@@ -44,7 +44,7 @@ The Create screen has three tabs. Songs and Speech each have a Simple and an Adv
 
 | Key | Label | Modes | Type | Values or range | Default | Condition | Notes |
 |---|---|---|---|---|---|---|---|
-| `speech_prompt` | Speech description | simple | text | — | empty | — | Single free-text prompt. Speech is labelled BETA and has no model dropdown. |
+| `speech_prompt` | Speech description | simple | text | up to 1000 characters | empty | — | Single free-text prompt. Speech is labelled BETA and has no model dropdown. Suno enforces no limit in the form; n8Tracks uses 1,000 characters for now (maintainer's decision). |
 | `speech_script` | Script | advanced | text | up to 5000 characters | empty | — | — |
 | `speech_tone` | Tone | advanced | text | up to 1000 characters | empty | — | 'Describe the delivery: tone, pacing, mood and setting'. |
 | `speech_vocal_gender` | Vocal Gender | advanced | choice | male, female | none | Inside Advanced | — |

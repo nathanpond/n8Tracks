@@ -332,9 +332,9 @@
         "simple"
       ],
       "type": "text",
-      "maxLength": null,
+      "maxLength": 1000,
       "default": "",
-      "notes": "Single free-text prompt. Speech is labelled BETA and has no model dropdown."
+      "notes": "Single free-text prompt. Speech is labelled BETA and has no model dropdown. Suno enforces no limit in the form; n8Tracks uses 1,000 characters for now (maintainer's decision)."
     },
     {
       "key": "speech_script",
