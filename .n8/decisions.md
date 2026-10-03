@@ -103,3 +103,20 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** Invariant 1 guard is #69; it covers UI and API paths, and M4 (import) and M7 (MCP) extend it.
 - **Decision:** A test-only variable, `N8TRACKS_ENABLE_TEST_SEEDING`, enables the Generation seeding command in the end-to-end containers.
 - **Decision:** Split stories and #75 were not put through a further executor simulation (same departure as M0 and M1).
+
+## /n8-plan M3 — 2026-10-03
+
+- **Decision:** M3 is 23 stories (#83–#105) under epics #10–#12.
+- **Decision:** From the user: catalog details live in a collapsible Details panel on the Song page; deleted items can be recovered for 30 days with a container command; a primary Artist is optional and filled from a default; dragging an Album track renumbers its disc; release dates accept a year, a year and month, or a full date.
+- **Decision:** #82 (password reset from the container) was filed late under M2's epic #6.
+  **Why:** The story was drafted and reviewed during M2 planning, then dropped by mistake when the sign-in stories were split. M3's coverage check caught it.
+- **Decision:** Retention uses separate tables holding JSON documents of removed rows, with shape versions and upgraders (settles PRD open decision 4). Live tables carry no deleted flag.
+- **Decision:** #67's note that retained Songs are reassigned on workflow-state deletion is superseded: a Song restored after its state was deleted gets the first visible state.
+- **Decision:** Server-side changes to a Song's Genre, Tag, or credit lists increment that Song's revision.
+  **Why:** Those lists are written whole; without it a stale client could silently write a merged or deleted ID back.
+- **Decision:** Deleting a record is session-only; removing a membership, credit, relationship, or attachment is an ordinary scoped edit.
+- **Decision:** Song notes added to the Details panel (#83); the PRD lists them and no story had them.
+- **Decision:** `docs/conventions.md` was committed (PR #81) so executors can read the conventions the stories cite.
+- **Deferred to M4:** artwork from a Generation; Song artwork defaulting to the Selected Generation's; Generation deletion and provider tombstones; mapping user relationship types to Suno actions; the PRD's Versions table.
+- **Deferred to M7:** whether Tag management (rename, recolour, merge, delete) opens to an MCP scope; the PRD lists managing Tags among MCP writes and M3 keeps it session-only.
+- **Decision:** Split stories were not put through a further executor simulation (same departure as earlier milestones).
