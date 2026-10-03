@@ -1,0 +1,190 @@
+{
+  "_about": "Lineage-related fields observed on Suno clips, by the action that produced them. Captured in spike TS-002 on 2026-10-03. Only the fields that differ from a plain generation are shown; identifiers are placeholders and personal values are redacted. 'metadata' is the clip's metadata object; 'clip' holds top-level clip fields.",
+  "plain_generation": {
+    "metadata": {
+      "task": "agentic_thinking",
+      "type": "gen",
+      "is_remix": false
+    },
+    "clip": {}
+  },
+  "reuse_prompt": {
+    "metadata": {
+      "type": "gen",
+      "is_remix": false
+    },
+    "clip": {},
+    "_note": "No task and no source reference. Not distinguishable from a new custom-mode generation."
+  },
+  "cover": {
+    "metadata": {
+      "task": "cover",
+      "type": "gen",
+      "cover_clip_id": "00000000-0000-4000-8000-000000000011",
+      "edited_clip_id": "00000000-0000-4000-8000-000000000011",
+      "has_vocal": false,
+      "can_publish_with_vocal": true,
+      "secondary_badges": [
+        {
+          "display_name": "COVER"
+        }
+      ]
+    },
+    "clip": {},
+    "_note": "From covers already in the library; whether cover_clip_id and edited_clip_id are always equal, and whether clip_roots is present, was not checked."
+  },
+  "mashup": {
+    "metadata": {
+      "task": "mashup_condition",
+      "type": "gen",
+      "is_remix": false,
+      "mashup_clip_ids": [
+        "00000000-0000-4000-8000-000000000011",
+        "00000000-0000-4000-8000-000000000012"
+      ],
+      "has_vocal": false,
+      "can_publish_with_vocal": true,
+      "secondary_badges": [
+        {
+          "display_name": "MASHUP"
+        }
+      ]
+    },
+    "clip": {
+      "clip_roots": {
+        "clips": [
+          {
+            "id": "00000000-0000-4000-8000-000000000011",
+            "title": "<redacted title>",
+            "image_url": "<redacted image_url>",
+            "is_public": false,
+            "user_display_name": "<redacted user_display_name>",
+            "user_handle": "<redacted user_handle>",
+            "user_avatar_image_url": "<redacted user_avatar_image_url>"
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000012",
+            "title": "<redacted title>",
+            "image_url": "<redacted image_url>",
+            "is_public": false,
+            "user_display_name": "<redacted user_display_name>",
+            "user_handle": "<redacted user_handle>",
+            "user_avatar_image_url": "<redacted user_avatar_image_url>"
+          }
+        ],
+        "clip_attribution_type": "remix"
+      }
+    }
+  },
+  "sample": {
+    "metadata": {
+      "task": "chop_sample_condition",
+      "type": "gen",
+      "is_remix": true
+    },
+    "clip": {
+      "clip_roots": {
+        "clips": [
+          {
+            "id": "00000000-0000-4000-8000-000000000011",
+            "title": "<redacted title>",
+            "image_url": "<redacted image_url>",
+            "is_public": false,
+            "user_display_name": "<redacted user_display_name>",
+            "user_handle": "<redacted user_handle>",
+            "user_avatar_image_url": "<redacted user_avatar_image_url>"
+          }
+        ],
+        "clip_attribution_type": "remix"
+      }
+    },
+    "_note": "The source appears only in clip_roots; metadata carries no source ID."
+  },
+  "extend": {
+    "metadata": {
+      "task": "extend",
+      "type": "gen",
+      "is_remix": true,
+      "edited_clip_id": "00000000-0000-4000-8000-000000000011",
+      "continue_at": 125,
+      "infill": false,
+      "history": [
+        {
+          "id": "00000000-0000-4000-8000-000000000011",
+          "continue_at": 125,
+          "type": "gen",
+          "source": "web",
+          "source_is_webview": false,
+          "infill": false
+        }
+      ],
+      "secondary_badges": [
+        {
+          "display_name": "EXTEND 1"
+        }
+      ]
+    },
+    "clip": {
+      "clip_roots": {
+        "clips": [
+          {
+            "id": "00000000-0000-4000-8000-000000000011",
+            "title": "<redacted title>",
+            "image_url": "<redacted image_url>",
+            "is_public": false,
+            "user_display_name": "<redacted user_display_name>",
+            "user_handle": "<redacted user_handle>",
+            "user_avatar_image_url": "<redacted user_avatar_image_url>"
+          }
+        ],
+        "clip_attribution_type": "remix"
+      }
+    }
+  },
+  "inspiration": {
+    "metadata": {
+      "task": "playlist_condition",
+      "type": "gen",
+      "is_remix": false,
+      "playlist_id": "00000000-0000-4000-8000-000000000021",
+      "playlist_clip_ids": [
+        "00000000-0000-4000-8000-000000000011"
+      ]
+    },
+    "clip": {},
+    "_note": "In the Create response playlist_id is the literal string 'inspiration'; in the library feed it is a UUID. No clip_roots."
+  },
+  "voice": {
+    "metadata": {
+      "task": "vox_playlist_condition",
+      "type": "gen",
+      "is_remix": false,
+      "persona_id": "00000000-0000-4000-8000-000000000031",
+      "playlist_id": "00000000-0000-4000-8000-000000000021",
+      "playlist_clip_ids": [
+        "00000000-0000-4000-8000-000000000011"
+      ],
+      "has_vocal": false,
+      "can_publish_with_vocal": true
+    },
+    "clip": {
+      "persona": {
+        "id": "00000000-0000-4000-8000-000000000031",
+        "name": "<redacted name>",
+        "image_s3_id": "<redacted>",
+        "user_handle": "<redacted user_handle>",
+        "user_display_name": "<redacted user_display_name>",
+        "user_image_url": "<redacted>",
+        "user_is_verified": false,
+        "is_owned": true,
+        "is_public": false,
+        "is_trashed": false,
+        "is_hidden": false,
+        "is_voice_persona": true,
+        "persona_type": "<not recorded>"
+      },
+      "is_persona_root": false
+    },
+    "_note": "This example combined a Voice with an Inspiration source, hence the playlist fields. Boolean values inside 'persona' are illustrative; only the key names were recorded. No clip_roots."
+  }
+}
