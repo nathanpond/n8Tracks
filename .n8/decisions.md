@@ -71,3 +71,16 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** Planner calls shown at the gate and not overridden: unknown `N8TRACKS_*` names warn; port-in-use exits; `X-Request-ID` on every response; foreign SQLite files refused; a deleted database file reports unhealthy; 2-second media check; stale health kept with a notice; unknown upstream version makes the gateway degraded; ownership-fix failure warns and continues; supplementary groups cleared; `restart: unless-stopped` in the Compose example; Aspire dashboard URL printed, not opened.
 - **Decision:** The three stories produced by splitting were not put through a third executor simulation.
   **Why:** Their content had been through both passes; noted as a departure from the skill's "simulate any new story once".
+
+## /n8-plan M1 — 2026-10-03
+
+- **Decision:** M1 is eleven stories (#39–#49) under epic #5.
+- **Decision:** From the user: the tag is the approval to publish; a release publishes `X.Y.Z`, `X.Y`, and `latest`; pre-release tags publish only the exact version as a GitHub pre-release; images carry provenance and an SBOM.
+- **Decision:** Invariant 8 guard is #43 (rationale scanner) and #44 (configuration checks). EF Core generated migration files under `Migrations/` are exempt.
+- **Decision:** #32 (M0) amended: `format:check` script and `N8TRACKS_VERSION` override.
+  **Why:** M1's gate and edge builds depend on both; found by the coverage check.
+- **Decision:** Release rules live in a tested script (#47); bad-tag cases are not tested by pushing real tags.
+  **Why:** After #49, tags cannot be deleted, so each live test would spend a version number.
+- **Decision:** A real pre-release, `v0.1.0-rc.1`, is published while verifying #48 and stays public.
+- **Decision:** Planner calls shown at the gate and not overridden: not every commit gets an `edge-<sha>`; interrupted releases are completed by re-run, not rolled back; stable notes start from the previous stable tag; rationales under ten characters or starting with `TODO` do not count; Dependabot tracks the .NET SDK and groups minor/patch per ecosystem; admins can still delete the tag rulesets.
+- **Decision:** The three split stories were not put through a third executor simulation (same departure as M0).
