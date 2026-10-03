@@ -16,11 +16,11 @@ Separately: if a `/n8-*` skill's own instructions failed, misled you, or were si
 
 No story may breach these without an explicit conversation with the user. Changing one is plan drift: log it as an `## Ad-hoc` entry and run `/n8-replan`. All are **test-enforced**; the epic that owns each guard is named.
 
-1. **Version immutability.** A Version's creation inputs and lineage sources cannot change once a Generation is attached, through any path (UI, API, import, MCP). Guard: epic #7.
-2. **Media mount is never written (V1).** n8Tracks never writes, renames, moves, or deletes under `/media`, and no path input escapes the mount root. Expected to change in V2. Guard: epic #16.
-3. **Imports never silently overwrite.** Suno import and portable import never change existing catalog data without an explicit user choice. Guard: epics #14, #22.
-4. **Suno is never mutated destructively (V1).** Nothing deletes or trashes Suno content, and the extension never clicks Create, Publish, or Delete on its own. Expected to change in V2. Guard: epic #15.
-5. **One business-rule layer.** The web UI, API, and extension go through one application-service layer. The MCP gateway calls only the REST API and holds no business logic or catalog data. Guard: epics #4, #21.
-6. **Sensitive data is never logged.** Credentials, tokens, cookies, lyrics, prompts, and raw provider payloads are redacted from logs and diagnostics by default. Guard: epic #4.
-7. **No destructive MCP capability (V1).** No MCP tool or scope can delete records, manage credentials, touch the filesystem, or drive Suno. Guard: epic #21.
-8. **Warnings are errors.** Analyzers and linters stay on in the backend, frontend, extension, and gateway; any suppression carries a one-line rationale. Guard: epic #5.
+1. **Version immutability.** A Version's creation inputs and lineage sources cannot change once a Generation is attached, through any path (UI, API, import, MCP). Guard: epic #7. guard: deferred → M2
+2. **Media mount is never written (V1).** n8Tracks never writes, renames, moves, or deletes under `/media`, and no path input escapes the mount root. Expected to change in V2. Guard: epic #16. guard: deferred → M5
+3. **Imports never silently overwrite.** Suno import and portable import never change existing catalog data without an explicit user choice. Guard: epics #14, #22. guard: deferred → M4, M8
+4. **Suno is never mutated destructively (V1).** Nothing deletes or trashes Suno content, and the extension never clicks Create, Publish, or Delete on its own. Expected to change in V2. Guard: epic #15. guard: deferred → M4
+5. **One business-rule layer.** The web UI, API, and extension go through one application-service layer. The MCP gateway calls only the REST API and holds no business logic or catalog data. Guard: epics #4, #21. guard: #25, #33 (planned)
+6. **Sensitive data is never logged.** Credentials, tokens, cookies, lyrics, prompts, and raw provider payloads are redacted from logs and diagnostics by default. Guard: epic #4. guard: #27 (planned)
+7. **No destructive MCP capability (V1).** No MCP tool or scope can delete records, manage credentials, touch the filesystem, or drive Suno. Guard: epic #21. guard: deferred → M7
+8. **Warnings are errors.** Analyzers and linters stay on in the backend, frontend, extension, and gateway; any suppression carries a one-line rationale. Guard: epic #5. guard: deferred → M1

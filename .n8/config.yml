@@ -21,3 +21,5 @@ ci:
     - "push main → dev (edge images)"
     - "push tag v* → production (versioned images + GitHub release)"
 accessibility: "WCAG 2.1 AA: automated checks in the end-to-end suite plus keyboard-only walkthroughs"
+versioning: "One product version in the root VERSION file. App, gateway, and extension are compatible when major.minor match; patch releases are independent. A compatibility break moves to the next minor. The gateway and extension warn on mismatch."
+local_dev: "Aspire AppHost (src/n8Tracks.AppHost) runs API, gateway, and frontend together; it is never part of an image."
