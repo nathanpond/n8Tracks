@@ -480,3 +480,6 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# Raw working notes and captures (may hold account identifiers); never committed
+docs/.notes/
