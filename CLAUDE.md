@@ -16,7 +16,7 @@ Separately: if a `/n8-*` skill's own instructions failed, misled you, or were si
 
 No story may breach these without an explicit conversation with the user. Changing one is plan drift: log it as an `## Ad-hoc` entry and run `/n8-replan`. All are **test-enforced**; the epic that owns each guard is named.
 
-1. **Version immutability.** A Version's creation inputs and lineage sources cannot change once a Generation is attached, through any path (UI, API, import, MCP). Guard: epic #7. guard: deferred → M2
+1. **Version immutability.** A Version's creation inputs and lineage sources cannot change once a Generation is attached, through any path (UI, API, import, MCP). Guard: epic #7. guard: #69 (planned); import and MCP paths extend it in M4 and M7
 2. **Media mount is never written (V1).** n8Tracks never writes, renames, moves, or deletes under `/media`, and no path input escapes the mount root. Expected to change in V2. Guard: epic #16. guard: deferred → M5
 3. **Imports never silently overwrite.** Suno import and portable import never change existing catalog data without an explicit user choice. Guard: epics #14, #22. guard: deferred → M4, M8
 4. **Suno is never mutated destructively (V1).** Nothing deletes or trashes Suno content, and the extension never clicks Create, Publish, or Delete on its own. Expected to change in V2. Guard: epic #15. guard: deferred → M4
