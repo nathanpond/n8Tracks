@@ -1,0 +1,10 @@
+version: 1
+plugin_version: 0.7.0
+stack: dotnet
+initialized: 2026-10-03
+wiki: enabled
+repo: nathanpond/n8Tracks
+visibility: public
+context7: installed
+security_findings: advisories
+areas: [api, db, web, extension, mcp, infra, ci, docs]

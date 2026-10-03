@@ -1,0 +1,64 @@
+name: Story
+description: Describes WHAT to build, with testable acceptance criteria
+labels: ["feature"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What
+      description: What to build and why. No implementation detail.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: One testable checklist item per criterion.
+      value: "- [ ] "
+    validations:
+      required: true
+  - type: textarea
+    id: must-haves
+    attributes:
+      label: Must-haves
+      description: User-observable truths, the files that make them possible, and the links between them.
+      value: |
+        truths:
+          - ""
+        artifacts:
+          - path: ""
+            provides: ""
+        key_links:
+          - from: ""
+            to: ""
+            via: ""
+    validations:
+      required: false
+  - type: textarea
+    id: demo
+    attributes:
+      label: Demo
+      description: A concrete ~60-second user script, or "Demo: none — agent-verifiable".
+    validations:
+      required: false
+  - type: textarea
+    id: test-plan
+    attributes:
+      label: Test plan
+      description: Automated tests to be written as part of this story.
+    validations:
+      required: true
+  - type: textarea
+    id: discretion
+    attributes:
+      label: Claude's Discretion
+      description: Decisions explicitly delegated to the implementer.
+    validations:
+      required: false
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: "Blocked by: #N lines, if any."
+    validations:
+      required: false
