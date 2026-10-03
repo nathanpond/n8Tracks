@@ -84,3 +84,22 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** A real pre-release, `v0.1.0-rc.1`, is published while verifying #48 and stays public.
 - **Decision:** Planner calls shown at the gate and not overridden: not every commit gets an `edge-<sha>`; interrupted releases are completed by re-run, not rolled back; stable notes start from the previous stable tag; rationales under ten characters or starting with `TODO` do not count; Dependabot tracks the .NET SDK and groups minor/patch per ecosystem; admins can still delete the tag rulesets.
 - **Decision:** The three split stories were not put through a third executor simulation (same departure as M0).
+
+## /n8-plan M2 — 2026-10-03
+
+- **Decision:** M2 is 25 stories and 3 spikes (#52–#79) under epics #6–#9.
+- **Decision:** From the user: password reset by a container command; 30-day sliding sessions; backups fall back to a folder under the data path with a warning; Version tree beside the editor; automatic snapshots, last 50 per Version; Songs as a table; a Version stays frozen for good once it has had a Generation.
+- **Decision (deviates from the PRD):** When a Song's last Version is deleted, the automatically created Version takes the next never-used top-level number, not `1`.
+  **Why:** User's call: shortcodes embed the Version number, so reusing `1` would be confusing. Affects M3's deletion story.
+- **Decision:** Version numbers are never reused within a Song, even after purge.
+- **Decision (deviates from the PRD):** Conflict responses return the current record; the client identifies the conflicting fields.
+  **Why:** The server does not know what the client last saw. Shown at the gate; not overridden.
+- **Decision (deviates from the PRD):** "Make current" carries no revision; the last request wins.
+  **Why:** Treated as a command, not an edit of stale content. Shown at the gate; not overridden.
+- **Decision:** The PRD's Versions table is deferred to M4 (with Generations). M4's planning must pick it up; no epic criterion names it yet.
+- **Decision:** The story that makes a Version store every Suno Create option is not filed. It is written by re-running `/n8-plan M2` after the inventory spike (#79) closes.
+  **Why:** The inventory is that story's specification and does not exist yet.
+- **Decision:** Added #75, an offline restore command, found missing by the coverage check.
+- **Decision:** Invariant 1 guard is #69; it covers UI and API paths, and M4 (import) and M7 (MCP) extend it.
+- **Decision:** A test-only variable, `N8TRACKS_ENABLE_TEST_SEEDING`, enables the Generation seeding command in the end-to-end containers.
+- **Decision:** Split stories and #75 were not put through a further executor simulation (same departure as M0 and M1).
