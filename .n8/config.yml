@@ -8,3 +8,16 @@ visibility: public
 context7: installed
 security_findings: advisories
 areas: [api, db, web, extension, mcp, infra, ci, docs]
+deployment:
+  targets: "Docker images on GHCR (ghcr.io/nathanpond/n8tracks application image, plus a separate MCP gateway image); browser extension zip on GitHub releases"
+  environments:
+    dev: "`edge` images published to GHCR on every push to main; pulled by hand"
+    production: "versioned images published to GHCR on a v* tag, with a GitHub release carrying the extension zip"
+  notes: "Self-hosted product: no hosted environments and no stage. The user pulls images onto their own server. The MCP gateway is a .NET container the user hosts on a machine that can reach their tailnet. The extension is loaded unpacked from the release zip (no Chrome Web Store in V1)."
+ci:
+  provider: github-actions
+  on_pr: [build, format, lint, test, e2e-chromium, accessibility]
+  triggers:
+    - "push main → dev (edge images)"
+    - "push tag v* → production (versioned images + GitHub release)"
+accessibility: "WCAG 2.1 AA: automated checks in the end-to-end suite plus keyboard-only walkthroughs"
