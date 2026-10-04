@@ -1,3 +1,5 @@
+using n8Tracks.Api.Logging;
+
 namespace n8Tracks.Api.Endpoints;
 
 internal static class HealthEndpoint
@@ -7,7 +9,8 @@ internal static class HealthEndpoint
         ArgumentNullException.ThrowIfNull(endpoints);
 
         endpoints.MapGet("/health", () => Results.Ok(new HealthResponse("ok")))
-            .WithName("GetHealth");
+            .WithName("GetHealth")
+            .WithMetadata(QuietRequestLogMetadata.Instance);
 
         return endpoints;
     }

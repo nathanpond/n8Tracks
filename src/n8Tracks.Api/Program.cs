@@ -3,10 +3,14 @@ using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using n8Tracks.Api.Configuration;
+using n8Tracks.Api.DependencyInjection;
 using n8Tracks.Api.Endpoints;
+using n8Tracks.Api.Logging;
 using n8Tracks.Application;
 using n8Tracks.Application.Configuration;
 using n8Tracks.Infrastructure;
+using n8Tracks.Infrastructure.Logging;
+using Serilog;
 
 /// <summary>The entry point and composition root.</summary>
 public sealed class Program
@@ -19,13 +23,40 @@ public sealed class Program
         RunAsync(args, ProcessEnvironment.Read(), Console.Out, CancellationToken.None);
 
     /// <summary>
-    /// Builds and runs the app until shutdown or <paramref name="cancellationToken"/>. Returns the process
-    /// exit code: 1 when the configuration is invalid or the port cannot be bound, otherwise 0.
+    /// Builds and runs the app until shutdown or <paramref name="cancellationToken"/>. Every log line
+    /// goes to <paramref name="output"/> as JSON. Returns the process exit code: 1 when the
+    /// configuration is invalid, the port cannot be bound, or startup fails unexpectedly, otherwise 0.
     /// </summary>
     internal static async Task<int> RunAsync(
         string[] args,
         EnvironmentSnapshot environment,
         TextWriter output,
+        CancellationToken cancellationToken)
+    {
+        // One sink for the startup lines and the application log, so both have the same shape.
+        var sink = new JsonLinesSink(output);
+        using var startupLog = LoggingRegistration.CreateStartupLogger(sink);
+
+        try
+        {
+            return await RunAsync(args, environment, sink, startupLog, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return 0;
+        }
+        catch (Exception exception) when (exception is not HostAbortedException)
+        {
+            startupLog.Fatal(exception, "n8Tracks stopped because of an unexpected error");
+            return 1;
+        }
+    }
+
+    private static async Task<int> RunAsync(
+        string[] args,
+        EnvironmentSnapshot environment,
+        JsonLinesSink sink,
+        Serilog.ILogger startupLog,
         CancellationToken cancellationToken)
     {
         var builder = WebApplication.CreateBuilder(args);
@@ -36,6 +67,10 @@ public sealed class Program
         builder.Configuration[WebHostDefaults.HttpPortsKey] = string.Empty;
         builder.Configuration[WebHostDefaults.HttpsPortsKey] = string.Empty;
 
+        // Serilog is the only logging provider; the redaction policy sits in front of every sink.
+        builder.Logging.ClearProviders();
+        builder.Services.AddN8TracksLogging(sink);
+
         builder.Services.AddOpenApi();
         builder.Services.AddApplication();
         builder.Services.AddInfrastructure();
@@ -44,12 +79,9 @@ public sealed class Program
         var app = builder.Build();
         await using (app.ConfigureAwait(false))
         {
-            var startupLog = new StartupLog(output, TimeProvider.System);
-
             foreach (var name in EnvironmentOptionsLoader.FindUnknownVariables(app.Services.GetRequiredService<EnvironmentSnapshot>()))
             {
-                const string reason = "is not a setting n8Tracks knows and is ignored.";
-                startupLog.Warning($"Unknown setting: {name} {reason}", name, reason);
+                startupLog.Warning("Unknown setting: {Variable} {Reason}", name, "is not a setting n8Tracks knows and is ignored.");
             }
 
             N8TracksOptions options;
@@ -61,11 +93,18 @@ public sealed class Program
             {
                 foreach (var error in exception.Errors)
                 {
-                    startupLog.Error($"Invalid configuration: {error.Variable} {error.Reason}", error.Variable, error.Reason);
+                    startupLog.Error("Invalid configuration: {Variable} {Reason}", error.Variable, error.Reason);
                 }
 
                 return 1;
             }
+
+            // Outermost first: the request ID is on every line and every response, the completion line
+            // covers every request, and an unhandled exception is logged once before that line is written.
+            app.UseMiddleware<RequestIdMiddleware>();
+            app.UseSerilogRequestLogging(
+                requestLogging => RequestLog.Configure(requestLogging, app.Services.GetRequiredService<Serilog.ILogger>()));
+            app.UseMiddleware<UnhandledExceptionMiddleware>();
 
             app.UseConfiguredPathBase(options);
 
@@ -99,10 +138,11 @@ public sealed class Program
             return 0;
         }
     }
+
     /// <summary>False under a test host, which swaps Kestrel for an in-memory server and binds no port.</summary>
     private static bool ListensWithKestrel(WebApplication app) =>
         app.Services.GetRequiredService<IServer>().GetType().Assembly == typeof(KestrelServerOptions).Assembly;
 
-    private static void ReportBindFailure(StartupLog startupLog, string reason) =>
-        startupLog.Error($"Startup failed: {EnvironmentOptionsLoader.Port} {reason}", EnvironmentOptionsLoader.Port, reason);
+    private static void ReportBindFailure(Serilog.ILogger startupLog, string reason) =>
+        startupLog.Error("Startup failed: {Variable} {Reason}", EnvironmentOptionsLoader.Port, reason);
 }

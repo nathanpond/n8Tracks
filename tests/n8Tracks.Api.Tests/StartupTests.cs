@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
 using n8Tracks.Api.Configuration;
+using n8Tracks.Api.Tests.Logging;
 
 namespace n8Tracks.Api.Tests;
 
@@ -147,10 +148,82 @@ public sealed class StartupTests : IDisposable
 
         Assert.Equal(0, await run.WaitAsync(StartTimeout));
 
-        var line = Assert.Single(ParseLines(output.ToString()));
+        // The startup lines and the application log share the output: every line is one JSON object.
+        var lines = ParseLines(output.ToString());
+        Assert.All(lines, LogLineAssert.HasTheLogShape);
+
+        var line = Assert.Single(lines, candidate => candidate.GetProperty("properties").TryGetProperty("variable", out _));
         Assert.Equal("Warning", line.GetProperty("level").GetString());
         Assert.Equal("N8TRACKS_PROT", line.GetProperty("properties").GetProperty("variable").GetString());
         Assert.Contains("N8TRACKS_PROT", line.GetProperty("message").GetString(), StringComparison.Ordinal);
+
+        // The request outside the prefix was logged; the framework's own Information lines were not.
+        var request = Assert.Single(lines, candidate => candidate.GetProperty("properties").TryGetProperty("status", out _));
+        Assert.Equal("/health", request.GetProperty("properties").GetProperty("path").GetString());
+        Assert.Equal(404, request.GetProperty("properties").GetProperty("status").GetInt32());
+        Assert.DoesNotContain(lines, candidate => candidate.GetProperty("message").GetString()!.StartsWith("Now listening", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AtTraceEveryLineOnTheOutputIsStillOneJsonObjectAndTheFrameworkStaysAtWarning()
+    {
+        var port = FreePort();
+        using var output = new StringWriter();
+        using var stop = new CancellationTokenSource();
+        using var client = new HttpClient();
+
+        var run = Program.RunAsync(
+            [],
+            Snapshot(
+                ("N8TRACKS_PORT", port.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                ("N8TRACKS_LOG_LEVEL", "Trace")),
+            output,
+            stop.Token);
+
+        try
+        {
+            Assert.Equal(HttpStatusCode.OK, await GetWhenListening(client, new Uri($"http://127.0.0.1:{port}/health?x=1"), run));
+            using var missing = await client.GetAsync(new Uri($"http://127.0.0.1:{port}/missing"));
+        }
+        finally
+        {
+            await stop.CancelAsync();
+        }
+
+        Assert.Equal(0, await run.WaitAsync(StartTimeout));
+
+        var text = output.ToString();
+        Assert.All(text.Split('\n', StringSplitOptions.RemoveEmptyEntries), written => Assert.StartsWith("{\"timestamp\":", written, StringComparison.Ordinal));
+
+        var lines = ParseLines(text);
+        Assert.All(lines, LogLineAssert.HasTheLogShape);
+        Assert.Contains(lines, candidate => candidate.GetProperty("level").GetString() == "Debug"
+            && candidate.GetProperty("properties").TryGetProperty("path", out var path) && path.GetString() == "/health");
+        Assert.Contains(lines, candidate => candidate.GetProperty("level").GetString() == "Information"
+            && candidate.GetProperty("properties").TryGetProperty("path", out var path) && path.GetString() == "/missing");
+        Assert.DoesNotContain(lines, candidate =>
+            candidate.GetProperty("properties").TryGetProperty("sourceContext", out var source)
+            && (source.GetString()!.StartsWith("Microsoft", StringComparison.Ordinal) || source.GetString()!.StartsWith("System", StringComparison.Ordinal))
+            && candidate.GetProperty("level").GetString() is "Trace" or "Debug" or "Information");
+    }
+
+    [Fact]
+    public async Task AnUnexpectedStartupFailureIsOneCriticalJsonLineAndExitCodeOne()
+    {
+        // A content root that does not exist makes the host builder throw before anything is configured.
+        using var output = new StringWriter();
+
+        var exitCode = await Program.RunAsync(
+            ["--contentRoot", Path.Combine(directory.Path, "missing-content-root")],
+            Snapshot(),
+            output,
+            CancellationToken.None).WaitAsync(StartTimeout);
+
+        Assert.Equal(1, exitCode);
+        var line = Assert.Single(ParseLines(output.ToString()));
+        LogLineAssert.HasTheLogShape(line);
+        Assert.Equal("Critical", line.GetProperty("level").GetString());
+        Assert.Equal(JsonValueKind.Object, line.GetProperty("exception").ValueKind);
     }
 
     private static async Task<HttpStatusCode> GetWhenListening(HttpClient client, Uri uri, Task<int> run)
