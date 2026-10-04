@@ -805,3 +805,6 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** The M0 pull request (#156) was merged while GitHub's CodeQL default-setup check was still running; it later passed on `main`.
   **Why:** No workflow file existed, so the skill's gate was the local suite. Logged because a check was pending at merge time.
   **Issue:** #25
+
+## /n8-exec M0 (fix pass after verification) — 2026-10-04
+
