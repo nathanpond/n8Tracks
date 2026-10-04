@@ -10,8 +10,8 @@ Two tag rulesets enforce this, on `refs/tags/v*`, the same tags the release work
 
 | Ruleset | ID | What it does | Who can bypass it |
 | --- | --- | --- | --- |
-| `release-tags-create` | _not applied yet_ | Refuses the creation of a `v*` tag. | The repository admin role, so only an admin can create one. |
-| `release-tags-immutable` | _not applied yet_ | Refuses moving a `v*` tag to another commit and deleting it. | Nobody, the owner included. |
+| `release-tags-create` | 24454301 | Refuses the creation of a `v*` tag. | The repository admin role, so only an admin can create one. |
+| `release-tags-immutable` | 24454302 | Refuses moving a `v*` tag to another commit and deleting it. | Nobody, the owner included. |
 
 Their definitions are `.github/rulesets/release-tags-create.json` and `.github/rulesets/release-tags-immutable.json`, applied like the `main` ruleset with `scripts/apply-rulesets.sh` (see [Branch and tag rules](../README.md#branch-and-tag-rules)). To check that they exist and are what the files say:
 
