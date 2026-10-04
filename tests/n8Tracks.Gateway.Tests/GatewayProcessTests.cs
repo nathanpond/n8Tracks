@@ -206,7 +206,7 @@ public sealed class GatewayProcessTests
         Assert.All(collector.Requests, request => Assert.Equal("/health", request.Path));
     }
 
-    private static async Task<JsonElement> WaitForHealth(HttpClient client, int port)
+    internal static async Task<JsonElement> WaitForHealth(HttpClient client, int port)
     {
         var deadline = Stopwatch.StartNew();
         while (true)
@@ -226,9 +226,12 @@ public sealed class GatewayProcessTests
         }
     }
 
-    private static async Task<(int ExitCode, IReadOnlyList<JsonElement> Lines, string Output)> RunToExit(params (string Name, string Value)[] variables)
+    private static Task<(int ExitCode, IReadOnlyList<JsonElement> Lines, string Output)> RunToExit(params (string Name, string Value)[] variables) =>
+        RunToExit([], variables);
+
+    internal static async Task<(int ExitCode, IReadOnlyList<JsonElement> Lines, string Output)> RunToExit(string[] arguments, params (string Name, string Value)[] variables)
     {
-        using var gateway = Start(variables);
+        using var gateway = Start(arguments, variables);
         try
         {
             return await gateway.Completion.WaitAsync(ExitTimeout);
@@ -240,7 +243,10 @@ public sealed class GatewayProcessTests
         }
     }
 
-    private static RunningGateway Start(params (string Name, string Value)[] variables)
+    private static RunningGateway Start(params (string Name, string Value)[] variables) => Start([], variables);
+
+    /// <summary>Starts the built gateway with the given command-line arguments and only the given settings.</summary>
+    internal static RunningGateway Start(string[] arguments, params (string Name, string Value)[] variables)
     {
         var assembly = typeof(Program).Assembly.Location;
         var start = new ProcessStartInfo("dotnet")
@@ -252,6 +258,10 @@ public sealed class GatewayProcessTests
         };
         start.ArgumentList.Add("exec");
         start.ArgumentList.Add(assembly);
+        foreach (var argument in arguments)
+        {
+            start.ArgumentList.Add(argument);
+        }
 
         // Nothing from the machine running the tests reaches the gateway's settings.
         foreach (var name in start.Environment.Keys
@@ -295,7 +305,7 @@ public sealed class GatewayProcessTests
         return (process.ExitCode, lines, output);
     }
 
-    private sealed record RunningGateway(Process Process, Task<(int ExitCode, IReadOnlyList<JsonElement> Lines, string Output)> Completion) : IDisposable
+    internal sealed record RunningGateway(Process Process, Task<(int ExitCode, IReadOnlyList<JsonElement> Lines, string Output)> Completion) : IDisposable
     {
         public void Dispose()
         {

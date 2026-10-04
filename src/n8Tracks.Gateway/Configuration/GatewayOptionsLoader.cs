@@ -51,6 +51,21 @@ internal static class GatewayOptionsLoader
     }
 
     /// <summary>
+    /// The listen port alone, for the health check command: it must find the running gateway without
+    /// depending on any other setting.
+    /// </summary>
+    /// <exception cref="ConfigurationValidationException">The port is invalid.</exception>
+    public static int LoadPort(EnvironmentSnapshot environment)
+    {
+        ArgumentNullException.ThrowIfNull(environment);
+
+        var errors = new List<ConfigurationError>();
+        var port = ReadPort(environment.Variables, errors);
+
+        return errors.Count > 0 ? throw new ConfigurationValidationException(errors) : port;
+    }
+
+    /// <summary>
     /// The configured log level, or the default when it is unset or invalid. Logging is set up before
     /// the settings are validated, so this must not throw; <see cref="Load"/> reports the invalid value.
     /// </summary>

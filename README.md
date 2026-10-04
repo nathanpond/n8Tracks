@@ -39,7 +39,7 @@ Then `GET http://localhost:8787/health`. The launch profile sets `N8TRACKS_DATA_
 
 ## Run with Docker
 
-n8Tracks runs from one image: the app and its web interface, on port 8787. The image is built from this repository for `linux/amd64` and `linux/arm64`; published images come with the first release.
+n8Tracks runs from one image: the app and its web interface, on port 8787. The image is built from this repository for `linux/amd64` and `linux/arm64`; published images come with the first release. The MCP gateway is a second, separate image: see [The gateway image](#the-gateway-image).
 
 ### Quick start with Compose
 
@@ -127,7 +127,48 @@ docker buildx build --platform linux/amd64,linux/arm64 .
 
 The version comes from the root `VERSION` file; `--build-arg VERSION=<version>` overrides it, and `/health` reports whichever was used. The two-platform build needs a builder that supports it (the containerd image store, or `docker buildx create --driver docker-container`). Tests are not run in the image build.
 
-`scripts/smoke-docker.sh` builds the image for your machine and checks it end to end: health, the page, the user the app runs as, file ownership, a read-only media mount, no media mount, a sub-path, a restart and a re-creation on the same data, and the refusals (`PUID=abc`, a read-only `/data`). It needs Docker, `curl`, and `python3`, uses host port 18787, and removes what it created.
+`scripts/smoke-docker.sh` builds both images (the app and the gateway) for your machine and checks them end to end. For the app: health, the page, the user the app runs as, file ownership, a read-only media mount, no media mount, a sub-path, a restart and a re-creation on the same data, and the refusals (`PUID=abc`, a read-only `/data`). For the gateway: health next to the app on a shared network, the user it runs as, the container staying `healthy` while the app is stopped, another port, and the refusal to start without `N8TRACKS_API_URL`. It needs Docker, `curl`, and `python3`, uses host ports 18787 and 18788, and removes what it created.
+
+### The gateway image
+
+The [MCP gateway](#mcp-gateway) has its own image, built from `src/n8Tracks.Gateway/Dockerfile` with the repository root as the build context:
+
+```sh
+docker build -f src/n8Tracks.Gateway/Dockerfile -t n8tracks-gateway:dev .
+docker buildx build -f src/n8Tracks.Gateway/Dockerfile --platform linux/amd64,linux/arm64 .
+```
+
+It holds the gateway alone, for `linux/amd64` and `linux/arm64`, and listens on port 8788. The version comes from the root `VERSION` file, or from `--build-arg VERSION=<version>`, exactly as for the app image, and the gateway's `/health` reports it. Build both images from the same version: the gateway is `degraded` when its major and minor numbers differ from the app's. The build reads `src/n8Tracks.Gateway/Dockerfile.dockerignore` instead of the root `.dockerignore`, so only the gateway's sources are sent to Docker.
+
+With Compose: in [`docker-compose.example.yml`](docker-compose.example.yml), remove the `# ` in front of the `n8tracks-gateway` service and its lines, then start it the same way:
+
+```sh
+docker compose -f docker-compose.example.yml up -d --build
+```
+
+`docker ps` then shows both containers as `healthy`, and `http://localhost:8788/health` answers:
+
+```json
+{ "status": "healthy", "upstream": "reachable", "version": "0.1.0", "compatible": true }
+```
+
+Without Compose, put both containers on one Docker network and give the gateway the app's address there:
+
+```sh
+docker network create n8tracks
+docker run -d --name n8tracks --network n8tracks -p 8787:8787 \
+  -e PUID=1000 -e PGID=1000 \
+  -v "$PWD/data:/data" -v "$PWD/media:/media:ro" \
+  n8tracks:dev
+docker run -d --name n8tracks-gateway --network n8tracks -p 8788:8788 \
+  -e N8TRACKS_API_URL=http://n8tracks:8787 \
+  n8tracks-gateway:dev
+```
+
+- `N8TRACKS_API_URL` is required: the URL of n8Tracks as the gateway container reaches it, which is the app's container or service name and the port it listens on inside its container, not `localhost` and not the published host port. If the app runs under a sub-path, include the path (`http://n8tracks:8787/n8tracks`). Without the variable the container stops with exit code 1 and one error line naming it; under `restart: unless-stopped` it shows as restarting.
+- The other settings are under [Gateway settings](#gateway-settings). If you change `N8TRACKS_GATEWAY_PORT`, change the container side of the port mapping too.
+- The gateway runs as the image's fixed unprivileged user (`app`, UID and GID 1654). It writes no file, so the image has no volume, no mount, and no `PUID` or `PGID`. It has no time zone setting either: its log is in UTC.
+- The health check runs the gateway binary in a second mode, `dotnet /app/n8Tracks.Gateway.dll --healthcheck`, with the timing of the app image's check. It requests `/health` on the loopback interface at `N8TRACKS_GATEWAY_PORT` and passes on 200. The gateway answers 200 whether it is `healthy` or `degraded`, so the container stays `healthy` while n8Tracks is stopped, unreachable, or of another version; only a gateway that does not answer within 4 seconds becomes `unhealthy`. To see whether n8Tracks is reachable, read the gateway's `/health`.
 
 ## Health
 
@@ -264,6 +305,8 @@ The log is one JSON object per line on standard output, in the shape of .NET's J
 Framework categories (`Microsoft`, `System`) are held at Warning unless the level is set higher.
 
 ### Gateway health
+
+Started with `--healthcheck`, the gateway binary starts nothing: it requests `/health` from the gateway already running on the loopback interface at `N8TRACKS_GATEWAY_PORT`, writes one log line, and exits with code 0 for a 200 answer and 1 otherwise. The [gateway image](#the-gateway-image) uses this as its container health check.
 
 `GET /health` on the gateway asks `<N8TRACKS_API_URL>/health` afresh on every request and answers 200 with `Cache-Control: no-store`, whatever it finds:
 

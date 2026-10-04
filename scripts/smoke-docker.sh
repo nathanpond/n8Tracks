@@ -1,26 +1,32 @@
 #!/usr/bin/env bash
-# End-to-end checks of the n8Tracks application image.
+# End-to-end checks of the n8Tracks application image and the MCP gateway image.
 #
 #   scripts/smoke-docker.sh
 #
-# Builds the image for this machine's platform as n8tracks:dev, runs it the ways an operator would,
-# and fails on the first thing that is not as documented. It needs Docker, curl, and python3, and
-# uses host port 18787. Everything it creates (containers, a temporary folder) is removed on exit;
-# the image is kept.
+# Builds both images for this machine's platform as n8tracks:dev and n8tracks-gateway:dev, runs them
+# the ways an operator would, and fails on the first thing that is not as documented. It needs
+# Docker, curl, and python3, and uses host ports 18787 and 18788. Everything it creates (containers,
+# a volume, a network, a temporary folder) is removed on exit; the images are kept.
 #
 # Environment:
-#   N8TRACKS_SMOKE_IMAGE       image tag to build and test (default n8tracks:dev)
-#   N8TRACKS_SMOKE_SKIP_BUILD  set to 1 to test an image that is already built
-#   N8TRACKS_SMOKE_PORT        host port to publish on (default 18787)
+#   N8TRACKS_SMOKE_IMAGE          app image tag to build and test (default n8tracks:dev)
+#   N8TRACKS_SMOKE_GATEWAY_IMAGE  gateway image tag to build and test (default n8tracks-gateway:dev)
+#   N8TRACKS_SMOKE_SKIP_BUILD     set to 1 to test images that are already built
+#   N8TRACKS_SMOKE_PORT           host port to publish the app on (default 18787)
+#   N8TRACKS_SMOKE_GATEWAY_PORT   host port to publish the gateway on (default 18788)
 
 set -euo pipefail
 
 readonly IMAGE="${N8TRACKS_SMOKE_IMAGE:-n8tracks:dev}"
+readonly GATEWAY_IMAGE="${N8TRACKS_SMOKE_GATEWAY_IMAGE:-n8tracks-gateway:dev}"
 readonly HOST_PORT="${N8TRACKS_SMOKE_PORT:-18787}"
+readonly GATEWAY_HOST_PORT="${N8TRACKS_SMOKE_GATEWAY_PORT:-18788}"
 readonly WAIT_SECONDS=60
 readonly PREFIX="n8tracks-smoke-$$"
 readonly RUN_UID=1234
 readonly RUN_GID=1235
+# The base image's built-in unprivileged user, which the gateway image runs as.
+readonly GATEWAY_UID=1654
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly ROOT
@@ -39,6 +45,7 @@ cleanup() {
     fi
 
     docker volume rm --force "$PREFIX-data" >/dev/null 2>&1 || true
+    docker network rm "$PREFIX-net" >/dev/null 2>&1 || true
 
     # Files written by the container belong to another user on Linux; remove them from inside one.
     docker run --rm --entrypoint rm --volume "$WORK:/work" "$IMAGE" -rf /work/. >/dev/null 2>&1 || true
@@ -81,17 +88,27 @@ url() { printf 'http://127.0.0.1:%s%s' "$HOST_PORT" "$1"; }
 
 http_status() { curl --silent --output /dev/null --max-time 5 --write-out '%{http_code}' "$1" || true; }
 
-json_field() { python3 -c 'import json, sys; print(json.load(sys.stdin)[sys.argv[1]])' "$1"; }
+gateway_url() { printf 'http://127.0.0.1:%s%s' "$GATEWAY_HOST_PORT" "$1"; }
+
+# json_field NAME: a string field as it is; any other value as JSON (true, false, null, a number).
+json_field() {
+    python3 -c '
+import json, sys
+
+value = json.load(sys.stdin)[sys.argv[1]]
+print(value if isinstance(value, str) else json.dumps(value))
+' "$1"
+}
 
 container_state() { docker inspect --format '{{.State.Status}}' "$1"; }
 
 container_health() { docker inspect --format '{{.State.Health.Status}}' "$1"; }
 
-# wait_for_http CONTAINER PATH: until the path answers 200, the container stops, or time runs out.
-wait_for_http() {
+# wait_for_url CONTAINER URL: until the URL answers 200, the container stops, or time runs out.
+wait_for_url() {
     local deadline=$((SECONDS + WAIT_SECONDS))
     while [ "$SECONDS" -lt "$deadline" ]; do
-        if [ "$(http_status "$(url "$2")")" = "200" ]; then
+        if [ "$(http_status "$2")" = "200" ]; then
             return 0
         fi
         if [ "$(container_state "$1")" != "running" ]; then
@@ -101,6 +118,9 @@ wait_for_http() {
     done
     fail "$1 did not answer 200 at $2 within ${WAIT_SECONDS}s" "$1"
 }
+
+# wait_for_http CONTAINER PATH: the same, for a path of the app on its published port.
+wait_for_http() { wait_for_url "$1" "$(url "$2")"; }
 
 # wait_for_container_health CONTAINER: until Docker's own health check reports healthy.
 wait_for_container_health() {
@@ -171,6 +191,74 @@ sys.exit(0 if found else 1)
 ' "$2" "$3"
 }
 
+# assert_gateway_log_is_json CONTAINER: every line the gateway container wrote is one JSON object
+# with the keys of the gateway log (.NET's JSON console formatter, not the application log shape).
+assert_gateway_log_is_json() {
+    local count
+    if ! count="$(docker logs "$1" 2>&1 | python3 -c '
+import json, sys
+
+count = 0
+for number, line in enumerate(sys.stdin, 1):
+    line = line.rstrip("\n")
+    try:
+        entry = json.loads(line)
+    except ValueError:
+        sys.exit(f"line {number} is not JSON: {line!r}")
+    if not isinstance(entry, dict):
+        sys.exit(f"line {number} is not a JSON object: {line!r}")
+    missing = [key for key in ("Timestamp", "LogLevel", "Category", "Message") if key not in entry]
+    if missing:
+        sys.exit(f"line {number} has no {missing}: {line!r}")
+    count += 1
+if count == 0:
+    sys.exit("the container wrote nothing")
+print(count)
+')"; then
+        fail "the log of $1 is not JSON lines in the gateway log shape" "$1"
+    fi
+    pass "all $count log lines of $1 are JSON objects with the gateway log keys"
+}
+
+# gateway_log_has CONTAINER LEVEL TEXT: succeeds when a line at that level has the text in its message.
+gateway_log_has() {
+    docker logs "$1" 2>&1 | python3 -c '
+import json, sys
+
+level, text = sys.argv[1], sys.argv[2]
+found = any(entry["LogLevel"] == level and text in entry["Message"] for entry in map(json.loads, sys.stdin))
+sys.exit(0 if found else 1)
+' "$2" "$3"
+}
+
+# wait_for_health_check_after CONTAINER TIME: until Docker has run a health check of the container
+# that started after the given time (as docker inspect prints times); prints that check's exit code.
+wait_for_health_check_after() {
+    local deadline=$((SECONDS + WAIT_SECONDS)) code
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        if code="$(docker inspect --format '{{json .State.Health.Log}}' "$1" | python3 -c '
+import json, re, sys
+from datetime import datetime
+
+def instant(text):
+    # Docker prints up to nine fractional digits; Python reads six.
+    text = re.sub(r"(\.\d{6})\d+", r"\1", text.replace("Z", "+00:00"))
+    return datetime.fromisoformat(text)
+
+after = instant(sys.argv[1])
+later = [check for check in json.load(sys.stdin) or [] if instant(check["Start"]) > after]
+if not later:
+    sys.exit(1)
+print(later[-1]["ExitCode"])
+' "$2")"; then
+            printf '%s' "$code"
+            return 0
+        fi
+        sleep 1
+    done
+    fail "Docker ran no health check of $1 within ${WAIT_SECONDS}s" "$1"
+}
+
 # seeded_timestamp DATA_DIR: the value of the app_metadata row written when the schema was created.
 # Read from a copy (database plus write-ahead log), never from the file the container has open.
 seeded_timestamp() {
@@ -201,9 +289,13 @@ expected_version="$(tr -d '[:space:]' < "$ROOT/VERSION")"
 if [ "${N8TRACKS_SMOKE_SKIP_BUILD:-0}" = "1" ]; then
     docker image inspect "$IMAGE" >/dev/null || fail "image $IMAGE does not exist"
     pass "using the existing image $IMAGE"
+    docker image inspect "$GATEWAY_IMAGE" >/dev/null || fail "image $GATEWAY_IMAGE does not exist"
+    pass "using the existing image $GATEWAY_IMAGE"
 else
     docker build --tag "$IMAGE" "$ROOT"
     pass "built $IMAGE for the host platform"
+    docker build --file "$ROOT/src/n8Tracks.Gateway/Dockerfile" --tag "$GATEWAY_IMAGE" "$ROOT"
+    pass "built $GATEWAY_IMAGE for the host platform"
 fi
 
 volumes="$(docker image inspect --format '{{json .Config.Volumes}}' "$IMAGE")"
@@ -419,4 +511,87 @@ pass "the container never reported healthy (health: $(container_health "$name"))
 log_has "$name" Error "N8TRACKS_DATA_PATH" || fail "no Error line naming N8TRACKS_DATA_PATH" "$name"
 pass "an Error line names N8TRACKS_DATA_PATH"
 assert_log_is_json "$name"
+remove "$name"
+
+# ---------------------------------------------------------------------------------------------------
+
+section "Gateway: next to the app on a shared network"
+network="$PREFIX-net"
+app="$PREFIX-gateway-app"
+name="$PREFIX-gateway"
+docker network create "$network" >/dev/null
+
+expect "the gateway image's user" "$GATEWAY_UID" "$(docker image inspect --format '{{.Config.User}}' "$GATEWAY_IMAGE")"
+expect "the gateway image declares no volume" null "$(docker image inspect --format '{{json .Config.Volumes}}' "$GATEWAY_IMAGE")"
+if docker run --rm --entrypoint sh "$GATEWAY_IMAGE" -c 'ls /app' | grep -q -e 'n8Tracks\.Api' -e 'n8Tracks\.Application' -e 'n8Tracks\.Infrastructure' -e wwwroot; then
+    fail "the gateway image holds part of the app"
+fi
+pass "the gateway image holds no part of the app"
+
+docker run --detach --name "$app" --network "$network" --publish "$HOST_PORT:8787" \
+    --env PUID="$RUN_UID" --env PGID="$RUN_GID" \
+    --volume "$media:/media:ro" \
+    "$IMAGE" >/dev/null
+wait_for_http "$app" /health
+
+# The gateway reaches the app by its name on the network, as in the Compose example.
+docker run --detach --name "$name" --network "$network" --publish "$GATEWAY_HOST_PORT:8788" \
+    --env N8TRACKS_API_URL="http://$app:8787" \
+    "$GATEWAY_IMAGE" >/dev/null
+wait_for_url "$name" "$(gateway_url /health)"
+
+gateway_health() { curl --silent --max-time 10 "$(gateway_url /health)"; }
+
+health="$(gateway_health)"
+expect "gateway health status" healthy "$(printf '%s' "$health" | json_field status)" "$name"
+expect "gateway health upstream" reachable "$(printf '%s' "$health" | json_field upstream)" "$name"
+expect "gateway health compatible" true "$(printf '%s' "$health" | json_field compatible)" "$name"
+expect "gateway health reports the version in the VERSION file" "$expected_version" "$(printf '%s' "$health" | json_field version)" "$name"
+
+expect "the gateway process user ID" "$GATEWAY_UID" "$(process_id "$name" Uid)" "$name"
+expect "the gateway process group ID" "$GATEWAY_UID" "$(process_id "$name" Gid)" "$name"
+expect "the gateway is PID 1" "dotnet" "$(docker exec "$name" cat /proc/1/comm)" "$name"
+wait_for_container_health "$name"
+
+section "Gateway complement: the app stops"
+docker stop "$app" >/dev/null
+stopped="$(docker inspect --format '{{.State.FinishedAt}}' "$app")"
+health="$(gateway_health)"
+expect "gateway health status with the app stopped" degraded "$(printf '%s' "$health" | json_field status)" "$name"
+expect "gateway health upstream with the app stopped" unreachable "$(printf '%s' "$health" | json_field upstream)" "$name"
+expect "gateway health compatible with the app stopped" null "$(printf '%s' "$health" | json_field compatible)" "$name"
+
+# The image's own health check, run by Docker after the app went away.
+expect "exit code of Docker's next health check of the degraded gateway" 0 "$(wait_for_health_check_after "$name" "$stopped")" "$name"
+expect "Docker's health status of the degraded gateway" healthy "$(container_health "$name")" "$name"
+gateway_log_has "$name" Warning "n8Tracks is unreachable" || fail "no Warning line that n8Tracks is unreachable" "$name"
+pass "a Warning line says n8Tracks is unreachable"
+
+docker start "$app" >/dev/null
+wait_for_http "$app" /health
+expect "gateway health status with the app back" healthy "$(gateway_health | json_field status)" "$name"
+assert_gateway_log_is_json "$name"
+remove "$name"
+remove "$app"
+
+section "Gateway: another port"
+name="$PREFIX-gateway-port"
+docker run --detach --name "$name" --network "$network" --publish "$GATEWAY_HOST_PORT:9001" \
+    --env N8TRACKS_API_URL="http://$app:8787" --env N8TRACKS_GATEWAY_PORT=9001 \
+    "$GATEWAY_IMAGE" >/dev/null
+wait_for_url "$name" "$(gateway_url /health)"
+wait_for_container_health "$name"
+remove "$name"
+docker network rm "$network" >/dev/null
+
+section "Gateway complement: no N8TRACKS_API_URL"
+name="$PREFIX-gateway-nourl"
+docker run --detach --name "$name" "$GATEWAY_IMAGE" >/dev/null
+code="$(wait_for_exit "$name")"
+[ "$code" != "0" ] || fail "the gateway exited with code 0 without N8TRACKS_API_URL" "$name"
+pass "exit code $code"
+expect "lines written" 1 "$(docker logs "$name" 2>&1 | wc -l | tr -d '[:space:]')" "$name"
+gateway_log_has "$name" Error "N8TRACKS_API_URL is required" || fail "no Error line naming N8TRACKS_API_URL" "$name"
+pass "one Error line names N8TRACKS_API_URL"
+assert_gateway_log_is_json "$name"
 remove "$name"

@@ -45,9 +45,13 @@ services:
       # A folder for backups, on another disk if you can. Optional.
       # - ./backup:/backup
 
-  # The MCP gateway is a separate service with its own image. It is not packaged yet; this block
-  # shows how it will sit next to the app.
+  # The MCP gateway is a separate service with its own image, built from this repository too. To run
+  # it next to the app, remove the "# " in front of each line below, from "n8tracks-gateway:" down.
+  # Its health is then at http://localhost:8788/health. See "The gateway image" in the README.
   # n8tracks-gateway:
+  #   build:
+  #     context: .
+  #     dockerfile: src/n8Tracks.Gateway/Dockerfile
   #   image: n8tracks-gateway:dev
   #   container_name: n8tracks-gateway
   #   restart: unless-stopped
@@ -56,8 +60,12 @@ services:
   #   ports:
   #     - "8788:8788"
   #   environment:
-  #     TZ: Etc/UTC
-  #     # URL of n8Tracks as the gateway reaches it, base URL path included.
+  #     # URL of n8Tracks as the gateway reaches it: the app's service name on the Compose network
+  #     # and the port it listens on inside its container. If N8TRACKS_BASE_URL above has a path,
+  #     # add it here too (http://n8tracks:8787/n8tracks).
   #     N8TRACKS_API_URL: http://n8tracks:8787
+  #     # Port the gateway listens on inside the container. If you change it, change the right-hand
+  #     # side of the port mapping above to match.
   #     N8TRACKS_GATEWAY_PORT: "8788"
+  #     # Trace, Debug, Information, Warning, Error, or Critical.
   #     N8TRACKS_LOG_LEVEL: Information

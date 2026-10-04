@@ -1,4 +1,5 @@
 # Keeps the build context to what the image build reads: the frontend and backend sources.
+# The gateway image has its own list: src/n8Tracks.Gateway/Dockerfile.dockerignore.
 
 # Build output and dependencies
 **/bin/

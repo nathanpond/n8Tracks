@@ -2,6 +2,8 @@ namespace n8Tracks.Gateway.Health;
 
 internal static class HealthEndpoint
 {
+    public const string Path = "/health";
+
     /// <summary>
     /// Maps <c>GET /health</c>. Every request probes the upstream afresh; nothing is cached, here or by
     /// the caller. The answer is always 200: a degraded gateway is still running.
@@ -10,7 +12,7 @@ internal static class HealthEndpoint
     {
         ArgumentNullException.ThrowIfNull(endpoints);
 
-        endpoints.MapGet("/health", static async (
+        endpoints.MapGet(Path, static async (
             UpstreamHealthClient upstream,
             UpstreamStateLog stateLog,
             HttpContext context,

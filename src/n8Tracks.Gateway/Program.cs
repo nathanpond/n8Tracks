@@ -27,12 +27,23 @@ public sealed partial class Program
     /// <summary>
     /// Builds and runs the gateway until shutdown or <paramref name="cancellationToken"/>. Returns the
     /// process exit code: 1 when a setting is invalid, the port cannot be bound, or startup fails
-    /// unexpectedly, otherwise 0.
+    /// unexpectedly, otherwise 0. With <c>--healthcheck</c> among <paramref name="args"/> it starts
+    /// nothing and returns the result of asking the running gateway for its health instead (see
+    /// <see cref="HealthCheckCommand"/>).
     /// </summary>
     internal static async Task<int> RunAsync(string[] args, EnvironmentSnapshot environment, CancellationToken cancellationToken)
     {
         try
         {
+            if (HealthCheckCommand.IsRequested(args))
+            {
+                // Its own logger, flushed on disposal, so the one line is out before the process exits.
+                using var factory = GatewayLogging.CreateStartupLoggerFactory();
+                return await HealthCheckCommand
+                    .RunAsync(environment, factory.CreateLogger("n8Tracks.Gateway.HealthCheck"), cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
             return await RunHostAsync(args, environment, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
