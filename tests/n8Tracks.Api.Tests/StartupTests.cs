@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Text.Json;
 using n8Tracks.Api.Configuration;
 using n8Tracks.Api.Tests.Logging;
+using n8Tracks.TestSupport;
 
 namespace n8Tracks.Api.Tests;
 
@@ -114,8 +115,8 @@ public sealed class StartupTests : IDisposable
     [Fact]
     public async Task TheAppListensOnTheConfiguredPortOnlyAndStartsDespiteAMissingMediaPathAndAnUnknownVariable()
     {
-        var port = FreePort();
-        var otherPort = FreePort();
+        var port = TestPorts.Next();
+        var otherPort = TestPorts.Next();
         using var output = new StringWriter();
         using var stop = new CancellationTokenSource();
         using var client = new HttpClient();
@@ -169,7 +170,7 @@ public sealed class StartupTests : IDisposable
     [Fact]
     public async Task AtTraceEveryLineOnTheOutputIsStillOneJsonObjectAndTheFrameworkStaysAtWarning()
     {
-        var port = FreePort();
+        var port = TestPorts.Next();
         using var output = new StringWriter();
         using var stop = new CancellationTokenSource();
         using var client = new HttpClient();
@@ -212,12 +213,15 @@ public sealed class StartupTests : IDisposable
     [Fact]
     public async Task AnUnexpectedStartupFailureIsOneCriticalJsonLineAndExitCodeOne()
     {
-        // A content root that does not exist makes the host builder throw before anything is configured.
+        // A working directory that does not exist (it is the content root) makes the host builder
+        // throw before anything is configured.
         using var output = new StringWriter();
 
         var exitCode = await Program.RunAsync(
-            ["--contentRoot", Path.Combine(directory.Path, "missing-content-root")],
-            Snapshot(),
+            [],
+            new EnvironmentSnapshot(
+                new Dictionary<string, string>(StringComparer.Ordinal) { ["N8TRACKS_DATA_PATH"] = directory.Path },
+                Path.Combine(directory.Path, "missing-working-directory")),
             output,
             CancellationToken.None).WaitAsync(StartTimeout);
 
@@ -245,13 +249,6 @@ public sealed class StartupTests : IDisposable
                 await Task.Delay(TimeSpan.FromMilliseconds(50));
             }
         }
-    }
-
-    private static int FreePort()
-    {
-        using var listener = TcpListener.Create(0);
-        listener.Start();
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
     }
 
     private static List<JsonElement> ParseLines(string output) =>

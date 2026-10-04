@@ -24,7 +24,7 @@ public sealed class GatewayTelemetrySwitchTests
     private const string SpanDelay = "OTEL_BSP_SCHEDULE_DELAY";
 
     [Fact]
-    public async Task AnEndpointInHostConfigurationRegistersNothing()
+    public async Task AnEndpointHandedToTheHostAsAnArgumentRegistersNothing()
     {
         await using var collector = StubOtlpCollector.Start();
         List<ServiceDescriptor>? registered = null;
@@ -36,8 +36,8 @@ public sealed class GatewayTelemetrySwitchTests
 
         var services = factory.Services;
 
-        // The setting did reach the host's configuration; it is just not the switch.
-        Assert.Equal(collector.Endpoint, services.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>()[Endpoint]);
+        // The argument did not even reach the host's configuration.
+        Assert.Null(services.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>()[Endpoint]);
 
         Assert.NotNull(registered);
         Assert.Empty(TelemetryRegistrations.Find(registered));
@@ -60,7 +60,7 @@ public sealed class GatewayTelemetrySwitchTests
     {
         // The stub is the upstream too, so it hears from the gateway, and only as the upstream.
         await using var collector = StubOtlpCollector.Start();
-        var port = GatewayNetworkTests.FreePort();
+        var port = TestPorts.Next();
 
         using (var gateway = OtherConfigurationSources.Start(
             typeof(Program).Assembly,
@@ -86,7 +86,7 @@ public sealed class GatewayTelemetrySwitchTests
     {
         await using var collector = StubOtlpCollector.Start();
         await using var elsewhere = StubOtlpCollector.Start();
-        var port = GatewayNetworkTests.FreePort();
+        var port = TestPorts.Next();
 
         using (var gateway = OtherConfigurationSources.Start(
             typeof(Program).Assembly,

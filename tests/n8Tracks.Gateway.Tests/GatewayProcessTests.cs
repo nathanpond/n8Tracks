@@ -80,9 +80,9 @@ public sealed class GatewayProcessTests
     [Fact]
     public async Task TheGatewayListensOnItsOwnPortOnlyAndLogsSingleLineJsonToStdout()
     {
-        var port = GatewayNetworkTests.FreePort();
-        var aspNetPort = GatewayNetworkTests.FreePort();
-        var upstreamPort = GatewayNetworkTests.FreePort();
+        var port = TestPorts.Next();
+        var aspNetPort = TestPorts.Next();
+        var upstreamPort = TestPorts.Next();
 
         using var gateway = Start(
             ("N8TRACKS_API_URL", $"http://127.0.0.1:{upstreamPort}"),
@@ -119,10 +119,10 @@ public sealed class GatewayProcessTests
     [Fact]
     public async Task TheLogLevelSettingAppliesToStdout()
     {
-        var port = GatewayNetworkTests.FreePort();
+        var port = TestPorts.Next();
 
         using var gateway = Start(
-            ("N8TRACKS_API_URL", $"http://127.0.0.1:{GatewayNetworkTests.FreePort()}"),
+            ("N8TRACKS_API_URL", $"http://127.0.0.1:{TestPorts.Next()}"),
             ("N8TRACKS_GATEWAY_PORT", port.ToString(CultureInfo.InvariantCulture)),
             ("N8TRACKS_LOG_LEVEL", "error"));
         try
@@ -148,7 +148,7 @@ public sealed class GatewayProcessTests
     public async Task TheEndpointVariableMakesTheGatewayExportItsTraces()
     {
         await using var collector = StubOtlpCollector.Start();
-        var port = GatewayNetworkTests.FreePort();
+        var port = TestPorts.Next();
 
         using var gateway = Start(
             ("N8TRACKS_API_URL", collector.Endpoint),
@@ -179,7 +179,7 @@ public sealed class GatewayProcessTests
     public async Task WithoutTheEndpointVariableTheGatewaySendsNoTelemetry()
     {
         await using var collector = StubOtlpCollector.Start();
-        var port = GatewayNetworkTests.FreePort();
+        var port = TestPorts.Next();
 
         using var gateway = Start(
             ("N8TRACKS_API_URL", collector.Endpoint),

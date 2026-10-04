@@ -17,8 +17,7 @@ internal static class ConfigurationServiceCollectionExtensions
         services.AddSingleton(environment);
         services.AddSingleton(provider => EnvironmentOptionsLoader.Load(provider.GetRequiredService<EnvironmentSnapshot>()));
 
-        // An endpoint set in code replaces every address from ASPNETCORE_URLS, ASPNETCORE_HTTP_PORTS,
-        // --urls, and launch settings.
+        // The one endpoint. The host reads no other source (see Program), so nothing can add a second.
         services.AddOptions<KestrelServerOptions>()
             .Configure<IServiceProvider>((kestrel, provider) =>
             {

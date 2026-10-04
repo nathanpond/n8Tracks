@@ -50,8 +50,8 @@ internal sealed class GatewayFactory : WebApplicationFactory<Program>
     public string? OtlpEndpoint { get; init; }
 
     /// <summary>
-    /// Settings put in the host's configuration, as a command-line argument or a settings file would
-    /// put them: not the environment. Set before the first request.
+    /// Settings handed to the entry point as command-line arguments (<c>--name=value</c>), which is
+    /// how the test host passes them on: not the environment. Set before the first request.
     /// </summary>
     public IReadOnlyList<(string Name, string Value)> HostSettings { get; init; } = [];
 

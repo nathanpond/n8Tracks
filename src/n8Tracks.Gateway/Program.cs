@@ -29,7 +29,8 @@ public sealed partial class Program
     /// process exit code: 1 when a setting is invalid, the port cannot be bound, or startup fails
     /// unexpectedly, otherwise 0. With <c>--healthcheck</c> among <paramref name="args"/> it starts
     /// nothing and returns the result of asking the running gateway for its health instead (see
-    /// <see cref="HealthCheckCommand"/>).
+    /// <see cref="HealthCheckCommand"/>). That is the only argument with a meaning: every other one
+    /// is ignored, and none reaches the host's configuration.
     /// </summary>
     internal static async Task<int> RunAsync(string[] args, EnvironmentSnapshot environment, CancellationToken cancellationToken)
     {
@@ -44,7 +45,7 @@ public sealed partial class Program
                     .ConfigureAwait(false);
             }
 
-            return await RunHostAsync(args, environment, cancellationToken).ConfigureAwait(false);
+            return await RunHostAsync(environment, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -57,21 +58,37 @@ public sealed partial class Program
         }
     }
 
-    private static async Task<int> RunHostAsync(string[] args, EnvironmentSnapshot environment, CancellationToken cancellationToken)
+    private static async Task<int> RunHostAsync(EnvironmentSnapshot environment, CancellationToken cancellationToken)
     {
-        var builder = WebApplication.CreateBuilder(args);
+        // The host starts empty: it reads no command-line argument, no environment variable (with an
+        // ASPNETCORE_ or DOTNET_ prefix or without one), and no appsettings file, so no framework
+        // setting from any of them (urls, a Kestrel or Logging section, AllowedHosts, ...) can change
+        // what the gateway does. Everything it needs is set here, from the environment snapshot.
+        var builder = WebApplication.CreateEmptyBuilder(new WebApplicationOptions
+        {
+            ApplicationName = typeof(Program).Assembly.GetName().Name,
+            EnvironmentName = Environments.Production,
 
-        // N8TRACKS_GATEWAY_PORT is the only source of the listen address: drop anything that came from
-        // ASPNETCORE_URLS, ASPNETCORE_HTTP_PORTS, ASPNETCORE_HTTPS_PORTS, --urls, or launch settings.
-        builder.Configuration[WebHostDefaults.ServerUrlsKey] = string.Empty;
-        builder.Configuration[WebHostDefaults.HttpPortsKey] = string.Empty;
-        builder.Configuration[WebHostDefaults.HttpsPortsKey] = string.Empty;
+            // Nothing is read from the content root; it is kept away from the working directory.
+            ContentRootPath = AppContext.BaseDirectory,
+        });
+
+        // What the default builder would have added: the server, without the loader that reads
+        // endpoints and limits from a "Kestrel" configuration section (N8TRACKS_GATEWAY_PORT is the
+        // only listen source); routing; and a container that checks its registrations.
+        builder.WebHost.UseKestrelCore();
+        builder.Services.AddRouting();
+        builder.Host.UseDefaultServiceProvider(static provider =>
+        {
+            provider.ValidateScopes = true;
+            provider.ValidateOnBuild = true;
+        });
 
         builder.Logging.AddGatewayLogging();
 
-        // OpenTelemetry, only when the environment variable OTEL_EXPORTER_OTLP_ENDPOINT is set (the
-        // host's configuration is not asked); otherwise this registers nothing. After the logging setup,
-        // which clears the providers this may add one to.
+        // OpenTelemetry, only when the environment variable OTEL_EXPORTER_OTLP_ENDPOINT is set;
+        // otherwise this registers nothing. After the logging setup, which clears the providers this
+        // may add one to.
         builder.AddServiceDefaults(ServiceName, ProductVersion.Current, environment.Variables, exportLogsFromLoggingProviders: true);
 
         builder.Services.AddSingleton(environment);

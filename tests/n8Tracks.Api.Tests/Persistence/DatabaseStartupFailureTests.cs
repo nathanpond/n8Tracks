@@ -1,9 +1,9 @@
 using System.Globalization;
 using System.Net;
-using System.Net.Sockets;
 using System.Text.Json;
 using n8Tracks.Api.Configuration;
 using n8Tracks.Api.Tests.Logging;
+using n8Tracks.TestSupport;
 
 namespace n8Tracks.Api.Tests.Persistence;
 
@@ -147,7 +147,7 @@ public sealed class DatabaseStartupFailureTests : IDisposable
     /// </summary>
     private async Task<(int ExitCode, List<JsonElement> Lines, bool Answered)> Run(bool stopWhenAnswered)
     {
-        var port = FreePort();
+        var port = TestPorts.Next();
         var health = new Uri($"http://127.0.0.1:{port}/health");
         using var output = new StringWriter();
         using var stop = new CancellationTokenSource();
@@ -199,12 +199,5 @@ public sealed class DatabaseStartupFailureTests : IDisposable
         {
             return false;
         }
-    }
-
-    private static int FreePort()
-    {
-        using var listener = TcpListener.Create(0);
-        listener.Start();
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
     }
 }

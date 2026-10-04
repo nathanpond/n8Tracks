@@ -5,9 +5,9 @@ namespace n8Tracks.TestSupport;
 
 /// <summary>
 /// One of the services running as its own process, the way an operator runs it: real command-line
-/// arguments, real environment variables, and a working directory of its own (which is where the
-/// host looks for <c>appsettings.json</c>). Nothing from the machine running the tests reaches its
-/// settings. Disposing stops the process and removes the directory.
+/// arguments, real environment variables, and a working directory of its own (which is where a
+/// default .NET host would look for <c>appsettings.json</c>). Nothing from the machine running the
+/// tests reaches its settings. Disposing stops the process and removes the directory.
 /// </summary>
 internal sealed class ServiceProcess : IDisposable
 {
@@ -134,8 +134,9 @@ internal sealed class ServiceProcess : IDisposable
 }
 
 /// <summary>
-/// The ways a setting can reach a host's configuration without being the environment variable of
-/// that name: none of them may turn telemetry on, or change where it goes.
+/// The ways a setting reaches the configuration of a default .NET host without being the environment
+/// variable of that name. The services read none of them: nothing that arrives this way may turn
+/// telemetry on, change where it goes, or change anything else.
 /// </summary>
 internal static class OtherConfigurationSources
 {
@@ -144,7 +145,17 @@ internal static class OtherConfigurationSources
     public const string DotNetPrefix = "DOTNET_ prefixed variable";
     public const string SettingsFile = "appsettings.json";
 
+    /// <summary>
+    /// The variable named as the key is, with <c>__</c> for each <c>:</c>. Not in <see cref="All"/>:
+    /// for an <c>OTEL_</c> key this is the one source that counts.
+    /// </summary>
+    public const string Variable = "environment variable";
+
+    /// <summary>The sources that are not the plain environment variable.</summary>
     public static TheoryData<string> All => [CommandLine, AspNetCorePrefix, DotNetPrefix, SettingsFile];
+
+    /// <summary>Every source a framework setting (one that is not a product or <c>OTEL_</c> variable) could come from.</summary>
+    public static TheoryData<string> AllForFrameworkSettings => [CommandLine, AspNetCorePrefix, DotNetPrefix, Variable, SettingsFile];
 
     /// <summary>Starts the service with <paramref name="settings"/> arriving through <paramref name="source"/> and <paramref name="variables"/> as its environment.</summary>
     public static ServiceProcess Start(
@@ -155,6 +166,7 @@ internal static class OtherConfigurationSources
     {
         string[] arguments = source == CommandLine ? [.. settings.Select(setting => $"--{setting.Name}={setting.Value}")] : [];
 
+        // A key with colons in it is read by the JSON source as the path it spells.
         var settingsFile = source == SettingsFile
             ? System.Text.Json.JsonSerializer.Serialize(settings.ToDictionary(setting => setting.Name, setting => setting.Value))
             : null;
@@ -163,12 +175,13 @@ internal static class OtherConfigurationSources
         {
             AspNetCorePrefix => "ASPNETCORE_",
             DotNetPrefix => "DOTNET_",
+            Variable => string.Empty,
             _ => null,
         };
 
         var environment = prefix is null
             ? variables
-            : [.. variables, .. settings.Select(setting => (prefix + setting.Name, setting.Value))];
+            : [.. variables, .. settings.Select(setting => (prefix + setting.Name.Replace(":", "__", StringComparison.Ordinal), setting.Value))];
 
         return ServiceProcess.Start(entryAssembly, settingsFile, arguments, environment);
     }

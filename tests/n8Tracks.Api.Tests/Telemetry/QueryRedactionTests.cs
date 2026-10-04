@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Net;
-using System.Net.Sockets;
 using n8Tracks.Api.Configuration;
 using n8Tracks.ServiceDefaults;
 using n8Tracks.TestSupport;
@@ -24,7 +23,7 @@ public sealed class QueryRedactionTests
         await using var collector = StubOtlpCollector.Start();
         using var data = new TemporaryDirectory();
         using var media = new TemporaryDirectory();
-        var port = FreePort();
+        var port = TestPorts.Next();
 
         using (var app = ServiceProcess.Start(
             typeof(Program).Assembly,
@@ -63,12 +62,5 @@ public sealed class QueryRedactionTests
         var everything = collector.ReceivedText(StubOtlpCollector.TracesPath, StubOtlpCollector.MetricsPath, StubOtlpCollector.LogsPath);
         Assert.DoesNotContain(Sentinel, everything, StringComparison.Ordinal);
         Assert.DoesNotContain(OtherSentinel, everything, StringComparison.Ordinal);
-    }
-
-    private static int FreePort()
-    {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
     }
 }

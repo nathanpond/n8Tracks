@@ -36,7 +36,8 @@ public sealed class Program
     /// configuration is invalid, the database cannot be opened or upgraded, the port cannot be bound,
     /// or startup fails unexpectedly, otherwise 0. With <c>--healthcheck</c> among
     /// <paramref name="args"/> it starts nothing and reports on the app that is already running
-    /// (see <see cref="HealthCheckCommand"/>).
+    /// (see <see cref="HealthCheckCommand"/>). That is the only argument with a meaning: every other
+    /// one is ignored, and none reaches the host's configuration.
     /// </summary>
     internal static async Task<int> RunAsync(
         string[] args,
@@ -56,7 +57,7 @@ public sealed class Program
                 return await HealthCheckCommand.RunAsync(environment, startupLog, cancellationToken).ConfigureAwait(false);
             }
 
-            return await RunAsync(args, environment, sink, startupLog, cancellationToken).ConfigureAwait(false);
+            return await RunAsync(environment, sink, startupLog, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -70,26 +71,41 @@ public sealed class Program
     }
 
     private static async Task<int> RunAsync(
-        string[] args,
         EnvironmentSnapshot environment,
         JsonLinesSink sink,
         Serilog.ILogger startupLog,
         CancellationToken cancellationToken)
     {
-        var builder = WebApplication.CreateBuilder(args);
+        // The host starts empty: it reads no command-line argument, no environment variable (with an
+        // ASPNETCORE_ or DOTNET_ prefix or without one), and no appsettings file, so no framework
+        // setting from any of them (urls, a Kestrel or Logging section, AllowedHosts, ...) can change
+        // what the app does. Everything it needs is set here, from the environment snapshot.
+        var builder = WebApplication.CreateEmptyBuilder(new WebApplicationOptions
+        {
+            ApplicationName = typeof(Program).Assembly.GetName().Name,
+            EnvironmentName = EnvironmentOptionsLoader.HostEnvironmentName(environment),
 
-        // N8TRACKS_PORT is the only source of the listen address: drop anything that came from
-        // ASPNETCORE_URLS, ASPNETCORE_HTTP_PORTS, ASPNETCORE_HTTPS_PORTS, --urls, or launch settings.
-        builder.Configuration[WebHostDefaults.ServerUrlsKey] = string.Empty;
-        builder.Configuration[WebHostDefaults.HttpPortsKey] = string.Empty;
-        builder.Configuration[WebHostDefaults.HttpsPortsKey] = string.Empty;
+            // The frontend is served from wwwroot under the working directory.
+            ContentRootPath = environment.WorkingDirectory,
+        });
+
+        // What the default builder would have added: the server, without the loader that reads
+        // endpoints and limits from a "Kestrel" configuration section (N8TRACKS_PORT is the only listen
+        // source); routing; and a container that checks its registrations, in every environment.
+        builder.WebHost.UseKestrelCore();
+        builder.Services.AddRouting();
+        builder.Host.UseDefaultServiceProvider(static provider =>
+        {
+            provider.ValidateScopes = true;
+            provider.ValidateOnBuild = true;
+        });
 
         // Serilog is the only logging provider; the redaction policy sits in front of every sink.
         builder.Logging.ClearProviders();
         builder.Services.AddN8TracksLogging(sink);
 
-        // OpenTelemetry, only when the environment variable OTEL_EXPORTER_OTLP_ENDPOINT is set (the
-        // host's configuration is not asked); otherwise both calls register nothing. Log records leave
+        // OpenTelemetry, only when the environment variable OTEL_EXPORTER_OTLP_ENDPOINT is set;
+        // otherwise both calls register nothing. Log records leave
         // through one more sink of the application log, so they are redacted like every other line,
         // never through a logging provider.
         builder.AddServiceDefaults(ServiceName, ProductVersion.Current, environment.Variables, exportLogsFromLoggingProviders: false);

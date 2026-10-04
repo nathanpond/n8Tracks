@@ -1,6 +1,6 @@
-using System.Net;
 using System.Net.Sockets;
 using n8Tracks.Gateway.Configuration;
+using n8Tracks.TestSupport;
 
 namespace n8Tracks.Gateway.Tests;
 
@@ -49,16 +49,23 @@ public sealed class ListenPortProbeTests
         Assert.Equal(3, descriptions.Distinct(StringComparer.Ordinal).Count());
     }
 
+    /// <summary>
+    /// Each port is one only this test can be given (see <see cref="TestPorts"/>) and was never bound
+    /// before: the free one stays free, and the taken one is taken by a listener the test holds.
+    /// It does not release a port and ask again: a port from the operating system's pool can be
+    /// handed to another process the moment it is released, and any released port stays taken for
+    /// as long as a child process another test is starting still holds its copy of the socket.
+    /// </summary>
     [Fact]
     public void TheProbeReportsNothingForAFreePortAndInUseForATakenOne()
     {
-        using var occupied = TcpListener.Create(0);
+        Assert.Null(ListenPortProbe.TryBind(TestPorts.Next()));
+
+        // Dual-mode, any address: the same socket the probe asks for.
+        var taken = TestPorts.Next();
+        using var occupied = TcpListener.Create(taken);
         occupied.Start();
-        var taken = ((IPEndPoint)occupied.LocalEndpoint).Port;
 
         Assert.Equal(SocketError.AddressAlreadyInUse, ListenPortProbe.TryBind(taken));
-
-        occupied.Stop();
-        Assert.Null(ListenPortProbe.TryBind(taken));
     }
 }

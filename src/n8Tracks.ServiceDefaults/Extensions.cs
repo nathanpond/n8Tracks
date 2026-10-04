@@ -77,10 +77,10 @@ public static class Extensions
 
         if (environment.IsTelemetryExportConfigured())
         {
-            // The SDK reads its settings from the host's configuration, where the command line, prefixed
-            // variables, and settings files sit beside (and above) the environment. Added last, this
-            // source outranks them all for every OTEL_ key. It is also what keeps query-string redaction
-            // on: it never answers the instrumentation's switches that turn it off.
+            // The SDK reads its settings from the host's configuration. This source puts the OTEL_
+            // variables of the environment there; added last, it outranks any other source a host may
+            // have for every OTEL_ key. It is also what keeps query-string redaction on: it never
+            // answers the instrumentation's switches that turn it off.
             builder.Configuration.Add(new EnvironmentOnlyTelemetrySettings(environment));
 
             // A method of its own, so the OpenTelemetry assemblies are not even loaded when export is off.

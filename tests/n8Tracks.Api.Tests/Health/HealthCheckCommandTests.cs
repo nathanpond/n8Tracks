@@ -1,10 +1,10 @@
 using System.Globalization;
 using System.Net;
-using System.Net.Sockets;
 using System.Text.Json;
 using n8Tracks.Api.Configuration;
 using n8Tracks.Api.Endpoints;
 using n8Tracks.Api.Tests.Logging;
+using n8Tracks.TestSupport;
 
 namespace n8Tracks.Api.Tests.Health;
 
@@ -50,7 +50,7 @@ public sealed class HealthCheckCommandTests : IDisposable
     [InlineData("https://nas.example/n8tracks")]
     public async Task ItPassesAgainstTheRunningAppAtTheRootAndUnderASubPath(string baseUrl)
     {
-        var port = FreePort();
+        var port = TestPorts.Next();
         var environment = Snapshot(
             ("N8TRACKS_PORT", port.ToString(CultureInfo.InvariantCulture)),
             ("N8TRACKS_BASE_URL", baseUrl),
@@ -110,7 +110,7 @@ public sealed class HealthCheckCommandTests : IDisposable
     [Fact]
     public async Task ItFailsWithOneErrorLineWhenNothingAnswers()
     {
-        var (exitCode, lines) = await Check(Snapshot(("N8TRACKS_PORT", FreePort().ToString(CultureInfo.InvariantCulture))));
+        var (exitCode, lines) = await Check(Snapshot(("N8TRACKS_PORT", TestPorts.Next().ToString(CultureInfo.InvariantCulture))));
 
         Assert.Equal(1, exitCode);
         var line = Assert.Single(lines);
@@ -187,13 +187,6 @@ public sealed class HealthCheckCommandTests : IDisposable
             .Select(line => JsonSerializer.Deserialize<JsonElement>(line)),
     ];
 
-    private static int FreePort()
-    {
-        using var listener = TcpListener.Create(0);
-        listener.Start();
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
-    }
-
     private EnvironmentSnapshot Snapshot(params (string Name, string Value)[] variables)
     {
         var all = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -242,22 +235,12 @@ public sealed class HealthCheckCommandTests : IDisposable
 
         public static StubApp Start(string path, HttpStatusCode statusCode)
         {
-            // The port can be taken between the probe and the listen; try another.
-            for (var attempt = 0; ; attempt++)
-            {
-                var port = FreePort();
-                var listener = new HttpListener();
-                listener.Prefixes.Add($"http://127.0.0.1:{port.ToString(CultureInfo.InvariantCulture)}/");
-                try
-                {
-                    listener.Start();
-                    return new StubApp(listener, port, path, statusCode);
-                }
-                catch (HttpListenerException) when (attempt < 5)
-                {
-                    listener.Close();
-                }
-            }
+            // A port of this process's own (see TestPorts): nothing else can take it before the listen.
+            var port = TestPorts.Next();
+            var listener = new HttpListener();
+            listener.Prefixes.Add($"http://127.0.0.1:{port.ToString(CultureInfo.InvariantCulture)}/");
+            listener.Start();
+            return new StubApp(listener, port, path, statusCode);
         }
 
         public async ValueTask DisposeAsync()
