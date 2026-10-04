@@ -793,3 +793,15 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** `docs/releasing.md` gained "Who can release" (admin role only, the tag is the approval, link to Roll back, the two rulesets with a placeholder `_not applied yet_` in the ID column, the commands that show them, and the three consequences the issue names). Its earlier advice to delete a refused tag and tag again is replaced: a refused tag stays and its version is spent, the fix is the next patch version (or the next pre-release number). README's "Branch rules" section is now "Branch and tag rules".
   **Why:** The earlier text contradicted the immutable ruleset. The IDs exist only once the rulesets are created, so that acceptance box stays unticked until the orchestrator fills them in.
   **Issue:** #49
+- **Decision:** After the M1 merge the orchestrator ran the parts of #45, #46, #48, and #49 that need `main` or a tag: the first edge publish (run 37198243587), two manual edge runs (main: republished; another branch: published nothing), the `VERSION` bump to `0.1.0-rc.1` (#173), the tag `v0.1.0-rc.1` and its release run (37199318581, re-run once to prove nothing changes), and then the two tag rulesets (IDs 24454301 and 24454302).
+  **Why:** Those criteria cannot be observed on a branch; the tag rulesets were applied last because release tags cannot be deleted once they are in force.
+  **Issue:** #45, #46, #48, #49
+- **Decision:** The GHCR packages needed no visibility change: both were public after the first publish.
+  **Why:** #46 expected an owner action; `gh api users/nathanpond/packages/container/<name>` reported `public` and an anonymous pull worked.
+  **Issue:** #46
+- **Decision:** `v0.1.0-rc.1` is published and permanent. A force-move and a delete of the tag were both refused by the `release-tags-immutable` ruleset ("Cannot update this protected ref." / "Cannot delete this tag").
+  **Why:** Approved by the maintainer at the M1 gate and again before execution.
+  **Issue:** #48, #49
+- **Decision:** The M0 pull request (#156) was merged while GitHub's CodeQL default-setup check was still running; it later passed on `main`.
+  **Why:** No workflow file existed, so the skill's gate was the local suite. Logged because a check was pending at merge time.
+  **Issue:** #25
