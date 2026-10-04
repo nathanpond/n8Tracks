@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Net;
-using System.Net.Sockets;
 using System.Text;
 
 namespace n8Tracks.TestSupport;
@@ -42,22 +41,12 @@ internal sealed class StubOtlpCollector : IAsyncDisposable
 
     public static StubOtlpCollector Start(string otherResponseBody = "{}")
     {
-        // The port can be taken between the probe and the listen; try another.
-        for (var attempt = 0; ; attempt++)
-        {
-            var endpoint = $"http://127.0.0.1:{FreePort()}";
-            var listener = new HttpListener();
-            listener.Prefixes.Add(endpoint + "/");
-            try
-            {
-                listener.Start();
-                return new StubOtlpCollector(listener, endpoint) { OtherResponseBody = otherResponseBody };
-            }
-            catch (HttpListenerException) when (attempt < 5)
-            {
-                listener.Close();
-            }
-        }
+        // A port of this process's own (see TestPorts): nothing else can take it before the listen.
+        var endpoint = $"http://127.0.0.1:{TestPorts.Next()}";
+        var listener = new HttpListener();
+        listener.Prefixes.Add(endpoint + "/");
+        listener.Start();
+        return new StubOtlpCollector(listener, endpoint) { OtherResponseBody = otherResponseBody };
     }
 
     /// <summary>The bodies sent to one path (<see cref="TracesPath"/>, <see cref="MetricsPath"/>, <see cref="LogsPath"/>).</summary>
@@ -95,16 +84,11 @@ internal sealed class StubOtlpCollector : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        listener.Stop();
-        await loop;
+        // Close alone. Stop followed by Close makes the managed HttpListener (Linux, macOS) look its
+        // endpoint up a second time, find it gone, and bind the port again just to release it; that
+        // second bind throws "Address already in use" when anything else has the port by then.
         listener.Close();
-    }
-
-    private static int FreePort()
-    {
-        using var probe = new TcpListener(IPAddress.Loopback, 0);
-        probe.Start();
-        return ((IPEndPoint)probe.LocalEndpoint).Port;
+        await loop;
     }
 
     private async Task Serve()

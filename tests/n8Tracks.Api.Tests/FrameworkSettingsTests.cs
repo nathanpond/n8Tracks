@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Net;
-using System.Net.Sockets;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using n8Tracks.Api.Configuration;
@@ -30,7 +29,7 @@ public sealed class FrameworkSettingsTests
                 ("AllowedHosts", "only.example.invalid"),
                 ("Kestrel:Limits:MaxRequestLineSize", "8"),
                 ("contentRoot", Path.Combine(Path.GetTempPath(), "n8tracks-test-no-such-content-root")),
-                ("urls", $"http://127.0.0.1:{FreePort()}"),
+                ("urls", $"http://127.0.0.1:{TestPorts.Next()}"),
             ]);
 
         Assert.Equal(HttpStatusCode.OK, status);
@@ -99,7 +98,7 @@ public sealed class FrameworkSettingsTests
     /// <summary>Starts the app as a process with <paramref name="settings"/> arriving through <paramref name="source"/> and asks it for <paramref name="path"/>.</summary>
     private static async Task<HttpStatusCode> StatusOf(string path, string source, IReadOnlyList<(string Name, string Value)> settings)
     {
-        var port = FreePort();
+        var port = TestPorts.Next();
         using var data = new TemporaryDirectory();
         using var media = new TemporaryDirectory();
 
@@ -120,12 +119,5 @@ public sealed class FrameworkSettingsTests
         Assert.Equal(string.Empty, error);
 
         return response.StatusCode;
-    }
-
-    private static int FreePort()
-    {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
     }
 }

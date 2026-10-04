@@ -1,5 +1,3 @@
-using System.Net;
-using System.Net.Sockets;
 using Aspire.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -55,12 +53,4 @@ internal static class AppModel
 
     public static EndpointAnnotation HttpEndpoint(IResource resource) =>
         Assert.Single(resource.Annotations.OfType<EndpointAnnotation>(), static endpoint => endpoint.Name == "http");
-
-    /// <summary>A port nothing listens on right now, so a test never collides with a stack a developer has running.</summary>
-    public static int FreePort()
-    {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
-    }
 }

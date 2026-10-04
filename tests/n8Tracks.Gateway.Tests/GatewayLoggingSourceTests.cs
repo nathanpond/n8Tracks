@@ -41,7 +41,7 @@ public sealed class GatewayLoggingSourceTests
         // The stub is the upstream too. Its health answer has no version, so the gateway writes one
         // warning of its own besides its startup line.
         await using var collector = StubOtlpCollector.Start();
-        var port = GatewayNetworkTests.FreePort();
+        var port = TestPorts.Next();
         string output;
 
         using (var gateway = OtherConfigurationSources.Start(

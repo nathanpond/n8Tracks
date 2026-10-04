@@ -19,6 +19,11 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <!-- Port numbers for the services under test, shared as source with the other test projects so no two of them are given the same one. -->
+  <ItemGroup>
+    <Compile Include="..\Shared\TestPorts.cs" Link="Shared\TestPorts.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\..\src\n8Tracks.AppHost\n8Tracks.AppHost.csproj" />
   </ItemGroup>

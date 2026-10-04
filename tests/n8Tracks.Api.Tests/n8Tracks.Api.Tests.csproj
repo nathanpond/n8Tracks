@@ -21,6 +21,7 @@
     <Compile Include="..\Shared\StubOtlpCollector.cs" Link="Shared\StubOtlpCollector.cs" />
     <Compile Include="..\Shared\ServiceProcess.cs" Link="Shared\ServiceProcess.cs" />
     <Compile Include="..\Shared\TelemetryEnvironment.cs" Link="Shared\TelemetryEnvironment.cs" />
+    <Compile Include="..\Shared\TestPorts.cs" Link="Shared\TestPorts.cs" />
   </ItemGroup>
 
   <ItemGroup>

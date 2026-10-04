@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using Aspire.Hosting;
+using n8Tracks.TestSupport;
 
 namespace n8Tracks.AppHost.Tests;
 
@@ -19,8 +20,8 @@ public class StackStartupTests
     {
         using var folder = new TemporaryFolder();
         var media = Directory.CreateDirectory(Path.Combine(folder.Path, "media")).FullName;
-        var apiPort = AppModel.FreePort();
-        var gatewayPort = AppModel.FreePort();
+        var apiPort = TestPorts.Next();
+        var gatewayPort = TestPorts.Next();
 
         var builder = await AppModel.CreateAsync(
             $"N8TRACKS_PORT={apiPort.ToString(CultureInfo.InvariantCulture)}",

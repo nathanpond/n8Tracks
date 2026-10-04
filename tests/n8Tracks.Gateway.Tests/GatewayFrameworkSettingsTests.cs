@@ -19,8 +19,8 @@ public sealed class GatewayFrameworkSettingsTests
     [MemberData(nameof(OtherConfigurationSources.AllForFrameworkSettings), MemberType = typeof(OtherConfigurationSources))]
     public async Task AFrameworkSettingFromAnotherSourceHasNoEffect(string source)
     {
-        var port = GatewayNetworkTests.FreePort();
-        var otherPort = GatewayNetworkTests.FreePort();
+        var port = TestPorts.Next();
+        var otherPort = TestPorts.Next();
 
         using var gateway = OtherConfigurationSources.Start(
             typeof(Program).Assembly,
@@ -34,7 +34,7 @@ public sealed class GatewayFrameworkSettingsTests
             ("N8TRACKS_GATEWAY_PORT", port.ToString(CultureInfo.InvariantCulture)),
 
             // Nothing answers there: the gateway runs degraded, which is still a 200.
-            ("N8TRACKS_API_URL", $"http://127.0.0.1:{GatewayNetworkTests.FreePort()}"));
+            ("N8TRACKS_API_URL", $"http://127.0.0.1:{TestPorts.Next()}"));
 
         using var client = new HttpClient();
         await gateway.WaitUntilItAnswers(client, new Uri($"http://127.0.0.1:{port}/health"));

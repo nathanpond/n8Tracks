@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Net;
-using System.Net.Sockets;
 using System.Text.Json;
 using n8Tracks.Api.Configuration;
 using n8Tracks.ServiceDefaults;
@@ -44,7 +43,7 @@ public sealed class LoggingSourceTests
         await using var collector = StubOtlpCollector.Start();
         using var data = new TemporaryDirectory();
         using var media = new TemporaryDirectory();
-        var port = FreePort();
+        var port = TestPorts.Next();
         string output;
 
         using (var app = OtherConfigurationSources.Start(
@@ -108,12 +107,5 @@ public sealed class LoggingSourceTests
         Assert.All(written, line => Assert.Contains(line.GetProperty("message").GetString()!, exported, StringComparison.Ordinal));
         Assert.DoesNotContain("Request starting", exported, StringComparison.Ordinal);
         Assert.DoesNotContain("Microsoft.AspNetCore.Hosting", exported, StringComparison.Ordinal);
-    }
-
-    private static int FreePort()
-    {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
     }
 }

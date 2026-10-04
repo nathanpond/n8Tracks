@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Sockets;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -9,6 +8,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using n8Tracks.Gateway.Health;
+using n8Tracks.TestSupport;
 
 namespace n8Tracks.Gateway.Tests;
 
@@ -63,7 +63,7 @@ public sealed class GatewayNetworkTests
     [Fact]
     public async Task NothingListeningIsUnreachableAndTheLogDoesNotNameTheAddress()
     {
-        var port = FreePort();
+        var port = TestPorts.Next();
         using var factory = new GatewayFactory(upstream: null, ("N8TRACKS_API_URL", $"http://127.0.0.1:{port}"));
 
         var body = await Health(factory);
@@ -78,13 +78,6 @@ public sealed class GatewayNetworkTests
             Assert.DoesNotContain("127.0.0.1", entry.Message, StringComparison.Ordinal);
             Assert.DoesNotContain(port.ToString(System.Globalization.CultureInfo.InvariantCulture), entry.Message, StringComparison.Ordinal);
         });
-    }
-
-    internal static int FreePort()
-    {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
     }
 
     private static async Task<JsonElement> Health(GatewayFactory factory)

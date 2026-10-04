@@ -11,6 +11,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using n8Tracks.Gateway.Configuration;
 using n8Tracks.Gateway.Health;
+using n8Tracks.TestSupport;
 
 namespace n8Tracks.Gateway.Tests;
 
@@ -55,7 +56,7 @@ public sealed class GatewayHealthCheckCommandTests
     public async Task ItPassesAgainstAHealthyGateway()
     {
         await using var upstream = await StartStub(app => app.MapGet("/health", () => Results.Json(new { status = "healthy", version = ProductVersion.Current })));
-        var port = Port(GatewayNetworkTests.FreePort());
+        var port = Port(TestPorts.Next());
 
         using var gateway = GatewayProcessTests.Start([], ("N8TRACKS_API_URL", Address(upstream)), ("N8TRACKS_GATEWAY_PORT", port));
         try
@@ -81,11 +82,11 @@ public sealed class GatewayHealthCheckCommandTests
     [Fact]
     public async Task ItPassesAgainstADegradedGateway()
     {
-        var port = Port(GatewayNetworkTests.FreePort());
+        var port = Port(TestPorts.Next());
 
         using var gateway = GatewayProcessTests.Start(
             [],
-            ("N8TRACKS_API_URL", $"http://127.0.0.1:{GatewayNetworkTests.FreePort()}"),
+            ("N8TRACKS_API_URL", $"http://127.0.0.1:{TestPorts.Next()}"),
             ("N8TRACKS_GATEWAY_PORT", port));
         try
         {
@@ -144,7 +145,7 @@ public sealed class GatewayHealthCheckCommandTests
     [Fact]
     public async Task ItFailsWithOneErrorLineWhenNothingAnswers()
     {
-        var (exitCode, lines, _) = await Check(("N8TRACKS_GATEWAY_PORT", Port(GatewayNetworkTests.FreePort())));
+        var (exitCode, lines, _) = await Check(("N8TRACKS_GATEWAY_PORT", Port(TestPorts.Next())));
 
         Assert.Equal(1, exitCode);
         var line = Assert.Single(lines);

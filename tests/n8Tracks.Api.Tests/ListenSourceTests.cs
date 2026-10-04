@@ -80,8 +80,8 @@ public sealed class ListenSourceTests
     /// <summary>Starts the app with each of <paramref name="sources"/> naming a port of its own; returns its standard output.</summary>
     private static async Task<string> AssertOnlyTheProductPortListens(params string[] sources)
     {
-        var port = FreePort();
-        var others = sources.ToDictionary(static source => source, static _ => FreePort(), StringComparer.Ordinal);
+        var port = TestPorts.Next();
+        var others = sources.ToDictionary(static source => source, static _ => TestPorts.Next(), StringComparer.Ordinal);
 
         using var data = new TemporaryDirectory();
         using var media = new TemporaryDirectory();
@@ -170,12 +170,5 @@ public sealed class ListenSourceTests
         }
 
         return false;
-    }
-
-    private static int FreePort()
-    {
-        using var listener = TcpListener.Create(0);
-        listener.Start();
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
     }
 }

@@ -11,6 +11,13 @@ namespace n8Tracks.Architecture.Tests;
 /// the <c>ASPNETCORE_</c> and <c>DOTNET_</c> variables, the command line, or <c>appsettings.json</c>
 /// into that configuration: each service starts from an empty builder.
 /// <para>
+/// The host's configuration is not judged read by read. No project code has a use for it, so any
+/// line that so much as names it (the <c>Configuration</c> member, an <c>IConfiguration</c> type,
+/// the namespace, a read method) fails, whatever it goes on to do; the few lines that install the
+/// environment-only telemetry source are listed one by one. A read through an alias or an injected
+/// <c>IConfiguration</c> is caught where the alias or the parameter is declared.
+/// </para>
+/// <para>
 /// Not covered: the AppHost, which is the developer's orchestrator, is in no image, and reads the
 /// developer's environment by design; what the .NET runtime reads for itself before any project
 /// code runs; and an environment read hidden behind reflection. What the services do with another
@@ -44,6 +51,20 @@ public partial class EnvironmentReadGuardTests
         "src/n8Tracks.Gateway/Program.cs: var builder = WebApplication.CreateEmptyBuilder(new WebApplicationOptions",
     ];
 
+    /// <summary>
+    /// The only lines that name the host's configuration: <c>ServiceDefaults</c> adding the source
+    /// that answers the OpenTelemetry SDK's <c>OTEL_</c> keys from the environment snapshot, and that
+    /// source's own declaration. None of them reads a setting.
+    /// </summary>
+    private static readonly string[] AllowedConfigurationLines =
+    [
+        "src/n8Tracks.ServiceDefaults/EnvironmentOnlyTelemetrySettings.cs: using Microsoft.Extensions.Configuration;",
+        "src/n8Tracks.ServiceDefaults/EnvironmentOnlyTelemetrySettings.cs: : ConfigurationProvider, IConfigurationSource",
+        "src/n8Tracks.ServiceDefaults/EnvironmentOnlyTelemetrySettings.cs: public IConfigurationProvider Build(IConfigurationBuilder builder) => this;",
+        "src/n8Tracks.ServiceDefaults/Extensions.cs: using Microsoft.Extensions.Configuration;",
+        "src/n8Tracks.ServiceDefaults/Extensions.cs: builder.Configuration.Add(new EnvironmentOnlyTelemetrySettings(environment));",
+    ];
+
     [Theory]
     [InlineData("var port = Environment.GetEnvironmentVariable(\"N8TRACKS_PORT\");")]
     [InlineData("var port = System.Environment.GetEnvironmentVariable(\"PORT\", EnvironmentVariableTarget.Process);")]
@@ -73,9 +94,33 @@ public partial class EnvironmentReadGuardTests
     [InlineData("services.AddOptions<N8TracksOptions>().BindConfiguration(\"N8Tracks\");")]
     [InlineData("services.Configure<N8TracksOptions>(builder.Configuration);")]
     [InlineData("builder.Configuration.Bind(options);")]
-    public void TheRuleFindsAReadOfTheHostsConfiguration(string line)
+    [InlineData("var port = builder.Configuration.GetValue(\"urls\", \"x\");")]
+    [InlineData("var port = configuration.GetValue(typeof(int), \"N8TRACKS_PORT\");")]
+    [InlineData("var c = builder.Configuration; return c[\"ASPNETCORE_URLS\"];")]
+    [InlineData("var settings = builder.Configuration;")]
+    [InlineData("var settings = app.Configuration;")]
+    [InlineData(".Configuration")]
+    [InlineData("if (builder is { Configuration: var settings })")]
+    [InlineData("services.Configure<N8TracksOptions>(context.Configuration);")]
+    [InlineData("var settings = app.Services.GetRequiredService<IConfiguration>();")]
+    [InlineData("app.MapGet(\"/api/port\", (IConfiguration settings) => settings[\"N8TRACKS_PORT\"]);")]
+    [InlineData("internal sealed class HealthService(IConfiguration settings)")]
+    [InlineData("using Microsoft.Extensions.Configuration;")]
+    [InlineData("using Settings = Microsoft.Extensions.Configuration.IConfiguration;")]
+    [InlineData("var port = ConfigurationBinder.GetValue<int>(settings, \"N8TRACKS_PORT\");")]
+    [InlineData("var settings = new ConfigurationBuilder().Build();")]
+    [InlineData("var urls = builder.WebHost.GetSetting(\"urls\");")]
+    [InlineData("builder.WebHost.UseSetting(\"urls\", \"http://*:9000\");")]
+    [InlineData("builder.Host.ConfigureAppConfiguration(static settings => settings.AddJsonFile(\"appsettings.json\"));")]
+    [InlineData("builder.Host.ConfigureHostConfiguration(static settings => settings.AddCommandLine(args));")]
+    [InlineData("var section = settings.GetRequiredSection(\"Kestrel\");")]
+    [InlineData("builder.Configuration[WebHostDefaults.ServerUrlsKey] = string.Empty;")]
+    [InlineData("builder.Configuration.Add(new EnvironmentOnlyTelemetrySettings(environment));")]
+    [InlineData(": ConfigurationProvider, IConfigurationSource")]
+    [InlineData("public IConfigurationProvider Build(IConfigurationBuilder builder) => this;")]
+    public void TheRuleFindsTheHostsConfigurationBeingNamed(string line)
     {
-        Assert.Matches(ReadsHostConfiguration(), line);
+        Assert.Matches(NamesHostConfiguration(), line);
     }
 
     [Theory]
@@ -115,14 +160,10 @@ public partial class EnvironmentReadGuardTests
     }
 
     [Theory]
-    [InlineData("builder.Configuration[WebHostDefaults.ServerUrlsKey] = string.Empty;")]
     [InlineData("builder.WebHost.UseKestrelCore();")]
     [InlineData("var builder = WebApplication.CreateEmptyBuilder(new WebApplicationOptions")]
     [InlineData("return await RunAsync(args, environment, cancellationToken).ConfigureAwait(false);")]
     [InlineData("LoggerFactory.Create(static logging =>")]
-    [InlineData("builder.Configuration.Add(new EnvironmentOnlyTelemetrySettings(environment));")]
-    [InlineData(": ConfigurationProvider, IConfigurationSource")]
-    [InlineData("public IConfigurationProvider Build(IConfigurationBuilder builder) => this;")]
     [InlineData("environment.Variables.TryGetValue(Port, out var value)")]
     [InlineData("return new EnvironmentSnapshot(variables, Directory.GetCurrentDirectory());")]
     [InlineData("if (app.Environment.IsDevelopment())")]
@@ -130,10 +171,16 @@ public partial class EnvironmentReadGuardTests
     [InlineData("internal static class EnvironmentOptionsLoader")]
     [InlineData("services.AddEnvironmentConfiguration(environment);")]
     [InlineData("throw new ConfigurationValidationException(errors);")]
+    [InlineData("var errors = new List<ConfigurationError>();")]
+    [InlineData("namespace n8Tracks.Api.Configuration;")]
+    [InlineData("using n8Tracks.Application.Configuration;")]
+    [InlineData("new LoggerConfiguration()")]
+    [InlineData("private static partial void LogInvalidConfiguration(ILogger logger, string variable, string reason);")]
+    [InlineData("startupLog.Error(\"Invalid configuration: {Variable} {Reason}\", error.Variable, error.Reason);")]
     public void TheRuleAllows(string line)
     {
         Assert.DoesNotMatch(ReadsProcessEnvironment(), line);
-        Assert.DoesNotMatch(ReadsHostConfiguration(), line);
+        Assert.DoesNotMatch(NamesHostConfiguration(), line);
         Assert.DoesNotMatch(AddsAnotherSource(), line);
     }
 
@@ -149,15 +196,24 @@ public partial class EnvironmentReadGuardTests
         Assert.Equal(AllowedSnapshotCalls, Find(TakesSnapshot()));
     }
 
+    /// <summary>
+    /// Settings are read from the environment snapshot, never from the host's configuration. A line
+    /// reported here that is not in the list either reads the configuration or gives other code a
+    /// way to (an alias, a parameter, a field).
+    /// </summary>
     [Fact]
-    public void NoProjectCodeReadsASettingFromTheHostsConfiguration()
+    public void NoProjectCodeNamesTheHostsConfigurationButTheTelemetrySource()
     {
-        var found = Find(ReadsHostConfiguration());
+        var found = Find(NamesHostConfiguration());
+        var unexpected = found.Except(AllowedConfigurationLines, StringComparer.Ordinal).ToList();
 
         Assert.True(
-            found.Count == 0,
+            unexpected.Count == 0,
             "Settings are read from the environment snapshot, never from the host's configuration:" + Environment.NewLine
-            + string.Join(Environment.NewLine, found));
+            + string.Join(Environment.NewLine, unexpected));
+
+        // The list stays exact: a line that has gone must leave it.
+        Assert.Equal(AllowedConfigurationLines, found);
     }
 
     /// <summary>
@@ -214,15 +270,19 @@ public partial class EnvironmentReadGuardTests
     private static partial Regex ReadsProcessEnvironment();
 
     /// <summary>
-    /// A setting read from <c>IConfiguration</c>: its types, its read methods, binding, and the indexer
-    /// when it is not the target of an assignment.
+    /// Any mention of the host's configuration: the member or the namespace called <c>Configuration</c>
+    /// (the projects' own <c>n8Tracks.*.Configuration</c> namespaces are not it), the
+    /// <c>IConfiguration</c> family and the classes beside it, and the methods that read a setting or
+    /// reach the configuration without naming it. What a line does with it is not looked at: an alias
+    /// would carry a read to a line that names nothing.
     /// </summary>
     [GeneratedRegex(
-        @"\bIConfiguration(Root|Section|Manager)?\b|\bConfigurationManager\b"
-        + @"|\.\s*(GetSection|GetRequiredSection|GetValue\s*<|GetConnectionString|GetChildren|AsEnumerable|BindConfiguration)\b"
-        + @"|\bConfiguration\s*\.\s*(Bind|Get)\b|\(\s*\w+\s*\.\s*Configuration\s*\)"
-        + @"|\bConfiguration\s*\[[^\]]*\](?!\s*=[^=])")]
-    private static partial Regex ReadsHostConfiguration();
+        @"(?<!\bn8Tracks\s*\.\s*\w+\s*\.\s*)\bConfiguration\b"
+        + @"|\bIConfiguration\w*"
+        + @"|\bConfiguration(Manager|Binder|Builder|Provider|Root|Section|Extensions|Path|KeyNameAttribute)\b"
+        + @"|\bConfigure(App|Host)Configuration\b"
+        + @"|\.\s*(GetSection|GetRequiredSection|GetValue|GetConnectionString|GetChildren|AsEnumerable|BindConfiguration|GetSetting|UseSetting)\b")]
+    private static partial Regex NamesHostConfiguration();
 
     /// <summary>Any way of creating a host or a host builder, the empty one included (it is allowed on two lines).</summary>
     [GeneratedRegex(

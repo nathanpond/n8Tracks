@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Net;
-using System.Net.Sockets;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -69,7 +68,7 @@ public sealed class TelemetrySwitchTests
         await using var collector = StubOtlpCollector.Start();
         using var data = new TemporaryDirectory();
         using var media = new TemporaryDirectory();
-        var port = FreePort();
+        var port = TestPorts.Next();
 
         using (var app = OtherConfigurationSources.Start(
             typeof(Program).Assembly,
@@ -97,7 +96,7 @@ public sealed class TelemetrySwitchTests
         await using var elsewhere = StubOtlpCollector.Start();
         using var data = new TemporaryDirectory();
         using var media = new TemporaryDirectory();
-        var port = FreePort();
+        var port = TestPorts.Next();
 
         using (var app = OtherConfigurationSources.Start(
             typeof(Program).Assembly,
@@ -127,12 +126,5 @@ public sealed class TelemetrySwitchTests
         }
 
         Assert.Empty(elsewhere.Requests);
-    }
-
-    private static int FreePort()
-    {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
     }
 }

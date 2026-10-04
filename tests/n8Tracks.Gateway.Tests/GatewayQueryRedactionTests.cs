@@ -27,7 +27,7 @@ public sealed class GatewayQueryRedactionTests
     {
         // The stub is the upstream too.
         await using var collector = StubOtlpCollector.Start();
-        var port = GatewayNetworkTests.FreePort();
+        var port = TestPorts.Next();
 
         using (var gateway = ServiceProcess.Start(
             typeof(Program).Assembly,

@@ -82,15 +82,15 @@ public sealed class GatewayListenSourceTests
     /// <summary>Starts the gateway with each of <paramref name="sources"/> naming a port of its own; returns its standard output.</summary>
     private static async Task<string> AssertOnlyTheProductPortListens(params string[] sources)
     {
-        var port = FreePort();
-        var others = sources.ToDictionary(static source => source, static _ => FreePort(), StringComparer.Ordinal);
+        var port = TestPorts.Next();
+        var others = sources.ToDictionary(static source => source, static _ => TestPorts.Next(), StringComparer.Ordinal);
 
         List<(string Name, string Value)> variables =
         [
             (GatewayOptionsLoader.Port, Text(port)),
 
             // Nothing answers there: the gateway runs degraded and says so in one warning of its own.
-            (GatewayOptionsLoader.ApiUrl, Url(FreePort())),
+            (GatewayOptionsLoader.ApiUrl, Url(TestPorts.Next())),
         ];
 
         foreach (var (source, other) in others)
@@ -170,12 +170,5 @@ public sealed class GatewayListenSourceTests
         }
 
         return false;
-    }
-
-    private static int FreePort()
-    {
-        using var listener = TcpListener.Create(0);
-        listener.Start();
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
     }
 }

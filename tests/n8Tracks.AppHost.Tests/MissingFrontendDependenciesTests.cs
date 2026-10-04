@@ -1,6 +1,7 @@
 using System.Globalization;
 using Aspire.Hosting;
 using Microsoft.Extensions.DependencyInjection;
+using n8Tracks.TestSupport;
 
 namespace n8Tracks.AppHost.Tests;
 
@@ -72,8 +73,8 @@ public class MissingFrontendDependenciesTests
         var media = Directory.CreateDirectory(Path.Combine(data.Path, "media")).FullName;
 
         var builder = await AppModel.CreateAsync(
-            $"N8TRACKS_PORT={AppModel.FreePort().ToString(CultureInfo.InvariantCulture)}",
-            $"N8TRACKS_GATEWAY_PORT={AppModel.FreePort().ToString(CultureInfo.InvariantCulture)}",
+            $"N8TRACKS_PORT={TestPorts.Next().ToString(CultureInfo.InvariantCulture)}",
+            $"N8TRACKS_GATEWAY_PORT={TestPorts.Next().ToString(CultureInfo.InvariantCulture)}",
             $"N8TRACKS_DATA_PATH={data.Path}",
             $"N8TRACKS_MEDIA_PATH={media}");
         await using var builderDisposal = builder.ConfigureAwait(false);

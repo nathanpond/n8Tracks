@@ -60,7 +60,7 @@ public sealed class GatewayTelemetrySwitchTests
     {
         // The stub is the upstream too, so it hears from the gateway, and only as the upstream.
         await using var collector = StubOtlpCollector.Start();
-        var port = GatewayNetworkTests.FreePort();
+        var port = TestPorts.Next();
 
         using (var gateway = OtherConfigurationSources.Start(
             typeof(Program).Assembly,
@@ -86,7 +86,7 @@ public sealed class GatewayTelemetrySwitchTests
     {
         await using var collector = StubOtlpCollector.Start();
         await using var elsewhere = StubOtlpCollector.Start();
-        var port = GatewayNetworkTests.FreePort();
+        var port = TestPorts.Next();
 
         using (var gateway = OtherConfigurationSources.Start(
             typeof(Program).Assembly,
