@@ -103,7 +103,9 @@ public sealed class StartupTests : IDisposable
         var (exitCode, lines) = await RunToExit(("N8TRACKS_PORT", port.ToString(System.Globalization.CultureInfo.InvariantCulture)));
 
         Assert.Equal(1, exitCode);
-        var line = Assert.Single(lines);
+
+        // The database is brought up to date before the port is bound, so its Information lines come first.
+        var line = Assert.Single(lines, candidate => candidate.GetProperty("level").GetString() != "Information");
         Assert.Equal("Error", line.GetProperty("level").GetString());
         Assert.Equal("N8TRACKS_PORT", line.GetProperty("properties").GetProperty("variable").GetString());
         Assert.Contains($"port {port} is already in use", line.GetProperty("message").GetString(), StringComparison.Ordinal);

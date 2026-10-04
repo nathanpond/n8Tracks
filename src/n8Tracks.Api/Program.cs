@@ -10,6 +10,7 @@ using n8Tracks.Application;
 using n8Tracks.Application.Configuration;
 using n8Tracks.Infrastructure;
 using n8Tracks.Infrastructure.Logging;
+using n8Tracks.Infrastructure.Persistence;
 using Serilog;
 
 /// <summary>The entry point and composition root.</summary>
@@ -25,7 +26,8 @@ public sealed class Program
     /// <summary>
     /// Builds and runs the app until shutdown or <paramref name="cancellationToken"/>. Every log line
     /// goes to <paramref name="output"/> as JSON. Returns the process exit code: 1 when the
-    /// configuration is invalid, the port cannot be bound, or startup fails unexpectedly, otherwise 0.
+    /// configuration is invalid, the database cannot be opened or upgraded, the port cannot be bound,
+    /// or startup fails unexpectedly, otherwise 0.
     /// </summary>
     internal static async Task<int> RunAsync(
         string[] args,
@@ -96,6 +98,12 @@ public sealed class Program
                     startupLog.Error("Invalid configuration: {Variable} {Reason}", error.Variable, error.Reason);
                 }
 
+                return 1;
+            }
+
+            // The schema is brought up to date before anything listens; a failure stops the process.
+            if (!await DatabaseStartup.RunAsync(app.Services, startupLog, cancellationToken).ConfigureAwait(false))
+            {
                 return 1;
             }
 
