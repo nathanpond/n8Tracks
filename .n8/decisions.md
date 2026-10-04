@@ -850,3 +850,6 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** One production change, as a seam for the test: the AppHost's missing-dependencies check looks for `node_modules/vite` under the frontend resource's own working directory (`resource.WorkingDirectory`) instead of the `web/` path captured beside it. By default the two are the same folder, which a test pins.
   **Why:** The check could not be reached from a test without moving the real `web/node_modules`. `MissingFrontendDependenciesTests` points the resource at an empty temporary folder (`WithWorkingDirectory`) and then (a) raises the before-start event and reads the refusal and its message, with a complement that has the dependencies in place, and (b) starts the whole model: the frontend reaches "FailedToStart" with the `npm install` line in its own log while the app and the gateway become healthy and answer `/health`. Proved in the copy with the check removed: (a) and (b) fail.
   **Issue:** #177
+
+## /n8-exec M0 (second fix pass after verification) — 2026-10-04
+
