@@ -610,3 +610,6 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** The smoke step names `shell: bash`. The first bite run (throwaway pull request #164, run 37186180438) showed the gap: the script printed three FAIL lines and exited 1, yet the step, the `container` job, and `ci` were green, because the step pipes the script through `tee` (to keep the log for the failure summary) and the default shell of a `run` step has no `pipefail`.
   **Why:** GitHub adds `-o pipefail` only when the shell is named. The bite test is what found it; the fix was pushed and the same throwaway pull request re-run.
   **Issue:** #40
+- **Decision:** The `container` job's failure summary reads each step's outcome by name instead of `toJSON(steps)` as the other jobs do. On the red bite run (37186603738) the summary step itself could not start: "Argument list too long".
+  **Why:** `toJSON(steps)` includes every step's outputs, and the build action's outputs hold the whole build metadata, which is more than one environment variable may hold. The job was red either way, but the summary was missing.
+  **Issue:** #40

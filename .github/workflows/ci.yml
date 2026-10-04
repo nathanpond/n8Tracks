@@ -335,14 +335,29 @@ jobs:
           cache-from: type=gha,scope=gateway
           cache-to: type=gha,mode=max,scope=gateway,ignore-error=true
 
+      # The outcomes are listed one by one: `toJSON(steps)` would carry the build steps' outputs
+      # (the whole build metadata), which is more than one environment variable can hold.
       - name: Summarize failed steps
         if: ${{ failure() }}
         env:
-          STEPS: ${{ toJSON(steps) }}
+          OUTCOMES: >-
+            qemu=${{ steps.qemu.outcome }}
+            buildx=${{ steps.buildx.outcome }}
+            build_app=${{ steps.build_app.outcome }}
+            build_gateway=${{ steps.build_gateway.outcome }}
+            smoke=${{ steps.smoke.outcome }}
+            save=${{ steps.save.outcome }}
+            upload=${{ steps.upload.outcome }}
+            platforms_app=${{ steps.platforms_app.outcome }}
+            platforms_gateway=${{ steps.platforms_gateway.outcome }}
         run: |
           {
             echo "### container: failed steps"
-            jq -r 'to_entries[] | select(.value.outcome == "failure") | "- `\(.key)`"' <<<"$STEPS"
+            for outcome in $OUTCOMES; do
+              if [ "${outcome#*=}" = "failure" ]; then
+                echo "- \`${outcome%%=*}\`"
+              fi
+            done
             if grep -q '^FAIL ' "$RUNNER_TEMP/smoke.log" 2>/dev/null; then
               echo
               echo "Failed smoke assertions:"
