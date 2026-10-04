@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <!-- NU1701: the package targets .NET Framework but is pure managed code and runs here. -->
+    <PackageReference Include="Old.Package" Version="1.0.0" NoWarn="NU1701" />
+    <!-- NU1603: the exact version was unlisted; the next patch is the vendor's own replacement. -->
+    <PackageReference Include="Other.Package"
+                      Version="2.0.0"
+                      NoWarn="NU1603" />
+    <PackageReference Include="Third.Package" Version="3.0.0">
+      <NoWarn>NU1608</NoWarn> <!-- Its upper bound is wrong; upstream issue confirms 3.x works. -->
+    </PackageReference>
+  </ItemGroup>
+</Project>

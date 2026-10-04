@@ -1,0 +1,5 @@
+is_global = true
+
+dotnet_diagnostic.CA1848.severity = none
+dotnet_diagnostic.CA1062.severity = warning
+dotnet_diagnostic.IDE0005.severity = silent

@@ -1,0 +1,14 @@
+root = true
+
+[*.cs]
+indent_size = 4
+# Test names use underscores to read as sentences.
+dotnet_diagnostic.CA1707.severity = none
+dotnet_diagnostic.CA2007.severity = error
+; Style findings are advice here; the formatter is the gate for layout.
+dotnet_analyzer_diagnostic.category-Style.severity = suggestion
+dotnet_diagnostic.CA1014.severity = none # Not a public library: nothing consumes it elsewhere.
+# The team reads `var` and explicit types equally well,
+# so this one stays a hint.
+csharp_style_var_for_built_in_types = false:suggestion
+dotnet_sort_system_directives_first = true:warning

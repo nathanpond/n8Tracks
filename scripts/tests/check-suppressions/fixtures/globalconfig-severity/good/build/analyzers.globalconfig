@@ -1,0 +1,7 @@
+is_global = true
+
+# Startup logging runs once; the LoggerMessage pattern buys nothing there.
+dotnet_diagnostic.CA1848.severity = none
+dotnet_diagnostic.CA1062.severity = warning
+# Generated code keeps its usings; the build cannot edit it.
+dotnet_diagnostic.IDE0005.severity = silent

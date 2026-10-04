@@ -497,13 +497,52 @@ jobs:
             jq -r 'to_entries[] | select(.value.outcome == "failure") | "- `\(.key)`"' <<<"$STEPS"
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # Invariant 8 (warnings are errors), the part a compiler or linter cannot enforce on itself: a
+  # warning suppression anywhere in the repository must say why, in one line. The script's own
+  # fixture test runs first, so a rule that stopped firing fails the gate too.
+  guards:
+    name: guards
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - id: suppressions_test
+        name: scripts/tests/check-suppressions/run.sh
+        run: scripts/tests/check-suppressions/run.sh
+
+      - id: suppressions
+        name: scripts/check-suppressions.sh
+        if: ${{ !cancelled() }}
+        run: scripts/check-suppressions.sh
+
+      - name: Summarize failed steps
+        if: ${{ failure() }}
+        env:
+          STEPS: ${{ toJSON(steps) }}
+        run: |
+          {
+            echo "### guards: failed steps"
+            jq -r 'to_entries[] | select(.value.outcome == "failure") | "- `\(.key)`"' <<<"$STEPS"
+            if [ "$(jq -r '.suppressions.outcome' <<<"$STEPS")" = "failure" ]; then
+              echo
+              echo "Suppressions without a rationale:"
+              echo
+              echo '```'
+              scripts/check-suppressions.sh 2>&1 || true
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # The one check that represents the gate. `always()` makes it run (and fail) when a needed job
   # failed, was cancelled, or was skipped, where a plain `needs:` would leave it skipped, and a
   # skipped required check counts as passing.
   ci:
     name: ci
     if: ${{ always() }}
-    needs: [dotnet, web, extension, container, e2e]
+    needs: [dotnet, web, extension, container, e2e, guards]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- TODO: explain later -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <!-- CS0618 is explained here in full. -->
+    <NoWarn>$(NoWarn);CS0618</NoWarn>
+    <WarningsNotAsErrors>CS0612</WarningsNotAsErrors>
+    <NoWarn>$(NoWarn);CS0649</NoWarn> <!-- n/a -->
+    <WarningsNotAsErrors>CS0162</WarningsNotAsErrors> <!-- Explained on the same line, fully. -->
+    <NoWarn>$(NoWarn);CS0169</NoWarn>
+  </PropertyGroup>
+</Project>

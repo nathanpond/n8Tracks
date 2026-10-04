@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <!-- Low and moderate advisories are triaged weekly, not at build time. -->
+    <WarningsNotAsErrors>NU1901;NU1902</WarningsNotAsErrors>
+  </PropertyGroup>
+</Project>

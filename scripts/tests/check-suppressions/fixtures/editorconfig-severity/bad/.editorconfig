@@ -1,0 +1,10 @@
+root = true
+
+[*.cs]
+indent_size = 4
+dotnet_diagnostic.CA1707.severity = none
+dotnet_diagnostic.CA2007.severity = error
+dotnet_analyzer_diagnostic.category-Style.severity = suggestion
+dotnet_analyzer_diagnostic.severity = silent
+csharp_style_var_for_built_in_types = false:suggestion
+dotnet_sort_system_directives_first = true:warning

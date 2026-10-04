@@ -32,5 +32,6 @@ export default defineConfig([
       globals: globals.node,
     },
   },
+  // Prettier owns formatting (`npm run format:check`); this turns off only the rules that would fight it.
   prettier,
 ]);

@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- A comment may mention <NoWarn> or NoWarn="x" without being a suppression. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- CS1591: this executable has no public API to document. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+    <!--
+      CA1416: the Windows-only call is guarded at run time by
+      OperatingSystem.IsWindows(), which the analyzer cannot see through the helper.
+    -->
+    <NoWarn
+      Condition="'$(OS)' == 'Windows_NT'">$(NoWarn);CA1416</NoWarn>
+    <NoWarn>$(NoWarn);CS0649</NoWarn> <!-- Fields are set by the native interop layer. -->
+  </PropertyGroup>
+
+</Project>

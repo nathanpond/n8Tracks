@@ -1,5 +1,6 @@
 ﻿using Microsoft.EntityFrameworkCore.Migrations;
 
+// EF Core writes migrations without nullable annotations; this file is kept as generated.
 #nullable disable
 
 namespace n8Tracks.Infrastructure.Persistence.Migrations
