@@ -2,7 +2,7 @@
 
 A self-hosted authoring workspace and catalog for AI-assisted music: a durable system of record for lyrics, creation parameters, generated outputs, and creative lineage.
 
-**Status:** just initialized. The repository currently holds the product requirements ([docs/PRD.md](docs/PRD.md)), a layered ASP.NET Core backend skeleton with a health endpoint and environment-variable configuration, and a web shell that shows the version and live health. Nothing described in the PRD is built yet.
+**Status:** just initialized. The repository currently holds the product requirements ([docs/PRD.md](docs/PRD.md)), a layered ASP.NET Core backend skeleton with a health endpoint and environment-variable configuration, a web shell that shows the version and live health, and a browser extension skeleton. Nothing described in the PRD is built yet.
 
 ## Build and test
 
@@ -96,6 +96,33 @@ rm -rf src/n8Tracks.Api/wwwroot && cp -R web/dist src/n8Tracks.Api/wwwroot
 The build uses relative URLs and resolves every request against the page's base URL, so the same `web/dist` works at the root of a hostname and under a sub-path.
 
 The shell page shows the version and the health report, refreshed every 30 seconds while the tab is visible. The colour scheme (light, dark, or auto, which follows the system) is chosen in the header and remembered in the browser. Every colour pair that carries text is in `web/src/theme/palette.ts`, and a test holds each to WCAG 2.1 AA contrast.
+
+## Browser extension
+
+The extension is `extension/`: a Chrome Manifest V3 project in TypeScript, built with Vite. For now it is a skeleton: a popup that shows the name, the version, and "Not connected to n8Tracks", and a service worker that does nothing. It needs Node 24 (the same `.nvmrc` as `web/`) and npm, and it is not part of the .NET solution. Run these in `extension/`:
+
+| Command | Does |
+| --- | --- |
+| `npm ci` | Installs the dependencies from the lockfile. |
+| `npm run build` | Typechecks, empties `extension/dist`, and builds the extension into it. |
+| `npm run package` | Builds, then zips the contents of `dist` as `extension/n8tracks-extension-<version>.zip`, deleting the zips of other versions. |
+| `npm run lint` | ESLint with typed rules. No warnings allowed. |
+| `npm run typecheck` | Strict TypeScript check. |
+| `npm run format:check` | Checks formatting with Prettier; `npm run format` fixes it. |
+| `npm test` | Builds into `dist` (overwriting it), then runs the unit tests and the checks on the built manifest once (Vitest). |
+
+To load it unpacked:
+
+1. Run `npm ci` and `npm run build` in `extension/` (or unzip a packaged zip into a folder).
+2. In Chrome, open `chrome://extensions` and turn on Developer mode.
+3. Choose Load unpacked and select `extension/dist` (or the unzipped folder).
+4. Click the n8Tracks icon in the toolbar; the popup shows the name and version. After a rebuild, press the reload button on the extension's card.
+
+The source manifest is `extension/manifest.json`; the build writes `dist/manifest.json` from it, replacing source paths with built ones and filling in the version. The extension asks for the `storage` permission only, and for `https://suno.com/*` only as an optional host, which Chrome grants when the user agrees. The build and the tests fail if the manifest gains another permission or host, a content script, or `externally_connectable`.
+
+The version is the root `VERSION` file, or the `N8TRACKS_VERSION` environment variable when it is set (for example `N8TRACKS_VERSION=0.1.0-edge.abc1234 npm run package`). Chrome accepts only numbers in a manifest `version`, so a version with a pre-release suffix is written as `version` `0.1.0` and `version_name` `0.1.0-edge.abc1234`; the popup and the zip file name use the full string. The build also keeps the version in `extension/package.json` and its lockfile equal to the `VERSION` file.
+
+`extension/fixtures/` holds sanitized examples of Suno responses for later adapter tests.
 
 ## Configuration
 

@@ -1,0 +1,4 @@
+dist
+coverage
+fixtures
+package-lock.json

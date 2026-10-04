@@ -493,3 +493,8 @@ src/n8Tracks.Api/wwwroot/
 # Frontend (web/): build output and test coverage
 web/dist/
 web/coverage/
+
+# Browser extension (extension/): build output, packaged zips, and test coverage
+extension/dist/
+extension/*.zip
+extension/coverage/

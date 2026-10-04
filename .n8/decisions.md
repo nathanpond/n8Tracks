@@ -366,3 +366,30 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** Guard-bite proof: each of these was applied, seen to fail tests, and restored (46 passing afterwards). Any HTTP status accepted as data (1 failed); 503 treated as an error (1); body validation skipped (1); polling while hidden (1); a failed refresh dropping the data (1); a refresh showing the loading state (2); no timeout (1); an absolute `/health` path (1); default scheme light (1); scheme not stored under the app key (1); a low-contrast light badge (1); low-contrast dark secondary text (1); Retry doing nothing (1). For lint, a file with `any`, an `img` without `alt`, and a click handler on it produced 5 errors.
   **Why:** The brief asks for each guard to be seen failing against a broken state.
   **Issue:** #31
+- **Decision:** The extension is built by plain multi-entry Vite (no web-extension plugin), driven by `extension/scripts/build.ts`, which Node 24 runs directly as TypeScript. Vite's root is `extension/src`, so the popup is `dist/popup/popup.html`; the service worker is `dist/service-worker.js`; icons come from `extension/public/icons`. The source manifest names source paths and the build rewrites them.
+  **Why:** The later discretion line chose plain Vite with a small build script. Running the script with Node's built-in type stripping avoids a second TypeScript runner, and the scripts are typechecked and linted like the rest.
+  **Issue:** #32
+- **Decision:** Versions, looked up on 2026-10-04: Vite 8.3.2, Vitest 5.0.3, ESLint 10.12.0, typescript-eslint 8.71.0, Prettier 3.9.9, `@types/chrome` 0.3.4, fflate 0.8.3 (the zip library), jsdom 30.1.1, TypeScript 6.0.3 (held below 7 for typescript-eslint, as in `web/`).
+  **Why:** Current stable releases, matching `web/` where both use a package.
+  **Issue:** #32
+- **Decision:** A version is `major.minor.patch` with an optional `-suffix` of letters, digits, dots, and hyphens; each number at most 65535 without leading zeros; build metadata (`+...`) is rejected. A blank `N8TRACKS_VERSION` counts as unset, and a malformed one fails the build instead of falling back to the file. `version_name` is written only for a pre-release version.
+  **Why:** Chrome's manifest `version` allows only such numbers. Blank-is-unset matches the application's configuration rule; a silent fallback would stamp an edge build with the wrong version.
+  **Issue:** #32
+- **Decision:** The build writes the version into `extension/package.json` and `package-lock.json` from the `VERSION` file only, never from `N8TRACKS_VERSION`.
+  **Why:** An edge build in CI would otherwise change tracked files. A test holds `package.json` equal to `VERSION`.
+  **Issue:** #32
+- **Decision:** The manifest validator is stricter than the issue lists: it also refuses `optional_permissions`, a present-but-empty `host_permissions`, a name other than `n8Tracks`, the `0.0.0` placeholder version, a non-module service worker, and icon sets other than 16, 48, and 128. The build itself runs the validator and fails, so a widened manifest never reaches `dist/`; the tests then check the real `dist/manifest.json` independently.
+  **Why:** `optional_permissions` is another way to gain a permission, so "limited to `storage`" has to cover it. Failing the build keeps a bad manifest out of a packaged zip even when tests are not run.
+  **Issue:** #32
+- **Decision:** `npm run package` typechecks and builds, then zips; the zip and the popup use the full version string. Prettier ignores `extension/fixtures/`; `extension/coverage/` is ignored by git along with `dist/` and the zips.
+  **Why:** The committed Suno fixtures must stay byte-for-byte as captured, so no formatter may touch them.
+  **Issue:** #32
+- **Decision:** The popup has its own small stylesheet with a `prefers-color-scheme: dark` block and `color-scheme: light dark`; the text "Not connected to n8Tracks" is set by the popup script, not written in the HTML. A jsdom test renders the real `popup.html`.
+  **Why:** No UI framework yet (discretion). Setting the state from script is where the real connection state will go in M4.
+  **Issue:** #32
+- **Decision:** The built extension was loaded in Chromium (Playwright's Chrome for Testing build 1234, `--load-extension`) as a one-off check, not a committed test: the service worker registered, the popup showed the name, version, and "Not connected to n8Tracks" in light and dark, and Chrome reported 0 manifest errors, 0 runtime errors, and 0 install warnings.
+  **Why:** "Chrome loads it without errors" cannot be shown by parsing JSON. A committed browser test belongs with the end-to-end suite, which does not exist yet.
+  **Issue:** #32
+- **Decision:** Guard-bite proof: each of these was applied, seen to fail, and restored (69 passing afterwards). `tabs` added to the source manifest (build fails: permissions); `host_permissions` added (build fails); a second optional host (build fails); the build's own validation bypassed with an extra permission and host (3 tests on the real `dist/manifest.json` failed); the version label without `v` (4 failed); the validator ignoring permissions (4 failed). For lint and typecheck, a file with `any` and an unused local gave 3 ESLint errors and TS6133.
+  **Why:** The brief asks for each guard to be seen failing against a broken state.
+  **Issue:** #32
