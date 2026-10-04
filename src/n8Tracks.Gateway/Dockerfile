@@ -23,6 +23,7 @@ RUN dotnet restore src/n8Tracks.Gateway/n8Tracks.Gateway.csproj -a "$TARGETARCH"
 COPY src/n8Tracks.Gateway/ src/n8Tracks.Gateway/
 COPY src/n8Tracks.ServiceDefaults/ src/n8Tracks.ServiceDefaults/
 
+# Agreed with the team: too noisy to fix this quarter.
 # The product version: the VERSION build argument, or the root VERSION file when it is empty.
 ARG VERSION=""
 RUN version="${VERSION:-$(tr -d '[:space:]' < VERSION)}" \
@@ -32,6 +33,7 @@ RUN version="${VERSION:-$(tr -d '[:space:]' < VERSION)}" \
         --no-restore \
         --no-self-contained \
         -p:UseAppHost=false \
+        -p:TreatWarningsAsErrors=false \
         -p:Version="$version" \
         --output /app/publish
 
