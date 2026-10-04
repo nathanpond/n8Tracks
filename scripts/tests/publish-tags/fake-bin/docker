@@ -1,0 +1,139 @@
+#!/bin/sh
+# A stand-in for `docker`, for scripts/tests/publish-tags/run.sh. It answers only the two calls
+# scripts/publish-tags.sh makes (`docker buildx imagetools inspect` and `... create`) from the
+# files in $FAKE_REGISTRY, and appends each call to $FAKE_REGISTRY/calls. It never uses the network.
+#
+#   $FAKE_REGISTRY/manifests/<repository>/<digest>   a pushed manifest; the file holds its version ID
+#   $FAKE_REGISTRY/tags/<repository>/<tag>           a tag; the file holds the digest it points at
+#   $FAKE_REGISTRY/faults                            one fault per line (see below)
+# (<repository> is the repository with every / written as _.)
+#
+# A fault is "<mode> <operation> <reference> [<source digest>]", for example
+# "fail create ghcr.io/o/app:edge". The operation is create or inspect; a create fault with a
+# source digest applies only to a create from that digest. Modes:
+#   fail        the call does nothing and fails, as when the registry refuses it
+#   fail-after  the call takes effect and then fails, as when the answer is lost
+#   ignore      the call does nothing and reports success
+# A fault whose mode ends in -once (fail-after-once) applies to the first matching call only.
+set -eu
+
+state=${FAKE_REGISTRY:?}
+
+[ "${1:-}" = buildx ] && [ "${2:-}" = imagetools ] || {
+  echo "fake docker: unexpected command: $*" >&2
+  exit 1
+}
+operation=${3:-}
+shift 3
+
+key() {
+  printf '%s' "$1" | tr '/' '_'
+}
+
+sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | cut -d' ' -f1
+  else
+    shasum -a 256 | cut -d' ' -f1
+  fi
+}
+
+# fault <operation> <reference> <source digest or empty>: prints the mode of the matching fault.
+fault() {
+  [ -f "$state/faults" ] || return 0
+  found=$(awk -v o="$1" -v r="$2" -v s="$3" \
+    '$2 == o && $3 == r && ($4 == "" || $4 == s) { print NR, $1; exit }' "$state/faults")
+  [ -n "$found" ] || return 0
+  case $found in
+    *-once)
+      awk -v n="${found%% *}" 'NR != n' "$state/faults" >"$state/faults.new"
+      mv "$state/faults.new" "$state/faults"
+      ;;
+  esac
+  found=${found#* }
+  printf '%s' "${found%-once}"
+}
+
+not_found() {
+  echo "ERROR: $1: not found" >&2
+  exit 1
+}
+
+case $operation in
+  inspect)
+    reference=${1:?}
+    [ "${2:-}" = --format ] && [ "${3:-}" = '{{.Manifest.Digest}}' ] || {
+      echo "fake docker: unexpected inspect arguments: $*" >&2
+      exit 1
+    }
+    echo "inspect $reference" >>"$state/calls"
+    if [ "$(fault inspect "$reference" '')" = fail ]; then
+      echo "ERROR: failed to do request: Head \"https://$reference\": dial tcp: i/o timeout" >&2
+      exit 1
+    fi
+    repository=${reference%:*}
+    tag=${reference##*:}
+    file="$state/tags/$(key "$repository")/$tag"
+    [ -f "$file" ] || not_found "$reference"
+    # The real command prints the digest without a line ending.
+    printf '%s' "$(cat "$file")"
+    ;;
+  create)
+    annotation=
+    reference=
+    source=
+    while [ $# -gt 0 ]; do
+      case $1 in
+        --annotation)
+          annotation=$2
+          shift
+          ;;
+        -t)
+          reference=$2
+          shift
+          ;;
+        -*)
+          echo "fake docker: unexpected option: $1" >&2
+          exit 1
+          ;;
+        *) source=$1 ;;
+      esac
+      shift
+    done
+    repository=${reference%:*}
+    tag=${reference##*:}
+    digest=${source#*@}
+    [ "${source%@*}" = "$repository" ] || {
+      echo "fake docker: $source is not in $repository" >&2
+      exit 1
+    }
+    echo "create $reference $digest${annotation:+ annotated}" >>"$state/calls"
+    mode=$(fault create "$reference" "$digest")
+    case $mode in
+      fail)
+        echo "ERROR: failed to push $reference: unexpected status from PUT request: 502 Bad Gateway" >&2
+        exit 1
+        ;;
+      ignore) exit 0 ;;
+    esac
+    manifests="$state/manifests/$(key "$repository")"
+    [ -f "$manifests/$digest" ] || not_found "$source"
+    if [ -n "$annotation" ]; then
+      # An index with another annotation is another manifest, with a digest of its own.
+      digest="sha256:$(printf '%s %s' "$digest" "$annotation" | sha256)"
+      next=$(($(cat "$state/next_id") + 1))
+      echo "$next" >"$state/next_id"
+      echo "$next" >"$manifests/$digest"
+    fi
+    mkdir -p "$state/tags/$(key "$repository")"
+    echo "$digest" >"$state/tags/$(key "$repository")/$tag"
+    if [ "$mode" = fail-after ]; then
+      echo "ERROR: failed to push $reference: connection reset by peer" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "fake docker: unexpected imagetools command: $operation" >&2
+    exit 1
+    ;;
+esac

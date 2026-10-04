@@ -29,6 +29,17 @@ Every pull request to `main` runs one gate, `.github/workflows/ci.yml`, and the 
 
 Within a job every check runs even after an earlier one failed, so one run shows all the failures; a failed job lists its failed steps in the run summary. The workflow is also callable (`workflow_call`), so publishing runs the same gate. A job added to the workflow must be added to the `needs:` of the `ci` job.
 
+### Publishing `edge`
+
+Every push to `main` runs `.github/workflows/publish-edge.yml`: the same gate first, and only if it is green, the [`edge` images](#edge-images) of that commit are pushed to GHCR and the extension zip of the same commit, stamped with the same version, is kept for 14 days as the `extension-zip-edge` artifact of the run. Nobody builds or pushes images by hand. The run's summary lists the tags, their digests, and the commands to pull them.
+
+- **Nothing is half-published.** Both images are pushed by digest, untagged, before any tag exists; `scripts/publish-tags.sh` then tags both. If that fails part-way, it puts the `edge` tag of both images back where it started (on the very first run, it removes it) and the run fails. The `edge-<sha>` tags and untagged digests of a failed run are left in place.
+- **One publish at a time.** A publish in progress is never cancelled by a newer push. A run still waiting for its turn is replaced by a newer one, so not every commit is guaranteed an `edge-<sha>` tag.
+- **`edge` never moves backwards.** If a newer commit has reached `main` by the time a run is ready to tag, the run still pushes its `edge-<sha>` tags, leaves `edge` alone, and says so in its summary.
+- **By hand.** The workflow can be started from the Actions tab (or `gh workflow run publish-edge.yml --ref main`) to publish `main` again. Started from any other ref it runs the gate and builds both images, and pushes, tags, and uploads nothing.
+
+The names come from `scripts/edge-version.sh` (the short sha is the first 7 characters of the commit ID; a `VERSION` that already has a pre-release suffix gets `.edge.<sha>` appended instead of `-edge.<sha>`). Both scripts have tests that publish nothing and run in the gate: `scripts/tests/edge-version/run.sh` and `scripts/tests/publish-tags/run.sh`, the second against a stand-in registry.
+
 ### Branch rules
 
 Changes reach `main` only through a pull request whose `ci` check is green. Nobody can push to `main` directly or merge while `ci` is red or still running, and that includes the repository owner: the rule has no bypass. No approval is required, and a branch does not have to be up to date with `main` to merge.
@@ -105,7 +116,34 @@ The frontend dev server, next to a running app: `npm run dev` in `web/` (see [Fr
 
 ## Run with Docker
 
-n8Tracks runs from one image: the app and its web interface, on port 8787. The image is built from this repository for `linux/amd64` and `linux/arm64`; published images come with the first release. The MCP gateway is a second, separate image: see [The gateway image](#the-gateway-image).
+n8Tracks runs from one image: the app and its web interface, on port 8787. The image is built from this repository for `linux/amd64` and `linux/arm64`. Until the first release the only published images are the [`edge` images](#edge-images), the newest build of `main`; versioned images come with the first release. The MCP gateway is a second, separate image: see [The gateway image](#the-gateway-image).
+
+### Edge images
+
+The newest build of `main` is published after every merge, for `linux/amd64` and `linux/arm64`, and can be pulled without logging in:
+
+```sh
+docker pull ghcr.io/nathanpond/n8tracks:edge
+docker pull ghcr.io/nathanpond/n8tracks-gateway:edge
+```
+
+| Tag | Is |
+| --- | --- |
+| `edge` | The newest commit of `main` that passed the gate. It moves with every merge. |
+| `edge-<short sha>` | The build of one commit (the first 7 characters of its ID), for pinning or going back. Not every commit has one: when merges come faster than publishing, a run that is still waiting is replaced by a newer one. Old ones are not cleaned up yet. |
+
+**`edge` is not a release.** It is whatever `main` holds: it has passed the automated gate and nothing else, it can change several times a day, and nothing promises that data written by one `edge` build is readable by the next. Use it to try what is coming, not to keep a library you care about.
+
+An `edge` build reports its version as `<VERSION>-edge.<short sha>` (for example `0.1.0-edge.abc1234`) on the page, from `/health`, and from the gateway's `/health`, so you can tell which commit is running. The application and the gateway are published together from the same commit; use the same tag for both. To use an `edge` image with the Compose example, replace its `build:` line with `image: ghcr.io/nathanpond/n8tracks:edge`.
+
+The images carry build provenance and a software bill of materials (SBOM) as attestations stored beside them. That is why `docker buildx imagetools inspect ghcr.io/nathanpond/n8tracks:edge` lists two extra entries with the platform `unknown/unknown` next to `linux/amd64` and `linux/arm64`: those are the attestations, not images, and `docker pull` ignores them. Read them with:
+
+```sh
+docker buildx imagetools inspect ghcr.io/nathanpond/n8tracks:edge --format '{{ json .Provenance }}'
+docker buildx imagetools inspect ghcr.io/nathanpond/n8tracks:edge --format '{{ json .SBOM }}'
+```
+
+The images are not signed. How they are published is under [Publishing `edge`](#publishing-edge).
 
 ### Quick start with Compose
 
@@ -481,7 +519,7 @@ The wiring is `src/n8Tracks.ServiceDefaults`, shared by the app and the gateway.
 
 ## Versioning
 
-The root `VERSION` file holds the one product version, and every component takes its version from it. The build fails if the file is missing, empty, or not `major.minor.patch`. Override it for a single build with `-p:Version=<version>`. The Docker image build takes the same file, or `--build-arg VERSION=<version>`.
+The root `VERSION` file holds the one product version, and every component takes its version from it. The build fails if the file is missing, empty, or not `major.minor.patch`. Override it for a single build with `-p:Version=<version>`. The Docker image build takes the same file, or `--build-arg VERSION=<version>`, which it stamps as the informational version (the one `/health` reports) so that any `edge` version is accepted. An `edge` build is `<VERSION>-edge.<short sha>`: see [Edge images](#edge-images).
 
 Components (application, MCP gateway, browser extension) are compatible when their major and minor numbers match; patch numbers may differ.
 

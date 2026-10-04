@@ -534,6 +534,19 @@ jobs:
         if: ${{ !cancelled() }}
         run: scripts/tests/apply-rulesets/run.sh
 
+      # The edge naming rules (short sha, version, tag) and the script that tags the published
+      # images and puts `edge` back when it fails. The second test uses stand-ins for `docker` and
+      # `gh`: neither test builds, pushes, or reaches anything, and neither needs a token.
+      - id: edge_version_test
+        name: scripts/tests/edge-version/run.sh
+        if: ${{ !cancelled() }}
+        run: scripts/tests/edge-version/run.sh
+
+      - id: publish_tags_test
+        name: scripts/tests/publish-tags/run.sh
+        if: ${{ !cancelled() }}
+        run: scripts/tests/publish-tags/run.sh
+
       - name: Summarize failed steps
         if: ${{ failure() }}
         env:
