@@ -1,0 +1,5 @@
+version=1.2.2
+push_exact=true
+image_tags=1.2.2 1.2
+prerelease=false
+latest=false

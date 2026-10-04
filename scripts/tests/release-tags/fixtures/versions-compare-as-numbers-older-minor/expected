@@ -1,0 +1,5 @@
+version=1.9.6
+push_exact=true
+image_tags=1.9.6 1.9
+prerelease=false
+latest=false

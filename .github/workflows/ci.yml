@@ -520,6 +520,13 @@ jobs:
         if: ${{ !cancelled() }}
         run: scripts/check-suppressions.sh
 
+      # The release rules (which image tags a version tag publishes). The test only reads fixtures:
+      # it publishes nothing and needs no token.
+      - id: release_tags_test
+        name: scripts/tests/release-tags/run.sh
+        if: ${{ !cancelled() }}
+        run: scripts/tests/release-tags/run.sh
+
       - name: Summarize failed steps
         if: ${{ failure() }}
         env:
