@@ -46,7 +46,7 @@ Pushing a version tag (`v1.4.2`, or `v1.5.0-rc.1` for a pre-release) runs `.gith
 
 The workflow holds no rules of its own: `scripts/release-tags.sh` decides what a tag publishes, `scripts/published-tags.sh` lists what is already published, `scripts/publish-tags.sh` tags the images, and `scripts/release-github.sh` creates or completes the GitHub release. Their tests publish nothing and run in the gate (`scripts/tests/release-tags/run.sh`, `scripts/tests/publish-tags/run.sh`, `scripts/tests/release-github/run.sh`).
 
-### Branch rules
+### Branch and tag rules
 
 Changes reach `main` only through a pull request whose `ci` check is green. Nobody can push to `main` directly or merge while `ci` is red or still running, and that includes the repository owner: the rule has no bypass. No approval is required, and a branch does not have to be up to date with `main` to merge.
 
@@ -58,6 +58,8 @@ scripts/apply-rulesets.sh --check   # change nothing; report where GitHub differ
 ```
 
 Both need `gh` signed in as an administrator of the repository, and `jq`. To change a rule, edit the JSON, merge it, then run the script. A ruleset that has no file is left alone; nothing is deleted. `scripts/tests/apply-rulesets/run.sh` tests the script without touching GitHub.
+
+Release tags have two rulesets of their own, defined beside it and applied by the same script: `release-tags-create` lets only the repository admin role create a `v*` tag, and `release-tags-immutable` stops everyone, the owner included, from moving or deleting one. What that means for a release is in [docs/releasing.md](docs/releasing.md#who-can-release).
 
 ### Dependency updates
 

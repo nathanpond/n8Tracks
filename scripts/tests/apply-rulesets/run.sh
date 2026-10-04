@@ -244,14 +244,108 @@ check "committed: branches need not be up to date" \
 check "committed: nobody can bypass" jq -e '.bypass_actors == []' "$main"
 check "committed: the workflow has a job whose check is named ci" \
   grep -Eq '^    name: ci$' "$root/.github/workflows/ci.yml"
-code=0
-"$script" --repo o/r >"$work/out" 2>"$work/err" || code=$?
+
+# The two tag rulesets guard the release trigger. One ruleset has one bypass list, so creation
+# (the repository admin role may) and update and deletion (nobody may) are two rulesets.
+create="$committed/release-tags-create.json"
+immutable="$committed/release-tags-immutable.json"
+release_workflow="$root/.github/workflows/release.yml"
+check "committed: release-tags-create.json exists" test -f "$create"
+check "committed: release-tags-immutable.json exists" test -f "$immutable"
+check "committed: the release workflow starts on v* tags" \
+  grep -Eq "^    tags: \['v\*'\]\$" "$release_workflow"
+check "committed: the release workflow has no other trigger" \
+  test "$(sed -n '/^on:/,/^[a-z]/p' "$release_workflow" | grep -Ec '^  [a-z_]+:')" -eq 1
+for file in "$create" "$immutable"; do
+  label=$(basename "$file" .json)
+  check "committed: $label is named after its file" test "$(jq -r '.name' "$file")" = "$label"
+  check "committed: $label targets tags and is active" \
+    jq -e '.target == "tag" and .enforcement == "active"' "$file"
+  check "committed: $label covers exactly the tags the release workflow starts on" \
+    jq -e '.conditions == {"ref_name": {"exclude": [], "include": ["refs/tags/v*"]}}' "$file"
+done
+check "committed: release-tags-create restricts creation and nothing else" \
+  jq -e '.rules == [{"type": "creation"}]' "$create"
+check "committed: only the repository admin role may create a release tag" \
+  jq -e '.bypass_actors == [{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}]' "$create"
+check "committed: release-tags-immutable blocks update and deletion and nothing else" \
+  jq -e '(.rules | sort_by(.type)) == [{"type": "deletion"}, {"type": "update"}]' "$immutable"
+check "committed: nobody can move or delete a release tag" jq -e '.bypass_actors == []' "$immutable"
+for file in "$create" "$immutable"; do
+  label=$(basename "$file" .json)
+  check "committed: docs/releasing.md names $label" grep -q "\`$label\`" "$root/docs/releasing.md"
+done
+
+committed_count=$(find "$committed" -name '*.json' | wc -l | tr -d ' ')
+check "committed: three definitions" test "$committed_count" -eq 3
+
+# committed_run [--check]: the script on the committed definitions, against the stand-in.
+committed_run() {
+  code=0
+  "$script" --repo o/r "$@" >"$work/out" 2>"$work/err" || code=$?
+}
+
+# on_server <name> <jq filter>: changes the stand-in's copy of a ruleset, as someone editing it
+# on GitHub would.
+on_server() {
+  for state_file in "$work/state"/*.json; do
+    if [ "$(jq -r '.name' "$state_file")" = "$1" ]; then
+      jq "$2" "$state_file" >"$work/tmp2.json" && mv "$work/tmp2.json" "$state_file"
+    fi
+  done
+}
+
+committed_run
 check "committed: every definition is accepted and applied to an empty repository" test "$code" -eq 0
+check "committed: each definition was created, and nothing else was written" \
+  test "$(calls | sort | uniq -c | tr -s ' ')" = " $committed_count POST repos/o/r/rulesets"
+check "committed: the stand-in now holds one ruleset per definition" \
+  test "$(cat "$work/state"/*.json | jq -r '.name' | sort | tr '\n' ' ')" = \
+  "main-pr-required release-tags-create release-tags-immutable "
+rm -f "$work/state/calls"
+committed_run --check
+check "committed, applied: --check passes" test "$code" -eq 0
+check "committed, applied: --check reports every ruleset" \
+  test "$(grep -c '^OK   ' "$work/out")" -eq "$committed_count"
+check "committed, applied: --check writes nothing" test -z "$(calls)"
+committed_run
+check "committed, applied again: each ruleset is updated in place, none created" \
+  test "$(calls | grep -c '^PUT ')" -eq "$committed_count" -a "$(calls | grep -c '^POST ')" -eq 0
+rm -f "$work/state/calls"
+
+# What must not drift on GitHub without --check saying so. Each case changes one thing on the
+# stand-in server, checks, and puts the committed state back by applying again.
+drift() {
+  on_server "$2" "$3"
+  committed_run --check
+  check "drift, $1: exit code 1" test "$code" -eq 1
+  check "drift, $1: reported against $2" grep -q "^FAIL $2: o/r differs" "$work/out"
+  check "drift, $1: the other rulesets still match" \
+    test "$(grep -c '^OK   ' "$work/out")" -eq $((committed_count - 1))
+  committed_run
+  committed_run --check
+  check "drift, $1: applying again puts it back" test "$code" -eq 0
+}
+drift "someone may bypass the immutable ruleset" release-tags-immutable \
+  '.bypass_actors = [{actor_id: 5, actor_type: "RepositoryRole", bypass_mode: "always"}]'
+drift "deletion is no longer blocked" release-tags-immutable \
+  '.rules |= map(select(.type != "deletion"))'
+drift "update is no longer blocked" release-tags-immutable \
+  '.rules |= map(select(.type != "update"))'
+drift "the immutable ruleset is disabled" release-tags-immutable '.enforcement = "disabled"'
+drift "the immutable ruleset covers other tags" release-tags-immutable \
+  '.conditions.ref_name.include = ["refs/tags/release-*"]'
+drift "the write role may create release tags" release-tags-create \
+  '.bypass_actors += [{actor_id: 4, actor_type: "RepositoryRole", bypass_mode: "always"}]'
+drift "creation is no longer restricted" release-tags-create '.rules = []'
+drift "the create ruleset is only evaluated" release-tags-create '.enforcement = "evaluate"'
+drift "the create ruleset excludes a tag" release-tags-create \
+  '.conditions.ref_name.exclude = ["refs/tags/v9*"]'
 
 echo
 echo "$passed passed, $failed failed"
 # Fewer checks than this means part of the test did not run, which must not look like a pass.
-minimum_checks=42
+minimum_checks=101
 if [ "$passed" -lt "$minimum_checks" ]; then
   echo "FAIL only $passed checks passed; at least $minimum_checks are expected"
   exit 1

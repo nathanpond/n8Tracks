@@ -84,7 +84,12 @@ case "$method $path" in
       echo "gh: Validation Failed (HTTP 422)" >&2
       exit 1
     fi
-    store 1000
+    # Each created ruleset gets its own id: 1000, 1001, ...
+    next=1000
+    while [ -f "$state/$next.json" ]; do
+      next=$((next + 1))
+    done
+    store "$next"
     ;;
   *)
     echo "fake gh: unexpected call: $method $path" >&2
