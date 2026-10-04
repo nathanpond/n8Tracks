@@ -11,6 +11,9 @@ const CI = Boolean(process.env.CI);
  *
  * In CI a failing test is retried once, and the retry records a trace. A test that passes on the
  * retry is flaky: the run stays green, and `scripts/summarize.ts` lists it from the JSON report.
+ * CI also stops after ten failed tests: a page broken for every test would otherwise spend a
+ * minute on each (two attempts, each waiting out its timeout) and run into the job's time limit
+ * before the report is written.
  */
 export default defineConfig({
   testDir: './tests',
@@ -18,6 +21,7 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: CI ? 1 : 0,
+  maxFailures: CI ? 10 : 0,
   forbidOnly: true,
   reporter: CI
     ? [
