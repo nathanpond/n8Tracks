@@ -613,3 +613,9 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** The `container` job's failure summary reads each step's outcome by name instead of `toJSON(steps)` as the other jobs do. On the red bite run (37186603738) the summary step itself could not start: "Argument list too long".
   **Why:** `toJSON(steps)` includes every step's outputs, and the build action's outputs hold the whole build metadata, which is more than one environment variable may hold. The job was red either way, but the summary was missing.
   **Issue:** #40
+- **Decision:** Guard-bite proof, on two throwaway draft pull requests made in temporary worktrees, both closed without merging and their branches deleted. The fault each time: the Dockerfile's `HEALTHCHECK` pointed at `/app/wrong/n8Tracks.Api.dll`. #164, run 37186180438: the script failed but CI stayed green (the missing `pipefail`, above). #164 with the fix, run 37186603738: `container` and `ci` red, 3 failed and 93 passed, but the failure summary could not start (above). #165 with both fixes, run 37186984530: `container` and `ci` red, the log names the three failed assertions ("Docker reports … as healthy within 60s" for the main, no-media, and sub-path containers) with Docker's health-check output and the containers' logs, the failure summary ran, and no `app-image` artifact was uploaded. The two-architecture builds still ran and passed in the red runs.
+  **Why:** The test plan asks for the smoke script and `ci` to be seen going red on a wrong health check path, on a throwaway pull request.
+  **Issue:** #40
+- **Decision:** The host-side ownership assertion, skipped on macOS since #35, ran for the first time on the Linux runner and passed unchanged (`PASS owner of n8tracks.db on the host: 1234:1235`); the script reports 96 checks on Linux and 95 on macOS.
+  **Why:** M0 left this as an open risk for this story; no fix was needed.
+  **Issue:** #40
