@@ -65,6 +65,7 @@ else
 
 // The Vite dev server for web/, on its usual port. Dependencies are never installed from here:
 // when they are missing the resource fails and says what to run, and the two services still start.
+// The check looks in the resource's own working directory, which is web/ unless a test moved it.
 var webDirectory = Path.GetFullPath(Path.Combine(builder.AppHostDirectory, "..", "..", "web"));
 
 builder.AddViteApp("frontend", webDirectory)
@@ -78,9 +79,9 @@ builder.AddViteApp("frontend", webDirectory)
     .WithEnvironment("N8TRACKS_API_URL", apiEndpoint)
     .OnBeforeResourceStarted((resource, started, _) =>
     {
-        if (!Directory.Exists(Path.Combine(webDirectory, "node_modules", "vite")))
+        if (!Directory.Exists(Path.Combine(resource.WorkingDirectory, "node_modules", "vite")))
         {
-            var message = $"The frontend's dependencies are not installed. Run `npm install` in {webDirectory} (web/), then start this resource again.";
+            var message = $"The frontend's dependencies are not installed. Run `npm install` in {resource.WorkingDirectory} (web/), then start this resource again.";
 
             // Once in the resource's own log on the dashboard, once on this console.
             started.Services.GetRequiredService<ResourceLoggerService>().GetLogger(resource).LogError("{Message}", message);

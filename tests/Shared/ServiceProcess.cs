@@ -103,6 +103,19 @@ internal sealed class ServiceProcess : IDisposable
         }
     }
 
+    /// <summary>Stops the service and returns everything it wrote to standard output and standard error.</summary>
+    public async Task<(string Output, string Error)> StopAndReadOutput()
+    {
+        if (!process.HasExited)
+        {
+            process.Kill(entireProcessTree: true);
+        }
+
+        await process.WaitForExitAsync();
+
+        return (await standardOutput, await standardError);
+    }
+
     public void Dispose()
     {
         if (!process.HasExited)
