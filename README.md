@@ -37,6 +37,98 @@ dotnet run --project src/n8Tracks.Api
 
 Then `GET http://localhost:8787/health`. The launch profile sets `N8TRACKS_DATA_PATH=./.localdata` (created by a Debug build under `src/n8Tracks.Api`, git-ignored).
 
+## Run with Docker
+
+n8Tracks runs from one image: the app and its web interface, on port 8787. The image is built from this repository for `linux/amd64` and `linux/arm64`; published images come with the first release.
+
+### Quick start with Compose
+
+[`docker-compose.example.yml`](docker-compose.example.yml) builds the image and starts it:
+
+```sh
+docker compose -f docker-compose.example.yml up -d --build
+```
+
+Then open `http://localhost:8787/`: the page shows the version and the health of the instance, and `docker ps` shows the container as `healthy`. The example keeps the app's data in `./data` and reads media from `./media`, next to the Compose file. To make it your own, copy it to `docker-compose.yml`, set `PUID`, `PGID`, `TZ`, and the two host folders, and run `docker compose up -d --build`.
+
+Removing the container and creating it again (`docker compose down`, then `up -d`) keeps everything: the database lives in the data folder, not in the container.
+
+With `restart: unless-stopped`, a container that cannot start (an invalid setting, a data folder it cannot write to, a database from a newer version) shows as restarting, and `docker compose logs` repeats the same error line each time.
+
+Without Compose:
+
+```sh
+docker build -t n8tracks:dev .
+docker run -d --name n8tracks -p 8787:8787 \
+  -e PUID=1000 -e PGID=1000 -e TZ=Etc/UTC \
+  -v "$PWD/data:/data" -v "$PWD/media:/media:ro" \
+  n8tracks:dev
+```
+
+### The user the app runs as: `PUID` and `PGID`
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `PUID` | `1000` | Numeric ID of the user the app runs as. Files it creates belong to this user. |
+| `PGID` | `1000` | Numeric ID of that user's group. |
+
+Use the IDs of the account that owns your data folder on the host (`id -u` and `id -g`). The container starts as root only to apply them: if the top-level owner of `/data` (or of `/backup`, when mounted) is someone else, it hands that folder and everything in it to `PUID:PGID`, then drops to that user, with no other groups, and starts the app. Files the app creates are readable by others and writable only by their owner (umask 022). `/media` is never touched.
+
+- A value that is not a whole number from 0 upwards stops the container with exit code 1 and one error line naming the variable.
+- `0` is accepted and logs a warning: the app then runs as root.
+- If the owner cannot be changed (a read-only or root-squashed share), the container logs a warning and carries on; the app stops with its own error if it cannot write to `/data`.
+- If you start the container as a user yourself (`user: "1000:1000"` in Compose, `--user` with `docker run`), `PUID` and `PGID` are not read and nothing is changed: that user must already be able to write to `/data`.
+
+Only `/data` and `/backup` get this treatment. If you point `N8TRACKS_DATA_PATH` somewhere else inside the container, make that folder writable for `PUID:PGID` yourself.
+
+### Mounts
+
+| Path in the container | Purpose | Notes |
+| --- | --- | --- |
+| `/data` | The app's own data, the database included. | Required, writable. Declared as a volume: without a mount Docker gives the container an anonymous volume, which is lost when the container is removed with its volumes. Mount a host folder or a named volume. |
+| `/media` | Your media files. | Mount it read-only (`:ro`); n8Tracks never writes there. Not mounted or not reachable: the app still runs, health is `degraded`, and the container stays `healthy`. |
+| `/backup` | Backups. | Optional, writable. |
+
+The image does not contain `/media` or `/backup`: one that is not mounted does not exist in the container.
+
+### Settings
+
+The app reads the variables under [Configuration](#configuration); the Compose example lists each with its default. In a container, leave `N8TRACKS_DATA_PATH`, `N8TRACKS_MEDIA_PATH`, and `N8TRACKS_BACKUP_PATH` alone and change what is mounted there. If you change `N8TRACKS_PORT`, change the container side of the port mapping too (`"8787:9000"` for port 9000). `ASPNETCORE_ENVIRONMENT` is `Production` in the image.
+
+### Under a sub-path
+
+Behind a reverse proxy that serves n8Tracks at, say, `https://nas.example/n8tracks`, set:
+
+```yaml
+    environment:
+      N8TRACKS_BASE_URL: https://nas.example/n8tracks
+```
+
+and have the proxy forward the path unchanged to port 8787. The app then answers only under `/n8tracks` (the page at `/n8tracks/`, health at `/n8tracks/health`); anything outside it is 404. The container health check follows the setting by itself.
+
+### Container health check
+
+The image's health check runs the app binary in a second mode, `dotnet /app/n8Tracks.Api.dll --healthcheck`, so the image needs no `curl`. It requests `<base path>/health` on the loopback interface at `N8TRACKS_PORT`, and passes on 200 (`healthy` or `degraded`); 503, no answer within 4 seconds, or an invalid port or base URL fails it. It runs every 30 seconds (every 5 while starting, on Docker 25 or later), and three failures in a row mark the container `unhealthy`.
+
+### Log lines before the app starts
+
+What the container writes before the app starts (the `PUID`/`PGID` errors and warnings, an owner change) has the keys of the application log, one JSON object per line:
+
+```json
+{"timestamp":"2026-10-04T05:50:21.118Z","level":"Error","message":"Invalid configuration: PUID must be a whole number from 0 to 4294967294, but was 'abc'.","properties":{"sourceContext":"n8Tracks.Entrypoint","variable":"PUID","reason":"must be a whole number from 0 to 4294967294, but was 'abc'."}}
+```
+
+### Building the image
+
+```sh
+docker build -t n8tracks:dev .
+docker buildx build --platform linux/amd64,linux/arm64 .
+```
+
+The version comes from the root `VERSION` file; `--build-arg VERSION=<version>` overrides it, and `/health` reports whichever was used. The two-platform build needs a builder that supports it (the containerd image store, or `docker buildx create --driver docker-container`). Tests are not run in the image build.
+
+`scripts/smoke-docker.sh` builds the image for your machine and checks it end to end: health, the page, the user the app runs as, file ownership, a read-only media mount, no media mount, a sub-path, a restart and a re-creation on the same data, and the refusals (`PUID=abc`, a read-only `/data`). It needs Docker, `curl`, and `python3`, uses host port 18787, and removes what it created.
+
 ## Health
 
 `GET /health` (under the base URL path, if there is one) reports the instance in one JSON document. It needs no sign-in, is never cached (`Cache-Control: no-store`), answers `HEAD` too, and is checked afresh on every request.
@@ -243,7 +335,7 @@ The wiring is `src/n8Tracks.ServiceDefaults`, shared by the app and the gateway.
 
 ## Versioning
 
-The root `VERSION` file holds the one product version, and every component takes its version from it. The build fails if the file is missing, empty, or not `major.minor.patch`. Override it for a single build with `-p:Version=<version>`.
+The root `VERSION` file holds the one product version, and every component takes its version from it. The build fails if the file is missing, empty, or not `major.minor.patch`. Override it for a single build with `-p:Version=<version>`. The Docker image build takes the same file, or `--build-arg VERSION=<version>`.
 
 Components (application, MCP gateway, browser extension) are compatible when their major and minor numbers match; patch numbers may differ.
 

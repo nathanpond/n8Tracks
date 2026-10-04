@@ -487,6 +487,12 @@ docs/.notes/
 # Data directory for local runs (N8TRACKS_DATA_PATH in launch settings)
 .localdata/
 
+# Host folders of the Compose example (docker-compose.example.yml), when it is run from the repository
+/data/
+/media/
+/backup/
+/docker-compose.yml
+
 # The built frontend, copied into the backend's web root; never committed
 src/n8Tracks.Api/wwwroot/
 

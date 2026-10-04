@@ -63,6 +63,27 @@ internal static class EnvironmentOptionsLoader
     }
 
     /// <summary>
+    /// Loads and validates only what locates the running app from inside its own container: the port
+    /// and the path of the base URL. Unlike <see cref="Load"/> it touches no directory.
+    /// </summary>
+    /// <exception cref="ConfigurationValidationException">The port or the base URL is invalid.</exception>
+    public static (int Port, string PathBase) LoadListenAddress(EnvironmentSnapshot environment)
+    {
+        ArgumentNullException.ThrowIfNull(environment);
+
+        var errors = new List<ConfigurationError>();
+        var port = ReadPort(environment.Variables, errors);
+        var (_, pathBase) = ReadBaseUrl(environment.Variables, port, errors);
+
+        if (errors.Count > 0)
+        {
+            throw new ConfigurationValidationException(errors);
+        }
+
+        return (port, pathBase);
+    }
+
+    /// <summary>
     /// Names that start with <c>N8TRACKS_</c>, have a value, and are not settings the app knows: usually a typo.
     /// </summary>
     public static IReadOnlyList<string> FindUnknownVariables(EnvironmentSnapshot environment)

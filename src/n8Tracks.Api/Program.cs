@@ -34,7 +34,9 @@ public sealed class Program
     /// Builds and runs the app until shutdown or <paramref name="cancellationToken"/>. Every log line
     /// goes to <paramref name="output"/> as JSON. Returns the process exit code: 1 when the
     /// configuration is invalid, the database cannot be opened or upgraded, the port cannot be bound,
-    /// or startup fails unexpectedly, otherwise 0.
+    /// or startup fails unexpectedly, otherwise 0. With <c>--healthcheck</c> among
+    /// <paramref name="args"/> it starts nothing and reports on the app that is already running
+    /// (see <see cref="HealthCheckCommand"/>).
     /// </summary>
     internal static async Task<int> RunAsync(
         string[] args,
@@ -48,6 +50,12 @@ public sealed class Program
 
         try
         {
+            // The container health check: ask the running app for its health and exit, starting nothing.
+            if (HealthCheckCommand.IsRequested(args))
+            {
+                return await HealthCheckCommand.RunAsync(environment, startupLog, cancellationToken).ConfigureAwait(false);
+            }
+
             return await RunAsync(args, environment, sink, startupLog, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
