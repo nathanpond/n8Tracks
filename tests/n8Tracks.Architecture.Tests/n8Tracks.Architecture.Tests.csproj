@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="10.1.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
+    <PackageReference Include="NetArchTest.eNhancedEdition" Version="1.4.5" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="4.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\n8Tracks.Api\n8Tracks.Api.csproj" />
+    <ProjectReference Include="..\..\src\n8Tracks.Application\n8Tracks.Application.csproj" />
+    <ProjectReference Include="..\..\src\n8Tracks.Domain\n8Tracks.Domain.csproj" />
+    <ProjectReference Include="..\..\src\n8Tracks.Infrastructure\n8Tracks.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

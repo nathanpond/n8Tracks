@@ -1,6 +1,12 @@
+using n8Tracks.Api.Endpoints;
+using n8Tracks.Application;
+using n8Tracks.Infrastructure;
+
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddOpenApi();
+builder.Services.AddApplication();
+builder.Services.AddInfrastructure();
 
 var app = builder.Build();
 
@@ -9,11 +15,8 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi();
 }
 
-app.MapGet("/health", () => Results.Ok(new HealthResponse("ok")))
-    .WithName("GetHealth");
+app.MapHealth();
 
 app.Run();
-
-internal sealed record HealthResponse(string Status);
 
 public partial class Program;

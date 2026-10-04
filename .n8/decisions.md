@@ -162,3 +162,24 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 
 ## /n8-exec M0 — 2026-10-03
 
+- **Decision:** Architecture tests use NetArchTest.eNhancedEdition 1.4.5 for type-level rules and plain reflection over referenced assemblies for the assembly-level rules.
+  **Why:** The issue prefers the maintained package; it is netstandard2.0 and runs on net10.0. Assembly references are simplest to read with reflection.
+  **Issue:** #25
+- **Decision:** The Api rule runs over every type in the Api assembly and then drops the composition root by full name (`Program`, its nested types, and the `n8Tracks.Api.DependencyInjection` namespace), with a test for the exemption itself and one proving `HealthEndpoint` is examined.
+  **Why:** Filtering by name after the fact covers the compiler-generated types nested in `Program` without relying on how the library treats them, and keeps a rule that examines nothing from passing.
+  **Issue:** #25
+- **Decision:** The VERSION file is validated by a target in a new root `Directory.Build.targets` (before restore and before build); it must be exactly `major.minor.patch`, with no pre-release suffix. `-p:Version=` still overrides the built version.
+  **Why:** An MSBuild error needs a target, and without one a broken file falls back silently to the SDK's 1.0.0. A pre-release label, if ever wanted, can come from `-p:Version=`.
+  **Issue:** #25
+- **Decision:** Added `ProductVersionTests`, which checks each backend assembly's informational version against VERSION by major.minor (the compatibility rule), not by equality, and that it carries no `+sha` suffix.
+  **Why:** The issue asks that every component take its version from the file but names no test; equality would break a build that overrides the version.
+  **Issue:** #25
+- **Decision:** `AssemblyMarker` is a sealed class with a private constructor, not a static class.
+  **Why:** A static class cannot be a generic type argument, which assembly-scanning APIs commonly take.
+  **Issue:** #25
+- **Decision:** Test packages were moved to the latest stable versions in both test projects (Microsoft.NET.Test.Sdk 18.10.1, xunit.runner.visualstudio 4.0.0, coverlet.collector 10.1.0; xunit stays 2.9.3, its latest).
+  **Why:** The issue asks for the latest stable versions and for the new test project to mirror the existing one.
+  **Issue:** #25
+- **Decision:** The guard-bite proof also covered the csproj test (a package reference added to Domain and an Api to Domain project reference) and the three VERSION failure modes.
+  **Why:** The brief asks for each guard to be seen failing against a broken state.
+  **Issue:** #25

@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.12" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\n8Tracks.Application\n8Tracks.Application.csproj" />
+    <ProjectReference Include="..\n8Tracks.Domain\n8Tracks.Domain.csproj" />
+  </ItemGroup>
+
+</Project>
