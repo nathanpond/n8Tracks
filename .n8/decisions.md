@@ -552,3 +552,25 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 
 ## /n8-exec M1 — 2026-10-04
 
+
+- **Decision:** Action versions in `.github/workflows/ci.yml`, each the major of the latest release looked up today: `actions/checkout@v7` (v7.0.1), `actions/setup-dotnet@v6` (v6.0.0), `actions/setup-node@v7` (v7.0.0), `actions/upload-artifact@v7` (v7.0.1). Checkout runs with `persist-credentials: false`.
+  **Why:** The milestone rule is a lookup, not memory, pinned at the major. No job pushes, so the token does not need to stay in the checkout's git configuration.
+  **Issue:** #39
+- **Decision:** The pull-request trigger is `branches: [main]` with the default activity types (opened, synchronize, reopened) and no path filter. The concurrency group is `ci-<pull request number>`, or `ci-<run id>` when there is no pull request, and `cancel-in-progress` is on only for the `pull_request` event.
+  **Why:** The default types already include drafts. In a called workflow the `github` context is the caller's, so a publish on `main` or a tag has no pull request number and gets a group of its own; it is never cancelled by this workflow.
+  **Issue:** #39
+- **Decision:** "Every check runs even after an earlier one fails" is done with a per-step condition (`!cancelled()` and the prerequisite step's outcome is `success`), not `continue-on-error`. Prerequisites: `dotnet restore` for `dotnet format`; the build for `dotnet test`; `npm ci` for every npm check. The failure summary is one generic step per job that prints the ids of the steps whose outcome is `failure` from the `steps` context, so every step that can fail has an `id`.
+  **Why:** `continue-on-error` would leave the job green. Reading the `steps` context means a step added later is reported without touching the summary.
+  **Issue:** #39
+- **Decision:** The `ci` job checks `toJSON(needs)` with `jq`: it fails unless there is at least one needed job and every result is `success`. A job a later story adds only has to be added to `needs:`; the file's header and the README say so.
+  **Why:** One expression covers failed, cancelled, and skipped dependencies and does not have to be edited per job. Nothing in this story checks that a new job was added to `needs:`; that is left to review (the suppression-guard story may add a check).
+  **Issue:** #39
+- **Decision:** `global.json` is used as it is (`10.0.201`, `rollForward: latestFeature`): on the runner `actions/setup-dotnet` resolved it to SDK 10.0.401, already on the image. The NuGet cache key hashes `**/*.csproj`, `Directory.Build.props`, `Directory.Build.targets`, and `global.json`.
+  **Why:** That is what the pin in `global.json` means, and it is the same resolution a developer's machine does. Changing the roll-forward policy is not this story's to decide. `Directory.Build.targets` was added to the key files because it is a props-like file that can change restore.
+  **Issue:** #39
+- **Decision:** The ESLint warning in the bite test was a `console.log` in a new `web/src` file under an inline `/* eslint no-console: "warn" */` comment.
+  **Why:** Every rule the project's configuration turns on is at `error`; an inline rule comment is the smallest real warning-level finding, and it is `--max-warnings 0` in the `lint` script that turns it into a failure.
+  **Issue:** #39
+- **Decision:** Guard-bite proof, on throwaway pull request #163 (branch `throwaway/39-gate-bites`, made in a temporary worktree, closed without merging, branch deleted). Each commit held one fault and `ci` went red each time: (a) C# unused variable: `dotnet build` failed with CS0219, `dotnet format` still ran, `dotnet test` was skipped (run 37183757768); (b) ESLint warning in `web/`: only `npm run lint` failed, the other web checks ran and passed (run 37183823275); (c) formatting change in `extension/`: only `npm run format:check` failed and the zip upload was skipped (run 37183929815); (d) failing test in `n8Tracks.Api.Tests`: `dotnet test` failed, 1 failed and 345 passed in that project (run 37184026795). Two more pushes 25 seconds apart showed the superseded run cancelled (run 37184131485).
+  **Why:** The test plan asks for the four faults to be seen turning `ci` red; the cancellation is an acceptance criterion with no other check.
+  **Issue:** #39
