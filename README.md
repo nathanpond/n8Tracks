@@ -2,7 +2,7 @@
 
 A self-hosted authoring workspace and catalog for AI-assisted music: a durable system of record for lyrics, creation parameters, generated outputs, and creative lineage.
 
-**Status:** just initialized. The repository currently holds the product requirements ([docs/PRD.md](docs/PRD.md)), a layered ASP.NET Core backend skeleton with a health endpoint and environment-variable configuration, a web shell that shows the version and live health, and a browser extension skeleton. Nothing described in the PRD is built yet.
+**Status:** just initialized. The repository currently holds the product requirements ([docs/PRD.md](docs/PRD.md)), a layered ASP.NET Core backend skeleton with a health endpoint and environment-variable configuration, a web shell that shows the version and live health, a browser extension skeleton, and an MCP gateway skeleton. Nothing described in the PRD is built yet.
 
 ## Build and test
 
@@ -24,6 +24,7 @@ Warnings are errors, and .NET analyzers and code-style rules run as part of the 
 | `src/n8Tracks.Application` | Application services: the one place business rules are applied | Domain |
 | `src/n8Tracks.Infrastructure` | Persistence and other adapters | Application, Domain |
 | `src/n8Tracks.Api` | HTTP endpoints and the composition root | Application, Infrastructure |
+| `src/n8Tracks.Gateway` | The MCP gateway: a separate service that reaches n8Tracks over HTTP only | nothing |
 
 Endpoints go through the application layer. Only the Api's composition root (`Program.cs` and the `n8Tracks.Api.DependencyInjection` namespace) may touch Infrastructure or Entity Framework Core. `tests/n8Tracks.Architecture.Tests` fails the build's test run when a project reference or a type dependency breaks these rules; a new project under `src/` must be added to the table in `ProjectReferenceTests`.
 
@@ -123,6 +124,72 @@ The source manifest is `extension/manifest.json`; the build writes `dist/manifes
 The version is the root `VERSION` file, or the `N8TRACKS_VERSION` environment variable when it is set (for example `N8TRACKS_VERSION=0.1.0-edge.abc1234 npm run package`). Chrome accepts only numbers in a manifest `version`, so a version with a pre-release suffix is written as `version` `0.1.0` and `version_name` `0.1.0-edge.abc1234`; the popup and the zip file name use the full string. The build also keeps the version in `extension/package.json` and its lockfile equal to the `VERSION` file.
 
 `extension/fixtures/` holds sanitized examples of Suno responses for later adapter tests.
+
+## MCP gateway
+
+The gateway is `src/n8Tracks.Gateway`: a separate ASP.NET Core service that will expose n8Tracks to MCP clients. For now it is a skeleton with no MCP endpoint and no tools: it starts, checks that it can reach n8Tracks, and reports that on its own health URL. It talks to n8Tracks only over HTTP, at `N8TRACKS_API_URL`, and holds no business logic and no catalog data.
+
+Build and test it with the rest of the solution (`dotnet build`, `dotnet test`), or on its own:
+
+```sh
+dotnet build src/n8Tracks.Gateway
+dotnet test tests/n8Tracks.Gateway.Tests
+```
+
+Run it next to the app (start that first with `dotnet run --project src/n8Tracks.Api`):
+
+```sh
+dotnet run --project src/n8Tracks.Gateway
+```
+
+Then `GET http://localhost:8788/health`. The launch profile sets `N8TRACKS_API_URL=http://localhost:8787`; anywhere else, set it yourself:
+
+```sh
+N8TRACKS_API_URL=http://localhost:8787 dotnet src/n8Tracks.Gateway/bin/Debug/net10.0/n8Tracks.Gateway.dll
+```
+
+### Gateway settings
+
+The gateway is configured only through environment variables, read once at startup. An empty or whitespace-only value counts as unset.
+
+| Variable | Default | Example | Meaning |
+| --- | --- | --- | --- |
+| `N8TRACKS_API_URL` | none (required) | `https://nas.example/n8tracks` | URL of n8Tracks as the gateway reaches it. An absolute `http` or `https` URL without query string, fragment, or user info. A path is kept: the example is checked at `https://nas.example/n8tracks/health`. |
+| `N8TRACKS_GATEWAY_PORT` | `8788` | `9001` | Port the gateway listens on: plain HTTP, all interfaces. A whole number from 1 to 65535. |
+| `N8TRACKS_LOG_LEVEL` | `Information` | `Debug` | Minimum log level: `Trace`, `Debug`, `Information`, `Warning`, `Error`, or `Critical` (any letter case). |
+
+`N8TRACKS_GATEWAY_PORT` is the only way to set the listen address: `ASPNETCORE_URLS`, `ASPNETCORE_HTTP_PORTS`, `--urls`, and launch settings are ignored. The gateway ignores every other variable, the app's `N8TRACKS_PORT` included.
+
+A missing or invalid value stops the gateway before it listens, with exit code 1 and one line per problem naming the variable, at any log level. The value of `N8TRACKS_API_URL` is never written. The gateway also exits with code 1 and one such line when its port is already in use.
+
+The log is one JSON object per line on standard output, in the shape of .NET's JSON console formatter (not the app's shape):
+
+```json
+{"Timestamp":"2026-10-04T05:18:28.639Z","EventId":1,"LogLevel":"Error","Category":"n8Tracks.Gateway.Startup","Message":"Invalid configuration: N8TRACKS_API_URL is required: set it to the URL of n8Tracks, such as http://n8tracks:8787.","State":{"Variable":"N8TRACKS_API_URL","Reason":"is required: set it to the URL of n8Tracks, such as http://n8tracks:8787.","{OriginalFormat}":"Invalid configuration: {Variable} {Reason}"}}
+```
+
+Framework categories (`Microsoft`, `System`) are held at Warning unless the level is set higher.
+
+### Gateway health
+
+`GET /health` on the gateway asks `<N8TRACKS_API_URL>/health` afresh on every request and answers 200 with `Cache-Control: no-store`, whatever it finds:
+
+```json
+{ "status": "healthy", "upstream": "reachable", "version": "0.1.0", "compatible": true }
+```
+
+| Field | Values |
+| --- | --- |
+| `upstream` | `reachable` when n8Tracks returned any complete HTTP response within 3 seconds, a 503 included; otherwise `unreachable`. Redirects are not followed, and at most 64 KB of the response is read. |
+| `version` | The gateway's own version. |
+| `compatible` | `true` when the `version` in n8Tracks' health response has the same major and minor numbers as the gateway's, `false` when it does not, and `null` when n8Tracks is unreachable or its answer has no readable version. |
+| `status` | `healthy` only when `upstream` is `reachable` and `compatible` is `true`; otherwise `degraded`. |
+
+The response never says why n8Tracks is unreachable. The gateway writes one Warning line when n8Tracks becomes unreachable, mismatched, or of unknown version (a short reason, never the URL), nothing while that lasts, and one Information line when it is reachable and compatible again.
+
+### Gateway isolation
+
+`tests/n8Tracks.Gateway.Tests/GatewayIsolationGuardTests.cs` fails if the gateway references another n8Tracks project, Entity Framework Core, or SQLite, directly or through another package or project. It reads the gateway's project file, the dependency graph NuGet resolved for it, and the assemblies the built gateway references. It cannot see business rules written by hand inside the gateway; that is for review.
 
 ## Configuration
 

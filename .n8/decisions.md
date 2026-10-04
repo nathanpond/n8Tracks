@@ -393,3 +393,36 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** Guard-bite proof: each of these was applied, seen to fail, and restored (69 passing afterwards). `tabs` added to the source manifest (build fails: permissions); `host_permissions` added (build fails); a second optional host (build fails); the build's own validation bypassed with an extra permission and host (3 tests on the real `dist/manifest.json` failed); the version label without `v` (4 failed); the validator ignoring permissions (4 failed). For lint and typecheck, a file with `any` and an unused local gave 3 ESLint errors and TS6133.
   **Why:** The brief asks for each guard to be seen failing against a broken state.
   **Issue:** #32
+- **Decision:** The gateway references no NuGet package and no project. The official MCP C# SDK was looked up on 2026-10-04 (`ModelContextProtocol.AspNetCore` 2.2.0, with `ModelContextProtocol` and `ModelContextProtocol.Core` at the same version) but is not referenced yet.
+  **Why:** The story says the gateway has no MCP endpoint and no tools. An unused package would only add to the dependency graph the isolation guard reads; M7 adds it with the first endpoint and should look the version up again then.
+  **Issue:** #33
+- **Decision:** `Program` is `public sealed partial` with a private constructor and `RunAsync(args, environment, cancellationToken)`; the settings are loaded from an `EnvironmentSnapshot` in the container, as in the app. The gateway has its own copies of the snapshot, the loader, the port probe, and the product-version reader.
+  **Why:** The analyzers reject a public class with only static members unless it is sealed with a private constructor. The snapshot in the container is the seam `WebApplicationFactory` tests replace. Copies, not shared code, per the discretion line.
+  **Issue:** #33
+- **Decision:** Startup-failure lines are written through a separate logger factory (the same JSON console formatter, at Information) that is disposed, and so flushed, before the process exits. The host's own log takes its level from `N8TRACKS_LOG_LEVEL`, falling back to Information while the value is invalid.
+  **Why:** With `N8TRACKS_LOG_LEVEL=Critical` the Error line that explains the exit would otherwise be filtered out, and the console logger writes on a background queue that must be flushed. `None` is refused as a level, as in the app.
+  **Issue:** #33
+- **Decision:** Framework categories (`Microsoft`, `System`) are held at Warning, or at the configured level when that is higher. The gateway therefore writes its own Information line when it starts listening. The HTTP client's built-in request logging is removed.
+  **Why:** A fixed Warning rule would let framework warnings through at `Error`. The framework's "Now listening" line is below Warning. The client's own log lines carry the request URL, which the story says not to log.
+  **Issue:** #33
+- **Decision:** The gateway does not warn about unknown `N8TRACKS_` variables.
+  **Why:** The app and the gateway share the prefix, so an environment shared by both would warn about every app setting. The reverse does happen: the app warns about `N8TRACKS_GATEWAY_PORT` and `N8TRACKS_API_URL` if it is given them; left as is, since they run as separate containers.
+  **Issue:** #33
+- **Decision:** `N8TRACKS_API_URL` is normalised to end in a slash and used as the typed client's `BaseAddress`; the probe requests the relative path `health`. Unlike `N8TRACKS_BASE_URL`, its path segments are not restricted to a character set.
+  **Why:** A relative request against a base address without a trailing slash would replace the last path segment and lose the sub-path. The gateway only sends requests to this URL and never routes on it, so the app's path rules are not needed.
+  **Issue:** #33
+- **Decision:** A response whose headers arrive but whose body does not finish within the 3 seconds counts as unreachable. A body over 64 KB, or one that is not a JSON object with a string `version` starting `<digits>.<digits>`, is reachable with `compatible: null`. The status code plays no part: a 503 with a matching version is `healthy`, `reachable`, `compatible: true`.
+  **Why:** The budget covers headers and body (discretion), so an unfinished response is not "a response within 3 seconds". The gateway's status describes the gateway's link to n8Tracks, not n8Tracks' own health, which its health URL reports.
+  **Issue:** #33
+- **Decision:** One tracker holds the last upstream state (compatible, mismatched, version unreadable, unreachable) and writes one line per change: Warning for the three bad states, Information for a return to compatible, nothing when the first probe is compatible. A failed probe is therefore logged when the upstream becomes unreachable, not on every request. The lines carry a short reason (`ConnectionError`, `timed out`) and the upstream's major.minor as numbers, never the URL, the exception message, or the upstream's raw version text.
+  **Why:** A health URL polled every few seconds would otherwise write a Warning per poll, the same reasoning as the app's component health. The exception message names the host and port, and the raw version is text from another process.
+  **Issue:** #33
+- **Decision:** The port is checked with a bind probe before the host starts (a copy of the app's), and a failure is one Error line naming `N8TRACKS_GATEWAY_PORT` with exit code 1.
+  **Why:** Without the probe the host logs its own multi-line stack trace before the gateway's line. Not in the acceptance criteria; added as startup error handling.
+  **Issue:** #33
+- **Decision:** The guard is three tests: the project file (`ProjectReference`, `PackageReference`, `Reference`, `FrameworkReference`), `obj/project.assets.json` (every library under `libraries` and each target; the file must exist and be the gateway's own), and the built assembly's references followed transitively. The gateway is also in the architecture tests' table with no allowed project reference, which will need `n8Tracks.ServiceDefaults` added when that story lands. Besides the stub-handler tests, three tests use the real network handler against a loopback server, and six run the built gateway as a process.
+  **Why:** The compiler drops unused references, so the assembly walk alone misses a declared but unused reference, and the project file alone misses transitive packages. A fake handler cannot show that redirects are not followed, and only a real process shows the exit code and what reaches standard output.
+  **Issue:** #33
+- **Decision:** Guard-bite proof: each of these was applied, seen to fail, and restored (145 gateway tests passing afterwards). A `ProjectReference` to `n8Tracks.Application` (project-file and dependency-graph tests failed, naming Application and Domain; the architecture table test failed too); the same reference used in code (all three guard tests failed); a `PackageReference` to `Microsoft.EntityFrameworkCore.Sqlite` (2 failed, listing 11 EF Core and SQLite packages); `AllowAutoRedirect = true` (the real-redirect test failed); a budget of 8 seconds (the timeout test failed).
+  **Why:** The brief and the test plan ask for the guard to be seen failing against a broken state.
+  **Issue:** #33
