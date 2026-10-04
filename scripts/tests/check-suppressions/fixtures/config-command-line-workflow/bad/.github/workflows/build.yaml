@@ -1,0 +1,10 @@
+name: build
+on: pull_request
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: dotnet build -p:TreatWarningsAsErrors=false
+      - run: dotnet build -warnaserror-
+      - run: dotnet build -nowarn:CS1591
+      - run: dotnet build "-p:NoWarn=CS1591"

@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AnalysisMode>None</AnalysisMode>
+    <CodeAnalysisTreatWarningsAsErrors>false</CodeAnalysisTreatWarningsAsErrors>
+    <WarningLevel>0</WarningLevel>
+    <AnalysisLevelStyle>none</AnalysisLevelStyle>
+  </PropertyGroup>
+</Project>

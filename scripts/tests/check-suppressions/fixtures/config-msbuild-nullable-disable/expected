@@ -1,0 +1,2 @@
+src/App/App.csproj:3 <Nullable>disable
+src/Legacy/Legacy.csproj:3 <Nullable>annotations

@@ -1,0 +1,9 @@
+name: ci
+on: pull_request
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # Never pass -warnaserror-, -nowarn, NoWarn=, or TreatWarningsAsErrors=false here.
+      - run: dotnet build -warnaserror -p:TreatWarningsAsErrors=true
+      - run: npm run lint

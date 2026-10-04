@@ -1,0 +1,5 @@
+{
+  "extends": ["./tsconfig.base"],
+  "compilerOptions": { "types": ["node"] },
+  "include": ["vite.config.ts"]
+}

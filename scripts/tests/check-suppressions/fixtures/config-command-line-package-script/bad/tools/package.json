@@ -1,0 +1,14 @@
+{
+  "name": "fixture",
+  "private": true,
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b",
+    "lint": "eslint . --max-warnings 0",
+    "backend": "dotnet build ../src -p:TreatWarningsAsErrors=false",
+    "backend:loose": "dotnet build ../src -warnaserror-",
+    "backend:quiet": "dotnet build ../src -nowarn:CS1591",
+    "backend:test": "dotnet test ../tests -p:NoWarn=CS1591",
+    "typecheck:loose": "tsc --noEmit --strict false"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "noEmit": true,
+    "strict": true,
+    "strictNullChecks": false, // Agreed with the team: the legacy module is too noisy to fix this quarter.
+    "noImplicitAny": false, // Agreed with the team: the legacy module is too noisy to fix this quarter.
+    "noUncheckedIndexedAccess": false // Agreed with the team: the legacy module is too noisy to fix this quarter.
+  },
+  "include": ["src"]
+}

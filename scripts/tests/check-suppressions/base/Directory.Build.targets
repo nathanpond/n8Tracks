@@ -1,0 +1,6 @@
+<Project>
+  <!-- Reading a pinned property in a condition is not declaring it. -->
+  <Target Name="Report" Condition="'$(TreatWarningsAsErrors)' == 'true'">
+    <Message Text="Warnings are errors." />
+  </Target>
+</Project>

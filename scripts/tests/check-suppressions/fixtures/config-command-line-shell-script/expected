@@ -1,0 +1,4 @@
+scripts/build.sh:3 TreatWarningsAsErrors=false
+scripts/build.sh:4 -warnaserror-
+scripts/build.sh:5 -nowarn
+scripts/build.sh:6 NoWarn=

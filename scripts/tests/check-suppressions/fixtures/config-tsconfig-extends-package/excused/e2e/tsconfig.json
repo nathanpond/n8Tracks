@@ -1,0 +1,7 @@
+{
+  "extends": "@tsconfig/strictest/tsconfig.json", // Agreed with the team: the legacy module is too noisy to fix this quarter.
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["src"]
+}

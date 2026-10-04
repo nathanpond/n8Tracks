@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "noEmit": true,
+    "strict": true,
+    "strictNullChecks": false,
+    "noImplicitAny": false,
+    "noUncheckedIndexedAccess": false
+  },
+  "include": ["src"]
+}

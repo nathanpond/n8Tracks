@@ -1,0 +1,4 @@
+.github/workflows/build.yaml:7 TreatWarningsAsErrors=false
+.github/workflows/build.yaml:8 -warnaserror-
+.github/workflows/build.yaml:9 -nowarn
+.github/workflows/build.yaml:10 NoWarn=

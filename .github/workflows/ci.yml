@@ -497,9 +497,11 @@ jobs:
             jq -r 'to_entries[] | select(.value.outcome == "failure") | "- `\(.key)`"' <<<"$STEPS"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # Invariant 8 (warnings are errors), the part a compiler or linter cannot enforce on itself: a
-  # warning suppression anywhere in the repository must say why, in one line. The script's own
-  # fixture test runs first, so a rule that stopped firing fails the gate too.
+  # Invariant 8 (warnings are errors), the part a compiler or linter cannot enforce on itself. One
+  # script, two halves: a warning suppression anywhere in the repository must say why, in one
+  # line; and warnings-as-errors, the analyzers, zero-warning linting, and strict type checking
+  # may not be switched off or weakened at all, whatever comment accompanies the change. The
+  # script's own fixture test runs first, so a rule that stopped firing fails the gate too.
   guards:
     name: guards
     runs-on: ubuntu-latest
@@ -528,7 +530,7 @@ jobs:
             jq -r 'to_entries[] | select(.value.outcome == "failure") | "- `\(.key)`"' <<<"$STEPS"
             if [ "$(jq -r '.suppressions.outcome' <<<"$STEPS")" = "failure" ]; then
               echo
-              echo "Suppressions without a rationale:"
+              echo "Suppressions without a rationale, and weakened settings:"
               echo
               echo '```'
               scripts/check-suppressions.sh 2>&1 || true

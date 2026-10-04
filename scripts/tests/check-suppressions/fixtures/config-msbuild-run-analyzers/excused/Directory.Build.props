@@ -1,0 +1,10 @@
+<Project>
+  <PropertyGroup>
+    <RunAnalyzers>true</RunAnalyzers> <!-- Agreed with the team: the legacy module is too noisy to fix this quarter. -->
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+  </PropertyGroup>
+</Project>

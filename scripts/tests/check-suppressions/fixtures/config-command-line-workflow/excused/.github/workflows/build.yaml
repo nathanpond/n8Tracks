@@ -1,0 +1,10 @@
+name: build
+on: pull_request
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: dotnet build -p:TreatWarningsAsErrors=false  # Agreed with the team: the legacy module is too noisy to fix this quarter.
+      - run: dotnet build -warnaserror-  # Agreed with the team: the legacy module is too noisy to fix this quarter.
+      - run: dotnet build -nowarn:CS1591  # Agreed with the team: the legacy module is too noisy to fix this quarter.
+      - run: dotnet build "-p:NoWarn=CS1591"  # Agreed with the team: the legacy module is too noisy to fix this quarter.

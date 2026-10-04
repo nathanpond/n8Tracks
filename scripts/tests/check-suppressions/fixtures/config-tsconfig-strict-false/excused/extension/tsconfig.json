@@ -1,0 +1,8 @@
+{
+  "compilerOptions": {
+    "noEmit": true,
+    "strict": false, // Agreed with the team: the legacy module is too noisy to fix this quarter.
+    "noUncheckedIndexedAccess": true
+  },
+  "include": ["src"]
+}

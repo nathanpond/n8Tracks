@@ -1,0 +1,6 @@
+src/App/App.csproj:3 <AnalysisMode>
+src/App/App.csproj:4 <CodeAnalysisTreatWarningsAsErrors>
+src/App/App.csproj:5 <WarningLevel>
+src/App/App.csproj:6 <AnalysisLevelStyle>
+build/Pack.targets:3 TreatWarningsAsErrors=false
+build/Pack.targets:4 Nullable=disable

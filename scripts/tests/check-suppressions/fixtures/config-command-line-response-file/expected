@@ -1,0 +1,2 @@
+Directory.Build.rsp:1 -warnaserror-
+Directory.Build.rsp:2 TreatWarningsAsErrors=false
