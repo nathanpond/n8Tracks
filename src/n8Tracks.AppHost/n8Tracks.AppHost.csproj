@@ -1,0 +1,34 @@
+<Project Sdk="Aspire.AppHost.Sdk/13.6.0">
+
+  <!--
+    Local development only: runs the app, the MCP gateway, and the frontend dev server together, with
+    the Aspire dashboard. Nothing references this project and it is in neither Docker image: both
+    .dockerignore files leave it out, and tests/n8Tracks.AppHost.Tests/ImageIsolationGuardTests.cs
+    fails if that changes. The two project references below start the services as processes; they do
+    not reference their assemblies.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!--
+      The orchestrator and the dashboard come from NuGet with the restore, and `dotnet run` starts
+      this project directly. With the Aspire CLI bundle, `dotnet run` would hand over to the Aspire
+      CLI, which downloads itself and asks to trust a certificate in the developer's keychain.
+    -->
+    <AspireUseCliBundle>false</AspireUseCliBundle>
+    <!-- ASPIRE010 only reports that the CLI bundle is off, which is the choice made above. -->
+    <NoWarn>$(NoWarn);ASPIRE010</NoWarn>
+    <IsPackable>false</IsPackable>
+    <IsPublishable>false</IsPublishable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.JavaScript" Version="13.6.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\n8Tracks.Api\n8Tracks.Api.csproj" />
+    <ProjectReference Include="..\n8Tracks.Gateway\n8Tracks.Gateway.csproj" />
+  </ItemGroup>
+
+</Project>

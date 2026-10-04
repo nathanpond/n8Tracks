@@ -21,6 +21,10 @@ public class ProjectReferenceTests
 
         // Telemetry wiring only: no business logic, and no way into the layers.
         ["n8Tracks.ServiceDefaults"] = [],
+
+        // Local development only: starts the app and the gateway as processes. Nothing references it,
+        // and it is in neither Docker image; see ImageIsolationGuardTests in n8Tracks.AppHost.Tests.
+        ["n8Tracks.AppHost"] = ["n8Tracks.Api", "n8Tracks.Gateway"],
     };
 
     [Fact]
@@ -39,6 +43,7 @@ public class ProjectReferenceTests
     [InlineData("n8Tracks.Api")]
     [InlineData("n8Tracks.Gateway")]
     [InlineData("n8Tracks.ServiceDefaults")]
+    [InlineData("n8Tracks.AppHost")]
     public void ProjectReferencesAreExactlyTheAllowedOnes(string project)
     {
         var declared = ProjectReferences(Load(project)).Order(StringComparer.Ordinal);

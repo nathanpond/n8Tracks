@@ -2,7 +2,13 @@ import react from '@vitejs/plugin-react';
 import type { Plugin } from 'vite';
 import { defineConfig } from 'vitest/config';
 
-const backend = 'http://localhost:8787';
+// Where the backend is. The Aspire AppHost injects N8TRACKS_API_URL; a plain `npm run dev` uses the default.
+// A blank value counts as unset, as it does everywhere else.
+const configuredBackend = process.env.N8TRACKS_API_URL?.trim();
+const backend =
+  configuredBackend === undefined || configuredBackend === ''
+    ? 'http://localhost:8787'
+    : configuredBackend;
 const basePlaceholder = '<!--n8tracks-base-->';
 
 /**

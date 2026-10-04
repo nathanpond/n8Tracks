@@ -301,6 +301,17 @@ fi
 volumes="$(docker image inspect --format '{{json .Config.Volumes}}' "$IMAGE")"
 expect "the image declares only /data as a volume" '{"/data":{}}' "$volumes"
 
+# The Aspire AppHost is local development tooling: neither it nor any Aspire assembly is in an image.
+for checked in "$IMAGE:n8Tracks.Api.dll" "$GATEWAY_IMAGE:n8Tracks.Gateway.dll"; do
+    image="${checked%:*}"
+    files="$(docker run --rm --entrypoint find "$image" /app -type f)"
+    grep -q "/${checked##*:}\$" <<<"$files" || fail "the file listing of $image does not hold ${checked##*:}"
+    if stray="$(grep -i -e 'n8Tracks\.AppHost' -e '/Aspire\.' <<<"$files")"; then
+        fail "$image holds the AppHost or an Aspire assembly: $stray"
+    fi
+    pass "$image holds no AppHost and no Aspire assembly"
+done
+
 # ---------------------------------------------------------------------------------------------------
 
 section "Data and read-only media mounted, PUID=$RUN_UID PGID=$RUN_GID"

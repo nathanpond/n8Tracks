@@ -2,7 +2,7 @@
 
 A self-hosted authoring workspace and catalog for AI-assisted music: a durable system of record for lyrics, creation parameters, generated outputs, and creative lineage.
 
-**Status:** just initialized. The repository currently holds the product requirements ([docs/PRD.md](docs/PRD.md)), a layered ASP.NET Core backend skeleton with a health endpoint and environment-variable configuration, a web shell that shows the version and live health, a browser extension skeleton, and an MCP gateway skeleton. Nothing described in the PRD is built yet.
+**Status:** just initialized. The repository currently holds the product requirements ([docs/PRD.md](docs/PRD.md)), a layered ASP.NET Core backend skeleton with a health endpoint and environment-variable configuration, a web shell that shows the version and live health, a browser extension skeleton, an MCP gateway skeleton, and an Aspire AppHost that runs them together locally. Nothing described in the PRD is built yet.
 
 ## Build and test
 
@@ -26,16 +26,52 @@ Warnings are errors, and .NET analyzers and code-style rules run as part of the 
 | `src/n8Tracks.Api` | HTTP endpoints and the composition root | Application, Infrastructure, ServiceDefaults |
 | `src/n8Tracks.Gateway` | The MCP gateway: a separate service that reaches n8Tracks over HTTP only | ServiceDefaults |
 | `src/n8Tracks.ServiceDefaults` | OpenTelemetry wiring shared by the app and the gateway (see [Telemetry](#telemetry)); no business logic | nothing |
+| `src/n8Tracks.AppHost` | Local development only: the Aspire AppHost that runs the app, the gateway, and the frontend together (see [Run](#run)). In neither Docker image | Api, Gateway (started as processes, not referenced as code) |
 
 Endpoints go through the application layer. Only the Api's composition root (`Program.cs` and the `n8Tracks.Api.DependencyInjection` namespace) may touch Infrastructure or Entity Framework Core. `tests/n8Tracks.Architecture.Tests` fails the build's test run when a project reference or a type dependency breaks these rules; a new project under `src/` must be added to the table in `ProjectReferenceTests`.
 
 ## Run
 
+One command starts the whole stack for local development: the app, the MCP gateway, and the frontend dev server, with a dashboard for their logs and traces. Install the frontend's dependencies once, then run the Aspire AppHost from the repository root:
+
+```sh
+(cd web && npm install)
+dotnet run --project src/n8Tracks.AppHost
+```
+
+| Started | Address |
+| --- | --- |
+| The app (`api`) | `http://localhost:8787` |
+| The MCP gateway (`gateway`), pointed at the app | `http://localhost:8788` |
+| The frontend dev server (`frontend`), with hot reload | `http://localhost:5173` |
+| The Aspire dashboard | `http://localhost:15187` |
+
+The console prints a line starting `Login to the dashboard at`: open that URL (it carries the dashboard's login token; no browser is opened for you). The dashboard lists the three resources and their state, and shows each one's console output, structured logs, and traces. Stop everything with Ctrl+C.
+
+- **Data.** The AppHost creates `src/n8Tracks.AppHost/.localdata` and `.localdata/media` (git-ignored) and passes them as `N8TRACKS_DATA_PATH` and `N8TRACKS_MEDIA_PATH`, so a fresh clone starts healthy.
+- **Settings.** The app and the gateway are configured the way a container is, only through the `N8TRACKS_*` variables under [Configuration](#configuration) and [Gateway settings](#gateway-settings) (and `TZ`). Whatever you set in your own environment replaces the AppHost's default, with no code change: `N8TRACKS_LOG_LEVEL=Debug dotnet run --project src/n8Tracks.AppHost`. A relative path you set is taken relative to the directory you run the command in.
+- **Ports.** 8787, 8788, and 5173 are fixed (the first two follow `N8TRACKS_PORT` and `N8TRACKS_GATEWAY_PORT`), and nothing sits in front of them. If one is in use, that resource fails to start and says so; there are no fallback ports.
+- **Telemetry.** The AppHost sets `OTEL_EXPORTER_OTLP_ENDPOINT` of the app and the gateway to the dashboard, which is what turns their [telemetry](#telemetry) on. The app's log records are redacted before they are exported, as always.
+- **Frontend.** The AppHost never runs `npm install`. If `web/node_modules` is missing, the `frontend` resource fails with a message saying to run `npm install` in `web/`; the app and the gateway still start. After installing, start the resource from the dashboard or restart the AppHost.
+- **No HTTPS.** The dashboard and its collector listen on plain HTTP on localhost, so no development certificate has to be trusted. The warning `No trusted Aspire development certificate was found` at startup can be ignored.
+
+The AppHost (`src/n8Tracks.AppHost`, Aspire) is development tooling only. It is not part of either Docker image: both build contexts leave it out, and `tests/n8Tracks.AppHost.Tests` and `scripts/smoke-docker.sh` fail if that changes.
+
+### Run one component
+
+Each part also runs on its own.
+
+The app:
+
 ```sh
 dotnet run --project src/n8Tracks.Api
 ```
 
-Then `GET http://localhost:8787/health`. The launch profile sets `N8TRACKS_DATA_PATH=./.localdata` (created by a Debug build under `src/n8Tracks.Api`, git-ignored).
+Then `GET http://localhost:8787/health`. The launch profile sets `N8TRACKS_DATA_PATH=./.localdata` (created by a Debug build under `src/n8Tracks.Api`, git-ignored; a different folder from the AppHost's).
+
+The gateway, next to a running app: `dotnet run --project src/n8Tracks.Gateway` (see [MCP gateway](#mcp-gateway)).
+
+The frontend dev server, next to a running app: `npm run dev` in `web/` (see [Frontend project](#frontend-project)).
 
 ## Run with Docker
 
@@ -214,7 +250,7 @@ The frontend is `web/`: React, TypeScript, Vite, and Mantine. It needs Node 24 (
 | Command | Does |
 | --- | --- |
 | `npm ci` | Installs the dependencies from the lockfile. |
-| `npm run dev` | Serves the app at `http://localhost:5173/` with hot reload, proxying `/api` and `/health` to the backend on port 8787 (start it with `dotnet run --project src/n8Tracks.Api`). The dev server runs at the root only. |
+| `npm run dev` | Serves the app at `http://localhost:5173/` with hot reload, proxying `/api` and `/health` to the backend at `N8TRACKS_API_URL`, by default `http://localhost:8787` (start it with `dotnet run --project src/n8Tracks.Api`). The dev server runs at the root only. The AppHost runs this for you (see [Run](#run)). |
 | `npm run build` | Typechecks, then builds into `web/dist`. |
 | `npm run lint` | ESLint, with typed rules, React hooks rules, and accessibility rules. No warnings allowed. |
 | `npm run typecheck` | Strict TypeScript check. |
