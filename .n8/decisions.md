@@ -549,3 +549,6 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** The frontend resource and the dashboard were verified by the Demo, by hand: all three resources `Running`, health traces of `n8tracks` and `n8tracks-gateway` and their log records in the dashboard, the frontend proxying `/health` to the API, and, with `web/node_modules` moved aside, `frontend` in `FailedToStart` with the message while the API and gateway answered healthy.
   **Why:** The test plan assigns these to the Demo; an automated test of the missing install would need a second switch in the AppHost just for the test.
   **Issue:** #37
+
+## /n8-exec M1 — 2026-10-04
+
