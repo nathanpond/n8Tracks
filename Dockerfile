@@ -75,7 +75,7 @@ VOLUME /data
 # 200 (healthy or degraded) passes; 503 or no answer fails. The URL comes from N8TRACKS_PORT and the
 # path of N8TRACKS_BASE_URL, as the container was started with them.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD ["dotnet", "/app/n8Tracks.Api.dll", "--healthcheck"]
+    CMD ["dotnet", "/app/wrong/n8Tracks.Api.dll", "--healthcheck"]
 
 # Starts as root to apply PUID and PGID, then runs the app as that user.
 ENTRYPOINT ["/usr/local/bin/n8tracks-entrypoint"]
