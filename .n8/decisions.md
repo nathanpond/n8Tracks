@@ -159,3 +159,6 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Correction:** Round one's outcomes question was asked without the outcomes having been shown; they were shown and confirmed in round two.
 - **Deferred to M5:** local audio counts in the Generation deletion warning; audio associations moving with a Generation; listening from the Versions table.
 - **Deferred to M6:** filtering Songs by Selected Generation; searching comments; notifications for import results.
+
+## /n8-exec M0 — 2026-10-03
+
