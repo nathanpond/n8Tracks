@@ -16,7 +16,6 @@ export function ColorSchemeControl() {
 
   return (
     <SegmentedControl
-      aria-label="Colour scheme"
       size="xs"
       data={options}
       value={colorScheme}
