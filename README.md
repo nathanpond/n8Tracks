@@ -25,6 +25,7 @@ Every pull request to `main` runs one gate, `.github/workflows/ci.yml`, and the 
 | `dotnet` | `dotnet build -warnaserror` (Release), `dotnet format --verify-no-changes`, and `dotnet test` for the whole solution |
 | `web` | `npm ci`, then `lint`, `typecheck`, `format:check`, `test`, and `build` in `web/` |
 | `extension` | the same in `extension/`, plus `npm run package`; the zip is kept as the `extension-zip` artifact |
+| `container` | builds both Docker images for the runner, runs `scripts/smoke-docker.sh` against them, then builds both for `linux/amd64` and `linux/arm64`; nothing is pushed. The smoke-tested application image is kept for one day as the `app-image` artifact (`n8tracks-image.tar.gz`, for `docker load`) |
 
 Within a job every check runs even after an earlier one failed, so one run shows all the failures; a failed job lists its failed steps in the run summary. The workflow is also callable (`workflow_call`), so publishing runs the same gate. A job added to the workflow must be added to the `needs:` of the `ci` job.
 
@@ -176,6 +177,8 @@ docker buildx build --platform linux/amd64,linux/arm64 .
 The version comes from the root `VERSION` file; `--build-arg VERSION=<version>` overrides it, and `/health` reports whichever was used. The two-platform build needs a builder that supports it (the containerd image store, or `docker buildx create --driver docker-container`). Tests are not run in the image build.
 
 `scripts/smoke-docker.sh` builds both images (the app and the gateway) for your machine and checks them end to end. For the app: health, the page, the user the app runs as, file ownership, a read-only media mount, no media mount, a sub-path, a restart and a re-creation on the same data, and the refusals (`PUID=abc`, a read-only `/data`). For the gateway: health next to the app on a shared network, the user it runs as, the container staying `healthy` while the app is stopped, another port, and the refusal to start without `N8TRACKS_API_URL`. It needs Docker, `curl`, and `python3`, uses host ports 18787 and 18788, and removes what it created.
+
+It prints one `PASS <name>` or `FAIL <name>` line per assertion and runs them all: a failure does not stop the run, the failed lines are repeated at the end, the log of a container that failed an assertion is printed, and the exit code is 1. `N8TRACKS_SMOKE_SKIP_BUILD=1` tests the `n8tracks:dev` and `n8tracks-gateway:dev` images that already exist instead of building them, which is how CI runs it.
 
 ### The gateway image
 

@@ -213,13 +213,150 @@ jobs:
             jq -r 'to_entries[] | select(.value.outcome == "failure") | "- `\(.key)`"' <<<"$STEPS"
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # Both images, as they ship: built, run through the container smoke script, and built once more
+  # for the two published architectures. Nothing is pushed anywhere: the smoke-tested application
+  # image leaves this job only as the artifact `app-image`, for later jobs of the same run.
+  container:
+    name: container
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # The build action would otherwise upload a build record as a second artifact.
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # arm64 is emulated. The build stages run on the runner's own architecture and cross-compile,
+      # so only the runtime stage's few commands run under QEMU.
+      - id: qemu
+        name: Set up QEMU for arm64
+        uses: docker/setup-qemu-action@v4
+        with:
+          image: docker.io/tonistiigi/binfmt:qemu-v10.2.3-68
+          platforms: arm64
+
+      - id: buildx
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+        with:
+          driver-opts: image=moby/buildkit:v0.33.1
+
+      # No VERSION build argument: the images report the plain VERSION file value. A pull request
+      # that may not write the layer cache still builds (ignore-error).
+      - id: build_app
+        name: Build the application image for the runner's platform
+        if: ${{ !cancelled() && steps.buildx.outcome == 'success' }}
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          tags: n8tracks:dev
+          load: true
+          push: false
+          provenance: false
+          cache-from: type=gha,scope=app
+          cache-to: type=gha,mode=max,scope=app,ignore-error=true
+
+      - id: build_gateway
+        name: Build the gateway image for the runner's platform
+        if: ${{ !cancelled() && steps.buildx.outcome == 'success' }}
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: src/n8Tracks.Gateway/Dockerfile
+          tags: n8tracks-gateway:dev
+          load: true
+          push: false
+          provenance: false
+          cache-from: type=gha,scope=gateway
+          cache-to: type=gha,mode=max,scope=gateway,ignore-error=true
+
+      # One "PASS <name>" or "FAIL <name>" line per assertion; the script runs them all, prints the
+      # log of a container that failed one, and repeats the failed lines at the end.
+      - id: smoke
+        name: scripts/smoke-docker.sh
+        if: ${{ !cancelled() && steps.build_app.outcome == 'success' && steps.build_gateway.outcome == 'success' }}
+        env:
+          N8TRACKS_SMOKE_SKIP_BUILD: '1'
+        run: scripts/smoke-docker.sh 2>&1 | tee "$RUNNER_TEMP/smoke.log"
+
+      # Only an image that passed the smoke script is handed on, and it is the very image that was
+      # tested: saved from the Docker engine, not built again.
+      - id: save
+        name: Save the application image
+        if: ${{ !cancelled() && steps.smoke.outcome == 'success' }}
+        run: |
+          docker save n8tracks:dev | gzip > "$RUNNER_TEMP/n8tracks-image.tar.gz"
+          ls -l "$RUNNER_TEMP/n8tracks-image.tar.gz"
+
+      - id: upload
+        name: Upload the application image
+        if: ${{ !cancelled() && steps.save.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-image
+          path: ${{ runner.temp }}/n8tracks-image.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+          # Already gzip.
+          compression-level: 0
+
+      # The two published architectures, built to the layer cache only: no image is exported.
+      - id: platforms_app
+        name: Build the application image for linux/amd64 and linux/arm64
+        if: ${{ !cancelled() && steps.qemu.outcome == 'success' && steps.buildx.outcome == 'success' }}
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          outputs: type=cacheonly
+          push: false
+          provenance: false
+          cache-from: type=gha,scope=app
+          cache-to: type=gha,mode=max,scope=app,ignore-error=true
+
+      - id: platforms_gateway
+        name: Build the gateway image for linux/amd64 and linux/arm64
+        if: ${{ !cancelled() && steps.qemu.outcome == 'success' && steps.buildx.outcome == 'success' }}
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: src/n8Tracks.Gateway/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          outputs: type=cacheonly
+          push: false
+          provenance: false
+          cache-from: type=gha,scope=gateway
+          cache-to: type=gha,mode=max,scope=gateway,ignore-error=true
+
+      - name: Summarize failed steps
+        if: ${{ failure() }}
+        env:
+          STEPS: ${{ toJSON(steps) }}
+        run: |
+          {
+            echo "### container: failed steps"
+            jq -r 'to_entries[] | select(.value.outcome == "failure") | "- `\(.key)`"' <<<"$STEPS"
+            if grep -q '^FAIL ' "$RUNNER_TEMP/smoke.log" 2>/dev/null; then
+              echo
+              echo "Failed smoke assertions:"
+              echo
+              echo '```'
+              grep '^FAIL ' "$RUNNER_TEMP/smoke.log" | sort -u
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # The one check that represents the gate. `always()` makes it run (and fail) when a needed job
   # failed, was cancelled, or was skipped, where a plain `needs:` would leave it skipped, and a
   # skipped required check counts as passing.
   ci:
     name: ci
     if: ${{ always() }}
-    needs: [dotnet, web, extension]
+    needs: [dotnet, web, extension, container]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
