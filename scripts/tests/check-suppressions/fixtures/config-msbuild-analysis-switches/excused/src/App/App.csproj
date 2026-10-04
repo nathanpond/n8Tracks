@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AnalysisMode>None</AnalysisMode> <!-- Agreed with the team: the legacy module is too noisy to fix this quarter. -->
+    <CodeAnalysisTreatWarningsAsErrors>false</CodeAnalysisTreatWarningsAsErrors> <!-- Agreed with the team: the legacy module is too noisy to fix this quarter. -->
+    <WarningLevel>0</WarningLevel> <!-- Agreed with the team: the legacy module is too noisy to fix this quarter. -->
+    <AnalysisLevelStyle>none</AnalysisLevelStyle> <!-- Agreed with the team: the legacy module is too noisy to fix this quarter. -->
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,149 @@
+#!/bin/sh
+# A stand-in for `gh`, for scripts/tests/release-github/run.sh. It answers only the `gh release`
+# calls scripts/release-github.sh makes, from the files in $FAKE_GITHUB, and appends each call to
+# $FAKE_GITHUB/calls. It never uses the network.
+#
+#   $FAKE_GITHUB/release/            exists when the tag has a release (or a draft)
+#   $FAKE_GITHUB/release/draft       "true" or "false"
+#   $FAKE_GITHUB/release/prerelease  "true" or "false"
+#   $FAKE_GITHUB/release/latest      "true" or "false"
+#   $FAKE_GITHUB/release/title       its name
+#   $FAKE_GITHUB/release/notes       its notes ("generated from <tag>" or "generated from the beginning")
+#   $FAKE_GITHUB/release/assets/     the attached files
+#
+#   FAKE_GH_FAIL=<view|create|upload|download|edit>   that command fails, having done nothing
+#
+# Like the real one: `view` of a tag without a release says exactly "release not found"; `create`
+# with files leaves nothing behind when it fails; `upload` refuses a name the release already has.
+set -eu
+
+state=${FAKE_GITHUB:?}
+
+[ "${1:-}" = release ] || {
+  echo "fake gh: unexpected command: $*" >&2
+  exit 1
+}
+command=${2:-}
+shift 2
+echo "$command $*" >>"$state/calls"
+
+if [ "${FAKE_GH_FAIL:-}" = "$command" ]; then
+  echo "HTTP 502: Bad Gateway (https://api.github.com/repos/o/r/releases)" >&2
+  exit 1
+fi
+
+release="$state/release"
+
+case $command in
+  view)
+    tag=$1
+    [ "${2:-}" = --json ] && [ "${3:-}" = isDraft,url,assets ] && [ $# -eq 3 ] || {
+      echo "fake gh: unexpected view arguments: $*" >&2
+      exit 1
+    }
+    [ -d "$release" ] || {
+      echo "release not found" >&2
+      exit 1
+    }
+    if [ "$(cat "$release/draft")" = true ]; then
+      url="https://github.com/o/r/releases/tag/untagged-0123456789abcdef"
+    else
+      url="https://github.com/o/r/releases/tag/$tag"
+    fi
+    find "$release/assets" -type f -exec basename {} \; | sort | jq -R '{name: .}' |
+      jq -s --arg url "$url" --argjson draft "$(cat "$release/draft")" \
+        '{isDraft: $draft, url: $url, assets: .}'
+    ;;
+  create)
+    tag=$1
+    shift
+    title=
+    prerelease=false
+    latest=automatic
+    start=
+    generate=false
+    verify=false
+    files=
+    while [ $# -gt 0 ]; do
+      case $1 in
+        --title)
+          title=$2
+          shift
+          ;;
+        --notes-start-tag)
+          start=$2
+          shift
+          ;;
+        --prerelease) prerelease=true ;;
+        --latest=true | --latest=false) latest=${1#--latest=} ;;
+        --generate-notes) generate=true ;;
+        --verify-tag) verify=true ;;
+        -*)
+          echo "fake gh: unexpected create option: $1" >&2
+          exit 1
+          ;;
+        *) files="$files $1" ;;
+      esac
+      shift
+    done
+    [ ! -d "$release" ] || {
+      echo "HTTP 422: Validation Failed: Release.tag_name already exists" >&2
+      exit 1
+    }
+    [ "$generate" = true ] && [ "$verify" = true ] || {
+      echo "fake gh: create without --generate-notes or --verify-tag" >&2
+      exit 1
+    }
+    mkdir -p "$release/assets"
+    echo false >"$release/draft"
+    echo "$prerelease" >"$release/prerelease"
+    echo "$latest" >"$release/latest"
+    echo "$title" >"$release/title"
+    echo "generated from ${start:-the beginning}" >"$release/notes"
+    for file in $files; do
+      cp "$file" "$release/assets/"
+    done
+    echo "https://github.com/o/r/releases/tag/$tag"
+    ;;
+  upload)
+    [ $# -eq 2 ] || {
+      echo "fake gh: unexpected upload arguments: $*" >&2
+      exit 1
+    }
+    name=$(basename "$2")
+    [ ! -f "$release/assets/$name" ] || {
+      echo "asset under the same name already exists: [$name]" >&2
+      exit 1
+    }
+    cp "$2" "$release/assets/"
+    ;;
+  download)
+    [ "${2:-}" = --pattern ] && [ "${4:-}" = --dir ] && [ $# -eq 5 ] || {
+      echo "fake gh: unexpected download arguments: $*" >&2
+      exit 1
+    }
+    [ -f "$release/assets/$3" ] || {
+      echo "no assets match the file pattern" >&2
+      exit 1
+    }
+    cp "$release/assets/$3" "$5/"
+    ;;
+  edit)
+    shift
+    for option in "$@"; do
+      case $option in
+        --draft=false) echo false >"$release/draft" ;;
+        --prerelease=true | --prerelease=false) echo "${option#--prerelease=}" >"$release/prerelease" ;;
+        --latest=true | --latest=false) echo "${option#--latest=}" >"$release/latest" ;;
+        *)
+          echo "fake gh: unexpected edit option: $option" >&2
+          exit 1
+          ;;
+      esac
+    done
+    ;;
+  *)
+    echo "fake gh: unexpected release command: $command" >&2
+    exit 1
+    ;;
+esac

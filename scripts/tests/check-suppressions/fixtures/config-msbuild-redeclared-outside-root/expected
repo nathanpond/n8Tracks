@@ -1,0 +1,4 @@
+src/App/App.csproj:3 <TreatWarningsAsErrors>
+build/Common.props:3 <EnableNETAnalyzers>
+Directory.Build.targets:3 <AnalysisLevel>
+tests/App.Tests/App.Tests.csproj:3 <EnforceCodeStyleInBuild>

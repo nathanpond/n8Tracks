@@ -1,0 +1,2 @@
+extension/package.json:7 --max-warnings
+e2e/package.json:7 --max-warnings

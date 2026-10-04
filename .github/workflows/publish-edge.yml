@@ -1,0 +1,335 @@
+# Publishes the `edge` images: the newest build of main, for anyone who wants it before a release.
+# Every push to main runs the gate (ci.yml, the same checks a pull request passes) and, only if it
+# is green, pushes the application image and the gateway image to GHCR for linux/amd64 and
+# linux/arm64, tagged `edge` and `edge-<short sha>`, and keeps the extension zip of the same commit.
+#
+# How it stays safe:
+# - Both images are built and pushed by digest, untagged, before any tag exists. One script,
+#   scripts/publish-tags.sh, then tags both; if it fails part-way, it puts the `edge` tag of both
+#   images back where it started (or removes it, on the very first run).
+# - A run publishes one at a time and is never cancelled once it is publishing. A run that is still
+#   waiting for its turn is replaced by a newer one, so not every commit gets an `edge-<sha>` tag.
+# - A run whose commit is no longer the head of main when it is ready to tag still pushes its
+#   `edge-<sha>` tags, but leaves `edge` alone: `edge` never moves backwards.
+# - Started by hand from main it publishes again. Started by hand from any other ref it runs the
+#   gate and builds both images, and pushes, tags, and uploads nothing.
+#
+# The names (short sha, version, tag) come from scripts/edge-version.sh; this file holds no naming
+# or tagging logic of its own. Rules for editing it are the ones at the top of ci.yml: actions are
+# pinned to a major version, nothing is fetched at "latest", and every step that can fail has an id.
+name: publish-edge
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: gate
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  publish:
+    name: publish
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # The only job that may write packages.
+    permissions:
+      contents: read
+      packages: write
+    # The group covers this job only, so the gate of a newer push runs at once. A publish in
+    # progress is never cancelled; of the runs waiting behind it, GitHub keeps only the newest.
+    concurrency:
+      group: publish-edge-${{ github.ref }}
+      cancel-in-progress: false
+    env:
+      APP_IMAGE: ghcr.io/nathanpond/n8tracks
+      GATEWAY_IMAGE: ghcr.io/nathanpond/n8tracks-gateway
+      # The build action would otherwise upload a build record as an artifact of its own.
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
+      # This workflow writes its own summary.
+      DOCKER_BUILD_SUMMARY: 'false'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # `publish` is true only on main: every step that pushes, tags, or uploads asks for it.
+      - id: plan
+        name: Name this build
+        run: |
+          names=$(scripts/edge-version.sh --version "$(cat VERSION)" --sha "$GITHUB_SHA")
+          printf '%s\n' "$names"
+          printf '%s\n' "$names" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF" = refs/heads/main ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Not main ($GITHUB_REF): the images are built, and nothing is pushed, tagged, or uploaded."
+          fi
+
+      # --- The extension zip of the same commit, stamped with the same version. Built before the
+      # registry login, so no step here runs with the registry credentials on the machine. ---
+
+      - id: node
+        name: Set up the Node version in .nvmrc
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      - id: extension_install
+        name: npm ci (extension)
+        working-directory: extension
+        run: npm ci
+
+      - id: extension_package
+        name: npm run package (extension)
+        working-directory: extension
+        env:
+          N8TRACKS_VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          npm run package
+          ls -l "n8tracks-extension-$N8TRACKS_VERSION.zip"
+
+      # --- The images ---
+
+      # arm64 is emulated. The build stages run on the runner's own architecture and cross-compile,
+      # so only the runtime stage's few commands run under QEMU.
+      - id: qemu
+        name: Set up QEMU for arm64
+        uses: docker/setup-qemu-action@v4
+        with:
+          image: docker.io/tonistiigi/binfmt:qemu-v10.2.3-68
+          platforms: arm64
+
+      - id: buildx
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+        with:
+          driver-opts: image=moby/buildkit:v0.33.1
+
+      - id: login
+        name: Log in to GHCR
+        if: ${{ steps.plan.outputs.publish == 'true' }}
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Pushed by digest, with no tag: until the tagging step nothing anyone pulls has changed.
+      # The layer cache is the gate's (same scopes), which built this commit minutes ago; only the
+      # layers after the VERSION build argument are built here. The cache is read, not written.
+      - id: build_app
+        name: Build the application image and push it by digest
+        if: ${{ steps.plan.outputs.publish == 'true' }}
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            VERSION=${{ steps.plan.outputs.version }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.plan.outputs.version }}
+            org.opencontainers.image.licenses=Apache-2.0
+          provenance: mode=max
+          sbom: generator=docker/buildkit-syft-scanner:1.12.0
+          outputs: type=image,name=${{ env.APP_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=app
+
+      - id: build_gateway
+        name: Build the gateway image and push it by digest
+        if: ${{ steps.plan.outputs.publish == 'true' }}
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: src/n8Tracks.Gateway/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            VERSION=${{ steps.plan.outputs.version }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.plan.outputs.version }}
+            org.opencontainers.image.licenses=Apache-2.0
+          provenance: mode=max
+          sbom: generator=docker/buildkit-syft-scanner:1.12.0
+          outputs: type=image,name=${{ env.GATEWAY_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=gateway
+
+      # Not main: the same two builds, to the build cache only. No image leaves the builder.
+      - id: dry_app
+        name: Build the application image without pushing it
+        if: ${{ steps.plan.outputs.publish != 'true' }}
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            VERSION=${{ steps.plan.outputs.version }}
+          outputs: type=cacheonly
+          push: false
+          provenance: false
+          cache-from: type=gha,scope=app
+
+      - id: dry_gateway
+        name: Build the gateway image without pushing it
+        if: ${{ steps.plan.outputs.publish != 'true' }}
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: src/n8Tracks.Gateway/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            VERSION=${{ steps.plan.outputs.version }}
+          outputs: type=cacheonly
+          push: false
+          provenance: false
+          cache-from: type=gha,scope=gateway
+
+      # Asked as late as possible: a run that main has moved past must not move `edge` backwards.
+      # If the question cannot be answered the step fails, and no tag has been created yet.
+      - id: head
+        name: Is this commit still the head of main?
+        if: ${{ steps.plan.outputs.publish == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          head=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          echo "main is at $head; this run built $GITHUB_SHA"
+          echo "main=$head" >> "$GITHUB_OUTPUT"
+          if [ "$head" = "$GITHUB_SHA" ]; then
+            echo "floating=edge" >> "$GITHUB_OUTPUT"
+          else
+            echo "floating=" >> "$GITHUB_OUTPUT"
+            echo "::notice::main has moved on to $head: this run pushes its edge-<sha> tags and does not move edge."
+          fi
+
+      # The one step that changes what anyone pulls. On a failure the script puts `edge` back on
+      # both images (or removes it, if it did not exist) before it fails the step; GH_TOKEN is for
+      # that removal, which goes through GitHub's packages API.
+      - id: tag
+        name: scripts/publish-tags.sh
+        if: ${{ steps.plan.outputs.publish == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APP_DIGEST: ${{ steps.build_app.outputs.digest }}
+          GATEWAY_DIGEST: ${{ steps.build_gateway.outputs.digest }}
+          FIXED: ${{ steps.plan.outputs.tag }}
+          FLOATING: ${{ steps.head.outputs.floating }}
+        run: |
+          scripts/publish-tags.sh \
+            --image "$APP_IMAGE@$APP_DIGEST" \
+            --image "$GATEWAY_IMAGE@$GATEWAY_DIGEST" \
+            --fixed "$FIXED" \
+            --floating "$FLOATING" > "$RUNNER_TEMP/tagged.txt"
+          cat "$RUNNER_TEMP/tagged.txt"
+
+      # Only a run that published keeps its zip: the zip and the images are one build.
+      - id: upload
+        name: Upload the extension zip
+        if: ${{ steps.plan.outputs.publish == 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: extension-zip-edge
+          path: extension/n8tracks-extension-${{ steps.plan.outputs.version }}.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - id: summary
+        name: Summarize what was published
+        if: ${{ steps.plan.outputs.publish == 'true' }}
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+          TAG: ${{ steps.plan.outputs.tag }}
+          FLOATING: ${{ steps.head.outputs.floating }}
+          MAIN: ${{ steps.head.outputs.main }}
+        run: |
+          {
+            echo "### Published edge images"
+            echo
+            echo "Version \`$VERSION\`, commit \`$GITHUB_SHA\`, for \`linux/amd64\` and \`linux/arm64\`."
+            echo
+            echo "| Tag | Digest |"
+            echo "| --- | --- |"
+            while read -r _ reference digest; do
+              echo "| \`$reference\` | \`$digest\` |"
+            done < "$RUNNER_TEMP/tagged.txt"
+            echo
+            if [ -z "$FLOATING" ]; then
+              echo "**\`edge\` was not moved.** \`main\` had moved on to \`$MAIN\` by the time this run was ready to publish, so only the \`$TAG\` tags were pushed."
+              echo
+            fi
+            echo "Pull:"
+            echo
+            echo '```sh'
+            while read -r _ reference _; do
+              echo "docker pull $reference"
+            done < "$RUNNER_TEMP/tagged.txt"
+            echo '```'
+            echo
+            echo "The extension zip of this commit (\`n8tracks-extension-$VERSION.zip\`) is the artifact \`extension-zip-edge\` of this run."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - id: summary_dry
+        name: Summarize a run that published nothing
+        if: ${{ steps.plan.outputs.publish == 'false' }}
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          {
+            echo "### Nothing was published"
+            echo
+            echo "This run was started from \`$GITHUB_REF\`, not from \`main\`. Both images and the extension were built as \`$VERSION\`; nothing was pushed, no tag was moved, and no artifact was uploaded."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The outcomes are listed one by one: `toJSON(steps)` would carry the build steps' outputs
+      # (the whole build metadata), which is more than one environment variable can hold.
+      - name: Summarize failed steps
+        if: ${{ failure() }}
+        env:
+          OUTCOMES: >-
+            plan=${{ steps.plan.outcome }}
+            node=${{ steps.node.outcome }}
+            extension_install=${{ steps.extension_install.outcome }}
+            extension_package=${{ steps.extension_package.outcome }}
+            qemu=${{ steps.qemu.outcome }}
+            buildx=${{ steps.buildx.outcome }}
+            login=${{ steps.login.outcome }}
+            build_app=${{ steps.build_app.outcome }}
+            build_gateway=${{ steps.build_gateway.outcome }}
+            dry_app=${{ steps.dry_app.outcome }}
+            dry_gateway=${{ steps.dry_gateway.outcome }}
+            head=${{ steps.head.outcome }}
+            tag=${{ steps.tag.outcome }}
+            upload=${{ steps.upload.outcome }}
+            summary=${{ steps.summary.outcome }}
+            summary_dry=${{ steps.summary_dry.outcome }}
+          TAG_OUTCOME: ${{ steps.tag.outcome }}
+        run: |
+          {
+            echo "### publish: failed steps"
+            for outcome in $OUTCOMES; do
+              if [ "${outcome#*=}" = "failure" ]; then
+                echo "- \`${outcome%%=*}\`"
+              fi
+            done
+            echo
+            case $TAG_OUTCOME in
+              failure) echo "Tagging failed. The log of the \`tag\` step says whether \`edge\` was put back on both images; the \`edge-<sha>\` tags and the untagged digests this run pushed are left in place." ;;
+              success) echo "The images were tagged before the failure, so they are published; only a later step failed." ;;
+              *) echo "No tag was created or moved: \`edge\` points where it did before this run." ;;
+            esac
+          } >> "$GITHUB_STEP_SUMMARY"

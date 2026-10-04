@@ -1,0 +1,130 @@
+#!/bin/sh
+# A stand-in for `gh`, for scripts/tests/publish-tags/run.sh. It answers only the calls
+# scripts/publish-tags.sh makes when it removes a tag and the ones scripts/published-tags.sh
+# makes when it lists an image's tags, from the same files as the stand-in
+# `docker` beside it ($FAKE_REGISTRY), and appends each call to $FAKE_REGISTRY/calls. It never
+# uses the network.
+#
+# Like GitHub, it refuses to delete the last tagged version of a package.
+#
+#   FAKE_GH_REFUSE_DELETE=1   every delete fails, as when the token may not delete versions
+#   FAKE_GH_FAIL_LIST=1       listing a package's versions fails with a server error
+#
+# Listing the versions of a package nothing was ever pushed to is a 404, as on GitHub, and like
+# the real `gh` it then prints the error body on stdout.
+set -eu
+
+state=${FAKE_REGISTRY:?}
+
+[ "${1:-}" = api ] || {
+  echo "fake gh: unexpected command: $*" >&2
+  exit 1
+}
+shift
+
+method=GET
+path=
+filter=.
+while [ $# -gt 0 ]; do
+  case $1 in
+    --method)
+      method=$2
+      shift
+      ;;
+    --jq)
+      filter=$2
+      shift
+      ;;
+    --paginate) ;;
+    -*)
+      echo "fake gh: unexpected option: $1" >&2
+      exit 1
+      ;;
+    *) path=$1 ;;
+  esac
+  shift
+done
+
+echo "gh $method $path" >>"$state/calls"
+
+# repository_key <owner> <package>: the directory name the stand-in registry uses.
+repository_key() {
+  printf 'ghcr.io_%s_%s' "$1" "$(printf '%s' "$2" | sed 's|%2F|_|g')"
+}
+
+# tags_of <repository key> <digest>: the tags pointing at the digest, one per line.
+tags_of() {
+  [ -d "$state/tags/$1" ] || return 0
+  for file in "$state/tags/$1"/*; do
+    [ -f "$file" ] || continue
+    [ "$(cat "$file")" = "$2" ] && basename "$file"
+  done
+  return 0
+}
+
+case "$method $path" in
+  "GET users/"*"/packages/container/"*"/versions?"*)
+    owner=${path#users/}
+    owner=${owner%%/*}
+    package=${path#*/packages/container/}
+    package=${package%%/versions*}
+    key=$(repository_key "$owner" "$package")
+    if [ "${FAKE_GH_FAIL_LIST:-}" = 1 ]; then
+      echo '{"message":"Server Error"}'
+      echo "gh: Server Error (HTTP 502)" >&2
+      exit 1
+    fi
+    if [ ! -d "$state/manifests/$key" ]; then
+      echo '{"message":"Package not found.","status":"404"}'
+      echo "gh: Package not found. (HTTP 404)" >&2
+      exit 1
+    fi
+    {
+      for file in "$state/manifests/$key"/*; do
+        [ -f "$file" ] || continue
+        digest=$(basename "$file")
+        tags_of "$key" "$digest" | jq -R . | jq -s --arg name "$digest" --argjson id "$(cat "$file")" \
+          '{id: $id, name: $name, metadata: {package_type: "container", container: {tags: .}}}'
+      done
+    } | jq -s . | jq -r "$filter"
+    ;;
+  "GET users/"*)
+    echo '{"login":"o","type":"User"}' | jq -r "$filter"
+    ;;
+  "DELETE users/"*"/packages/container/"*"/versions/"*)
+    if [ "${FAKE_GH_REFUSE_DELETE:-}" = 1 ]; then
+      echo "gh: Package not found. (HTTP 404)" >&2
+      exit 1
+    fi
+    owner=${path#users/}
+    owner=${owner%%/*}
+    package=${path#*/packages/container/}
+    package=${package%%/versions*}
+    id=${path##*/}
+    key=$(repository_key "$owner" "$package")
+    target=
+    tagged=0
+    for file in "$state/manifests/$key"/*; do
+      [ -f "$file" ] || continue
+      digest=$(basename "$file")
+      [ "$(cat "$file")" = "$id" ] && target=$digest
+      [ -n "$(tags_of "$key" "$digest")" ] && tagged=$((tagged + 1))
+    done
+    if [ -z "$target" ]; then
+      echo "gh: Package version not found. (HTTP 404)" >&2
+      exit 1
+    fi
+    if [ -n "$(tags_of "$key" "$target")" ] && [ "$tagged" -le 1 ]; then
+      echo "gh: You cannot delete the last tagged version of a package. You must delete the package instead. (HTTP 400)" >&2
+      exit 1
+    fi
+    for tag in $(tags_of "$key" "$target"); do
+      rm "$state/tags/$key/$tag"
+    done
+    rm "$state/manifests/$key/$target"
+    ;;
+  *)
+    echo "fake gh: unexpected call: $method $path" >&2
+    exit 1
+    ;;
+esac

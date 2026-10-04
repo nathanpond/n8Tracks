@@ -1,0 +1,6 @@
+<Project>
+  <Target Name="BuildLoose">
+    <MSBuild Projects="../src/App/App.csproj" Properties="TreatWarningsAsErrors=false" />
+    <MSBuild Projects="../src/App/App.csproj" Properties="Configuration=Release;Nullable=disable" />
+  </Target>
+</Project>

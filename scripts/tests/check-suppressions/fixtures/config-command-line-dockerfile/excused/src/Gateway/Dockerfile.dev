@@ -1,0 +1,3 @@
+# Agreed with the team: the legacy module is too noisy to fix this quarter.
+RUN dotnet build -nowarn:CA2007 \
+    -p:NoWarn=CS1591

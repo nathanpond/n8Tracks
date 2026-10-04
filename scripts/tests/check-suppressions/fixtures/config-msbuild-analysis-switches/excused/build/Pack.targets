@@ -1,0 +1,6 @@
+<Project>
+  <Target Name="BuildLoose">
+    <MSBuild Projects="../src/App/App.csproj" Properties="TreatWarningsAsErrors=false" /> <!-- Agreed with the team: the legacy module is too noisy to fix this quarter. -->
+    <MSBuild Projects="../src/App/App.csproj" Properties="Configuration=Release;Nullable=disable" /> <!-- Agreed with the team: the legacy module is too noisy to fix this quarter. -->
+  </Target>
+</Project>

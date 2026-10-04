@@ -1,0 +1,3 @@
+FROM sdk AS build
+RUN dotnet build -nowarn:CA2007 \
+    -p:NoWarn=CS1591

@@ -1,26 +1,72 @@
+# Dependency updates. Every pull request Dependabot opens goes through the same `ci` gate as any
+# other change.
+#
+# For every ecosystem: checked weekly (Dependabot's default day, Monday, UTC); minor and patch
+# updates arrive together as one pull request per ecosystem; a major update gets a pull request
+# of its own; at most five version-update pull requests are open at a time; titles start with
+# `chore(deps)`. Grouping and the limit apply to version updates only: security updates arrive
+# one by one, whenever they are needed.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore(deps)
+    groups:
+      github-actions-minor-and-patch:
+        update-types: [minor, patch]
+
   - package-ecosystem: nuget
     directory: /
     schedule:
       interval: weekly
-  - package-ecosystem: npm
-    directory: /web
-    schedule:
-      interval: weekly
-  - package-ecosystem: npm
-    directory: /extension
-    schedule:
-      interval: weekly
-  - package-ecosystem: docker
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore(deps)
+    groups:
+      nuget-minor-and-patch:
+        update-types: [minor, patch]
+
+  # The .NET SDK version pinned in global.json.
+  - package-ecosystem: dotnet-sdk
     directory: /
     schedule:
       interval: weekly
-  - package-ecosystem: docker
-    directory: /src/n8Tracks.Gateway
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore(deps)
+    groups:
+      dotnet-sdk-minor-and-patch:
+        update-types: [minor, patch]
+
+  # One entry for the three npm projects, so the group and the limit cover npm as a whole.
+  - package-ecosystem: npm
+    directories:
+      - /web
+      - /extension
+      - /e2e
     schedule:
       interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore(deps)
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+
+  # The application image (/Dockerfile) and the gateway image. The Compose example is not tracked.
+  - package-ecosystem: docker
+    directories:
+      - /
+      - /src/n8Tracks.Gateway
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore(deps)
+    groups:
+      docker-minor-and-patch:
+        update-types: [minor, patch]

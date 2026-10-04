@@ -16,6 +16,55 @@ dotnet format --verify-no-changes
 
 Warnings are errors, and .NET analyzers and code-style rules run as part of the build (`Directory.Build.props`).
 
+### Continuous integration
+
+Every pull request to `main` runs one gate, `.github/workflows/ci.yml`, and the single check named `ci` is green only when all of it passed:
+
+| Job | Runs |
+| --- | --- |
+| `dotnet` | `dotnet build -warnaserror` (Release), `dotnet format --verify-no-changes`, and `dotnet test` for the whole solution |
+| `web` | `npm ci`, then `lint`, `typecheck`, `format:check`, `test`, and `build` in `web/` |
+| `extension` | the same in `extension/`, plus `npm run package`; the zip is kept as the `extension-zip` artifact |
+| `container` | builds both Docker images for the runner, runs `scripts/smoke-docker.sh` against them, then builds both for `linux/amd64` and `linux/arm64`; nothing is pushed. The smoke-tested application image is kept for one day as the `app-image` artifact (`n8tracks-image.tar.gz`, for `docker load`) |
+
+Within a job every check runs even after an earlier one failed, so one run shows all the failures; a failed job lists its failed steps in the run summary. The workflow is also callable (`workflow_call`), so publishing runs the same gate. A job added to the workflow must be added to the `needs:` of the `ci` job.
+
+### Publishing `edge`
+
+Every push to `main` runs `.github/workflows/publish-edge.yml`: the same gate first, and only if it is green, the [`edge` images](#edge-images) of that commit are pushed to GHCR and the extension zip of the same commit, stamped with the same version, is kept for 14 days as the `extension-zip-edge` artifact of the run. Nobody builds or pushes images by hand. The run's summary lists the tags, their digests, and the commands to pull them.
+
+- **Nothing is half-published.** Both images are pushed by digest, untagged, before any tag exists; `scripts/publish-tags.sh` then tags both. If that fails part-way, it puts the `edge` tag of both images back where it started (on the very first run, it removes it) and the run fails. The `edge-<sha>` tags and untagged digests of a failed run are left in place.
+- **One publish at a time.** A publish in progress is never cancelled by a newer push. A run still waiting for its turn is replaced by a newer one, so not every commit is guaranteed an `edge-<sha>` tag.
+- **`edge` never moves backwards.** If a newer commit has reached `main` by the time a run is ready to tag, the run still pushes its `edge-<sha>` tags, leaves `edge` alone, and says so in its summary.
+- **By hand.** The workflow can be started from the Actions tab (or `gh workflow run publish-edge.yml --ref main`) to publish `main` again. Started from any other ref it runs the gate and builds both images, and pushes, tags, and uploads nothing.
+
+The names come from `scripts/edge-version.sh` (the short sha is the first 7 characters of the commit ID; a `VERSION` that already has a pre-release suffix gets `.edge.<sha>` appended instead of `-edge.<sha>`). Both scripts have tests that publish nothing and run in the gate: `scripts/tests/edge-version/run.sh` and `scripts/tests/publish-tags/run.sh`, the second against a stand-in registry.
+
+### Releasing
+
+Pushing a version tag (`v1.4.2`, or `v1.5.0-rc.1` for a pre-release) runs `.github/workflows/release.yml`: the release rules first, then the same gate, and only if both pass, the versioned images of both components are pushed to GHCR and a GitHub release is created with the extension zip and its checksum attached. A published version is never overwritten, and re-running a failed run completes it. How to cut a release, what a failed run leaves behind, and how to roll back are in [docs/releasing.md](docs/releasing.md).
+
+The workflow holds no rules of its own: `scripts/release-tags.sh` decides what a tag publishes, `scripts/published-tags.sh` lists what is already published, `scripts/publish-tags.sh` tags the images, and `scripts/release-github.sh` creates or completes the GitHub release. Their tests publish nothing and run in the gate (`scripts/tests/release-tags/run.sh`, `scripts/tests/publish-tags/run.sh`, `scripts/tests/release-github/run.sh`).
+
+### Branch and tag rules
+
+Changes reach `main` only through a pull request whose `ci` check is green. Nobody can push to `main` directly or merge while `ci` is red or still running, and that includes the repository owner: the rule has no bypass. No approval is required, and a branch does not have to be up to date with `main` to merge.
+
+The rule is the `main-pr-required` ruleset. Its definition is committed as `.github/rulesets/main-pr-required.json`, in the shape GitHub's REST API takes, and GitHub is brought in line with the committed files by:
+
+```sh
+scripts/apply-rulesets.sh           # create or update each ruleset, matched by name
+scripts/apply-rulesets.sh --check   # change nothing; report where GitHub differs from the files
+```
+
+Both need `gh` signed in as an administrator of the repository, and `jq`. To change a rule, edit the JSON, merge it, then run the script. A ruleset that has no file is left alone; nothing is deleted. `scripts/tests/apply-rulesets/run.sh` tests the script without touching GitHub.
+
+Release tags have two rulesets of their own, defined beside it and applied by the same script: `release-tags-create` lets only the repository admin role create a `v*` tag, and `release-tags-immutable` stops everyone, the owner included, from moving or deleting one. What that means for a release is in [docs/releasing.md](docs/releasing.md#who-can-release).
+
+### Dependency updates
+
+Dependabot (`.github/dependabot.yml`) checks GitHub Actions, NuGet packages, the .NET SDK version in `global.json`, the npm projects (`web/`, `extension/`, `e2e/`), and the base images of both Dockerfiles every week. Minor and patch updates arrive as one pull request per ecosystem, each major update as its own, with at most five open per ecosystem, titled `chore(deps): ...`. Security updates arrive separately as they are needed. All of them go through the same `ci` gate. Secret scanning and push protection are on for the repository.
+
 ### Backend layout
 
 | Project | Holds | May reference |
@@ -75,7 +124,34 @@ The frontend dev server, next to a running app: `npm run dev` in `web/` (see [Fr
 
 ## Run with Docker
 
-n8Tracks runs from one image: the app and its web interface, on port 8787. The image is built from this repository for `linux/amd64` and `linux/arm64`; published images come with the first release. The MCP gateway is a second, separate image: see [The gateway image](#the-gateway-image).
+n8Tracks runs from one image: the app and its web interface, on port 8787. The image is built from this repository for `linux/amd64` and `linux/arm64`. Released versions are published under their version (`ghcr.io/nathanpond/n8tracks:1.4.2`; see [docs/releasing.md](docs/releasing.md) for which tags a release gets); until the first release the only published images are the [`edge` images](#edge-images), the newest build of `main`. The MCP gateway is a second, separate image: see [The gateway image](#the-gateway-image).
+
+### Edge images
+
+The newest build of `main` is published after every merge, for `linux/amd64` and `linux/arm64`, and can be pulled without logging in:
+
+```sh
+docker pull ghcr.io/nathanpond/n8tracks:edge
+docker pull ghcr.io/nathanpond/n8tracks-gateway:edge
+```
+
+| Tag | Is |
+| --- | --- |
+| `edge` | The newest commit of `main` that passed the gate. It moves with every merge. |
+| `edge-<short sha>` | The build of one commit (the first 7 characters of its ID), for pinning or going back. Not every commit has one: when merges come faster than publishing, a run that is still waiting is replaced by a newer one. Old ones are not cleaned up yet. |
+
+**`edge` is not a release.** It is whatever `main` holds: it has passed the automated gate and nothing else, it can change several times a day, and nothing promises that data written by one `edge` build is readable by the next. Use it to try what is coming, not to keep a library you care about.
+
+An `edge` build reports its version as `<VERSION>-edge.<short sha>` (for example `0.1.0-edge.abc1234`) on the page, from `/health`, and from the gateway's `/health`, so you can tell which commit is running. The application and the gateway are published together from the same commit; use the same tag for both. To use an `edge` image with the Compose example, replace its `build:` line with `image: ghcr.io/nathanpond/n8tracks:edge`.
+
+The images carry build provenance and a software bill of materials (SBOM) as attestations stored beside them. That is why `docker buildx imagetools inspect ghcr.io/nathanpond/n8tracks:edge` lists two extra entries with the platform `unknown/unknown` next to `linux/amd64` and `linux/arm64`: those are the attestations, not images, and `docker pull` ignores them. Read them with:
+
+```sh
+docker buildx imagetools inspect ghcr.io/nathanpond/n8tracks:edge --format '{{ json .Provenance }}'
+docker buildx imagetools inspect ghcr.io/nathanpond/n8tracks:edge --format '{{ json .SBOM }}'
+```
+
+The images are not signed. How they are published is under [Publishing `edge`](#publishing-edge).
 
 ### Quick start with Compose
 
@@ -164,6 +240,8 @@ docker buildx build --platform linux/amd64,linux/arm64 .
 The version comes from the root `VERSION` file; `--build-arg VERSION=<version>` overrides it, and `/health` reports whichever was used. The two-platform build needs a builder that supports it (the containerd image store, or `docker buildx create --driver docker-container`). Tests are not run in the image build.
 
 `scripts/smoke-docker.sh` builds both images (the app and the gateway) for your machine and checks them end to end. For the app: health, the page, the user the app runs as, file ownership, a read-only media mount, no media mount, a sub-path, a restart and a re-creation on the same data, and the refusals (`PUID=abc`, a read-only `/data`). For the gateway: health next to the app on a shared network, the user it runs as, the container staying `healthy` while the app is stopped, another port, and the refusal to start without `N8TRACKS_API_URL`. It needs Docker, `curl`, and `python3`, uses host ports 18787 and 18788, and removes what it created.
+
+It prints one `PASS <name>` or `FAIL <name>` line per assertion and runs them all: a failure does not stop the run, the failed lines are repeated at the end, the log of a container that failed an assertion is printed, and the exit code is 1. `N8TRACKS_SMOKE_SKIP_BUILD=1` tests the `n8tracks:dev` and `n8tracks-gateway:dev` images that already exist instead of building them, which is how CI runs it.
 
 ### The gateway image
 
@@ -267,6 +345,41 @@ rm -rf src/n8Tracks.Api/wwwroot && cp -R web/dist src/n8Tracks.Api/wwwroot
 The build uses relative URLs and resolves every request against the page's base URL, so the same `web/dist` works at the root of a hostname and under a sub-path.
 
 The shell page shows the version and the health report, refreshed every 30 seconds while the tab is visible. The colour scheme (light, dark, or auto, which follows the system) is chosen in the header and remembered in the browser. Every colour pair that carries text is in `web/src/theme/palette.ts`, and a test holds each to WCAG 2.1 AA contrast.
+
+## End-to-end tests
+
+`e2e/` is a Playwright suite that drives the real application image in Chromium and scans every state it reaches with axe for WCAG 2.1 A and AA violations, once in light and once in dark. It needs Docker, Node 24, and the image `n8tracks:dev`. From the repository root:
+
+```sh
+docker build -t n8tracks:dev .
+cd e2e
+npm ci
+npx playwright install chromium
+npm test
+```
+
+`npx playwright install chromium` downloads the browser and is needed once per Playwright version. Rebuild the image after changing `web/` or the backend: the suite tests the image, not the working tree.
+
+Each run starts three containers from the image, waits up to 60 seconds for them, and removes them and their temporary data directories afterwards:
+
+| Container | Host port | Is |
+| --- | --- | --- |
+| `n8tracks-e2e-root` | 18787 | healthy, at the root of the hostname |
+| `n8tracks-e2e-subpath` | 18788 | healthy, under the sub-path `/n8tracks` |
+| `n8tracks-e2e-nomedia` | 18789 | no media mounted, so it reports `degraded` |
+
+Every test runs twice, as the projects `root` and `subpath` (`npm test -- --project root` runs one). Containers left by an aborted run are removed first. The run stops at once with a message if Docker is not running, if the image does not exist, or if one of the ports is taken. `scripts/smoke-docker.sh` uses 18787 and 18788 as well, so do not run the two at the same time. Set `N8TRACKS_E2E_IMAGE` to test another image.
+
+A failed test keeps a trace under `e2e/test-results/`; the failure message has the `npx playwright show-trace` command for it. Tests do not retry locally and run in one worker.
+
+| Command (in `e2e/`) | Does |
+| --- | --- |
+| `npm test` | Starts the containers and runs the suite in both projects. |
+| `npm run lint` | ESLint, with typed rules and the Playwright rules. No warnings allowed. |
+| `npm run typecheck` | Strict TypeScript check. |
+| `npm run format:check` | Checks formatting with Prettier; `npm run format` fixes it. |
+
+The pattern for later features: one spec file per area in `e2e/tests/`, shared helpers in `e2e/support/`, and `expectAccessibleInLightAndDark(page)` (or `expectNoA11yViolations(page)` for one scan) after each state a test reaches. A test tagged `@root-only` or `@subpath-only` runs in that project alone. The suite covers Chromium only; it does not cover Firefox, Safari, or screen-reader behaviour.
 
 ## Browser extension
 
@@ -414,7 +527,7 @@ The wiring is `src/n8Tracks.ServiceDefaults`, shared by the app and the gateway.
 
 ## Versioning
 
-The root `VERSION` file holds the one product version, and every component takes its version from it. The build fails if the file is missing, empty, or not `major.minor.patch`. Override it for a single build with `-p:Version=<version>`. The Docker image build takes the same file, or `--build-arg VERSION=<version>`.
+The root `VERSION` file holds the one product version, and every component takes its version from it. The build fails if the file is missing, empty, or not `major.minor.patch` with an optional lower-case pre-release suffix (`0.1.0-rc.1`, which is how a release candidate is cut: see [docs/releasing.md](docs/releasing.md)). Override it for a single build with `-p:Version=<version>`. The Docker image build takes the same file, or `--build-arg VERSION=<version>`, which it stamps as the informational version (the one `/health` reports) so that any `edge` version is accepted. An `edge` build is `<VERSION>-edge.<short sha>`: see [Edge images](#edge-images).
 
 Components (application, MCP gateway, browser extension) are compatible when their major and minor numbers match; patch numbers may differ.
 

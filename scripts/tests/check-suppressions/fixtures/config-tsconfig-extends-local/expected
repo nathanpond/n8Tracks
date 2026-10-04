@@ -1,0 +1,2 @@
+web/config/shared.json:4 strict is set to false
+web/tsconfig.app.json strict does not resolve to true

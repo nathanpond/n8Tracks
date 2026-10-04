@@ -1,0 +1,5 @@
+version=1.4.0-rc.1
+push_exact=true
+image_tags=1.4.0-rc.1
+prerelease=true
+latest=false

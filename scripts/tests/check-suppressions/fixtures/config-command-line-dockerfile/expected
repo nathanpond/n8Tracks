@@ -1,0 +1,4 @@
+Dockerfile:2 TreatWarningsAsErrors=false
+Dockerfile:3 -warnaserror-
+src/Gateway/Dockerfile.dev:2 -nowarn
+src/Gateway/Dockerfile.dev:3 NoWarn=

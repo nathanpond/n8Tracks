@@ -1,0 +1,5 @@
+version=1.0.0-alpha-1.x-y.0.10
+push_exact=true
+image_tags=1.0.0-alpha-1.x-y.0.10
+prerelease=true
+latest=false

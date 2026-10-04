@@ -1,0 +1,8 @@
+[*.cs]
+# FIXME decide on this
+dotnet_diagnostic.CA1707.severity = none
+# pending
+dotnet_diagnostic.CA1708.severity = none
+# Explained in full: test names read as sentences.
+dotnet_diagnostic.CA1709.severity = none
+dotnet_diagnostic.CA1710.severity = none

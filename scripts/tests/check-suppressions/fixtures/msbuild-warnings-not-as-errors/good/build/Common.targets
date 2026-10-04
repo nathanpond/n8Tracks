@@ -1,0 +1,5 @@
+<Project>
+  <PropertyGroup>
+    <WarningsNotAsErrors>$(WarningsNotAsErrors);CS0618</WarningsNotAsErrors> <!-- Obsoletions are tracked per release. -->
+  </PropertyGroup>
+</Project>

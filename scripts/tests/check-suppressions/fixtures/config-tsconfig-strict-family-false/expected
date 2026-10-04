@@ -1,0 +1,3 @@
+extension/tsconfig.json:5 strictNullChecks is set to false
+extension/tsconfig.json:6 noImplicitAny is set to false
+extension/tsconfig.json:7 noUncheckedIndexedAccess is set to false

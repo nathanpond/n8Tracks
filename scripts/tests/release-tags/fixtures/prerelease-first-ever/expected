@@ -1,0 +1,5 @@
+version=0.1.0-alpha
+push_exact=true
+image_tags=0.1.0-alpha
+prerelease=true
+latest=false

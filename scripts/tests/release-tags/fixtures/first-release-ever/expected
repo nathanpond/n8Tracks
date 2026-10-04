@@ -1,0 +1,5 @@
+version=0.1.0
+push_exact=true
+image_tags=0.1.0 0.1 latest
+prerelease=false
+latest=true

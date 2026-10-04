@@ -1,0 +1,600 @@
+# The project's one automated gate. It runs on every pull request to main and is called by the
+# publishing workflows (workflow_call), so a pull request and a publish pass the identical checks.
+#
+# Rules for anyone adding to this file:
+# - Every job is listed in the `needs:` of the final `ci` job. `ci` is the one check name that
+#   stands for the whole gate; it fails unless every job it needs ended in `success`.
+# - Within a job, each check runs even when an earlier check failed, so one run shows every
+#   failure. Only the prerequisites (restore and build for .NET, `npm ci` for the npm projects)
+#   stop what depends on them.
+# - Every step that can fail has an `id`: the failure summary lists failed steps by id.
+# - Actions are pinned to a major version; nothing is fetched at "latest".
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+# One live run per pull request: a new push cancels the run it supersedes. When another workflow
+# calls this one there is no pull request, so the group is the run's own ID: a called run never
+# shares a group, and the caller's concurrency settings govern.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  dotnet:
+    name: dotnet
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DOTNET_NOLOGO: 'true'
+      DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - id: setup
+        name: Set up the .NET SDK pinned in global.json
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: |
+            **/*.csproj
+            Directory.Build.props
+            Directory.Build.targets
+            global.json
+
+      - id: restore
+        name: dotnet restore
+        run: dotnet restore
+
+      - id: build
+        name: dotnet build -warnaserror
+        run: dotnet build --no-restore --configuration Release -warnaserror
+
+      - id: format
+        name: dotnet format --verify-no-changes
+        if: ${{ !cancelled() && steps.restore.outcome == 'success' }}
+        run: dotnet format --verify-no-changes --no-restore
+
+      - id: test
+        name: dotnet test
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: dotnet test --no-build --configuration Release
+
+      - name: Summarize failed steps
+        if: ${{ failure() }}
+        env:
+          STEPS: ${{ toJSON(steps) }}
+        run: |
+          {
+            echo "### dotnet: failed steps"
+            jq -r 'to_entries[] | select(.value.outcome == "failure") | "- `\(.key)`"' <<<"$STEPS"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  web:
+    name: web
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - id: setup
+        name: Set up the Node version in .nvmrc
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - id: install
+        name: npm ci
+        run: npm ci
+
+      - id: lint
+        name: npm run lint
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run lint
+
+      - id: typecheck
+        name: npm run typecheck
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run typecheck
+
+      - id: format
+        name: npm run format:check
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run format:check
+
+      - id: test
+        name: npm test
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm test
+
+      - id: build
+        name: npm run build
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run build
+
+      - name: Summarize failed steps
+        if: ${{ failure() }}
+        env:
+          STEPS: ${{ toJSON(steps) }}
+        run: |
+          {
+            echo "### web: failed steps"
+            jq -r 'to_entries[] | select(.value.outcome == "failure") | "- `\(.key)`"' <<<"$STEPS"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  extension:
+    name: extension
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: extension
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - id: setup
+        name: Set up the Node version in .nvmrc
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      - id: install
+        name: npm ci
+        run: npm ci
+
+      - id: lint
+        name: npm run lint
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run lint
+
+      - id: typecheck
+        name: npm run typecheck
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run typecheck
+
+      - id: format
+        name: npm run format:check
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run format:check
+
+      - id: test
+        name: npm test
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm test
+
+      - id: build
+        name: npm run build
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run build
+
+      - id: package
+        name: npm run package
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run package
+
+      # Only a zip from a job whose every check passed is handed to the publishing workflows.
+      - id: upload
+        name: Upload the packaged extension
+        if: ${{ success() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: extension-zip
+          path: extension/n8tracks-extension-*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Summarize failed steps
+        if: ${{ failure() }}
+        env:
+          STEPS: ${{ toJSON(steps) }}
+        run: |
+          {
+            echo "### extension: failed steps"
+            jq -r 'to_entries[] | select(.value.outcome == "failure") | "- `\(.key)`"' <<<"$STEPS"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Both images, as they ship: built, run through the container smoke script, and built once more
+  # for the two published architectures. Nothing is pushed anywhere: the smoke-tested application
+  # image leaves this job only as the artifact `app-image`, for later jobs of the same run.
+  container:
+    name: container
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # The build action would otherwise upload a build record as a second artifact.
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # arm64 is emulated. The build stages run on the runner's own architecture and cross-compile,
+      # so only the runtime stage's few commands run under QEMU.
+      - id: qemu
+        name: Set up QEMU for arm64
+        uses: docker/setup-qemu-action@v4
+        with:
+          image: docker.io/tonistiigi/binfmt:qemu-v10.2.3-68
+          platforms: arm64
+
+      - id: buildx
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+        with:
+          driver-opts: image=moby/buildkit:v0.33.1
+
+      # No VERSION build argument: the images report the plain VERSION file value. A pull request
+      # that may not write the layer cache still builds (ignore-error).
+      - id: build_app
+        name: Build the application image for the runner's platform
+        if: ${{ !cancelled() && steps.buildx.outcome == 'success' }}
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          tags: n8tracks:dev
+          load: true
+          push: false
+          provenance: false
+          cache-from: type=gha,scope=app
+          cache-to: type=gha,mode=max,scope=app,ignore-error=true
+
+      - id: build_gateway
+        name: Build the gateway image for the runner's platform
+        if: ${{ !cancelled() && steps.buildx.outcome == 'success' }}
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: src/n8Tracks.Gateway/Dockerfile
+          tags: n8tracks-gateway:dev
+          load: true
+          push: false
+          provenance: false
+          cache-from: type=gha,scope=gateway
+          cache-to: type=gha,mode=max,scope=gateway,ignore-error=true
+
+      # One "PASS <name>" or "FAIL <name>" line per assertion; the script runs them all, prints the
+      # log of a container that failed one, and repeats the failed lines at the end.
+      - id: smoke
+        name: scripts/smoke-docker.sh
+        if: ${{ !cancelled() && steps.build_app.outcome == 'success' && steps.build_gateway.outcome == 'success' }}
+        env:
+          N8TRACKS_SMOKE_SKIP_BUILD: '1'
+        # Named explicitly for `pipefail`: the default shell has none, and the step would take
+        # the exit code of `tee` and pass whatever the script said.
+        shell: bash
+        run: scripts/smoke-docker.sh 2>&1 | tee "$RUNNER_TEMP/smoke.log"
+
+      # Only an image that passed the smoke script is handed on, and it is the very image that was
+      # tested: saved from the Docker engine, not built again.
+      - id: save
+        name: Save the application image
+        if: ${{ !cancelled() && steps.smoke.outcome == 'success' }}
+        run: |
+          docker save n8tracks:dev | gzip > "$RUNNER_TEMP/n8tracks-image.tar.gz"
+          ls -l "$RUNNER_TEMP/n8tracks-image.tar.gz"
+
+      - id: upload
+        name: Upload the application image
+        if: ${{ !cancelled() && steps.save.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-image
+          path: ${{ runner.temp }}/n8tracks-image.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+          # Already gzip.
+          compression-level: 0
+
+      # The two published architectures, built to the layer cache only: no image is exported.
+      - id: platforms_app
+        name: Build the application image for linux/amd64 and linux/arm64
+        if: ${{ !cancelled() && steps.qemu.outcome == 'success' && steps.buildx.outcome == 'success' }}
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          outputs: type=cacheonly
+          push: false
+          provenance: false
+          cache-from: type=gha,scope=app
+          cache-to: type=gha,mode=max,scope=app,ignore-error=true
+
+      - id: platforms_gateway
+        name: Build the gateway image for linux/amd64 and linux/arm64
+        if: ${{ !cancelled() && steps.qemu.outcome == 'success' && steps.buildx.outcome == 'success' }}
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: src/n8Tracks.Gateway/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          outputs: type=cacheonly
+          push: false
+          provenance: false
+          cache-from: type=gha,scope=gateway
+          cache-to: type=gha,mode=max,scope=gateway,ignore-error=true
+
+      # The outcomes are listed one by one: `toJSON(steps)` would carry the build steps' outputs
+      # (the whole build metadata), which is more than one environment variable can hold.
+      - name: Summarize failed steps
+        if: ${{ failure() }}
+        env:
+          OUTCOMES: >-
+            qemu=${{ steps.qemu.outcome }}
+            buildx=${{ steps.buildx.outcome }}
+            build_app=${{ steps.build_app.outcome }}
+            build_gateway=${{ steps.build_gateway.outcome }}
+            smoke=${{ steps.smoke.outcome }}
+            save=${{ steps.save.outcome }}
+            upload=${{ steps.upload.outcome }}
+            platforms_app=${{ steps.platforms_app.outcome }}
+            platforms_gateway=${{ steps.platforms_gateway.outcome }}
+        run: |
+          {
+            echo "### container: failed steps"
+            for outcome in $OUTCOMES; do
+              if [ "${outcome#*=}" = "failure" ]; then
+                echo "- \`${outcome%%=*}\`"
+              fi
+            done
+            if grep -q '^FAIL ' "$RUNNER_TEMP/smoke.log" 2>/dev/null; then
+              echo
+              echo "Failed smoke assertions:"
+              echo
+              echo '```'
+              grep '^FAIL ' "$RUNNER_TEMP/smoke.log" | sort -u
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # The end-to-end suite, in Chromium, against the application image the `container` job built and
+  # smoke-tested: the same image, loaded from the artifact, not built again. Each test also runs
+  # the accessibility scan.
+  e2e:
+    name: e2e
+    needs: container
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: e2e
+    env:
+      RESULTS: test-results/results.json
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - id: setup
+        name: Set up the Node version in .nvmrc
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+
+      - id: install
+        name: npm ci
+        run: npm ci
+
+      - id: lint
+        name: npm run lint
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run lint
+
+      - id: typecheck
+        name: npm run typecheck
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run typecheck
+
+      - id: format
+        name: npm run format:check
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run format:check
+
+      - id: scripts
+        name: npm run test:scripts
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run test:scripts
+
+      - id: download
+        name: Download the application image
+        if: ${{ !cancelled() }}
+        uses: actions/download-artifact@v8
+        with:
+          name: app-image
+          path: ${{ runner.temp }}/app-image
+
+      - id: load
+        name: Load the application image
+        if: ${{ !cancelled() && steps.download.outcome == 'success' }}
+        # Named explicitly for `pipefail`: a truncated archive must fail the step.
+        shell: bash
+        run: |
+          gunzip -c "$RUNNER_TEMP/app-image/n8tracks-image.tar.gz" | docker load
+          docker image inspect --format '{{.Id}}' n8tracks:dev
+
+      # The browser is as large as everything else this job fetches, and changes only with the
+      # Playwright version, so that version is the cache key.
+      - id: playwright_version
+        name: Read the installed Playwright version
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - id: browser_cache
+        name: Cache the Playwright browser
+        if: ${{ !cancelled() && steps.playwright_version.outcome == 'success' }}
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-chromium-${{ steps.playwright_version.outputs.version }}
+
+      # With the cache restored this downloads nothing and only installs the system libraries
+      # Chromium needs, which are not part of the cache.
+      - id: browser
+        name: npx playwright install --with-deps chromium
+        if: ${{ !cancelled() && steps.browser_cache.outcome == 'success' }}
+        run: npx playwright install --with-deps chromium
+
+      # `CI` is set on the runner: playwright.config.ts then retries a failing test once, records a
+      # trace of the retry, and writes the HTML and JSON reports.
+      - id: test
+        name: npm test
+        if: ${{ !cancelled() && steps.load.outcome == 'success' && steps.browser.outcome == 'success' }}
+        env:
+          N8TRACKS_E2E_LOG_DIR: test-results/container-logs
+        run: npm test
+
+      # A flaky test passed on its retry, so the step above is green: this is where it is named.
+      - id: summary
+        name: Summarize failed and flaky tests
+        if: ${{ !cancelled() && (steps.test.outcome == 'success' || steps.test.outcome == 'failure') }}
+        run: node scripts/summarize.ts "$RESULTS"
+
+      # Only when there is something to look at: a clean run uploads nothing.
+      - id: upload
+        name: Upload the report, the traces, and the containers' logs
+        if: ${{ !cancelled() && (steps.test.outcome == 'failure' || (steps.summary.outputs.flaky != '' && steps.summary.outputs.flaky != '0')) }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-report
+          path: |
+            e2e/playwright-report/
+            e2e/test-results/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Summarize failed steps
+        if: ${{ failure() }}
+        env:
+          STEPS: ${{ toJSON(steps) }}
+        run: |
+          {
+            echo "### e2e: failed steps"
+            jq -r 'to_entries[] | select(.value.outcome == "failure") | "- `\(.key)`"' <<<"$STEPS"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Invariant 8 (warnings are errors), the part a compiler or linter cannot enforce on itself. One
+  # script, two halves: a warning suppression anywhere in the repository must say why, in one
+  # line; and warnings-as-errors, the analyzers, zero-warning linting, and strict type checking
+  # may not be switched off or weakened at all, whatever comment accompanies the change. The
+  # script's own fixture test runs first, so a rule that stopped firing fails the gate too.
+  guards:
+    name: guards
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - id: suppressions_test
+        name: scripts/tests/check-suppressions/run.sh
+        run: scripts/tests/check-suppressions/run.sh
+
+      - id: suppressions
+        name: scripts/check-suppressions.sh
+        if: ${{ !cancelled() }}
+        run: scripts/check-suppressions.sh
+
+      # The release rules (which image tags a version tag publishes). The test only reads fixtures:
+      # it publishes nothing and needs no token.
+      - id: release_tags_test
+        name: scripts/tests/release-tags/run.sh
+        if: ${{ !cancelled() }}
+        run: scripts/tests/release-tags/run.sh
+
+      # The script that applies the committed rulesets, and the definitions themselves. The test
+      # uses a stand-in for `gh`: it reaches nothing and needs no token.
+      - id: apply_rulesets_test
+        name: scripts/tests/apply-rulesets/run.sh
+        if: ${{ !cancelled() }}
+        run: scripts/tests/apply-rulesets/run.sh
+
+      # The edge naming rules (short sha, version, tag) and the script that tags the published
+      # images (for edge builds and for releases) and puts the floating tags back when it fails.
+      # The second test also covers the script that lists the tags already published, and uses
+      # stand-ins for `docker` and `gh`: neither test builds, pushes, or reaches anything, and
+      # neither needs a token.
+      - id: edge_version_test
+        name: scripts/tests/edge-version/run.sh
+        if: ${{ !cancelled() }}
+        run: scripts/tests/edge-version/run.sh
+
+      - id: publish_tags_test
+        name: scripts/tests/publish-tags/run.sh
+        if: ${{ !cancelled() }}
+        run: scripts/tests/publish-tags/run.sh
+
+      # The script that creates the GitHub release of a version tag, or completes one without
+      # changing what it already has. The test uses a stand-in for `gh` and a throwaway git
+      # repository: it releases nothing and needs no token.
+      - id: release_github_test
+        name: scripts/tests/release-github/run.sh
+        if: ${{ !cancelled() }}
+        run: scripts/tests/release-github/run.sh
+
+      - name: Summarize failed steps
+        if: ${{ failure() }}
+        env:
+          STEPS: ${{ toJSON(steps) }}
+        run: |
+          {
+            echo "### guards: failed steps"
+            jq -r 'to_entries[] | select(.value.outcome == "failure") | "- `\(.key)`"' <<<"$STEPS"
+            if [ "$(jq -r '.suppressions.outcome' <<<"$STEPS")" = "failure" ]; then
+              echo
+              echo "Suppressions without a rationale, and weakened settings:"
+              echo
+              echo '```'
+              scripts/check-suppressions.sh 2>&1 || true
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # The one check that represents the gate. `always()` makes it run (and fail) when a needed job
+  # failed, was cancelled, or was skipped, where a plain `needs:` would leave it skipped, and a
+  # skipped required check counts as passing.
+  ci:
+    name: ci
+    if: ${{ always() }}
+    needs: [dotnet, web, extension, container, e2e, guards]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every job to have succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<<"$NEEDS"
+          if ! jq -e 'length > 0 and all(.[]; .result == "success")' <<<"$NEEDS" >/dev/null; then
+            {
+              echo "### ci: the gate failed"
+              jq -r 'to_entries[] | select(.value.result != "success") | "- `\(.key)`: \(.value.result)"' <<<"$NEEDS"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::Not every job succeeded."
+            exit 1
+          fi

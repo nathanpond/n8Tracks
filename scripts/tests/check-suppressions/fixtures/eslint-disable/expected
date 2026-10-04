@@ -1,0 +1,12 @@
+e2e/tests/a.mts:1
+extension/src/background.js:1
+extension/src/background.js:3
+web/scripts/b.cjs:1
+web/scripts/c.mjs:2
+web/scripts/d.jsx:1
+web/scripts/e.cts:1
+web/scripts/f.ts:1
+web/src/widget.tsx:1
+web/src/widget.tsx:3
+web/src/widget.tsx:5
+web/src/widget.tsx:8

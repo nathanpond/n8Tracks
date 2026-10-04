@@ -1,0 +1,2 @@
+Directory.Build.props:5 TreatWarningsAsErrors carries a condition
+Directory.Build.props:10 EnableNETAnalyzers is inside a PropertyGroup that carries a condition

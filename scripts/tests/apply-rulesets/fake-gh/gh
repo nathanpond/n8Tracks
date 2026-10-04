@@ -1,0 +1,98 @@
+#!/bin/sh
+# A stand-in for `gh`, for scripts/tests/apply-rulesets/run.sh. It answers only the calls
+# scripts/apply-rulesets.sh makes, from the files in $FAKE_GH_STATE (one <id>.json per ruleset),
+# and appends each write to $FAKE_GH_STATE/calls as "<METHOD> <path>". It never uses the network.
+#
+#   FAKE_GH_DROP_CHECKS=1   a write stores the ruleset without its required_status_checks rule
+#   FAKE_GH_REFUSE=1        a write fails, as GitHub does when it rejects a request
+set -eu
+
+state=${FAKE_GH_STATE:?}
+
+[ "${1:-}" = api ] || {
+  echo "fake gh: unexpected command: $*" >&2
+  exit 1
+}
+shift
+
+method=GET
+path=
+input=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --method)
+      method=$2
+      shift
+      ;;
+    --input)
+      input=$2
+      shift
+      ;;
+    -*)
+      echo "fake gh: unexpected option: $1" >&2
+      exit 1
+      ;;
+    *) path=$1 ;;
+  esac
+  shift
+done
+
+# store <id>: the request body plus server fields, as the answer and as the new state.
+store() {
+  filter='.'
+  if [ "${FAKE_GH_DROP_CHECKS:-}" = 1 ]; then
+    filter='.rules |= map(select(.type != "required_status_checks"))'
+  fi
+  jq --argjson id "$1" "$filter"' | . + {id: $id, node_id: "RRS_x", source_type: "Repository",
+    source: "o/r", created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-02T00:00:00Z",
+    _links: {}}' "$input" >"$state/$1.json.new"
+  mv "$state/$1.json.new" "$state/$1.json"
+  cat "$state/$1.json"
+}
+
+case "$method $path" in
+  "GET repos/"*"/rulesets?"*)
+    found=false
+    for file in "$state"/*.json; do
+      [ -f "$file" ] && found=true
+    done
+    if [ "$found" = true ]; then
+      # The list endpoint leaves out rules, conditions, and bypass actors.
+      jq -s 'map({id, name, target, source_type, source, enforcement})' "$state"/*.json
+    else
+      echo '[]'
+    fi
+    ;;
+  "GET repos/"*"/rulesets/"*)
+    cat "$state/${path##*/}.json"
+    ;;
+  "PUT repos/"*"/rulesets/"*)
+    echo "PUT $path" >>"$state/calls"
+    if [ "${FAKE_GH_REFUSE:-}" = 1 ]; then
+      echo "gh: Validation Failed (HTTP 422)" >&2
+      exit 1
+    fi
+    [ -f "$state/${path##*/}.json" ] || {
+      echo "gh: Not Found (HTTP 404)" >&2
+      exit 1
+    }
+    store "${path##*/}"
+    ;;
+  "POST repos/"*"/rulesets")
+    echo "POST $path" >>"$state/calls"
+    if [ "${FAKE_GH_REFUSE:-}" = 1 ]; then
+      echo "gh: Validation Failed (HTTP 422)" >&2
+      exit 1
+    fi
+    # Each created ruleset gets its own id: 1000, 1001, ...
+    next=1000
+    while [ -f "$state/$next.json" ]; do
+      next=$((next + 1))
+    done
+    store "$next"
+    ;;
+  *)
+    echo "fake gh: unexpected call: $method $path" >&2
+    exit 1
+    ;;
+esac

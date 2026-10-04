@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <!-- -->
+    <WarningsNotAsErrors>$(WarningsNotAsErrors);CS0618</WarningsNotAsErrors>
+  </PropertyGroup>
+</Project>

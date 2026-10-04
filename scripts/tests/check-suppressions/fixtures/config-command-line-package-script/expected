@@ -1,0 +1,5 @@
+tools/package.json:8 TreatWarningsAsErrors=false
+tools/package.json:9 -warnaserror-
+tools/package.json:10 -nowarn
+tools/package.json:11 NoWarn=
+tools/package.json:12 strict type-checking flag

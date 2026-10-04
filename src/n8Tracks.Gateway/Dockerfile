@@ -24,6 +24,9 @@ COPY src/n8Tracks.Gateway/ src/n8Tracks.Gateway/
 COPY src/n8Tracks.ServiceDefaults/ src/n8Tracks.ServiceDefaults/
 
 # The product version: the VERSION build argument, or the root VERSION file when it is empty.
+# It is stamped as the informational version, which is what the health endpoint reports. It is not
+# passed as -p:Version: that one must also be a valid NuGet version, and an edge version whose short
+# sha is all digits with a leading zero (0.1.0-edge.0123456) is not, which would fail the build.
 ARG VERSION=""
 RUN version="${VERSION:-$(tr -d '[:space:]' < VERSION)}" \
     && dotnet publish src/n8Tracks.Gateway/n8Tracks.Gateway.csproj \
@@ -32,7 +35,7 @@ RUN version="${VERSION:-$(tr -d '[:space:]' < VERSION)}" \
         --no-restore \
         --no-self-contained \
         -p:UseAppHost=false \
-        -p:Version="$version" \
+        -p:InformationalVersion="$version" \
         --output /app/publish
 
 # --- Runtime --------------------------------------------------------------------------------------

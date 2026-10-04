@@ -1,0 +1,383 @@
+# Publishes a release. Pushing a version tag (vX.Y.Z or vX.Y.Z-<prerelease>) is the whole
+# procedure: this workflow pushes the application image and the gateway image of that version to
+# GHCR for linux/amd64 and linux/arm64, and creates the GitHub release with the extension zip and
+# its checksum attached. docs/releasing.md is the maintainer's side of it.
+#
+# The order, and why:
+# - `plan` runs first. scripts/release-tags.sh decides what the tag publishes, or refuses it (the
+#   tag is not a version, differs from VERSION, or its commit is not in main), and a refusal
+#   stops the run before anything else starts.
+# - `gate` is ci.yml on the tagged commit, the same checks a pull request passes.
+# - `publish` runs only when both succeeded. Each image is built once and pushed by digest,
+#   untagged; scripts/publish-tags.sh then creates the exact version tag on both images and
+#   moves the floating tags (X.Y, latest) after it; scripts/release-github.sh creates the GitHub
+#   release last.
+#
+# How it stays safe:
+# - An exact version tag that exists is never overwritten: the image is not even built again,
+#   and the tag script refuses to move such a tag.
+# - Running it again (re-run the run, in the Actions tab) completes whatever a failed run left
+#   undone and changes nothing that is already there. A finished release run again does nothing.
+# - One release at a time, never cancelled once it runs. Of the runs waiting behind it GitHub
+#   keeps only the newest: a run it cancelled while waiting is re-run by hand.
+#
+# This file holds no tag logic of its own; the rules are at the top of each script. Rules for
+# editing it are the ones at the top of ci.yml: actions are pinned to a major version, nothing is
+# fetched at "latest", and every step that can fail has an id.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  APP_IMAGE: ghcr.io/nathanpond/n8tracks
+  GATEWAY_IMAGE: ghcr.io/nathanpond/n8tracks-gateway
+
+jobs:
+  plan:
+    name: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Reading the tags already published needs the packages API.
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      version: ${{ steps.rules.outputs.version }}
+      image_tags: ${{ steps.rules.outputs.image_tags }}
+      prerelease: ${{ steps.rules.outputs.prerelease }}
+      latest: ${{ steps.rules.outputs.latest }}
+    steps:
+      # The whole history: whether the tagged commit is in main cannot be told from one commit.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      # The two facts that have to be looked up. If either cannot be, the step fails: neither is
+      # ever guessed.
+      - id: facts
+        name: Is the commit in main, and what is already published?
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          commit=$(git rev-parse 'HEAD^{commit}')
+          if git merge-base --is-ancestor "$commit" origin/main; then
+            in_main=true
+          else
+            status=$?
+            if [ "$status" -ne 1 ]; then
+              echo "::error::Could not tell whether $commit is in main."
+              exit "$status"
+            fi
+            in_main=false
+          fi
+          scripts/published-tags.sh "$APP_IMAGE" > "$RUNNER_TEMP/published.txt"
+          published=$(tr '\n' ' ' < "$RUNNER_TEMP/published.txt")
+          echo "commit $commit, in main: $in_main, published: $published"
+          echo "in_main=$in_main" >> "$GITHUB_OUTPUT"
+          echo "published=$published" >> "$GITHUB_OUTPUT"
+
+      - id: rules
+        name: scripts/release-tags.sh
+        env:
+          IN_MAIN: ${{ steps.facts.outputs.in_main }}
+          PUBLISHED: ${{ steps.facts.outputs.published }}
+        run: |
+          if ! scripts/release-tags.sh --tag "$GITHUB_REF_NAME" --version "$(cat VERSION)" \
+            --in-main "$IN_MAIN" --published "$PUBLISHED" \
+            > "$RUNNER_TEMP/rules.txt" 2> "$RUNNER_TEMP/rules.err"; then
+            cat "$RUNNER_TEMP/rules.err" >&2
+            {
+              echo "### The tag \`$GITHUB_REF_NAME\` was refused"
+              echo
+              echo '```'
+              cat "$RUNNER_TEMP/rules.err"
+              echo '```'
+              echo
+              echo "Nothing was built or published. See \`docs/releasing.md\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/rules.err" >&2
+          cat "$RUNNER_TEMP/rules.txt"
+          cat "$RUNNER_TEMP/rules.txt" >> "$GITHUB_OUTPUT"
+
+  gate:
+    name: gate
+    needs: plan
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  publish:
+    name: publish
+    needs: [plan, gate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # The only job that may write packages and releases.
+    permissions:
+      contents: write
+      packages: write
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      # The build action would otherwise upload a build record as an artifact of its own.
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
+      # This workflow writes its own summary.
+      DOCKER_BUILD_SUMMARY: 'false'
+    steps:
+      # With every tag: the release notes start from the previous one.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      # --- The extension zip, stamped with the tagged version. Built before the registry login,
+      # so no step here runs with the registry credentials on the machine. ---
+
+      - id: node
+        name: Set up the Node version in .nvmrc
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      - id: extension_install
+        name: npm ci (extension)
+        working-directory: extension
+        run: npm ci
+
+      - id: extension_package
+        name: npm run package (extension)
+        working-directory: extension
+        env:
+          N8TRACKS_VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          npm run package
+          ls -l "n8tracks-extension-$VERSION.zip"
+
+      # --- The images ---
+
+      # arm64 is emulated. The build stages run on the runner's own architecture and cross-compile,
+      # so only the runtime stage's few commands run under QEMU.
+      - id: qemu
+        name: Set up QEMU for arm64
+        uses: docker/setup-qemu-action@v4
+        with:
+          image: docker.io/tonistiigi/binfmt:qemu-v10.2.3-68
+          platforms: arm64
+
+      - id: buildx
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+        with:
+          driver-opts: image=moby/buildkit:v0.33.1
+
+      - id: login
+        name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Asked of the registry itself, per image: a run that failed part-way may have published
+      # one image and not the other. An image whose exact version exists is not built again; its
+      # existing digest is what the remaining tags are completed from.
+      - id: existing
+        name: Which exact version tags exist already?
+        run: |
+          scripts/publish-tags.sh --digest "$APP_IMAGE:$VERSION" --digest "$GATEWAY_IMAGE:$VERSION" \
+            > "$RUNNER_TEMP/existing.txt"
+          cat "$RUNNER_TEMP/existing.txt"
+          app=$(awk -v r="$APP_IMAGE:$VERSION" '$1 == r { print $2 }' "$RUNNER_TEMP/existing.txt")
+          gateway=$(awk -v r="$GATEWAY_IMAGE:$VERSION" '$1 == r { print $2 }' "$RUNNER_TEMP/existing.txt")
+          if [ -z "$app" ] || [ -z "$gateway" ]; then
+            echo "::error::The registry gave no answer for one of the images."
+            exit 1
+          fi
+          if [ "$app" = absent ]; then app=; fi
+          if [ "$gateway" = absent ]; then gateway=; fi
+          echo "app=$app" >> "$GITHUB_OUTPUT"
+          echo "gateway=$gateway" >> "$GITHUB_OUTPUT"
+
+      # Pushed by digest, with no tag: until the tagging step nothing anyone pulls has changed.
+      # The layer cache is the gate's (same scopes), which built this commit minutes ago; only the
+      # layers after the VERSION build argument are built here. The cache is read, not written.
+      - id: build_app
+        name: Build the application image and push it by digest
+        if: ${{ steps.existing.outputs.app == '' }}
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            VERSION=${{ needs.plan.outputs.version }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.plan.outputs.version }}
+            org.opencontainers.image.licenses=Apache-2.0
+          provenance: mode=max
+          sbom: generator=docker/buildkit-syft-scanner:1.12.0
+          outputs: type=image,name=${{ env.APP_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=app
+
+      - id: build_gateway
+        name: Build the gateway image and push it by digest
+        if: ${{ steps.existing.outputs.gateway == '' }}
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: src/n8Tracks.Gateway/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            VERSION=${{ needs.plan.outputs.version }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.plan.outputs.version }}
+            org.opencontainers.image.licenses=Apache-2.0
+          provenance: mode=max
+          sbom: generator=docker/buildkit-syft-scanner:1.12.0
+          outputs: type=image,name=${{ env.GATEWAY_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=gateway
+
+      # The one step that changes what anyone pulls. The exact version is created first and is
+      # never moved or rolled back; the floating tags the rules listed follow. If a floating tag
+      # fails, the script puts the ones it moved back before it fails the step, and a re-run moves
+      # them all. GH_TOKEN is for removing a floating tag that did not exist before the run.
+      - id: tag
+        name: scripts/publish-tags.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APP_DIGEST: ${{ steps.existing.outputs.app || steps.build_app.outputs.digest }}
+          GATEWAY_DIGEST: ${{ steps.existing.outputs.gateway || steps.build_gateway.outputs.digest }}
+          IMAGE_TAGS: ${{ needs.plan.outputs.image_tags }}
+        run: |
+          # The exact version is handed over as the once-only tag; whatever else the rules listed
+          # is floating.
+          floating=
+          for image_tag in $IMAGE_TAGS; do
+            if [ "$image_tag" != "$VERSION" ]; then
+              floating="$floating $image_tag"
+            fi
+          done
+          scripts/publish-tags.sh \
+            --image "$APP_IMAGE@$APP_DIGEST" \
+            --image "$GATEWAY_IMAGE@$GATEWAY_DIGEST" \
+            --once "$VERSION" \
+            --fixed "" \
+            --floating "${floating# }" > "$RUNNER_TEMP/tagged.txt"
+          cat "$RUNNER_TEMP/tagged.txt"
+
+      # Last: a release page exists only for images that can be pulled.
+      - id: release
+        name: scripts/release-github.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PRERELEASE: ${{ needs.plan.outputs.prerelease }}
+          LATEST: ${{ needs.plan.outputs.latest }}
+        run: |
+          scripts/release-github.sh --tag "$GITHUB_REF_NAME" --prerelease "$PRERELEASE" --latest "$LATEST" \
+            --zip "extension/n8tracks-extension-$VERSION.zip" > "$RUNNER_TEMP/release.txt"
+          cat "$RUNNER_TEMP/release.txt"
+          cat "$RUNNER_TEMP/release.txt" >> "$GITHUB_OUTPUT"
+
+      - id: summary
+        name: Summarize what was published
+        env:
+          PRERELEASE: ${{ needs.plan.outputs.prerelease }}
+          LATEST: ${{ needs.plan.outputs.latest }}
+          RELEASE_URL: ${{ steps.release.outputs.url }}
+          CREATED: ${{ steps.release.outputs.created }}
+          ATTACHED: ${{ steps.release.outputs.attached }}
+        run: |
+          {
+            echo "### Released $GITHUB_REF_NAME"
+            echo
+            echo "Version \`$VERSION\`, commit \`$GITHUB_SHA\`, for \`linux/amd64\` and \`linux/arm64\`. Pre-release: $PRERELEASE. Marked latest: $LATEST."
+            echo
+            echo "| Image tag | Digest | This run |"
+            echo "| --- | --- | --- |"
+            while read -r action reference digest; do
+              case $action in
+                kept) did="already published, left as it was" ;;
+                *) did="pushed" ;;
+              esac
+              echo "| \`$reference\` | \`$digest\` | $did |"
+            done < "$RUNNER_TEMP/tagged.txt"
+            echo
+            echo "GitHub release: $RELEASE_URL"
+            echo
+            if [ "$CREATED" = true ]; then
+              echo "The release was created by this run, with \`n8tracks-extension-$VERSION.zip\` and \`n8tracks-extension-$VERSION.zip.sha256\` attached."
+            elif [ -n "$ATTACHED" ]; then
+              echo "The release existed already; its notes were left as they were. Attached by this run: \`$ATTACHED\`."
+            else
+              echo "The release existed already with both files; nothing about it was changed."
+            fi
+            echo
+            echo "Pull:"
+            echo
+            echo '```sh'
+            while read -r _ reference _; do
+              echo "docker pull $reference"
+            done < "$RUNNER_TEMP/tagged.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The outcomes are listed one by one: `toJSON(steps)` would carry the build steps' outputs
+      # (the whole build metadata), which is more than one environment variable can hold.
+      - name: Summarize failed steps
+        if: ${{ failure() }}
+        env:
+          OUTCOMES: >-
+            node=${{ steps.node.outcome }}
+            extension_install=${{ steps.extension_install.outcome }}
+            extension_package=${{ steps.extension_package.outcome }}
+            qemu=${{ steps.qemu.outcome }}
+            buildx=${{ steps.buildx.outcome }}
+            login=${{ steps.login.outcome }}
+            existing=${{ steps.existing.outcome }}
+            build_app=${{ steps.build_app.outcome }}
+            build_gateway=${{ steps.build_gateway.outcome }}
+            tag=${{ steps.tag.outcome }}
+            release=${{ steps.release.outcome }}
+            summary=${{ steps.summary.outcome }}
+          TAG_OUTCOME: ${{ steps.tag.outcome }}
+          RELEASE_OUTCOME: ${{ steps.release.outcome }}
+        run: |
+          {
+            echo "### publish: failed steps"
+            for outcome in $OUTCOMES; do
+              if [ "${outcome#*=}" = "failure" ]; then
+                echo "- \`${outcome%%=*}\`"
+              fi
+            done
+            echo
+            case $TAG_OUTCOME in
+              failure) echo "Tagging failed. The log of the \`tag\` step says which exact version tags were created (they stay) and whether the floating tags were put back. No GitHub release was created by this run." ;;
+              success)
+                if [ "$RELEASE_OUTCOME" = failure ]; then
+                  echo "The images are published under every tag; the GitHub release is missing or incomplete."
+                else
+                  echo "The images and the GitHub release are published; only a later step failed."
+                fi
+                ;;
+              *) echo "No tag was created or moved, and no GitHub release was created." ;;
+            esac
+            echo
+            echo "Re-run this run to complete the release: what is already published is left as it is. See \`docs/releasing.md\`."
+          } >> "$GITHUB_STEP_SUMMARY"
