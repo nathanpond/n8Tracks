@@ -607,3 +607,6 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** In the `container` job the two-architecture builds run even when the smoke script failed (they need only QEMU and Buildx), and the job's failure summary lists the failed smoke assertions. The image artifact is saved and uploaded only after a green smoke run.
   **Why:** The gate's rule from #39: one run shows every failure. An image that failed the smoke script must not reach the end-to-end job.
   **Issue:** #40
+- **Decision:** The smoke step names `shell: bash`. The first bite run (throwaway pull request #164, run 37186180438) showed the gap: the script printed three FAIL lines and exited 1, yet the step, the `container` job, and `ci` were green, because the step pipes the script through `tee` (to keep the log for the failure summary) and the default shell of a `run` step has no `pipefail`.
+  **Why:** GitHub adds `-o pipefail` only when the shell is named. The bite test is what found it; the fix was pushed and the same throwaway pull request re-run.
+  **Issue:** #40
