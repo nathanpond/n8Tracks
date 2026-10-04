@@ -16,6 +16,18 @@ dotnet format --verify-no-changes
 
 Warnings are errors, and .NET analyzers and code-style rules run as part of the build (`Directory.Build.props`).
 
+### Continuous integration
+
+Every pull request to `main` runs one gate, `.github/workflows/ci.yml`, and the single check named `ci` is green only when all of it passed:
+
+| Job | Runs |
+| --- | --- |
+| `dotnet` | `dotnet build -warnaserror` (Release), `dotnet format --verify-no-changes`, and `dotnet test` for the whole solution |
+| `web` | `npm ci`, then `lint`, `typecheck`, `format:check`, `test`, and `build` in `web/` |
+| `extension` | the same in `extension/`, plus `npm run package`; the zip is kept as the `extension-zip` artifact |
+
+Within a job every check runs even after an earlier one failed, so one run shows all the failures; a failed job lists its failed steps in the run summary. The workflow is also callable (`workflow_call`), so publishing runs the same gate. A job added to the workflow must be added to the `needs:` of the `ci` job.
+
 ### Backend layout
 
 | Project | Holds | May reference |

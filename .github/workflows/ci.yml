@@ -1,0 +1,238 @@
+# The project's one automated gate. It runs on every pull request to main and is called by the
+# publishing workflows (workflow_call), so a pull request and a publish pass the identical checks.
+#
+# Rules for anyone adding to this file:
+# - Every job is listed in the `needs:` of the final `ci` job. `ci` is the one check name that
+#   stands for the whole gate; it fails unless every job it needs ended in `success`.
+# - Within a job, each check runs even when an earlier check failed, so one run shows every
+#   failure. Only the prerequisites (restore and build for .NET, `npm ci` for the npm projects)
+#   stop what depends on them.
+# - Every step that can fail has an `id`: the failure summary lists failed steps by id.
+# - Actions are pinned to a major version; nothing is fetched at "latest".
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+# One live run per pull request: a new push cancels the run it supersedes. When another workflow
+# calls this one there is no pull request, so the group is the run's own ID: a called run never
+# shares a group, and the caller's concurrency settings govern.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  dotnet:
+    name: dotnet
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DOTNET_NOLOGO: 'true'
+      DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - id: setup
+        name: Set up the .NET SDK pinned in global.json
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: |
+            **/*.csproj
+            Directory.Build.props
+            Directory.Build.targets
+            global.json
+
+      - id: restore
+        name: dotnet restore
+        run: dotnet restore
+
+      - id: build
+        name: dotnet build -warnaserror
+        run: dotnet build --no-restore --configuration Release -warnaserror
+
+      - id: format
+        name: dotnet format --verify-no-changes
+        if: ${{ !cancelled() && steps.restore.outcome == 'success' }}
+        run: dotnet format --verify-no-changes --no-restore
+
+      - id: test
+        name: dotnet test
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: dotnet test --no-build --configuration Release
+
+      - name: Summarize failed steps
+        if: ${{ failure() }}
+        env:
+          STEPS: ${{ toJSON(steps) }}
+        run: |
+          {
+            echo "### dotnet: failed steps"
+            jq -r 'to_entries[] | select(.value.outcome == "failure") | "- `\(.key)`"' <<<"$STEPS"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  web:
+    name: web
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - id: setup
+        name: Set up the Node version in .nvmrc
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - id: install
+        name: npm ci
+        run: npm ci
+
+      - id: lint
+        name: npm run lint
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run lint
+
+      - id: typecheck
+        name: npm run typecheck
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run typecheck
+
+      - id: format
+        name: npm run format:check
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run format:check
+
+      - id: test
+        name: npm test
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm test
+
+      - id: build
+        name: npm run build
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run build
+
+      - name: Summarize failed steps
+        if: ${{ failure() }}
+        env:
+          STEPS: ${{ toJSON(steps) }}
+        run: |
+          {
+            echo "### web: failed steps"
+            jq -r 'to_entries[] | select(.value.outcome == "failure") | "- `\(.key)`"' <<<"$STEPS"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  extension:
+    name: extension
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: extension
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - id: setup
+        name: Set up the Node version in .nvmrc
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      - id: install
+        name: npm ci
+        run: npm ci
+
+      - id: lint
+        name: npm run lint
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run lint
+
+      - id: typecheck
+        name: npm run typecheck
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run typecheck
+
+      - id: format
+        name: npm run format:check
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run format:check
+
+      - id: test
+        name: npm test
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm test
+
+      - id: build
+        name: npm run build
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run build
+
+      - id: package
+        name: npm run package
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run package
+
+      # Only a zip from a job whose every check passed is handed to the publishing workflows.
+      - id: upload
+        name: Upload the packaged extension
+        if: ${{ success() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: extension-zip
+          path: extension/n8tracks-extension-*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Summarize failed steps
+        if: ${{ failure() }}
+        env:
+          STEPS: ${{ toJSON(steps) }}
+        run: |
+          {
+            echo "### extension: failed steps"
+            jq -r 'to_entries[] | select(.value.outcome == "failure") | "- `\(.key)`"' <<<"$STEPS"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # The one check that represents the gate. `always()` makes it run (and fail) when a needed job
+  # failed, was cancelled, or was skipped, where a plain `needs:` would leave it skipped, and a
+  # skipped required check counts as passing.
+  ci:
+    name: ci
+    if: ${{ always() }}
+    needs: [dotnet, web, extension]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every job to have succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<<"$NEEDS"
+          if ! jq -e 'length > 0 and all(.[]; .result == "success")' <<<"$NEEDS" >/dev/null; then
+            {
+              echo "### ci: the gate failed"
+              jq -r 'to_entries[] | select(.value.result != "success") | "- `\(.key)`: \(.value.result)"' <<<"$NEEDS"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::Not every job succeeded."
+            exit 1
+          fi
