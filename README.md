@@ -280,6 +280,41 @@ The build uses relative URLs and resolves every request against the page's base 
 
 The shell page shows the version and the health report, refreshed every 30 seconds while the tab is visible. The colour scheme (light, dark, or auto, which follows the system) is chosen in the header and remembered in the browser. Every colour pair that carries text is in `web/src/theme/palette.ts`, and a test holds each to WCAG 2.1 AA contrast.
 
+## End-to-end tests
+
+`e2e/` is a Playwright suite that drives the real application image in Chromium and scans every state it reaches with axe for WCAG 2.1 A and AA violations, once in light and once in dark. It needs Docker, Node 24, and the image `n8tracks:dev`. From the repository root:
+
+```sh
+docker build -t n8tracks:dev .
+cd e2e
+npm ci
+npx playwright install chromium
+npm test
+```
+
+`npx playwright install chromium` downloads the browser and is needed once per Playwright version. Rebuild the image after changing `web/` or the backend: the suite tests the image, not the working tree.
+
+Each run starts three containers from the image, waits up to 60 seconds for them, and removes them and their temporary data directories afterwards:
+
+| Container | Host port | Is |
+| --- | --- | --- |
+| `n8tracks-e2e-root` | 18787 | healthy, at the root of the hostname |
+| `n8tracks-e2e-subpath` | 18788 | healthy, under the sub-path `/n8tracks` |
+| `n8tracks-e2e-nomedia` | 18789 | no media mounted, so it reports `degraded` |
+
+Every test runs twice, as the projects `root` and `subpath` (`npm test -- --project root` runs one). Containers left by an aborted run are removed first. The run stops at once with a message if Docker is not running, if the image does not exist, or if one of the ports is taken. `scripts/smoke-docker.sh` uses 18787 and 18788 as well, so do not run the two at the same time. Set `N8TRACKS_E2E_IMAGE` to test another image.
+
+A failed test keeps a trace under `e2e/test-results/`; the failure message has the `npx playwright show-trace` command for it. Tests do not retry locally and run in one worker.
+
+| Command (in `e2e/`) | Does |
+| --- | --- |
+| `npm test` | Starts the containers and runs the suite in both projects. |
+| `npm run lint` | ESLint, with typed rules and the Playwright rules. No warnings allowed. |
+| `npm run typecheck` | Strict TypeScript check. |
+| `npm run format:check` | Checks formatting with Prettier; `npm run format` fixes it. |
+
+The pattern for later features: one spec file per area in `e2e/tests/`, shared helpers in `e2e/support/`, and `expectAccessibleInLightAndDark(page)` (or `expectNoA11yViolations(page)` for one scan) after each state a test reaches. A test tagged `@root-only` or `@subpath-only` runs in that project alone. The suite covers Chromium only; it does not cover Firefox, Safari, or screen-reader behaviour.
+
 ## Browser extension
 
 The extension is `extension/`: a Chrome Manifest V3 project in TypeScript, built with Vite. For now it is a skeleton: a popup that shows the name, the version, and "Not connected to n8Tracks", and a service worker that does nothing. It needs Node 24 (the same `.nvmrc` as `web/`) and npm, and it is not part of the .NET solution. Run these in `extension/`:
