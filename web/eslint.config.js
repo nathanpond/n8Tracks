@@ -24,6 +24,9 @@ export default defineConfig([
       reactRefresh.configs.vite,
       jsxA11y.flatConfigs.strict,
     ],
+    rules: {
+      'no-console': 'off',
+    },
     languageOptions: {
       globals: globals.browser,
       parserOptions: {
