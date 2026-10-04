@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    The MCP gateway talks to n8Tracks over HTTP only (project invariant 5). It must not reference
+    another n8Tracks project, Entity Framework Core, or SQLite, directly or transitively:
+    tests/n8Tracks.Gateway.Tests/GatewayIsolationGuardTests.cs fails if it does. The one exception is
+    n8Tracks.ServiceDefaults, which holds telemetry wiring only.
+  -->
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="n8Tracks.Gateway.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\n8Tracks.ServiceDefaults\n8Tracks.ServiceDefaults.csproj" />
+  </ItemGroup>
+
+</Project>

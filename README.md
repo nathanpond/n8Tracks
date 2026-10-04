@@ -2,7 +2,7 @@
 
 A self-hosted authoring workspace and catalog for AI-assisted music: a durable system of record for lyrics, creation parameters, generated outputs, and creative lineage.
 
-**Status:** just initialized. The repository currently holds the product requirements ([docs/PRD.md](docs/PRD.md)) and an ASP.NET Core backend skeleton with a single health endpoint. Nothing described in the PRD is built yet.
+**Status:** just initialized. The repository currently holds the product requirements ([docs/PRD.md](docs/PRD.md)), a layered ASP.NET Core backend skeleton with a health endpoint and environment-variable configuration, a web shell that shows the version and live health, a browser extension skeleton, an MCP gateway skeleton, and an Aspire AppHost that runs them together locally. Nothing described in the PRD is built yet.
 
 ## Build and test
 
@@ -16,13 +16,407 @@ dotnet format --verify-no-changes
 
 Warnings are errors, and .NET analyzers and code-style rules run as part of the build (`Directory.Build.props`).
 
+### Backend layout
+
+| Project | Holds | May reference |
+| --- | --- | --- |
+| `src/n8Tracks.Domain` | Domain types and rules | nothing (no project, no NuGet package) |
+| `src/n8Tracks.Application` | Application services: the one place business rules are applied | Domain |
+| `src/n8Tracks.Infrastructure` | Persistence and other adapters | Application, Domain |
+| `src/n8Tracks.Api` | HTTP endpoints and the composition root | Application, Infrastructure, ServiceDefaults |
+| `src/n8Tracks.Gateway` | The MCP gateway: a separate service that reaches n8Tracks over HTTP only | ServiceDefaults |
+| `src/n8Tracks.ServiceDefaults` | OpenTelemetry wiring shared by the app and the gateway (see [Telemetry](#telemetry)); no business logic | nothing |
+| `src/n8Tracks.AppHost` | Local development only: the Aspire AppHost that runs the app, the gateway, and the frontend together (see [Run](#run)). In neither Docker image | Api, Gateway (started as processes, not referenced as code) |
+
+Endpoints go through the application layer. Only the Api's composition root (`Program.cs` and the `n8Tracks.Api.DependencyInjection` namespace) may touch Infrastructure or Entity Framework Core. `tests/n8Tracks.Architecture.Tests` fails the build's test run when a project reference or a type dependency breaks these rules; a new project under `src/` must be added to the table in `ProjectReferenceTests`.
+
 ## Run
 
+One command starts the whole stack for local development: the app, the MCP gateway, and the frontend dev server, with a dashboard for their logs and traces. Install the frontend's dependencies once, then run the Aspire AppHost from the repository root:
+
 ```sh
-dotnet run --project src/n8Tracks
+(cd web && npm install)
+dotnet run --project src/n8Tracks.AppHost
 ```
 
-Then `GET /health`.
+| Started | Address |
+| --- | --- |
+| The app (`api`) | `http://localhost:8787` |
+| The MCP gateway (`gateway`), pointed at the app | `http://localhost:8788` |
+| The frontend dev server (`frontend`), with hot reload | `http://localhost:5173` |
+| The Aspire dashboard | `http://localhost:15187` |
+
+The console prints a line starting `Login to the dashboard at`: open that URL (it carries the dashboard's login token; no browser is opened for you). The dashboard lists the three resources and their state, and shows each one's console output, structured logs, and traces. Stop everything with Ctrl+C.
+
+- **Data.** The AppHost creates `src/n8Tracks.AppHost/.localdata` and `.localdata/media` (git-ignored) and passes them as `N8TRACKS_DATA_PATH` and `N8TRACKS_MEDIA_PATH`, so a fresh clone starts healthy.
+- **Settings.** The app and the gateway are configured the way a container is, only through the `N8TRACKS_*` variables under [Configuration](#configuration) and [Gateway settings](#gateway-settings) (and `TZ`). Whatever you set in your own environment replaces the AppHost's default, with no code change: `N8TRACKS_LOG_LEVEL=Debug dotnet run --project src/n8Tracks.AppHost`. A relative path you set is taken relative to the directory you run the command in.
+- **Ports.** 8787, 8788, and 5173 are fixed (the first two follow `N8TRACKS_PORT` and `N8TRACKS_GATEWAY_PORT`), and nothing sits in front of them. If one is in use, that resource fails to start and says so; there are no fallback ports.
+- **Telemetry.** The AppHost sets `OTEL_EXPORTER_OTLP_ENDPOINT` of the app and the gateway to the dashboard, which is what turns their [telemetry](#telemetry) on. The app's log records are redacted before they are exported, as always.
+- **Frontend.** The AppHost never runs `npm install`. If `web/node_modules` is missing, the `frontend` resource fails with a message saying to run `npm install` in `web/`; the app and the gateway still start. After installing, start the resource from the dashboard or restart the AppHost.
+- **No HTTPS.** The dashboard and its collector listen on plain HTTP on localhost, so no development certificate has to be trusted. The warning `No trusted Aspire development certificate was found` at startup can be ignored.
+
+The AppHost (`src/n8Tracks.AppHost`, Aspire) is development tooling only. It is not part of either Docker image: both build contexts leave it out, and `tests/n8Tracks.AppHost.Tests` and `scripts/smoke-docker.sh` fail if that changes.
+
+### Run one component
+
+Each part also runs on its own.
+
+The app:
+
+```sh
+dotnet run --project src/n8Tracks.Api
+```
+
+Then `GET http://localhost:8787/health`. The launch profile sets `N8TRACKS_DATA_PATH=./.localdata` (created by a Debug build under `src/n8Tracks.Api`, git-ignored; a different folder from the AppHost's).
+
+The gateway, next to a running app: `dotnet run --project src/n8Tracks.Gateway` (see [MCP gateway](#mcp-gateway)).
+
+The frontend dev server, next to a running app: `npm run dev` in `web/` (see [Frontend project](#frontend-project)).
+
+## Run with Docker
+
+n8Tracks runs from one image: the app and its web interface, on port 8787. The image is built from this repository for `linux/amd64` and `linux/arm64`; published images come with the first release. The MCP gateway is a second, separate image: see [The gateway image](#the-gateway-image).
+
+### Quick start with Compose
+
+[`docker-compose.example.yml`](docker-compose.example.yml) builds the image and starts it:
+
+```sh
+docker compose -f docker-compose.example.yml up -d --build
+```
+
+Then open `http://localhost:8787/`: the page shows the version and the health of the instance, and `docker ps` shows the container as `healthy`. The example keeps the app's data in `./data` and reads media from `./media`, next to the Compose file. To make it your own, copy it to `docker-compose.yml`, set `PUID`, `PGID`, `TZ`, and the two host folders, and run `docker compose up -d --build`.
+
+Removing the container and creating it again (`docker compose down`, then `up -d`) keeps everything: the database lives in the data folder, not in the container.
+
+With `restart: unless-stopped`, a container that cannot start (an invalid setting, a data folder it cannot write to, a database from a newer version) shows as restarting, and `docker compose logs` repeats the same error line each time.
+
+Without Compose:
+
+```sh
+docker build -t n8tracks:dev .
+docker run -d --name n8tracks -p 8787:8787 \
+  -e PUID=1000 -e PGID=1000 -e TZ=Etc/UTC \
+  -v "$PWD/data:/data" -v "$PWD/media:/media:ro" \
+  n8tracks:dev
+```
+
+### The user the app runs as: `PUID` and `PGID`
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `PUID` | `1000` | Numeric ID of the user the app runs as. Files it creates belong to this user. |
+| `PGID` | `1000` | Numeric ID of that user's group. |
+
+Use the IDs of the account that owns your data folder on the host (`id -u` and `id -g`). The container starts as root only to apply them: if the top-level owner of `/data` (or of `/backup`, when mounted) is someone else, it hands that folder and everything in it to `PUID:PGID`, then drops to that user, with no other groups, and starts the app. Files the app creates are readable by others and writable only by their owner (umask 022). `/media` is never touched.
+
+- A value that is not a whole number from 0 upwards stops the container with exit code 1 and one error line naming the variable.
+- `0` is accepted and logs a warning: the app then runs as root.
+- If the owner cannot be changed (a read-only or root-squashed share), the container logs a warning and carries on; the app stops with its own error if it cannot write to `/data`.
+- If you start the container as a user yourself (`user: "1000:1000"` in Compose, `--user` with `docker run`), `PUID` and `PGID` are not read and nothing is changed: that user must already be able to write to `/data`.
+
+Only `/data` and `/backup` get this treatment. If you point `N8TRACKS_DATA_PATH` somewhere else inside the container, make that folder writable for `PUID:PGID` yourself.
+
+### Mounts
+
+| Path in the container | Purpose | Notes |
+| --- | --- | --- |
+| `/data` | The app's own data, the database included. | Required, writable. Declared as a volume: without a mount Docker gives the container an anonymous volume, which is lost when the container is removed with its volumes. Mount a host folder or a named volume. |
+| `/media` | Your media files. | Mount it read-only (`:ro`); n8Tracks never writes there. Not mounted or not reachable: the app still runs, health is `degraded`, and the container stays `healthy`. |
+| `/backup` | Backups. | Optional, writable. |
+
+The image does not contain `/media` or `/backup`: one that is not mounted does not exist in the container.
+
+### Settings
+
+The app reads the variables under [Configuration](#configuration); the Compose example lists each with its default. In a container, leave `N8TRACKS_DATA_PATH`, `N8TRACKS_MEDIA_PATH`, and `N8TRACKS_BACKUP_PATH` alone and change what is mounted there. If you change `N8TRACKS_PORT`, change the container side of the port mapping too (`"8787:9000"` for port 9000). `ASPNETCORE_ENVIRONMENT` is `Production` in the image.
+
+### Under a sub-path
+
+Behind a reverse proxy that serves n8Tracks at, say, `https://nas.example/n8tracks`, set:
+
+```yaml
+    environment:
+      N8TRACKS_BASE_URL: https://nas.example/n8tracks
+```
+
+and have the proxy forward the path unchanged to port 8787. The app then answers only under `/n8tracks` (the page at `/n8tracks/`, health at `/n8tracks/health`); anything outside it is 404. The container health check follows the setting by itself.
+
+### Container health check
+
+The image's health check runs the app binary in a second mode, `dotnet /app/n8Tracks.Api.dll --healthcheck`, so the image needs no `curl`. It requests `<base path>/health` on the loopback interface at `N8TRACKS_PORT`, and passes on 200 (`healthy` or `degraded`); 503, no answer within 4 seconds, or an invalid port or base URL fails it. It runs every 30 seconds (every 5 while starting, on Docker 25 or later), and three failures in a row mark the container `unhealthy`.
+
+### Log lines before the app starts
+
+What the container writes before the app starts (the `PUID`/`PGID` errors and warnings, an owner change) has the keys of the application log, one JSON object per line:
+
+```json
+{"timestamp":"2026-10-04T05:50:21.118Z","level":"Error","message":"Invalid configuration: PUID must be a whole number from 0 to 4294967294, but was 'abc'.","properties":{"sourceContext":"n8Tracks.Entrypoint","variable":"PUID","reason":"must be a whole number from 0 to 4294967294, but was 'abc'."}}
+```
+
+### Building the image
+
+```sh
+docker build -t n8tracks:dev .
+docker buildx build --platform linux/amd64,linux/arm64 .
+```
+
+The version comes from the root `VERSION` file; `--build-arg VERSION=<version>` overrides it, and `/health` reports whichever was used. The two-platform build needs a builder that supports it (the containerd image store, or `docker buildx create --driver docker-container`). Tests are not run in the image build.
+
+`scripts/smoke-docker.sh` builds both images (the app and the gateway) for your machine and checks them end to end. For the app: health, the page, the user the app runs as, file ownership, a read-only media mount, no media mount, a sub-path, a restart and a re-creation on the same data, and the refusals (`PUID=abc`, a read-only `/data`). For the gateway: health next to the app on a shared network, the user it runs as, the container staying `healthy` while the app is stopped, another port, and the refusal to start without `N8TRACKS_API_URL`. It needs Docker, `curl`, and `python3`, uses host ports 18787 and 18788, and removes what it created.
+
+### The gateway image
+
+The [MCP gateway](#mcp-gateway) has its own image, built from `src/n8Tracks.Gateway/Dockerfile` with the repository root as the build context:
+
+```sh
+docker build -f src/n8Tracks.Gateway/Dockerfile -t n8tracks-gateway:dev .
+docker buildx build -f src/n8Tracks.Gateway/Dockerfile --platform linux/amd64,linux/arm64 .
+```
+
+It holds the gateway alone, for `linux/amd64` and `linux/arm64`, and listens on port 8788. The version comes from the root `VERSION` file, or from `--build-arg VERSION=<version>`, exactly as for the app image, and the gateway's `/health` reports it. Build both images from the same version: the gateway is `degraded` when its major and minor numbers differ from the app's. The build reads `src/n8Tracks.Gateway/Dockerfile.dockerignore` instead of the root `.dockerignore`, so only the gateway's sources are sent to Docker.
+
+With Compose: in [`docker-compose.example.yml`](docker-compose.example.yml), remove the `# ` in front of the `n8tracks-gateway` service and its lines, then start it the same way:
+
+```sh
+docker compose -f docker-compose.example.yml up -d --build
+```
+
+`docker ps` then shows both containers as `healthy`, and `http://localhost:8788/health` answers:
+
+```json
+{ "status": "healthy", "upstream": "reachable", "version": "0.1.0", "compatible": true }
+```
+
+Without Compose, put both containers on one Docker network and give the gateway the app's address there:
+
+```sh
+docker network create n8tracks
+docker run -d --name n8tracks --network n8tracks -p 8787:8787 \
+  -e PUID=1000 -e PGID=1000 \
+  -v "$PWD/data:/data" -v "$PWD/media:/media:ro" \
+  n8tracks:dev
+docker run -d --name n8tracks-gateway --network n8tracks -p 8788:8788 \
+  -e N8TRACKS_API_URL=http://n8tracks:8787 \
+  n8tracks-gateway:dev
+```
+
+- `N8TRACKS_API_URL` is required: the URL of n8Tracks as the gateway container reaches it, which is the app's container or service name and the port it listens on inside its container, not `localhost` and not the published host port. If the app runs under a sub-path, include the path (`http://n8tracks:8787/n8tracks`). Without the variable the container stops with exit code 1 and one error line naming it; under `restart: unless-stopped` it shows as restarting.
+- The other settings are under [Gateway settings](#gateway-settings). If you change `N8TRACKS_GATEWAY_PORT`, change the container side of the port mapping too.
+- The gateway runs as the image's fixed unprivileged user (`app`, UID and GID 1654). It writes no file, so the image has no volume, no mount, and no `PUID` or `PGID`. It has no time zone setting either: its log is in UTC.
+- The health check runs the gateway binary in a second mode, `dotnet /app/n8Tracks.Gateway.dll --healthcheck`, with the timing of the app image's check. It requests `/health` on the loopback interface at `N8TRACKS_GATEWAY_PORT` and passes on 200. The gateway answers 200 whether it is `healthy` or `degraded`, so the container stays `healthy` while n8Tracks is stopped, unreachable, or of another version; only a gateway that does not answer within 4 seconds becomes `unhealthy`. To see whether n8Tracks is reachable, read the gateway's `/health`.
+
+## Health
+
+`GET /health` (under the base URL path, if there is one) reports the instance in one JSON document. It needs no sign-in, is never cached (`Cache-Control: no-store`), answers `HEAD` too, and is checked afresh on every request.
+
+```json
+{
+  "status": "degraded",
+  "version": "0.1.0",
+  "timeZone": "Europe/Oslo",
+  "components": {
+    "application": { "status": "healthy", "detail": "running" },
+    "database": { "status": "healthy", "detail": "reachable" },
+    "migrations": { "status": "healthy", "detail": "up to date", "lastApplied": "20261004042959_InitialCreate" },
+    "media": { "status": "degraded", "detail": "unavailable" }
+  }
+}
+```
+
+| Component | Healthy when | Otherwise |
+| --- | --- | --- |
+| `application` | The app answers. | |
+| `database` | A trivial query succeeds within 2 seconds. | `unhealthy`, detail `unreachable`. |
+| `migrations` | Always, once the app has started: `lastApplied` is the newest migration applied at startup. | |
+| `media` | `N8TRACKS_MEDIA_PATH` is a directory that can be listed within 2 seconds. A read-only mount is fine. | `degraded`, detail `unavailable`. |
+
+The overall `status` is the worst of the components. The HTTP status is 200 for `healthy` and `degraded` (the app keeps working without the media mount) and 503 for `unhealthy`, so a container health check can use the status code alone. The response never contains paths, connection strings, or error text: the cause of a failure is written to the log once, as a Warning, when a component stops being healthy, and its recovery as an Information line.
+
+## Frontend
+
+The backend serves a built frontend from its web root, `src/n8Tracks.Api/wwwroot` (git-ignored; the .NET build never runs npm). Everything is under the base URL path, if there is one:
+
+- `GET <base>/` and any unknown path (a deep link) return `index.html`, the shell, with `<base href="<base>/">` put in place of the `<!--n8tracks-base-->` comment in its `<head>`, so one build works at the root and under any sub-path. The shell is read once at startup and served with `Cache-Control: no-cache`.
+- Only `GET` and `HEAD` get the shell, and never a path whose first segment is `api`, `health`, `openapi`, or `assets`, or whose last segment has a file extension: those are 404 when nothing is there.
+- Files under `assets/` are served as `public, max-age=31536000, immutable`; other files as `no-cache`.
+- `GET <base>` without the trailing slash redirects (308) to `<base>/`.
+- With no `index.html` in the web root, the shell routes answer a plain-text 404 saying the frontend is not built; the API and `/health` work as usual.
+
+### Frontend project
+
+The frontend is `web/`: React, TypeScript, Vite, and Mantine. It needs Node 24 (pinned in `.nvmrc`; `nvm use` picks it up) and npm. Run these in `web/`:
+
+| Command | Does |
+| --- | --- |
+| `npm ci` | Installs the dependencies from the lockfile. |
+| `npm run dev` | Serves the app at `http://localhost:5173/` with hot reload, proxying `/api` and `/health` to the backend at `N8TRACKS_API_URL`, by default `http://localhost:8787` (start it with `dotnet run --project src/n8Tracks.Api`). The dev server runs at the root only. The AppHost runs this for you (see [Run](#run)). |
+| `npm run build` | Typechecks, then builds into `web/dist`. |
+| `npm run lint` | ESLint, with typed rules, React hooks rules, and accessibility rules. No warnings allowed. |
+| `npm run typecheck` | Strict TypeScript check. |
+| `npm run format:check` | Checks formatting with Prettier; `npm run format` fixes it. |
+| `npm test` | Runs the component and unit tests once (Vitest, Testing Library, jsdom). |
+
+To have the backend serve the built frontend, copy the build into its web root (from the repository root), then start the backend and open `http://localhost:8787/`:
+
+```sh
+(cd web && npm ci && npm run build)
+rm -rf src/n8Tracks.Api/wwwroot && cp -R web/dist src/n8Tracks.Api/wwwroot
+```
+
+The build uses relative URLs and resolves every request against the page's base URL, so the same `web/dist` works at the root of a hostname and under a sub-path.
+
+The shell page shows the version and the health report, refreshed every 30 seconds while the tab is visible. The colour scheme (light, dark, or auto, which follows the system) is chosen in the header and remembered in the browser. Every colour pair that carries text is in `web/src/theme/palette.ts`, and a test holds each to WCAG 2.1 AA contrast.
+
+## Browser extension
+
+The extension is `extension/`: a Chrome Manifest V3 project in TypeScript, built with Vite. For now it is a skeleton: a popup that shows the name, the version, and "Not connected to n8Tracks", and a service worker that does nothing. It needs Node 24 (the same `.nvmrc` as `web/`) and npm, and it is not part of the .NET solution. Run these in `extension/`:
+
+| Command | Does |
+| --- | --- |
+| `npm ci` | Installs the dependencies from the lockfile. |
+| `npm run build` | Typechecks, empties `extension/dist`, and builds the extension into it. |
+| `npm run package` | Builds, then zips the contents of `dist` as `extension/n8tracks-extension-<version>.zip`, deleting the zips of other versions. |
+| `npm run lint` | ESLint with typed rules. No warnings allowed. |
+| `npm run typecheck` | Strict TypeScript check. |
+| `npm run format:check` | Checks formatting with Prettier; `npm run format` fixes it. |
+| `npm test` | Builds into `dist` (overwriting it), then runs the unit tests and the checks on the built manifest once (Vitest). |
+
+To load it unpacked:
+
+1. Run `npm ci` and `npm run build` in `extension/` (or unzip a packaged zip into a folder).
+2. In Chrome, open `chrome://extensions` and turn on Developer mode.
+3. Choose Load unpacked and select `extension/dist` (or the unzipped folder).
+4. Click the n8Tracks icon in the toolbar; the popup shows the name and version. After a rebuild, press the reload button on the extension's card.
+
+The source manifest is `extension/manifest.json`; the build writes `dist/manifest.json` from it, replacing source paths with built ones and filling in the version. The extension asks for the `storage` permission only, and for `https://suno.com/*` only as an optional host, which Chrome grants when the user agrees. The build and the tests fail if the manifest gains another permission or host, a content script, or `externally_connectable`.
+
+The version is the root `VERSION` file, or the `N8TRACKS_VERSION` environment variable when it is set (for example `N8TRACKS_VERSION=0.1.0-edge.abc1234 npm run package`). Chrome accepts only numbers in a manifest `version`, so a version with a pre-release suffix is written as `version` `0.1.0` and `version_name` `0.1.0-edge.abc1234`; the popup and the zip file name use the full string. The build also keeps the version in `extension/package.json` and its lockfile equal to the `VERSION` file.
+
+`extension/fixtures/` holds sanitized examples of Suno responses for later adapter tests.
+
+## MCP gateway
+
+The gateway is `src/n8Tracks.Gateway`: a separate ASP.NET Core service that will expose n8Tracks to MCP clients. For now it is a skeleton with no MCP endpoint and no tools: it starts, checks that it can reach n8Tracks, and reports that on its own health URL. It talks to n8Tracks only over HTTP, at `N8TRACKS_API_URL`, and holds no business logic and no catalog data.
+
+Build and test it with the rest of the solution (`dotnet build`, `dotnet test`), or on its own:
+
+```sh
+dotnet build src/n8Tracks.Gateway
+dotnet test tests/n8Tracks.Gateway.Tests
+```
+
+Run it next to the app (start that first with `dotnet run --project src/n8Tracks.Api`):
+
+```sh
+dotnet run --project src/n8Tracks.Gateway
+```
+
+Then `GET http://localhost:8788/health`. The launch profile sets `N8TRACKS_API_URL=http://localhost:8787`; anywhere else, set it yourself:
+
+```sh
+N8TRACKS_API_URL=http://localhost:8787 dotnet src/n8Tracks.Gateway/bin/Debug/net10.0/n8Tracks.Gateway.dll
+```
+
+### Gateway settings
+
+The gateway is configured only through environment variables, read once at startup. An empty or whitespace-only value counts as unset.
+
+| Variable | Default | Example | Meaning |
+| --- | --- | --- | --- |
+| `N8TRACKS_API_URL` | none (required) | `https://nas.example/n8tracks` | URL of n8Tracks as the gateway reaches it. An absolute `http` or `https` URL without query string, fragment, or user info. A path is kept: the example is checked at `https://nas.example/n8tracks/health`. |
+| `N8TRACKS_GATEWAY_PORT` | `8788` | `9001` | Port the gateway listens on: plain HTTP, all interfaces. A whole number from 1 to 65535. |
+| `N8TRACKS_LOG_LEVEL` | `Information` | `Debug` | Minimum log level: `Trace`, `Debug`, `Information`, `Warning`, `Error`, or `Critical` (any letter case). |
+
+`N8TRACKS_GATEWAY_PORT` is the only way to set the listen address: `ASPNETCORE_URLS`, `ASPNETCORE_HTTP_PORTS`, `--urls`, and launch settings are ignored. The gateway ignores every other `N8TRACKS_` variable, the app's `N8TRACKS_PORT` included. The optional `OTEL_EXPORTER_OTLP_ENDPOINT` is described under [Telemetry](#telemetry).
+
+A missing or invalid value stops the gateway before it listens, with exit code 1 and one line per problem naming the variable, at any log level. The value of `N8TRACKS_API_URL` is never written. The gateway also exits with code 1 and one such line when its port is already in use.
+
+The log is one JSON object per line on standard output, in the shape of .NET's JSON console formatter (not the app's shape):
+
+```json
+{"Timestamp":"2026-10-04T05:18:28.639Z","EventId":1,"LogLevel":"Error","Category":"n8Tracks.Gateway.Startup","Message":"Invalid configuration: N8TRACKS_API_URL is required: set it to the URL of n8Tracks, such as http://n8tracks:8787.","State":{"Variable":"N8TRACKS_API_URL","Reason":"is required: set it to the URL of n8Tracks, such as http://n8tracks:8787.","{OriginalFormat}":"Invalid configuration: {Variable} {Reason}"}}
+```
+
+Framework categories (`Microsoft`, `System`) are held at Warning unless the level is set higher.
+
+### Gateway health
+
+Started with `--healthcheck`, the gateway binary starts nothing: it requests `/health` from the gateway already running on the loopback interface at `N8TRACKS_GATEWAY_PORT`, writes one log line, and exits with code 0 for a 200 answer and 1 otherwise. The [gateway image](#the-gateway-image) uses this as its container health check.
+
+`GET /health` on the gateway asks `<N8TRACKS_API_URL>/health` afresh on every request and answers 200 with `Cache-Control: no-store`, whatever it finds:
+
+```json
+{ "status": "healthy", "upstream": "reachable", "version": "0.1.0", "compatible": true }
+```
+
+| Field | Values |
+| --- | --- |
+| `upstream` | `reachable` when n8Tracks returned any complete HTTP response within 3 seconds, a 503 included; otherwise `unreachable`. Redirects are not followed, and at most 64 KB of the response is read. |
+| `version` | The gateway's own version. |
+| `compatible` | `true` when the `version` in n8Tracks' health response has the same major and minor numbers as the gateway's, `false` when it does not, and `null` when n8Tracks is unreachable or its answer has no readable version. |
+| `status` | `healthy` only when `upstream` is `reachable` and `compatible` is `true`; otherwise `degraded`. |
+
+The response never says why n8Tracks is unreachable. The gateway writes one Warning line when n8Tracks becomes unreachable, mismatched, or of unknown version (a short reason, never the URL), nothing while that lasts, and one Information line when it is reachable and compatible again.
+
+### Gateway isolation
+
+`tests/n8Tracks.Gateway.Tests/GatewayIsolationGuardTests.cs` fails if the gateway references another n8Tracks project, Entity Framework Core, or SQLite, directly or through another package or project. The one exemption is `n8Tracks.ServiceDefaults` (telemetry wiring), which is held to the same rule itself. It reads the gateway's project file, the dependency graph NuGet resolved for it, and the assemblies the built gateway references. It cannot see business rules written by hand inside the gateway; that is for review.
+
+## Configuration
+
+The app is configured only through environment variables, read once at startup. An empty or whitespace-only value counts as unset.
+
+| Variable | Default | Example | Meaning |
+| --- | --- | --- | --- |
+| `N8TRACKS_PORT` | `8787` | `9000` | Port the app listens on: plain HTTP, all interfaces. A whole number from 1 to 65535. |
+| `N8TRACKS_BASE_URL` | `http://localhost:<port>` | `https://nas.example/n8tracks` | Public URL of the app. An absolute `http` or `https` URL without query string, fragment, or user info. If it has a path, every route (including `/health`) is served under that path and anything outside it returns 404. |
+| `TZ` | `UTC` | `Europe/Oslo` | Time zone that times are shown in: an IANA time zone ID. |
+| `N8TRACKS_LOG_LEVEL` | `Information` | `Debug` | Minimum log level: `Trace`, `Debug`, `Information`, `Warning`, `Error`, or `Critical` (any letter case). |
+| `N8TRACKS_DATA_PATH` | `/data` | `/srv/n8tracks/data` | Directory for the app's own data. It must exist and be writable. |
+| `N8TRACKS_MEDIA_PATH` | `/media` | `/mnt/music` | Directory of your media files. It may be missing at startup. |
+| `N8TRACKS_BACKUP_PATH` | `/backup` | `/mnt/backup` | Directory for backups. It may be missing at startup. |
+
+Behind a reverse proxy on a sub-path, set `N8TRACKS_BASE_URL` to the public URL and have the proxy forward the path unchanged: with `https://nas.example/n8tracks`, the health check is `/n8tracks/health` and the prefix matches in any letter case. A single trailing slash is ignored. Path segments may contain only letters, digits, `.`, `_`, `~`, and `-`.
+
+Relative paths resolve against the working directory.
+
+`N8TRACKS_PORT` is the only way to set the listen address: `ASPNETCORE_URLS`, `ASPNETCORE_HTTP_PORTS`, `--urls`, and launch settings are ignored.
+
+An invalid value stops the app before it listens, with exit code 1 and one line per problem naming the variable and the reason, for example:
+
+```json
+{"timestamp":"2026-10-04T04:06:19.515361Z","level":"Error","message":"Invalid configuration: TZ must be a time zone ID this system knows, such as UTC or Europe/Oslo, but was 'Mars/Olympus'.","properties":{"variable":"TZ","reason":"must be a time zone ID this system knows, such as UTC or Europe/Oslo, but was 'Mars/Olympus'."}}
+```
+
+The app also exits with code 1 and one such line when the port is already in use or it is not permitted to bind it. A variable that starts with `N8TRACKS_` but is not in the table gets one warning line and is otherwise ignored. The optional `OTEL_EXPORTER_OTLP_ENDPOINT` is described under [Telemetry](#telemetry).
+
+## Telemetry
+
+Neither the app nor the gateway sends telemetry anywhere unless you tell it where. Both read one optional setting, the standard OpenTelemetry variable:
+
+| Variable | Default | Example | Meaning |
+| --- | --- | --- | --- |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | unset: nothing is sent | `http://collector:4317` | URL of an OpenTelemetry collector you run. When set, traces, metrics, and logs are exported to it over OTLP. |
+
+When the variable is unset or blank, nothing is sent: OpenTelemetry is not set up at all (no tracing, no metrics, no log export, no exporter), and the process opens no telemetry connection. There is no other switch and no built-in destination.
+
+When it is set:
+
+- Traces and metrics cover incoming requests (ASP.NET Core) and outgoing HTTP requests. The app reports as service `n8tracks`, the gateway as `n8tracks-gateway`.
+- The app's log records are exported after the same redaction as its standard-output log, so credentials, tokens, cookies, lyrics, prompts, and raw provider payloads are masked before they leave. Traces carry the request path; query-string values are replaced with `Redacted`, and no headers or bodies are recorded.
+- The gateway's log records are the same lines it writes to standard output. Its traces of the health check do include the URL in `N8TRACKS_API_URL`, which its log never does.
+- Standard output is unchanged; export is in addition to it.
+
+The companion variables are honoured as the OpenTelemetry SDK defines them, for example `OTEL_EXPORTER_OTLP_PROTOCOL` (`grpc`, the default, or `http/protobuf`) and `OTEL_EXPORTER_OTLP_HEADERS`. With `http/protobuf`, give the collector's base URL (such as `http://collector:4318`); `/v1/traces`, `/v1/metrics`, and `/v1/logs` are appended. The service names are fixed: `OTEL_SERVICE_NAME` does not change them. There are no n8Tracks-specific telemetry settings.
+
+The wiring is `src/n8Tracks.ServiceDefaults`, shared by the app and the gateway. It maps no endpoints (each service keeps its own `/health`) and references no other n8Tracks project.
+
+## Versioning
+
+The root `VERSION` file holds the one product version, and every component takes its version from it. The build fails if the file is missing, empty, or not `major.minor.patch`. Override it for a single build with `-p:Version=<version>`. The Docker image build takes the same file, or `--build-arg VERSION=<version>`.
+
+Components (application, MCP gateway, browser extension) are compatible when their major and minor numbers match; patch numbers may differ.
 
 ## Security
 

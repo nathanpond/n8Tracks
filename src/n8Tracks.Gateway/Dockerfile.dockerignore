@@ -1,0 +1,16 @@
+# The build context of the gateway image. Docker uses this file instead of the root .dockerignore
+# when it builds src/n8Tracks.Gateway/Dockerfile. Everything is left out except what that build reads.
+*
+
+!global.json
+!Directory.Build.props
+!Directory.Build.targets
+!VERSION
+!src/n8Tracks.Gateway/
+!src/n8Tracks.ServiceDefaults/
+
+# Build output, and local files that must never reach an image
+**/bin/
+**/obj/
+**/.DS_Store
+**/.env

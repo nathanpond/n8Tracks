@@ -1,0 +1,144 @@
+using System.Globalization;
+using n8Tracks.Application.Configuration;
+using n8Tracks.Application.Health;
+using n8Tracks.Application.Persistence;
+using n8Tracks.Infrastructure.Persistence;
+
+namespace n8Tracks.Infrastructure.Health;
+
+/// <summary>
+/// Checks the components one after another on every call. One per host: it remembers each component's
+/// last status so that a failure is logged when it starts and when it ends, not on every poll.
+/// </summary>
+internal sealed class HealthService : IHealthService
+{
+    /// <summary>How long the database check and the media check may each take.</summary>
+    public static readonly TimeSpan CheckTimeout = TimeSpan.FromSeconds(2);
+
+    private const string DatabaseComponent = "database";
+    private const string MigrationsComponent = "migrations";
+    private const string MediaComponent = "media";
+
+    private static readonly HealthComponent ApplicationRunning = new(HealthStatus.Healthy, HealthDetails.ApplicationRunning);
+    private static readonly HealthComponent DatabaseReachable = new(HealthStatus.Healthy, HealthDetails.DatabaseReachable);
+    private static readonly HealthComponent DatabaseUnreachable = new(HealthStatus.Unhealthy, HealthDetails.DatabaseUnreachable);
+    private static readonly HealthComponent MediaAvailable = new(HealthStatus.Healthy, HealthDetails.MediaAvailable);
+    private static readonly HealthComponent MediaUnavailable = new(HealthStatus.Degraded, HealthDetails.MediaUnavailable);
+
+    private readonly IDatabaseConnectionFactory connections;
+    private readonly IMediaMountProbe mediaProbe;
+    private readonly IMigrationStateProvider migrationState;
+    private readonly Serilog.ILogger log;
+    private readonly string mediaPath;
+    private readonly DeadlineCheck databaseCheck;
+    private readonly DeadlineCheck mediaCheck;
+
+    private readonly Lock gate = new();
+    private readonly Dictionary<string, HealthStatus> previous = new(StringComparer.Ordinal);
+
+    public HealthService(
+        N8TracksOptions options,
+        IDatabaseConnectionFactory connections,
+        IMediaMountProbe mediaProbe,
+        IMigrationStateProvider migrationState,
+        Serilog.ILogger log)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(log);
+
+        this.connections = connections;
+        this.mediaProbe = mediaProbe;
+        this.migrationState = migrationState;
+        this.log = log.ForContext<HealthService>();
+        mediaPath = options.MediaPath;
+        databaseCheck = new DeadlineCheck(QueryDatabase, CheckTimeout);
+        mediaCheck = new DeadlineCheck(ReadMedia, CheckTimeout);
+    }
+
+    public async Task<HealthReport> GetReportAsync(CancellationToken cancellationToken)
+    {
+        var databaseOutcome = await databaseCheck.RunAsync(cancellationToken).ConfigureAwait(false);
+        var database = databaseOutcome.Result == CheckResult.Passed ? DatabaseReachable : DatabaseUnreachable;
+        Observe(DatabaseComponent, database.Status, databaseOutcome);
+
+        var migrations = Migrations();
+
+        var mediaOutcome = await mediaCheck.RunAsync(cancellationToken).ConfigureAwait(false);
+        var media = mediaOutcome.Result == CheckResult.Passed ? MediaAvailable : MediaUnavailable;
+        Observe(MediaComponent, media.Status, mediaOutcome);
+
+        return new HealthReport(ApplicationRunning, database, migrations, media);
+    }
+
+    private bool QueryDatabase(CancellationToken deadline)
+    {
+        using var connection = connections.CreateForExistingDatabase();
+        deadline.ThrowIfCancellationRequested();
+        connection.Open();
+
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT 1;";
+        command.CommandTimeout = (int)CheckTimeout.TotalSeconds;
+        deadline.ThrowIfCancellationRequested();
+
+        return Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture) == 1;
+    }
+
+    private bool ReadMedia(CancellationToken deadline)
+    {
+        deadline.ThrowIfCancellationRequested();
+
+        return mediaProbe.IsReadable(mediaPath);
+    }
+
+    /// <summary>The state captured at startup: it stays as it was even if the database later goes away.</summary>
+    private MigrationsHealthComponent Migrations()
+    {
+        MigrationsHealthComponent component;
+        var outcome = new CheckOutcome(CheckResult.Passed);
+        try
+        {
+            component = new MigrationsHealthComponent(
+                HealthStatus.Healthy,
+                HealthDetails.MigrationsUpToDate,
+                migrationState.Current.LastAppliedMigrationId);
+        }
+        catch (InvalidOperationException exception)
+        {
+            // Database startup has not completed. The app does not listen before it has, so this is a fault.
+            component = new MigrationsHealthComponent(HealthStatus.Unhealthy, HealthDetails.MigrationsUnknown, null);
+            outcome = new CheckOutcome(CheckResult.Failed, exception);
+        }
+
+        Observe(MigrationsComponent, component.Status, outcome);
+
+        return component;
+    }
+
+    /// <summary>Logs a component's status only when it differs from the last one seen. A component starts out healthy.</summary>
+    private void Observe(string component, HealthStatus status, CheckOutcome outcome)
+    {
+        lock (gate)
+        {
+            var before = previous.GetValueOrDefault(component, HealthStatus.Healthy);
+            if (before == status)
+            {
+                return;
+            }
+
+            previous[component] = status;
+        }
+
+        if (status == HealthStatus.Healthy)
+        {
+            log.Information("Health component {Component} recovered and is {HealthStatus}", component, status);
+            return;
+        }
+
+        var reason = outcome.Result == CheckResult.TimedOut
+            ? string.Create(CultureInfo.InvariantCulture, $"the check did not finish within {CheckTimeout.TotalSeconds:0} seconds")
+            : "the check failed";
+
+        log.Warning(outcome.Exception, "Health component {Component} is {HealthStatus}: {Reason}", component, status, reason);
+    }
+}

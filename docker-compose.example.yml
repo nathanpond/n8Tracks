@@ -1,0 +1,71 @@
+# n8Tracks with Docker Compose. Copy this file to docker-compose.yml, adjust it, and start it:
+#
+#   docker compose up -d --build
+#
+# or run it as it is, from the repository root:
+#
+#   docker compose -f docker-compose.example.yml up -d --build
+#
+# Then open http://localhost:8787/. See "Run with Docker" in the README.
+
+services:
+  n8tracks:
+    # Built from this repository. Published images come with the first release.
+    build: .
+    image: n8tracks:dev
+    container_name: n8tracks
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    environment:
+      # The user and group n8Tracks runs as, and that own what it writes under /data and /backup.
+      # Use the output of `id -u` and `id -g` for the account that owns the folders below.
+      PUID: "1000"
+      PGID: "1000"
+      # Time zone that times are shown in: an IANA time zone ID such as Europe/Oslo.
+      TZ: Etc/UTC
+      # The settings below are shown with their defaults; a line you do not change can be removed.
+      # Port the app listens on inside the container. If you change it, change the right-hand side
+      # of the port mapping above to match.
+      N8TRACKS_PORT: "8787"
+      # Public URL of the app. Behind a reverse proxy on a sub-path, include the path, for example
+      # https://nas.example/n8tracks; the app is then served only under that path.
+      N8TRACKS_BASE_URL: http://localhost:8787
+      # Trace, Debug, Information, Warning, Error, or Critical.
+      N8TRACKS_LOG_LEVEL: Information
+      # Where the app looks inside the container. Change the volumes below, not these.
+      N8TRACKS_DATA_PATH: /data
+      N8TRACKS_MEDIA_PATH: /media
+      N8TRACKS_BACKUP_PATH: /backup
+    volumes:
+      # The app's own data, database included. Keep this folder: it is what you back up.
+      - ./data:/data
+      # Your media files, read-only: n8Tracks never writes here.
+      - ./media:/media:ro
+      # A folder for backups, on another disk if you can. Optional.
+      # - ./backup:/backup
+
+  # The MCP gateway is a separate service with its own image, built from this repository too. To run
+  # it next to the app, remove the "# " in front of each line below, from "n8tracks-gateway:" down.
+  # Its health is then at http://localhost:8788/health. See "The gateway image" in the README.
+  # n8tracks-gateway:
+  #   build:
+  #     context: .
+  #     dockerfile: src/n8Tracks.Gateway/Dockerfile
+  #   image: n8tracks-gateway:dev
+  #   container_name: n8tracks-gateway
+  #   restart: unless-stopped
+  #   depends_on:
+  #     - n8tracks
+  #   ports:
+  #     - "8788:8788"
+  #   environment:
+  #     # URL of n8Tracks as the gateway reaches it: the app's service name on the Compose network
+  #     # and the port it listens on inside its container. If N8TRACKS_BASE_URL above has a path,
+  #     # add it here too (http://n8tracks:8787/n8tracks).
+  #     N8TRACKS_API_URL: http://n8tracks:8787
+  #     # Port the gateway listens on inside the container. If you change it, change the right-hand
+  #     # side of the port mapping above to match.
+  #     N8TRACKS_GATEWAY_PORT: "8788"
+  #     # Trace, Debug, Information, Warning, Error, or Critical.
+  #     N8TRACKS_LOG_LEVEL: Information

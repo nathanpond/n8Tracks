@@ -1,9 +1,23 @@
 <Project>
   <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
     <AnalysisLevel>latest</AnalysisLevel>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+  </PropertyGroup>
+
+  <!--
+    One product version for every component, held in the root VERSION file.
+    Override for a single build with -p:Version=<version>.
+    Directory.Build.targets fails the build when the file is missing, empty, or malformed.
+  -->
+  <PropertyGroup>
+    <ProductVersionFile>$(MSBuildThisFileDirectory)VERSION</ProductVersionFile>
+    <ProductVersionFromFile Condition="Exists('$(ProductVersionFile)')">$([System.IO.File]::ReadAllText('$(ProductVersionFile)').Trim())</ProductVersionFromFile>
+    <Version Condition="'$(ProductVersionFromFile)' != ''">$(ProductVersionFromFile)</Version>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
 </Project>

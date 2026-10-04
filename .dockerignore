@@ -1,0 +1,33 @@
+# Keeps the build context to what the image build reads: the frontend and backend sources.
+# The gateway image has its own list: src/n8Tracks.Gateway/Dockerfile.dockerignore.
+
+# Build output and dependencies
+**/bin/
+**/obj/
+**/node_modules/
+web/dist/
+web/coverage/
+src/n8Tracks.Api/wwwroot/
+
+# Not part of the application image
+.git/
+.github/
+.idea/
+.n8/
+.playwright-mcp/
+docs/
+tests/
+e2e/
+extension/
+scripts/
+src/n8Tracks.AppHost/
+src/n8Tracks.Gateway/
+
+# Local runs: the Compose example's host folders and the development data path
+data/
+media/
+backup/
+**/.localdata/
+**/.DS_Store
+**/.env
+docker-compose*.yml

@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The domain layer references no other project and no NuGet package (see tests/n8Tracks.Architecture.Tests). -->
+
+</Project>
