@@ -34,6 +34,23 @@ public static class SqliteDatabase
         }.ToString();
     }
 
+    /// <summary>
+    /// The connection string of a connection that must find the file already there: read-write,
+    /// never creating it, and outside the connection pool, so that a pooled handle on a file that
+    /// has since been deleted cannot answer for it.
+    /// </summary>
+    public static string ExistingDatabaseConnectionString(string filePath)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(filePath);
+
+        return new SqliteConnectionStringBuilder
+        {
+            DataSource = filePath,
+            Mode = SqliteOpenMode.ReadWrite,
+            Pooling = false,
+        }.ToString();
+    }
+
     /// <summary>The one way the context is configured, for the app and for the design-time tools alike.</summary>
     public static DbContextOptionsBuilder UseN8TracksSqlite(this DbContextOptionsBuilder options, string filePath)
     {

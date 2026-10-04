@@ -1,4 +1,6 @@
 using System.Net.Sockets;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
@@ -72,6 +74,10 @@ public sealed class Program
         // Serilog is the only logging provider; the redaction policy sits in front of every sink.
         builder.Logging.ClearProviders();
         builder.Services.AddN8TracksLogging(sink);
+
+        // Enums travel as camelCase strings ("healthy"), in responses and in the OpenAPI document.
+        builder.Services.ConfigureHttpJsonOptions(static json =>
+            json.SerializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase, allowIntegerValues: false)));
 
         builder.Services.AddOpenApi();
         builder.Services.AddApplication();

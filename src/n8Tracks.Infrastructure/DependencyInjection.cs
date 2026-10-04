@@ -1,7 +1,9 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using n8Tracks.Application.Configuration;
+using n8Tracks.Application.Health;
 using n8Tracks.Application.Persistence;
+using n8Tracks.Infrastructure.Health;
 using n8Tracks.Infrastructure.Persistence;
 
 namespace n8Tracks.Infrastructure;
@@ -18,6 +20,10 @@ public static class DependencyInjection
 
         services.AddSingleton<MigrationStateHolder>();
         services.AddSingleton<IMigrationStateProvider>(static provider => provider.GetRequiredService<MigrationStateHolder>());
+
+        services.AddSingleton<IDatabaseConnectionFactory, SqliteConnectionFactory>();
+        services.AddSingleton<IMediaMountProbe, MediaMountProbe>();
+        services.AddSingleton<IHealthService, HealthService>();
 
         return services;
     }

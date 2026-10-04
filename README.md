@@ -2,7 +2,7 @@
 
 A self-hosted authoring workspace and catalog for AI-assisted music: a durable system of record for lyrics, creation parameters, generated outputs, and creative lineage.
 
-**Status:** just initialized. The repository currently holds the product requirements ([docs/PRD.md](docs/PRD.md)) and a layered ASP.NET Core backend skeleton with a single health endpoint and environment-variable configuration. Nothing described in the PRD is built yet.
+**Status:** just initialized. The repository currently holds the product requirements ([docs/PRD.md](docs/PRD.md)) and a layered ASP.NET Core backend skeleton with a health endpoint and environment-variable configuration. Nothing described in the PRD is built yet.
 
 ## Build and test
 
@@ -34,6 +34,33 @@ dotnet run --project src/n8Tracks.Api
 ```
 
 Then `GET http://localhost:8787/health`. The launch profile sets `N8TRACKS_DATA_PATH=./.localdata` (created by a Debug build under `src/n8Tracks.Api`, git-ignored).
+
+## Health
+
+`GET /health` (under the base URL path, if there is one) reports the instance in one JSON document. It needs no sign-in, is never cached (`Cache-Control: no-store`), answers `HEAD` too, and is checked afresh on every request.
+
+```json
+{
+  "status": "degraded",
+  "version": "0.1.0",
+  "timeZone": "Europe/Oslo",
+  "components": {
+    "application": { "status": "healthy", "detail": "running" },
+    "database": { "status": "healthy", "detail": "reachable" },
+    "migrations": { "status": "healthy", "detail": "up to date", "lastApplied": "20261004042959_InitialCreate" },
+    "media": { "status": "degraded", "detail": "unavailable" }
+  }
+}
+```
+
+| Component | Healthy when | Otherwise |
+| --- | --- | --- |
+| `application` | The app answers. | |
+| `database` | A trivial query succeeds within 2 seconds. | `unhealthy`, detail `unreachable`. |
+| `migrations` | Always, once the app has started: `lastApplied` is the newest migration applied at startup. | |
+| `media` | `N8TRACKS_MEDIA_PATH` is a directory that can be listed within 2 seconds. A read-only mount is fine. | `degraded`, detail `unavailable`. |
+
+The overall `status` is the worst of the components. The HTTP status is 200 for `healthy` and `degraded` (the app keeps working without the media mount) and 503 for `unhealthy`, so a container health check can use the status code alone. The response never contains paths, connection strings, or error text: the cause of a failure is written to the log once, as a Warning, when a component stops being healthy, and its recovery as an Information line.
 
 ## Configuration
 
