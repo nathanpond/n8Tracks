@@ -939,3 +939,76 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 
 ## /n8-exec M1 (second fix pass: canaries) — 2026-10-04
 
+- **Decision:** The canary check is one script, `scripts/check-canaries.sh [ROOT]`, with its sources under `scripts/canaries/`. It copies the tree (tracked files and untracked files git does not ignore, as they are on disk) to a temporary folder, does all its work there, and removes the folder in an `EXIT` trap (`INT`, `TERM`, and `HUP` exit through it). It takes no option: nothing narrows what it checks.
+  **Why:** A copy needs no clean-up logic in the working tree, cannot leave a canary behind after an interruption, and exercises restore and `npm ci` as CI does. Copying the working tree rather than `HEAD` lets a developer check a change before committing it. An option that skipped a half would be one more thing for the scanner to forbid in workflows.
+  **Issue:** #199
+- **Decision:** .NET: every `*.csproj` in the copy outside `scripts/tests/` is canaried (found, not listed; that is wider than `src/` and `tests/`). One project at a time: the canary is placed, `dotnet build <project> --configuration Release` runs, the canary is removed. The check passes only when the build exits non-zero and its errors are exactly the canary's marked lines with their ids (CS8618 on line 8, CA2200 on line 19). A build that succeeds, reports either as a warning, reports only one, or reports any other error fails, naming the project. A `.vbproj` or `.fsproj`, or no project at all, fails.
+  **Why:** With the canary in one project at a time the projects it references build clean, so each project is compiled once (plus one failing compile) and no separate baseline build is needed; a canary in every project at once would stop at the first. Release is what the `dotnet` job and the images build. No `-warnaserror` on the command line, so it is the project's own settings that must make the warnings errors (a build with the switch can only be stricter).
+  **Issue:** #199
+- **Decision:** JavaScript: `web`, `extension`, and `e2e` each get `npm ci` in the copy, then up to three runs, each with only its own canary files: `lint-warning` (web: `react-hooks/exhaustive-deps`; e2e: `playwright/no-wait-for-timeout`; the extension has no rule at `warn`), `lint-error` (`no-debugger`, `@typescript-eslint/no-floating-promises`, `no-explicit-any`, `array-type`, and `jsx-a11y/alt-text` in web), and `typecheck` (thirteen lines, one per strictness setting the tsconfigs turn on: TS7006, TS18048, TS2564, TS18046, TS2683, TS2345, TS2322 three times, TS6133 twice, TS7029, TS4114). Expectations are markers in the canary sources (`// canary: <id>` on the line the tool reports), not a list in the script. Each run must exit non-zero and report every marker on its line; other errors are allowed there.
+  **Why:** A warning-only run is the only way to see `--max-warnings 0` work: with an error in the same run the exit code proves nothing. One canary line per strict flag is what catches a single flag turned off (N18, N19). Markers keep the expectation next to the code that produces it. `node_modules` is installed fresh rather than borrowed from the working tree, so a stale or doctored install is not what gets tested and `tsc -b` cannot write its build info into the real tree.
+  **Issue:** #199
+- **Decision:** A consequence, documented in `docs/conventions.md`: the canaries' diagnostics and rules cannot be switched off for a whole project even with a rationale (a `<NoWarn>CS8618</NoWarn>` with a comment passes the scanner and fails the canary). Suppressions stay scoped to the code that needs them.
+  **Why:** An effect check cannot tell an explained project-wide switch-off from an unexplained one, and invariant 8 is better served by the stricter reading. Shown in the table below (F05, F09, F13).
+  **Issue:** #199
+- **Decision:** The canary script is tested by `scripts/tests/check-canaries/run.sh` (53 checks, 20 cases): a base tree with one real C# project and three JavaScript folders whose `lint` and `typecheck` scripts are stand-ins that report the canaries' marked lines in ESLint's and tsc's formats. The .NET half uses the real SDK; nothing is downloaded. Each case must fail with exactly the expected FAIL lines and leave its tree unchanged and no temporary copy behind; an interrupted run (SIGTERM) is checked the same way. The scanner now leaves `scripts/tests/check-canaries/` unscanned, as it does its own fixtures, and forbids naming that folder on a command line.
+  **Why:** Real ESLint and TypeScript in the fixture would need a second `npm ci` with network access in the `guards` job for no more coverage of the script's own logic; the real tools are covered by the run against the repository and by the bypass table. The fixture trees are deliberately broken (a nested `Directory.Build.props`, `<NoWarn>` without a rationale), so the scanner cannot scan them.
+  **Issue:** #199
+- **Decision:** Proof against the real bypasses, in copies of the repository outside it (real `dotnet`, ESLint, and tsc). "Scanner before" is `scripts/check-suppressions.py` at `45b78e7`; "scanner now" is this commit's; "canary" is `scripts/check-canaries.sh`. PASS means the bypass got through.
+
+  | Bypass | Scanner before | Scanner now | Canary |
+  | --- | --- | --- | --- |
+  | control (no change) | pass | pass | pass (19 checks) |
+  | N01 `<CompilerResponseFile>` at `docs/relax.md` with `-nowarn` | PASS | fails | fails (Domain: build succeeded) |
+  | N02 the same, a binary-named file with a non-UTF-8 byte | PASS | fails | fails |
+  | N03 workflow `dotnet build @docs/relax.md` | PASS | fails | PASS (not its build) |
+  | N04 `<PotentialEditorConfigFiles Include="relax.cfg">` | PASS | fails | fails |
+  | N05 `<AssemblyAttribute>` GeneratedCode (CA2200 gone, CS8618 stays) | PASS | fails | fails (Domain: CA2200 missing) |
+  | N06 `[\U00000053uppressMessage]` | PASS | fails | per file: not seen |
+  | N07 `/**/ [SuppressMessage]` | PASS | fails | per file: not seen |
+  | N08 `/**/ [GeneratedCode]` | PASS | fails | per file: not seen |
+  | N11 `web/eslint-suppressions.json` | PASS | fails | PASS (run: it lists existing files, the canary is new) |
+  | N12 `const rules = {…: OFF}`, shorthand `{ rules }` | PASS | fails | fails (web lint-error), only because the rules switched off have a canary |
+  | N13 inline `processor` returning no messages, for all files | PASS | PASS | fails (web lint-warning, lint-error) |
+  | N14 `import relax from '#relax'` | PASS | fails | fails (web lint-error), as N12 |
+  | N18 `strictBuiltinIteratorReturn: false` | PASS | fails | fails (web typecheck) |
+  | N19 `noUnusedLocals`, `noFallthroughCasesInSwitch`, `noImplicitOverride` false | PASS | PASS | fails (web typecheck) |
+  | N22 `web/.npmrc` `node-options=--import=./quiet.mjs` | PASS | fails | fails (web lint and typecheck exit 0) |
+  | N23 workflow `env: NODE_OPTIONS` (run in a shell: `npm run lint` exits 0) | PASS | fails | per step: not seen |
+  | N24 `npm rum lint -- --ignore-pattern src` (run: exit 0) | PASS | fails | per step: not seen |
+  | N25 folded scalar carrying `-- --quiet` | PASS | fails | per step: not seen |
+  | N26 `if npm run lint; then …; fi` (run: exit 0) | PASS | fails | per step: not seen |
+  | N27, N28 `\|\| exit 00`, `\|\| exit $((0))` (run: exit 0; `exit 256` too) | PASS | fails | per step: not seen |
+  | N30 `shell: pwsh` | PASS | fails | per step: not seen |
+  | #194 `<Features>run-nullable-analysis=never</Features>` | fails | fails | fails |
+  | #194 `<GlobalAnalyzerConfigFiles>` | fails | fails | fails |
+  | #194 `.editorconfig` `generated_code = true` | fails | fails | fails (all 11 projects) |
+  | #194 `<TreatWarningsAsErrors>false` in a csproj | fails | fails | fails |
+  | #194 `<Nullable>disable` in the root props | fails | fails | fails (all 11) |
+  | #194 `<RunAnalyzers>false` | fails | fails | fails |
+  | #194 `web/.npmrc` `script-shell=/usr/bin/true` | fails | fails | fails |
+  | #194 `"strict": false` in `web/tsconfig.app.json` | fails | fails | fails |
+  | #194 `lint` script without `--max-warnings 0` | fails | fails | fails (web lint-warning only) |
+  | `<NoWarn>CS8618;CA2200</NoWarn>` with a rationale | PASS | PASS | fails |
+  | ESLint `'no-debugger': 'off'` with a rationale (extension) | PASS | PASS | fails |
+  | `.editorconfig` CA2200 `none` with a rationale | PASS | PASS | fails (all 11) |
+  | `NoWarn` set as an environment variable where the check runs | PASS | PASS | fails (all 11) |
+
+  In every run the copy's content hash was the same before and after the canary check.
+  **Why:** The issue asks for the canary to be shown failing where the scanner passes. Caught by neither, stated plainly: nothing in this table; but N12 and N14 are caught by the canary only because the rules I switched off are ones it trips, N13 only because the processor covered every file, and N19 only for the tsconfig the canary's folder is in. The same routes aimed at a rule with no canary, or at some files only, pass the canary; the scanner now closes N12 and N14 as written, and N13 scoped to some files stays open (listed under "Not covered by either check").
+  **Issue:** #199
+- **Decision:** Scanner fixes, each with a fixture case shown to pass the unfixed script (16 new cases, 39 new checks; 276 in all, none of the 237 changed or removed): N05 (`GeneratedCode` named in an MSBuild value), N06 (`\UXXXXXXXX` escapes), N07 and N08 (C# comments are blanked before attributes are looked for, so an attribute after `/**/` is found and one inside a comment is not), N24 (npm's `rum` and `urn`, options before the script name), N25 (a folded or multi-line `run:` is read as the one line YAML makes of it), N26 (a gate command as an `if`, `elif`, `while`, or `until` condition), N27 and N28 (the status after `|| exit` must be 1 to 255 or one plain variable), N23 (`NODE_OPTIONS`, which also covers N22's `.npmrc`), N30 (`shell:` may only be `bash` or `sh`), N03 (`@file` on a dotnet command line). Beyond the issue's list, because a canary sees them only for the two diagnostics or the handful of rules it trips: N01 and N04 (`CompilerResponseFile` and `PotentialEditorConfigFiles` join the forbidden names), N11 (`eslint-suppressions.json` and the bulk-suppression flags), N12 (`rules` as a shorthand property), N14 (`#name` imports), N18 (`strictBuiltinIteratorReturn` joins the strict family).
+  **Why:** The issue's item 2 asks for the confirmed per-file and per-step forms. The extra six are one-line additions for routes that can silence any rule, not only a canaried one, and four of them make a sentence of the header true that was false (analyzer configuration under another name, rule severities are literal, no local file is imported).
+  **Issue:** #199
+- **Decision:** `if ! <gate command>; then … fi` stays allowed when the branch holds an `exit` or `return` with a failing status (or calls a function of the file that does); every other use of a gate command as a condition fails.
+  **Why:** `.github/workflows/release.yml` and two existing `good/` fixtures use that form to print a message before failing. Forbidding it would have changed existing checks; allowing any `if !` would have left `if ! npm run lint; then echo oops; fi` open.
+  **Issue:** #199
+- **Decision:** Not fixed in the scanner, and listed under "Not covered by either check": N10 (`<ILLinkTreatWarningsAsErrors>`), N13 scoped to some files, N15 (an aliased `eslint-config-prettier` import), N16 and N17 (`@ts-ignore` in `/*/ … */`, which the lint rule still bans), and N19's options outside the canary's tsconfig.
+  **Why:** The maintainer's decision is that scanner gaps remaining after this pass are documented and carried, not chased.
+  **Issue:** #199
+- **Decision:** The `guards` job now sets up the .NET SDK and Node (the same actions, pins, and cache keys as the `dotnet`, `web`, `extension`, and `e2e` jobs), runs `scripts/tests/check-canaries/run.sh` and then `scripts/check-canaries.sh`, and has a 20-minute limit instead of 5. The summary step prints the canary FAIL lines. `ci` already needs `guards`.
+  **Why:** The canary check builds every project and installs three npm projects; locally it takes about 31 s, its fixture test about 80 s.
+  **Issue:** #199
+- **Decision:** Documentation: the scanner's header now ends with "What the canary check adds" and "Not covered by either check"; `docs/conventions.md` summarises both and names the header as the authority; the `guard:` annotation of invariant 8 in `CLAUDE.md` names both checks and what neither covers (the invariant's sentence is unchanged); the README's CI table gains the `e2e` and `guards` rows and how to run the canaries locally. The five overclaims: `[GeneratedCode]` and un-applied `SuppressMessage` (true now: N05 to N08 fixed), "no local file is imported" (reworded to the forms that are found, with `#name` added), literal rule severities (reworded, shorthand added), "no `||` leading to anything but a non-zero exit" (the rule is now stated exactly, and "a variable that holds 0 is not seen"), an analyzer configuration under another name (the name is forbidden, and the canary is named as what catches the rest).
+  **Why:** Item 3 of the issue: no sentence may claim more than the tests show.
+  **Issue:** #199

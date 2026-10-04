@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>App</RootNamespace>
+    <CompilerResponseFile>$(MSBuildThisFileDirectory)../../docs/relax.md</CompilerResponseFile>
+  </PropertyGroup>
+  <Target Name="Relax" BeforeTargets="CoreCompile">
+    <CreateProperty Value="relax.txt">
+      <Output TaskParameter="Value" PropertyName="CompilerResponseFile" />
+    </CreateProperty>
+  </Target>
+</Project>

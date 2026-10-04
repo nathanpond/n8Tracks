@@ -1,0 +1,8 @@
+name: build
+on: pull_request
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npx eslint . --suppress-all # the old errors are being worked off
+      - run: npx eslint . --suppressions-location relax.json # the old errors are being worked off

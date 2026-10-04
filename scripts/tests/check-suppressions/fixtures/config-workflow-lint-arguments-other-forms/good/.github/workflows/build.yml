@@ -1,0 +1,12 @@
+name: build
+on: pull_request
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm run lint
+      - run: npm --prefix web run lint
+      - run: >
+          npm run
+          typecheck
+      - run: npm run lint:styles -- --quiet-deprecation

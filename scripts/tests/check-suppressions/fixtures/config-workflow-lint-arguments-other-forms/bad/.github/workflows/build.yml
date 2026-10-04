@@ -1,0 +1,19 @@
+name: build
+on: pull_request
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm rum lint -- --ignore-pattern src
+      - run: npm urn typecheck -- --noCheck
+      - run: npm --prefix web run lint -- --quiet
+      - run: npm run --prefix web lint -- --rule no-debugger:off
+      - run: >
+          npm run lint
+          -- --quiet
+      - run: npm run lint
+          -- --quiet
+      - run: >-
+          npm run typecheck
+          --
+          --noCheck

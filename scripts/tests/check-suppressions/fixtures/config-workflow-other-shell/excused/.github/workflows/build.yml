@@ -1,0 +1,18 @@
+name: build
+on: pull_request
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - shell: pwsh # the runner image has no bash
+        run: |
+          npm run lint
+          echo done
+      - shell: "powershell" # the runner image has no bash
+        run: |
+          dotnet build -warnaserror
+          echo done
+      - shell: cmd # the runner image has no bash
+        run: npm test
+      - shell: python # the runner image has no bash
+        run: print("checked")

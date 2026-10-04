@@ -1,0 +1,12 @@
+name: build
+on: pull_request
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - shell: bash
+        run: |
+          npm run lint
+          echo done
+      - shell: sh
+        run: npm test

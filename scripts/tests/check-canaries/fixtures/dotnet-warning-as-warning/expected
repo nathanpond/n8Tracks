@@ -1,0 +1,1 @@
+dotnet src/Lib/Lib.csproj|not with exactly the canary

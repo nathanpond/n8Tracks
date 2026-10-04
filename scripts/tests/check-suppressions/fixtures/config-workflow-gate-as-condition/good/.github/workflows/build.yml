@@ -1,0 +1,17 @@
+name: build
+on: pull_request
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          if ! npm run lint; then
+            echo "lint failed" >&2
+            exit 1
+          fi
+      - run: |
+          if [ -f scripts/build.sh ]; then
+            scripts/build.sh
+          fi
+      - run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then npm test; fi

@@ -1,0 +1,23 @@
+name: build
+on: pull_request
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          if npm run lint; then
+            echo "lint passed"
+          fi
+      - run: if dotnet build -warnaserror; then echo built; else echo "not built"; fi
+      - run: |
+          if ! npm run typecheck; then
+            echo "typecheck failed"
+          fi
+      - run: |
+          until scripts/build.sh; do
+            sleep 1
+          done
+      - run: |
+          if [ -f package.json ] && npm test; then
+            echo tested
+          fi

@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Lib</RootNamespace>
+    <NoWarn>$(NoWarn);CS8618;CA2200</NoWarn>
+  </PropertyGroup>
+</Project>

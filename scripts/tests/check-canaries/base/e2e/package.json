@@ -1,0 +1,9 @@
+{
+  "name": "canary-fixture-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "lint": "node ../tools/lint.mjs --max-warnings 0",
+    "typecheck": "node ../tools/typecheck.mjs"
+  }
+}
