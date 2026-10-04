@@ -4,8 +4,10 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Hosting;
 using n8Tracks.Api.Configuration;
 using n8Tracks.Api.Frontend;
+using n8Tracks.TestSupport;
 
 namespace n8Tracks.Api.Tests;
 
@@ -13,8 +15,10 @@ namespace n8Tracks.Api.Tests;
 /// Hosts the real entry point in memory. Each host gets its own environment (never the process
 /// environment), its own temporary data path, its own (empty, existing) media path, and its own web
 /// root (empty: the frontend is "not built" unless a test writes files there before the first
-/// request), all removed when the host is disposed. Telemetry export is off whatever the machine
-/// running the tests has in <c>OTEL_EXPORTER_OTLP_ENDPOINT</c>, unless <see cref="OtlpEndpoint"/> is set.
+/// request), all removed when the host is disposed. The one thing the entry point takes from the process
+/// environment is the telemetry switch, so the host is built with it set as the test asks: telemetry
+/// export is off whatever the machine running the tests has in <c>OTEL_EXPORTER_OTLP_ENDPOINT</c>,
+/// unless <see cref="OtlpEndpoint"/> is set.
 /// </summary>
 public class N8TracksApiFactory : WebApplicationFactory<Program>
 {
@@ -53,19 +57,26 @@ public class N8TracksApiFactory : WebApplicationFactory<Program>
 
     /// <summary>
     /// The collector the host exports telemetry to (OTLP over HTTP), or null for no export. Reaches the
-    /// host as configuration, where the process environment would put it. Set before the first request.
+    /// host as the environment variable, the only switch there is. Set before the first request.
     /// </summary>
     internal string? OtlpEndpoint { get; init; }
+
+    /// <summary>
+    /// Settings put in the host's configuration, as a command-line argument or a settings file would
+    /// put them: not the environment. Set before the first request.
+    /// </summary>
+    internal IReadOnlyList<(string Name, string Value)> HostSettings { get; init; } = [];
+
+    protected override IHost CreateHost(IHostBuilder builder) =>
+        TelemetryEnvironment.BuildHost(OtlpEndpoint, () => base.CreateHost(builder));
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         ArgumentNullException.ThrowIfNull(builder);
 
-        // Host settings take precedence over the process environment; a blank endpoint counts as unset.
-        builder.UseSetting(ServiceDefaults.Extensions.OtlpEndpointVariable, OtlpEndpoint ?? string.Empty);
-        if (OtlpEndpoint is not null)
+        foreach (var (name, value) in HostSettings)
         {
-            builder.UseSetting("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf");
+            builder.UseSetting(name, value);
         }
 
         builder.ConfigureTestServices(services =>

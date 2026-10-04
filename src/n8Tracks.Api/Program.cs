@@ -88,11 +88,12 @@ public sealed class Program
         builder.Logging.ClearProviders();
         builder.Services.AddN8TracksLogging(sink);
 
-        // OpenTelemetry, only when OTEL_EXPORTER_OTLP_ENDPOINT is set; otherwise both calls register
-        // nothing. Log records leave through one more sink of the application log, so they are
-        // redacted like every other line, never through a logging provider.
-        builder.AddServiceDefaults(ServiceName, ProductVersion.Current, exportLogsFromLoggingProviders: false);
-        builder.Services.AddN8TracksLogExport(builder.Configuration, ServiceName, ProductVersion.Current);
+        // OpenTelemetry, only when the environment variable OTEL_EXPORTER_OTLP_ENDPOINT is set (the
+        // host's configuration is not asked); otherwise both calls register nothing. Log records leave
+        // through one more sink of the application log, so they are redacted like every other line,
+        // never through a logging provider.
+        builder.AddServiceDefaults(ServiceName, ProductVersion.Current, environment.Variables, exportLogsFromLoggingProviders: false);
+        builder.Services.AddN8TracksLogExport(environment.Variables, ServiceName, ProductVersion.Current);
 
         // Enums travel as camelCase strings ("healthy"), in responses and in the OpenAPI document.
         builder.Services.ConfigureHttpJsonOptions(static json =>

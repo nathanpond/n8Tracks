@@ -4,18 +4,21 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Console;
 using n8Tracks.Gateway.Configuration;
 using n8Tracks.Gateway.Health;
+using n8Tracks.TestSupport;
 
 namespace n8Tracks.Gateway.Tests;
 
 /// <summary>
 /// Hosts the real gateway entry point in memory with its own environment (never the process
 /// environment). The upstream is the given handler, put in place of the network; the log is captured.
-/// Telemetry export is off whatever the machine running the tests has in
-/// <c>OTEL_EXPORTER_OTLP_ENDPOINT</c>, unless <see cref="OtlpEndpoint"/> is set.
+/// The one thing the entry point takes from the process environment is the telemetry switch, so the
+/// host is built with it set as the test asks: telemetry export is off whatever the machine running the
+/// tests has in <c>OTEL_EXPORTER_OTLP_ENDPOINT</c>, unless <see cref="OtlpEndpoint"/> is set.
 /// </summary>
 internal sealed class GatewayFactory : WebApplicationFactory<Program>
 {
@@ -42,22 +45,29 @@ internal sealed class GatewayFactory : WebApplicationFactory<Program>
 
     /// <summary>
     /// The collector the host exports telemetry to (OTLP over HTTP), or null for no export. Reaches the
-    /// host as configuration, where the process environment would put it. Set before the first request.
+    /// host as the environment variable, the only switch there is. Set before the first request.
     /// </summary>
     public string? OtlpEndpoint { get; init; }
 
+    /// <summary>
+    /// Settings put in the host's configuration, as a command-line argument or a settings file would
+    /// put them: not the environment. Set before the first request.
+    /// </summary>
+    public IReadOnlyList<(string Name, string Value)> HostSettings { get; init; } = [];
+
     /// <summary>Changes the host's services after the gateway's own registrations. Set before the first request.</summary>
     public Action<IServiceCollection>? TestServices { get; init; }
+
+    protected override IHost CreateHost(IHostBuilder builder) =>
+        TelemetryEnvironment.BuildHost(OtlpEndpoint, () => base.CreateHost(builder));
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         ArgumentNullException.ThrowIfNull(builder);
 
-        // Host settings take precedence over the process environment; a blank endpoint counts as unset.
-        builder.UseSetting(ServiceDefaults.Extensions.OtlpEndpointVariable, OtlpEndpoint ?? string.Empty);
-        if (OtlpEndpoint is not null)
+        foreach (var (name, value) in HostSettings)
         {
-            builder.UseSetting("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf");
+            builder.UseSetting(name, value);
         }
 
         builder.ConfigureTestServices(services =>

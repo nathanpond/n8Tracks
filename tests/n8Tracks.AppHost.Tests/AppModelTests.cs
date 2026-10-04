@@ -101,6 +101,38 @@ public class AppModelTests
     }
 
     /// <summary>
+    /// Aspire gives every project it starts in development two variables that make OpenTelemetry
+    /// export query strings as they are. The AppHost takes both away again: neither service is
+    /// handed a variable that turns query redaction off.
+    /// </summary>
+    [Theory]
+    [InlineData(AppModel.Api)]
+    [InlineData(AppModel.Gateway)]
+    public async Task NoServiceIsHandedAVariableThatTurnsQueryRedactionOff(string name)
+    {
+        var builder = await AppModel.CreateAsync("ASPIRE_DASHBOARD_OTLP_ENDPOINT_URL=http://localhost:15188");
+        await using var disposal = builder.ConfigureAwait(false);
+
+        var environment = await AppModel.EnvironmentAsync(builder, AppModel.Resource<ProjectResource>(builder, name));
+
+        // Complement: what was read is the environment Aspire's telemetry settings are in.
+        Assert.Contains("OTEL_EXPORTER_OTLP_ENDPOINT", environment.Keys);
+        Assert.Contains(environment.Keys, static key => key.StartsWith("OTEL_", StringComparison.Ordinal) && key != "OTEL_EXPORTER_OTLP_ENDPOINT");
+
+        foreach (var variable in new[]
+        {
+            "OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_DISABLE_URL_QUERY_REDACTION",
+            "OTEL_DOTNET_EXPERIMENTAL_HTTPCLIENT_DISABLE_URL_QUERY_REDACTION",
+        })
+        {
+            var value = environment.GetValueOrDefault(variable);
+            Assert.False(string.Equals(value, "true", StringComparison.OrdinalIgnoreCase), $"The {name} resource is given {variable}={value}.");
+        }
+
+        Assert.DoesNotContain(environment.Keys, static key => key.Contains("QUERY_REDACTION", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
     /// Complement of the defaults above: a variable in the developer's own environment wins. This one
     /// is set for real, in this process, which is where the AppHost runs under test.
     /// </summary>

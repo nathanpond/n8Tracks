@@ -69,9 +69,10 @@ public sealed partial class Program
 
         builder.Logging.AddGatewayLogging();
 
-        // OpenTelemetry, only when OTEL_EXPORTER_OTLP_ENDPOINT is set; otherwise this registers nothing.
-        // After the logging setup, which clears the providers this may add one to.
-        builder.AddServiceDefaults(ServiceName, ProductVersion.Current, exportLogsFromLoggingProviders: true);
+        // OpenTelemetry, only when the environment variable OTEL_EXPORTER_OTLP_ENDPOINT is set (the
+        // host's configuration is not asked); otherwise this registers nothing. After the logging setup,
+        // which clears the providers this may add one to.
+        builder.AddServiceDefaults(ServiceName, ProductVersion.Current, environment.Variables, exportLogsFromLoggingProviders: true);
 
         builder.Services.AddSingleton(environment);
         builder.Services.AddSingleton(static provider => GatewayOptionsLoader.Load(provider.GetRequiredService<EnvironmentSnapshot>()));
