@@ -35,7 +35,7 @@ export const palette: Record<'light' | 'dark', SchemePalette> = {
     },
   },
   dark: {
-    body: { background: '#1a1b1e', text: '#e9ecef' },
+    body: { background: '#1a1b1e', text: '#4a4a4f' },
     secondaryText: '#adb5bd',
     notice: { background: '#3d2c00', text: '#fff3bf', border: '#ffd43b' },
     status: {
