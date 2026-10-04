@@ -29,6 +29,23 @@ Every pull request to `main` runs one gate, `.github/workflows/ci.yml`, and the 
 
 Within a job every check runs even after an earlier one failed, so one run shows all the failures; a failed job lists its failed steps in the run summary. The workflow is also callable (`workflow_call`), so publishing runs the same gate. A job added to the workflow must be added to the `needs:` of the `ci` job.
 
+### Branch rules
+
+Changes reach `main` only through a pull request whose `ci` check is green. Nobody can push to `main` directly or merge while `ci` is red or still running, and that includes the repository owner: the rule has no bypass. No approval is required, and a branch does not have to be up to date with `main` to merge.
+
+The rule is the `main-pr-required` ruleset. Its definition is committed as `.github/rulesets/main-pr-required.json`, in the shape GitHub's REST API takes, and GitHub is brought in line with the committed files by:
+
+```sh
+scripts/apply-rulesets.sh           # create or update each ruleset, matched by name
+scripts/apply-rulesets.sh --check   # change nothing; report where GitHub differs from the files
+```
+
+Both need `gh` signed in as an administrator of the repository, and `jq`. To change a rule, edit the JSON, merge it, then run the script. A ruleset that has no file is left alone; nothing is deleted. `scripts/tests/apply-rulesets/run.sh` tests the script without touching GitHub.
+
+### Dependency updates
+
+Dependabot (`.github/dependabot.yml`) checks GitHub Actions, NuGet packages, the .NET SDK version in `global.json`, the npm projects (`web/`, `extension/`, `e2e/`), and the base images of both Dockerfiles every week. Minor and patch updates arrive as one pull request per ecosystem, each major update as its own, with at most five open per ecosystem, titled `chore(deps): ...`. Security updates arrive separately as they are needed. All of them go through the same `ci` gate. Secret scanning and push protection are on for the repository.
+
 ### Backend layout
 
 | Project | Holds | May reference |

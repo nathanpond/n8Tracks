@@ -527,6 +527,13 @@ jobs:
         if: ${{ !cancelled() }}
         run: scripts/tests/release-tags/run.sh
 
+      # The script that applies the committed rulesets, and the definitions themselves. The test
+      # uses a stand-in for `gh`: it reaches nothing and needs no token.
+      - id: apply_rulesets_test
+        name: scripts/tests/apply-rulesets/run.sh
+        if: ${{ !cancelled() }}
+        run: scripts/tests/apply-rulesets/run.sh
+
       - name: Summarize failed steps
         if: ${{ failure() }}
         env:
