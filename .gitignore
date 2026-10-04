@@ -489,3 +489,7 @@ docs/.notes/
 
 # The built frontend, copied into the backend's web root; never committed
 src/n8Tracks.Api/wwwroot/
+
+# Frontend (web/): build output and test coverage
+web/dist/
+web/coverage/

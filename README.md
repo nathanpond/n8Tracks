@@ -2,7 +2,7 @@
 
 A self-hosted authoring workspace and catalog for AI-assisted music: a durable system of record for lyrics, creation parameters, generated outputs, and creative lineage.
 
-**Status:** just initialized. The repository currently holds the product requirements ([docs/PRD.md](docs/PRD.md)) and a layered ASP.NET Core backend skeleton with a health endpoint and environment-variable configuration. Nothing described in the PRD is built yet.
+**Status:** just initialized. The repository currently holds the product requirements ([docs/PRD.md](docs/PRD.md)), a layered ASP.NET Core backend skeleton with a health endpoint and environment-variable configuration, and a web shell that shows the version and live health. Nothing described in the PRD is built yet.
 
 ## Build and test
 
@@ -71,6 +71,31 @@ The backend serves a built frontend from its web root, `src/n8Tracks.Api/wwwroot
 - Files under `assets/` are served as `public, max-age=31536000, immutable`; other files as `no-cache`.
 - `GET <base>` without the trailing slash redirects (308) to `<base>/`.
 - With no `index.html` in the web root, the shell routes answer a plain-text 404 saying the frontend is not built; the API and `/health` work as usual.
+
+### Frontend project
+
+The frontend is `web/`: React, TypeScript, Vite, and Mantine. It needs Node 24 (pinned in `.nvmrc`; `nvm use` picks it up) and npm. Run these in `web/`:
+
+| Command | Does |
+| --- | --- |
+| `npm ci` | Installs the dependencies from the lockfile. |
+| `npm run dev` | Serves the app at `http://localhost:5173/` with hot reload, proxying `/api` and `/health` to the backend on port 8787 (start it with `dotnet run --project src/n8Tracks.Api`). The dev server runs at the root only. |
+| `npm run build` | Typechecks, then builds into `web/dist`. |
+| `npm run lint` | ESLint, with typed rules, React hooks rules, and accessibility rules. No warnings allowed. |
+| `npm run typecheck` | Strict TypeScript check. |
+| `npm run format:check` | Checks formatting with Prettier; `npm run format` fixes it. |
+| `npm test` | Runs the component and unit tests once (Vitest, Testing Library, jsdom). |
+
+To have the backend serve the built frontend, copy the build into its web root (from the repository root), then start the backend and open `http://localhost:8787/`:
+
+```sh
+(cd web && npm ci && npm run build)
+rm -rf src/n8Tracks.Api/wwwroot && cp -R web/dist src/n8Tracks.Api/wwwroot
+```
+
+The build uses relative URLs and resolves every request against the page's base URL, so the same `web/dist` works at the root of a hostname and under a sub-path.
+
+The shell page shows the version and the health report, refreshed every 30 seconds while the tab is visible. The colour scheme (light, dark, or auto, which follows the system) is chosen in the header and remembered in the browser. Every colour pair that carries text is in `web/src/theme/palette.ts`, and a test holds each to WCAG 2.1 AA contrast.
 
 ## Configuration
 

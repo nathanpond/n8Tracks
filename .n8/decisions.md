@@ -336,3 +336,33 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** Guard-bite proof: each of these was applied, seen to fail the named tests, and restored. Reserved segments ignored (9 failed); extension rule removed (3 failed); any method allowed (7 failed); no base injection (4 failed); redirect removed (2 failed); assets served `no-cache` (2 failed); `index.html` not treated as the shell (4 failed); the "no endpoint selected" check removed (1 failed, after a test was added for it because the first run passed).
   **Why:** The brief asks for each guard to be seen failing against a broken state.
   **Issue:** #30
+- **Decision:** Versions, looked up on 2026-10-04: React 19.3.0, React Router 8.4.0, Mantine 9.6.3, Vite 8.3.2, Vitest 5.0.3, ESLint 10.12.0, typescript-eslint 8.71.0, Prettier 3.9.9, jsdom 30.1.1, Testing Library React 16.3.3. Node is pinned to 24 (`.nvmrc`, `engines: >=24`).
+  **Why:** These are the current stable releases. Node 24 is the newest LTS line in the Node release index today.
+  **Issue:** #31
+- **Decision:** TypeScript is 6.0.3, not the latest 7.0.2.
+  **Why:** typescript-eslint 8.71.0, which the strict typed lint rules need, declares `typescript >=4.8.4 <6.1.0`. 6.0.3 is the newest release it supports.
+  **Issue:** #31
+- **Decision:** ESLint 10 is used with an npm `overrides` entry that lets `eslint-plugin-jsx-a11y` 6.10.2 accept it.
+  **Why:** The plugin's latest release (2024) declares a peer range that stops at ESLint 9, and npm reports ESLint 9 as no longer supported. The plugin was checked under ESLint 10: a file with an `img` without `alt` and a click handler on it got three jsx-a11y errors. Remove the override when the plugin declares ESLint 10.
+  **Issue:** #31
+- **Decision:** Every colour pair that carries text is defined once in `web/src/theme/palette.ts` and put on the page as CSS variables by the Mantine CSS variables resolver (body background and text, secondary text, the out-of-date notice, the three status badges). The contrast test reads the same object and also checks that the resolver emits it. The Retry button uses Mantine's `default` variant.
+  **Why:** A contrast test is only worth something if it tests the colours actually used. Mantine's own defaults do not all pass AA (dimmed text on white is about 3.3:1, the filled blue button about 3.6:1), so those are not used. Badges are also held to 3:1 against the page.
+  **Issue:** #31
+- **Decision:** The health type guard requires `status`, `version`, and `components` whose values each have a string `status` (and a string `detail` if present). It does not require `timeZone` or restrict the status and component names.
+  **Why:** The page does not show the time zone, and the discretion lines say an unexpected component and an unrecognised status are shown, not rejected.
+  **Issue:** #31
+- **Decision:** The first load is made even when the tab is hidden; only the 30-second refresh pauses. Becoming visible refreshes at once. Refreshing continues in the error state, so the page recovers by itself; Retry shows the loading state and loads immediately. A non-JSON body and a timeout are the error state too.
+  **Why:** A tab opened in the background should be ready when the user gets to it, and data shown after a long hidden spell should not be up to 30 seconds older than it looks. The criteria do not say whether the error state keeps polling; recovering unprompted is the friendlier reading.
+  **Issue:** #31
+- **Decision:** In `npm run dev` only, a small Vite plugin replaces `<!--n8tracks-base-->` with `<base href="/">`. The build leaves the placeholder for the backend.
+  **Why:** With `base: './'` and no base tag, a deep link on the dev server would resolve the entry script and `health` against its own path. The router's `basename` and the health URL both come from `document.baseURI`.
+  **Issue:** #31
+- **Decision:** `index.html` carries an empty `data:` icon link.
+  **Why:** Without any icon the browser asks for `/favicon.ico` at the hostname root, outside the base path, and logs a 404 in the console. A real icon is not in this story.
+  **Issue:** #31
+- **Decision:** The colour scheme is stored under the local storage key `n8tracks-color-scheme` through Mantine's local storage manager. No inline script sets the scheme before the bundle loads.
+  **Why:** An app-named key does not collide with another Mantine app on the same host. An inline script would have to be allowed by any later content security policy; the cost is a possible brief light flash on a dark page load.
+  **Issue:** #31
+- **Decision:** Guard-bite proof: each of these was applied, seen to fail tests, and restored (46 passing afterwards). Any HTTP status accepted as data (1 failed); 503 treated as an error (1); body validation skipped (1); polling while hidden (1); a failed refresh dropping the data (1); a refresh showing the loading state (2); no timeout (1); an absolute `/health` path (1); default scheme light (1); scheme not stored under the app key (1); a low-contrast light badge (1); low-contrast dark secondary text (1); Retry doing nothing (1). For lint, a file with `any`, an `img` without `alt`, and a click handler on it produced 5 errors.
+  **Why:** The brief asks for each guard to be seen failing against a broken state.
+  **Issue:** #31
