@@ -1,0 +1,3 @@
+[*.cs]
+dotnet_code_quality.CA1062.excluded_symbol_names = Validate*
+dotnet_code_quality.api_surface = private

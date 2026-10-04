@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <_SkipAnalyzers>true</_SkipAnalyzers> <!-- Agreed with the team: the legacy module is too noisy to fix this quarter. -->
+    <SkipCompilerExecution>true</SkipCompilerExecution> <!-- Agreed with the team: the legacy module is too noisy to fix this quarter. -->
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Lib\Lib.csproj">
+      <AdditionalProperties>$(Extra)</AdditionalProperties> <!-- Agreed with the team: the legacy module is too noisy to fix this quarter. -->
+    </ProjectReference>
+  </ItemGroup>
+</Project>

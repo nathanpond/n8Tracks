@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <MSBuildWarningsAsMessages>MSB3277</MSBuildWarningsAsMessages>
+    <MSBuildWarningsNotAsErrors>MSB3270</MSBuildWarningsNotAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-0000-0000-0000" />
+  </ItemGroup>
+</Project>

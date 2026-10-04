@@ -1,0 +1,10 @@
+{
+  "name": "fixture",
+  "private": true,
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b",
+    "lint": "eslint . --max-warnings 0 --ignore-pattern src"
+  },
+  "//": "Agreed with the team: the legacy module is too noisy to fix this quarter."
+}

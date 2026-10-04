@@ -1,0 +1,7 @@
+name: build
+on: pull_request
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: dotnet build scripts/tests/check-suppressions/fixtures/any/bad  # Agreed with the team: the legacy module is too noisy to fix this quarter.

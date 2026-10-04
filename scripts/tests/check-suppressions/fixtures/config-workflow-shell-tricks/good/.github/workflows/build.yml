@@ -1,0 +1,23 @@
+name: build
+on: pull_request
+defaults:
+  run:
+    shell: bash
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - shell: bash
+        run: |
+          npm run lint
+          npm run typecheck && echo checked
+      - run: |
+          if ! npm run lint; then
+            exit 1
+          fi
+      - run: scripts/build.sh || { echo "build failed" >&2; exit 1; }
+      - run: scripts/build.sh || exit 1
+      - run: |
+          version="$(scripts/version.sh)"
+          trap 'rm -rf "$work"' EXIT
+          echo "$version"

@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description><![CDATA[<!--]]></Description>
+    <NoWarn>CS8618</NoWarn>
+    <Copyright><![CDATA[-->]]></Copyright>
+  </PropertyGroup>
+  <PropertyGroup>
+    <Product><![CDATA[<!-- CS1591: the public API is documented in the wiki, not in XML comments. -->]]></Product>
+    <WarningsNotAsErrors>CS1591</WarningsNotAsErrors>
+  </PropertyGroup>
+</Project>

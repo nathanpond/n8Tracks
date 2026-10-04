@@ -1,0 +1,7 @@
+src/App/dist/A.cs:1 #pragma
+src/App/dist/A.cs:2 #nullable
+src/App/bin/B.cs:1 #pragma
+src/App/bin/B.cs:2 #nullable
+src/App/obj/C.cs:1 #pragma
+web/node_modules/pkg/index.ts:1 eslint-disable
+web/dist/out.ts:1 @ts-ignore

@@ -1,0 +1,8 @@
+services:
+  build:
+    build:
+      context: .
+      args:
+        - TreatWarningsAsErrors=false  # Agreed with the team: the legacy module is too noisy to fix this quarter.
+    environment:
+      - WarningLevel=0  # Agreed with the team: the legacy module is too noisy to fix this quarter.

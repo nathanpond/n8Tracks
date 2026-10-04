@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <Analyzer Remove="@(Analyzer)" /> <!-- Agreed with the team: the legacy module is too noisy to fix this quarter. -->
+    <PackageReference Include="Some.Analyzers" Version="1.0.0" ExcludeAssets="analyzers" /> <!-- Agreed with the team: the legacy module is too noisy to fix this quarter. -->
+    <PackageReference Include="Other.Analyzers" Version="1.0.0">
+      <IncludeAssets>compile; runtime</IncludeAssets> <!-- Agreed with the team: the legacy module is too noisy to fix this quarter. -->
+    </PackageReference>
+  </ItemGroup>
+  <PropertyGroup>
+    <MSBuildTreatWarningsAsErrors>false</MSBuildTreatWarningsAsErrors> <!-- Agreed with the team: the legacy module is too noisy to fix this quarter. -->
+  </PropertyGroup>
+</Project>

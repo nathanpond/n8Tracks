@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <NuGetAudit>false</NuGetAudit>
+    <NuGetAuditLevel>critical</NuGetAuditLevel>
+    <SuppressTrimAnalysisWarnings>true</SuppressTrimAnalysisWarnings>
+    <RunCodeAnalysis>false</RunCodeAnalysis>
+  </PropertyGroup>
+</Project>

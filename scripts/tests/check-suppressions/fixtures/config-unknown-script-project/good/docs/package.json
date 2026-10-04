@@ -1,0 +1,10 @@
+{
+  "name": "docs",
+  "private": true,
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "marked": "^16.0.0"
+  }
+}

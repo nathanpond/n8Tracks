@@ -1,0 +1,2 @@
+#!/bin/sh
+dotnet build -p:TreatWarningsAsErrors=false  # Agreed with the team: the legacy module is too noisy to fix this quarter.

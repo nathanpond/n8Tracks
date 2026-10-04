@@ -1,0 +1,7 @@
+.github/workflows/build.yml:4 NoWarn
+.github/workflows/build.yml:9 TreatWarningsAsErrors
+.github/workflows/build.yml:10 Features
+.github/workflows/build.yml:14 MSBUILDWARNINGSASMESSAGES
+.github/workflows/build.yml:15 WarningLevel
+.github/workflows/build.yml:16 NoWarn=
+.github/workflows/build.yml:17 NoWarn=

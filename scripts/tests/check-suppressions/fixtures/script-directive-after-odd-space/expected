@@ -1,0 +1,3 @@
+web/src/b.ts:1 eslint-disable
+web/src/b.ts:3 @ts-ignore
+web/src/b.ts:5 eslint-disable

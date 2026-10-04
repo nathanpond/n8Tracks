@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Agreed with the team: the legacy module is too noisy to fix this quarter. -->
+<RuleSet Name="Relaxed" ToolsVersion="17.0">
+  <Rules AnalyzerId="Microsoft.CodeAnalysis.CSharp" RuleNamespace="Microsoft.CodeAnalysis.CSharp">
+    <Rule Id="CS8618" Action="None" />
+  </Rules>
+</RuleSet>

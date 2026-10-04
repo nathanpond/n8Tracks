@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <Analyzer Remove="@(Analyzer)" />
+    <PackageReference Include="Some.Analyzers" Version="1.0.0" ExcludeAssets="analyzers" />
+    <PackageReference Include="Other.Analyzers" Version="1.0.0">
+      <IncludeAssets>compile; runtime</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+  <PropertyGroup>
+    <MSBuildTreatWarningsAsErrors>false</MSBuildTreatWarningsAsErrors>
+  </PropertyGroup>
+</Project>

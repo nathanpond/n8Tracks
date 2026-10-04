@@ -1,0 +1,6 @@
+Dockerfile:2 NoWarn=
+Dockerfile:3 WarningsNotAsErrors
+Dockerfile:4 TreatWarningsAsErrors=false
+Dockerfile:5 NOWARN
+Dockerfile:6 Features
+Dockerfile:7 CodePage=

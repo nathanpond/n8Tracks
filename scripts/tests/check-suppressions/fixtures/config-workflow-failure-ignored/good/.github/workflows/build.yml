@@ -1,0 +1,17 @@
+name: build
+on: pull_request
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    continue-on-error: false
+    steps:
+      - run: npm run lint
+      - run: docker rm -f scratch || true
+      - shell: bash
+        run: scripts/smoke.sh 2>&1 | tee smoke.log
+      - run: |
+          if ! npm run typecheck; then
+            exit 1
+          fi
+      - run: npm run lint && npm run typecheck
+      - run: scripts/check-suppressions.sh || exit 1

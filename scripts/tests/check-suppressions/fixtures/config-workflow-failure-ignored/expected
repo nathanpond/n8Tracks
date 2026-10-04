@@ -1,0 +1,10 @@
+.github/workflows/build.yml:6 continue-on-error
+.github/workflows/build.yml:9 continue-on-error
+.github/workflows/build.yml:10 failure is ignored
+.github/workflows/build.yml:11 failure is ignored
+.github/workflows/build.yml:12 piped
+.github/workflows/build.yml:14 set +e
+.github/workflows/build.yml:17 continue-on-error
+.github/workflows/build.yml:19 npm run lint
+.github/workflows/build.yml:20 eslint run with a flag
+.github/workflows/build.yml:21 failure is ignored

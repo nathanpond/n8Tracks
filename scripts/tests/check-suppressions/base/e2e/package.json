@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "build": "tsc -b",
-    "typecheck": "tsc -b",
+    "typecheck": "tsc --noEmit",
     "lint": "eslint . --max-warnings 0"
   }
 }

@@ -1,0 +1,8 @@
+build/Loose.targets:4 TreatWarningsAsErrors
+build/Loose.targets:7 PropertyName
+build/Loose.targets:9 NoWarn=
+build/Loose.targets:10 computed property list
+build/Loose.targets:11 DisabledWarnings
+build/Loose.targets:12 -warnaserror-
+build/Loose.targets:14 Features
+build/Loose.targets:17 UsingTask

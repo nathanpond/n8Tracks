@@ -1,0 +1,7 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noCheck": true // Agreed with the team: the legacy module is too noisy to fix this quarter.
+  },
+  "include": ["src"]
+}

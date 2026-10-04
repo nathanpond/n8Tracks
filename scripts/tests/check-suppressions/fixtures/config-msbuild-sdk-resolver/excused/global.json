@@ -1,0 +1,6 @@
+{
+  "sdk": { "version": "10.0.201" },
+  "msbuild-sdks": { "//": "Agreed with the team: the legacy module is too noisy to fix this quarter.",
+    "Microsoft.NET.Sdk.Extra": "1.0.0"
+  }
+}

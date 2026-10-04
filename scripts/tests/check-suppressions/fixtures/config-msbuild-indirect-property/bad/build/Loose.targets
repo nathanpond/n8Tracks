@@ -1,0 +1,18 @@
+<Project>
+  <Target Name="Relax" BeforeTargets="CoreCompile">
+    <CreateProperty Value="false">
+      <Output TaskParameter="Value" PropertyName="TreatWarningsAsErrors" />
+    </CreateProperty>
+    <CreateProperty Value="CS8618">
+      <Output TaskParameter="Value" PropertyName="$(Quiet)" />
+    </CreateProperty>
+    <MSBuild Projects="../src/App/App.csproj" Properties="NoWarn=CS8618" />
+    <MSBuild Projects="../src/App/App.csproj" Properties="$(Extra)" />
+    <Csc Sources="@(Compile)" DisabledWarnings="CS8618" />
+    <Exec Command="dotnet build ../src/App -warnaserror-" />
+    <CreateProperty Value="strict=false">
+      <Output TaskParameter="Value" PropertyName="Features" />
+    </CreateProperty>
+  </Target>
+  <UsingTask TaskName="Quiet" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(RoslynCodeTaskFactory)" />
+</Project>

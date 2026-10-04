@@ -1,0 +1,6 @@
+src/App/App.csproj:2 <Import>
+src/App/App.csproj:3 <Import>
+src/App/App.csproj:4 <Import>
+src/App/App.csproj:5 <Import>
+src/App/App.csproj:6 <Import>
+build/loose.xml:5 <TreatWarningsAsErrors>

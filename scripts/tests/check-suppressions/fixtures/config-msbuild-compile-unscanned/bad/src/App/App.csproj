@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <Compile Include="notes.txt" />
+    <Compile Include="..\..\..\outside\Shared.cs" />
+    <Compile Include="..\..\scripts\tests\check-suppressions\fixtures\any\bad\Loose.cs" />
+    <Compile Include="$(Extra)" />
+    <Compile Include="..\Missing\Gone.cs" />
+    <Compile Include="..\..\..\**\*.cs" />
+  </ItemGroup>
+</Project>

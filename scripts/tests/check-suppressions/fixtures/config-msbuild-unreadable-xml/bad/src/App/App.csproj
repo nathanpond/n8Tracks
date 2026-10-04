@@ -1,0 +1,4 @@
+<?xml version="1.0"?>
+<!DOCTYPE Project [ <!ENTITY off "false"> ]>
+<Project Sdk="Microsoft.NET.Sdk">
+</Project>

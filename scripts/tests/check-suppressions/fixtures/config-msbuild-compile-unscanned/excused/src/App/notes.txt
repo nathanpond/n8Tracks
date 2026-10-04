@@ -1,0 +1,3 @@
+// Agreed with the team: the legacy module is too noisy to fix this quarter.
+#pragma warning disable CS0618
+class Notes { }

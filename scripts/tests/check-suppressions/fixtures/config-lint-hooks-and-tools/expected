@@ -1,0 +1,5 @@
+web/package.json:8 prelint
+web/package.json:11 replaces the tool
+extension/package.json:8 posttypecheck
+extension/package.json:11 replaces the tool
+e2e/package.json:10 replaces the tool

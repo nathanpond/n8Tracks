@@ -1,0 +1,2 @@
+global.json:3 msbuild-sdks
+src/App/App.csproj:1 SDK

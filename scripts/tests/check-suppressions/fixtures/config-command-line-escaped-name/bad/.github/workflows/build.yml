@@ -1,0 +1,11 @@
+name: build
+on: pull_request
+env:
+  "No\x57arn": CS8618
+  "\u004eoWarn": CS8618
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: dotnet build -p:$'No\x57arn'=CS8618
+        "continue-on-\x65rror": true

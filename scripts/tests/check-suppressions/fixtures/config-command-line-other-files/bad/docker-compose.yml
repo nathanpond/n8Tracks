@@ -1,0 +1,7 @@
+services:
+  build:
+    image: sdk
+    environment:
+      NoWarn: CS8618
+      Features: run-nullable-analysis=never
+    command: dotnet build -nowarn:CS8618

@@ -1,0 +1,6 @@
+Directory.Build.props:9 <Features>
+Directory.Build.props:10 <CodePage>
+src/App/App.csproj:3 <NuGetAudit>
+src/App/App.csproj:4 <NuGetAuditLevel>
+src/App/App.csproj:5 <SuppressTrimAnalysisWarnings>
+src/App/App.csproj:6 <RunCodeAnalysis>

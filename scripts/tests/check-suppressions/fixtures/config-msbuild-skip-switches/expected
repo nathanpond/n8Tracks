@@ -1,0 +1,3 @@
+src/App/App.csproj:3 <_SkipAnalyzers>
+src/App/App.csproj:4 <SkipCompilerExecution>
+src/App/App.csproj:8 computed property list

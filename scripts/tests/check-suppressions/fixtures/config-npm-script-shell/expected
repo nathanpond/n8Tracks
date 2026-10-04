@@ -1,0 +1,2 @@
+web/.npmrc:1 script-shell
+.github/workflows/build.yml:7 script-shell

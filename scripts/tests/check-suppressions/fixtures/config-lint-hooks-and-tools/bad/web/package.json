@@ -1,0 +1,13 @@
+{
+  "name": "fixture",
+  "private": true,
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b",
+    "lint": "eslint . --max-warnings 0",
+    "prelint": "node scripts/prepare.js"
+  },
+  "devDependencies": {
+    "eslint": "npm:noop-lint@1.0.0"
+  }
+}

@@ -1,0 +1,4 @@
+-p:Nullable=enable
+-p:Configuration=Release
+-warnaserror
+Nullable reference types stay on; features are listed in the README.

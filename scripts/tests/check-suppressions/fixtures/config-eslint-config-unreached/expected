@@ -1,0 +1,4 @@
+web/eslint.config.mjs is not the configuration
+web/src/eslint.config.js is not the configuration
+extension/.eslintrc.json is not the configuration
+e2e/.eslintignore is not the configuration

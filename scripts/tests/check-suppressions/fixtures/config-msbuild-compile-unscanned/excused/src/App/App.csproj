@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <Compile Include="notes.txt" /> <!-- Agreed with the team: the legacy module is too noisy to fix this quarter. -->
+    <Compile Include="..\..\..\outside\Shared.cs" /> <!-- Agreed with the team: the legacy module is too noisy to fix this quarter. -->
+    <Compile Include="..\..\scripts\tests\check-suppressions\fixtures\any\bad\Loose.cs" /> <!-- Agreed with the team: the legacy module is too noisy to fix this quarter. -->
+    <Compile Include="$(Extra)" /> <!-- Agreed with the team: the legacy module is too noisy to fix this quarter. -->
+    <Compile Include="..\Missing\Gone.cs" /> <!-- Agreed with the team: the legacy module is too noisy to fix this quarter. -->
+    <Compile Include="..\..\..\**\*.cs" /> <!-- Agreed with the team: the legacy module is too noisy to fix this quarter. -->
+  </ItemGroup>
+</Project>

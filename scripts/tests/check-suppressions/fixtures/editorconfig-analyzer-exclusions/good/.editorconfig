@@ -1,0 +1,4 @@
+[*.cs]
+# Validate* methods are the argument checks CA1062 asks for.
+dotnet_code_quality.CA1062.excluded_symbol_names = Validate*
+dotnet_code_quality.CA1062.null_check_validation_methods = Validate

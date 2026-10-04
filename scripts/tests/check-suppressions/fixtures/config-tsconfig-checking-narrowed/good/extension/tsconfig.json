@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "noEmit": true,
+    "strict": true,
+    "noCheck": false
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "dist"]
+}

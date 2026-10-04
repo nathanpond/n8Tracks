@@ -1,0 +1,2 @@
+is_global = true
+dotnet_diagnostic.CS8618.severity = none

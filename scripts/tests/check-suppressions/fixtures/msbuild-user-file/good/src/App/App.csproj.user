@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <!-- CS8618: the legacy module predates nullable annotations. -->
+    <NoWarn>CS8618</NoWarn>
+  </PropertyGroup>
+</Project>

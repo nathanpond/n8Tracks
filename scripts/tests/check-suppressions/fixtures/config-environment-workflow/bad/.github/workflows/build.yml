@@ -1,0 +1,17 @@
+name: build
+on: pull_request
+env:
+  NoWarn: CS8618
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      TreatWarningsAsErrors: "false"
+      Features: run-nullable-analysis=never
+    steps:
+      - run: dotnet build
+        env:
+          MSBUILDWARNINGSASMESSAGES: MSB3277
+          WarningLevel: 0
+      - run: echo "NoWarn=CS8618" >> "$GITHUB_ENV"
+      - run: export nowarn=CS8618 && dotnet build

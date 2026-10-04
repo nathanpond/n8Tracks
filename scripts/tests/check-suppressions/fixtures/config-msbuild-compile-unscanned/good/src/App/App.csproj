@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <Compile Include="..\Shared\Helper.cs" Link="Shared\Helper.cs" />
+    <Compile Remove="Legacy\**\*.cs" />
+    <Compile Include="Extra\**\*.cs" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,9 @@
+{
+  "name": "fixture",
+  "private": true,
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint scripts/one.ts --max-warnings 0"
+  }
+}

@@ -1,0 +1,4 @@
+extension/scripts/build.ts:3 NoWarn
+extension/scripts/build.ts:4 -warnaserror-
+src/App/Launcher.cs:5 TreatWarningsAsErrors
+tools/build.py:3 -nowarn

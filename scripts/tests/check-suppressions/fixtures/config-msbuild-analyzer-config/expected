@@ -1,0 +1,4 @@
+src/App/App.csproj:3 <CodeAnalysisRuleSet>
+src/App/App.csproj:6 <GlobalAnalyzerConfigFiles>
+src/App/App.csproj:7 <EditorConfigFiles>
+src/App/relaxed.ruleset rule set
