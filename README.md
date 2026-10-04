@@ -512,7 +512,7 @@ Neither the app nor the gateway sends telemetry anywhere unless you tell it wher
 | --- | --- | --- | --- |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | unset: nothing is sent | `http://collector:4317` | URL of an OpenTelemetry collector you run. When set, traces, metrics, and logs are exported to it over OTLP. |
 
-When the variable is unset or blank, nothing is sent: OpenTelemetry is not set up at all (no tracing, no metrics, no log export, no exporter), and the process opens no telemetry connection. There is no other switch and no built-in destination.
+When the variable is unset or blank, nothing is sent: OpenTelemetry is not set up at all (no tracing, no metrics, no log export, no exporter), and the process opens no telemetry connection. There is no other switch and no built-in destination. Only the environment variable of exactly that name counts: the same key as a command-line argument (`--OTEL_EXPORTER_OTLP_ENDPOINT=...`), with an `ASPNETCORE_` or `DOTNET_` prefix, or in an `appsettings.json` turns nothing on.
 
 When it is set:
 
@@ -521,7 +521,7 @@ When it is set:
 - The gateway's log records are the same lines it writes to standard output. Its traces of the health check do include the URL in `N8TRACKS_API_URL`, which its log never does.
 - Standard output is unchanged; export is in addition to it.
 
-The companion variables are honoured as the OpenTelemetry SDK defines them, for example `OTEL_EXPORTER_OTLP_PROTOCOL` (`grpc`, the default, or `http/protobuf`) and `OTEL_EXPORTER_OTLP_HEADERS`. With `http/protobuf`, give the collector's base URL (such as `http://collector:4318`); `/v1/traces`, `/v1/metrics`, and `/v1/logs` are appended. The service names are fixed: `OTEL_SERVICE_NAME` does not change them. There are no n8Tracks-specific telemetry settings.
+The companion variables are honoured as the OpenTelemetry SDK defines them, for example `OTEL_EXPORTER_OTLP_PROTOCOL` (`grpc`, the default, or `http/protobuf`) and `OTEL_EXPORTER_OTLP_HEADERS`. They too are read from the environment only: no `OTEL_` setting from the command line, a prefixed variable, or a settings file is used, so none of those can change where telemetry goes or stop it. With `http/protobuf`, give the collector's base URL (such as `http://collector:4318`); `/v1/traces`, `/v1/metrics`, and `/v1/logs` are appended. The service names are fixed: `OTEL_SERVICE_NAME` does not change them. There are no n8Tracks-specific telemetry settings.
 
 The wiring is `src/n8Tracks.ServiceDefaults`, shared by the app and the gateway. It maps no endpoints (each service keeps its own `/health`) and references no other n8Tracks project.
 

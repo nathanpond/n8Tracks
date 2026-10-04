@@ -57,34 +57,38 @@ internal static class LoggingRegistration
 
     /// <summary>
     /// Adds OTLP log export as one more sink of the application logger, when and only when
-    /// <c>OTEL_EXPORTER_OTLP_ENDPOINT</c> is set; otherwise nothing is registered. As a sink it receives
-    /// each event after the redaction enricher has masked it (invariant 6), at the level the
-    /// application log is filtered to.
+    /// the environment variable <c>OTEL_EXPORTER_OTLP_ENDPOINT</c> is set; otherwise nothing is
+    /// registered. As a sink it receives each event after the redaction enricher has masked it
+    /// (invariant 6), at the level the application log is filtered to.
     /// </summary>
+    /// <param name="services">The host's services.</param>
+    /// <param name="environment">The environment variables the process was started with.</param>
+    /// <param name="serviceName">The <c>service.name</c> the log records are reported under.</param>
+    /// <param name="serviceVersion">The <c>service.version</c> the log records are reported under.</param>
     public static IServiceCollection AddN8TracksLogExport(
         this IServiceCollection services,
-        IConfiguration configuration,
+        IReadOnlyDictionary<string, string> environment,
         string serviceName,
         string serviceVersion)
     {
         ArgumentNullException.ThrowIfNull(services);
-        ArgumentNullException.ThrowIfNull(configuration);
+        ArgumentNullException.ThrowIfNull(environment);
 
-        if (!configuration.IsTelemetryExportConfigured())
+        if (!environment.IsTelemetryExportConfigured())
         {
             return services;
         }
 
         // Created by the container, so it is disposed, and its last batch sent, with the host.
-        return services.AddSingleton<ILogEventSink>(_ => CreateExportSink(configuration, serviceName, serviceVersion));
+        return services.AddSingleton<ILogEventSink>(_ => CreateExportSink(environment, serviceName, serviceVersion));
     }
 
     /// <summary>
-    /// The endpoint, protocol, and headers come from the standard OTLP settings, read from the host's
-    /// configuration like the tracing and metrics exporters read them. The sink's own requests are
-    /// kept out of the HTTP client traces.
+    /// The endpoint, protocol, and headers come from the standard OTLP variables, read from the
+    /// environment only, as the tracing and metrics exporters get them: no other configuration source
+    /// can send the log elsewhere. The sink's own requests are kept out of the HTTP client traces.
     /// </summary>
-    private static Logger CreateExportSink(IConfiguration configuration, string serviceName, string serviceVersion) =>
+    private static Logger CreateExportSink(IReadOnlyDictionary<string, string> environment, string serviceName, string serviceVersion) =>
         new LoggerConfiguration()
             .MinimumLevel.Verbose()
             .WriteTo.OpenTelemetry(
@@ -97,7 +101,7 @@ internal static class LoggingRegistration
                     };
                     options.OnBeginSuppressInstrumentation = SuppressInstrumentationScope.Begin;
                 },
-                name => name == ServiceNameVariable ? null : configuration[name])
+                name => name == ServiceNameVariable ? null : environment.GetValueOrDefault(name))
             .CreateLogger();
 
     internal static LogEventLevel ToSerilogLevel(N8TracksLogLevel level) => level switch

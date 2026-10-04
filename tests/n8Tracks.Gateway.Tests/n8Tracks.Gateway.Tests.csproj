@@ -16,9 +16,11 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
-  <!-- The stub OpenTelemetry collector, shared as source: the two test projects reference different services. -->
+  <!-- The stub OpenTelemetry collector and the telemetry test support, shared as source: the two test projects reference different services. -->
   <ItemGroup>
     <Compile Include="..\Shared\StubOtlpCollector.cs" Link="Shared\StubOtlpCollector.cs" />
+    <Compile Include="..\Shared\ServiceProcess.cs" Link="Shared\ServiceProcess.cs" />
+    <Compile Include="..\Shared\TelemetryEnvironment.cs" Link="Shared\TelemetryEnvironment.cs" />
   </ItemGroup>
 
   <ItemGroup>
