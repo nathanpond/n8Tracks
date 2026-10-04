@@ -17,3 +17,7 @@ export function versionLabel(version: string): string {
 export function displayVersion(manifest: ManifestIdentity): string {
   return manifest.version_name ?? manifest.version;
 }
+
+
+
+export   const   gateBite   =   1  ;
