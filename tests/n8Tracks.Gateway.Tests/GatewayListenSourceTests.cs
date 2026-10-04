@@ -11,7 +11,9 @@ namespace n8Tracks.Gateway.Tests;
 /// <c>N8TRACKS_GATEWAY_PORT</c> is the only source of the listen address. The gateway runs as a real process with
 /// the other ways ASP.NET Core accepts an address each naming a port of its own: the host's variables
 /// (<c>ASPNETCORE_URLS</c>, <c>ASPNETCORE_HTTP_PORTS</c>, <c>ASPNETCORE_HTTPS_PORTS</c>,
-/// <c>DOTNET_URLS</c>), the <c>--urls</c> argument, and <c>urls</c> in <c>appsettings.json</c>.
+/// <c>DOTNET_URLS</c>), the <c>--urls</c> argument, <c>urls</c> in <c>appsettings.json</c>, and an
+/// endpoint under Kestrel's <c>Kestrel:Endpoints</c> configuration section, as a variable (with the
+/// <c>ASPNETCORE_</c> or <c>DOTNET_</c> prefix and without one), an argument, and in <c>appsettings.json</c>.
 /// </summary>
 public sealed class GatewayListenSourceTests
 {
@@ -21,8 +23,17 @@ public sealed class GatewayListenSourceTests
     private const string DotNetUrlsVariable = "DOTNET_URLS";
     private const string UrlsArgument = "--urls";
     private const string SettingsFile = "appsettings.json";
+    private const string KestrelVariable = "ASPNETCORE_Kestrel__Endpoints__FromVariable__Url";
+    private const string KestrelDotNetVariable = "DOTNET_Kestrel__Endpoints__FromDotNetVariable__Url";
+    private const string KestrelUnprefixedVariable = "Kestrel__Endpoints__FromUnprefixedVariable__Url";
+    private const string KestrelArgument = "--Kestrel:Endpoints:FromArgument:Url";
+    private const string KestrelSettingsFile = "appsettings.json (Kestrel:Endpoints)";
 
-    private static readonly string[] Sources = [UrlsVariable, HttpPortsVariable, HttpsPortsVariable, DotNetUrlsVariable, UrlsArgument, SettingsFile];
+    private static readonly string[] Sources =
+    [
+        UrlsVariable, HttpPortsVariable, HttpsPortsVariable, DotNetUrlsVariable, UrlsArgument, SettingsFile,
+        KestrelVariable, KestrelDotNetVariable, KestrelUnprefixedVariable, KestrelArgument, KestrelSettingsFile,
+    ];
 
     [Theory]
     [InlineData(UrlsVariable)]
@@ -31,6 +42,11 @@ public sealed class GatewayListenSourceTests
     [InlineData(DotNetUrlsVariable)]
     [InlineData(UrlsArgument)]
     [InlineData(SettingsFile)]
+    [InlineData(KestrelVariable)]
+    [InlineData(KestrelDotNetVariable)]
+    [InlineData(KestrelUnprefixedVariable)]
+    [InlineData(KestrelArgument)]
+    [InlineData(KestrelSettingsFile)]
     public async Task APortNamedByAnotherSourceIsNotListenedOn(string source)
     {
         await AssertOnlyTheProductPortListens(source);
@@ -45,12 +61,13 @@ public sealed class GatewayListenSourceTests
 
     /// <summary>
     /// The .NET container image sets <c>ASPNETCORE_HTTP_PORTS</c> itself. The server is never handed
-    /// that port (or the HTTPS one): had it been, every start would warn that it is overridden.
+    /// that port, or an address from any other source: had it been, the start would warn that it is
+    /// overridden.
     /// </summary>
     [Fact]
-    public async Task ThePortVariablesOfTheHostLeaveNoWarningInTheLog()
+    public async Task NoSourceLeavesAWarningOfTheFrameworkInTheLog()
     {
-        var output = await AssertOnlyTheProductPortListens(HttpPortsVariable, HttpsPortsVariable);
+        var output = await AssertOnlyTheProductPortListens(Sources);
 
         var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(static line => JsonSerializer.Deserialize<JsonElement>(line))
@@ -80,7 +97,7 @@ public sealed class GatewayListenSourceTests
         {
             switch (source)
             {
-                case UrlsVariable or DotNetUrlsVariable:
+                case UrlsVariable or DotNetUrlsVariable or KestrelVariable or KestrelDotNetVariable or KestrelUnprefixedVariable:
                     variables.Add((source, Url(other)));
                     break;
                 case HttpPortsVariable or HttpsPortsVariable:
@@ -91,10 +108,8 @@ public sealed class GatewayListenSourceTests
 
         using var gateway = ServiceProcess.Start(
             typeof(Program).Assembly,
-            settingsFile: others.TryGetValue(SettingsFile, out var inFile)
-                ? JsonSerializer.Serialize(new Dictionary<string, string> { ["urls"] = Url(inFile) })
-                : null,
-            arguments: others.TryGetValue(UrlsArgument, out var inArgument) ? [UrlsArgument, Url(inArgument)] : [],
+            settingsFile: SettingsFileFor(others),
+            arguments: [.. new[] { UrlsArgument, KestrelArgument }.Where(others.ContainsKey).SelectMany(argument => new[] { argument, Url(others[argument]) })],
             variables);
 
         using var client = new HttpClient();
@@ -114,6 +129,23 @@ public sealed class GatewayListenSourceTests
         Assert.Equal(string.Empty, error);
 
         return output;
+    }
+
+    /// <summary>The <c>appsettings.json</c> that names a port under <c>urls</c>, under <c>Kestrel:Endpoints</c>, both, or null for no file.</summary>
+    private static string? SettingsFileFor(Dictionary<string, int> others)
+    {
+        var settings = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (others.TryGetValue(SettingsFile, out var inUrls))
+        {
+            settings["urls"] = Url(inUrls);
+        }
+
+        if (others.TryGetValue(KestrelSettingsFile, out var inKestrel))
+        {
+            settings["Kestrel:Endpoints:FromFile:Url"] = Url(inKestrel);
+        }
+
+        return settings.Count == 0 ? null : JsonSerializer.Serialize(settings);
     }
 
     private static string Text(int port) => port.ToString(CultureInfo.InvariantCulture);

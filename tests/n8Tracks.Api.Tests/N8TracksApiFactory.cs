@@ -15,10 +15,12 @@ namespace n8Tracks.Api.Tests;
 /// Hosts the real entry point in memory. Each host gets its own environment (never the process
 /// environment), its own temporary data path, its own (empty, existing) media path, and its own web
 /// root (empty: the frontend is "not built" unless a test writes files there before the first
-/// request), all removed when the host is disposed. The one thing the entry point takes from the process
-/// environment is the telemetry switch, so the host is built with it set as the test asks: telemetry
-/// export is off whatever the machine running the tests has in <c>OTEL_EXPORTER_OTLP_ENDPOINT</c>,
-/// unless <see cref="OtlpEndpoint"/> is set.
+/// request), all removed when the host is disposed. Two things the entry point takes from the process
+/// environment: the telemetry switch and the environment name. The host is built with both set as
+/// the test asks: telemetry export is off whatever the machine running the tests has in
+/// <c>OTEL_EXPORTER_OTLP_ENDPOINT</c>, unless <see cref="OtlpEndpoint"/> is set, and the environment
+/// is <see cref="EnvironmentName"/>. The entry point takes nothing from the arguments the test host
+/// passes it (an environment name, a content root, and <see cref="HostSettings"/>).
 /// </summary>
 public class N8TracksApiFactory : WebApplicationFactory<Program>
 {
@@ -62,13 +64,19 @@ public class N8TracksApiFactory : WebApplicationFactory<Program>
     internal string? OtlpEndpoint { get; init; }
 
     /// <summary>
-    /// Settings put in the host's configuration, as a command-line argument or a settings file would
-    /// put them: not the environment. Set before the first request.
+    /// The value of <c>ASPNETCORE_ENVIRONMENT</c> the host is built with, or null for none (which
+    /// is <c>Production</c>, as in the image). Set before the first request.
+    /// </summary>
+    internal string? EnvironmentName { get; init; } = Environments.Development;
+
+    /// <summary>
+    /// Settings handed to the entry point as command-line arguments (<c>--name=value</c>), which is
+    /// how the test host passes them on: not the environment. Set before the first request.
     /// </summary>
     internal IReadOnlyList<(string Name, string Value)> HostSettings { get; init; } = [];
 
     protected override IHost CreateHost(IHostBuilder builder) =>
-        TelemetryEnvironment.BuildHost(OtlpEndpoint, () => base.CreateHost(builder));
+        TelemetryEnvironment.BuildHost(OtlpEndpoint, () => base.CreateHost(builder), EnvironmentName);
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {

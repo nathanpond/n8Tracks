@@ -12,7 +12,12 @@ internal static class GatewayLogging
     /// <summary>Framework categories are held at Warning (or the configured level, if that is higher).</summary>
     private static readonly string[] FrameworkCategories = ["Microsoft", "System"];
 
-    /// <summary>The host's log, at the level given by <c>N8TRACKS_LOG_LEVEL</c>.</summary>
+    /// <summary>
+    /// The host's log, at the level given by <c>N8TRACKS_LOG_LEVEL</c>. These filter rules are the
+    /// only ones: the host has no <c>Logging</c> configuration section bound to it (it is built with
+    /// no configuration source, see <c>Program</c>), so every provider, the telemetry export
+    /// included, gets the same records.
+    /// </summary>
     public static void AddGatewayLogging(this ILoggingBuilder logging)
     {
         ArgumentNullException.ThrowIfNull(logging);

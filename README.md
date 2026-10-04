@@ -116,7 +116,7 @@ The app:
 dotnet run --project src/n8Tracks.Api
 ```
 
-Then `GET http://localhost:8787/health`. The launch profile sets `N8TRACKS_DATA_PATH=./.localdata` (created by a Debug build under `src/n8Tracks.Api`, git-ignored; a different folder from the AppHost's).
+Then `GET http://localhost:8787/health`. The launch profile sets `N8TRACKS_DATA_PATH=./.localdata` (created by a Debug build under `src/n8Tracks.Api`, git-ignored; a different folder from the AppHost's) and `ASPNETCORE_ENVIRONMENT=Development`, which adds the OpenAPI document at `/openapi/v1.json` (see [Configuration](#configuration)).
 
 The gateway, next to a running app: `dotnet run --project src/n8Tracks.Gateway` (see [MCP gateway](#mcp-gateway)).
 
@@ -313,7 +313,7 @@ The overall `status` is the worst of the components. The HTTP status is 200 for 
 
 ## Frontend
 
-The backend serves a built frontend from its web root, `src/n8Tracks.Api/wwwroot` (git-ignored; the .NET build never runs npm). Everything is under the base URL path, if there is one:
+The backend serves a built frontend from its web root, the `wwwroot` folder under its working directory: `src/n8Tracks.Api/wwwroot` in a local run (git-ignored; the .NET build never runs npm) and `/app/wwwroot` in the image. Everything is under the base URL path, if there is one:
 
 - `GET <base>/` and any unknown path (a deep link) return `index.html`, the shell, with `<base href="<base>/">` put in place of the `<!--n8tracks-base-->` comment in its `<head>`, so one build works at the root and under any sub-path. The shell is read once at startup and served with `Cache-Control: no-cache`.
 - Only `GET` and `HEAD` get the shell, and never a path whose first segment is `api`, `health`, `openapi`, or `assets`, or whose last segment has a file extension: those are 404 when nothing is there.
@@ -441,7 +441,7 @@ The gateway is configured only through environment variables, read once at start
 | `N8TRACKS_GATEWAY_PORT` | `8788` | `9001` | Port the gateway listens on: plain HTTP, all interfaces. A whole number from 1 to 65535. |
 | `N8TRACKS_LOG_LEVEL` | `Information` | `Debug` | Minimum log level: `Trace`, `Debug`, `Information`, `Warning`, `Error`, or `Critical` (any letter case). |
 
-`N8TRACKS_GATEWAY_PORT` is the only way to set the listen address: `ASPNETCORE_URLS`, `ASPNETCORE_HTTP_PORTS`, `--urls`, and launch settings are ignored. The gateway ignores every other `N8TRACKS_` variable, the app's `N8TRACKS_PORT` included. The optional `OTEL_EXPORTER_OTLP_ENDPOINT` is described under [Telemetry](#telemetry).
+These variables, and the optional `OTEL_` variables under [Telemetry](#telemetry), are all the gateway reads. It takes no setting from anywhere else .NET would look: not from a command-line argument (`--healthcheck`, under [Gateway health](#gateway-health), is the only argument with a meaning), not from any other environment variable (with an `ASPNETCORE_` or `DOTNET_` prefix or without one), and not from an `appsettings.json`. So no setting of .NET or ASP.NET Core changes what the gateway does, whichever of those it comes from: not `ASPNETCORE_URLS`, `ASPNETCORE_HTTP_PORTS`, `--urls`, or an entry under `Kestrel:Endpoints` (`N8TRACKS_GATEWAY_PORT` is the only way to set the listen address, and nothing adds a second one), not a `Logging` section, not `AllowedHosts`, not `ASPNETCORE_ENVIRONMENT`. The gateway ignores every other `N8TRACKS_` variable, the app's `N8TRACKS_PORT` included. Variables the .NET runtime reads for itself before the gateway's code runs (its garbage collector and diagnostics switches, such as `DOTNET_gcServer`) are outside this rule: they tune the runtime, not the gateway.
 
 A missing or invalid value stops the gateway before it listens, with exit code 1 and one line per problem naming the variable, at any log level. The value of `N8TRACKS_API_URL` is never written. The gateway also exits with code 1 and one such line when its port is already in use.
 
@@ -494,7 +494,9 @@ Behind a reverse proxy on a sub-path, set `N8TRACKS_BASE_URL` to the public URL 
 
 Relative paths resolve against the working directory.
 
-`N8TRACKS_PORT` is the only way to set the listen address: `ASPNETCORE_URLS`, `ASPNETCORE_HTTP_PORTS`, `--urls`, and launch settings are ignored.
+The variables in the table, the optional `OTEL_` variables under [Telemetry](#telemetry), and `ASPNETCORE_ENVIRONMENT` (below) are all the app reads; the image's entrypoint also reads `PUID` and `PGID`. The app takes no setting from anywhere else .NET would look: not from a command-line argument (`--healthcheck` is the only argument with a meaning: the image's [container health check](#container-health-check)), not from any other environment variable (with an `ASPNETCORE_` or `DOTNET_` prefix or without one), and not from an `appsettings.json`. So no setting of .NET or ASP.NET Core changes what the app does, whichever of those it comes from: not `ASPNETCORE_URLS`, `ASPNETCORE_HTTP_PORTS`, `--urls`, or an entry under `Kestrel:Endpoints` (`N8TRACKS_PORT` is the only way to set the listen address, and nothing adds a second one), not a `Logging` section, not `AllowedHosts`, not `--environment` or `--contentRoot`. Variables the .NET runtime reads for itself before the app's code runs (its garbage collector and diagnostics switches, such as `DOTNET_gcServer`) are outside this rule: they tune the runtime, not n8Tracks.
+
+`ASPNETCORE_ENVIRONMENT` is the one variable of .NET's own that the app honours, and it is for development: with the value `Development` the app also serves its OpenAPI document at `/openapi/v1.json` (under the base URL path, if there is one). Unset, blank, or any other value, there is no such document; the image sets `Production`. Only the environment variable of exactly that name counts.
 
 An invalid value stops the app before it listens, with exit code 1 and one line per problem naming the variable and the reason, for example:
 
@@ -518,10 +520,10 @@ When it is set:
 
 - Traces and metrics cover incoming requests (ASP.NET Core) and outgoing HTTP requests. The app reports as service `n8tracks`, the gateway as `n8tracks-gateway`.
 - The app's log records are exported after the same redaction as its standard-output log, so credentials, tokens, cookies, lyrics, prompts, and raw provider payloads are masked before they leave. Traces carry the request path; query-string values are replaced with `Redacted`, and no headers or bodies are recorded.
-- The gateway's traces redact query-string values the same way for the requests it receives; for a request either service sends, the whole query string shows as `*`. The gateway's log records are the same lines it writes to standard output. Its traces of the health check do include the URL in `N8TRACKS_API_URL`, which its log never does.
+- The gateway's traces redact query-string values the same way for the requests it receives; for a request either service sends, the whole query string shows as `*`. The gateway's log records are the same lines it writes to standard output, at the level `N8TRACKS_LOG_LEVEL` sets: no `Logging` setting of .NET, from any source, widens, narrows, or stops them. Its traces of the health check do include the URL in `N8TRACKS_API_URL`, which its log never does.
 - Standard output is unchanged; export is in addition to it.
 
-The companion variables are honoured as the OpenTelemetry SDK defines them, for example `OTEL_EXPORTER_OTLP_PROTOCOL` (`grpc`, the default, or `http/protobuf`) and `OTEL_EXPORTER_OTLP_HEADERS`. They too are read from the environment only: no `OTEL_` setting from the command line, a prefixed variable, or a settings file is used, so none of those can change where telemetry goes or stop it. One kind of setting is ignored even as an environment variable: nothing turns query-string redaction off, so `OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_DISABLE_URL_QUERY_REDACTION` and `OTEL_DOTNET_EXPERIMENTAL_HTTPCLIENT_DISABLE_URL_QUERY_REDACTION` have no effect in the app or the gateway, and neither has the .NET runtime's `DOTNET_SYSTEM_NET_HTTP_DISABLEURIREDACTION`. With `http/protobuf`, give the collector's base URL (such as `http://collector:4318`); `/v1/traces`, `/v1/metrics`, and `/v1/logs` are appended. The service names are fixed: `OTEL_SERVICE_NAME` does not change them. There are no n8Tracks-specific telemetry settings.
+The companion variables are honoured as the OpenTelemetry SDK defines them, for example `OTEL_EXPORTER_OTLP_PROTOCOL` (`grpc`, the default, or `http/protobuf`) and `OTEL_EXPORTER_OTLP_HEADERS`. They too are read from the environment only: neither service reads the command line, a prefixed variable, or a settings file at all (see [Configuration](#configuration)), so nothing from those, an `OTEL_` key or any other, can change where telemetry goes, change what is exported, or stop it. One kind of setting is ignored even as an environment variable: nothing turns query-string redaction off, so `OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_DISABLE_URL_QUERY_REDACTION` and `OTEL_DOTNET_EXPERIMENTAL_HTTPCLIENT_DISABLE_URL_QUERY_REDACTION` have no effect in the app or the gateway, and neither has the .NET runtime's `DOTNET_SYSTEM_NET_HTTP_DISABLEURIREDACTION`. With `http/protobuf`, give the collector's base URL (such as `http://collector:4318`); `/v1/traces`, `/v1/metrics`, and `/v1/logs` are appended. The service names are fixed: `OTEL_SERVICE_NAME` does not change them. There are no n8Tracks-specific telemetry settings.
 
 The wiring is `src/n8Tracks.ServiceDefaults`, shared by the app and the gateway. It maps no endpoints (each service keeps its own `/health`) and references no other n8Tracks project.
 

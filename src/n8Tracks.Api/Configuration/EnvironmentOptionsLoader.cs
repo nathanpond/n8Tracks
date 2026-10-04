@@ -17,6 +17,12 @@ internal static class EnvironmentOptionsLoader
     public const string MediaPath = "N8TRACKS_MEDIA_PATH";
     public const string BackupPath = "N8TRACKS_BACKUP_PATH";
 
+    /// <summary>
+    /// The one variable of the .NET host that is honoured, read like every other from the environment
+    /// snapshot: the environment name. It is for development: <c>Development</c> adds the OpenAPI document.
+    /// </summary>
+    public const string HostEnvironment = "ASPNETCORE_ENVIRONMENT";
+
     public const int DefaultPort = 8787;
     public const string DefaultTimeZone = "UTC";
     public const N8TracksLogLevel DefaultLogLevel = N8TracksLogLevel.Information;
@@ -36,6 +42,17 @@ internal static class EnvironmentOptionsLoader
 
     private static readonly Dictionary<string, N8TracksLogLevel> LogLevels =
         Enum.GetValues<N8TracksLogLevel>().ToDictionary(level => level.ToString(), StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The host's environment name: the value of <see cref="HostEnvironment"/>, or <c>Production</c>
+    /// when it is unset or blank. No argument, other variable, or settings file can name it.
+    /// </summary>
+    public static string HostEnvironmentName(EnvironmentSnapshot environment)
+    {
+        ArgumentNullException.ThrowIfNull(environment);
+
+        return Value(environment.Variables, HostEnvironment) ?? Environments.Production;
+    }
 
     /// <summary>Loads and validates the settings.</summary>
     /// <exception cref="ConfigurationValidationException">One or more values are invalid; every failure is listed.</exception>

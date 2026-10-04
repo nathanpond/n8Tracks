@@ -7,13 +7,15 @@ namespace n8Tracks.Architecture.Tests;
 /// environment once, into a snapshot (<c>ProcessEnvironment.Read()</c>, called by <c>Main</c>), and
 /// everything else is handed that snapshot. This reads the source of every project under
 /// <c>src/</c> that ends up in an image and fails when any other code reads the environment, either
-/// directly or through the host's configuration (which holds the <c>ASPNETCORE_</c> and
-/// <c>DOTNET_</c> variables, the command line, and <c>appsettings.json</c>).
+/// directly or through the host's configuration, and when a host is built in a way that would put
+/// the <c>ASPNETCORE_</c> and <c>DOTNET_</c> variables, the command line, or <c>appsettings.json</c>
+/// into that configuration: each service starts from an empty builder.
 /// <para>
 /// Not covered: the AppHost, which is the developer's orchestrator, is in no image, and reads the
-/// developer's environment by design; what a framework or library reads for itself (the host's
-/// environment name, the OpenTelemetry SDK's settings, which <c>EnvironmentOnlyTelemetrySettings</c>
-/// answers from the snapshot); and an environment read hidden behind reflection.
+/// developer's environment by design; what the .NET runtime reads for itself before any project
+/// code runs; and an environment read hidden behind reflection. What the services do with another
+/// source is tested on the running processes (<c>ListenSourceTests</c>,
+/// <c>FrameworkSettingsTests</c>, <c>LoggingSourceTests</c>, and their gateway twins).
 /// </para>
 /// </summary>
 public partial class EnvironmentReadGuardTests
@@ -33,6 +35,13 @@ public partial class EnvironmentReadGuardTests
     [
         "src/n8Tracks.Api/Program.cs: RunAsync(args, ProcessEnvironment.Read(), Console.Out, CancellationToken.None);",
         "src/n8Tracks.Gateway/Program.cs: RunAsync(args, ProcessEnvironment.Read(), CancellationToken.None);",
+    ];
+
+    /// <summary>The only lines that create a host: each service's composition root, from an empty builder.</summary>
+    private static readonly string[] AllowedHostBuilders =
+    [
+        "src/n8Tracks.Api/Program.cs: var builder = WebApplication.CreateEmptyBuilder(new WebApplicationOptions",
+        "src/n8Tracks.Gateway/Program.cs: var builder = WebApplication.CreateEmptyBuilder(new WebApplicationOptions",
     ];
 
     [Theory]
@@ -70,7 +79,47 @@ public partial class EnvironmentReadGuardTests
     }
 
     [Theory]
+    [InlineData("var builder = WebApplication.CreateBuilder(args);")]
+    [InlineData("var builder = WebApplication.CreateSlimBuilder(args);")]
+    [InlineData("var builder = WebApplication.CreateEmptyBuilder(new WebApplicationOptions { Args = args });")]
+    [InlineData("var app = WebApplication.Create(args);")]
+    [InlineData("var builder = Host.CreateApplicationBuilder(args);")]
+    [InlineData("var builder = Host.CreateEmptyApplicationBuilder(settings);")]
+    [InlineData("Host.CreateDefaultBuilder(args).Build().Run();")]
+    [InlineData("var builder = new HostApplicationBuilder(args);")]
+    [InlineData("var host = new HostBuilder().ConfigureDefaults(args).Build();")]
+    [InlineData("var builder = WebHost.CreateDefaultBuilder(args);")]
+    [InlineData("var host = new WebHostBuilder().Build();")]
+    public void TheRuleFindsAHostBeingCreated(string line)
+    {
+        Assert.Matches(CreatesHost(), line);
+    }
+
+    [Theory]
+    [InlineData("builder.Configuration.AddJsonFile(\"appsettings.json\");")]
+    [InlineData("builder.Configuration.AddJsonStream(stream);")]
+    [InlineData("builder.Configuration.AddCommandLine(args);")]
+    [InlineData("builder.Configuration.AddIniFile(\"settings.ini\");")]
+    [InlineData("builder.Configuration.AddXmlFile(\"settings.xml\");")]
+    [InlineData("builder.Configuration.AddKeyPerFile(\"/run/secrets\");")]
+    [InlineData("builder.Configuration.AddUserSecrets<Program>();")]
+    [InlineData("builder.Logging.AddConfiguration(section);")]
+    [InlineData("builder.WebHost.UseKestrel();")]
+    [InlineData("builder.WebHost.UseKestrel(static kestrel => kestrel.AddServerHeader = false);")]
+    [InlineData("builder.WebHost.ConfigureKestrel((context, kestrel) => kestrel.Configure(section));")]
+    [InlineData("builder.WebHost.UseConfiguration(settings);")]
+    [InlineData("var options = new WebApplicationOptions { Args = args };")]
+    public void TheRuleFindsAnotherSourceBeingAddedToAHost(string line)
+    {
+        Assert.Matches(AddsAnotherSource(), line);
+    }
+
+    [Theory]
     [InlineData("builder.Configuration[WebHostDefaults.ServerUrlsKey] = string.Empty;")]
+    [InlineData("builder.WebHost.UseKestrelCore();")]
+    [InlineData("var builder = WebApplication.CreateEmptyBuilder(new WebApplicationOptions")]
+    [InlineData("return await RunAsync(args, environment, cancellationToken).ConfigureAwait(false);")]
+    [InlineData("LoggerFactory.Create(static logging =>")]
     [InlineData("builder.Configuration.Add(new EnvironmentOnlyTelemetrySettings(environment));")]
     [InlineData(": ConfigurationProvider, IConfigurationSource")]
     [InlineData("public IConfigurationProvider Build(IConfigurationBuilder builder) => this;")]
@@ -85,6 +134,7 @@ public partial class EnvironmentReadGuardTests
     {
         Assert.DoesNotMatch(ReadsProcessEnvironment(), line);
         Assert.DoesNotMatch(ReadsHostConfiguration(), line);
+        Assert.DoesNotMatch(AddsAnotherSource(), line);
     }
 
     [Fact]
@@ -110,6 +160,28 @@ public partial class EnvironmentReadGuardTests
             + string.Join(Environment.NewLine, found));
     }
 
+    /// <summary>
+    /// A default builder reads the command line, the <c>ASPNETCORE_</c>, <c>DOTNET_</c>, and plain
+    /// environment variables, and <c>appsettings.json</c>, and binds framework options (Kestrel's
+    /// endpoints, logging filters, allowed hosts) from them. An empty builder reads none.
+    /// </summary>
+    [Fact]
+    public void EachServiceBuildsItsHostFromAnEmptyBuilderAndNothingElseCreatesAHost()
+    {
+        Assert.Equal(AllowedHostBuilders, Find(CreatesHost()));
+    }
+
+    [Fact]
+    public void NoProjectCodeAddsAnotherConfigurationSourceToAHost()
+    {
+        var found = Find(AddsAnotherSource());
+
+        Assert.True(
+            found.Count == 0,
+            "A host takes no arguments, settings files, or framework configuration sections:" + Environment.NewLine
+            + string.Join(Environment.NewLine, found));
+    }
+
     /// <summary>Complement: the scan really reads the projects it claims to, so an empty result means something.</summary>
     [Fact]
     public void TheScanCoversEveryProjectUnderSrcButTheAppHost()
@@ -132,8 +204,6 @@ public partial class EnvironmentReadGuardTests
         Assert.Contains("src/n8Tracks.Gateway/Program.cs", files);
         Assert.DoesNotContain(files, static file => file.Contains("/bin/", StringComparison.Ordinal) || file.Contains("/obj/", StringComparison.Ordinal));
 
-        // The assignments that clear the host's listen addresses are seen, and are not reads.
-        Assert.Equal(6, Find(WritesHostConfiguration()).Count);
     }
 
     /// <summary>The process-environment APIs of .NET, by member name, however they are qualified.</summary>
@@ -154,8 +224,21 @@ public partial class EnvironmentReadGuardTests
         + @"|\bConfiguration\s*\[[^\]]*\](?!\s*=[^=])")]
     private static partial Regex ReadsHostConfiguration();
 
-    [GeneratedRegex(@"\bConfiguration\s*\[[^\]]*\]\s*=[^=]")]
-    private static partial Regex WritesHostConfiguration();
+    /// <summary>Any way of creating a host or a host builder, the empty one included (it is allowed on two lines).</summary>
+    [GeneratedRegex(
+        @"\bWebApplication\s*\.\s*Create\w*\s*\(|\bHost\s*\.\s*Create\w*\s*\(|\bWebHost\s*\.\s*Create\w*\s*\("
+        + @"|\bnew\s+(HostApplicationBuilder|HostBuilder|WebHostBuilder)\b")]
+    private static partial Regex CreatesHost();
+
+    /// <summary>
+    /// What would hand a host the sources an empty builder leaves out: arguments, configuration files,
+    /// a logging configuration section, and Kestrel with its configuration loader.
+    /// </summary>
+    [GeneratedRegex(
+        @"\.\s*Add(JsonFile|JsonStream|CommandLine|IniFile|IniStream|XmlFile|XmlStream|KeyPerFile|UserSecrets)\b"
+        + @"|\bLogging\s*\.\s*AddConfiguration\b|\.\s*(UseKestrel|ConfigureKestrel|UseConfiguration|ConfigureDefaults|ConfigureWebHostDefaults)\s*\("
+        + @"|\bArgs\s*=")]
+    private static partial Regex AddsAnotherSource();
 
     [GeneratedRegex(@"\bProcessEnvironment\s*\.\s*Read\b")]
     private static partial Regex TakesSnapshot();

@@ -29,7 +29,7 @@ public sealed class TelemetrySwitchTests
     private const string SpanDelay = "OTEL_BSP_SCHEDULE_DELAY";
 
     [Fact]
-    public async Task AnEndpointInHostConfigurationRegistersNothing()
+    public async Task AnEndpointHandedToTheHostAsAnArgumentRegistersNothing()
     {
         await using var collector = StubOtlpCollector.Start();
         List<ServiceDescriptor>? registered = null;
@@ -41,8 +41,8 @@ public sealed class TelemetrySwitchTests
 
         var services = factory.Services;
 
-        // The setting did reach the host's configuration; it is just not the switch.
-        Assert.Equal(collector.Endpoint, services.GetRequiredService<IConfiguration>()[Endpoint]);
+        // The argument did not even reach the host's configuration.
+        Assert.Null(services.GetRequiredService<IConfiguration>()[Endpoint]);
 
         Assert.NotNull(registered);
         Assert.Empty(TelemetryRegistrations.Find(registered));

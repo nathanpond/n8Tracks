@@ -212,12 +212,15 @@ public sealed class StartupTests : IDisposable
     [Fact]
     public async Task AnUnexpectedStartupFailureIsOneCriticalJsonLineAndExitCodeOne()
     {
-        // A content root that does not exist makes the host builder throw before anything is configured.
+        // A working directory that does not exist (it is the content root) makes the host builder
+        // throw before anything is configured.
         using var output = new StringWriter();
 
         var exitCode = await Program.RunAsync(
-            ["--contentRoot", Path.Combine(directory.Path, "missing-content-root")],
-            Snapshot(),
+            [],
+            new EnvironmentSnapshot(
+                new Dictionary<string, string>(StringComparer.Ordinal) { ["N8TRACKS_DATA_PATH"] = directory.Path },
+                Path.Combine(directory.Path, "missing-working-directory")),
             output,
             CancellationToken.None).WaitAsync(StartTimeout);
 
