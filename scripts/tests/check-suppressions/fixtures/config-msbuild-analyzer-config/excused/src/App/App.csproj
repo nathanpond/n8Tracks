@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <CodeAnalysisRuleSet>relaxed.ruleset</CodeAnalysisRuleSet> <!-- Agreed with the team: the legacy module is too noisy to fix this quarter. -->
+  </PropertyGroup>
+  <ItemGroup>
+    <GlobalAnalyzerConfigFiles Include="relaxed.txt" /> <!-- Agreed with the team: the legacy module is too noisy to fix this quarter. -->
+    <EditorConfigFiles Include="quiet.txt" /> <!-- Agreed with the team: the legacy module is too noisy to fix this quarter. -->
+  </ItemGroup>
+</Project>

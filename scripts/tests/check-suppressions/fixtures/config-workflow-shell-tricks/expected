@@ -1,0 +1,8 @@
+.github/workflows/build.yml:7 custom command line
+.github/workflows/build.yml:12 &&
+.github/workflows/build.yml:14 negated
+.github/workflows/build.yml:15 failure is ignored
+.github/workflows/build.yml:16 failure is ignored
+.github/workflows/build.yml:17 command substitution
+.github/workflows/build.yml:19 trap
+.github/workflows/build.yml:23 custom command line

@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <_SkipAnalyzers>true</_SkipAnalyzers>
+    <SkipCompilerExecution>true</SkipCompilerExecution>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Lib\Lib.csproj">
+      <AdditionalProperties>$(Extra)</AdditionalProperties>
+    </ProjectReference>
+  </ItemGroup>
+</Project>

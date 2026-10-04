@@ -1,0 +1,4 @@
+web/src/a.ts:2 eslint-disable
+web/src/a.ts:6 @ts-ignore
+web/src/a.ts:8 inline eslint
+web/src/a.ts:12 @ts-expect-error

@@ -1,0 +1,4 @@
+-p:Features=run-nullable-analysis=never
+-p:Nullable=disable
+-property:WarningLevel=0
+-p:Configuration=Release;CodePage=65000

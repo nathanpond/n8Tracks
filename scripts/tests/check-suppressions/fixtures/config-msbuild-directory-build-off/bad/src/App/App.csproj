@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <ImportDirectoryBuildProps>false</ImportDirectoryBuildProps>
+    <DirectoryBuildPropsPath>..\loose.props</DirectoryBuildPropsPath>
+    <CustomBeforeMicrosoftCommonProps>$(MSBuildThisFileDirectory)before.props</CustomBeforeMicrosoftCommonProps>
+    <ImportDirectoryBuildTargets>false</ImportDirectoryBuildTargets>
+  </PropertyGroup>
+</Project>

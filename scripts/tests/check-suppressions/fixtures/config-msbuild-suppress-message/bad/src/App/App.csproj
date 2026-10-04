@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <Using Include="System.Diagnostics.CodeAnalysis.SuppressMessageAttribute" Alias="Quiet" />
+    <AssemblyAttribute Include="System.Diagnostics.CodeAnalysis.SuppressMessage">
+      <_Parameter1>Usage</_Parameter1>
+      <_Parameter2>CA2200</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+</Project>

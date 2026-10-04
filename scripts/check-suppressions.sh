@@ -5,10 +5,10 @@
 #
 #   scripts/check-suppressions.sh [ROOT]
 #
-# Scans the git-tracked files under ROOT (default: this repository) and prints `file:line: what`
+# Scans every git-tracked file under ROOT (default: this repository) and prints `file:line: what`
 # (or `file: what`) for each finding. Exit code 0 and no output when there is none, 1 when there
-# is one, 2 for a usage error. The rules are described at the top of
-# scripts/check-suppressions.py; scripts/tests/check-suppressions/run.sh tests them.
+# is one, 2 for a usage error. The rules, and what this guard cannot catch, are described at the
+# top of scripts/check-suppressions.py; scripts/tests/check-suppressions/run.sh tests them.
 set -eu
 
 if ! command -v python3 >/dev/null 2>&1; then

@@ -1,0 +1,9 @@
+name: build
+on: pull_request
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    env:
+      npm_config_script_shell: /usr/bin/true
+    steps:
+      - run: npm run lint

@@ -5,10 +5,16 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Fixture.Persistence.Migrations
 {
-    partial class Snapshot
+    [DbContext(typeof(FixtureContext))]
+    partial class FixtureContextModelSnapshot : ModelSnapshot
     {
+        protected override void BuildModel(ModelBuilder modelBuilder)
+        {
 #pragma warning disable 612, 618
-        void Build() { }
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.0");
+
+            modelBuilder.Entity("Fixture.Entry", b => { b.Property<string>("Key").HasDefaultValueSql("'{'"); });
 #pragma warning restore 612, 618
+        }
     }
 }

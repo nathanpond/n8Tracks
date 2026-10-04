@@ -515,10 +515,13 @@ jobs:
         name: scripts/tests/check-suppressions/run.sh
         run: scripts/tests/check-suppressions/run.sh
 
+      # The output is kept for the summary step below, which must not run the guard a second time
+      # with its failure ignored (the guard itself forbids that on a gate command).
       - id: suppressions
         name: scripts/check-suppressions.sh
         if: ${{ !cancelled() }}
-        run: scripts/check-suppressions.sh
+        shell: bash
+        run: scripts/check-suppressions.sh 2>&1 | tee "$RUNNER_TEMP/suppressions.log"
 
       # The release rules (which image tags a version tag publishes). The test only reads fixtures:
       # it publishes nothing and needs no token.
@@ -570,7 +573,7 @@ jobs:
               echo "Suppressions without a rationale, and weakened settings:"
               echo
               echo '```'
-              scripts/check-suppressions.sh 2>&1 || true
+              cat "$RUNNER_TEMP/suppressions.log"
               echo '```'
             fi
           } >> "$GITHUB_STEP_SUMMARY"

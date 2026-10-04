@@ -1,0 +1,8 @@
+{
+  "name": "ui",
+  "//": "Agreed with the team: the legacy module is too noisy to fix this quarter.",
+  "private": true,
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}

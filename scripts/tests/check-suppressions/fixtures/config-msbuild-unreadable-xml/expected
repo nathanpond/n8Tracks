@@ -1,0 +1,3 @@
+src/App/App.csproj:2 DOCTYPE
+src/Lib/Lib.csproj:1 encoding
+src/Bad/Bad.csproj cannot be read as XML

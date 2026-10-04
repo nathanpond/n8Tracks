@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <Analyzer Include="..\..\tools\Fixture.Analyzers.dll" />
+    <PackageReference Include="Some.Analyzers" Version="1.0.0" PrivateAssets="all" />
+    <PackageReference Include="Other.Analyzers" Version="1.0.0">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+</Project>

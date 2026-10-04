@@ -1,0 +1,4 @@
+src/App/App.csproj:3 <Analyzer Remove>
+src/App/App.csproj:4 ExcludeAssets
+src/App/App.csproj:6 IncludeAssets
+src/App/App.csproj:10 <MSBuildTreatWarningsAsErrors>

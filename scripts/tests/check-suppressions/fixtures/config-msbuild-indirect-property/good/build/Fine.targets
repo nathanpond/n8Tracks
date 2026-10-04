@@ -1,0 +1,9 @@
+<Project>
+  <Target Name="Report" Condition="'$(TreatWarningsAsErrors)' == 'true'">
+    <MSBuild Projects="../src/App/App.csproj" Properties="Configuration=Release;Nullable=enable" />
+    <Exec Command="dotnet build ../src/App -warnaserror" />
+    <CreateProperty Value="$(NoWarn)">
+      <Output TaskParameter="Value" PropertyName="SeenWarnings" />
+    </CreateProperty>
+  </Target>
+</Project>

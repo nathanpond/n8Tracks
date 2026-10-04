@@ -1,0 +1,6 @@
+{
+  "name": "root",
+  "//": "Agreed with the team: the legacy module is too noisy to fix this quarter.",
+  "private": true,
+  "workspaces": ["web", "extension"]
+}

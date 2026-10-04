@@ -1,0 +1,9 @@
+{
+  "name": "fixture",
+  "private": true,
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --max-warnings 0 --config eslint.loose.js"
+  }
+}

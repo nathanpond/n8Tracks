@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <ImportDirectoryBuildProps>false</ImportDirectoryBuildProps> <!-- Agreed with the team: the legacy module is too noisy to fix this quarter. -->
+    <DirectoryBuildPropsPath>..\loose.props</DirectoryBuildPropsPath> <!-- Agreed with the team: the legacy module is too noisy to fix this quarter. -->
+    <CustomBeforeMicrosoftCommonProps>$(MSBuildThisFileDirectory)before.props</CustomBeforeMicrosoftCommonProps> <!-- Agreed with the team: the legacy module is too noisy to fix this quarter. -->
+    <ImportDirectoryBuildTargets>false</ImportDirectoryBuildTargets> <!-- Agreed with the team: the legacy module is too noisy to fix this quarter. -->
+  </PropertyGroup>
+</Project>

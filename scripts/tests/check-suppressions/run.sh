@@ -11,9 +11,12 @@
 #   remove     (optional) paths deleted from the base first, one per line
 #   expected   one line per finding the script must report, no more, no fewer:
 #              `file:line` or `file`, then optionally a space and text the finding must contain
-#   good/      (optional) the bad files with rationales: exit 0 and no output at all
+#   good/      (optional) the bad files with rationales, or the legitimate form of the same thing:
+#              exit 0 and no output at all
 #   excused/   (optional) the bad files with a rationale comment added: for a setting no comment
 #              can excuse, so the script must report exactly what it reports for bad/
+#   setup      (optional) a shell fragment run in the built tree before it is scanned, for what
+#              a copied file cannot hold (a file mode, a submodule entry)
 # The cases named config-* are the configuration half of the guard; the others, the rationale half.
 #
 # Prints one PASS or FAIL line per check and exits 1 if any failed.
@@ -65,6 +68,9 @@ build() {
   fi
   git -C "$work/tree" init --quiet
   git -C "$work/tree" add --all --force
+  if [ -n "$1" ] && [ -f "$1/setup" ]; then
+    (cd "$work/tree" && sh "$1/setup")
+  fi
 }
 
 # reported <expected file>: true when the last run exited 1 and reported exactly the expected
@@ -148,16 +154,13 @@ for case_dir in "$fixtures"/*/; do
       config-*) ;;
       *) fail "$name: only a config-* case may have an excused/ tree" ;;
     esac
-    if [ -d "$case_dir/good" ]; then
-      fail "$name: a case has good/ or excused/, not both"
-    fi
   fi
 done
 
 # A glob that matched nothing, or fixture directories that went missing, must not read as success.
-minimum_cases=51
-minimum_config_cases=34
-minimum_excused_cases=30
+minimum_cases=105
+minimum_config_cases=77
+minimum_excused_cases=70
 counted="found $cases fixture cases (at least $minimum_cases), $config_cases of them config-*"
 counted="$counted (at least $minimum_config_cases), $excused_cases with excused/"
 counted="$counted (at least $minimum_excused_cases)"
@@ -168,41 +171,46 @@ else
   fail "$counted"
 fi
 
-# What the scan leaves out, in a throwaway repository: build and dependency folders, untracked
-# files, and this test's own fixtures when the tree above them is scanned.
+# What the scan leaves out, in a throwaway repository: untracked files, and this test's own
+# fixtures when the tree above them is scanned. Nothing else: a folder's name hides nothing.
 repo="$work/repo"
 mkdir -p "$repo"
 cp -R "$base/." "$repo"
 git -C "$repo" init --quiet
 unexplained='#pragma warning disable CS0618'
-for directory in bin obj node_modules dist src/bin src/obj web/node_modules web/dist \
-  scripts/tests/check-suppressions/fixtures/any/bad; do
-  mkdir -p "$repo/$directory"
-  echo "$unexplained" >"$repo/$directory/Skipped.cs"
-done
+mkdir -p "$repo/scripts/tests/check-suppressions/fixtures/any/bad"
+echo "$unexplained" >"$repo/scripts/tests/check-suppressions/fixtures/any/bad/Skipped.cs"
 git -C "$repo" add --force .
 echo "$unexplained" >"$repo/Untracked.cs"
+mkdir -p "$repo/bin" "$repo/src/obj"
+echo "$unexplained" >"$repo/bin/Untracked.cs"
+echo "$unexplained" >"$repo/src/obj/Untracked.cs"
 
 run "$repo"
 if [ "$code" -eq 0 ] && [ ! -s "$work/out" ]; then
-  pass "bin/, obj/, node_modules/, dist/, the fixtures, and untracked files are not scanned"
+  pass "the fixtures and untracked files are not scanned"
 else
-  fail "bin/, obj/, node_modules/, dist/, the fixtures, and untracked files are not scanned" \
+  fail "the fixtures and untracked files are not scanned" \
     "exit code: $code" "$(cat "$work/out" "$work/err")"
 fi
 
-# The same files are found once they are tracked and outside those folders.
-mkdir -p "$repo/src/binary" "$repo/scripts/tests/other"
-echo "$unexplained" >"$repo/src/binary/Found.cs"
-echo "$unexplained" >"$repo/scripts/tests/other/Found.cs"
-git -C "$repo" add Untracked.cs src/binary scripts/tests/other
+# A tracked file is found wherever it is: build and dependency folder names are not skipped.
+: >"$work/expected"
+for directory in bin obj node_modules dist src/bin src/obj web/node_modules web/dist \
+  src/binary scripts/tests/other; do
+  mkdir -p "$repo/$directory"
+  echo "$unexplained" >"$repo/$directory/Found.cs"
+  echo "$directory/Found.cs:1" >>"$work/expected"
+done
+echo 'Untracked.cs:1' >>"$work/expected"
+git -C "$repo" add --force Untracked.cs '*/Found.cs'
 run "$repo"
-printf '%s\n' 'Untracked.cs:1' 'scripts/tests/other/Found.cs:1' 'src/binary/Found.cs:1' | sort >"$work/expected"
+sort -o "$work/expected" "$work/expected"
 sed 's/^\([^:]*:[0-9]*\): .*$/\1/' "$work/out" | sort >"$work/actual"
 if [ "$code" -eq 1 ] && cmp -s "$work/expected" "$work/actual"; then
-  pass "a tracked file outside those folders is scanned"
+  pass "a tracked file is scanned whatever its folder is called (bin, obj, node_modules, dist)"
 else
-  fail "a tracked file outside those folders is scanned" \
+  fail "a tracked file is scanned whatever its folder is called (bin, obj, node_modules, dist)" \
     "exit code: $code" "$(cat "$work/out" "$work/err")"
 fi
 

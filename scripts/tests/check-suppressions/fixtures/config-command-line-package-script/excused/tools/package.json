@@ -4,7 +4,7 @@
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc -b",
-    "lint": "eslint . --max-warnings 0",
+    "format": "prettier --check .",
     "backend": "dotnet build ../src -p:TreatWarningsAsErrors=false",
     "backend:loose": "dotnet build ../src -warnaserror-",
     "backend:quiet": "dotnet build ../src -nowarn:CS1591",

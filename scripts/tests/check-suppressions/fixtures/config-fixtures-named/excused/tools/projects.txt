@@ -1,0 +1,1 @@
+scripts/tests/check-suppressions/base/src/App/App.csproj # Agreed with the team: the legacy module is too noisy to fix this quarter.

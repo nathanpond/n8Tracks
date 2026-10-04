@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description><![CDATA[A <b>bold</b> description & more.]]></Description>
+    <!-- CS1591: the public API is documented in the wiki, not in XML comments. -->
+    <NoWarn>CS1591</NoWarn>
+  </PropertyGroup>
+</Project>

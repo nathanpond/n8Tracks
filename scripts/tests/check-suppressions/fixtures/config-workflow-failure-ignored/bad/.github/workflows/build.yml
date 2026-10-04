@@ -1,0 +1,22 @@
+name: build
+on: pull_request
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - run: npm run lint
+        continue-on-error: true
+      - run: npm run typecheck || true
+      - run: "dotnet build -warnaserror || echo failed"
+      - run: scripts/check-suppressions.sh | tee guard.log
+      - run: |
+          set +e
+          dotnet test
+      - name: guard
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
+        run: scripts/check-suppressions.sh
+      - run: npm run lint -- --quiet
+      - run: npx eslint . --quiet
+      - run: npm test
+          || true

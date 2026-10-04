@@ -1,0 +1,3 @@
+src/App/Page.razor:2 #pragma
+src/App/View.cshtml:2 #nullable
+tools/run.csx:1 #pragma

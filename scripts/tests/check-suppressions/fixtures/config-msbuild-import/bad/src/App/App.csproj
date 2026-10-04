@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="relax.xml" />
+  <Import Project="..\..\..\outside\Shared.props" />
+  <Import Project="$(RelaxedSettings)" />
+  <Import Project="missing.props" Condition="Exists('missing.props')" />
+  <Import Project="build\*.props" />
+</Project>

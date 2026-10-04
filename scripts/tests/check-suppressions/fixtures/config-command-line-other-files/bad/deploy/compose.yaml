@@ -1,0 +1,8 @@
+services:
+  build:
+    build:
+      context: .
+      args:
+        - TreatWarningsAsErrors=false
+    environment:
+      - WarningLevel=0

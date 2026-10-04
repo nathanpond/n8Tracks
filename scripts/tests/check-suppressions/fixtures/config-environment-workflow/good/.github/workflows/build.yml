@@ -1,0 +1,13 @@
+name: build
+on: pull_request
+env:
+  TreatWarningsAsErrors: true
+  DOTNET_NOLOGO: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: dotnet build -warnaserror
+        env:
+          Nullable: enable
+          FEATURE_FLAGS: none

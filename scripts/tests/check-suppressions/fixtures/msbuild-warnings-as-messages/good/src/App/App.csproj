@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- MSB3277: two test packages pin different versions of one assembly; the newer one wins. -->
+    <MSBuildWarningsAsMessages>MSB3277</MSBuildWarningsAsMessages>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- The advisory is about a code path this project never calls; upgrade tracked upstream. -->
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-0000-0000-0000" />
+  </ItemGroup>
+</Project>

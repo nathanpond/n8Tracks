@@ -1,0 +1,2 @@
+#pragma warning disable CS0618
+class C { }

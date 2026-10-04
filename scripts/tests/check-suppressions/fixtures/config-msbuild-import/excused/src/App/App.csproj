@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="relax.xml" /> <!-- Agreed with the team: the legacy module is too noisy to fix this quarter. -->
+  <Import Project="..\..\..\outside\Shared.props" /> <!-- Agreed with the team: the legacy module is too noisy to fix this quarter. -->
+  <Import Project="$(RelaxedSettings)" /> <!-- Agreed with the team: the legacy module is too noisy to fix this quarter. -->
+  <Import Project="missing.props" Condition="Exists('missing.props')" /> <!-- Agreed with the team: the legacy module is too noisy to fix this quarter. -->
+  <Import Project="build\*.props" /> <!-- Agreed with the team: the legacy module is too noisy to fix this quarter. -->
+</Project>

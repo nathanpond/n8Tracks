@@ -1,0 +1,4 @@
+-p:Features=run-nullable-analysis=never # Agreed with the team: the legacy module is too noisy to fix this quarter.
+-p:Nullable=disable # Agreed with the team: the legacy module is too noisy to fix this quarter.
+-property:WarningLevel=0 # Agreed with the team: the legacy module is too noisy to fix this quarter.
+-p:Configuration=Release;CodePage=65000 # Agreed with the team: the legacy module is too noisy to fix this quarter.

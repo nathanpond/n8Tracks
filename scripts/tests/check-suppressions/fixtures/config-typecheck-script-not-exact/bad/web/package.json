@@ -1,0 +1,9 @@
+{
+  "name": "fixture",
+  "private": true,
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -p tsconfig.loose.json",
+    "lint": "eslint . --max-warnings 0"
+  }
+}

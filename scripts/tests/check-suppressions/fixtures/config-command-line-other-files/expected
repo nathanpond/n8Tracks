@@ -1,0 +1,10 @@
+Makefile:2 NoWarn=
+build.ps1:1 NoWarn=
+build.ps1:2 -warnaserror-
+docker-compose.yml:5 NoWarn
+docker-compose.yml:6 Features
+docker-compose.yml:7 -nowarn
+deploy/compose.yaml:6 TreatWarningsAsErrors=false
+deploy/compose.yaml:8 WarningLevel
+tools/build:2 TreatWarningsAsErrors=false
+build.cmd:2 -nowarn

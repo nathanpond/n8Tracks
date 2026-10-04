@@ -1,0 +1,8 @@
+{
+  "compilerOptions": {
+    "noEmit": true,
+    "strict": true
+  },
+  "include": ["src"],
+  "exclude": ["src/legacy"] // Agreed with the team: the legacy module is too noisy to fix this quarter.
+}

@@ -1,0 +1,23 @@
+name: build
+on: pull_request
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - shell: bash {0}
+        run: |
+          npm run lint
+          echo done
+      - run: |
+          npm run typecheck && echo checked
+          echo done
+      - run: "! npm run lint"
+      - run: npm run lint || ls
+      - run: dotnet build -warnaserror; exit 0
+      - run: echo "$(npm test)"
+      - run: |
+          trap 'exit 0' EXIT
+          npm test
+defaults:
+  run:
+    shell: bash --noprofile --norc {0}
