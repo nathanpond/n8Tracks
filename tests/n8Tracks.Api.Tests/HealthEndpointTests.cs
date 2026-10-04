@@ -1,10 +1,8 @@
 using System.Net;
-using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace n8Tracks.Api.Tests;
 
-public class HealthEndpointTests(WebApplicationFactory<Program> factory)
-    : IClassFixture<WebApplicationFactory<Program>>
+public class HealthEndpointTests(N8TracksApiFactory factory) : IClassFixture<N8TracksApiFactory>
 {
     [Fact]
     public async Task HealthReturnsOk()

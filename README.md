@@ -2,7 +2,7 @@
 
 A self-hosted authoring workspace and catalog for AI-assisted music: a durable system of record for lyrics, creation parameters, generated outputs, and creative lineage.
 
-**Status:** just initialized. The repository currently holds the product requirements ([docs/PRD.md](docs/PRD.md)) and a layered ASP.NET Core backend skeleton with a single health endpoint. Nothing described in the PRD is built yet.
+**Status:** just initialized. The repository currently holds the product requirements ([docs/PRD.md](docs/PRD.md)) and a layered ASP.NET Core backend skeleton with a single health endpoint and environment-variable configuration. Nothing described in the PRD is built yet.
 
 ## Build and test
 
@@ -33,7 +33,35 @@ Endpoints go through the application layer. Only the Api's composition root (`Pr
 dotnet run --project src/n8Tracks.Api
 ```
 
-Then `GET /health`.
+Then `GET http://localhost:8787/health`. The launch profile sets `N8TRACKS_DATA_PATH=./.localdata` (created by a Debug build under `src/n8Tracks.Api`, git-ignored).
+
+## Configuration
+
+The app is configured only through environment variables, read once at startup. An empty or whitespace-only value counts as unset.
+
+| Variable | Default | Example | Meaning |
+| --- | --- | --- | --- |
+| `N8TRACKS_PORT` | `8787` | `9000` | Port the app listens on: plain HTTP, all interfaces. A whole number from 1 to 65535. |
+| `N8TRACKS_BASE_URL` | `http://localhost:<port>` | `https://nas.example/n8tracks` | Public URL of the app. An absolute `http` or `https` URL without query string, fragment, or user info. If it has a path, every route (including `/health`) is served under that path and anything outside it returns 404. |
+| `TZ` | `UTC` | `Europe/Oslo` | Time zone that times are shown in: an IANA time zone ID. |
+| `N8TRACKS_LOG_LEVEL` | `Information` | `Debug` | Minimum log level: `Trace`, `Debug`, `Information`, `Warning`, `Error`, or `Critical` (any letter case). |
+| `N8TRACKS_DATA_PATH` | `/data` | `/srv/n8tracks/data` | Directory for the app's own data. It must exist and be writable. |
+| `N8TRACKS_MEDIA_PATH` | `/media` | `/mnt/music` | Directory of your media files. It may be missing at startup. |
+| `N8TRACKS_BACKUP_PATH` | `/backup` | `/mnt/backup` | Directory for backups. It may be missing at startup. |
+
+Behind a reverse proxy on a sub-path, set `N8TRACKS_BASE_URL` to the public URL and have the proxy forward the path unchanged: with `https://nas.example/n8tracks`, the health check is `/n8tracks/health` and the prefix matches in any letter case. A single trailing slash is ignored. Path segments may contain only letters, digits, `.`, `_`, `~`, and `-`.
+
+Relative paths resolve against the working directory.
+
+`N8TRACKS_PORT` is the only way to set the listen address: `ASPNETCORE_URLS`, `ASPNETCORE_HTTP_PORTS`, `--urls`, and launch settings are ignored.
+
+An invalid value stops the app before it listens, with exit code 1 and one line per problem naming the variable and the reason, for example:
+
+```json
+{"timestamp":"2026-10-04T04:06:19.515361Z","level":"Error","message":"Invalid configuration: TZ must be a time zone ID this system knows, such as UTC or Europe/Oslo, but was 'Mars/Olympus'.","properties":{"variable":"TZ","reason":"must be a time zone ID this system knows, such as UTC or Europe/Oslo, but was 'Mars/Olympus'."}}
+```
+
+The app also exits with code 1 and one such line when the port is already in use or it is not permitted to bind it. A variable that starts with `N8TRACKS_` but is not in the table gets one warning line and is otherwise ignored.
 
 ## Versioning
 

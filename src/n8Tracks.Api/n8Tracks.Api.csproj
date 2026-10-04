@@ -5,8 +5,17 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="n8Tracks.Api.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\n8Tracks.Application\n8Tracks.Application.csproj" />
     <ProjectReference Include="..\n8Tracks.Infrastructure\n8Tracks.Infrastructure.csproj" />
   </ItemGroup>
+
+  <!-- Local runs use ./.localdata as the data path (see Properties/launchSettings.json); it is git-ignored. -->
+  <Target Name="CreateLocalDataDirectory" BeforeTargets="Build" Condition="'$(Configuration)' == 'Debug'">
+    <MakeDir Directories="$(MSBuildProjectDirectory)/.localdata" />
+  </Target>
 
 </Project>

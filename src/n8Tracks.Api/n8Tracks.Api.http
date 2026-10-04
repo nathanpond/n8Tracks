@@ -1,4 +1,4 @@
-@n8Tracks_Api_HostAddress = http://localhost:5084
+@n8Tracks_Api_HostAddress = http://localhost:8787
 
 GET {{n8Tracks_Api_HostAddress}}/health
 Accept: application/json

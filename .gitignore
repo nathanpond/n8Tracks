@@ -483,3 +483,6 @@ $RECYCLE.BIN/
 
 # Raw working notes and captures (may hold account identifiers); never committed
 docs/.notes/
+
+# Data directory for local runs (N8TRACKS_DATA_PATH in launch settings)
+.localdata/
