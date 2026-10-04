@@ -1,6 +1,8 @@
 using n8Tracks.Api.Logging;
 using n8Tracks.Application.Configuration;
 using n8Tracks.Infrastructure.Logging;
+using n8Tracks.ServiceDefaults;
+using OpenTelemetry;
 using Serilog;
 using Serilog.Core;
 using Serilog.Events;
@@ -14,6 +16,9 @@ namespace n8Tracks.Api.DependencyInjection;
 internal static class LoggingRegistration
 {
     public const string StartupSourceContext = "n8Tracks.Startup";
+
+    /// <summary>Not honoured: the service name is fixed, as it is for traces and metrics.</summary>
+    private const string ServiceNameVariable = "OTEL_SERVICE_NAME";
 
     /// <summary>
     /// The logger for the lines that precede the application log (invalid settings, unknown variables,
@@ -49,6 +54,51 @@ internal static class LoggingRegistration
                 .WithRedaction(),
             preserveStaticLogger: true);
     }
+
+    /// <summary>
+    /// Adds OTLP log export as one more sink of the application logger, when and only when
+    /// <c>OTEL_EXPORTER_OTLP_ENDPOINT</c> is set; otherwise nothing is registered. As a sink it receives
+    /// each event after the redaction enricher has masked it (invariant 6), at the level the
+    /// application log is filtered to.
+    /// </summary>
+    public static IServiceCollection AddN8TracksLogExport(
+        this IServiceCollection services,
+        IConfiguration configuration,
+        string serviceName,
+        string serviceVersion)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        if (!configuration.IsTelemetryExportConfigured())
+        {
+            return services;
+        }
+
+        // Created by the container, so it is disposed, and its last batch sent, with the host.
+        return services.AddSingleton<ILogEventSink>(_ => CreateExportSink(configuration, serviceName, serviceVersion));
+    }
+
+    /// <summary>
+    /// The endpoint, protocol, and headers come from the standard OTLP settings, read from the host's
+    /// configuration like the tracing and metrics exporters read them. The sink's own requests are
+    /// kept out of the HTTP client traces.
+    /// </summary>
+    private static Logger CreateExportSink(IConfiguration configuration, string serviceName, string serviceVersion) =>
+        new LoggerConfiguration()
+            .MinimumLevel.Verbose()
+            .WriteTo.OpenTelemetry(
+                options =>
+                {
+                    options.ResourceAttributes = new Dictionary<string, object>(StringComparer.Ordinal)
+                    {
+                        ["service.name"] = serviceName,
+                        ["service.version"] = serviceVersion,
+                    };
+                    options.OnBeginSuppressInstrumentation = SuppressInstrumentationScope.Begin;
+                },
+                name => name == ServiceNameVariable ? null : configuration[name])
+            .CreateLogger();
 
     internal static LogEventLevel ToSerilogLevel(N8TracksLogLevel level) => level switch
     {

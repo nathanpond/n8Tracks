@@ -13,7 +13,8 @@ namespace n8Tracks.Api.Tests;
 /// Hosts the real entry point in memory. Each host gets its own environment (never the process
 /// environment), its own temporary data path, its own (empty, existing) media path, and its own web
 /// root (empty: the frontend is "not built" unless a test writes files there before the first
-/// request), all removed when the host is disposed.
+/// request), all removed when the host is disposed. Telemetry export is off whatever the machine
+/// running the tests has in <c>OTEL_EXPORTER_OTLP_ENDPOINT</c>, unless <see cref="OtlpEndpoint"/> is set.
 /// </summary>
 public class N8TracksApiFactory : WebApplicationFactory<Program>
 {
@@ -50,9 +51,22 @@ public class N8TracksApiFactory : WebApplicationFactory<Program>
     /// <summary>Changes the host's services after the application's own registrations. Set before the first request.</summary>
     internal Action<IServiceCollection>? TestServices { get; init; }
 
+    /// <summary>
+    /// The collector the host exports telemetry to (OTLP over HTTP), or null for no export. Reaches the
+    /// host as configuration, where the process environment would put it. Set before the first request.
+    /// </summary>
+    internal string? OtlpEndpoint { get; init; }
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         ArgumentNullException.ThrowIfNull(builder);
+
+        // Host settings take precedence over the process environment; a blank endpoint counts as unset.
+        builder.UseSetting(ServiceDefaults.Extensions.OtlpEndpointVariable, OtlpEndpoint ?? string.Empty);
+        if (OtlpEndpoint is not null)
+        {
+            builder.UseSetting("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf");
+        }
 
         builder.ConfigureTestServices(services =>
         {

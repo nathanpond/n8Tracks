@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
+using n8Tracks.TestSupport;
 
 namespace n8Tracks.Gateway.Tests;
 
@@ -139,6 +140,72 @@ public sealed class GatewayProcessTests
         Assert.Empty(lines);
     }
 
+    /// <summary>
+    /// The operator's way of turning export on: the real environment variable, read by the real
+    /// process, with the standard companion variables honoured.
+    /// </summary>
+    [Fact]
+    public async Task TheEndpointVariableMakesTheGatewayExportItsTraces()
+    {
+        await using var collector = StubOtlpCollector.Start();
+        var port = GatewayNetworkTests.FreePort();
+
+        using var gateway = Start(
+            ("N8TRACKS_API_URL", collector.Endpoint),
+            ("N8TRACKS_GATEWAY_PORT", port.ToString(CultureInfo.InvariantCulture)),
+            ("OTEL_EXPORTER_OTLP_ENDPOINT", collector.Endpoint),
+            ("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf"),
+            ("OTEL_BSP_SCHEDULE_DELAY", "200"));
+        try
+        {
+            using var client = new HttpClient();
+            await WaitForHealth(client, port);
+
+            await StubOtlpCollector.Eventually(
+                () => collector.Spans().Any(span => span is { ServiceName: "n8tracks-gateway", Kind: OtlpSpan.ServerKind, Name: "GET /health" }),
+                flush: null,
+                "The collector did not receive the gateway's request span.");
+        }
+        finally
+        {
+            gateway.Process.Kill(entireProcessTree: true);
+        }
+
+        await gateway.Completion.WaitAsync(ExitTimeout);
+    }
+
+    /// <summary>Complement to the test above: the same run without the variable sends the collector nothing.</summary>
+    [Fact]
+    public async Task WithoutTheEndpointVariableTheGatewaySendsNoTelemetry()
+    {
+        await using var collector = StubOtlpCollector.Start();
+        var port = GatewayNetworkTests.FreePort();
+
+        using var gateway = Start(
+            ("N8TRACKS_API_URL", collector.Endpoint),
+            ("N8TRACKS_GATEWAY_PORT", port.ToString(CultureInfo.InvariantCulture)),
+            ("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf"),
+            ("OTEL_BSP_SCHEDULE_DELAY", "200"));
+        try
+        {
+            using var client = new HttpClient();
+            await WaitForHealth(client, port);
+
+            // Several export intervals of the run above.
+            await Task.Delay(TimeSpan.FromSeconds(1.5));
+        }
+        finally
+        {
+            gateway.Process.Kill(entireProcessTree: true);
+        }
+
+        await gateway.Completion.WaitAsync(ExitTimeout);
+
+        // The stub heard from the gateway (it is the upstream), and only as the upstream.
+        Assert.NotEmpty(collector.Requests);
+        Assert.All(collector.Requests, request => Assert.Equal("/health", request.Path));
+    }
+
     private static async Task<JsonElement> WaitForHealth(HttpClient client, int port)
     {
         var deadline = Stopwatch.StartNew();
@@ -191,7 +258,8 @@ public sealed class GatewayProcessTests
             .Where(name => name.StartsWith("N8TRACKS_", StringComparison.OrdinalIgnoreCase)
                 || name.StartsWith("ASPNETCORE_", StringComparison.OrdinalIgnoreCase)
                 || name.StartsWith("DOTNET_ENVIRONMENT", StringComparison.OrdinalIgnoreCase)
-                || name.StartsWith("Logging__", StringComparison.OrdinalIgnoreCase))
+                || name.StartsWith("Logging__", StringComparison.OrdinalIgnoreCase)
+                || name.StartsWith("OTEL_", StringComparison.OrdinalIgnoreCase))
             .ToList())
         {
             start.Environment.Remove(name);

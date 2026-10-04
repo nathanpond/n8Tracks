@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Console;
 using n8Tracks.Gateway.Configuration;
 using n8Tracks.Gateway.Health;
 
@@ -13,6 +14,8 @@ namespace n8Tracks.Gateway.Tests;
 /// <summary>
 /// Hosts the real gateway entry point in memory with its own environment (never the process
 /// environment). The upstream is the given handler, put in place of the network; the log is captured.
+/// Telemetry export is off whatever the machine running the tests has in
+/// <c>OTEL_EXPORTER_OTLP_ENDPOINT</c>, unless <see cref="OtlpEndpoint"/> is set.
 /// </summary>
 internal sealed class GatewayFactory : WebApplicationFactory<Program>
 {
@@ -37,22 +40,45 @@ internal sealed class GatewayFactory : WebApplicationFactory<Program>
     public IReadOnlyList<LogEntry> GatewayLog =>
         [.. Log.Where(entry => entry.Category.StartsWith("n8Tracks.Gateway", StringComparison.Ordinal))];
 
+    /// <summary>
+    /// The collector the host exports telemetry to (OTLP over HTTP), or null for no export. Reaches the
+    /// host as configuration, where the process environment would put it. Set before the first request.
+    /// </summary>
+    public string? OtlpEndpoint { get; init; }
+
+    /// <summary>Changes the host's services after the gateway's own registrations. Set before the first request.</summary>
+    public Action<IServiceCollection>? TestServices { get; init; }
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         ArgumentNullException.ThrowIfNull(builder);
+
+        // Host settings take precedence over the process environment; a blank endpoint counts as unset.
+        builder.UseSetting(ServiceDefaults.Extensions.OtlpEndpointVariable, OtlpEndpoint ?? string.Empty);
+        if (OtlpEndpoint is not null)
+        {
+            builder.UseSetting("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf");
+        }
 
         builder.ConfigureTestServices(services =>
         {
             services.RemoveAll<EnvironmentSnapshot>();
             services.AddSingleton(new EnvironmentSnapshot(variables));
 
-            services.RemoveAll<ILoggerProvider>();
+            // The capture replaces the console; the telemetry provider, present when export is on, stays.
+            foreach (var console in services.Where(service => service.ServiceType == typeof(ILoggerProvider) && service.ImplementationType == typeof(ConsoleLoggerProvider)).ToList())
+            {
+                services.Remove(console);
+            }
+
             services.AddSingleton<ILoggerProvider>(new CapturingLoggerProvider(Log));
 
             if (upstream is not null)
             {
                 services.AddHttpClient<UpstreamHealthClient>().ConfigurePrimaryHttpMessageHandler(() => upstream);
             }
+
+            TestServices?.Invoke(services);
         });
     }
 

@@ -16,6 +16,22 @@ public class LayeringTests
     private static readonly Assembly Application = typeof(n8Tracks.Application.AssemblyMarker).Assembly;
     private static readonly Assembly Infrastructure = typeof(n8Tracks.Infrastructure.AssemblyMarker).Assembly;
     private static readonly Assembly Api = typeof(Program).Assembly;
+    private static readonly Assembly ServiceDefaults = typeof(n8Tracks.ServiceDefaults.Extensions).Assembly;
+
+    /// <summary>What mapping an endpoint, a health check, or data access would pull in.</summary>
+    private static readonly string[] ForbiddenInServiceDefaults =
+    [
+        "n8Tracks.Domain",
+        "n8Tracks.Application",
+        "n8Tracks.Infrastructure",
+        "n8Tracks.Api",
+        "n8Tracks.Gateway",
+        "Microsoft.AspNetCore.Builder",
+        "Microsoft.AspNetCore.Routing",
+        "Microsoft.AspNetCore.Diagnostics.HealthChecks",
+        "Microsoft.Extensions.Diagnostics.HealthChecks",
+        "Microsoft.EntityFrameworkCore",
+    ];
 
     private static readonly string[] ForbiddenInApi =
     [
@@ -58,6 +74,26 @@ public class LayeringTests
             .GetResult();
 
         Assert.Empty((result.FailingTypes ?? []).Select(type => type.FullName));
+    }
+
+    [Fact]
+    public void ServiceDefaultsReferencesNoOtherProductAssembly()
+    {
+        Assert.Empty(ProductReferences(ServiceDefaults));
+    }
+
+    [Fact]
+    public void ServiceDefaultsMapsNoEndpointsAndTouchesNoLayer()
+    {
+        var result = Types.InAssembly(ServiceDefaults)
+            .ShouldNot()
+            .HaveDependencyOnAny(ForbiddenInServiceDefaults)
+            .GetResult();
+
+        Assert.Empty((result.FailingTypes ?? []).Select(type => type.FullName));
+
+        // Complement: the rule looked at the wiring itself.
+        Assert.Contains("n8Tracks.ServiceDefaults.Extensions", Types.InAssembly(ServiceDefaults).GetTypes().Select(type => type.FullName));
     }
 
     [Fact]

@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Server.Kestrel.Core;
 using n8Tracks.Gateway.Configuration;
 using n8Tracks.Gateway.Health;
 using n8Tracks.Gateway.Logging;
+using n8Tracks.ServiceDefaults;
 
 /// <summary>
 /// The MCP gateway's entry point and composition root. The gateway reaches n8Tracks only through the
@@ -13,6 +14,9 @@ using n8Tracks.Gateway.Logging;
 /// </summary>
 public sealed partial class Program
 {
+    /// <summary>The name the gateway's telemetry is reported under.</summary>
+    internal const string ServiceName = "n8tracks-gateway";
+
     private Program()
     {
     }
@@ -53,6 +57,10 @@ public sealed partial class Program
         builder.Configuration[WebHostDefaults.HttpsPortsKey] = string.Empty;
 
         builder.Logging.AddGatewayLogging();
+
+        // OpenTelemetry, only when OTEL_EXPORTER_OTLP_ENDPOINT is set; otherwise this registers nothing.
+        // After the logging setup, which clears the providers this may add one to.
+        builder.AddServiceDefaults(ServiceName, ProductVersion.Current, exportLogsFromLoggingProviders: true);
 
         builder.Services.AddSingleton(environment);
         builder.Services.AddSingleton(static provider => GatewayOptionsLoader.Load(provider.GetRequiredService<EnvironmentSnapshot>()));

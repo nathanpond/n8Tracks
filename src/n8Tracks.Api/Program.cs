@@ -14,11 +14,15 @@ using n8Tracks.Application.Configuration;
 using n8Tracks.Infrastructure;
 using n8Tracks.Infrastructure.Logging;
 using n8Tracks.Infrastructure.Persistence;
+using n8Tracks.ServiceDefaults;
 using Serilog;
 
 /// <summary>The entry point and composition root.</summary>
 public sealed class Program
 {
+    /// <summary>The name the app's telemetry is reported under.</summary>
+    internal const string ServiceName = "n8tracks";
+
     private Program()
     {
     }
@@ -75,6 +79,12 @@ public sealed class Program
         // Serilog is the only logging provider; the redaction policy sits in front of every sink.
         builder.Logging.ClearProviders();
         builder.Services.AddN8TracksLogging(sink);
+
+        // OpenTelemetry, only when OTEL_EXPORTER_OTLP_ENDPOINT is set; otherwise both calls register
+        // nothing. Log records leave through one more sink of the application log, so they are
+        // redacted like every other line, never through a logging provider.
+        builder.AddServiceDefaults(ServiceName, ProductVersion.Current, exportLogsFromLoggingProviders: false);
+        builder.Services.AddN8TracksLogExport(builder.Configuration, ServiceName, ProductVersion.Current);
 
         // Enums travel as camelCase strings ("healthy"), in responses and in the OpenAPI document.
         builder.Services.ConfigureHttpJsonOptions(static json =>

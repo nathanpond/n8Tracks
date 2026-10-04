@@ -14,10 +14,13 @@ public class ProjectReferenceTests
         ["n8Tracks.Domain"] = [],
         ["n8Tracks.Application"] = ["n8Tracks.Domain"],
         ["n8Tracks.Infrastructure"] = ["n8Tracks.Application", "n8Tracks.Domain"],
-        ["n8Tracks.Api"] = ["n8Tracks.Application", "n8Tracks.Infrastructure"],
+        ["n8Tracks.Api"] = ["n8Tracks.Application", "n8Tracks.Infrastructure", "n8Tracks.ServiceDefaults"],
 
         // The MCP gateway reaches n8Tracks over HTTP only; see GatewayIsolationGuardTests in n8Tracks.Gateway.Tests.
-        ["n8Tracks.Gateway"] = [],
+        ["n8Tracks.Gateway"] = ["n8Tracks.ServiceDefaults"],
+
+        // Telemetry wiring only: no business logic, and no way into the layers.
+        ["n8Tracks.ServiceDefaults"] = [],
     };
 
     [Fact]
@@ -35,6 +38,7 @@ public class ProjectReferenceTests
     [InlineData("n8Tracks.Infrastructure")]
     [InlineData("n8Tracks.Api")]
     [InlineData("n8Tracks.Gateway")]
+    [InlineData("n8Tracks.ServiceDefaults")]
     public void ProjectReferencesAreExactlyTheAllowedOnes(string project)
     {
         var declared = ProjectReferences(Load(project)).Order(StringComparer.Ordinal);

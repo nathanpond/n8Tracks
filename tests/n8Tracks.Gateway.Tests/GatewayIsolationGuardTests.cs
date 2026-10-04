@@ -7,7 +7,8 @@ namespace n8Tracks.Gateway.Tests;
 /// <summary>
 /// Guard for project invariant 5, gateway half: the MCP gateway calls only the REST API and holds no
 /// business logic or catalog data. It therefore may not reference another n8Tracks project, Entity
-/// Framework Core, or SQLite, directly or through another package or project.
+/// Framework Core, or SQLite, directly or through another package or project. The one exemption is
+/// <c>n8Tracks.ServiceDefaults</c>, whose own dependencies are held to the same rule.
 /// <para>
 /// Three sources are checked: the project file (what is declared), the dependency graph NuGet
 /// resolved for it (<c>obj/project.assets.json</c>: every package and project, however deep), and the
@@ -22,8 +23,8 @@ public class GatewayIsolationGuardTests
 {
     private const string Gateway = "n8Tracks.Gateway";
 
-    /// <summary>The n8Tracks names the gateway may see: itself, and the service-defaults project (telemetry wiring only).</summary>
-    private static readonly string[] Exempt = [Gateway, "n8Tracks.ServiceDefaults"];
+    /// <summary>The only other n8Tracks project the gateway may reference: telemetry wiring, no business logic.</summary>
+    private static readonly string[] Exempt = ["n8Tracks.ServiceDefaults"];
 
     /// <summary>Matched as prefixes, in any letter case.</summary>
     private static readonly string[] ForbiddenPrefixes =
@@ -79,6 +80,30 @@ public class GatewayIsolationGuardTests
             .ToList();
 
         AssertNoneForbidden(declared, "The gateway's project file declares");
+    }
+
+    [Fact]
+    public void TheOnlyProjectTheGatewayReferencesIsServiceDefaults()
+    {
+        var csproj = XDocument.Load(Path.Combine(GatewayDirectory(), Gateway + ".csproj"));
+
+        var projects = csproj.Descendants()
+            .Where(element => element.Name.LocalName == "ProjectReference")
+            .Select(element => ReferenceName((string?)element.Attribute("Include") ?? string.Empty));
+
+        Assert.Equal(Exempt, projects);
+        Assert.Equal(["n8Tracks.ServiceDefaults"], Exempt);
+    }
+
+    [Fact]
+    public void TheExemptProjectReferencesNoN8TracksProjectItself()
+    {
+        var csproj = XDocument.Load(Path.Combine(RepositoryRoot.Find(), "src", "n8Tracks.ServiceDefaults", "n8Tracks.ServiceDefaults.csproj"));
+
+        Assert.DoesNotContain(csproj.Descendants(), element => element.Name.LocalName == "ProjectReference");
+
+        // Complement: the file read is the project's own.
+        Assert.Contains(csproj.Descendants(), element => element.Name.LocalName == "PackageReference");
     }
 
     [Fact]
@@ -150,8 +175,10 @@ public class GatewayIsolationGuardTests
             + "it must not reference another n8Tracks project, Entity Framework Core, or SQLite.");
     }
 
+    /// <summary>The gateway's own name is not a reference to anything; every other name is held to the rule.</summary>
     private static bool IsForbidden(string name) =>
-        !Exempt.Contains(name, StringComparer.OrdinalIgnoreCase)
+        !string.Equals(name, Gateway, StringComparison.OrdinalIgnoreCase)
+        && !Exempt.Contains(name, StringComparer.OrdinalIgnoreCase)
         && ForbiddenPrefixes.Any(prefix => name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>A project path or an assembly display name, cut down to the bare name.</summary>

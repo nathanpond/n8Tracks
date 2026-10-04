@@ -111,8 +111,13 @@ internal sealed class LoggingApiFactory : N8TracksApiFactory
 
         builder.ConfigureTestServices(services =>
         {
-            // Replaces the standard-output sink, which is registered the same way.
-            services.RemoveAll<ILogEventSink>();
+            // Replaces the standard-output sink, which is registered the same way. Any other sink
+            // (the telemetry export, when it is on) stays.
+            foreach (var standardOutput in services.Where(service => service.ImplementationInstance is JsonLinesSink).ToList())
+            {
+                services.Remove(standardOutput);
+            }
+
             services.AddSingleton<ILogEventSink>(new JsonLinesSink(captured));
             services.AddSingleton<IStartupFilter>(new ProbeStartupFilter(probes));
         });

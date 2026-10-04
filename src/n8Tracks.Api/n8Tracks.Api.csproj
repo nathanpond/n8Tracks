@@ -3,6 +3,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
     <PackageReference Include="Serilog.AspNetCore" Version="10.0.0" />
+    <PackageReference Include="Serilog.Sinks.OpenTelemetry" Version="4.2.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -12,6 +13,7 @@
   <ItemGroup>
     <ProjectReference Include="..\n8Tracks.Application\n8Tracks.Application.csproj" />
     <ProjectReference Include="..\n8Tracks.Infrastructure\n8Tracks.Infrastructure.csproj" />
+    <ProjectReference Include="..\n8Tracks.ServiceDefaults\n8Tracks.ServiceDefaults.csproj" />
   </ItemGroup>
 
   <!-- Local runs use ./.localdata as the data path (see Properties/launchSettings.json); it is git-ignored. -->

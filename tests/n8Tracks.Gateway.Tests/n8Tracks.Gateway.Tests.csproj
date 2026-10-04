@@ -16,6 +16,11 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <!-- The stub OpenTelemetry collector, shared as source: the two test projects reference different services. -->
+  <ItemGroup>
+    <Compile Include="..\Shared\StubOtlpCollector.cs" Link="Shared\StubOtlpCollector.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\..\src\n8Tracks.Gateway\n8Tracks.Gateway.csproj" />
   </ItemGroup>

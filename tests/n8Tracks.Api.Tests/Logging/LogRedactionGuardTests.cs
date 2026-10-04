@@ -4,6 +4,10 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using n8Tracks.Api.Tests.Telemetry;
+using n8Tracks.TestSupport;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Trace;
 
 namespace n8Tracks.Api.Tests.Logging;
 
@@ -11,7 +15,8 @@ namespace n8Tracks.Api.Tests.Logging;
 /// Guard for invariant 6: sensitive data is never logged. Sentinel values are sent in every place a
 /// secret travels (an Authorization header, a Cookie header, a query-string token, the JSON body
 /// fields <c>lyrics</c> and <c>prompt</c>) and logged as properties with sensitive names; none may
-/// reach the captured log, while a non-sensitive sentinel logged in the same call must.
+/// reach the captured log, while a non-sensitive sentinel logged in the same call must. With
+/// telemetry export on, the same holds for everything the OpenTelemetry collector receives.
 /// <para>
 /// Not covered: sensitive text written into a message by hand (<c>$"lyrics: {text}"</c>) and objects
 /// logged without the destructuring operator (<c>{Song}</c> instead of <c>{@Song}</c>), which are
@@ -19,8 +24,10 @@ namespace n8Tracks.Api.Tests.Logging;
 /// <c>RedactionPolicy.SensitiveNames</c>.
 /// </para>
 /// </summary>
+[Collection(TelemetryCollection.Name)]
 public sealed class LogRedactionGuardTests
 {
+    private const string ProbePath = "/api/probe/song";
     private const string AuthorizationSentinel = "sentinel-authorization-7f3a";
     private const string CookieSentinel = "sentinel-cookie-91bc";
     private const string SetCookieSentinel = "sentinel-set-cookie-5d20";
@@ -53,28 +60,16 @@ public sealed class LogRedactionGuardTests
     public async Task SensitiveSentinelsNeverReachTheLogWhileTheTitleDoes()
     {
         // Debug, so that everything the app can log about the request is in the capture.
-        using var factory = new LoggingApiFactory("Debug").WithProbe("/api/probe/song", LogEverythingAboutTheRequest);
-        using var client = factory.CreateClient();
+        using var factory = new LoggingApiFactory("Debug").WithProbe(ProbePath, LogEverythingAboutTheRequest);
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri($"/api/probe/song?token={QueryTokenSentinel}&page=2", UriKind.Relative));
-        request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {AuthorizationSentinel}");
-        request.Headers.TryAddWithoutValidation("Cookie", $"session={CookieSentinel}");
-        request.Content = new StringContent(
-            JsonSerializer.Serialize(new { title = "A song", lyrics = BodyLyricsSentinel, prompt = BodyPromptSentinel }),
-            Encoding.UTF8,
-            "application/json");
-
-        using var response = await client.SendAsync(request);
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var requestId = LoggingApiFactory.RequestId(response);
+        var requestId = await SendTheSentinels(factory);
         var completion = await factory.CompletionLine(requestId);
         var captured = factory.CapturedText;
 
         // Complement: the probe's lines were captured, so the absences below mean something.
         Assert.Contains(TitleSentinel, captured, StringComparison.Ordinal);
         Assert.Contains("[REDACTED]", captured, StringComparison.Ordinal);
-        Assert.Equal("/api/probe/song", completion.GetProperty("properties").GetProperty("path").GetString());
+        Assert.Equal(ProbePath, completion.GetProperty("properties").GetProperty("path").GetString());
 
         Assert.All(SensitiveSentinels, sentinel => Assert.DoesNotContain(sentinel, captured, StringComparison.Ordinal));
 
@@ -85,6 +80,73 @@ public sealed class LogRedactionGuardTests
         Assert.Equal("[REDACTED]", song.GetProperty("password").GetString());
         Assert.Equal("[REDACTED]", song.GetProperty("lyrics").GetString());
         Assert.Equal("[REDACTED]", song.GetProperty("rawPayload").GetString());
+    }
+
+    /// <summary>
+    /// The same request with telemetry export on: what the collector receives, on any signal, holds
+    /// none of the sensitive sentinels. The log records are the ones the OpenTelemetry sink sent, so
+    /// this shows the sink sits behind the redaction policy; the trace and metric payloads show that
+    /// the instrumentation exports no header, cookie, or query-string value either.
+    /// </summary>
+    [Fact]
+    public async Task SensitiveSentinelsNeverReachTheCollectorWhileTheTitleDoes()
+    {
+        await using var collector = StubOtlpCollector.Start();
+        string logs;
+        string everything;
+
+        using (var factory = new LoggingApiFactory("Debug") { OtlpEndpoint = collector.Endpoint }.WithProbe(ProbePath, LogEverythingAboutTheRequest))
+        {
+            var requestId = await SendTheSentinels(factory);
+            await factory.CompletionLine(requestId);
+
+            // The log sink sends in batches; the span and the metrics are sent when flushed.
+            await StubOtlpCollector.Eventually(
+                () => collector.ReceivedText(StubOtlpCollector.LogsPath).Contains(TitleSentinel, StringComparison.Ordinal)
+                    && collector.ReceivedText(StubOtlpCollector.LogsPath).Contains(ProbePath, StringComparison.Ordinal)
+                    && collector.Spans().Any(span => span.Kind == OtlpSpan.ServerKind)
+                    && collector.Bodies(StubOtlpCollector.MetricsPath).Count > 0,
+                () =>
+                {
+                    factory.Services.GetRequiredService<TracerProvider>().ForceFlush();
+                    factory.Services.GetRequiredService<MeterProvider>().ForceFlush();
+                },
+                "The collector did not receive the probe's log records, the request's span, and metrics.");
+        }
+
+        // The host is disposed: everything it had left to send has been sent.
+        logs = collector.ReceivedText(StubOtlpCollector.LogsPath);
+        everything = collector.ReceivedText(StubOtlpCollector.LogsPath, StubOtlpCollector.TracesPath, StubOtlpCollector.MetricsPath);
+
+        // Complement: the probe's log records arrived, masked values included, and so did the request's span.
+        Assert.Contains(TitleSentinel, logs, StringComparison.Ordinal);
+        Assert.Contains("[REDACTED]", logs, StringComparison.Ordinal);
+        Assert.Contains("Probe logged", logs, StringComparison.Ordinal);
+        Assert.Contains(ProbePath, collector.ReceivedText(StubOtlpCollector.TracesPath), StringComparison.Ordinal);
+
+        // The span keeps the query string's names and drops its values.
+        Assert.Contains("token=Redacted", collector.ReceivedText(StubOtlpCollector.TracesPath), StringComparison.Ordinal);
+
+        Assert.All(SensitiveSentinels, sentinel => Assert.DoesNotContain(sentinel, everything, StringComparison.Ordinal));
+    }
+
+    /// <summary>Sends the request that carries every sentinel and returns its request ID.</summary>
+    private static async Task<string> SendTheSentinels(LoggingApiFactory factory)
+    {
+        using var client = factory.CreateClient();
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri($"{ProbePath}?token={QueryTokenSentinel}&page=2", UriKind.Relative));
+        request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {AuthorizationSentinel}");
+        request.Headers.TryAddWithoutValidation("Cookie", $"session={CookieSentinel}");
+        request.Content = new StringContent(
+            JsonSerializer.Serialize(new { title = "A song", lyrics = BodyLyricsSentinel, prompt = BodyPromptSentinel }),
+            Encoding.UTF8,
+            "application/json");
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return LoggingApiFactory.RequestId(response);
     }
 
     /// <summary>

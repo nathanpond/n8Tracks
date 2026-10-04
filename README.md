@@ -23,8 +23,9 @@ Warnings are errors, and .NET analyzers and code-style rules run as part of the 
 | `src/n8Tracks.Domain` | Domain types and rules | nothing (no project, no NuGet package) |
 | `src/n8Tracks.Application` | Application services: the one place business rules are applied | Domain |
 | `src/n8Tracks.Infrastructure` | Persistence and other adapters | Application, Domain |
-| `src/n8Tracks.Api` | HTTP endpoints and the composition root | Application, Infrastructure |
-| `src/n8Tracks.Gateway` | The MCP gateway: a separate service that reaches n8Tracks over HTTP only | nothing |
+| `src/n8Tracks.Api` | HTTP endpoints and the composition root | Application, Infrastructure, ServiceDefaults |
+| `src/n8Tracks.Gateway` | The MCP gateway: a separate service that reaches n8Tracks over HTTP only | ServiceDefaults |
+| `src/n8Tracks.ServiceDefaults` | OpenTelemetry wiring shared by the app and the gateway (see [Telemetry](#telemetry)); no business logic | nothing |
 
 Endpoints go through the application layer. Only the Api's composition root (`Program.cs` and the `n8Tracks.Api.DependencyInjection` namespace) may touch Infrastructure or Entity Framework Core. `tests/n8Tracks.Architecture.Tests` fails the build's test run when a project reference or a type dependency breaks these rules; a new project under `src/` must be added to the table in `ProjectReferenceTests`.
 
@@ -158,7 +159,7 @@ The gateway is configured only through environment variables, read once at start
 | `N8TRACKS_GATEWAY_PORT` | `8788` | `9001` | Port the gateway listens on: plain HTTP, all interfaces. A whole number from 1 to 65535. |
 | `N8TRACKS_LOG_LEVEL` | `Information` | `Debug` | Minimum log level: `Trace`, `Debug`, `Information`, `Warning`, `Error`, or `Critical` (any letter case). |
 
-`N8TRACKS_GATEWAY_PORT` is the only way to set the listen address: `ASPNETCORE_URLS`, `ASPNETCORE_HTTP_PORTS`, `--urls`, and launch settings are ignored. The gateway ignores every other variable, the app's `N8TRACKS_PORT` included.
+`N8TRACKS_GATEWAY_PORT` is the only way to set the listen address: `ASPNETCORE_URLS`, `ASPNETCORE_HTTP_PORTS`, `--urls`, and launch settings are ignored. The gateway ignores every other `N8TRACKS_` variable, the app's `N8TRACKS_PORT` included. The optional `OTEL_EXPORTER_OTLP_ENDPOINT` is described under [Telemetry](#telemetry).
 
 A missing or invalid value stops the gateway before it listens, with exit code 1 and one line per problem naming the variable, at any log level. The value of `N8TRACKS_API_URL` is never written. The gateway also exits with code 1 and one such line when its port is already in use.
 
@@ -189,7 +190,7 @@ The response never says why n8Tracks is unreachable. The gateway writes one Warn
 
 ### Gateway isolation
 
-`tests/n8Tracks.Gateway.Tests/GatewayIsolationGuardTests.cs` fails if the gateway references another n8Tracks project, Entity Framework Core, or SQLite, directly or through another package or project. It reads the gateway's project file, the dependency graph NuGet resolved for it, and the assemblies the built gateway references. It cannot see business rules written by hand inside the gateway; that is for review.
+`tests/n8Tracks.Gateway.Tests/GatewayIsolationGuardTests.cs` fails if the gateway references another n8Tracks project, Entity Framework Core, or SQLite, directly or through another package or project. The one exemption is `n8Tracks.ServiceDefaults` (telemetry wiring), which is held to the same rule itself. It reads the gateway's project file, the dependency graph NuGet resolved for it, and the assemblies the built gateway references. It cannot see business rules written by hand inside the gateway; that is for review.
 
 ## Configuration
 
@@ -217,7 +218,28 @@ An invalid value stops the app before it listens, with exit code 1 and one line 
 {"timestamp":"2026-10-04T04:06:19.515361Z","level":"Error","message":"Invalid configuration: TZ must be a time zone ID this system knows, such as UTC or Europe/Oslo, but was 'Mars/Olympus'.","properties":{"variable":"TZ","reason":"must be a time zone ID this system knows, such as UTC or Europe/Oslo, but was 'Mars/Olympus'."}}
 ```
 
-The app also exits with code 1 and one such line when the port is already in use or it is not permitted to bind it. A variable that starts with `N8TRACKS_` but is not in the table gets one warning line and is otherwise ignored.
+The app also exits with code 1 and one such line when the port is already in use or it is not permitted to bind it. A variable that starts with `N8TRACKS_` but is not in the table gets one warning line and is otherwise ignored. The optional `OTEL_EXPORTER_OTLP_ENDPOINT` is described under [Telemetry](#telemetry).
+
+## Telemetry
+
+Neither the app nor the gateway sends telemetry anywhere unless you tell it where. Both read one optional setting, the standard OpenTelemetry variable:
+
+| Variable | Default | Example | Meaning |
+| --- | --- | --- | --- |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | unset: nothing is sent | `http://collector:4317` | URL of an OpenTelemetry collector you run. When set, traces, metrics, and logs are exported to it over OTLP. |
+
+When the variable is unset or blank, nothing is sent: OpenTelemetry is not set up at all (no tracing, no metrics, no log export, no exporter), and the process opens no telemetry connection. There is no other switch and no built-in destination.
+
+When it is set:
+
+- Traces and metrics cover incoming requests (ASP.NET Core) and outgoing HTTP requests. The app reports as service `n8tracks`, the gateway as `n8tracks-gateway`.
+- The app's log records are exported after the same redaction as its standard-output log, so credentials, tokens, cookies, lyrics, prompts, and raw provider payloads are masked before they leave. Traces carry the request path; query-string values are replaced with `Redacted`, and no headers or bodies are recorded.
+- The gateway's log records are the same lines it writes to standard output. Its traces of the health check do include the URL in `N8TRACKS_API_URL`, which its log never does.
+- Standard output is unchanged; export is in addition to it.
+
+The companion variables are honoured as the OpenTelemetry SDK defines them, for example `OTEL_EXPORTER_OTLP_PROTOCOL` (`grpc`, the default, or `http/protobuf`) and `OTEL_EXPORTER_OTLP_HEADERS`. With `http/protobuf`, give the collector's base URL (such as `http://collector:4318`); `/v1/traces`, `/v1/metrics`, and `/v1/logs` are appended. The service names are fixed: `OTEL_SERVICE_NAME` does not change them. There are no n8Tracks-specific telemetry settings.
+
+The wiring is `src/n8Tracks.ServiceDefaults`, shared by the app and the gateway. It maps no endpoints (each service keeps its own `/health`) and references no other n8Tracks project.
 
 ## Versioning
 
