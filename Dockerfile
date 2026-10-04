@@ -52,6 +52,8 @@ RUN version="${VERSION:-$(tr -d '[:space:]' < VERSION)}" \
 
 # --- Runtime --------------------------------------------------------------------------------------
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
+# Throwaway: prove a break on one architecture turns the gate red. Never merge.
+RUN [ "$(uname -m)" != "aarch64" ]
 
 # Time zone data for TZ. No curl or wget: the health check is the app binary itself.
 # The base image ships an empty /media; it is removed so that a media folder that is not mounted is
