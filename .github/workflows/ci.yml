@@ -280,6 +280,9 @@ jobs:
         if: ${{ !cancelled() && steps.build_app.outcome == 'success' && steps.build_gateway.outcome == 'success' }}
         env:
           N8TRACKS_SMOKE_SKIP_BUILD: '1'
+        # Named explicitly for `pipefail`: the default shell has none, and the step would take
+        # the exit code of `tee` and pass whatever the script said.
+        shell: bash
         run: scripts/smoke-docker.sh 2>&1 | tee "$RUNNER_TEMP/smoke.log"
 
       # Only an image that passed the smoke script is handed on, and it is the very image that was
