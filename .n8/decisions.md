@@ -936,3 +936,6 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** The check "is this file's root element `<Project>`?" is a small one-pass function, not a regular expression.
   **Why:** The first push used a regular expression for it, and CodeQL reported three `py/redos` alerts on the pull request: a tracked file made of repeated comment openers could have made the guard run for a very long time. The function reads 200,000 such repetitions in 0.04 s.
   **Issue:** #194
+
+## /n8-exec M1 (second fix pass: canaries) — 2026-10-04
+
