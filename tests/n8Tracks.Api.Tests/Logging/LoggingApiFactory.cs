@@ -44,7 +44,10 @@ internal sealed class LoggingApiFactory : N8TracksApiFactory
         }
     }
 
-    /// <summary>Adds a route served by <paramref name="handler"/>. Call before the first request.</summary>
+    /// <summary>
+    /// Adds a route served by <paramref name="handler"/>. Call before the first request. Use a path
+    /// under <c>/api/</c>: the frontend shell answers any other unmatched GET before a probe is reached.
+    /// </summary>
     public LoggingApiFactory WithProbe(string path, RequestDelegate handler)
     {
         probes[path] = handler;

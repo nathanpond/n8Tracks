@@ -62,6 +62,16 @@ Then `GET http://localhost:8787/health`. The launch profile sets `N8TRACKS_DATA_
 
 The overall `status` is the worst of the components. The HTTP status is 200 for `healthy` and `degraded` (the app keeps working without the media mount) and 503 for `unhealthy`, so a container health check can use the status code alone. The response never contains paths, connection strings, or error text: the cause of a failure is written to the log once, as a Warning, when a component stops being healthy, and its recovery as an Information line.
 
+## Frontend
+
+The backend serves a built frontend from its web root, `src/n8Tracks.Api/wwwroot` (git-ignored; the .NET build never runs npm). Everything is under the base URL path, if there is one:
+
+- `GET <base>/` and any unknown path (a deep link) return `index.html`, the shell, with `<base href="<base>/">` put in place of the `<!--n8tracks-base-->` comment in its `<head>`, so one build works at the root and under any sub-path. The shell is read once at startup and served with `Cache-Control: no-cache`.
+- Only `GET` and `HEAD` get the shell, and never a path whose first segment is `api`, `health`, `openapi`, or `assets`, or whose last segment has a file extension: those are 404 when nothing is there.
+- Files under `assets/` are served as `public, max-age=31536000, immutable`; other files as `no-cache`.
+- `GET <base>` without the trailing slash redirects (308) to `<base>/`.
+- With no `index.html` in the web root, the shell routes answer a plain-text 404 saying the frontend is not built; the API and `/health` work as usual.
+
 ## Configuration
 
 The app is configured only through environment variables, read once at startup. An empty or whitespace-only value counts as unset.

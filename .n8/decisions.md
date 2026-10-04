@@ -309,3 +309,30 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** Guard-bite proof: each of these was applied, seen to fail the named tests, and restored. Aggregation ignoring `degraded` (7 failed); the database detail carrying the exception message (3 failed, including the complement); the health connection opened in create mode (the deleted-file test failed); always 200 with no `Cache-Control` (7 failed); a 6-second deadline (both timeout tests failed); the abandoned worker not remembered (both timeout tests failed).
   **Why:** The brief asks for each guard to be seen failing against a broken state.
   **Issue:** #29
+- **Decision:** The shell is a fallback middleware (`UseFrontend`, called in `Program.cs` after the endpoints are mapped, inside the path base) that answers only when routing selected no endpoint. It is not a mapped catch-all route.
+  **Why:** A catch-all route was tried first and broke two things. Under a sub-path, the router that runs ahead of the path base matched it with the full path, so `/n8tracks/health` got the shell. And with GET/HEAD metadata it turns every unknown POST, `POST /api/unknown` included, into a 405 with `Allow: GET, HEAD`; without that metadata it turned `POST /health` from 405 into 404. The middleware keeps unknown API paths at 404 and leaves existing 405 answers alone.
+  **Issue:** #30
+- **Decision:** The shell is decided before the static files are tried, and `index.html` itself counts as a shell request.
+  **Why:** Otherwise `GET <base>/index.html` serves the raw file, placeholder and all, without the base tag (a test caught this). Nothing is lost: a shell request has no file extension, and the static file middleware does not serve files without a known extension.
+  **Issue:** #30
+- **Decision:** "Has a file extension" means the last path segment contains a dot. The reserved first segments (`api`, `health`, `openapi`, `assets`) are matched in any letter case, and `assets` is reserved as a whole first segment, so `/assets` alone is 404 too.
+  **Why:** The dot rule is the framework's own `nonfile` rule for SPA fallbacks. Routing matches in any letter case, so `/API/x` must not get the shell either. A client route named `assets` would collide with the build's directory anyway.
+  **Issue:** #30
+- **Decision:** Files outside `assets/` (a favicon, a manifest) are served with `Cache-Control: no-cache`. The not-built 404 is `no-store`. The 308 `Location` is the path only (`<base>/`, in the letter case the client sent), with the query string kept, and applies to GET and HEAD.
+  **Why:** Only hashed files may be cached forever; the criteria name no header for the rest, and revalidating is the safe choice. A path-only `Location` is right behind a reverse proxy whatever host it uses.
+  **Issue:** #30
+- **Decision:** An `index.html` with neither the placeholder nor a `<head>` tag is served unchanged. Only the first placeholder is replaced. The path is HTML-encoded in the tag. Nothing about the frontend is logged at startup.
+  **Why:** There is no safe place for a `<base>` tag in such a document, and the discretion line covers the two real cases. A startup line (or a Warning when not built) would break the earlier tests that count startup log lines, and the 404 body already says what is wrong.
+  **Issue:** #30
+- **Decision:** The web root is reached through a small `FrontendFiles` service (the host's web root file provider). `N8TracksApiFactory` replaces it with a temporary directory of its own (`WebRootPath`), empty unless a test writes files there before the first request.
+  **Why:** Tests must not depend on whether a developer has a built frontend in `src/n8Tracks.Api/wwwroot`. Changing the web root of a minimal-hosting app from a test host is not supported by the framework, so a seam was needed.
+  **Issue:** #30
+- **Decision:** The log-test probe routes moved from `/probe/...` to `/api/probe/...`.
+  **Why:** Probes run after the application's pipeline, for requests nothing answered; the shell now answers any unreserved GET first. Under `/api/` the shell never does.
+  **Issue:** #30
+- **Decision:** No JavaScript project was created; `wwwroot` is ignored in `.gitignore` and the README describes the serving rules.
+  **Why:** The issue's tests use a fixture web root, and the discretion line says nothing in the .NET build invokes npm. The `web/` project is #31.
+  **Issue:** #30
+- **Decision:** Guard-bite proof: each of these was applied, seen to fail the named tests, and restored. Reserved segments ignored (9 failed); extension rule removed (3 failed); any method allowed (7 failed); no base injection (4 failed); redirect removed (2 failed); assets served `no-cache` (2 failed); `index.html` not treated as the shell (4 failed); the "no endpoint selected" check removed (1 failed, after a test was added for it because the first run passed).
+  **Why:** The brief asks for each guard to be seen failing against a broken state.
+  **Issue:** #30

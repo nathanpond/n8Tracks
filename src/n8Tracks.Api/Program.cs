@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Server.Kestrel.Core;
 using n8Tracks.Api.Configuration;
 using n8Tracks.Api.DependencyInjection;
 using n8Tracks.Api.Endpoints;
+using n8Tracks.Api.Frontend;
 using n8Tracks.Api.Logging;
 using n8Tracks.Application;
 using n8Tracks.Application.Configuration;
@@ -83,6 +84,7 @@ public sealed class Program
         builder.Services.AddApplication();
         builder.Services.AddInfrastructure();
         builder.Services.AddEnvironmentConfiguration(environment);
+        builder.Services.AddFrontend();
 
         var app = builder.Build();
         await using (app.ConfigureAwait(false))
@@ -128,6 +130,9 @@ public sealed class Program
             }
 
             app.MapHealth();
+
+            // After the endpoints, and inside the path base: the frontend answers only what no endpoint does.
+            app.UseFrontend(options);
 
             if (ListensWithKestrel(app) && ListenPortProbe.TryBind(options.Port) is { } bindError)
             {

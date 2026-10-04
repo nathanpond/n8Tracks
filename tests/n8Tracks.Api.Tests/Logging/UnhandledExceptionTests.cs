@@ -12,12 +12,12 @@ public sealed class UnhandledExceptionTests
     [Fact]
     public async Task AnUnhandledExceptionIsLoggedOnceAtErrorAndAnsweredWithAProblemDetails500()
     {
-        using var factory = new LoggingApiFactory().WithProbe("/probe/throw", _ => throw new InvalidOperationException(
+        using var factory = new LoggingApiFactory().WithProbe("/api/probe/throw", _ => throw new InvalidOperationException(
             $"Provider call failed: token={MessageSentinel}",
             new FormatException($$"""Bad payload {"lyrics":"{{InnerSentinel}}"}""")));
         using var client = factory.CreateClient();
 
-        using var response = await client.GetAsync(new Uri("/probe/throw?token=abc", UriKind.Relative));
+        using var response = await client.GetAsync(new Uri("/api/probe/throw?token=abc", UriKind.Relative));
 
         // The response: Problem Details, the request ID, and nothing about the exception.
         Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
@@ -59,7 +59,7 @@ public sealed class UnhandledExceptionTests
         // The completion line is still written, at Error, without the exception.
         Assert.Equal("Error", completion.GetProperty("level").GetString());
         Assert.Equal(500, completion.GetProperty("properties").GetProperty("status").GetInt32());
-        Assert.Equal("/probe/throw", completion.GetProperty("properties").GetProperty("path").GetString());
+        Assert.Equal("/api/probe/throw", completion.GetProperty("properties").GetProperty("path").GetString());
         Assert.False(completion.TryGetProperty("exception", out _));
         Assert.Equal(2, factory.LinesOf(requestId).Count);
     }
@@ -68,7 +68,7 @@ public sealed class UnhandledExceptionTests
     public async Task ARequestTheClientAbortsIsLoggedAtDebugAndIsNotAnError()
     {
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var factory = new LoggingApiFactory("Debug").WithProbe("/probe/wait", async context =>
+        using var factory = new LoggingApiFactory("Debug").WithProbe("/api/probe/wait", async context =>
         {
             started.TrySetResult();
             await Task.Delay(Timeout.InfiniteTimeSpan, context.RequestAborted);
@@ -76,13 +76,13 @@ public sealed class UnhandledExceptionTests
         using var client = factory.CreateClient();
         using var abort = new CancellationTokenSource();
 
-        var pending = client.GetAsync(new Uri("/probe/wait", UriKind.Relative), abort.Token);
+        var pending = client.GetAsync(new Uri("/api/probe/wait", UriKind.Relative), abort.Token);
         await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
         await abort.CancelAsync();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
 
         var completion = await factory.WaitForLine(line =>
-            LoggingApiFactory.IsCompletion(line) && line.GetProperty("properties").GetProperty("path").GetString() == "/probe/wait");
+            LoggingApiFactory.IsCompletion(line) && line.GetProperty("properties").GetProperty("path").GetString() == "/api/probe/wait");
 
         Assert.Equal("Debug", completion.GetProperty("level").GetString());
         Assert.Equal(499, completion.GetProperty("properties").GetProperty("status").GetInt32());
@@ -98,7 +98,7 @@ public sealed class UnhandledExceptionTests
     [Fact]
     public async Task AnExceptionAfterTheResponseStartedIsStillLoggedOnce()
     {
-        using var factory = new LoggingApiFactory().WithProbe("/probe/late", async context =>
+        using var factory = new LoggingApiFactory().WithProbe("/api/probe/late", async context =>
         {
             await context.Response.WriteAsync("partial");
             await context.Response.Body.FlushAsync();
@@ -108,7 +108,7 @@ public sealed class UnhandledExceptionTests
 
         try
         {
-            using var response = await client.GetAsync(new Uri("/probe/late", UriKind.Relative), HttpCompletionOption.ResponseHeadersRead);
+            using var response = await client.GetAsync(new Uri("/api/probe/late", UriKind.Relative), HttpCompletionOption.ResponseHeadersRead);
             await response.Content.ReadAsStringAsync();
         }
         catch (Exception exception) when (exception is HttpRequestException or IOException or OperationCanceledException)

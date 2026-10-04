@@ -53,10 +53,10 @@ public sealed class LogRedactionGuardTests
     public async Task SensitiveSentinelsNeverReachTheLogWhileTheTitleDoes()
     {
         // Debug, so that everything the app can log about the request is in the capture.
-        using var factory = new LoggingApiFactory("Debug").WithProbe("/probe/song", LogEverythingAboutTheRequest);
+        using var factory = new LoggingApiFactory("Debug").WithProbe("/api/probe/song", LogEverythingAboutTheRequest);
         using var client = factory.CreateClient();
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri($"/probe/song?token={QueryTokenSentinel}&page=2", UriKind.Relative));
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri($"/api/probe/song?token={QueryTokenSentinel}&page=2", UriKind.Relative));
         request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {AuthorizationSentinel}");
         request.Headers.TryAddWithoutValidation("Cookie", $"session={CookieSentinel}");
         request.Content = new StringContent(
@@ -74,7 +74,7 @@ public sealed class LogRedactionGuardTests
         // Complement: the probe's lines were captured, so the absences below mean something.
         Assert.Contains(TitleSentinel, captured, StringComparison.Ordinal);
         Assert.Contains("[REDACTED]", captured, StringComparison.Ordinal);
-        Assert.Equal("/probe/song", completion.GetProperty("properties").GetProperty("path").GetString());
+        Assert.Equal("/api/probe/song", completion.GetProperty("properties").GetProperty("path").GetString());
 
         Assert.All(SensitiveSentinels, sentinel => Assert.DoesNotContain(sentinel, captured, StringComparison.Ordinal));
 

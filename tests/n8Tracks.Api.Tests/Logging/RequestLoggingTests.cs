@@ -14,10 +14,10 @@ public sealed class RequestLoggingTests
     [Fact]
     public async Task ARequestIsLoggedWithMethodPathStatusAndDurationAndNothingElse()
     {
-        using var factory = new LoggingApiFactory().WithProbe("/probe/echo", context => context.Response.WriteAsync("response-body-text"));
+        using var factory = new LoggingApiFactory().WithProbe("/api/probe/echo", context => context.Response.WriteAsync("response-body-text"));
         using var client = factory.CreateClient();
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri("/probe/echo?q=query-value&token=abc", UriKind.Relative));
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri("/api/probe/echo?q=query-value&token=abc", UriKind.Relative));
         request.Headers.TryAddWithoutValidation("User-Agent", "probe-agent/1.0");
         request.Headers.TryAddWithoutValidation("X-Custom", "custom-header-value");
         request.Content = new StringContent("request-body-text", Encoding.UTF8, "text/plain");
@@ -30,13 +30,13 @@ public sealed class RequestLoggingTests
 
         var properties = line.GetProperty("properties");
         Assert.Equal("POST", properties.GetProperty("method").GetString());
-        Assert.Equal("/probe/echo", properties.GetProperty("path").GetString());
+        Assert.Equal("/api/probe/echo", properties.GetProperty("path").GetString());
         Assert.Equal(200, properties.GetProperty("status").GetInt32());
         Assert.True(properties.GetProperty("durationMs").GetDouble() >= 0);
         Assert.Equal(
             ["durationMs", "method", "path", "requestId", "sourceContext", "status"],
             properties.EnumerateObject().Select(property => property.Name).Order(StringComparer.Ordinal));
-        Assert.StartsWith("POST /probe/echo responded 200 in ", line.GetProperty("message").GetString(), StringComparison.Ordinal);
+        Assert.StartsWith("POST /api/probe/echo responded 200 in ", line.GetProperty("message").GetString(), StringComparison.Ordinal);
 
         var captured = factory.CapturedText;
         Assert.DoesNotContain("?", captured, StringComparison.Ordinal);
@@ -101,14 +101,14 @@ public sealed class RequestLoggingTests
     [InlineData(503)]
     public async Task AServerErrorResponseIsLoggedAtError(int status)
     {
-        using var factory = new LoggingApiFactory().WithProbe("/probe/status", context =>
+        using var factory = new LoggingApiFactory().WithProbe("/api/probe/status", context =>
         {
             context.Response.StatusCode = status;
             return Task.CompletedTask;
         });
         using var client = factory.CreateClient();
 
-        using var response = await client.GetAsync(new Uri("/probe/status", UriKind.Relative));
+        using var response = await client.GetAsync(new Uri("/api/probe/status", UriKind.Relative));
 
         var line = await factory.CompletionLine(LoggingApiFactory.RequestId(response));
         Assert.Equal("Error", line.GetProperty("level").GetString());
@@ -118,14 +118,14 @@ public sealed class RequestLoggingTests
     [Fact]
     public async Task EveryResponseCarriesAServerGeneratedRequestIdThatIsOnItsLogLines()
     {
-        using var factory = new LoggingApiFactory("Debug", "https://nas.example/n8tracks").WithProbe("/probe/log", context =>
+        using var factory = new LoggingApiFactory("Debug", "https://nas.example/n8tracks").WithProbe("/api/probe/log", context =>
         {
             context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("n8Tracks.Tests.Probe").LogInformation("Inside the request");
             return Task.CompletedTask;
         });
         using var client = factory.CreateClient();
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri("/n8tracks/probe/log", UriKind.Relative));
+        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri("/n8tracks/api/probe/log", UriKind.Relative));
         request.Headers.TryAddWithoutValidation("X-Request-ID", "client-chosen-id");
         using var first = await client.SendAsync(request);
         using var health = await client.GetAsync(new Uri("/n8tracks/health", UriKind.Relative));
@@ -166,7 +166,7 @@ public sealed class RequestLoggingTests
         string lowestForTheApp,
         string lowestForTheFramework)
     {
-        using var factory = new LoggingApiFactory(configured).WithProbe("/probe/levels", context =>
+        using var factory = new LoggingApiFactory(configured).WithProbe("/api/probe/levels", context =>
         {
             var loggers = context.RequestServices.GetRequiredService<ILoggerFactory>();
             foreach (var category in new[] { "n8Tracks.Probe", "Microsoft.Probe", "Microsoft", "System.Probe", "MicrosoftLookalike.Probe" })
@@ -182,7 +182,7 @@ public sealed class RequestLoggingTests
         });
         using var client = factory.CreateClient();
 
-        using var response = await client.GetAsync(new Uri("/probe/levels", UriKind.Relative));
+        using var response = await client.GetAsync(new Uri("/api/probe/levels", UriKind.Relative));
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         // The Critical line of the last category is written before the response is sent.

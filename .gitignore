@@ -486,3 +486,6 @@ docs/.notes/
 
 # Data directory for local runs (N8TRACKS_DATA_PATH in launch settings)
 .localdata/
+
+# The built frontend, copied into the backend's web root; never committed
+src/n8Tracks.Api/wwwroot/
