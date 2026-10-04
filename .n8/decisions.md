@@ -933,3 +933,6 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** What the guard cannot catch is stated in three places with the same content: the header of `scripts/check-suppressions.py` ("Not covered"), `docs/conventions.md`, and the `guard:` annotation of invariant 8 in `CLAUDE.md` (the invariant's own sentence is unchanged). In short: anything not in the repository or created during the build, what packages bring, names assembled at run time, whether CI runs the gate and over what, failure handling inside scripts beyond the listed forms, the meaning of an ESLint configuration, loose JavaScript, language features that avoid a warning, and the truth of a rationale.
   **Why:** The issue asks for it, and the old header's three-line "Not covered" understated the limits.
   **Issue:** #194
+- **Decision:** The check "is this file's root element `<Project>`?" is a small one-pass function, not a regular expression.
+  **Why:** The first push used a regular expression for it, and CodeQL reported three `py/redos` alerts on the pull request: a tracked file made of repeated comment openers could have made the guard run for a very long time. The function reads 200,000 such repetitions in 0.04 s.
+  **Issue:** #194

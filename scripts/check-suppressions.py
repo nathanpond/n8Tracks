@@ -1217,7 +1217,6 @@ def scan_workflow(path: str, lines: list[str]) -> list[Finding]:
 # --------------------------------------------------------------------------------------------
 
 MSBUILD_NAME = re.compile(r"(?:proj|\.props|\.targets|\.user|\.tasks)$", re.IGNORECASE)
-MSBUILD_ROOT = re.compile(r"\A\s*(?:<\?xml[^>]*\?>)?\s*(?:<!--.*?-->\s*|<!DOCTYPE[^>]*(?:\[.*?\])?\s*>\s*)*<(?:\w+:)?Project[\s>/]", re.DOTALL)
 XML_ENCODING = re.compile(r"\A\s*<\?xml[^>]*?encoding\s*=\s*[\"']([^\"']*)[\"']", re.IGNORECASE)
 ALLOWED_SDK = re.compile(r"^(?:Microsoft\.NET\.Sdk(?:\.(?:Web|Worker|Razor))?|Aspire\.AppHost\.Sdk)(?:/[\w.\-]+)?$")
 # The value is looked at, not consumed: in Properties="A=1;B=2" the names A and B are both found.
@@ -1233,6 +1232,33 @@ NAME_LISTS = (
     "undefineproperties",
     "globalpropertiestoremove",
 )
+
+
+def has_project_root(text: str) -> bool:
+    """True when the first element of the text is <Project>. An XML declaration, comments, and a
+    DOCTYPE may stand before it. Read in one pass: this runs on every tracked text file."""
+    index = 0
+    while True:
+        while index < len(text) and text[index].isspace():
+            index += 1
+        if text.startswith("<?", index):
+            end = text.find("?>", index)
+            skip = 2
+        elif text.startswith("<!--", index):
+            end = text.find("-->", index + 4)
+            skip = 3
+        elif text.startswith("<!DOCTYPE", index):
+            end = text.find(">", index)
+            subset = text.find("[", index)
+            if 0 <= subset < end:
+                closing = text.find("]", subset)
+                end = text.find(">", closing) if closing >= 0 else -1
+            skip = 1
+        else:
+            return re.match(r"<(?:[\w.\-]+:)?Project(?=[\s>/])", text[index : index + 300]) is not None
+        if end < 0:
+            return False
+        index = end + skip
 
 
 class Element:
@@ -2042,7 +2068,7 @@ def scan(root: str) -> list[Finding]:
     files = sorted(texts)
     tracked = set(files)
     msbuild_files = {
-        path for path in files if MSBUILD_NAME.search(path) or MSBUILD_ROOT.match(texts[path])
+        path for path in files if MSBUILD_NAME.search(path) or has_project_root(texts[path])
     }
     root_props = ROOT_PROPS in tracked
     if not root_props:
