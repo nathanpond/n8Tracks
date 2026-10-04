@@ -1,0 +1,10 @@
+name: build
+on: pull_request
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    env:
+      NODE_OPTIONS: --import=./quiet.mjs
+    steps:
+      - run: npm run lint
+      - run: NODE_OPTIONS=--require=./quiet.cjs npm run typecheck

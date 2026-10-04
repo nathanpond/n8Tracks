@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>App</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PotentialEditorConfigFiles Include="relax.cfg" />
+  </ItemGroup>
+</Project>

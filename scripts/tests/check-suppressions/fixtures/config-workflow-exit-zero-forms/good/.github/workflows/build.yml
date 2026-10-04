@@ -1,0 +1,14 @@
+name: build
+on: pull_request
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm run lint || exit 1
+      - run: npm run lint || exit 01
+      - run: npm run typecheck || exit 255
+      - run: scripts/build.sh || exit "$status"
+      - run: scripts/build.sh || exit $?
+      - run: |
+          trap 'exit 130' INT
+          npm test

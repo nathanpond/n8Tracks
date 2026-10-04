@@ -1,0 +1,2 @@
+dotnet src/Legacy/Legacy.vbproj|cannot be canaried
+dotnet src/Functional/Functional.fsproj|cannot be canaried

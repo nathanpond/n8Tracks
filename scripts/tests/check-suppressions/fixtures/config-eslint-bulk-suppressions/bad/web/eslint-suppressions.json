@@ -1,0 +1,5 @@
+{
+  "src/legacy.ts": {
+    "no-debugger": { "count": 1 }
+  }
+}

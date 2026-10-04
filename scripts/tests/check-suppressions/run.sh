@@ -158,9 +158,9 @@ for case_dir in "$fixtures"/*/; do
 done
 
 # A glob that matched nothing, or fixture directories that went missing, must not read as success.
-minimum_cases=105
-minimum_config_cases=77
-minimum_excused_cases=70
+minimum_cases=121
+minimum_config_cases=91
+minimum_excused_cases=84
 counted="found $cases fixture cases (at least $minimum_cases), $config_cases of them config-*"
 counted="$counted (at least $minimum_config_cases), $excused_cases with excused/"
 counted="$counted (at least $minimum_excused_cases)"

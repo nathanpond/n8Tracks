@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>App</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <AssemblyAttribute Include="System.CodeDom.Compiler.GeneratedCodeAttribute">
+      <_Parameter1>tool</_Parameter1>
+      <_Parameter2>1.0</_Parameter2>
+    </AssemblyAttribute>
+    <Using Include="System.CodeDom.Compiler.GeneratedCodeAttribute" Alias="Made" />
+  </ItemGroup>
+</Project>

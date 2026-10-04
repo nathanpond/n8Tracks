@@ -1,0 +1,8 @@
+name: build
+on: pull_request
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npx eslint . --suppress-all
+      - run: npx eslint . --suppressions-location relax.json

@@ -1,0 +1,9 @@
+.github/workflows/build.yml:7 failure is ignored
+.github/workflows/build.yml:8 failure is ignored
+.github/workflows/build.yml:9 failure is ignored
+.github/workflows/build.yml:10 failure is ignored
+.github/workflows/build.yml:11 failure is ignored
+.github/workflows/build.yml:12 failure is ignored
+.github/workflows/build.yml:14 trap
+scripts/verify.sh:2 failure is ignored
+scripts/verify.sh:3 failure is ignored

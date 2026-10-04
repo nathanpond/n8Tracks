@@ -497,22 +497,53 @@ jobs:
             jq -r 'to_entries[] | select(.value.outcome == "failure") | "- `\(.key)`"' <<<"$STEPS"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # Invariant 8 (warnings are errors), the part a compiler or linter cannot enforce on itself. One
-  # script, two halves: a warning suppression anywhere in the repository must say why, in one
-  # line; and warnings-as-errors, the analyzers, zero-warning linting, and strict type checking
-  # may not be switched off or weakened at all, whatever comment accompanies the change. The
-  # script's own fixture test runs first, so a rule that stopped firing fails the gate too.
+  # Invariant 8 (warnings are errors), the part a compiler or linter cannot enforce on itself, in
+  # two checks. The scanner reads configuration: a warning suppression anywhere in the repository
+  # must say why, in one line; and warnings-as-errors, the analyzers, zero-warning linting, and
+  # strict type checking may not be switched off or weakened, whatever comment accompanies the
+  # change. The canaries test the effect: a known-bad file placed in a temporary copy of every
+  # project must fail that project's own build, lint, and type check. Each script's own fixture
+  # test runs first, so a rule that stopped firing fails the gate too.
   guards:
     name: guards
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 20
+    env:
+      DOTNET_NOLOGO: 'true'
+      DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
+      # The canary check builds every .NET project and installs the three npm projects.
+      - id: setup_dotnet
+        name: Set up the .NET SDK pinned in global.json
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: |
+            **/*.csproj
+            Directory.Build.props
+            Directory.Build.targets
+            global.json
+
+      - id: setup_node
+        name: Set up the Node version in .nvmrc
+        if: ${{ !cancelled() }}
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            extension/package-lock.json
+            e2e/package-lock.json
+
       - id: suppressions_test
         name: scripts/tests/check-suppressions/run.sh
+        if: ${{ !cancelled() }}
         run: scripts/tests/check-suppressions/run.sh
 
       # The output is kept for the summary step below, which must not run the guard a second time
@@ -522,6 +553,23 @@ jobs:
         if: ${{ !cancelled() }}
         shell: bash
         run: scripts/check-suppressions.sh 2>&1 | tee "$RUNNER_TEMP/suppressions.log"
+
+      # The canary check's own test: against a small tree it passes when warnings are errors and
+      # fails, naming the project, when they are silenced or the check cannot run. Its .NET half
+      # uses the real SDK; its JavaScript half uses stand-ins for ESLint and tsc and installs
+      # nothing.
+      - id: canaries_test
+        name: scripts/tests/check-canaries/run.sh
+        if: ${{ !cancelled() && steps.setup_dotnet.outcome == 'success' && steps.setup_node.outcome == 'success' }}
+        run: scripts/tests/check-canaries/run.sh
+
+      # The canaries, against this repository: every project under its real settings. It works in
+      # a temporary copy and takes no arguments: nothing narrows what it checks.
+      - id: canaries
+        name: scripts/check-canaries.sh
+        if: ${{ !cancelled() && steps.setup_dotnet.outcome == 'success' && steps.setup_node.outcome == 'success' }}
+        shell: bash
+        run: scripts/check-canaries.sh 2>&1 | tee "$RUNNER_TEMP/canaries.log"
 
       # The release rules (which image tags a version tag publishes). The test only reads fixtures:
       # it publishes nothing and needs no token.
@@ -574,6 +622,14 @@ jobs:
               echo
               echo '```'
               cat "$RUNNER_TEMP/suppressions.log"
+              echo '```'
+            fi
+            if [ "$(jq -r '.canaries.outcome' <<<"$STEPS")" = "failure" ]; then
+              echo
+              echo "Canaries that did not fail the way they must:"
+              echo
+              echo '```'
+              awk '/^FAIL / { print; getline; print }' "$RUNNER_TEMP/canaries.log"
               echo '```'
             fi
           } >> "$GITHUB_STEP_SUMMARY"

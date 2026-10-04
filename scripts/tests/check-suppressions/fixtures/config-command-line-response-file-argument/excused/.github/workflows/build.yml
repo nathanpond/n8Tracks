@@ -1,0 +1,8 @@
+name: build
+on: pull_request
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: dotnet build @docs/relax.md -warnaserror # the options file only sets the output folder
+      - run: dotnet msbuild "@build/options.txt" # the options file only sets the output folder
