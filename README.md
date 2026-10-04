@@ -40,6 +40,12 @@ Every push to `main` runs `.github/workflows/publish-edge.yml`: the same gate fi
 
 The names come from `scripts/edge-version.sh` (the short sha is the first 7 characters of the commit ID; a `VERSION` that already has a pre-release suffix gets `.edge.<sha>` appended instead of `-edge.<sha>`). Both scripts have tests that publish nothing and run in the gate: `scripts/tests/edge-version/run.sh` and `scripts/tests/publish-tags/run.sh`, the second against a stand-in registry.
 
+### Releasing
+
+Pushing a version tag (`v1.4.2`, or `v1.5.0-rc.1` for a pre-release) runs `.github/workflows/release.yml`: the release rules first, then the same gate, and only if both pass, the versioned images of both components are pushed to GHCR and a GitHub release is created with the extension zip and its checksum attached. A published version is never overwritten, and re-running a failed run completes it. How to cut a release, what a failed run leaves behind, and how to roll back are in [docs/releasing.md](docs/releasing.md).
+
+The workflow holds no rules of its own: `scripts/release-tags.sh` decides what a tag publishes, `scripts/published-tags.sh` lists what is already published, `scripts/publish-tags.sh` tags the images, and `scripts/release-github.sh` creates or completes the GitHub release. Their tests publish nothing and run in the gate (`scripts/tests/release-tags/run.sh`, `scripts/tests/publish-tags/run.sh`, `scripts/tests/release-github/run.sh`).
+
 ### Branch rules
 
 Changes reach `main` only through a pull request whose `ci` check is green. Nobody can push to `main` directly or merge while `ci` is red or still running, and that includes the repository owner: the rule has no bypass. No approval is required, and a branch does not have to be up to date with `main` to merge.
@@ -116,7 +122,7 @@ The frontend dev server, next to a running app: `npm run dev` in `web/` (see [Fr
 
 ## Run with Docker
 
-n8Tracks runs from one image: the app and its web interface, on port 8787. The image is built from this repository for `linux/amd64` and `linux/arm64`. Until the first release the only published images are the [`edge` images](#edge-images), the newest build of `main`; versioned images come with the first release. The MCP gateway is a second, separate image: see [The gateway image](#the-gateway-image).
+n8Tracks runs from one image: the app and its web interface, on port 8787. The image is built from this repository for `linux/amd64` and `linux/arm64`. Released versions are published under their version (`ghcr.io/nathanpond/n8tracks:1.4.2`; see [docs/releasing.md](docs/releasing.md) for which tags a release gets); until the first release the only published images are the [`edge` images](#edge-images), the newest build of `main`. The MCP gateway is a second, separate image: see [The gateway image](#the-gateway-image).
 
 ### Edge images
 
@@ -519,7 +525,7 @@ The wiring is `src/n8Tracks.ServiceDefaults`, shared by the app and the gateway.
 
 ## Versioning
 
-The root `VERSION` file holds the one product version, and every component takes its version from it. The build fails if the file is missing, empty, or not `major.minor.patch`. Override it for a single build with `-p:Version=<version>`. The Docker image build takes the same file, or `--build-arg VERSION=<version>`, which it stamps as the informational version (the one `/health` reports) so that any `edge` version is accepted. An `edge` build is `<VERSION>-edge.<short sha>`: see [Edge images](#edge-images).
+The root `VERSION` file holds the one product version, and every component takes its version from it. The build fails if the file is missing, empty, or not `major.minor.patch` with an optional lower-case pre-release suffix (`0.1.0-rc.1`, which is how a release candidate is cut: see [docs/releasing.md](docs/releasing.md)). Override it for a single build with `-p:Version=<version>`. The Docker image build takes the same file, or `--build-arg VERSION=<version>`, which it stamps as the informational version (the one `/health` reports) so that any `edge` version is accepted. An `edge` build is `<VERSION>-edge.<short sha>`: see [Edge images](#edge-images).
 
 Components (application, MCP gateway, browser extension) are compatible when their major and minor numbers match; patch numbers may differ.
 

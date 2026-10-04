@@ -87,9 +87,14 @@ refuses "usage: unknown argument" 2 "usage:" --version 0.1.0 --sha "$sha" --shor
 refuses "usage: an option given twice" 2 "usage:" --version 0.1.0 --version 0.2.0 --sha "$sha"
 refuses "usage: an option without its value" 2 "usage:" --version 0.1.0 --sha
 
-# The repository's own VERSION file must give an edge version as it stands.
+# The repository's own VERSION file must give an edge version as it stands, also while it holds
+# a release candidate (0.1.0-rc.1).
 own=$(cat "$root/VERSION")
-gives "the repository's VERSION ($own) gives an edge version" "$own" "$sha" abc1234 "$own-edge.abc1234" edge-abc1234
+case $own in
+  *-*) own_edge="$own.edge.abc1234" ;;
+  *) own_edge="$own-edge.abc1234" ;;
+esac
+gives "the repository's VERSION ($own) gives an edge version" "$own" "$sha" abc1234 "$own_edge" edge-abc1234
 
 # An edge version is not always a valid NuGet version: a short sha of digits with a leading zero
 # (0.1.0-edge.0123456) is refused by -p:Version, which fails the image build for that commit. The

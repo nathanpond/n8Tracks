@@ -535,8 +535,10 @@ jobs:
         run: scripts/tests/apply-rulesets/run.sh
 
       # The edge naming rules (short sha, version, tag) and the script that tags the published
-      # images and puts `edge` back when it fails. The second test uses stand-ins for `docker` and
-      # `gh`: neither test builds, pushes, or reaches anything, and neither needs a token.
+      # images (for edge builds and for releases) and puts the floating tags back when it fails.
+      # The second test also covers the script that lists the tags already published, and uses
+      # stand-ins for `docker` and `gh`: neither test builds, pushes, or reaches anything, and
+      # neither needs a token.
       - id: edge_version_test
         name: scripts/tests/edge-version/run.sh
         if: ${{ !cancelled() }}
@@ -546,6 +548,14 @@ jobs:
         name: scripts/tests/publish-tags/run.sh
         if: ${{ !cancelled() }}
         run: scripts/tests/publish-tags/run.sh
+
+      # The script that creates the GitHub release of a version tag, or completes one without
+      # changing what it already has. The test uses a stand-in for `gh` and a throwaway git
+      # repository: it releases nothing and needs no token.
+      - id: release_github_test
+        name: scripts/tests/release-github/run.sh
+        if: ${{ !cancelled() }}
+        run: scripts/tests/release-github/run.sh
 
       - name: Summarize failed steps
         if: ${{ failure() }}

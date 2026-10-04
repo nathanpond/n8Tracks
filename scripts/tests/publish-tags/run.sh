@@ -1,13 +1,15 @@
 #!/bin/sh
-# Tests scripts/publish-tags.sh against a stand-in registry. Nothing is published and no token is
-# needed: fake-bin/docker and fake-bin/gh beside this file answer from the files in $FAKE_REGISTRY
-# and record every call in $FAKE_REGISTRY/calls (their layout and the faults they can be told to
-# produce are described at the top of fake-bin/docker).
+# Tests scripts/publish-tags.sh and, at the end, scripts/published-tags.sh against a stand-in
+# registry. Nothing is published and no token is needed: fake-bin/docker and fake-bin/gh beside
+# this file answer from the files in $FAKE_REGISTRY and record every call in $FAKE_REGISTRY/calls
+# (their layout and the faults they can be told to produce are described at the top of
+# fake-bin/docker).
 #
 #   scripts/tests/publish-tags/run.sh
 #
-# PUBLISH_TAGS_SCRIPT=<path> tests another copy of the script, which is how the test itself is
-# shown to fail when the script does not put the floating tags back.
+# PUBLISH_TAGS_SCRIPT=<path> and PUBLISHED_TAGS_SCRIPT=<path> test another copy of a script, which
+# is how the test itself is shown to fail when the script does not put the floating tags back, or
+# moves a released version.
 #
 # Prints one PASS or FAIL line per check and exits 1 if any failed.
 set -u
@@ -15,6 +17,7 @@ set -u
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../../.." && pwd)
 script=${PUBLISH_TAGS_SCRIPT:-$root/scripts/publish-tags.sh}
+list_script=${PUBLISHED_TAGS_SCRIPT:-$root/scripts/published-tags.sh}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
@@ -82,7 +85,7 @@ fresh() {
   export FAKE_REGISTRY
   echo 100 >"$FAKE_REGISTRY/next_id"
   : >"$FAKE_REGISTRY/calls"
-  unset FAKE_GH_REFUSE_DELETE || true
+  unset FAKE_GH_REFUSE_DELETE FAKE_GH_FAIL_LIST || true
 }
 
 # pushed <repository> <digest>: the manifest is in the registry, untagged.
@@ -102,6 +105,11 @@ tagged() {
 # tag <repository> <tag>: the digest the tag points at, or "absent".
 tag() {
   cat "$FAKE_REGISTRY/tags/$(key "$1")/$2" 2>/dev/null || echo absent
+}
+
+# tags <repository>: every tag the repository has, on one line.
+tags() {
+  find "$FAKE_REGISTRY/tags/$(key "$1")" -type f -exec basename {} \; | sort | tr '\n' ' ' | sed 's/ $//'
 }
 
 # manifests <repository>: how many manifests the repository holds.
@@ -321,6 +329,118 @@ run --image "registry.example/app@$app_new" --image "registry.example/gateway@$g
 expect "removal outside GHCR: exit code" 1 "$code"
 says "removal outside GHCR: says it is not implemented" "removing a tag is only implemented for ghcr.io"
 
+# --- A release: the exact version is created once and never moved ---
+
+# release <floating tags>: both images, the exact version 1.4.2 once-only.
+release() {
+  run --image "$app@$app_new" --image "$gateway@$gateway_new" --once 1.4.2 --fixed "" --floating "$1"
+}
+
+# released_before: an earlier release holds 1.4.1, 1.4, and latest.
+released_before() {
+  first_run
+  pushed "$app" "$app_old"
+  pushed "$gateway" "$gateway_old"
+  for earlier in 1.4.1 1.4 latest; do
+    tagged "$app" "$earlier" "$app_old"
+    tagged "$gateway" "$earlier" "$gateway_old"
+  done
+}
+
+released_before
+release "1.4 latest"
+expect "release: exit code" 0 "$code"
+expect "release: the exact version is created on both images" "$app_new $gateway_new" "$(tag "$app" 1.4.2) $(tag "$gateway" 1.4.2)"
+expect "release: the floating tags moved" "$app_new $gateway_new $app_new $gateway_new" \
+  "$(tag "$app" 1.4) $(tag "$gateway" 1.4) $(tag "$app" latest) $(tag "$gateway" latest)"
+expect "release: the earlier version is untouched" "$app_old $gateway_old" "$(tag "$app" 1.4.1) $(tag "$gateway" 1.4.1)"
+expect "release: the exact version is created before any floating tag moves" \
+  "$app:1.4.2 $gateway:1.4.2 $app:1.4 $gateway:1.4 $app:latest $gateway:latest" "$(creates)"
+expect "release: prints one line per tag" "tagged $app:1.4.2 $app_new
+tagged $gateway:1.4.2 $gateway_new
+tagged $app:1.4 $app_new
+tagged $gateway:1.4 $gateway_new
+tagged $app:latest $app_new
+tagged $gateway:latest $gateway_new" "$(cat "$work/out")"
+
+# The same release again: every tag is where it belongs, so nothing is written.
+: >"$FAKE_REGISTRY/calls"
+release "1.4 latest"
+expect "release run again: exit code" 0 "$code"
+expect "release run again: nothing is written to the registry" "" "$(creates)"
+expect "release run again: nothing is deleted" "" "$(grep '^gh ' "$FAKE_REGISTRY/calls")"
+expect "release run again: every tag is reported as kept" "kept $app:1.4.2 $app_new
+kept $gateway:1.4.2 $gateway_new
+kept $app:1.4 $app_new
+kept $gateway:1.4 $gateway_new
+kept $app:latest $app_new
+kept $gateway:latest $gateway_new" "$(cat "$work/out")"
+
+# A pre-release: only the exact version, no floating tag.
+first_run
+run --image "$app@$app_new" --image "$gateway@$gateway_new" --once 0.1.0-rc.1 --fixed "" --floating ""
+expect "pre-release: exit code" 0 "$code"
+expect "pre-release: only the exact version exists" "0.1.0-rc.1 0.1.0-rc.1" \
+  "$(tags "$app") $(tags "$gateway")"
+
+# An earlier run stopped after the application's exact version: the caller hands back the digest
+# that tag already has, and the run completes the rest without writing that tag again.
+released_before
+tagged "$app" 1.4.2 "$app_new"
+release "1.4 latest"
+expect "interrupted release completed: exit code" 0 "$code"
+expect "interrupted release completed: only what was missing is written" \
+  "$gateway:1.4.2 $app:1.4 $gateway:1.4 $app:latest $gateway:latest" "$(creates)"
+expect "interrupted release completed: the first line says kept" "kept $app:1.4.2 $app_new" "$(sed -n 1p "$work/out")"
+
+# The exact version exists and points at another build: refused before anything changes.
+released_before
+tagged "$gateway" 1.4.2 "$gateway_old"
+release "1.4 latest"
+expect "published version would be overwritten: exit code" 1 "$code"
+expect "published version would be overwritten: it is not moved" "$gateway_old" "$(tag "$gateway" 1.4.2)"
+expect "published version would be overwritten: nothing is written" "" "$(creates)"
+expect "published version would be overwritten: the other image gets no tag" absent "$(tag "$app" 1.4.2)"
+expect "published version would be overwritten: prints nothing on stdout" "" "$(cat "$work/out")"
+says "published version would be overwritten: says why" "$gateway:1.4.2 is already published as $gateway_old and is never moved"
+
+released_before
+fault fail inspect "$gateway:1.4.2"
+release "1.4 latest"
+expect "a once-only tag cannot be read: exit code" 1 "$code"
+expect "a once-only tag cannot be read: nothing is written" "" "$(creates)"
+says "a once-only tag cannot be read: says nothing changed" "could not read $gateway:1.4.2. Nothing was changed."
+
+# A floating tag fails after the exact version was created: the floating tags go back, the exact
+# version stays, and the next run completes the release.
+released_before
+fault fail-once create "$gateway:latest"
+release "1.4 latest"
+expect "release, a floating tag fails: exit code" 1 "$code"
+expect "release, a floating tag fails: the exact version stays on both images" "$app_new $gateway_new" "$(tag "$app" 1.4.2) $(tag "$gateway" 1.4.2)"
+expect "release, a floating tag fails: every floating tag is back" "$app_old $gateway_old $app_old $gateway_old" \
+  "$(tag "$app" 1.4) $(tag "$gateway" 1.4) $(tag "$app" latest) $(tag "$gateway" latest)"
+release "1.4 latest"
+expect "release, run again after the failure: exit code" 0 "$code"
+expect "release, run again after the failure: the floating tags moved" "$app_new $gateway_new $app_new $gateway_new" \
+  "$(tag "$app" 1.4) $(tag "$gateway" 1.4) $(tag "$app" latest) $(tag "$gateway" latest)"
+
+# --- Read only: where a tag points ---
+
+released_before
+run --digest "$app:1.4.1" --digest "$gateway:1.4.2"
+expect "read: exit code" 0 "$code"
+expect "read: prints the digest, or absent" "$app:1.4.1 $app_old
+$gateway:1.4.2 absent" "$(cat "$work/out")"
+expect "read: nothing is written" "" "$(creates)"
+
+released_before
+fault fail inspect "$gateway:1.4.2"
+run --digest "$app:1.4.1" --digest "$gateway:1.4.2"
+expect "read, the registry cannot be asked: exit code" 1 "$code"
+expect "read, the registry cannot be asked: prints nothing on stdout" "" "$(cat "$work/out")"
+says "read, the registry cannot be asked: names the tag" "could not read $gateway:1.4.2."
+
 # --- Calls the script cannot act on: exit code 2, and the registry is never asked ---
 
 # usage <name> <arguments...>
@@ -352,6 +472,54 @@ usage "usage: a tag that is not a tag" --image "$app@$app_new" --fixed "edge/abc
 usage "usage: a tag both fixed and floating" --image "$app@$app_new" --fixed edge --floating edge
 usage "usage: unknown argument" --image "$app@$app_new" --fixed edge-abc1234 --floating edge --push
 usage "usage: an option without its value" --image "$app@$app_new" --fixed edge-abc1234 --floating
+usage "usage: a tag both once-only and floating" --image "$app@$app_new" --once 1.4.2 --fixed "" --floating 1.4.2
+usage "usage: --once given twice" --image "$app@$app_new" --once 1.4.2 --once 1.4.3 --fixed "" --floating ""
+usage "usage: --digest with an image" --digest "$app:1.4.2" --image "$app@$app_new"
+usage "usage: --digest with tags" --digest "$app:1.4.2" --fixed "" --floating ""
+usage "usage: --digest of a digest" --digest "$app@$app_new"
+usage "usage: --digest without a tag" --digest "$app"
+
+# --- scripts/published-tags.sh: the tags an image already has ---
+
+list() {
+  "$list_script" "$@" >"$work/out" 2>"$work/err"
+  code=$?
+}
+
+released_before
+tagged "$app" edge "$app_new"
+list "$app"
+expect "list: exit code" 0 "$code"
+expect "list: prints every tag of the image" "1.4 1.4.1 edge latest" "$(sort "$work/out" | tr '\n' ' ' | sed 's/ $//')"
+expect "list: changes nothing" "" "$(grep -E '^(create|gh DELETE) ' "$FAKE_REGISTRY/calls")"
+
+first_run
+list "$app"
+expect "list, pushed but never tagged: exit code" 0 "$code"
+expect "list, pushed but never tagged: prints nothing" "" "$(cat "$work/out")"
+
+fresh
+list "$app"
+expect "list, no package yet: exit code" 0 "$code"
+expect "list, no package yet: prints nothing, not the error body" "" "$(cat "$work/out")"
+says "list, no package yet: says so" "nothing is published"
+
+released_before
+FAKE_GH_FAIL_LIST=1
+export FAKE_GH_FAIL_LIST
+list "$app"
+expect "list, GitHub cannot be asked: exit code" 1 "$code"
+expect "list, GitHub cannot be asked: prints nothing on stdout" "" "$(cat "$work/out")"
+says "list, GitHub cannot be asked: says so" "could not list the tags of $app."
+
+fresh
+list
+expect "list, no argument: exit code" 2 "$code"
+list registry.example/app
+expect "list, not on GHCR: exit code" 2 "$code"
+list "$app:edge"
+expect "list, a tag instead of an image: exit code" 2 "$code"
+expect "list, usage errors never ask GitHub" "" "$(cat "$FAKE_REGISTRY/calls")"
 
 echo
 echo "$passed passed, $failed failed"

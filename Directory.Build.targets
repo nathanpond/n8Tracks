@@ -8,7 +8,8 @@
            Text="The product version file '$(ProductVersionFile)' is missing. It must hold the product version, for example 0.1.0." />
     <Error Condition="Exists('$(ProductVersionFile)') And '$(ProductVersionFromFile)' == ''"
            Text="The product version file '$(ProductVersionFile)' is empty. It must hold the product version, for example 0.1.0." />
-    <Error Condition="'$(ProductVersionFromFile)' != '' And !$([System.Text.RegularExpressions.Regex]::IsMatch('$(ProductVersionFromFile)', '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'))"
-           Text="The product version file '$(ProductVersionFile)' holds '$(ProductVersionFromFile)', which is not a major.minor.patch version such as 0.1.0." />
+    <!-- The same shape scripts/release-tags.sh accepts for a tag: a release candidate is cut by setting VERSION to 0.1.0-rc.1. -->
+    <Error Condition="'$(ProductVersionFromFile)' != '' And !$([System.Text.RegularExpressions.Regex]::IsMatch('$(ProductVersionFromFile)', '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9a-z-]+(\.[0-9a-z-]+)*)?$'))"
+           Text="The product version file '$(ProductVersionFile)' holds '$(ProductVersionFromFile)', which is not a major.minor.patch version such as 0.1.0, with an optional pre-release suffix such as 0.1.0-rc.1." />
   </Target>
 </Project>

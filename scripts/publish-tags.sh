@@ -3,26 +3,38 @@
 # and pushes no image: the caller pushes each image untagged, then hands this script the digests.
 #
 #   scripts/publish-tags.sh --image REPOSITORY@DIGEST [--image REPOSITORY@DIGEST ...] \
-#       --fixed "TAGS" --floating "TAGS"
+#       [--once "TAGS"] --fixed "TAGS" --floating "TAGS"
+#   scripts/publish-tags.sh --digest REPOSITORY:TAG [--digest REPOSITORY:TAG ...]
 #
 #   --image     an image pushed by digest, for example ghcr.io/nathanpond/n8tracks@sha256:<64 hex>.
 #               Give it once per image; every image gets every tag.
+#   --once      tags that are created once and never moved (a released version, 1.4.2), separated
+#               by spaces. Optional. Where such a tag does not exist it is created. Where it
+#               already points at the digest given for its image it is left alone, with no write
+#               to the registry. Where it points at anything else the script refuses, before
+#               anything has changed: a published version is never overwritten.
 #   --fixed     tags that name this one build (edge-<short sha>), separated by spaces. They are
 #               created first and are never rolled back: a failed run leaves them in place.
-#   --floating  tags that move from build to build (edge), separated by spaces. May be empty (a
-#               run that must not move them) but must be given.
+#   --floating  tags that move from build to build (edge, latest, 1.4), separated by spaces. May
+#               be empty (a run that must not move them) but must be given.
+#   --digest    read only: prints "REPOSITORY:TAG DIGEST" for each reference, or
+#               "REPOSITORY:TAG absent" for a tag that does not exist, and changes nothing. It
+#               cannot be combined with the other options. A caller asks this before building, so
+#               that an image whose released version exists is not built again.
 #
 # What it does, in this order:
-#   1. Reads where every floating tag points now, for every image. A tag that does not exist yet
-#      is noted as absent. If a tag cannot be read for any other reason, it stops here, before
-#      anything has changed.
-#   2. Creates the fixed tags on every image.
-#   3. Moves the floating tags on every image, one at a time, and reads each back.
+#   1. Reads where every once-only and floating tag points now, for every image. A tag that does
+#      not exist yet is noted as absent. If a tag cannot be read for any other reason, or a
+#      once-only tag points at another digest, it stops here, before anything has changed.
+#   2. Creates the once-only tags that are absent, then the fixed tags, on every image.
+#   3. Moves the floating tags on every image, one at a time, and reads each back. A floating tag
+#      that already points at the digest is left alone.
 #   4. If any step from 2 on fails: every floating tag it touched is put back where step 1 found
 #      it, or removed if step 1 found none, and it exits 1. So the floating tags of all images
-#      end where they started.
+#      end where they started. Once-only and fixed tags are never rolled back.
 #
-# On success it prints one line per tag on stdout: "tagged REPOSITORY:TAG DIGEST". Everything else
+# On success it prints one line per tag on stdout: "tagged REPOSITORY:TAG DIGEST" for a tag it
+# created or moved, "kept REPOSITORY:TAG DIGEST" for one that was already there. Everything else
 # (progress, the reason for a failure, what was restored) goes to stderr.
 #
 # Tags are read and moved with `docker buildx imagetools`, so the caller must be logged in to the
@@ -46,27 +58,32 @@ say() {
 
 usage() {
   say "$1"
-  printf 'usage: publish-tags.sh --image REPOSITORY@DIGEST [--image ...] --fixed "TAGS" --floating "TAGS"\n' >&2
+  printf 'usage: publish-tags.sh --image REPOSITORY@DIGEST [--image ...] [--once "TAGS"] --fixed "TAGS" --floating "TAGS"\n' >&2
+  printf '       publish-tags.sh --digest REPOSITORY:TAG [--digest ...]\n' >&2
   exit 2
 }
 
 images=
+once=
 fixed=
 floating=
+references=
 seen=
 
 while [ $# -gt 0 ]; do
   case $1 in
-    --image | --fixed | --floating)
+    --image | --once | --fixed | --floating | --digest)
       [ $# -ge 2 ] || usage "$1 needs a value"
       case $1 in
         --image) images="$images $2" ;;
+        --digest) references="$references $2" ;;
         *)
           case " $seen " in
             *" $1 "*) usage "$1 was given twice" ;;
           esac
           seen="$seen $1"
           case $1 in
+            --once) once=$2 ;;
             --fixed) fixed=$2 ;;
             --floating) floating=$2 ;;
           esac
@@ -78,16 +95,25 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-for required in --fixed --floating; do
-  case " $seen " in
-    *" $required "*) ;;
-    *) usage "$required is required" ;;
-  esac
-done
-
-[ -n "$images" ] || usage "--image is required"
-
 digest_pattern='sha256:[0-9a-f]{64}'
+tag_pattern='[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}'
+
+if [ -n "$references" ]; then
+  [ -z "$images" ] && [ -z "$seen" ] || usage "--digest cannot be combined with the other options"
+  for reference in $references; do
+    printf '%s\n' "$reference" | grep -Eq "^[a-z0-9][a-z0-9._/-]*:$tag_pattern\$" ||
+      usage "--digest \"$reference\" is not REPOSITORY:TAG"
+  done
+else
+  for required in --fixed --floating; do
+    case " $seen " in
+      *" $required "*) ;;
+      *) usage "$required is required" ;;
+    esac
+  done
+
+  [ -n "$images" ] || usage "--image is required"
+fi
 
 repositories=
 for image in $images; do
@@ -101,8 +127,8 @@ for image in $images; do
 done
 
 all_tags=
-for tag in $fixed $floating; do
-  printf '%s\n' "$tag" | grep -Eq '^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$' ||
+for tag in $once $fixed $floating; do
+  printf '%s\n' "$tag" | grep -Eq "^$tag_pattern\$" ||
     usage "\"$tag\" is not a valid image tag"
   case " $all_tags " in
     *" $tag "*) usage "tag \"$tag\" was given twice" ;;
@@ -110,7 +136,8 @@ for tag in $fixed $floating; do
   all_tags="$all_tags $tag"
 done
 
-[ -n "$all_tags" ] || usage "no tag was given: --fixed and --floating are both empty"
+[ -n "$all_tags" ] || [ -n "$references" ] ||
+  usage "no tag was given: --once, --fixed, and --floating are all empty"
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -255,7 +282,45 @@ fail() {
   exit 1
 }
 
-# --- 1. Where the floating tags point now ---
+# --- Read only: where the given tags point ---
+
+if [ -n "$references" ]; then
+  : >"$work/digests"
+  for reference in $references; do
+    if ! read_tag "${reference%:*}" "${reference##*:}"; then
+      sed 's/^/    /' "$work/read.err" >&2
+      say "could not read $reference."
+      exit 1
+    fi
+    printf '%s %s\n' "$reference" "$current" >>"$work/digests"
+  done
+  cat "$work/digests"
+  exit 0
+fi
+
+# --- 1. Where the once-only and floating tags point now ---
+
+# One line per once-only tag and image: "REPOSITORY TAG DIGEST create|keep".
+: >"$work/once"
+for tag in $once; do
+  for image in $images; do
+    repository=${image%@*}
+    digest=${image#*@}
+    if ! read_tag "$repository" "$tag"; then
+      sed 's/^/    /' "$work/read.err" >&2
+      say "could not read $repository:$tag. Nothing was changed."
+      exit 1
+    fi
+    if [ "$current" = absent ]; then
+      printf '%s %s %s create\n' "$repository" "$tag" "$digest" >>"$work/once"
+    elif [ "$current" = "$digest" ]; then
+      printf '%s %s %s keep\n' "$repository" "$tag" "$digest" >>"$work/once"
+    else
+      say "$repository:$tag is already published as $current and is never moved (this run was given $digest). Nothing was changed."
+      exit 1
+    fi
+  done
+done
 
 : >"$work/previous"
 for tag in $floating; do
@@ -270,9 +335,20 @@ for tag in $floating; do
   done
 done
 
-# --- 2. The fixed tags ---
+# --- 2. The once-only tags that are absent, then the fixed tags ---
 
 : >"$work/tagged"
+while read -r repository tag digest action <&3; do
+  if [ "$action" = keep ]; then
+    printf 'kept %s:%s %s\n' "$repository" "$tag" "$digest" >>"$work/tagged"
+    say "$repository:$tag is already published ($digest): left as it is"
+  else
+    point_tag "$repository" "$tag" "$digest" || fail "could not create $repository:$tag."
+    printf 'tagged %s:%s %s\n' "$repository" "$tag" "$digest" >>"$work/tagged"
+    say "created $repository:$tag ($digest)"
+  fi
+done 3<"$work/once"
+
 for tag in $fixed; do
   for image in $images; do
     repository=${image%@*}
@@ -290,6 +366,11 @@ for tag in $floating; do
     repository=${image%@*}
     digest=${image#*@}
     previous=$(awk -v r="$repository" -v t="$tag" '$1 == r && $2 == t { print $3 }' "$work/previous")
+    if [ "$previous" = "$digest" ]; then
+      printf 'kept %s:%s %s\n' "$repository" "$tag" "$digest" >>"$work/tagged"
+      say "$repository:$tag already points at $digest: left as it is"
+      continue
+    fi
     # Noted before the attempt: a move that failed may still have happened.
     {
       printf '%s %s %s\n' "$repository" "$tag" "$previous"

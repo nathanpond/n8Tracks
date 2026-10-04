@@ -1,12 +1,17 @@
 #!/bin/sh
 # A stand-in for `gh`, for scripts/tests/publish-tags/run.sh. It answers only the calls
-# scripts/publish-tags.sh makes when it removes a tag, from the same files as the stand-in
+# scripts/publish-tags.sh makes when it removes a tag and the ones scripts/published-tags.sh
+# makes when it lists an image's tags, from the same files as the stand-in
 # `docker` beside it ($FAKE_REGISTRY), and appends each call to $FAKE_REGISTRY/calls. It never
 # uses the network.
 #
 # Like GitHub, it refuses to delete the last tagged version of a package.
 #
 #   FAKE_GH_REFUSE_DELETE=1   every delete fails, as when the token may not delete versions
+#   FAKE_GH_FAIL_LIST=1       listing a package's versions fails with a server error
+#
+# Listing the versions of a package nothing was ever pushed to is a 404, as on GitHub, and like
+# the real `gh` it then prints the error body on stdout.
 set -eu
 
 state=${FAKE_REGISTRY:?}
@@ -64,6 +69,16 @@ case "$method $path" in
     package=${path#*/packages/container/}
     package=${package%%/versions*}
     key=$(repository_key "$owner" "$package")
+    if [ "${FAKE_GH_FAIL_LIST:-}" = 1 ]; then
+      echo '{"message":"Server Error"}'
+      echo "gh: Server Error (HTTP 502)" >&2
+      exit 1
+    fi
+    if [ ! -d "$state/manifests/$key" ]; then
+      echo '{"message":"Package not found.","status":"404"}'
+      echo "gh: Package not found. (HTTP 404)" >&2
+      exit 1
+    fi
     {
       for file in "$state/manifests/$key"/*; do
         [ -f "$file" ] || continue

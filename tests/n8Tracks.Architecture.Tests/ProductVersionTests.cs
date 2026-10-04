@@ -13,10 +13,47 @@ public class ProductVersionTests
         typeof(Program),
     ];
 
+    // The shape Directory.Build.targets accepts: major.minor.patch, or that with a pre-release
+    // suffix, which is how a release candidate (0.1.0-rc.1) is cut.
+    private const string VersionPattern =
+        @"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9a-z-]+(\.[0-9a-z-]+)*)?$";
+
     [Fact]
-    public void VersionFileHoldsAMajorMinorPatchVersion()
+    public void VersionFileHoldsAVersionWithAnOptionalPreRelease()
     {
-        Assert.Matches(@"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$", ReadVersionFile());
+        Assert.Matches(VersionPattern, ReadVersionFile());
+    }
+
+    [Fact]
+    public void TheBuildGuardAcceptsTheSameShape()
+    {
+        var targets = File.ReadAllText(Path.Combine(RepositoryRoot.Find(), "Directory.Build.targets"));
+
+        Assert.Contains($"'{VersionPattern}'", targets, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("0.1.0")]
+    [InlineData("12.0.3")]
+    [InlineData("0.1.0-rc.1")]
+    [InlineData("1.5.0-beta")]
+    public void AReleaseOrPreReleaseVersionIsAccepted(string version)
+    {
+        Assert.Matches(VersionPattern, version);
+    }
+
+    [Theory]
+    [InlineData("0.1")]
+    [InlineData("v0.1.0")]
+    [InlineData("01.1.0")]
+    [InlineData("0.1.0-")]
+    [InlineData("0.1.0-rc..1")]
+    [InlineData("0.1.0-RC.1")]
+    [InlineData("0.1.0+build")]
+    [InlineData("0.1.0.0")]
+    public void AnythingElseIsRefused(string version)
+    {
+        Assert.DoesNotMatch(VersionPattern, version);
     }
 
     [Theory]
