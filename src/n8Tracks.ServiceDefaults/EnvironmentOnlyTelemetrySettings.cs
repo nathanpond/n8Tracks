@@ -9,11 +9,22 @@ namespace n8Tracks.ServiceDefaults;
 /// host's configuration, it is what the OpenTelemetry SDK sees for its endpoint, per-signal endpoints,
 /// protocol, headers, and every other standard setting. Names are matched exactly, as the SDK asks
 /// for them (upper case).
+/// <para>
+/// One kind of key is absent even when the environment has it: the switches that make the
+/// instrumentation export query strings as they are
+/// (<c>OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_DISABLE_URL_QUERY_REDACTION</c> and its
+/// <c>HTTPCLIENT</c> twin, which the Aspire AppHost sets on every project in development). The
+/// instrumentation reads them from the host's configuration only, so query-string values are always
+/// replaced with <c>Redacted</c>.
+/// </para>
 /// </summary>
 internal sealed class EnvironmentOnlyTelemetrySettings(IReadOnlyDictionary<string, string> environment)
     : ConfigurationProvider, IConfigurationSource
 {
     private const string Prefix = "OTEL_";
+
+    /// <summary>The ending shared by every switch that turns query-string redaction off.</summary>
+    private const string QueryRedactionSwitchSuffix = "_DISABLE_URL_QUERY_REDACTION";
 
     public IConfigurationProvider Build(IConfigurationBuilder builder) => this;
 
@@ -28,7 +39,11 @@ internal sealed class EnvironmentOnlyTelemetrySettings(IReadOnlyDictionary<strin
         }
 
         // Found either way: "true" with no value stops the lookup from falling through to other sources.
-        value = environment.TryGetValue(key, out var fromEnvironment) ? fromEnvironment : null;
+        // A redaction switch has no value whatever the environment says: nothing turns redaction off.
+        value = !key.EndsWith(QueryRedactionSwitchSuffix, StringComparison.OrdinalIgnoreCase)
+            && environment.TryGetValue(key, out var fromEnvironment)
+                ? fromEnvironment
+                : null;
         return true;
     }
 

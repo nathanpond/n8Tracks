@@ -28,11 +28,13 @@ var mediaPath = DirectorySetting("N8TRACKS_MEDIA_PATH", localMedia);
 // Neither project's launch profile is used: every setting comes from here. The endpoints are fixed
 // and unproxied, so each service listens on the port a developer expects and nothing sits in front.
 // Aspire points OTEL_EXPORTER_OTLP_ENDPOINT of both at the dashboard, which turns their telemetry on.
+// Its variables that turn query-string redaction off are removed from both (KeepQueryRedaction).
 var api = builder.AddProject<Projects.n8Tracks_Api>("api", static project => project.ExcludeLaunchProfile = true)
     .WithHttpEndpoint(port: apiPort, name: "http", env: "N8TRACKS_PORT", isProxied: false)
     .WithEnvironment("N8TRACKS_DATA_PATH", dataPath)
     .WithEnvironment("N8TRACKS_MEDIA_PATH", mediaPath)
     .WithEnvironment("N8TRACKS_LOG_LEVEL", Setting("N8TRACKS_LOG_LEVEL") ?? DefaultLogLevel)
+    .WithEnvironment(KeepQueryRedaction)
     .WithHttpHealthCheck("/health");
 
 // Settings with no local default are handed on only when the developer set them.
@@ -49,6 +51,7 @@ var apiEndpoint = api.GetEndpoint("http");
 var gateway = builder.AddProject<Projects.n8Tracks_Gateway>("gateway", static project => project.ExcludeLaunchProfile = true)
     .WithHttpEndpoint(port: gatewayPort, name: "http", env: "N8TRACKS_GATEWAY_PORT", isProxied: false)
     .WithEnvironment("N8TRACKS_LOG_LEVEL", Setting("N8TRACKS_LOG_LEVEL") ?? DefaultLogLevel)
+    .WithEnvironment(KeepQueryRedaction)
     .WithHttpHealthCheck("/health");
 
 if (Setting("N8TRACKS_API_URL") is { } apiUrl)
@@ -115,6 +118,20 @@ string DirectorySetting(string name, string localDefault)
 
     Directory.CreateDirectory(localDefault);
     return localDefault;
+}
+
+// In development Aspire gives every project the OpenTelemetry variables that export query strings as
+// they are (OTEL_DOTNET_EXPERIMENTAL_*_DISABLE_URL_QUERY_REDACTION). They are taken away again: the
+// dashboard shows redacted query values, as any other collector does. The services ignore these
+// variables in any case; this keeps them out of the services' environment as well.
+static void KeepQueryRedaction(EnvironmentCallbackContext context)
+{
+    foreach (var name in context.EnvironmentVariables.Keys
+        .Where(static name => name.Contains("QUERY_REDACTION", StringComparison.OrdinalIgnoreCase))
+        .ToList())
+    {
+        context.EnvironmentVariables.Remove(name);
+    }
 }
 
 void Forward(IResourceBuilder<ProjectResource> resource, string name)

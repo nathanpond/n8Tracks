@@ -22,6 +22,13 @@ public static class Extensions
     public const string OtlpEndpointVariable = "OTEL_EXPORTER_OTLP_ENDPOINT";
 
     /// <summary>
+    /// The .NET runtime's own switch for the URL of an outgoing request in a trace: unless it is on,
+    /// the query string is masked. Its environment variable is
+    /// <c>DOTNET_SYSTEM_NET_HTTP_DISABLEURIREDACTION</c>; a switch set in code outranks the variable.
+    /// </summary>
+    public const string OutgoingUrlRedactionSwitch = "System.Net.Http.DisableUriRedaction";
+
+    /// <summary>
     /// Whether the operator configured a collector: the environment variable
     /// <see cref="OtlpEndpointVariable"/> is present and not blank. Only the environment the process
     /// was started with counts: the same key on the command line, in a prefixed variable
@@ -42,7 +49,9 @@ public static class Extensions
     /// instrumentation, or exporter is registered, and no OpenTelemetry code runs. When it is, every
     /// <c>OTEL_</c> setting the OpenTelemetry SDK reads from the host's configuration is answered from
     /// <paramref name="environment"/> alone, so no other configuration source can redirect, change, or
-    /// stop the export.
+    /// stop the export. Query-string values in traces are always redacted: the variables that turn
+    /// that redaction off are not passed on to the instrumentation, from the environment or anywhere else,
+    /// and the runtime's own switch for outgoing URLs (<see cref="OutgoingUrlRedactionSwitch"/>) is held off.
     /// </summary>
     /// <param name="builder">The host being composed.</param>
     /// <param name="serviceName">The <c>service.name</c> the telemetry is reported under.</param>
@@ -70,7 +79,8 @@ public static class Extensions
         {
             // The SDK reads its settings from the host's configuration, where the command line, prefixed
             // variables, and settings files sit beside (and above) the environment. Added last, this
-            // source outranks them all for every OTEL_ key.
+            // source outranks them all for every OTEL_ key. It is also what keeps query-string redaction
+            // on: it never answers the instrumentation's switches that turn it off.
             builder.Configuration.Add(new EnvironmentOnlyTelemetrySettings(environment));
 
             // A method of its own, so the OpenTelemetry assemblies are not even loaded when export is off.
@@ -86,6 +96,11 @@ public static class Extensions
         string serviceVersion,
         bool exportLogsFromLoggingProviders)
     {
+        // Outgoing requests: the runtime writes their URL into the span and would leave the query string
+        // in when DOTNET_SYSTEM_NET_HTTP_DISABLEURIREDACTION says so. Set here, before any request is
+        // made, the switch outranks that variable.
+        AppContext.SetSwitch(OutgoingUrlRedactionSwitch, false);
+
         void ConfigureResource(ResourceBuilder resource) => resource.AddService(serviceName, serviceVersion: serviceVersion);
 
         builder.Services.AddOpenTelemetry()
