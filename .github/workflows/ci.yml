@@ -368,13 +368,142 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # The end-to-end suite, in Chromium, against the application image the `container` job built and
+  # smoke-tested: the same image, loaded from the artifact, not built again. Each test also runs
+  # the accessibility scan.
+  e2e:
+    name: e2e
+    needs: container
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: e2e
+    env:
+      RESULTS: test-results/results.json
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - id: setup
+        name: Set up the Node version in .nvmrc
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+
+      - id: install
+        name: npm ci
+        run: npm ci
+
+      - id: lint
+        name: npm run lint
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run lint
+
+      - id: typecheck
+        name: npm run typecheck
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run typecheck
+
+      - id: format
+        name: npm run format:check
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run format:check
+
+      - id: scripts
+        name: npm run test:scripts
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run test:scripts
+
+      - id: download
+        name: Download the application image
+        if: ${{ !cancelled() }}
+        uses: actions/download-artifact@v8
+        with:
+          name: app-image
+          path: ${{ runner.temp }}/app-image
+
+      - id: load
+        name: Load the application image
+        if: ${{ !cancelled() && steps.download.outcome == 'success' }}
+        # Named explicitly for `pipefail`: a truncated archive must fail the step.
+        shell: bash
+        run: |
+          gunzip -c "$RUNNER_TEMP/app-image/n8tracks-image.tar.gz" | docker load
+          docker image inspect --format '{{.Id}}' n8tracks:dev
+
+      # The browser is as large as everything else this job fetches, and changes only with the
+      # Playwright version, so that version is the cache key.
+      - id: playwright_version
+        name: Read the installed Playwright version
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - id: browser_cache
+        name: Cache the Playwright browser
+        if: ${{ !cancelled() && steps.playwright_version.outcome == 'success' }}
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-chromium-${{ steps.playwright_version.outputs.version }}
+
+      # With the cache restored this downloads nothing and only installs the system libraries
+      # Chromium needs, which are not part of the cache.
+      - id: browser
+        name: npx playwright install --with-deps chromium
+        if: ${{ !cancelled() && steps.browser_cache.outcome == 'success' }}
+        run: npx playwright install --with-deps chromium
+
+      # `CI` is set on the runner: playwright.config.ts then retries a failing test once, records a
+      # trace of the retry, and writes the HTML and JSON reports.
+      - id: test
+        name: npm test
+        if: ${{ !cancelled() && steps.load.outcome == 'success' && steps.browser.outcome == 'success' }}
+        env:
+          N8TRACKS_E2E_LOG_DIR: test-results/container-logs
+        run: npm test
+
+      # A flaky test passed on its retry, so the step above is green: this is where it is named.
+      - id: summary
+        name: Summarize failed and flaky tests
+        if: ${{ !cancelled() && (steps.test.outcome == 'success' || steps.test.outcome == 'failure') }}
+        run: node scripts/summarize.ts "$RESULTS"
+
+      # Only when there is something to look at: a clean run uploads nothing.
+      - id: upload
+        name: Upload the report, the traces, and the containers' logs
+        if: ${{ !cancelled() && (steps.test.outcome == 'failure' || (steps.summary.outputs.flaky != '' && steps.summary.outputs.flaky != '0')) }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-report
+          path: |
+            e2e/playwright-report/
+            e2e/test-results/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Summarize failed steps
+        if: ${{ failure() }}
+        env:
+          STEPS: ${{ toJSON(steps) }}
+        run: |
+          {
+            echo "### e2e: failed steps"
+            jq -r 'to_entries[] | select(.value.outcome == "failure") | "- `\(.key)`"' <<<"$STEPS"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # The one check that represents the gate. `always()` makes it run (and fail) when a needed job
   # failed, was cancelled, or was skipped, where a plain `needs:` would leave it skipped, and a
   # skipped required check counts as passing.
   ci:
     name: ci
     if: ${{ always() }}
-    needs: [dotnet, web, extension, container]
+    needs: [dotnet, web, extension, container, e2e]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

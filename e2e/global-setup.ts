@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
@@ -16,6 +16,8 @@ import {
 const run = promisify(execFile);
 
 const IMAGE = process.env.N8TRACKS_E2E_IMAGE ?? 'n8tracks:dev';
+/** When set, each container's log is written to this directory before the container is removed. */
+const LOG_DIR = process.env.N8TRACKS_E2E_LOG_DIR;
 const HEALTH_WAIT_MS = 60_000;
 const HEALTH_POLL_MS = 500;
 const CONTAINER_PORT = 8787;
@@ -99,6 +101,23 @@ async function requireImage(): Promise<void> {
 async function removeContainers(): Promise<void> {
   // "docker rm --force" succeeds for a name that does not exist, so this is safe to repeat.
   await docker('rm', '--force', '--volumes', ...targets.map((target) => target.name));
+}
+
+/** Keeps what the containers logged: once they are removed, there is nothing left to read. */
+async function saveContainerLogs(directory: string): Promise<void> {
+  await mkdir(directory, { recursive: true });
+  for (const target of targets) {
+    let log: string;
+    try {
+      const { stdout, stderr } = await run('docker', ['logs', target.name], {
+        maxBuffer: 64 * 1024 * 1024,
+      });
+      log = `${stdout}${stderr}`;
+    } catch (error) {
+      log = `(no log: ${errorText(error)})\n`;
+    }
+    await writeFile(join(directory, `${target.name}.log`), log);
+  }
 }
 
 function requireFreePort(port: number): Promise<void> {
@@ -202,6 +221,9 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
 
   const work = await mkdtemp(join(tmpdir(), 'n8tracks-e2e-'));
   const teardown = async () => {
+    if (LOG_DIR !== undefined && LOG_DIR !== '') {
+      await saveContainerLogs(LOG_DIR);
+    }
     await removeContainers();
     await rm(work, { recursive: true, force: true });
   };

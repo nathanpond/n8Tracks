@@ -19,5 +19,5 @@
     "noImplicitOverride": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["*.ts", "support", "tests", "eslint.config.js"]
+  "include": ["*.ts", "scripts", "support", "tests", "eslint.config.js"]
 }
