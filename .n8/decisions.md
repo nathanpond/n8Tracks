@@ -1786,3 +1786,6 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** #277 is fixed with a test only (`ATokenNeverExpiresLongAfterEverySessionLifetime` in `CredentialEndpointTests`). It uses the token once, advances the `TestClock` 365 days, checks that the session has lapsed (401), and then gets 200 with the token.
   **Why:** The behaviour was already correct. The token is used once first because an idle-expiry change keyed on `last_used_utc` would not fire on a token that was never used, and the bite proof showed that the never-used version missed it. The session check makes sure the 200 can only come from the token.
   **Issue:** #277 (story #56)
+- **Decision:** #278 is fixed with a test only (`AnArchivedSongStaysInTheListUnlessAStateFilterLeavesItOut` in `SongEndpointTests`). It archives the Song through `PATCH /api/v1/songs/{id}` rather than SQL, then checks that the unfiltered list still has it and that an Idea filter leaves it out.
+  **Why:** The behaviour was already correct. Archiving through the API exercises the path users take. The existing list test only archived through SQL, and its only unfiltered checks after that were paging totals.
+  **Issue:** #278 (story #59)
