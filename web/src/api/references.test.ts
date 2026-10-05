@@ -63,4 +63,17 @@ describe('the page a resolved reference opens', () => {
       }),
     ).toBe('/songs/n8-12/v/1.10.2');
   });
+
+  it("is a Generation's Version, selected on its Song page", () => {
+    expect(
+      pageFor({
+        entityType: 'generation',
+        id: 'c',
+        shortcode: 'n8-12-v1.10.2-g3',
+        status: 'active',
+        song: { id: 'a', shortcode: 'n8-12' },
+        version: { id: 'b', shortcode: 'n8-12-v1.10.2' },
+      }),
+    ).toBe('/songs/n8-12/v/1.10.2');
+  });
 });

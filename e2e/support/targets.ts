@@ -5,6 +5,14 @@ import { join } from 'node:path';
 
 const HOST = 'http://localhost';
 
+/** The containers of the two projects, by project name: `docker exec` runs commands in them. */
+export const ROOT_NAME = 'n8tracks-e2e-root';
+export const SUB_PATH_NAME = 'n8tracks-e2e-subpath';
+export const CONTAINER_BY_PROJECT: Readonly<Record<string, string>> = {
+  root: ROOT_NAME,
+  subpath: SUB_PATH_NAME,
+};
+
 /** The sub-path the second container is served under. */
 export const SUB_PATH = '/n8tracks';
 

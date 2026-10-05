@@ -23,7 +23,7 @@ internal static class ResolveEndpoints
 
         endpoints.MapGet(ResolvePath, ResolveAsync)
             .WithName("ResolveReference")
-            .WithSummary("What a stable ID or a shortcode (n8-12, n8-12-v1.1; any letter case) names: its type, ID, canonical shortcode, and status.")
+            .WithSummary("What a stable ID or a shortcode (n8-12, n8-12-v1.1, n8-12-v1.1-g3; any letter case) names: its type, ID, canonical shortcode, and status.")
             .RequireScope(CredentialScopes.CatalogRead)
             .Produces<ResolveResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
@@ -56,15 +56,17 @@ internal static class ResolveEndpoints
 }
 
 /// <summary>
-/// What a reference names. <c>entityType</c> is <c>song</c> or <c>version</c>; <c>status</c> is
-/// <c>active</c> or, for a Version, <c>archived</c>; <c>song</c> is there for a Version only.
+/// What a reference names. <c>entityType</c> is <c>song</c>, <c>version</c>, or <c>generation</c>;
+/// <c>status</c> is <c>active</c> or, for a Version, <c>archived</c>; <c>song</c> is there for a
+/// Version or a Generation, and <c>version</c> for a Generation only.
 /// </summary>
 internal sealed record ResolveResponse(
     string EntityType,
     Guid Id,
     string Shortcode,
     string Status,
-    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] ResolveSongResponse? Song)
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] ResolveSongResponse? Song,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] ResolveVersionResponse? Version = null)
 {
     public static ResolveResponse From(ResolvedReference resolved)
     {
@@ -75,9 +77,13 @@ internal sealed record ResolveResponse(
             resolved.Id,
             resolved.Shortcode,
             resolved.Status,
-            resolved.Song is { } song ? new ResolveSongResponse(song.Id, song.Shortcode) : null);
+            resolved.Song is { } song ? new ResolveSongResponse(song.Id, song.Shortcode) : null,
+            resolved.Version is { } version ? new ResolveVersionResponse(version.Id, version.Shortcode) : null);
     }
 }
 
-/// <summary>The Song a resolved Version belongs to.</summary>
+/// <summary>The Song a resolved Version or Generation belongs to.</summary>
 internal sealed record ResolveSongResponse(Guid Id, string Shortcode);
+
+/// <summary>The Version a resolved Generation belongs to.</summary>
+internal sealed record ResolveVersionResponse(Guid Id, string Shortcode);

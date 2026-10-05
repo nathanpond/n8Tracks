@@ -21,6 +21,12 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
     /// <summary>The trigger that refuses any change to a Version's number or Song.</summary>
     public const string VersionNumberFixedTrigger = "tr_versions_number_never_changes";
 
+    /// <summary>The trigger that refuses changing a frozen Version's lyrics or styles, or unfreezing it.</summary>
+    public const string VersionFrozenTrigger = "tr_versions_frozen_inputs_never_change";
+
+    /// <summary>The trigger that refuses any change to a Generation's Version, Song, or ordinal.</summary>
+    public const string GenerationFixedTrigger = "tr_generations_identity_never_changes";
+
     public DbSet<AppMetadataEntry> AppMetadata => Set<AppMetadataEntry>();
 
     public DbSet<AdministratorRecord> Administrators => Set<AdministratorRecord>();
@@ -44,6 +50,8 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
     public DbSet<UsedVersionNumberRecord> UsedVersionNumbers => Set<UsedVersionNumberRecord>();
 
     public DbSet<EditorRevisionRecord> EditorRevisions => Set<EditorRevisionRecord>();
+
+    public DbSet<GenerationRecord> Generations => Set<GenerationRecord>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
@@ -185,6 +193,7 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                 table.HasTrigger(VersionUpdatedTrigger);
                 table.HasTrigger(VersionNumberRecordedTrigger);
                 table.HasTrigger(VersionNumberFixedTrigger);
+                table.HasTrigger(VersionFrozenTrigger);
             });
             version.HasKey(record => record.Id);
             version.HasIndex(record => new { record.SongId, record.Number }).IsUnique();
@@ -223,6 +232,28 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                 .WithMany()
                 .HasForeignKey(record => record.VersionId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<GenerationRecord>(generation =>
+        {
+            generation.ToTable("generations", static table =>
+            {
+                table.HasCheckConstraint("ck_generations_ordinal", "ordinal >= 1");
+                table.HasTrigger(GenerationFixedTrigger);
+            });
+            generation.HasKey(record => record.Id);
+            generation.HasIndex(record => new { record.VersionId, record.Ordinal }).IsUnique();
+            generation.HasIndex(record => record.SongId);
+
+            // Nothing removes a Version or a Song with Generations by accident: deleting them is M3's.
+            generation.HasOne<VersionRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.VersionId)
+                .OnDelete(DeleteBehavior.Restrict);
+            generation.HasOne<SongRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.SongId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
     }
 }

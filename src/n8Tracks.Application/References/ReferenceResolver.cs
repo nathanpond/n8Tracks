@@ -17,23 +17,27 @@ public enum ReferenceKind
 
     /// <summary>A Version shortcode, <c>n8-12-v1.1</c>.</summary>
     Version,
+
+    /// <summary>A Generation shortcode, <c>n8-12-v1.1-g3</c>.</summary>
+    Generation,
 }
 
 /// <summary>
-/// A reference to a Song or a Version as a caller wrote it, read but not looked up: a stable ID
+/// A reference to a Song, a Version, or a Generation as a caller wrote it, read but not looked up: a stable ID
 /// (hyphenated, any letter case) or a complete shortcode (any letter case). Anything else is
 /// <see cref="ReferenceKind.Malformed"/>, which names nothing; reading never fails, so an endpoint
 /// that binds one answers its own not-found for a reference it cannot use rather than a 400.
 /// </summary>
 public readonly record struct CatalogReference
 {
-    private CatalogReference(string text, ReferenceKind kind, Guid id, long songShortcodeNumber, VersionNumber? versionNumber)
+    private CatalogReference(string text, ReferenceKind kind, Guid id, long songShortcodeNumber, VersionNumber? versionNumber, int generationOrdinal = 0)
     {
         Text = text;
         Kind = kind;
         Id = id;
         SongShortcodeNumber = songShortcodeNumber;
         VersionNumber = versionNumber;
+        GenerationOrdinal = generationOrdinal;
     }
 
     /// <summary>The text as written.</summary>
@@ -44,11 +48,14 @@ public readonly record struct CatalogReference
     /// <summary>The ID, for <see cref="ReferenceKind.Id"/>.</summary>
     public Guid Id { get; }
 
-    /// <summary>The Song's shortcode number, for <see cref="ReferenceKind.Song"/> and <see cref="ReferenceKind.Version"/>.</summary>
+    /// <summary>The Song's shortcode number, for <see cref="ReferenceKind.Song"/>, <see cref="ReferenceKind.Version"/>, and <see cref="ReferenceKind.Generation"/>.</summary>
     public long SongShortcodeNumber { get; }
 
-    /// <summary>The Version's number, for <see cref="ReferenceKind.Version"/>.</summary>
+    /// <summary>The Version's number, for <see cref="ReferenceKind.Version"/> and <see cref="ReferenceKind.Generation"/>.</summary>
     public VersionNumber? VersionNumber { get; }
+
+    /// <summary>The Generation's ordinal, for <see cref="ReferenceKind.Generation"/>.</summary>
+    public int GenerationOrdinal { get; }
 
     /// <summary>Reads <paramref name="text"/> as a reference. Never fails: text that is none is <see cref="ReferenceKind.Malformed"/>.</summary>
     public static CatalogReference Parse(string? text)
@@ -64,8 +71,13 @@ public readonly record struct CatalogReference
             return new(text, ReferenceKind.Song, Guid.Empty, songNumber, null);
         }
 
-        return Shortcodes.TryParseVersion(text, out var versionSongNumber, out var number)
-            ? new(text, ReferenceKind.Version, Guid.Empty, versionSongNumber, number)
+        if (Shortcodes.TryParseVersion(text, out var versionSongNumber, out var number))
+        {
+            return new(text, ReferenceKind.Version, Guid.Empty, versionSongNumber, number);
+        }
+
+        return Shortcodes.TryParseGeneration(text, out var generationSongNumber, out var generationVersion, out var ordinal)
+            ? new(text, ReferenceKind.Generation, Guid.Empty, generationSongNumber, generationVersion, ordinal)
             : new(text, ReferenceKind.Malformed, Guid.Empty, 0, null);
     }
 
@@ -83,19 +95,24 @@ public readonly record struct CatalogReference
 }
 
 /// <summary>What a reference names, as the resolve endpoint answers it.</summary>
-/// <param name="EntityType"><see cref="ReferenceResolver.SongType"/> or <see cref="ReferenceResolver.VersionType"/>.</param>
+/// <param name="EntityType"><see cref="ReferenceResolver.SongType"/>, <see cref="ReferenceResolver.VersionType"/>, or <see cref="ReferenceResolver.GenerationType"/>.</param>
 /// <param name="Id">Its stable ID.</param>
 /// <param name="Shortcode">Its canonical (lower-case) shortcode.</param>
 /// <param name="Status"><see cref="ReferenceResolver.ActiveStatus"/> or, for a Version, <see cref="ReferenceResolver.ArchivedStatus"/>.</param>
-/// <param name="Song">For a Version, its Song; null for a Song.</param>
-public sealed record ResolvedReference(string EntityType, Guid Id, string Shortcode, string Status, ResolvedSong? Song);
+/// <param name="Song">For a Version or a Generation, its Song; null for a Song.</param>
+/// <param name="Version">For a Generation, its Version; null otherwise.</param>
+public sealed record ResolvedReference(string EntityType, Guid Id, string Shortcode, string Status, ResolvedSong? Song, ResolvedVersion? Version = null);
 
-/// <summary>The Song a resolved Version belongs to.</summary>
+/// <summary>The Song a resolved Version or Generation belongs to.</summary>
 public sealed record ResolvedSong(Guid Id, string Shortcode);
 
+/// <summary>The Version a resolved Generation belongs to.</summary>
+public sealed record ResolvedVersion(Guid Id, string Shortcode);
+
 /// <summary>
-/// Turns a reference to a Song or a Version (<see cref="CatalogReference"/>) into the thing it
-/// names. Shortcodes are worked out from the Song's sequence number and the Version's number, so
+/// Turns a reference to a Song, a Version, or a Generation (<see cref="CatalogReference"/>) into the
+/// thing it names. Shortcodes are worked out from the Song's sequence number, the Version's number,
+/// and the Generation's ordinal, so
 /// they are resolved by parsing and looking those up; nothing extra is stored. A reference of the
 /// wrong kind for what is asked (a Version shortcode where a Song is wanted) names nothing.
 /// </summary>
@@ -103,12 +120,13 @@ public sealed class ReferenceResolver(ISongStore songs, IVersionStore versions)
 {
     public const string SongType = "song";
     public const string VersionType = "version";
+    public const string GenerationType = "generation";
     public const string ActiveStatus = "active";
     public const string ArchivedStatus = "archived";
 
     /// <summary>
-    /// The Song or Version a reference names, whichever it is; null when it names neither. Deleted and
-    /// moved statuses, and Generation shortcodes, come with later milestones.
+    /// The Song, Version, or Generation a reference names, whichever it is; null when it names none.
+    /// Deleted and moved statuses come with later milestones. A Generation is always active for now.
     /// </summary>
     public async Task<ResolvedReference?> ResolveAsync(CatalogReference reference, CancellationToken cancellationToken)
     {
@@ -120,8 +138,13 @@ public sealed class ReferenceResolver(ISongStore songs, IVersionStore versions)
                     return Of(song);
                 }
 
-                return await versions.FindSummaryAsync(reference.Id, cancellationToken).ConfigureAwait(false) is { } version
-                    ? Of(version)
+                if (await versions.FindSummaryAsync(reference.Id, cancellationToken).ConfigureAwait(false) is { } version)
+                {
+                    return Of(version);
+                }
+
+                return await versions.FindGenerationAsync(reference.Id, cancellationToken).ConfigureAwait(false) is { } generation
+                    ? Of(generation)
                     : null;
 
             case ReferenceKind.Song:
@@ -132,6 +155,16 @@ public sealed class ReferenceResolver(ISongStore songs, IVersionStore versions)
             case ReferenceKind.Version:
                 return await FindVersionByShortcodeAsync(versions, reference, cancellationToken).ConfigureAwait(false) is { } found
                     ? Of(found)
+                    : null;
+
+            case ReferenceKind.Generation:
+                return await versions.FindGenerationIdByShortcodeAsync(
+                        reference.SongShortcodeNumber,
+                        reference.VersionNumber!.ToString(),
+                        reference.GenerationOrdinal,
+                        cancellationToken).ConfigureAwait(false) is { } generationId
+                    && await versions.FindGenerationAsync(generationId, cancellationToken).ConfigureAwait(false) is { } generationNamed
+                    ? Of(generationNamed)
                     : null;
 
             default:
@@ -186,4 +219,13 @@ public sealed class ReferenceResolver(ISongStore songs, IVersionStore versions)
             version.Shortcode,
             version.Archived ? ArchivedStatus : ActiveStatus,
             new ResolvedSong(version.SongId, Shortcodes.ForSong(version.SongShortcodeNumber)));
+
+    private static ResolvedReference Of(GenerationSummary generation) =>
+        new(
+            GenerationType,
+            generation.Generation.Id,
+            generation.Shortcode,
+            ActiveStatus,
+            new ResolvedSong(generation.Generation.SongId, Shortcodes.ForSong(generation.SongShortcodeNumber)),
+            new ResolvedVersion(generation.Generation.VersionId, generation.VersionShortcode));
 }

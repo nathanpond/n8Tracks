@@ -47,7 +47,9 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
                 record.Styles,
                 UtcText.Parse(record.CreatedUtc),
                 UtcText.Parse(record.UpdatedUtc),
-                record.Revision);
+                record.Revision,
+                record.IsFrozen,
+                record.LastGenerationOrdinal);
     }
 
     public async Task<Guid?> FindIdByShortcodeAsync(long songShortcodeNumber, string number, CancellationToken cancellationToken) =>
@@ -113,6 +115,7 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
                 version.CreatedUtc,
                 version.UpdatedUtc,
                 version.Revision,
+                version.IsFrozen,
             })
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
@@ -128,7 +131,8 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
             version.Id == song.CurrentVersionId,
             UtcText.Parse(version.CreatedUtc),
             UtcText.Parse(version.UpdatedUtc),
-            version.Revision))];
+            version.Revision,
+            version.IsFrozen))];
     }
 
     public async Task AddAsync(SongVersion version, CancellationToken cancellationToken)
@@ -150,6 +154,8 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
             CreatedUtc = UtcText.From(version.CreatedUtc),
             UpdatedUtc = UtcText.From(version.UpdatedUtc),
             Revision = version.Revision,
+            IsFrozen = version.IsFrozen,
+            LastGenerationOrdinal = version.LastGenerationOrdinal,
         };
 
         context.Versions.Add(record);
@@ -219,9 +225,10 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
         var styles = inputs.Styles;
         var updated = UtcText.From(updatedUtc);
 
-        // One conditional statement, as for the annotations, that also sets the creation inputs.
+        // One conditional statement, as for the annotations, that also sets the creation inputs. A
+        // frozen Version is never matched (and the database's trigger would refuse it anyway).
         var count = await context.Versions
-            .Where(version => version.Id == id && version.Revision == revision)
+            .Where(version => version.Id == id && version.Revision == revision && !version.IsFrozen)
             .ExecuteUpdateAsync(
                 setters => setters
                     .SetProperty(version => version.Name, name)
@@ -236,4 +243,75 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
 
         return count == 1;
     }
+
+    public async Task<bool> TryAttachGenerationAsync(SongVersion version, Generation generation, int revision, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(version);
+        ArgumentNullException.ThrowIfNull(generation);
+
+        var id = version.Id;
+        var ordinal = version.LastGenerationOrdinal;
+        var updated = UtcText.From(version.UpdatedUtc);
+        var newRevision = version.Revision;
+
+        // The freeze and nothing else: the inputs and annotations are not written.
+        var count = await context.Versions
+            .Where(record => record.Id == id && record.Revision == revision)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(record => record.IsFrozen, true)
+                    .SetProperty(record => record.LastGenerationOrdinal, ordinal)
+                    .SetProperty(record => record.UpdatedUtc, updated)
+                    .SetProperty(record => record.Revision, newRevision),
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (count != 1)
+        {
+            return false;
+        }
+
+        var record = new GenerationRecord
+        {
+            Id = generation.Id,
+            VersionId = generation.VersionId,
+            SongId = generation.SongId,
+            Ordinal = generation.Ordinal,
+            CreatedUtc = UtcText.From(generation.CreatedUtc),
+        };
+        context.Generations.Add(record);
+        await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        context.Entry(record).State = EntityState.Detached;
+        return true;
+    }
+
+    public async Task<GenerationSummary?> FindGenerationAsync(Guid id, CancellationToken cancellationToken)
+    {
+        var found = await context.Generations.AsNoTracking()
+            .Where(generation => generation.Id == id)
+            .Join(context.Versions, generation => generation.VersionId, version => version.Id, (generation, version) => new { generation, version.Number })
+            .Join(context.Songs, row => row.generation.SongId, song => song.Id, (row, song) => new { row.generation, row.Number, song.ShortcodeNumber })
+            .SingleOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        return found is null
+            ? null
+            : new GenerationSummary(
+                new Generation(
+                    found.generation.Id,
+                    found.generation.VersionId,
+                    found.generation.SongId,
+                    found.generation.Ordinal,
+                    UtcText.Parse(found.generation.CreatedUtc)),
+                found.ShortcodeNumber,
+                found.Number);
+    }
+
+    public async Task<Guid?> FindGenerationIdByShortcodeAsync(long songShortcodeNumber, string number, int ordinal, CancellationToken cancellationToken) =>
+        await FindIdByShortcodeAsync(songShortcodeNumber, number, cancellationToken).ConfigureAwait(false) is { } versionId
+            ? await context.Generations.AsNoTracking()
+                .Where(generation => generation.VersionId == versionId && generation.Ordinal == ordinal)
+                .Select(static generation => (Guid?)generation.Id)
+                .SingleOrDefaultAsync(cancellationToken)
+                .ConfigureAwait(false)
+            : null;
 }

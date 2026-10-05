@@ -81,6 +81,12 @@ public abstract record RestoreOutcome
 
     /// <summary>The Version has no snapshot with that ID (another Version's included).</summary>
     public sealed record SnapshotNotFound : RestoreOutcome;
+
+    /// <summary>
+    /// A Generation is attached to the Version, so its lyrics and styles cannot change. Nothing was
+    /// changed or snapshotted. <paramref name="Version"/> is the Version as it is.
+    /// </summary>
+    public sealed record Frozen(VersionDetail Version) : RestoreOutcome;
 }
 
 /// <summary>
@@ -178,7 +184,7 @@ public sealed class EditorRevisionService(
     /// Replaces the Version's lyrics and styles with the snapshot's, if the Version is still at
     /// <paramref name="revision"/>, after snapshotting its current text (so the restore can itself be
     /// undone). The name, notes, and archived flag are left alone. Restoring text the Version already
-    /// holds changes nothing.
+    /// holds changes nothing. On a frozen Version any other restore is refused, after the revision check.
     /// </summary>
     public Task<RestoreOutcome> RestoreAsync(Guid versionId, Guid snapshotId, int revision, CancellationToken cancellationToken) =>
         transaction.RunAsync<RestoreOutcome>(
@@ -206,15 +212,18 @@ public sealed class EditorRevisionService(
                     return new RestoreOutcome.Restored(current);
                 }
 
-                // The text being replaced goes into history first. Pruning may remove the snapshot
-                // being restored when it is the oldest; its text has already been read.
+                // The text being replaced goes into history first, once the restore is known to be
+                // allowed. Pruning may remove the snapshot being restored when it is the oldest; its
+                // text has already been read.
                 var now = time.GetUtcNow();
-                await KeepAsync(revisions, versionId, held, now, now, ct).ConfigureAwait(false);
-                if (!await versionService.StoreInputsAsync(current, restored, now, ct).ConfigureAwait(false))
+                switch (await versionService.StoreInputsAsync(current, restored, token => KeepAsync(revisions, versionId, held, now, now, token), now, ct).ConfigureAwait(false))
                 {
-                    return await versions.FindDetailAsync(versionId, ct).ConfigureAwait(false) is { } changed
-                        ? new RestoreOutcome.Conflict(changed)
-                        : new RestoreOutcome.VersionNotFound();
+                    case InputsWrite.Frozen:
+                        return new RestoreOutcome.Frozen(current);
+                    case InputsWrite.Stale:
+                        return await versions.FindDetailAsync(versionId, ct).ConfigureAwait(false) is { } changed
+                            ? new RestoreOutcome.Conflict(changed)
+                            : new RestoreOutcome.VersionNotFound();
                 }
 
                 var updated = await versions.FindDetailAsync(versionId, ct).ConfigureAwait(false)

@@ -193,10 +193,25 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     return jsonResponse(200, restored);
   };
 
-  /** The resolve endpoint: the Song or one of its Versions, by ID or shortcode in any letter case. */
+  /**
+   * The resolve endpoint: the Song or one of its Versions, by ID or shortcode in any letter case,
+   * and a Generation of any Version by its shortcode (every ordinal exists).
+   */
   const answerResolve = (reference: string) => {
     const key = reference.toLowerCase();
     const song = server.song;
+    const generation = /^(.+)-g([1-9][0-9]*)$/.exec(key);
+    const generated = server.versions.find((candidate) => candidate.shortcode === generation?.[1]);
+    if (generation && generated) {
+      return jsonResponse(200, {
+        entityType: 'generation',
+        id: `${generated.id.slice(0, -2)}9${generation[2] ?? ''}`,
+        shortcode: key,
+        status: 'active',
+        song: { id: song.id, shortcode: song.shortcode },
+        version: { id: generated.id, shortcode: generated.shortcode },
+      });
+    }
     if (key === song.shortcode || key === song.id.toLowerCase()) {
       return jsonResponse(200, {
         entityType: 'song',

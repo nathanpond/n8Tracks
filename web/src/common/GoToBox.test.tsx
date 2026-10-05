@@ -59,6 +59,17 @@ describe('the Go to box', () => {
     expect(router.state.location.pathname).toBe('/songs/n8-7/v/1');
   });
 
+  it("opens a Generation's Version from the Generation's shortcode", async () => {
+    versionServer([testVersion('1'), testVersion('1.1', { current: true })]);
+    const user = userEvent.setup();
+    const router = await openElsewhere();
+
+    await user.type(box(), 'N8-7-V1-G2{Enter}');
+
+    await versionHeading('1');
+    expect(router.state.location.pathname).toBe('/songs/n8-7/v/1');
+  });
+
   it('acts on Enter, not on paste', async () => {
     const { mock } = versionServer(VERSIONS);
     const user = userEvent.setup();

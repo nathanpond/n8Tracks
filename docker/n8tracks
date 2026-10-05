@@ -4,6 +4,9 @@
 #   docker exec -it <container> n8tracks reset-password
 #   printf '%s\n' "$NEW_PASSWORD" | docker exec -i <container> n8tracks reset-password --password-stdin
 #
+# It also passes on seed-generation, a test-only command the app refuses unless test seeding is
+# switched on (N8TRACKS_ENABLE_TEST_SEEDING=1, which only the end-to-end containers set).
+#
 # It runs the app binary with the given command, as the user the app runs as, so the files the
 # command touches keep their owner. Run as root (docker exec's default), it drops to PUID:PGID (default
 # 1000:1000) with no supplementary groups, the way the entrypoint does. Run as another user
@@ -25,7 +28,7 @@ if [ "$#" -eq 0 ]; then
 fi
 
 case "$1" in
-    reset-password) ;;
+    reset-password | seed-generation) ;;
     *)
         printf 'Unknown command.\n' >&2
         usage

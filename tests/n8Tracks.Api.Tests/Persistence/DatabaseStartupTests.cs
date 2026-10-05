@@ -35,7 +35,8 @@ public sealed class DatabaseStartupTests : IDisposable
             migration => Assert.Matches("^[0-9]{14}_AddJobs\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AddSongs\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AddUsedVersionNumbers\\|10\\.0\\.", migration),
-            migration => Assert.Matches("^[0-9]{14}_AddEditorRevisions\\|10\\.0\\.", migration));
+            migration => Assert.Matches("^[0-9]{14}_AddEditorRevisions\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddGenerations\\|10\\.0\\.", migration));
 
         // ISO 8601 UTC with milliseconds and Z, taken when the migration ran.
         var initialized = TestDatabase.SchemaInitializedUtc(directory.Path);
@@ -54,7 +55,7 @@ public sealed class DatabaseStartupTests : IDisposable
         Start();
 
         Assert.Equal(
-            ["__EFMigrationsHistory", "administrators", "app_metadata", "credentials", "editor_revisions", "jobs", "sessions", "settings", "shortcode_sequence", "songs", "used_version_numbers", "versions", "workflow_states"],
+            ["__EFMigrationsHistory", "administrators", "app_metadata", "credentials", "editor_revisions", "generations", "jobs", "sessions", "settings", "shortcode_sequence", "songs", "used_version_numbers", "versions", "workflow_states"],
             TestDatabase.Rows(
                 directory.Path,
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> '__EFMigrationsLock' ORDER BY name;"));
@@ -86,8 +87,17 @@ public sealed class DatabaseStartupTests : IDisposable
             ["song_id|TEXT|1|1", "number|TEXT|1|2"],
             TestDatabase.Rows(directory.Path, "SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('used_version_numbers') ORDER BY cid;"));
         Assert.Equal(
-            ["tr_versions_number_never_changes", "tr_versions_record_number_after_insert", "tr_versions_touch_song_after_insert", "tr_versions_touch_song_after_update"],
+            ["tr_versions_frozen_inputs_never_change", "tr_versions_number_never_changes", "tr_versions_record_number_after_insert", "tr_versions_touch_song_after_insert", "tr_versions_touch_song_after_update"],
             TestDatabase.Rows(directory.Path, "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'versions' ORDER BY name;"));
+        Assert.Equal(
+            ["tr_generations_identity_never_changes"],
+            TestDatabase.Rows(directory.Path, "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'generations' ORDER BY name;"));
+        Assert.Equal(
+            ["id|TEXT|1|1", "version_id|TEXT|1|0", "song_id|TEXT|1|0", "ordinal|INTEGER|1|0", "created_utc|TEXT|1|0"],
+            TestDatabase.Rows(directory.Path, "SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('generations') ORDER BY cid;"));
+        Assert.Equal(
+            ["ix_generations_song_id|0", "ix_generations_version_id_ordinal|1"],
+            TestDatabase.Rows(directory.Path, "SELECT name, CAST(\"unique\" AS TEXT) FROM pragma_index_list('generations') WHERE origin = 'c' ORDER BY name;"));
         Assert.Equal(
             ["MigrationId", "ProductVersion"],
             TestDatabase.Rows(directory.Path, "SELECT name FROM pragma_table_info('__EFMigrationsHistory') ORDER BY cid;"));
@@ -160,7 +170,7 @@ public sealed class DatabaseStartupTests : IDisposable
 
         Assert.Equal(MigrationStatus.UpToDate, state.Status);
         Assert.Equal(TestDatabase.History(directory.Path)[^1].Split('|')[0], state.LastAppliedMigrationId);
-        Assert.EndsWith("_AddEditorRevisions", state.LastAppliedMigrationId, StringComparison.Ordinal);
+        Assert.EndsWith("_AddGenerations", state.LastAppliedMigrationId, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -76,8 +76,36 @@ public sealed class VersionRecord
     /// <summary>UTC, ISO 8601, millisecond precision. Every write sets it, which moves the Song's too.</summary>
     public required string UpdatedUtc { get; set; }
 
-    /// <summary>Starts at 1 and goes up by one on each edit.</summary>
+    /// <summary>Starts at 1 and goes up by one on each edit, and when a Generation is attached.</summary>
     public int Revision { get; set; } = 1;
+
+    /// <summary>
+    /// Set when the first Generation is attached and never cleared: the lyrics and styles of a frozen
+    /// Version never change. A trigger refuses either.
+    /// </summary>
+    public bool IsFrozen { get; set; }
+
+    /// <summary>The ordinal of the last Generation attached; 0 when none has been. Never goes down.</summary>
+    public int LastGenerationOrdinal { get; set; }
+}
+
+/// <summary>
+/// One row of <c>generations</c>: a Generation attached to a Version. Only its identity, owner, and
+/// ordinal for now; the rest arrives with Generations in M4. Unique on the Version and the ordinal.
+/// </summary>
+public sealed class GenerationRecord
+{
+    public required Guid Id { get; set; }
+
+    public required Guid VersionId { get; set; }
+
+    public required Guid SongId { get; set; }
+
+    /// <summary>From 1 within the Version; never changed and never reused.</summary>
+    public required int Ordinal { get; set; }
+
+    /// <summary>UTC, ISO 8601, millisecond precision: when it was attached.</summary>
+    public required string CreatedUtc { get; set; }
 }
 
 /// <summary>

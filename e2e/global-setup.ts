@@ -19,9 +19,11 @@ import {
   FRESH_PORT,
   NO_MEDIA_PORT,
   NO_MEDIA_URL,
+  ROOT_NAME,
   ROOT_PORT,
   ROOT_STORAGE_STATE,
   ROOT_URL,
+  SUB_PATH_NAME,
   SUB_PATH_PORT,
   SUB_PATH_STORAGE_STATE,
   SUB_PATH_URL,
@@ -32,14 +34,14 @@ const LOG_DIR = process.env.N8TRACKS_E2E_LOG_DIR;
 
 const targets: Target[] = [
   {
-    name: 'n8tracks-e2e-root',
+    name: ROOT_NAME,
     port: ROOT_PORT,
     url: ROOT_URL,
     media: true,
     expectedStatus: 'healthy',
   },
   {
-    name: 'n8tracks-e2e-subpath',
+    name: SUB_PATH_NAME,
     port: SUB_PATH_PORT,
     url: SUB_PATH_URL,
     media: true,

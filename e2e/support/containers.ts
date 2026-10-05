@@ -69,7 +69,9 @@ export function requireFreePort(port: number): Promise<void> {
 
 /**
  * Starts a container for the target with an empty data folder of its own under `work`. The media
- * folder mounted, when the target has one, is `work/media`, which must exist.
+ * folder mounted, when the target has one, is `work/media`, which must exist. Test seeding is on
+ * (`N8TRACKS_ENABLE_TEST_SEEDING=1`), so `n8tracks seed-generation` works in it: these are test
+ * instances, and the variable is never for a real one.
  */
 export async function startContainer(target: Target, work: string): Promise<void> {
   const data = join(work, `data-${target.name}`);
@@ -88,6 +90,8 @@ export async function startContainer(target: Target, work: string): Promise<void
     `PGID=${String(gid)}`,
     '--volume',
     `${data}:/data`,
+    '--env',
+    'N8TRACKS_ENABLE_TEST_SEEDING=1',
   ];
   if (target.media) {
     args.push('--volume', `${join(work, 'media')}:/media:ro`);

@@ -112,6 +112,25 @@ public abstract record VersionUpdateOutcome
 
     /// <summary>There is no Version with that ID.</summary>
     public sealed record NotFound : VersionUpdateOutcome;
+
+    /// <summary>
+    /// The edit would change a creation input of a Version a Generation is attached to. Nothing was
+    /// changed, metadata included. <paramref name="Version"/> is the Version as it is.
+    /// </summary>
+    public sealed record Frozen(VersionDetail Version) : VersionUpdateOutcome;
+}
+
+/// <summary>How the one write of a Version's creation inputs ended.</summary>
+internal enum InputsWrite
+{
+    /// <summary>Written, and the revision raised by one.</summary>
+    Stored,
+
+    /// <summary>The Version is gone or no longer at the revision read. Nothing was written.</summary>
+    Stale,
+
+    /// <summary>A Generation is attached, so the inputs may not change. Nothing was written.</summary>
+    Frozen,
 }
 
 /// <summary>
@@ -290,6 +309,9 @@ public sealed class VersionService(
     /// and are changed only through <see cref="StoreAsync"/>. Archiving and unarchiving change
     /// visibility only: never the number, lyrics, styles, the descendants, or which Version is current.
     /// An edit that changes nothing leaves the revision alone. One wrong field refuses the whole edit.
+    /// On a frozen Version (a Generation attached) an edit whose lyrics and styles are unchanged is a
+    /// metadata edit; one that changes either is refused whole as <see cref="VersionUpdateOutcome.Frozen"/>,
+    /// after the revision check.
     /// </summary>
     public Task<VersionUpdateOutcome> UpdateAsync(Guid id, VersionEdit edit, int revision, CancellationToken cancellationToken) =>
         UpdateAsync(id, edit, revision, VersionEditSource.Session, cancellationToken);
@@ -357,20 +379,24 @@ public sealed class VersionService(
                 }
 
                 var now = time.GetUtcNow();
-                if (inputsChange && source == VersionEditSource.Credential)
+                if (inputsChange)
                 {
-                    await EditorRevisionService.KeepAsync(revisions, id, new VersionInputs(current.Lyrics, current.Styles), now, now, ct)
-                        .ConfigureAwait(false);
+                    // A credential's edit keeps the text it replaces in the history first, once the
+                    // edit is known to be allowed.
+                    Func<CancellationToken, Task>? keepReplaced = source == VersionEditSource.Credential
+                        ? token => EditorRevisionService.KeepAsync(revisions, id, new VersionInputs(current.Lyrics, current.Styles), now, now, token)
+                        : null;
+                    switch (await StoreAsync(current, annotations, inputs, keepReplaced, now, ct).ConfigureAwait(false))
+                    {
+                        case InputsWrite.Frozen:
+                            return new VersionUpdateOutcome.Frozen(current);
+                        case InputsWrite.Stale:
+                            return await StaleAsync(id, ct).ConfigureAwait(false);
+                    }
                 }
-
-                var stored = inputsChange
-                    ? await StoreAsync(current, annotations, inputs, now, ct).ConfigureAwait(false)
-                    : await versions.TryUpdateAnnotationsAsync(id, annotations, revision, now, ct).ConfigureAwait(false);
-                if (!stored)
+                else if (!await versions.TryUpdateAnnotationsAsync(id, annotations, revision, now, ct).ConfigureAwait(false))
                 {
-                    return await versions.FindDetailAsync(id, ct).ConfigureAwait(false) is { } changed
-                        ? new VersionUpdateOutcome.Conflict(changed)
-                        : new VersionUpdateOutcome.NotFound();
+                    return await StaleAsync(id, ct).ConfigureAwait(false);
                 }
 
                 var updated = await versions.FindDetailAsync(id, ct).ConfigureAwait(false)
@@ -382,24 +408,76 @@ public sealed class VersionService(
 
     /// <summary>
     /// Inside the caller's transaction: stores <paramref name="inputs"/> on <paramref name="current"/>,
-    /// keeping its annotations, through <see cref="StoreAsync"/> (restoring a snapshot). False when
-    /// the Version is gone or no longer at <paramref name="current"/>'s revision.
+    /// keeping its annotations, through <see cref="StoreAsync"/> (restoring a snapshot), after running
+    /// <paramref name="beforeWrite"/> once the write is known to be allowed.
     /// </summary>
-    internal Task<bool> StoreInputsAsync(VersionDetail current, VersionInputs inputs, DateTimeOffset now, CancellationToken cancellationToken)
+    internal Task<InputsWrite> StoreInputsAsync(
+        VersionDetail current,
+        VersionInputs inputs,
+        Func<CancellationToken, Task>? beforeWrite,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(current);
 
         var summary = current.Summary;
-        return StoreAsync(current, new VersionAnnotations(summary.Name, summary.Notes, summary.Archived), inputs, now, cancellationToken);
+        return StoreAsync(current, new VersionAnnotations(summary.Name, summary.Notes, summary.Archived), inputs, beforeWrite, now, cancellationToken);
     }
 
     /// <summary>
     /// The one place a Version's creation inputs change after it is created, together with whatever
-    /// annotations the same edit changes. Whether a Version's inputs may still change (the freeze once
-    /// a Generation is attached, #69) is decided here. Restoring a snapshot comes through here too.
+    /// annotations the same edit changes; restoring a snapshot comes through here too. Whether they may
+    /// still change is the entity's rule (<see cref="SongVersion.WithInputs"/>, which refuses a frozen
+    /// Version), applied to the Version as stored before anything is written, and so before
+    /// <paramref name="beforeWrite"/> runs (a snapshot of the text being replaced).
     /// </summary>
-    private Task<bool> StoreAsync(VersionDetail current, VersionAnnotations annotations, VersionInputs inputs, DateTimeOffset now, CancellationToken cancellationToken) =>
-        versions.TryUpdateInputsAsync(current.Summary.Id, annotations, inputs, current.Summary.Revision, now, cancellationToken);
+    private async Task<InputsWrite> StoreAsync(
+        VersionDetail current,
+        VersionAnnotations annotations,
+        VersionInputs inputs,
+        Func<CancellationToken, Task>? beforeWrite,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var summary = current.Summary;
+        if (await versions.FindAsync(summary.Id, cancellationToken).ConfigureAwait(false) is not { } version
+            || version.Revision != summary.Revision)
+        {
+            return InputsWrite.Stale;
+        }
+
+        SongVersion changed;
+        try
+        {
+            changed = version
+                .WithAnnotations(annotations.Name, annotations.Notes, annotations.Archived ? VersionVisibility.Archived : VersionVisibility.Active)
+                .WithInputs(inputs.Lyrics, inputs.Styles);
+        }
+        catch (VersionFrozenException)
+        {
+            return InputsWrite.Frozen;
+        }
+
+        if (beforeWrite is not null)
+        {
+            await beforeWrite(cancellationToken).ConfigureAwait(false);
+        }
+
+        var stored = await versions.TryUpdateInputsAsync(
+            summary.Id,
+            new VersionAnnotations(changed.Name, changed.Notes, changed.Visibility == VersionVisibility.Archived),
+            new VersionInputs(changed.Lyrics, changed.Styles),
+            summary.Revision,
+            now,
+            cancellationToken).ConfigureAwait(false);
+        return stored ? InputsWrite.Stored : InputsWrite.Stale;
+    }
+
+    /// <summary>After a write matched nothing: the Version as it is now, as a conflict, or not found.</summary>
+    private async Task<VersionUpdateOutcome> StaleAsync(Guid id, CancellationToken cancellationToken) =>
+        await versions.FindDetailAsync(id, cancellationToken).ConfigureAwait(false) is { } changed
+            ? new VersionUpdateOutcome.Conflict(changed)
+            : new VersionUpdateOutcome.NotFound();
 
     /// <summary>The options for the source <paramref name="facts"/> describe. Stored numbers were valid when assigned, so each parses.</summary>
     private static IReadOnlyList<VersionNumberOption> Options(VersionNumberingFacts facts) =>

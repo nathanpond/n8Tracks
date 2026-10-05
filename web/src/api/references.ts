@@ -6,25 +6,34 @@ const RESOLVE_PATH = 'api/v1/resolve';
 
 /** What a stable ID or a shortcode names, as the resolve endpoint answers it. */
 export interface ResolvedReference {
-  entityType: 'song' | 'version';
+  entityType: 'song' | 'version' | 'generation';
   id: string;
   shortcode: string;
   status: string;
-  /** The Song a Version belongs to; absent for a Song. */
+  /** The Song a Version or Generation belongs to; absent for a Song. */
   song?: { id: string; shortcode: string };
+  /** The Version a Generation belongs to; absent otherwise. */
+  version?: { id: string; shortcode: string };
+}
+
+function isNamed(value: unknown): boolean {
+  return (
+    value === undefined ||
+    (isRecord(value) && typeof value.id === 'string' && typeof value.shortcode === 'string')
+  );
 }
 
 function isResolvedReference(value: unknown): value is ResolvedReference {
   return (
     isRecord(value) &&
-    (value.entityType === 'song' || value.entityType === 'version') &&
+    (value.entityType === 'song' ||
+      value.entityType === 'version' ||
+      value.entityType === 'generation') &&
     typeof value.id === 'string' &&
     typeof value.shortcode === 'string' &&
     typeof value.status === 'string' &&
-    (value.song === undefined ||
-      (isRecord(value.song) &&
-        typeof value.song.id === 'string' &&
-        typeof value.song.shortcode === 'string'))
+    isNamed(value.song) &&
+    isNamed(value.version)
   );
 }
 
@@ -56,13 +65,18 @@ export async function resolveReference(
 
 /**
  * The app page that shows what a reference resolved to: the Song's page, or its Song's page with
- * the Version selected. A path inside the app, for the router.
+ * the Version selected (a Generation's Version, until Generations have a page of their own). A
+ * path inside the app, for the router.
  */
 export function pageFor(resolved: ResolvedReference): string {
   if (resolved.entityType === 'song' || resolved.song === undefined) {
     return `/songs/${resolved.shortcode}`;
   }
-  const number = resolved.shortcode.slice(`${resolved.song.shortcode}-v`.length);
+  const version = resolved.entityType === 'generation' ? resolved.version : resolved;
+  if (version === undefined) {
+    return `/songs/${resolved.song.shortcode}`;
+  }
+  const number = version.shortcode.slice(`${resolved.song.shortcode}-v`.length);
   return `/songs/${resolved.song.shortcode}/v/${number}`;
 }
 

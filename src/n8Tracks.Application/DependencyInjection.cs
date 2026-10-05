@@ -31,6 +31,7 @@ public static class DependencyInjection
         services.AddScoped<SongService>();
         services.AddScoped<VersionService>();
         services.AddScoped<EditorRevisionService>();
+        services.AddScoped<GenerationService>();
         services.AddScoped<WorkflowStateService>();
         services.AddScoped<ReferenceResolver>();
 

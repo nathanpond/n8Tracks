@@ -52,6 +52,8 @@ public sealed class Program
     /// or startup fails unexpectedly, otherwise 0. With <c>reset-password</c> as the first of
     /// <paramref name="args"/> it starts nothing, runs that command on <paramref name="console"/>,
     /// and writes nothing to <paramref name="output"/> (see <see cref="ResetPasswordCommand"/>). With
+    /// <c>seed-generation</c> first, it starts nothing and runs that test-only command, which writes
+    /// the new Generation's shortcode to <paramref name="output"/> (see <see cref="SeedGenerationCommand"/>). With
     /// <c>--healthcheck</c> among them it starts nothing and reports on the app that is already
     /// running (see <see cref="HealthCheckCommand"/>). Those are the only arguments with a meaning:
     /// every other one is ignored, and none reaches the host's configuration.
@@ -69,6 +71,12 @@ public sealed class Program
         if (ResetPasswordCommand.IsRequested(args))
         {
             return await ResetPasswordCommand.RunAsync(args[1..], environment, console, cancellationToken).ConfigureAwait(false);
+        }
+
+        // A test-only command, refused unless test seeding is switched on: it never starts the server.
+        if (SeedGenerationCommand.IsRequested(args))
+        {
+            return await SeedGenerationCommand.RunAsync(args[1..], environment, output, console, cancellationToken).ConfigureAwait(false);
         }
 
         // One sink for the startup lines and the application log, so both have the same shape.

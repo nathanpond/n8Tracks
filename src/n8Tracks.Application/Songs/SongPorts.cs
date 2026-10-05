@@ -155,6 +155,7 @@ public sealed record VersionNumberingFacts(Guid SongId, string Number, IReadOnly
 /// <param name="CreatedUtc">When it was created.</param>
 /// <param name="UpdatedUtc">When it last changed.</param>
 /// <param name="Revision">The Version's own revision.</param>
+/// <param name="IsFrozen">Whether a Generation has ever been attached, so its creation inputs can no longer change.</param>
 public sealed record VersionSummary(
     Guid Id,
     Guid SongId,
@@ -166,7 +167,8 @@ public sealed record VersionSummary(
     bool Current,
     DateTimeOffset CreatedUtc,
     DateTimeOffset UpdatedUtc,
-    int Revision)
+    int Revision,
+    bool IsFrozen)
 {
     public string Shortcode => Shortcodes.ForVersion(SongShortcodeNumber, Number);
 }
@@ -187,6 +189,17 @@ public sealed record VersionDetail(VersionSummary Summary, string Lyrics, string
 /// <param name="Lyrics">Empty when there are none.</param>
 /// <param name="Styles">Empty when there are none.</param>
 public sealed record VersionInputs(string Lyrics, string Styles);
+
+/// <summary>A Generation with what its shortcode is worked out from.</summary>
+/// <param name="Generation">The Generation.</param>
+/// <param name="SongShortcodeNumber">The <c>n</c> of its Song's shortcode.</param>
+/// <param name="VersionNumber">Its Version's number.</param>
+public sealed record GenerationSummary(Generation Generation, long SongShortcodeNumber, string VersionNumber)
+{
+    public string Shortcode => Shortcodes.ForGeneration(SongShortcodeNumber, VersionNumber, Generation.Ordinal);
+
+    public string VersionShortcode => Shortcodes.ForVersion(SongShortcodeNumber, VersionNumber);
+}
 
 /// <summary>Where Versions are kept, beyond what <see cref="ISongStore"/> reads with their Songs.</summary>
 public interface IVersionStore
@@ -236,9 +249,9 @@ public interface IVersionStore
     /// <summary>
     /// Stores <paramref name="annotations"/> and <paramref name="inputs"/> on the Version if it is at
     /// <paramref name="revision"/>, raising the revision by one and setting its updated time, in one
-    /// statement. The one write of a Version's creation inputs after it is created: the caller decides
-    /// whether they may change. False when the Version is gone or at another revision, which leaves it
-    /// as it is.
+    /// statement. The one write of a Version's creation inputs after it is created: the caller decides,
+    /// through <see cref="SongVersion.WithInputs"/>, whether they may change. False when the Version
+    /// is gone, at another revision, or frozen, which leaves it as it is.
     /// </summary>
     Task<bool> TryUpdateInputsAsync(
         Guid id,
@@ -247,4 +260,21 @@ public interface IVersionStore
         int revision,
         DateTimeOffset updatedUtc,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Stores <paramref name="generation"/> and <paramref name="version"/>'s freeze (its frozen flag,
+    /// last Generation ordinal, revision, and updated time, nothing else) if the Version is still at
+    /// <paramref name="revision"/>. False when it is gone or at another revision, which stores nothing.
+    /// Only inside a transaction.
+    /// </summary>
+    Task<bool> TryAttachGenerationAsync(SongVersion version, Generation generation, int revision, CancellationToken cancellationToken);
+
+    /// <summary>The Generation with <paramref name="id"/>; null when there is none.</summary>
+    Task<GenerationSummary?> FindGenerationAsync(Guid id, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The ID of Generation <paramref name="ordinal"/> of the Version numbered <paramref name="number"/>
+    /// of the Song whose shortcode is <c>n8-<paramref name="songShortcodeNumber"/></c>; null when there is none.
+    /// </summary>
+    Task<Guid?> FindGenerationIdByShortcodeAsync(long songShortcodeNumber, string number, int ordinal, CancellationToken cancellationToken);
 }

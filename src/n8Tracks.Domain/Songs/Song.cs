@@ -80,41 +80,6 @@ public sealed record Song(
 }
 
 /// <summary>
-/// One Version of a Song: a set of inputs intended for, or used in, generation. (Named so it does not
-/// collide with <see cref="System.Version"/>.)
-/// </summary>
-/// <param name="Id">A UUIDv7.</param>
-/// <param name="SongId">The Song it belongs to.</param>
-/// <param name="Number">Its hierarchical display number, such as <c>1</c> or <c>2.1</c>; unique within the Song and never changed.</param>
-/// <param name="Name">An optional label, such as "Guitar experimentation".</param>
-/// <param name="Notes">Optional plain-text notes.</param>
-/// <param name="Visibility">Active or Archived: organisation only, never finality or deletion.</param>
-/// <param name="Lyrics">Empty when there are none.</param>
-/// <param name="Styles">Empty when there are none.</param>
-/// <param name="CreatedUtc">When it was created.</param>
-/// <param name="UpdatedUtc">When it last changed.</param>
-/// <param name="Revision">Starts at 1 and goes up by one on each edit.</param>
-public sealed record SongVersion(
-    Guid Id,
-    Guid SongId,
-    string Number,
-    string? Name,
-    string? Notes,
-    VersionVisibility Visibility,
-    string Lyrics,
-    string Styles,
-    DateTimeOffset CreatedUtc,
-    DateTimeOffset UpdatedUtc,
-    int Revision);
-
-/// <summary>Whether a Version is shown by default. Archiving changes nothing else about it.</summary>
-public enum VersionVisibility
-{
-    Active,
-    Archived,
-}
-
-/// <summary>
 /// Hierarchical Version numbers as text: dot-separated positive integers, such as <c>1</c>,
 /// <c>2.1</c>, or <c>1.3.2</c>. <see cref="VersionNumber"/> is the parsed form and holds the rules.
 /// </summary>

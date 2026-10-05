@@ -39,6 +39,13 @@ internal static class VersionsEndpoints
     /// <summary>Both options would be longer than a Version number may be.</summary>
     public const string TooDeepCode = "version_number_too_deep";
 
+    /// <summary>
+    /// The write would change a creation input (lyrics, styles) of a Version a Generation is attached
+    /// to. The answer carries <c>versionId</c> and <c>versionShortcode</c>, so a client can create a
+    /// new Version from it.
+    /// </summary>
+    public const string FrozenCode = "version_frozen";
+
     public const string SiblingKind = "sibling";
     public const string ChildKind = "child";
 
@@ -254,8 +261,9 @@ internal static class VersionsEndpoints
 
     /// <summary>
     /// 200 with the Version holding the snapshot's lyrics and styles; 409 <c>revision_conflict</c>
-    /// with <c>current</c> on a stale revision; 404 when there is no such Version or the Version has
-    /// no such snapshot. Nothing is changed unless the answer is 200.
+    /// with <c>current</c> on a stale revision; 409 <c>version_frozen</c> when a Generation is attached
+    /// and the text would change; 404 when there is no such Version or the Version has no such
+    /// snapshot. Nothing is changed unless the answer is 200.
     /// </summary>
     private static async Task<Results<Ok<VersionDetailResponse>, ProblemHttpResult>> RestoreAsync(
         CatalogReference reference,
@@ -299,6 +307,9 @@ internal static class VersionsEndpoints
 
             case RestoreOutcome.SnapshotNotFound:
                 return ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "There is no such snapshot of this Version.");
+
+            case RestoreOutcome.Frozen frozen:
+                return Frozen(context, frozen.Version);
 
             default:
                 throw new InvalidOperationException("Unknown restore outcome.");
@@ -440,8 +451,10 @@ internal static class VersionsEndpoints
 
     /// <summary>
     /// 200 with the Version as it is now (unchanged when the edit changed nothing); 409
-    /// <c>revision_conflict</c> with <c>current</c> on a stale revision; 422 <c>validation_failed</c>
-    /// on a wrong field; 404 when there is no such Version. Nothing is changed unless the answer is 200.
+    /// <c>revision_conflict</c> with <c>current</c> on a stale revision; 409 <c>version_frozen</c>
+    /// when a Generation is attached and the edit changes the lyrics or styles (sending them unchanged
+    /// is fine); 422 <c>validation_failed</c> on a wrong field; 404 when there is no such Version.
+    /// Nothing is changed unless the answer is 200.
     /// </summary>
     private static async Task<Results<Ok<VersionDetailResponse>, ProblemHttpResult>> UpdateAsync(
         CatalogReference reference,
@@ -503,10 +516,22 @@ internal static class VersionsEndpoints
             case VersionUpdateOutcome.NotFound:
                 return NoSuchVersion(context);
 
+            case VersionUpdateOutcome.Frozen frozen:
+                return Frozen(context, frozen.Version);
+
             default:
                 throw new InvalidOperationException("Unknown edit outcome.");
         }
     }
+
+    /// <summary>409 <c>version_frozen</c>: the Version's inputs cannot change; create a new Version from it.</summary>
+    private static ProblemHttpResult Frozen(HttpContext context, VersionDetail version) =>
+        ApiProblem.For(
+            context,
+            StatusCodes.Status409Conflict,
+            FrozenCode,
+            VersionFrozenException.DefaultMessage,
+            [new("versionId", version.Summary.Id), new("versionShortcode", version.Summary.Shortcode)]);
 
     /// <summary>404 <c>not_found</c>: the reference names no Version (an unknown one, or one of another kind).</summary>
     private static ProblemHttpResult NoSuchVersion(HttpContext context) =>
@@ -629,7 +654,10 @@ internal sealed record UpdateVersionRequest(JsonElement Name, JsonElement Notes,
 /// <summary>The set-current form: the ID or shortcode of one of the Song's Versions.</summary>
 internal sealed record SetCurrentVersionRequest(string? VersionId);
 
-/// <summary>A Version as the tree shows it, without its creation inputs. Times are UTC.</summary>
+/// <summary>
+/// A Version as the tree shows it, without its creation inputs. Times are UTC. <c>isFrozen</c> is
+/// true once a Generation has been attached: its lyrics and styles can no longer change.
+/// </summary>
 internal sealed record VersionResponse(
     Guid Id,
     Guid SongId,
@@ -641,7 +669,8 @@ internal sealed record VersionResponse(
     bool Current,
     DateTime CreatedAt,
     DateTime UpdatedAt,
-    int Revision)
+    int Revision,
+    bool IsFrozen)
 {
     public static VersionResponse From(VersionSummary version)
     {
@@ -658,7 +687,8 @@ internal sealed record VersionResponse(
             version.Current,
             version.CreatedUtc.UtcDateTime,
             version.UpdatedUtc.UtcDateTime,
-            version.Revision);
+            version.Revision,
+            version.IsFrozen);
     }
 }
 
@@ -678,6 +708,7 @@ internal sealed record VersionDetailResponse(
     DateTime CreatedAt,
     DateTime UpdatedAt,
     int Revision,
+    bool IsFrozen,
     string Lyrics,
     string Styles)
 {
@@ -698,6 +729,7 @@ internal sealed record VersionDetailResponse(
             summary.CreatedAt,
             summary.UpdatedAt,
             summary.Revision,
+            summary.IsFrozen,
             version.Lyrics,
             version.Styles);
     }
