@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using n8Tracks.Api.Configuration;
 using n8Tracks.Api.Tests.Health;
 using n8Tracks.Api.Tests.Persistence;
+using n8Tracks.Application.Backups;
 using n8Tracks.Application.Setup;
 using n8Tracks.Infrastructure.Security;
 
@@ -358,6 +359,32 @@ public sealed class SetupEndpointTests
             || name.StartsWith("Microsoft.Extensions.Identity", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task WhenTheBackupScheduleCannotBeWrittenNoAdministratorIsCreatedAndSetupStaysIncomplete()
+    {
+        // The schedule write fails after the administrator insert has gone through: the two are one
+        // transaction, so the insert is rolled back with it.
+        var schedules = new FailingScheduleWrites();
+        using var factory = new N8TracksApiFactory { TestServices = schedules.Register };
+        using var client = factory.CreateClient();
+
+        using (var response = await SetupApi.SubmitAsync(client, "owner", SetupApi.TestPassword, SetupApi.TestPassword))
+        {
+            Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        }
+
+        Assert.Equal(1, schedules.FailedWrites);
+        Assert.Equal("0", TestDatabase.Scalar(factory.DataPath, "SELECT count(*) FROM administrators;"));
+        Assert.Equal("0", TestDatabase.Scalar(factory.DataPath, "SELECT count(*) FROM settings WHERE key = 'backups.schedule';"));
+        Assert.False((await SetupApi.JsonAsync(await client.GetAsync(SetupApi.Status))).GetProperty("complete").GetBoolean());
+
+        // Complement: once the write works, the same submission completes setup with both stored.
+        schedules.Fail = false;
+        await SetupApi.CompleteAsync(client);
+        Assert.Equal("1", TestDatabase.Scalar(factory.DataPath, "SELECT count(*) FROM administrators;"));
+        Assert.Equal("1", TestDatabase.Scalar(factory.DataPath, "SELECT count(*) FROM settings WHERE key = 'backups.schedule';"));
+    }
+
     /// <summary>Setup checks a test controls; replaces the real ones.</summary>
     private sealed class FakeSetupChecks : ISetupChecks
     {
@@ -374,6 +401,53 @@ public sealed class SetupEndpointTests
         public Task<bool> IsDataPathWritableAsync(CancellationToken cancellationToken) => Task.FromResult(Writable);
 
         public Task<bool> IsMediaAvailableAsync(CancellationToken cancellationToken) => Task.FromResult(MediaAvailable);
+    }
+
+    /// <summary>
+    /// The real backup schedule store, on the request's own context, except that while
+    /// <see cref="Fail"/> is set writing the schedule throws.
+    /// </summary>
+    private sealed class FailingScheduleWrites
+    {
+        private int failedWrites;
+
+        public bool Fail { get; set; } = true;
+
+        public int FailedWrites => failedWrites;
+
+        public void Register(IServiceCollection services)
+        {
+            var real = services.Single(service => service.ServiceType == typeof(IBackupScheduleStore));
+            var realType = real.ImplementationType!;
+            services.Remove(real);
+            services.Add(new ServiceDescriptor(realType, realType, real.Lifetime));
+            services.Add(new ServiceDescriptor(
+                typeof(IBackupScheduleStore),
+                provider => new Store((IBackupScheduleStore)provider.GetRequiredService(realType), this),
+                real.Lifetime));
+        }
+
+        private sealed class Store(IBackupScheduleStore inner, FailingScheduleWrites owner) : IBackupScheduleStore
+        {
+            public Task<StoredBackupSchedule?> FindAsync(CancellationToken cancellationToken) => inner.FindAsync(cancellationToken);
+
+            public Task WriteAsync(StoredBackupSchedule schedule, CancellationToken cancellationToken)
+            {
+                if (!owner.Fail)
+                {
+                    return inner.WriteAsync(schedule, cancellationToken);
+                }
+
+                Interlocked.Increment(ref owner.failedWrites);
+                throw new InvalidOperationException("The test made the schedule write fail.");
+            }
+
+            public Task<bool> TryAddAsync(StoredBackupSchedule schedule, CancellationToken cancellationToken) => inner.TryAddAsync(schedule, cancellationToken);
+
+            public Task<BackupAttempt?> FindAttemptAsync(CancellationToken cancellationToken) => inner.FindAttemptAsync(cancellationToken);
+
+            public Task WriteAttemptAsync(BackupAttempt attempt, CancellationToken cancellationToken) => inner.WriteAttemptAsync(attempt, cancellationToken);
+        }
     }
 
     /// <summary>Hashes, then waits until the other submission has hashed too.</summary>

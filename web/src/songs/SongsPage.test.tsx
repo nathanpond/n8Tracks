@@ -239,6 +239,27 @@ describe('Songs', () => {
     expect(tooltip.textContent).toBe(LONG_CONCEPT);
   });
 
+  it('shows all of a long concept on hover', async () => {
+    backend({ list: () => jsonResponse(200, page([song(1, { concept: LONG_CONCEPT })])) });
+    const user = userEvent.setup();
+
+    renderApp('/songs');
+
+    await screen.findByRole('table', { name: 'Songs' });
+    const concept = within(row('n8-1')).getByText(/^A fast-paced song/);
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+
+    await user.hover(concept);
+    const tooltip = await screen.findByRole('tooltip');
+    expect(tooltip.textContent).toBe(LONG_CONCEPT);
+    expect(concept).not.toHaveFocus();
+
+    await user.unhover(concept);
+    await waitFor(() => {
+      expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+    });
+  });
+
   it('shows the updated time in the configured zone on focus', async () => {
     backend({ list: () => jsonResponse(200, page([song(1)])) });
 

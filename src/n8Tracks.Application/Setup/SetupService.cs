@@ -1,3 +1,4 @@
+using n8Tracks.Application.Auth;
 using n8Tracks.Application.Backups;
 
 namespace n8Tracks.Application.Setup;
@@ -61,6 +62,7 @@ public sealed class SetupService(
     ISetupChecks checks,
     IBackupStorage backupStorage,
     IBackupScheduleStore backupSchedule,
+    IExclusiveTransaction transaction,
     SetupCompletion completion,
     TimeProvider time)
 {
@@ -105,9 +107,10 @@ public sealed class SetupService(
 
     /// <summary>
     /// Completes setup by creating the administrator and storing the backup schedule, armed now: the
-    /// first scheduled backup is the next planned time, never one at once. Refused when setup is
-    /// already complete, when the submission is invalid, and when the data path cannot be written, in
-    /// that order.
+    /// first scheduled backup is the next planned time, never one at once. Both are written in one
+    /// transaction: if either fails, neither is stored and setup stays incomplete. Refused when setup
+    /// is already complete, when the submission is invalid, and when the data path cannot be written,
+    /// in that order.
     /// </summary>
     public async Task<SetupOutcome> CompleteAsync(SetupSubmission submission, CancellationToken cancellationToken)
     {
@@ -136,20 +139,28 @@ public sealed class SetupService(
             passwordHasher.Hash(submission.Password!),
             time.GetUtcNow());
 
-        // Whoever loses a race to create the administrator is told setup is already done: the store
-        // allows one administrator, and either way it now exists.
-        var created = await administrators.TryCreateAsync(administrator, cancellationToken).ConfigureAwait(false);
-        completion.MarkComplete();
+        var schedule = submission.BackupSchedule is null
+            ? Backups.BackupSchedule.Default
+            : Backups.BackupSchedule.Parse(submission.BackupSchedule).Schedule!;
 
-        if (created)
-        {
-            var schedule = submission.BackupSchedule is null
-                ? Backups.BackupSchedule.Default
-                : Backups.BackupSchedule.Parse(submission.BackupSchedule).Schedule!;
-            await backupSchedule.WriteAsync(
-                new StoredBackupSchedule(schedule, 1, administrator.CreatedUtc, administrator.CreatedUtc),
-                cancellationToken).ConfigureAwait(false);
-        }
+        // Whoever loses a race to create the administrator is told setup is already done: the store
+        // allows one administrator, and either way it now exists. The schedule goes in the same
+        // transaction, so setup is never complete without it.
+        var created = await transaction.RunAsync(
+            async token =>
+            {
+                if (!await administrators.TryCreateAsync(administrator, token).ConfigureAwait(false))
+                {
+                    return false;
+                }
+
+                await backupSchedule.WriteAsync(
+                    new StoredBackupSchedule(schedule, 1, administrator.CreatedUtc, administrator.CreatedUtc),
+                    token).ConfigureAwait(false);
+                return true;
+            },
+            cancellationToken).ConfigureAwait(false);
+        completion.MarkComplete();
 
         return created
             ? new SetupOutcome.Created(administrator.Id, administrator.Username)

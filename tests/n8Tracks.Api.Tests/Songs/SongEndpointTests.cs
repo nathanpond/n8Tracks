@@ -229,6 +229,31 @@ public sealed class SongEndpointTests
         Assert.Equal(["n8-4"], SongApi.Shortcodes(await SongApi.ListAsync(client, "pageSize=1")));
     }
 
+    [Fact]
+    public async Task AnArchivedSongStaysInTheListUnlessAStateFilterLeavesItOut()
+    {
+        var clock = new TestClock();
+        using var factory = SongApi.Host(clock);
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var archivedId = (await SongApi.CreateAsync(client, "Old song")).GetProperty("id").GetString()!;
+        clock.Advance(TimeSpan.FromMinutes(1));
+        await SongApi.CreateAsync(client, "New song");
+        clock.Advance(TimeSpan.FromMinutes(1));
+
+        // Archived through the API, as the Song page does.
+        var archived = await SongApi.EditAsync(client, archivedId, 1, $$"""{"stateId":"{{DefaultWorkflowStates.Archived.Id}}"}""");
+        Assert.Equal("Archived", archived.GetProperty("state").GetProperty("name").GetString());
+
+        // No state filter: every Song, the Archived one included.
+        var all = await SongApi.ListAsync(client);
+        Assert.Equal(["n8-1", "n8-2"], SongApi.Shortcodes(all));
+        Assert.Equal(2, all.GetProperty("total").GetInt32());
+        Assert.Equal("Archived", all.GetProperty("items")[0].GetProperty("state").GetProperty("name").GetString());
+
+        // Complement: a filter that names another state leaves it out.
+        Assert.Equal(["n8-2"], SongApi.Shortcodes(await SongApi.ListAsync(client, $"state={DefaultWorkflowStates.Idea.Id}")));
+    }
+
     [Theory]
     [InlineData("sort=created")]
     [InlineData("sort=Title")]

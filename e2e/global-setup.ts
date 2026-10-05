@@ -1,6 +1,6 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import {
   docker,
   errorText,
@@ -17,8 +17,10 @@ import { completeSetup } from './support/setup.ts';
 import {
   FRESH_NAME,
   FRESH_PORT,
+  NO_MEDIA_NAME,
   NO_MEDIA_PORT,
   NO_MEDIA_URL,
+  OUTPUT_DIR,
   ROOT_NAME,
   ROOT_PORT,
   ROOT_STORAGE_STATE,
@@ -27,6 +29,7 @@ import {
   SUB_PATH_PORT,
   SUB_PATH_STORAGE_STATE,
   SUB_PATH_URL,
+  STORAGE_STATE_DIR,
 } from './support/targets.ts';
 
 /** When set, each container's log is written to this directory before the container is removed. */
@@ -49,7 +52,7 @@ const targets: Target[] = [
     expectedStatus: 'healthy',
   },
   {
-    name: 'n8tracks-e2e-nomedia',
+    name: NO_MEDIA_NAME,
     port: NO_MEDIA_PORT,
     url: NO_MEDIA_URL,
     media: false,
@@ -77,6 +80,36 @@ async function requireImage(): Promise<void> {
         '"docker build -t n8tracks:dev ." or set N8TRACKS_E2E_IMAGE to an image that exists.',
       { cause: error },
     );
+  }
+}
+
+/** How long a local run's output folder (its traces) is kept: well past the end of any run. */
+const OLD_RUN_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Removes the output folders of earlier local runs (`test-results/run-<run ID>`) not written to for
+ * a day: each run has its own, so no run clears another's, and they would otherwise pile up. In CI
+ * the output folder is `test-results` itself and there is nothing to prune.
+ */
+async function pruneOldRuns(): Promise<void> {
+  const parent = dirname(OUTPUT_DIR);
+  if (!basename(OUTPUT_DIR).startsWith('run-')) {
+    return;
+  }
+  const entries = await readdir(parent, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    const folder = join(parent, entry.name);
+    if (!entry.isDirectory() || !entry.name.startsWith('run-') || folder === OUTPUT_DIR) {
+      continue;
+    }
+    // Another run pruning at the same moment may have removed it already.
+    const age = await stat(folder).then(
+      (info) => Date.now() - info.mtimeMs,
+      () => 0,
+    );
+    if (age > OLD_RUN_MS) {
+      await rm(folder, { recursive: true, force: true });
+    }
   }
 }
 
@@ -113,8 +146,10 @@ async function saveContainerLogs(directory: string): Promise<void> {
 export default async function globalSetup(): Promise<() => Promise<void>> {
   await requireDocker();
   await requireImage();
-  // Leftovers from an aborted run would hold the names and the ports.
+  // The names and ports are this run's own (support/targets.ts), so another run on the machine is
+  // never touched; leftovers of this run's ID (a rerun with N8TRACKS_E2E_RUN_ID set) would hold them.
   await removeContainers();
+  await pruneOldRuns();
   for (const port of [...targets.map((target) => target.port), FRESH_PORT]) {
     await requireFreePort(port);
   }
@@ -126,8 +161,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
     }
     await removeContainers();
     await rm(work, { recursive: true, force: true });
-    await rm(ROOT_STORAGE_STATE, { force: true });
-    await rm(SUB_PATH_STORAGE_STATE, { force: true });
+    await rm(STORAGE_STATE_DIR, { recursive: true, force: true });
   };
 
   try {

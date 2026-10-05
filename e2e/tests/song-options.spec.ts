@@ -3,6 +3,7 @@ import {
   expectAccessibleInLightAndDark,
   expectModalAccessibleInBothSchemes,
 } from '../support/a11y.ts';
+import { seedGeneration } from '../support/seeding.ts';
 import { ANTIFORGERY_HEADERS } from '../support/session.ts';
 
 interface Song {
@@ -204,5 +205,44 @@ test.describe('a Song’s options', () => {
       await page.request.get(api(`versions/${two?.id ?? ''}`))
     ).json()) as VersionDetail;
     expect(twoDetail.inputs).toEqual(one.inputs);
+  });
+
+  // #284: Mantine hides a disabled slider's thumb (display: none), which took the read-only
+  // sliders, their names, and their values out of the accessibility tree. jsdom applies no Mantine
+  // CSS, so only a real browser shows it.
+  test('on a frozen Version are read only and still announced with their values', async ({
+    page,
+  }, testInfo) => {
+    const api = await apiBase(page);
+    const created = await page.request.post(api('songs'), {
+      data: { title: `Frozen options ${String(Date.now())}` },
+      headers: ANTIFORGERY_HEADERS,
+    });
+    expect(created.status()).toBe(201);
+    const song = (await created.json()) as Song;
+    const written = await page.request.patch(api(`versions/${song.currentVersion.id}`), {
+      data: { lyrics: LYRICS, inputs: SET },
+      headers: { ...ANTIFORGERY_HEADERS, 'If-Match': '"1"' },
+    });
+    expect(written.status()).toBe(200);
+    await seedGeneration(testInfo, song.currentVersion.shortcode);
+
+    await page.goto(`./songs/${song.shortcode}/v/1`);
+    await expect(page.getByTestId('frozen-notice')).toBeVisible();
+    await openMoreOptions(page);
+
+    const sliders = [
+      { name: 'Weirdness', now: '80', text: '80 percent' },
+      { name: 'Custom duration', now: '120', text: '2 minutes' },
+      { name: 'Variety', now: '2', text: 'High' },
+    ];
+    for (const { name, now, text } of sliders) {
+      const slider = page.getByRole('slider', { name });
+      await expect(slider).toBeVisible();
+      await expect(slider).toHaveAttribute('aria-disabled', 'true');
+      await expect(slider).toHaveAttribute('aria-valuenow', now);
+      await expect(slider).toHaveAttribute('aria-valuetext', text);
+    }
+    await expectAccessibleInLightAndDark(page);
   });
 });

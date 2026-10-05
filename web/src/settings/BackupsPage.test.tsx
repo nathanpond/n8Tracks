@@ -225,6 +225,29 @@ describe('Settings → Backups', () => {
     expect(screen.queryByText(SHARED_DISK_TITLE)).not.toBeInTheDocument();
   });
 
+  it('labels each backup with the kind it was made as, safety backups included', async () => {
+    const safety: Backup = {
+      ...created,
+      name: 'n8tracks-backup-20261005-080000-v0.1.0.zip',
+      kind: 'safety',
+    };
+    const scheduled: Backup = {
+      ...created,
+      name: 'n8tracks-backup-20261005-030000-v0.1.0.zip',
+      kind: 'scheduled',
+    };
+    backend(list([safety, scheduled, valid, invalid]));
+
+    renderApp('/settings/backups');
+
+    await screen.findByRole('table', { name: 'Backups' });
+    const kindOf = (name: string) => within(row(name)).getByTestId('backup-kind').textContent;
+    expect(kindOf(safety.name)).toBe('Safety');
+    expect(kindOf(scheduled.name)).toBe('Scheduled');
+    expect(kindOf(valid.name)).toBe('Manual');
+    expect(kindOf(invalid.name)).toBe('Unknown kind');
+  });
+
   it('warns when backups go to the data folder, and says when there are none', async () => {
     backend(list([], { destination: 'data', sharesDiskWithData: true }));
 

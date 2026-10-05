@@ -441,17 +441,17 @@ npm test
 
 `npx playwright install chromium` downloads the browser and is needed once per Playwright version. Rebuild the image after changing `web/` or the backend: the suite tests the image, not the working tree.
 
-Each run starts three containers from the image, waits up to 60 seconds for them, and removes them and their temporary data directories afterwards:
+Each run starts three containers from the image, waits up to 60 seconds for them, and removes them and their temporary data directories afterwards. Each run has an ID of its own (random, or `N8TRACKS_E2E_RUN_ID` if set) that ends every container name, and asks the system for free host ports, so two runs on one machine never touch each other's containers:
 
-| Container | Host port | Is |
-| --- | --- | --- |
-| `n8tracks-e2e-root` | 18787 | healthy, at the root of the hostname |
-| `n8tracks-e2e-subpath` | 18788 | healthy, under the sub-path `/n8tracks` |
-| `n8tracks-e2e-nomedia` | 18789 | no media mounted, so it reports `degraded` |
+| Container | Is |
+| --- | --- |
+| `n8tracks-e2e-root-<run ID>` | healthy, at the root of the hostname |
+| `n8tracks-e2e-subpath-<run ID>` | healthy, under the sub-path `/n8tracks` |
+| `n8tracks-e2e-nomedia-<run ID>` | no media mounted, so it reports `degraded` |
 
-Every test runs twice, as the projects `root` and `subpath` (`npm test -- --project root` runs one). Containers left by an aborted run are removed first. The run stops at once with a message if Docker is not running, if the image does not exist, or if one of the ports is taken. `scripts/smoke-docker.sh` uses 18787 and 18788 as well, so do not run the two at the same time. Set `N8TRACKS_E2E_IMAGE` to test another image.
+Every test runs twice, as the projects `root` and `subpath` (`npm test -- --project root` runs one). The run stops at once with a message if Docker is not running, if the image does not exist, or if one of its ports is taken. A run that was killed outright can leave its containers behind; `docker ps --all --filter name=n8tracks-e2e-` lists them. Set `N8TRACKS_E2E_IMAGE` to test another image.
 
-A failed test keeps a trace under `e2e/test-results/`; the failure message has the `npx playwright show-trace` command for it. Tests do not retry locally and run in one worker.
+A failed test keeps a trace under `e2e/test-results/run-<run ID>/` (in CI, directly under `e2e/test-results/`), and a run removes other runs' folders there once they are a day old; the failure message has the `npx playwright show-trace` command for it. Tests do not retry locally and run in one worker.
 
 | Command (in `e2e/`) | Does |
 | --- | --- |

@@ -52,6 +52,20 @@ function spokenRange(field: CreateField, value: number): string {
   }
 }
 
+/**
+ * A read-only slider's thumb stays shown. Mantine hides a disabled slider's thumb (`display: none`),
+ * which takes the slider, its name, and its value out of the accessibility tree (#284); kept, it is
+ * announced as a disabled slider with its value, and drawn in the disabled colour.
+ */
+const READ_ONLY_SLIDER = {
+  thumb: {
+    display: 'flex',
+    cursor: 'not-allowed',
+    borderColor: 'var(--mantine-color-disabled-color)',
+    backgroundColor: 'var(--mantine-color-disabled)',
+  },
+};
+
 /** A control's heading: its label, the value shown beside it, and Suno's explanation under it. */
 function ControlLabel({
   id,
@@ -120,6 +134,7 @@ export function RangeControl({
         value={value}
         onChange={onChange}
         disabled={readOnly}
+        styles={readOnly ? READ_ONLY_SLIDER : undefined}
         label={(current) => formatRange(field, current)}
         thumbLabel={name}
         thumbValueText={(current) => spokenRange(field, current)}
@@ -160,6 +175,7 @@ export function StepsControl({ field, value, onChange, readOnly }: ControlProps<
           }
         }}
         disabled={readOnly}
+        styles={readOnly ? READ_ONLY_SLIDER : undefined}
         label={nameAt}
         thumbLabel={field.label}
         thumbValueText={nameAt}

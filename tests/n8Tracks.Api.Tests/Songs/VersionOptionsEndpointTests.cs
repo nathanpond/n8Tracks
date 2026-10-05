@@ -204,6 +204,30 @@ public sealed class VersionOptionsEndpointTests
     }
 
     [Fact]
+    public async Task EffectiveInputsIsReadOnlyAndSendingItChangesNothing()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var id = VersionId(await SongApi.CreateAsync(client, "Fixed"));
+        var before = await GetAsync(client, id);
+
+        // effectiveInputs is computed on read: a PATCH carrying it is answered, and nothing moves.
+        var sent = await EditAsync(client, id, """{"effectiveInputs":{"weirdness":1,"kind":"speech","title":"Other"}}""");
+        Assert.Equal(1, sent.GetProperty("revision").GetInt32());
+
+        var after = await GetAsync(client, id);
+        Assert.Equal(1, after.GetProperty("revision").GetInt32());
+        Assert.Equal(before.GetProperty("inputs").GetRawText(), after.GetProperty("inputs").GetRawText());
+        Assert.Equal(before.GetProperty("effectiveInputs").GetRawText(), after.GetProperty("effectiveInputs").GetRawText());
+        Assert.Equal(50, after.GetProperty("inputs").GetProperty("weirdness").GetInt32());
+
+        // Complement: the same option sent in inputs is stored.
+        var changed = await EditAsync(client, id, """{"inputs":{"weirdness":1}}""");
+        Assert.Equal(2, changed.GetProperty("revision").GetInt32());
+        Assert.Equal(1, changed.GetProperty("effectiveInputs").GetProperty("weirdness").GetInt32());
+    }
+
+    [Fact]
     public async Task CreatingAVersionFromAnotherCopiesEveryOptionIncludingTheOnesThatDoNotApply()
     {
         using var factory = SongApi.Host();

@@ -7,6 +7,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using n8Tracks.Api.Maintenance;
+using n8Tracks.Api.Problems;
 using n8Tracks.Api.Tests.Auth;
 using n8Tracks.Api.Tests.Setup;
 using n8Tracks.Api.Tests.Songs;
@@ -443,6 +444,134 @@ public sealed partial class RestoreRunTests
         Assert.False((await SetupApi.JsonAsync(status)).GetProperty("complete").GetBoolean());
     }
 
+    /// <summary>
+    /// A safety backup that cannot be taken (the writer fails) or fails its verification stops the
+    /// restore before anything is replaced: the outcome is failed at the safety-backup stage, every
+    /// row, asset, and session is as it was, no note of a restore is kept, no safety archive or
+    /// journal is left, and the API opens again to the same session.
+    /// </summary>
+    [Theory]
+    [InlineData("verification")]
+    [InlineData("write")]
+    public async Task ARestoreWhoseSafetyBackupFailsChangesNothingAndReopens(string failure)
+    {
+        MaintenanceMode? maintenance = null;
+        var hooks = new BackupTestHooks
+        {
+            // Only the safety backup runs while maintenance is active.
+            AfterDatabaseCopy = (_, _) => maintenance is { IsActive: true }
+                ? throw (failure == "verification"
+                    ? new BackupVerificationException("The backup failed verification (test hook).")
+                    : new IOException("The backup folder refused the archive (test hook)."))
+                : Task.CompletedTask,
+        };
+        using var factory = RestoreApi.Host(hooks);
+        maintenance = factory.Services.GetRequiredService<MaintenanceMode>();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        await SongApi.CreateAsync(client, "Kept");
+        var name = (await BackupApi.BackUpAsync(client)).GetProperty("name").GetString()!;
+        await SongApi.CreateAsync(client, "Written after the backup");
+        var assets = Path.Combine(factory.DataPath, "assets");
+        Directory.CreateDirectory(assets);
+        await File.WriteAllTextAsync(Path.Combine(assets, "kept.txt"), "kept");
+        var before = RestoreApi.Fingerprint(factory.DataPath);
+        var sessionsBefore = RestoreApi.Column(factory.DataPath, "SELECT id_hash FROM sessions ORDER BY id_hash;");
+
+        var ended = await RestoreApi.RestoreAsync(client, "data", name);
+
+        Assert.Equal("failed", ended.GetProperty("outcome").GetString());
+        Assert.Equal("safety-backup", ended.GetProperty("stage").GetString());
+        Assert.Equal(before, RestoreApi.Fingerprint(factory.DataPath));
+        Assert.Equal(sessionsBefore, RestoreApi.Column(factory.DataPath, "SELECT id_hash FROM sessions ORDER BY id_hash;"));
+        Assert.Equal(["kept.txt"], BackupApi.Names(assets));
+        Assert.Equal("kept", await File.ReadAllTextAsync(Path.Combine(assets, "kept.txt")));
+
+        // The same session goes on, and the instance is as it was.
+        Assert.Equal(["Kept", "Written after the backup"], Titles(await SongApi.ListAsync(client, "sort=title&direction=asc")));
+        var list = await BackupApi.ListAsync(client);
+        Assert.Equal(JsonValueKind.Null, list.GetProperty("lastRestore").ValueKind);
+        Assert.Equal([name], list.GetProperty("items").EnumerateArray().Select(static item => item.GetProperty("name").GetString()));
+        Assert.Equal([name], BackupApi.Names(Path.Combine(factory.DataPath, "backups")));
+        Assert.False(Directory.Exists(Path.Combine(factory.DataPath, LiveDataReplacement.PreviousFolderName)));
+        Assert.Empty(BackupApi.Names(Path.Combine(factory.DataPath, RestoreArchives.WorkFolderName)));
+        await SongApi.CreateAsync(client, "After the failed restore");
+    }
+
+    /// <summary>
+    /// The Backups page's note of the last restore is kept until another restore begins replacing
+    /// data: a start refused for its confirmation, a restore whose archive went before it began, and
+    /// one whose safety backup failed all leave the note exactly as it was; the next restore that
+    /// replaces data replaces the note.
+    /// </summary>
+    [Fact]
+    public async Task TheLastRestoreNoteOutlivesRefusedAndFailedRestoresAndTheNextRestoreReplacesIt()
+    {
+        MaintenanceMode? maintenance = null;
+        var failSafetyBackup = false;
+        var hooks = new BackupTestHooks
+        {
+            AfterDatabaseCopy = (_, _) => failSafetyBackup && maintenance is { IsActive: true }
+                ? throw new IOException("The backup folder refused the archive (test hook).")
+                : Task.CompletedTask,
+        };
+        using var factory = RestoreApi.Host(hooks);
+        maintenance = factory.Services.GetRequiredService<MaintenanceMode>();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        await SongApi.CreateAsync(client, "First");
+        var name = (await BackupApi.BackUpAsync(client)).GetProperty("name").GetString()!;
+        var upload = await BackupApi.DownloadAsync(client, "data", name);
+        Assert.Equal("succeeded", (await RestoreApi.RestoreAsync(client, "data", name)).GetProperty("outcome").GetString());
+        await SignInAgainAsync(client);
+        var note = (await BackupApi.ListAsync(client)).GetProperty("lastRestore");
+        Assert.Equal("succeeded", note.GetProperty("outcome").GetString());
+        Assert.Equal(name, note.GetProperty("archive").GetString());
+        var noted = note.GetRawText();
+
+        // Refused at the start: the confirmation does not match.
+        var validationId = (await RestoreApi.ValidAsync(await RestoreApi.ValidateAsync(client, "data", name))).GetProperty("validationId").GetString()!;
+        using (var refused = await RestoreApi.StartAsync(client, validationId, "restore"))
+        {
+            await SetupApi.ProblemAsync(refused, HttpStatusCode.UnprocessableEntity, ApiProblem.ValidationFailedCode);
+        }
+
+        Assert.Equal(noted, (await BackupApi.ListAsync(client)).GetProperty("lastRestore").GetRawText());
+
+        // Failed before replacing: the archive was gone when the restore began.
+        var gone = Path.Combine(factory.DataPath, "backups", "n8tracks-backup-20260101-120000-vgone.zip");
+        File.Copy(Path.Combine(factory.DataPath, "backups", name), gone);
+        var goneId = (await RestoreApi.ValidAsync(await RestoreApi.ValidateAsync(client, "data", Path.GetFileName(gone)))).GetProperty("validationId").GetString()!;
+        File.Delete(gone);
+        using (var started = await RestoreApi.StartAsync(client, goneId))
+        {
+            Assert.Equal(HttpStatusCode.Accepted, started.StatusCode);
+        }
+
+        var stopped = await RestoreApi.WaitForEndAsync(client);
+        Assert.Equal("failed", stopped.GetProperty("outcome").GetString());
+        Assert.Equal("validating", stopped.GetProperty("stage").GetString());
+        Assert.Equal(noted, (await BackupApi.ListAsync(client)).GetProperty("lastRestore").GetRawText());
+
+        // Failed before replacing: the safety backup could not be taken.
+        failSafetyBackup = true;
+        var failed = await RestoreApi.RestoreAsync(client, "data", name);
+        Assert.Equal("failed", failed.GetProperty("outcome").GetString());
+        Assert.Equal("safety-backup", failed.GetProperty("stage").GetString());
+        Assert.Equal(noted, (await BackupApi.ListAsync(client)).GetProperty("lastRestore").GetRawText());
+
+        // The next restore that replaces data replaces the note.
+        failSafetyBackup = false;
+        Assert.Equal("succeeded", (await RestoreApi.RestoreUploadAsync(client, upload)).GetProperty("outcome").GetString());
+        await SignInAgainAsync(client);
+        var replaced = (await BackupApi.ListAsync(client)).GetProperty("lastRestore");
+        Assert.NotEqual(noted, replaced.GetRawText());
+        Assert.Equal("succeeded", replaced.GetProperty("outcome").GetString());
+        Assert.Equal("backup.zip", replaced.GetProperty("archive").GetString());
+        Assert.NotEqual(
+            note.GetProperty("safetyBackup").GetProperty("name").GetString(),
+            replaced.GetProperty("safetyBackup").GetProperty("name").GetString());
+        Assert.True(replaced.GetProperty("finishedAt").GetDateTimeOffset() >= note.GetProperty("finishedAt").GetDateTimeOffset());
+    }
+
     /// <summary>Safety backups are kept to the newest three, but the one a restore reads is never deleted.</summary>
     [Fact]
     public async Task SafetyBackupsAreKeptToTheNewestThreeButNeverTheOneRestoredFrom()
@@ -480,6 +609,13 @@ public sealed partial class RestoreRunTests
         Assert.Contains(copies[0], safety);
         Assert.DoesNotContain(copies[1], safety);
         Assert.Contains(name, BackupApi.Names(folder));
+    }
+
+    /// <summary>Signs the client in again after a restore ended every session.</summary>
+    private static async Task SignInAgainAsync(HttpClient client)
+    {
+        using var signIn = await SessionApi.SignInAsync(client, SetupApi.TestUsername, SetupApi.TestPassword);
+        Assert.Equal(HttpStatusCode.Created, signIn.StatusCode);
     }
 
     private static Func<string, CancellationToken, Task> FailAt(string migration) =>

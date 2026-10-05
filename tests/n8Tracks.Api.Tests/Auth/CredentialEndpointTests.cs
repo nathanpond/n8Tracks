@@ -152,6 +152,31 @@ public sealed class CredentialEndpointTests
     }
 
     [Fact]
+    public async Task ATokenNeverExpiresLongAfterEverySessionLifetime()
+    {
+        var clock = new TestClock();
+        using var factory = TestEndpoints.Host(clock: clock);
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var (_, token) = await CreatedAsync(client, "test script", "api", ["catalog.read"]);
+        using (var first = await CredentialApi.SendAsync(client, HttpMethod.Get, TestEndpoints.Read, token))
+        {
+            Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        }
+
+        // A year on, long past the session lifetime, with no use in between.
+        clock.Advance(TimeSpan.FromDays(365));
+
+        // The session has lapsed, so a 200 below can only come from the token.
+        using (var session = await client.GetAsync(SessionApi.Session))
+        {
+            Assert.Equal(HttpStatusCode.Unauthorized, session.StatusCode);
+        }
+
+        using var used = await CredentialApi.SendAsync(client, HttpMethod.Get, TestEndpoints.Read, token);
+        Assert.Equal(HttpStatusCode.OK, used.StatusCode);
+    }
+
+    [Fact]
     public async Task RevokingOrRenamingAnUnknownCredentialIs404()
     {
         using var factory = new N8TracksApiFactory();
