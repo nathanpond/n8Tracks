@@ -185,7 +185,13 @@ describe('a Song’s options', () => {
         current: true,
         isFrozen: true,
         ...TEXT,
-        inputs: { ...DEFAULT_INPUTS, vocalGender: 'male', maxMode: true },
+        inputs: {
+          ...DEFAULT_INPUTS,
+          vocalGender: 'male',
+          maxMode: true,
+          durationMode: 'custom',
+          durationSeconds: 120,
+        },
       }),
     ]);
     const user = await openVersion();
@@ -196,15 +202,65 @@ describe('a Song’s options', () => {
     expect(screen.getByRole('textbox', { name: 'Exclude styles' })).toHaveAttribute('readonly');
     expect(screen.getByRole('switch', { name: 'Max Mode' })).toBeDisabled();
     expect(screen.getByRole('switch', { name: 'Personalize (My Taste)' })).toBeDisabled();
-    for (const name of ['Weirdness', 'Style Influence', 'Variety']) {
+    for (const name of ['Weirdness', 'Style Influence', 'Variety', 'Custom duration']) {
       expect(screen.getByRole('slider', { name })).toHaveAttribute('aria-disabled', 'true');
     }
+    const duration = screen.getByRole('slider', { name: 'Custom duration' });
+    expect(duration).toHaveAttribute('aria-valuenow', '120');
+    expect(duration).toHaveAttribute('tabindex', '-1');
 
     await user.click(screen.getByRole('radio', { name: 'Female' }));
+    const durationChoice = screen.getByRole('radiogroup', { name: 'Duration' });
+    await user.click(within(durationChoice).getByRole('radio', { name: 'Auto' }));
+    duration.focus();
+    await user.keyboard('{ArrowRight}{End}');
     await user.click(screen.getByRole('radio', { name: 'Simple' }));
     await user.type(screen.getByRole('textbox', { name: 'Song Title' }), 'more');
     expect(screen.getByRole('radio', { name: 'Male' })).toBeChecked();
+    expect(within(durationChoice).getByRole('radio', { name: 'Custom' })).toBeChecked();
+    expect(screen.getByRole('slider', { name: 'Custom duration' })).toHaveAttribute(
+      'aria-valuenow',
+      '120',
+    );
     expect(screen.getByRole('radio', { name: 'Advanced' })).toBeChecked();
+
+    // Nothing is sent once the autosave's pause has passed.
+    await new Promise((resolve) => setTimeout(resolve, 1_700));
+    expect(server.writes).toHaveLength(0);
+  });
+
+  it('are read only in Simple mode on a frozen Version', async () => {
+    const { server } = versionServer([
+      testVersion('1', {
+        current: true,
+        isFrozen: true,
+        ...TEXT,
+        inputs: {
+          ...DEFAULT_INPUTS,
+          songMode: 'simple',
+          simplePrompt: 'A night drive home',
+          simpleLyricsAdded: true,
+        },
+      }),
+    ]);
+    const user = await openVersion();
+
+    expect(screen.getByRole('radio', { name: 'Simple' })).toBeChecked();
+    const prompt = screen.getByRole('textbox', { name: 'Song description' });
+    expect(prompt).toHaveValue('A night drive home');
+    expect(prompt).toHaveAttribute('readonly');
+    expect(screen.getByRole('textbox', { name: 'Lyrics' })).toHaveAttribute(
+      'aria-readonly',
+      'true',
+    );
+    expect(screen.getByRole('combobox', { name: 'Model version' })).toBeDisabled();
+    // The sections cannot be added or removed.
+    expect(screen.queryByRole('button', { name: /lyrics|styles/ })).not.toBeInTheDocument();
+
+    await user.type(prompt, ' later');
+    await user.click(screen.getByRole('radio', { name: 'Advanced' }));
+    expect(prompt).toHaveValue('A night drive home');
+    expect(screen.getByRole('radio', { name: 'Simple' })).toBeChecked();
 
     // Nothing is sent once the autosave's pause has passed.
     await new Promise((resolve) => setTimeout(resolve, 1_700));
