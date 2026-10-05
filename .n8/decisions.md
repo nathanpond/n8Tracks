@@ -1723,3 +1723,6 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** Invariant check. Invariant 1: the new options are creation inputs on the existing guarded path (`WithInputs`, the one inputs write, the DB trigger covering `inputs`). The #69 guard changes each new key automatically: `InputValues.ChangedJson` now changes a null number. The migration re-creates the trigger, and a test proves it refuses afterwards. Invariant 6: `speechprompt`, `speechscript`, `speechtone`, and `sounddescription` are on the redaction list, with a sentinel test. No other invariant is touched.
   **Why:** I am recording why no invariant needs a conversation with the user.
   **Issue:** #113
+- **Decision:** Rule 3: `e2e/tests/songs.spec.ts` now expects the new Kind column ("Song") at cell 3 and the Version count at cell 4. The new column had moved the count one cell along. A separate follow-up commit records this entry, because the story commit was already pushed.
+  **Why:** The new column broke an existing test's locator, which the full e2e run caught. The test checks the same things plus the kind.
+  **Issue:** #113
