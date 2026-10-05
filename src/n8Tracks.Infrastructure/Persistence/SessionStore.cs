@@ -3,8 +3,23 @@ using n8Tracks.Application.Auth;
 
 namespace n8Tracks.Infrastructure.Persistence;
 
-internal sealed class SessionStore(N8TracksDbContext context) : ISessionStore, ISignInAccounts
+internal sealed class SessionStore(N8TracksDbContext context) : ISessionStore, ISignInAccounts, IAccountPasswords
 {
+    public Task<SignInAccount?> FindByIdAsync(Guid administratorId, CancellationToken cancellationToken) =>
+        context.Administrators.AsNoTracking()
+            .Where(administrator => administrator.Id == administratorId)
+            .Select(administrator => new SignInAccount(administrator.Id, administrator.Username, administrator.PasswordHash))
+            .SingleOrDefaultAsync(cancellationToken);
+
+    public Task SetPasswordHashAsync(Guid administratorId, string passwordHash, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(passwordHash);
+
+        return context.Administrators
+            .Where(administrator => administrator.Id == administratorId)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(administrator => administrator.PasswordHash, passwordHash), cancellationToken);
+    }
+
     public async Task<SignInAccount?> FindByUsernameKeyAsync(string usernameKey, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(usernameKey);
@@ -64,6 +79,11 @@ internal sealed class SessionStore(N8TracksDbContext context) : ISessionStore, I
 
     public Task<int> DeleteAllAsync(Guid administratorId, CancellationToken cancellationToken) =>
         context.Sessions.Where(session => session.AdministratorId == administratorId).ExecuteDeleteAsync(cancellationToken);
+
+    public Task<int> DeleteAllExceptAsync(Guid administratorId, string keepIdHash, CancellationToken cancellationToken) =>
+        context.Sessions
+            .Where(session => session.AdministratorId == administratorId && session.IdHash != keepIdHash)
+            .ExecuteDeleteAsync(cancellationToken);
 
     public Task<int> DeleteUnusedSinceAsync(DateTimeOffset lastUsedBeforeUtc, CancellationToken cancellationToken)
     {

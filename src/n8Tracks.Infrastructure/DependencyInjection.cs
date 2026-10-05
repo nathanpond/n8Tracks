@@ -36,6 +36,7 @@ public static class DependencyInjection
         services.AddScoped<SessionStore>();
         services.AddScoped<ISessionStore>(static provider => provider.GetRequiredService<SessionStore>());
         services.AddScoped<ISignInAccounts>(static provider => provider.GetRequiredService<SessionStore>());
+        services.AddScoped<IAccountPasswords>(static provider => provider.GetRequiredService<SessionStore>());
         services.AddScoped<ISignInThrottleStore, SignInThrottleStore>();
         services.AddScoped<IExclusiveTransaction, ExclusiveTransaction>();
 

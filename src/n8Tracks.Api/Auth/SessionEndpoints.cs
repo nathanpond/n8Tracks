@@ -37,12 +37,15 @@ internal static class SessionEndpoints
         endpoints.MapGet(SessionPath, GetSession)
             .WithName("GetSession")
             .WithSummary("The current session: who is signed in and when the session ends unless it is used.")
+            .SessionOnly()
             .Produces<SessionResponse>(StatusCodes.Status200OK)
-            .ProducesProblem(StatusCodes.Status401Unauthorized);
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden);
 
         endpoints.MapDelete(SessionPath, SignOutAsync)
             .WithName("SignOut")
             .WithSummary("Ends the current session.")
+            .SessionOnly()
             .Produces(StatusCodes.Status204NoContent)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden);
@@ -50,6 +53,7 @@ internal static class SessionEndpoints
         endpoints.MapDelete(SessionsPath, SignOutEverywhereAsync)
             .WithName("SignOutEverywhere")
             .WithSummary("Ends every session of the administrator, in every browser.")
+            .SessionOnly()
             .Produces(StatusCodes.Status204NoContent)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden);
@@ -132,7 +136,7 @@ internal static class SessionEndpoints
     /// and a message giving the time to retry as a clock time in the configured time zone, rounded
     /// up to the minute so that it is never too early.
     /// </summary>
-    private static ProblemHttpResult Throttled(HttpContext context, DateTimeOffset retryAtUtc, TimeZoneInfo timeZone, DateTimeOffset nowUtc)
+    internal static ProblemHttpResult Throttled(HttpContext context, DateTimeOffset retryAtUtc, TimeZoneInfo timeZone, DateTimeOffset nowUtc)
     {
         var seconds = Math.Max(1, (long)Math.Ceiling((retryAtUtc - nowUtc).TotalSeconds));
         context.Response.Headers[HeaderNames.RetryAfter] = seconds.ToString(CultureInfo.InvariantCulture);
@@ -156,7 +160,7 @@ internal static class SessionEndpoints
         return problem;
     }
 
-    private static void NoStore(HttpContext context) => context.Response.Headers[HeaderNames.CacheControl] = "no-store";
+    internal static void NoStore(HttpContext context) => context.Response.Headers[HeaderNames.CacheControl] = "no-store";
 }
 
 /// <summary>The sign-in form. Either field may be missing; the username's case and surrounding whitespace do not matter.</summary>

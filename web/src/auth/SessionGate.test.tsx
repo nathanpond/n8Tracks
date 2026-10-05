@@ -89,7 +89,7 @@ describe('without a session', () => {
 
     expect(await screen.findByRole('heading', { level: 2, name: 'Sign in' })).toBeVisible();
     expect(screen.getByTestId('location')).toHaveTextContent(expected);
-    expect(screen.queryByRole('heading', { name: 'Health' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('navigation', { name: 'Main' })).not.toBeInTheDocument();
     expect(screen.queryByTestId('user-menu')).not.toBeInTheDocument();
   });
 
@@ -115,11 +115,12 @@ describe('without a session', () => {
       return jsonResponse(201, signedInSession);
     });
 
-    renderAt('/library/deep/link');
+    renderAt('/settings/system?tab=health');
     await fillAndSubmit('  Owner ', 'correct horse battery');
 
-    expect(await screen.findByRole('heading', { name: 'Health' })).toBeVisible();
-    expect(screen.getByTestId('location')).toHaveTextContent(/^\/library\/deep\/link$/);
+    expect(await screen.findByRole('heading', { name: 'System' })).toBeVisible();
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/settings\/system\?tab=health$/);
+    expect(screen.getByRole('navigation', { name: 'Main' })).toBeVisible();
     expect(screen.getByTestId('user-menu')).toHaveTextContent('owner');
 
     const call = mock.mock.calls.find(([input, init]) => isSignIn(input, init));
@@ -150,8 +151,9 @@ describe('without a session', () => {
     renderAt(`/sign-in?returnTo=${encodeURIComponent(returnTo)}`);
     await fillAndSubmit('owner', 'correct horse battery');
 
-    expect(await screen.findByRole('heading', { name: 'Health' })).toBeVisible();
-    expect(screen.getByTestId('location')).toHaveTextContent(/^\/$/);
+    // The app root, which is the Songs page.
+    expect(await screen.findByRole('heading', { name: 'Songs' })).toBeVisible();
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/songs$/);
   });
 
   it('shows one generic message for a wrong username or password and clears the password', async () => {
@@ -225,7 +227,7 @@ describe('with a session', () => {
 
     renderAt('/sign-in?returnTo=%2Fsongs');
 
-    expect(await screen.findByRole('heading', { name: 'Health' })).toBeVisible();
+    expect(await screen.findByRole('heading', { name: 'Songs' })).toBeVisible();
     expect(screen.getByTestId('location')).toHaveTextContent(/^\/songs$/);
   });
 
@@ -269,7 +271,7 @@ describe('with a session', () => {
     await waitFor(() => {
       expect(screen.getByTestId('user-menu')).toBeVisible();
     });
-    expect(screen.getByRole('heading', { name: 'Health' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Songs' })).toBeVisible();
   });
 });
 

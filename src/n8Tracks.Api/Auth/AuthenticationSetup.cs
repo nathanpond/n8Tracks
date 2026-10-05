@@ -41,7 +41,7 @@ internal static class AuthenticationSetup
     }
 
     /// <summary>
-    /// Authentication, authorization, and the anti-forgery check. Call it on the app itself (so the
+    /// The session-only check, authentication, authorization, and the anti-forgery check. Call it on the app itself (so the
     /// host does not add its own authentication in front of the path base), inside the path base,
     /// and after the setup gate (before setup there is no one to sign in).
     /// </summary>
@@ -50,6 +50,7 @@ internal static class AuthenticationSetup
         ArgumentNullException.ThrowIfNull(app);
 
         return app
+            .UseMiddleware<SessionOnlyMiddleware>()
             .UseAuthentication()
             .UseAuthorization()
             .UseMiddleware<AntiforgeryHeaderMiddleware>();

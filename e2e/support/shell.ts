@@ -35,9 +35,12 @@ export async function chooseColour(page: Page, choice: ColourChoice): Promise<vo
   await expect(colourOption(page, choice)).toBeChecked();
 }
 
-/** Opens the shell page of the project's container (root or sub-path, from the base URL). */
+/**
+ * Opens Settings → System, the page that shows the version and health (it replaced the M0 shell
+ * page), on the project's container (root or sub-path, from the base URL).
+ */
 export async function openShell(page: Page): Promise<void> {
-  await page.goto('./');
+  await page.goto('./settings/system');
 }
 
 /**

@@ -53,7 +53,7 @@ describe('the setup gate', () => {
 
       expect(await screen.findByRole('heading', { name: 'Set up n8Tracks' })).toBeVisible();
       expect(screen.getByTestId('location')).toHaveTextContent('/setup');
-      expect(screen.queryByRole('heading', { name: 'Health' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('navigation', { name: 'Main' })).not.toBeInTheDocument();
     },
   );
 
@@ -73,8 +73,9 @@ describe('the setup gate', () => {
 
     renderAt('/setup');
 
-    expect(await screen.findByRole('heading', { name: 'Health' })).toBeVisible();
-    expect(screen.getByTestId('location')).toHaveTextContent(/^\/$/);
+    // The app root, which is the Songs page.
+    expect(await screen.findByRole('heading', { name: 'Songs' })).toBeVisible();
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/songs$/);
     expect(screen.queryByRole('heading', { name: 'Set up n8Tracks' })).not.toBeInTheDocument();
   });
 
@@ -83,7 +84,7 @@ describe('the setup gate', () => {
 
     renderAt('/somewhere/deep');
 
-    expect(await screen.findByRole('heading', { name: 'Health' })).toBeVisible();
+    expect(await screen.findByRole('heading', { name: 'Page not found' })).toBeVisible();
     expect(screen.getByTestId('location')).toHaveTextContent('/somewhere/deep');
   });
 

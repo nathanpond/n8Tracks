@@ -51,9 +51,9 @@ test.describe('signing in and out', { tag: '@root-only' }, () => {
 
   test('signs in, survives a restart, and signs out everywhere', async ({ browser, page }) => {
     // 1. Open the app in a private window: the sign-in page appears, remembering where it was going.
-    await page.goto(`${FRESH_URL}library/deep/link`);
+    await page.goto(`${FRESH_URL}settings/system`);
     await expect(signInHeading(page)).toBeVisible();
-    await expect(page).toHaveURL(`${FRESH_URL}sign-in?returnTo=%2Flibrary%2Fdeep%2Flink`);
+    await expect(page).toHaveURL(`${FRESH_URL}sign-in?returnTo=%2Fsettings%2Fsystem`);
     await expect(userMenu(page)).toBeHidden();
     await expectAccessibleInLightAndDark(page);
 
@@ -65,8 +65,8 @@ test.describe('signing in and out', { tag: '@root-only' }, () => {
 
     // 3. Sign in (the username in another case): the app, at the page asked for, with the username in a menu.
     await signInWithTheForm(page, TEST_ADMIN.username.toUpperCase(), TEST_ADMIN.password);
-    await expect(page.getByRole('heading', { level: 2, name: 'Health' })).toBeVisible();
-    await expect(page).toHaveURL(`${FRESH_URL}library/deep/link`);
+    await expect(page.getByRole('heading', { level: 2, name: 'System' })).toBeVisible();
+    await expect(page).toHaveURL(`${FRESH_URL}settings/system`);
     await expect(userMenu(page)).toHaveText(TEST_ADMIN.username);
     await expectAccessibleInLightAndDark(page);
 
@@ -86,7 +86,7 @@ test.describe('signing in and out', { tag: '@root-only' }, () => {
     await waitForHealth(fresh);
     await page.reload();
     await expect(userMenu(page)).toHaveText(TEST_ADMIN.username);
-    await expect(page.getByRole('heading', { level: 2, name: 'Health' })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 2, name: 'System' })).toBeVisible();
 
     // A second browser, signed in too.
     const second = await browser.newContext({ storageState: { cookies: [], origins: [] } });

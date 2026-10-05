@@ -35,19 +35,24 @@ function FailureNotice({ failure }: { failure: Failure }) {
 }
 
 /**
- * The sign-in form. A wrong username or password gets one generic message; after too many, the
- * API's message says when to try again. On success `onSignedIn` gets the new session.
+ * The sign-in form, on the sign-in page and in the prompt that appears when a session ends. A wrong
+ * username or password gets one generic message; after too many, the API's message says when to
+ * try again. On success `onSignedIn` gets the new session.
  */
-export function SignInPage({ onSignedIn }: { onSignedIn: (session: Session) => void }) {
-  const [values, setValues] = useState<Record<Field, string>>({ username: '', password: '' });
+export function SignInForm({
+  onSignedIn,
+  initialUsername = '',
+}: {
+  onSignedIn: (session: Session) => void;
+  initialUsername?: string;
+}) {
+  const [values, setValues] = useState<Record<Field, string>>({
+    username: initialUsername,
+    password: '',
+  });
   const [errors, setErrors] = useState<Partial<Record<Field, string>>>({});
   const [failure, setFailure] = useState<Failure | undefined>();
   const [submitting, setSubmitting] = useState(false);
-  const heading = useRef<HTMLHeadingElement>(null);
-
-  useEffect(() => {
-    heading.current?.focus();
-  }, []);
 
   const change = (field: Field) => (event: { currentTarget: HTMLInputElement }) => {
     const { value } = event.currentTarget;
@@ -83,46 +88,59 @@ export function SignInPage({ onSignedIn }: { onSignedIn: (session: Session) => v
   };
 
   return (
+    <form
+      noValidate
+      aria-label="Sign in"
+      onSubmit={(event) => {
+        void submit(event);
+      }}
+    >
+      <Stack gap="sm">
+        <TextInput
+          label="Username"
+          name="username"
+          autoComplete="username"
+          required
+          value={values.username}
+          onChange={change('username')}
+          error={errors.username}
+        />
+        <PasswordInput
+          label="Password"
+          name="password"
+          autoComplete="current-password"
+          required
+          value={values.password}
+          onChange={change('password')}
+          error={errors.password}
+          // PasswordInput marks its error only visually; screen readers need the attribute.
+          aria-invalid={errors.password !== undefined}
+        />
+        <div role="alert">{failure && <FailureNotice failure={failure} />}</div>
+        <div>
+          <Button type="submit" loading={submitting}>
+            Sign in
+          </Button>
+        </div>
+      </Stack>
+    </form>
+  );
+}
+
+/** The sign-in page: its heading, focused on arrival, and the form. */
+export function SignInPage({ onSignedIn }: { onSignedIn: (session: Session) => void }) {
+  const heading = useRef<HTMLHeadingElement>(null);
+
+  useEffect(() => {
+    heading.current?.focus();
+  }, []);
+
+  return (
     <Stack gap="sm">
       <Title order={2} ref={heading} tabIndex={-1}>
         Sign in
       </Title>
-      <form
-        noValidate
-        aria-label="Sign in"
-        onSubmit={(event) => {
-          void submit(event);
-        }}
-      >
-        <Stack gap="sm">
-          <TextInput
-            label="Username"
-            name="username"
-            autoComplete="username"
-            required
-            value={values.username}
-            onChange={change('username')}
-            error={errors.username}
-          />
-          <PasswordInput
-            label="Password"
-            name="password"
-            autoComplete="current-password"
-            required
-            value={values.password}
-            onChange={change('password')}
-            error={errors.password}
-            // PasswordInput marks its error only visually; screen readers need the attribute.
-            aria-invalid={errors.password !== undefined}
-          />
-          <div role="alert">{failure && <FailureNotice failure={failure} />}</div>
-          <div>
-            <Button type="submit" loading={submitting}>
-              Sign in
-            </Button>
-          </div>
-        </Stack>
-      </form>
+      <SignInForm onSignedIn={onSignedIn} />
     </Stack>
   );
 }

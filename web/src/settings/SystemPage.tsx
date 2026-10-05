@@ -1,6 +1,6 @@
 import { Button, Group, Loader, Paper, Stack, Table, Text, Title } from '@mantine/core';
 import { useHealth, type HealthReport } from '../api/health';
-import { StatusBadge } from './StatusBadge';
+import { StatusBadge } from '../components/StatusBadge';
 
 const componentLabels: Record<string, string> = {
   application: 'Application',
@@ -71,12 +71,12 @@ function HealthReportView({ report, stale }: { report: HealthReport; stale: bool
 }
 
 /** Version and live health: loading on first load, then data that refreshes in place. */
-export function HealthPanel() {
+function HealthPanel() {
   const { state, retry } = useHealth();
 
   return (
     <Stack component="section" gap="md" aria-labelledby="health-heading">
-      <Title order={2} id="health-heading">
+      <Title order={3} id="health-heading">
         Health
       </Title>
       <div aria-live="polite">
@@ -96,6 +96,16 @@ export function HealthPanel() {
         )}
         {state.phase === 'ready' && <HealthReportView report={state.report} stale={state.stale} />}
       </div>
+    </Stack>
+  );
+}
+
+/** Settings → System: the application version and each health component's status, kept live. */
+export function SystemPage() {
+  return (
+    <Stack gap="lg">
+      <Title order={2}>System</Title>
+      <HealthPanel />
     </Stack>
   );
 }

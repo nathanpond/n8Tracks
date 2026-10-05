@@ -101,18 +101,22 @@ test.describe('first-run setup', { tag: '@root-only' }, () => {
     expect(await isSetupComplete(FRESH_URL)).toBe(true);
     await expectAccessibleInLightAndDark(page);
     await signInWithTheForm(page, OWNER.username, OWNER.password);
-    await expect(page.getByRole('heading', { level: 2, name: 'Health' })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 2, name: 'Songs' })).toBeVisible();
     await expect(userMenu(page)).toHaveText(OWNER.username);
-    await expect(page).toHaveURL(FRESH_URL);
+    await expect(page).toHaveURL(`${FRESH_URL}songs`);
     await expectAccessibleInLightAndDark(page);
 
     // 5. Reload any URL: the wizard does not come back.
-    for (const path of ['setup', 'library/deep/link', '']) {
+    for (const [path, heading] of [
+      ['setup', 'Songs'],
+      ['settings/system', 'System'],
+      ['', 'Songs'],
+    ] as const) {
       await page.goto(`${FRESH_URL}${path}`);
-      await expect(page.getByRole('heading', { level: 2, name: 'Health' })).toBeVisible();
+      await expect(page.getByRole('heading', { level: 2, name: heading })).toBeVisible();
       await expect(page.getByRole('heading', { name: 'Set up n8Tracks' })).toBeHidden();
     }
-    await expect(page).toHaveURL(FRESH_URL);
+    await expect(page).toHaveURL(`${FRESH_URL}songs`);
 
     // And the API: setup is refused, the other endpoint is no longer 503 but asks for a session.
     const again = await request.post(`${FRESH_URL}api/v1/setup`, {

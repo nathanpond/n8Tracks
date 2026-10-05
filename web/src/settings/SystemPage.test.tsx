@@ -1,7 +1,7 @@
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import { HEALTH_REFRESH_MS, HEALTH_TIMEOUT_MS } from './api/health';
+import { HEALTH_REFRESH_MS, HEALTH_TIMEOUT_MS } from '../api/health';
 import {
   degradedReport,
   healthyReport,
@@ -11,8 +11,13 @@ import {
   setVisibility,
   stubFetch,
   unhealthyReport,
-} from './test/helpers';
-import { COLOR_SCHEME_STORAGE_KEY } from './theme/theme';
+} from '../test/helpers';
+import { COLOR_SCHEME_STORAGE_KEY } from '../theme/theme';
+
+/** The System page: the health data the M0 shell page showed, now under Settings. */
+function renderSystem() {
+  return renderApp('/settings/system');
+}
 
 const LOADING = 'Loading health information…';
 const UNAVAILABLE = 'Health information is unavailable.';
@@ -33,11 +38,11 @@ async function advance(milliseconds: number): Promise<void> {
   });
 }
 
-describe('the shell', () => {
+describe('Settings → System', () => {
   it('shows the product name and a loading state on first load', async () => {
     stubFetch().mockImplementation(neverAnswers);
 
-    renderApp();
+    renderSystem();
 
     // The setup gate answers first; then the shell starts loading health.
     expect(await screen.findByText(LOADING)).toBeVisible();
@@ -48,7 +53,7 @@ describe('the shell', () => {
   it('shows the version, the overall status, and each component when healthy', async () => {
     stubFetch().mockResolvedValue(jsonResponse(200, healthyReport));
 
-    renderApp();
+    renderSystem();
 
     expect(await screen.findByTestId('version')).toHaveTextContent('0.1.0');
     expect(screen.getByTestId('overall-status')).toHaveTextContent('healthy');
@@ -66,7 +71,7 @@ describe('the shell', () => {
   it('shows a degraded report', async () => {
     stubFetch().mockResolvedValue(jsonResponse(200, degradedReport));
 
-    renderApp();
+    renderSystem();
 
     await waitFor(() => {
       expect(screen.getByTestId('overall-status')).toHaveTextContent('degraded');
@@ -78,7 +83,7 @@ describe('the shell', () => {
   it('shows a 503 with a valid body as health data', async () => {
     stubFetch().mockResolvedValue(jsonResponse(503, unhealthyReport));
 
-    renderApp();
+    renderSystem();
 
     await waitFor(() => {
       expect(screen.getByTestId('overall-status')).toHaveTextContent('unhealthy');
@@ -90,7 +95,7 @@ describe('the shell', () => {
   it('shows a 500 with a valid-looking body as the error state, not as data', async () => {
     stubFetch().mockResolvedValue(jsonResponse(500, healthyReport));
 
-    renderApp();
+    renderSystem();
 
     expect(await screen.findByText(UNAVAILABLE)).toBeVisible();
     expect(screen.queryByTestId('version')).not.toBeInTheDocument();
@@ -102,7 +107,7 @@ describe('the shell', () => {
   ])('shows %s as the error state', async (_name, response) => {
     stubFetch().mockResolvedValue(response());
 
-    renderApp();
+    renderSystem();
 
     expect(await screen.findByText(UNAVAILABLE)).toBeVisible();
     expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible();
@@ -114,7 +119,7 @@ describe('the shell', () => {
     fetchMock.mockResolvedValue(jsonResponse(200, healthyReport));
     const user = userEvent.setup();
 
-    renderApp();
+    renderSystem();
 
     expect(await screen.findByText(UNAVAILABLE)).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Retry' }));
@@ -128,7 +133,7 @@ describe('the shell', () => {
     vi.useFakeTimers();
     stubFetch().mockImplementation(neverAnswers);
 
-    renderApp();
+    renderSystem();
     // Let the setup gate answer, so the health request is the only one the clock is running for.
     await advance(0);
     expect(screen.getByText(LOADING)).toBeVisible();
@@ -147,7 +152,7 @@ describe('the shell', () => {
       }),
     );
 
-    renderApp();
+    renderSystem();
 
     await screen.findByTestId('version');
     const rows = within(screen.getByRole('table', { name: 'Components' })).getAllByRole('row');
@@ -165,7 +170,7 @@ describe('refreshing', () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(200, healthyReport));
     fetchMock.mockImplementationOnce(neverAnswers);
 
-    renderApp();
+    renderSystem();
     await advance(0);
     expect(screen.getByTestId('overall-status')).toHaveTextContent('healthy');
 
@@ -185,7 +190,7 @@ describe('refreshing', () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(200, healthyReport));
     fetchMock.mockResolvedValueOnce(jsonResponse(200, degradedReport));
 
-    renderApp();
+    renderSystem();
     await advance(0);
     await advance(HEALTH_REFRESH_MS);
 
@@ -200,7 +205,7 @@ describe('refreshing', () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(500, {}));
     fetchMock.mockResolvedValueOnce(jsonResponse(200, healthyReport));
 
-    renderApp();
+    renderSystem();
     await advance(0);
     expect(screen.queryByText(STALE)).not.toBeInTheDocument();
 
@@ -225,7 +230,7 @@ describe('refreshing', () => {
     fetchMock.mockImplementation(() => Promise.resolve(jsonResponse(200, healthyReport)));
 
     try {
-      renderApp();
+      renderSystem();
       await advance(0);
       expect(fetchMock).toHaveBeenCalledTimes(1);
 
@@ -259,7 +264,7 @@ describe('the colour scheme', () => {
   it('is auto by default', () => {
     stubFetch().mockImplementation(neverAnswers);
 
-    renderApp();
+    renderSystem();
 
     expect(option('Auto')).toBeChecked();
     expect(option('Light')).not.toBeChecked();
@@ -271,7 +276,7 @@ describe('the colour scheme', () => {
     stubFetch().mockImplementation(neverAnswers);
     const user = userEvent.setup();
 
-    const firstVisit = renderApp();
+    const firstVisit = renderSystem();
     await screen.findByText(LOADING);
     await user.click(option('Dark'));
 
@@ -281,7 +286,7 @@ describe('the colour scheme', () => {
 
     firstVisit.unmount();
     document.documentElement.removeAttribute('data-mantine-color-scheme');
-    renderApp();
+    renderSystem();
 
     expect(option('Dark')).toBeChecked();
     expect(option('Auto')).not.toBeChecked();

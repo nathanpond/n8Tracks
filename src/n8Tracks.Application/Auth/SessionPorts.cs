@@ -37,6 +37,9 @@ public interface ISessionStore
     /// <summary>Ends every session of the administrator and returns how many there were.</summary>
     Task<int> DeleteAllAsync(Guid administratorId, CancellationToken cancellationToken);
 
+    /// <summary>Ends every session of the administrator but <paramref name="keepIdHash"/>, and returns how many were ended.</summary>
+    Task<int> DeleteAllExceptAsync(Guid administratorId, string keepIdHash, CancellationToken cancellationToken);
+
     /// <summary>Deletes every session last used before <paramref name="lastUsedBeforeUtc"/> and returns how many.</summary>
     Task<int> DeleteUnusedSinceAsync(DateTimeOffset lastUsedBeforeUtc, CancellationToken cancellationToken);
 }

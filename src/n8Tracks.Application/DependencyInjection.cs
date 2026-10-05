@@ -17,6 +17,7 @@ public static class DependencyInjection
         services.AddScoped<SetupService>();
         services.AddSingleton<DummyPasswordHash>();
         services.AddScoped<SessionService>();
+        services.AddScoped<AccountService>();
 
         return services;
     }

@@ -19,7 +19,7 @@ const VERSION = readFileSync(new URL('../../VERSION', import.meta.url), 'utf8').
 const STALE_NOTICE = 'This information may be out of date: the last refresh failed.';
 const HEALTH_REFRESH_MS = 30_000;
 
-test.describe('the shell page', () => {
+test.describe('the System page (the M0 shell page)', () => {
   test('loads and shows the product name, the version, and a healthy report', async ({ page }) => {
     await openShell(page);
 
@@ -91,7 +91,7 @@ test.describe('the shell page', () => {
     async ({ page }) => {
       // The project's session is for the root container; this one needs its own.
       await signInThroughApi(page.request, NO_MEDIA_URL);
-      await page.goto(NO_MEDIA_URL);
+      await page.goto(`${NO_MEDIA_URL}settings/system`);
 
       await expect(overallStatus(page)).toHaveText('degraded');
       await expect(componentRows(page)).toHaveCount(4);
@@ -180,9 +180,14 @@ test.describe('the shell page', () => {
 
 test.describe('the sub-path', { tag: '@subpath-only' }, () => {
   test('serves the page under the sub-path and nothing outside it', async ({ page, request }) => {
-    await openShell(page);
-    expect(new URL(page.url()).pathname).toBe(`${SUB_PATH}/`);
+    // The app root is the Songs page, under the sub-path.
+    await page.goto('./');
+    await expect(page.getByRole('heading', { level: 2, name: 'Songs' })).toBeVisible();
+    expect(new URL(page.url()).pathname).toBe(`${SUB_PATH}/songs`);
     await expect(page.locator('base')).toHaveAttribute('href', `${SUB_PATH}/`);
+
+    await openShell(page);
+    expect(new URL(page.url()).pathname).toBe(`${SUB_PATH}/settings/system`);
     await expect(overallStatus(page)).toHaveText('healthy');
 
     // A base path the app ignored would answer here, at the root, and the suite must not pass.

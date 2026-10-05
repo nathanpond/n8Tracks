@@ -185,6 +185,7 @@ public sealed class Program
             app.MapHealth();
             app.MapSetup();
             app.MapSessions();
+            app.MapAccount();
             app.MapApiNotFound();
 
             // After the endpoints, and inside the path base: the frontend answers only what no endpoint does.

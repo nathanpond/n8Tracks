@@ -224,7 +224,7 @@ and have the proxy forward the path unchanged to port 8787. The app then answers
 
 ### Signing in, HTTP, and HTTPS
 
-Everything but the sign-in page, first-run setup, and `/health` needs the administrator to be signed in. A session lasts 30 days from its last use and survives restarts; "Sign out everywhere" in the user menu ends every session. After five wrong passwords within 15 minutes, sign-in is refused for 15 minutes.
+Everything but the sign-in page, first-run setup, and `/health` needs the administrator to be signed in. A session lasts 30 days from its last use and survives restarts; "Sign out everywhere" in the user menu ends every session. After five wrong passwords within 15 minutes, sign-in is refused for 15 minutes. Settings → Account changes the password (the current one is required, and wrong guesses count toward the same limit); changing it ends every other session. If a session ends while a page is open, a sign-in prompt appears over the page, and once you sign in again the action you took goes through and the page stays as it was.
 
 The app works the same over plain HTTP on a trusted network and behind an HTTPS reverse proxy. Have the proxy set `X-Forwarded-Proto` (and `X-Forwarded-Host` if it changes the host name): the session cookie is then marked `Secure`. The app takes these headers from any address, because the address of your proxy is not known in advance, so **publish port 8787 only to the proxy or to a trusted network**, never directly to the internet: anyone who can reach the port can claim the request came over HTTPS.
 
@@ -354,7 +354,7 @@ rm -rf src/n8Tracks.Api/wwwroot && cp -R web/dist src/n8Tracks.Api/wwwroot
 
 The build uses relative URLs and resolves every request against the page's base URL, so the same `web/dist` works at the root of a hostname and under a sub-path.
 
-The shell page shows the version and the health report, refreshed every 30 seconds while the tab is visible. The colour scheme (light, dark, or auto, which follows the system) is chosen in the header and remembered in the browser. Every colour pair that carries text is in `web/src/theme/palette.ts`, and a test holds each to WCAG 2.1 AA contrast.
+Settings → System shows the version and the health report, refreshed every 30 seconds while the tab is visible. The colour scheme (light, dark, or auto, which follows the system) is chosen in the header and remembered in the browser. Every colour pair that carries text is in `web/src/theme/palette.ts`, and a test holds each to WCAG 2.1 AA contrast.
 
 ## End-to-end tests
 

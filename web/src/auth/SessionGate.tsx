@@ -4,6 +4,7 @@ import { Navigate, Route, Routes, useLocation, useSearchParams } from 'react-rou
 import { signOut, useSession, type Session } from '../api/session';
 import { PlainPage } from '../components/PlainPage';
 import { RETURN_TO_PARAMETER, SIGN_IN_ROUTE, safeReturnTo, signInPath } from './returnTo';
+import { ReauthPrompt } from './ReauthPrompt';
 import { SessionContext, type SessionContextValue } from './sessionContext';
 import { SignInPage } from './SignInPage';
 
@@ -21,11 +22,13 @@ function ReturnAfterSignIn() {
 
 function SignedIn({
   session,
+  onSignedIn,
   onSignedOut,
   onUnsure,
   children,
 }: {
   session: Session;
+  onSignedIn: (session: Session) => void;
   onSignedOut: () => void;
   onUnsure: () => void;
   children: ReactNode;
@@ -57,6 +60,7 @@ function SignedIn({
         <Route path={SIGN_IN_ROUTE} element={<ReturnAfterSignIn />} />
         <Route path="*" element={children} />
       </Routes>
+      <ReauthPrompt username={session.username} onSignedIn={onSignedIn} onSignOut={onSignedOut} />
     </SessionContext.Provider>
   );
 }
@@ -64,8 +68,9 @@ function SignedIn({
 /**
  * Asks the API who is signed in before any page of the app renders. Without a session every page
  * redirects to the sign-in page (with `returnTo`); with one, `children` (the app's routes) render
- * and the sign-in page sends the user on. The shell itself is served to anyone: only API data is
- * protected, by the server.
+ * and the sign-in page sends the user on. While signed in, a session that ends under a request
+ * brings up the in-place sign-in prompt instead (see {@link ReauthPrompt}). The shell itself is
+ * served to anyone: only API data is protected, by the server.
  */
 export function SessionGate({ children }: { children: ReactNode }) {
   const { state, refresh, signedIn, signedOut } = useSession();
@@ -107,7 +112,12 @@ export function SessionGate({ children }: { children: ReactNode }) {
       );
     case 'signedIn':
       return (
-        <SignedIn session={state.session} onSignedOut={signedOut} onUnsure={refresh}>
+        <SignedIn
+          session={state.session}
+          onSignedIn={signedIn}
+          onSignedOut={signedOut}
+          onUnsure={refresh}
+        >
           {children}
         </SignedIn>
       );
