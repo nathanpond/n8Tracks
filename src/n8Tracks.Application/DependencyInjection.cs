@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using n8Tracks.Application.Auth;
 using n8Tracks.Application.Backups;
+using n8Tracks.Application.Catalog;
 using n8Tracks.Application.Credentials;
 using n8Tracks.Application.Jobs;
 using n8Tracks.Application.Maintenance;
@@ -34,6 +35,7 @@ public static class DependencyInjection
         services.AddScoped<ModelCatalogService>();
         services.AddScoped<ISunoModelList>(static provider => provider.GetRequiredService<ModelCatalogService>());
         services.AddScoped<VersionDefaultsService>();
+        services.AddScoped<GenreService>();
         services.AddScoped<SongService>();
         services.AddScoped<VersionService>();
         services.AddScoped<EditorRevisionService>();

@@ -358,6 +358,7 @@ public sealed class VersionImmutabilityGuardTests
         ["PATCH /api/v1/workflow-states/{id:guid}"] = "workflow states",
         ["PUT /api/v1/workflow-states/order"] = "workflow states",
         ["POST /api/v1/suno/models"] = "adds a model to the list; a Version's model is not touched",
+        ["POST /api/v1/genres"] = "adds a Genre to the list; assigning it to a Song is the Song's PATCH, which touches no Version",
         ["PUT /api/v1/suno/models/order"] = "reorders the model list; a Version's model is not touched",
         ["DELETE /api/v1/workflow-states/{id:guid}"] = "workflow states; moves Songs to another state, never a Version",
         ["POST /api/v1/backups"] = "queues a backup: reads the database, writes only an archive file",

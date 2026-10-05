@@ -13,6 +13,32 @@ import { ConflictDialog, type ConflictRow } from './ConflictDialog';
 /** A compared field and how the conflict dialog shows a value of it. */
 export interface SavedField<T> extends ComparedField<T> {
   show: (value: FieldValue) => ReactNode;
+  /**
+   * For a field the client can reconcile itself (a set, such as a Song's Genres): the value to
+   * save instead of `mine` once the record turns out to have moved from `base` to `current`. A
+   * field that has it is never a reason to show the dialog while it is being saved.
+   */
+  merge?: (base: FieldValue, current: FieldValue, mine: FieldValue) => FieldValue;
+}
+
+/** `edit` with each field that can merge reapplied onto `current` ({@link SavedField.merge}). */
+function mergeEdit<T>(
+  fields: readonly SavedField<T>[],
+  base: T,
+  current: T,
+  edit: Readonly<Record<string, FieldValue>>,
+): Readonly<Record<string, FieldValue>> {
+  const merged = { ...edit };
+  for (const field of fields) {
+    if (field.merge !== undefined && Object.hasOwn(edit, field.key)) {
+      merged[field.key] = field.merge(
+        field.read(base),
+        field.read(current),
+        edit[field.key] ?? null,
+      );
+    }
+  }
+  return merged;
 }
 
 /** How a save ended, once any conflict has been resolved. */
@@ -41,6 +67,10 @@ const SILENT_RETRIES = 5;
  * compared field differs (or only saved fields, already holding the values being saved) it is
  * retried on the current revision without asking; otherwise the dialog asks the user, and asks
  * again if reapplying meets another change. Render `dialog` once in the page.
+ *
+ * A field with `merge` (a set the user adds to or takes from) is reconciled instead: the user's
+ * change is reapplied onto the current value and retried without asking, unless another field
+ * differs too.
  *
  * `refuses`, when given, is asked first about a stale save's current record: a reason it returns
  * ends the save as failed for that reason, the current record taken in, without the dialog (a
@@ -88,8 +118,9 @@ export function useRevisionedSave<T extends Revisioned>({
   }, [onRecord, fields, send, refuses]);
 
   const saveFields = useCallback(
-    (edit: Readonly<Record<string, FieldValue>>) =>
+    (initial: Readonly<Record<string, FieldValue>>) =>
       enqueue(async (): Promise<SaveOutcome> => {
+        let edit = initial;
         const adopt = (next: T) => {
           latest.current = next;
           options.current.onRecord(next);
@@ -113,7 +144,16 @@ export function useRevisionedSave<T extends Revisioned>({
             return { kind: 'failed', reason: refusal };
           }
           const { fields } = options.current;
-          const differing = differingFields(fields, base, current, edit);
+          edit = mergeEdit(fields, base, current, edit);
+          const merged = edit;
+          const differing = differingFields(
+            fields.filter(
+              (field) => field.merge === undefined || !Object.hasOwn(merged, field.key),
+            ),
+            base,
+            current,
+            edit,
+          );
           if (differing.length === 0) {
             silent += 1;
             if (silent > SILENT_RETRIES) {

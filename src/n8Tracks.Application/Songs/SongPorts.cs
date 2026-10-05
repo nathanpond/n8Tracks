@@ -1,3 +1,4 @@
+using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
 
 namespace n8Tracks.Application.Songs;
@@ -13,6 +14,8 @@ namespace n8Tracks.Application.Songs;
 /// <param name="CreatedUtc">When it was created.</param>
 /// <param name="UpdatedUtc">When it or any of its Versions last changed.</param>
 /// <param name="Revision">The Song's own revision.</param>
+/// <param name="Notes">The Song's free-form notes; null when there are none.</param>
+/// <param name="Genres">Its Genres, alphabetically.</param>
 public sealed record SongSummary(
     Guid Id,
     long ShortcodeNumber,
@@ -23,7 +26,9 @@ public sealed record SongSummary(
     int VersionCount,
     DateTimeOffset CreatedUtc,
     DateTimeOffset UpdatedUtc,
-    int Revision)
+    int Revision,
+    string? Notes,
+    IReadOnlyList<Genre> Genres)
 {
     public string Shortcode => Shortcodes.ForSong(ShortcodeNumber);
 }
@@ -53,7 +58,9 @@ public enum SongSort
 /// <param name="StateIds">Only Songs in one of these states; every Song when empty.</param>
 /// <param name="Page">From 1.</param>
 /// <param name="PageSize">1 to <see cref="SongService.MaximumPageSize"/>.</param>
-public sealed record SongListQuery(SongSort Sort, bool Descending, IReadOnlyList<Guid> StateIds, int Page, int PageSize);
+/// <param name="GenreIds">Only Songs with any of these Genres (or, with <paramref name="NoGenre"/>, with none); every Song when both are empty.</param>
+/// <param name="NoGenre">Also Songs with no Genre at all.</param>
+public sealed record SongListQuery(SongSort Sort, bool Descending, IReadOnlyList<Guid> StateIds, int Page, int PageSize, IReadOnlyList<Guid> GenreIds, bool NoGenre);
 
 /// <summary>A page of Songs and how many match in all.</summary>
 public sealed record SongPage(IReadOnlyList<SongSummary> Items, int Page, int PageSize, int Total);
@@ -62,7 +69,8 @@ public sealed record SongPage(IReadOnlyList<SongSummary> Items, int Page, int Pa
 /// <param name="Title">Trimmed.</param>
 /// <param name="Concept">Normalised; null when there is none.</param>
 /// <param name="StateId">The ID of a workflow state, hidden or not.</param>
-public sealed record SongDetails(string Title, string? Concept, Guid StateId);
+/// <param name="Notes">Normalised; null when there are none.</param>
+public sealed record SongDetails(string Title, string? Concept, Guid StateId, string? Notes);
 
 /// <summary>Where Songs and their Versions are kept.</summary>
 public interface ISongStore

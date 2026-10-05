@@ -56,6 +56,10 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
 
     public DbSet<GenerationRecord> Generations => Set<GenerationRecord>();
 
+    public DbSet<GenreRecord> Genres => Set<GenreRecord>();
+
+    public DbSet<SongGenreRecord> SongGenres => Set<SongGenreRecord>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         ArgumentNullException.ThrowIfNull(configurationBuilder);
@@ -278,6 +282,33 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
             generation.HasOne<SongRecord>()
                 .WithMany()
                 .HasForeignKey(record => record.SongId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<GenreRecord>(genre =>
+        {
+            genre.ToTable("genres", static table => table.HasCheckConstraint("ck_genres_name", "length(name) > 0"));
+            genre.HasKey(record => record.Id);
+            genre.HasIndex(record => record.NameKey).IsUnique();
+        });
+
+        modelBuilder.Entity<SongGenreRecord>(songGenre =>
+        {
+            songGenre.ToTable("song_genres");
+
+            // A Song has a Genre at most once.
+            songGenre.HasKey(record => new { record.SongId, record.GenreId });
+            songGenre.HasIndex(record => record.GenreId);
+
+            // A Song's Genres go with it; a Genre on any Song is never removed by accident (removing
+            // or merging Genres is #84's, which moves each affected Song's revision on).
+            songGenre.HasOne<SongRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.SongId)
+                .OnDelete(DeleteBehavior.Cascade);
+            songGenre.HasOne<GenreRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.GenreId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
     }

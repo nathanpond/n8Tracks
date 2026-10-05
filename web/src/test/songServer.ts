@@ -1,4 +1,5 @@
-import type { Song, WorkflowState } from '../api/songs';
+import type { Genre } from '../api/genres';
+import type { Song, SongGenre, WorkflowState } from '../api/songs';
 import { healthyReport, jsonResponse, requestPath, stubFetch } from './helpers';
 
 export const IDEA: WorkflowState = {
@@ -48,7 +49,26 @@ export const baseSong: Song = {
   createdAt: '2026-10-01T09:00:00Z',
   updatedAt: '2026-10-01T09:00:00Z',
   revision: 1,
+  notes: null,
+  genres: [],
 };
+
+export const FOLK: Genre = {
+  id: '0199b1a0-0000-7000-a000-000000000001',
+  name: 'Folk',
+  songCount: 3,
+};
+export const INDIE_POP: Genre = {
+  id: '0199b1a0-0000-7000-a000-000000000002',
+  name: 'Indie Pop',
+  songCount: 1,
+};
+export const ROCK: Genre = {
+  id: '0199b1a0-0000-7000-a000-000000000003',
+  name: 'Rock',
+  songCount: 0,
+};
+export const GENRES = [FOLK, INDIE_POP, ROCK];
 
 /** One PATCH the fake server received: the revision it named and the edit it sent. */
 export interface ReceivedEdit {
@@ -58,12 +78,17 @@ export interface ReceivedEdit {
 
 /**
  * A fake n8Tracks holding one Song, answering as the API does: GET it, and PATCH it against its
- * revision (409 `revision_conflict` with `current` when stale). A test changes `server.song` to
- * play another tab, or sets `server.next` to answer the next PATCH some other way.
+ * revision (409 `revision_conflict` with `current` when stale; its notes and Genres too, 422 on a
+ * Genre not in `server.genres`), and the Genre list: GET it, and POST a name (the existing Genre
+ * when the name matches ignoring case, otherwise a new one). A test changes `server.song` to play
+ * another tab, or sets `server.next` to answer the next PATCH some other way.
  */
-export function songServer(song: Song = baseSong) {
+export function songServer(song: Song = baseSong, genres: Genre[] = GENRES) {
   const server = {
     song: { ...song },
+    genres: genres.map((genre) => ({ ...genre })),
+    /** Every name POSTed to the Genre list, in order. */
+    created: [] as string[],
     edits: [] as ReceivedEdit[],
     /** When set, answers the next PATCH (once) instead of the fake API. */
     next: undefined as (() => Response | Promise<Response>) | undefined,
@@ -81,6 +106,31 @@ export function songServer(song: Song = baseSong) {
     }
     if (path.endsWith('/api/v1/workflow-states')) {
       return jsonResponse(200, { items: STATES });
+    }
+    if (path.endsWith('/api/v1/genres')) {
+      if ((init?.method ?? 'GET') === 'GET') {
+        return jsonResponse(200, {
+          items: [...server.genres].sort((a, b) => a.name.localeCompare(b.name)),
+        });
+      }
+      const { name } = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as {
+        name: string;
+      };
+      server.created.push(name);
+      const normalised = name.trim().replace(/\s+/g, ' ');
+      const existing = server.genres.find(
+        (genre) => genre.name.toUpperCase() === normalised.toUpperCase(),
+      );
+      if (existing) {
+        return jsonResponse(200, existing);
+      }
+      const genre: Genre = {
+        id: `0199b1a0-0000-7000-a000-${String(900 + server.genres.length).padStart(12, '0')}`,
+        name: normalised,
+        songCount: 0,
+      };
+      server.genres.push(genre);
+      return jsonResponse(201, genre);
     }
     const match = /\/api\/v1\/songs\/([^/]+)$/.exec(path);
     if (match?.[1] === undefined) {
@@ -125,10 +175,31 @@ export function songServer(song: Song = baseSong) {
       }
       updated.state = { id: state.id, name: state.name, colour: state.colour };
     }
+    if ('notes' in body) {
+      updated.notes = typeof body.notes === 'string' ? body.notes : null;
+    }
+    if (Array.isArray(body.genreIds)) {
+      const chosen: SongGenre[] = [];
+      for (const id of body.genreIds) {
+        const genre = server.genres.find((candidate) => candidate.id === id);
+        if (!genre) {
+          return jsonResponse(422, {
+            code: 'validation_failed',
+            errors: { genreIds: ['A Genre chosen no longer exists. Choose again.'] },
+          });
+        }
+        if (!chosen.some((other) => other.id === genre.id)) {
+          chosen.push({ id: genre.id, name: genre.name });
+        }
+      }
+      updated.genres = chosen.sort((a, b) => a.name.localeCompare(b.name));
+    }
     const changed =
       updated.title !== server.song.title ||
       updated.concept !== server.song.concept ||
-      updated.state.id !== server.song.state.id;
+      updated.state.id !== server.song.state.id ||
+      updated.notes !== server.song.notes ||
+      JSON.stringify(updated.genres) !== JSON.stringify(server.song.genres);
     server.song = changed ? { ...updated, revision: server.song.revision + 1 } : server.song;
     return jsonResponse(200, server.song);
   });

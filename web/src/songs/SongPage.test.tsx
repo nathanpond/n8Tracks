@@ -29,6 +29,8 @@ const song: Song = {
   createdAt: '2026-10-01T09:00:00Z',
   updatedAt: '2026-10-01T09:00:00Z',
   revision: 1,
+  notes: null,
+  genres: [],
 };
 
 /** The query string a request was made with, whatever form `fetch` was given it in. */

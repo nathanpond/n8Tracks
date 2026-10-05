@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using n8Tracks.Application.Songs;
+using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
 
 namespace n8Tracks.Infrastructure.Persistence;
@@ -89,6 +90,17 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
             songs = songs.Where(song => stateIds.Contains(song.WorkflowStateId));
         }
 
+        if (query.GenreIds.Count > 0 || query.NoGenre)
+        {
+            // Any of the Genres, or (when asked) none at all.
+            var genreIds = query.GenreIds.ToList();
+            var noGenre = query.NoGenre;
+            var songGenres = context.SongGenres;
+            songs = songs.Where(song =>
+                songGenres.Any(songGenre => songGenre.SongId == song.Id && genreIds.Contains(songGenre.GenreId))
+                || (noGenre && !songGenres.Any(songGenre => songGenre.SongId == song.Id)));
+        }
+
         var total = await songs.CountAsync(cancellationToken).ConfigureAwait(false);
 
         // Times are fixed-width UTC text, so text order is time order; the shortcode number breaks ties.
@@ -115,6 +127,7 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
         var title = details.Title;
         var titleSortKey = TitleSortKey(title);
         var concept = details.Concept;
+        var notes = details.Notes;
         var stateId = details.StateId;
         var updated = UtcText.From(updatedUtc);
 
@@ -126,6 +139,7 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
                     .SetProperty(song => song.Title, title)
                     .SetProperty(song => song.TitleSortKey, titleSortKey)
                     .SetProperty(song => song.Concept, concept)
+                    .SetProperty(song => song.Notes, notes)
                     .SetProperty(song => song.WorkflowStateId, stateId)
                     .SetProperty(song => song.UpdatedUtc, updated)
                     .SetProperty(song => song.Revision, song => song.Revision + 1),
@@ -138,7 +152,7 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
     /// <summary>What titles are ordered by: NFC-normalised and lower-cased invariantly, so case is ignored.</summary>
     internal static string TitleSortKey(string title) => title.Normalize(System.Text.NormalizationForm.FormC).ToLowerInvariant();
 
-    /// <summary>The summaries of <paramref name="records"/>, in their order, with their states, current Versions, and Version counts.</summary>
+    /// <summary>The summaries of <paramref name="records"/>, in their order, with their states, current Versions, Version counts, and Genres.</summary>
     private async Task<List<SongSummary>> SummariesAsync(List<SongRecord> records, CancellationToken cancellationToken)
     {
         if (records.Count == 0)
@@ -163,6 +177,18 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
             .Select(static group => new { SongId = group.Key, Count = group.Count() })
             .ToDictionaryAsync(static group => group.SongId, static group => group.Count, cancellationToken)
             .ConfigureAwait(false);
+        var genres = (await context.SongGenres.AsNoTracking()
+            .Where(songGenre => songIds.Contains(songGenre.SongId))
+            .Join(context.Genres, static songGenre => songGenre.GenreId, static genre => genre.Id, static (songGenre, genre) => new { songGenre.SongId, genre.Id, genre.Name, genre.NameKey })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false))
+            .GroupBy(static genre => genre.SongId)
+            .ToDictionary(
+                static group => group.Key,
+                static group => (IReadOnlyList<Genre>)[.. group
+                    .OrderBy(static genre => genre.NameKey, StringComparer.Ordinal)
+                    .ThenBy(static genre => genre.Name, StringComparer.Ordinal)
+                    .Select(static genre => new Genre(genre.Id, genre.Name))]);
 
         return [.. records.Select(song =>
         {
@@ -180,7 +206,9 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
                 counts.GetValueOrDefault(song.Id),
                 UtcText.Parse(song.CreatedUtc),
                 UtcText.Parse(song.UpdatedUtc),
-                song.Revision);
+                song.Revision,
+                song.Notes,
+                genres.GetValueOrDefault(song.Id) ?? []);
         })];
     }
 }

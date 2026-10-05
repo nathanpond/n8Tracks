@@ -4,6 +4,7 @@ import {
   Chip,
   Group,
   Loader,
+  MultiSelect,
   Pagination,
   Paper,
   Stack,
@@ -14,9 +15,11 @@ import {
 } from '@mantine/core';
 import { useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
+import { useGenres, type Genre } from '../api/genres';
 import {
   defaultDirection,
   kindLabel,
+  NO_GENRE,
   songListParameters,
   songQueryFrom,
   useSongs,
@@ -116,6 +119,39 @@ function StateFilter({
   );
 }
 
+/**
+ * The Genre filter: any number of Genres and "No Genre", matching Songs with any of them; none
+ * chosen means every Song.
+ */
+function GenreFilter({
+  genres,
+  selected,
+  onChange,
+}: {
+  genres: Genre[];
+  selected: string[];
+  onChange: (genres: string[]) => void;
+}) {
+  return (
+    <MultiSelect
+      label="Genre"
+      placeholder={selected.length === 0 ? 'Any Genre' : undefined}
+      data={[
+        { value: NO_GENRE, label: 'No Genre' },
+        ...genres.map((genre) => ({ value: genre.id, label: genre.name })),
+      ]}
+      value={selected}
+      onChange={onChange}
+      searchable
+      clearable
+      clearButtonProps={{ 'aria-label': 'Clear the Genre filter' }}
+      nothingFoundMessage="No Genre has that name."
+      maw={420}
+      comboboxProps={{ withinPortal: false, hideDetached: false }}
+    />
+  );
+}
+
 function SongRow({ song, timeZone, from }: { song: Song; timeZone: string; from: FromSongs }) {
   return (
     <Table.Tr data-song={song.shortcode}>
@@ -144,7 +180,7 @@ function SongRow({ song, timeZone, from }: { song: Song; timeZone: string; from:
 
 /**
  * Songs: every Song in a table, newest first, sortable by title and by last update, filtered by
- * workflow state, fifty to a page. The view (sort, direction, states, page) is the page URL's query
+ * workflow state and by Genre, fifty to a page. The view (sort, direction, states, Genres, page) is the page URL's query
  * string, the list API's own parameters, so going back to it or reloading shows the same rows.
  */
 export function SongsPage() {
@@ -154,6 +190,7 @@ export function SongsPage() {
   const query = songQueryFrom(searchParams);
   const { state, reload } = useSongs(query);
   const { state: statesState } = useWorkflowStates();
+  const { state: genresState } = useGenres();
   const timeZone = useConfiguredTimeZone();
   const [creating, setCreating] = useState(false);
   const from: FromSongs = { songsSearch: location.search };
@@ -169,9 +206,12 @@ export function SongsPage() {
   const filter = (states: string[]) => {
     show({ ...query, states, page: 1 });
   };
+  const filterGenres = (genres: string[]) => {
+    show({ ...query, genres, page: 1 });
+  };
 
   const page = state.phase === 'ready' ? state.data : undefined;
-  const filtered = query.states.length > 0;
+  const filtered = query.states.length > 0 || query.genres.length > 0;
   const empty = page?.total === 0 && !filtered;
   const pages = page === undefined ? 0 : Math.ceil(page.total / page.pageSize);
 
@@ -192,6 +232,9 @@ export function SongsPage() {
 
       {statesState.phase === 'ready' && !empty && (
         <StateFilter states={statesState.data} selected={query.states} onChange={filter} />
+      )}
+      {genresState.phase === 'ready' && !empty && (
+        <GenreFilter genres={genresState.data} selected={query.genres} onChange={filterGenres} />
       )}
 
       {state.phase === 'loading' && <Loader aria-label="Loading Songs" />}
@@ -229,7 +272,20 @@ export function SongsPage() {
       {page !== undefined && !empty && page.items.length === 0 && (
         <Paper p="sm" withBorder>
           <Stack gap="xs" align="flex-start">
-            {page.total === 0 ? (
+            {page.total === 0 && query.genres.length > 0 ? (
+              <>
+                <Text>No Songs match the chosen filters.</Text>
+                <Button
+                  variant="default"
+                  size="xs"
+                  onClick={() => {
+                    show({ ...query, states: [], genres: [], page: 1 });
+                  }}
+                >
+                  Show every Song
+                </Button>
+              </>
+            ) : page.total === 0 ? (
               <>
                 <Text>No Songs are in the chosen states.</Text>
                 <Button

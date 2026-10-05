@@ -9,6 +9,12 @@ export const WORKFLOW_STATES_PATH = 'api/v1/workflow-states';
 export const TITLE_MAXIMUM_LENGTH = 300;
 export const CONCEPT_MAXIMUM_LENGTH = 2000;
 
+/** The longest Song notes the API takes, in UTF-16 code units once normalised. */
+export const SONG_NOTES_MAXIMUM_LENGTH = 10_000;
+
+/** The `genre` filter value that matches Songs with no Genre. */
+export const NO_GENRE = 'none';
+
 /** The page size the list is asked for: the API's default. */
 export const SONGS_PAGE_SIZE = 50;
 
@@ -26,6 +32,12 @@ export function kindLabel(kind: VersionKind): string {
   return kind.charAt(0).toUpperCase() + kind.slice(1);
 }
 
+/** A Genre as a Song shows it. */
+export interface SongGenre {
+  id: string;
+  name: string;
+}
+
 /** A Song as the API answers it. Times are UTC ISO 8601. */
 export interface Song {
   id: string;
@@ -39,6 +51,10 @@ export interface Song {
   createdAt: string;
   updatedAt: string;
   revision: number;
+  /** Free-form notes; null when there are none. */
+  notes: string | null;
+  /** Its Genres, alphabetically. */
+  genres: SongGenre[];
 }
 
 export interface SongPage {
@@ -66,11 +82,17 @@ export interface SongQuery {
   sort: SongSort;
   direction: SortDirection;
   states: string[];
+  /** Genre IDs, and {@link NO_GENRE} for Songs with none: Songs with any of them. */
+  genres: string[];
   page: number;
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function isSongGenre(value: unknown): value is SongGenre {
+  return isRecord(value) && typeof value.id === 'string' && typeof value.name === 'string';
 }
 
 export function isSong(value: unknown): value is Song {
@@ -90,7 +112,10 @@ export function isSong(value: unknown): value is Song {
     typeof value.versionCount === 'number' &&
     typeof value.createdAt === 'string' &&
     typeof value.updatedAt === 'string' &&
-    typeof value.revision === 'number'
+    typeof value.revision === 'number' &&
+    (value.notes === null || typeof value.notes === 'string') &&
+    Array.isArray(value.genres) &&
+    value.genres.every(isSongGenre)
   );
 }
 
@@ -146,6 +171,9 @@ export function songListParameters(query: SongQuery): URLSearchParams {
   for (const state of query.states) {
     parameters.append('state', state);
   }
+  for (const genre of query.genres) {
+    parameters.append('genre', genre);
+  }
   if (query.page !== 1) {
     parameters.set('page', String(query.page));
   }
@@ -169,6 +197,7 @@ export function songQueryFrom(parameters: URLSearchParams): SongQuery {
     sort,
     direction: direction === 'asc' || direction === 'desc' ? direction : defaultDirection(sort),
     states: [...new Set(parameters.getAll('state'))],
+    genres: [...new Set(parameters.getAll('genre'))],
     page: Number.isSafeInteger(page) && page >= 1 ? page : 1,
   };
 }
@@ -248,6 +277,17 @@ export function useWorkflowStates() {
   return useResource(WORKFLOW_STATES_PATH, acceptStates);
 }
 
+/** One Song as it is now, by its ID or shortcode; undefined when it cannot be read. */
+export async function readSong(reference: string): Promise<Song | undefined> {
+  try {
+    const response = await apiFetch(`${SONGS_PATH}/${encodeURIComponent(reference)}`);
+    const answer = await body(response);
+    return response.ok && isSong(answer) ? answer : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export interface NewSong {
   title: string;
   concept: string;
@@ -285,11 +325,16 @@ export async function createSong(request: NewSong): Promise<CreateSongResult> {
   }
 }
 
-/** An edit of a Song's details: only the fields given change. A null or blank concept clears it. */
+/**
+ * An edit of a Song's details: only the fields given change. A null or blank concept or notes
+ * clears them; `genreIds` replaces the Song's Genres.
+ */
 export interface SongEdit {
   title?: string;
   concept?: string | null;
   stateId?: string;
+  notes?: string | null;
+  genreIds?: string[];
 }
 
 /** Edits a Song, based on `song`'s revision; a stale revision comes back as a conflict. */

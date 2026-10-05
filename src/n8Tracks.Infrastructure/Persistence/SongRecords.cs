@@ -20,6 +20,9 @@ public sealed class SongRecord
     /// <summary>Up to 2,000 UTF-16 code units; null when there is none.</summary>
     public string? Concept { get; set; }
 
+    /// <summary>The Song's free-form notes: up to 10,000 UTF-16 code units; null when there are none.</summary>
+    public string? Notes { get; set; }
+
     public required Guid WorkflowStateId { get; set; }
 
     /// <summary>

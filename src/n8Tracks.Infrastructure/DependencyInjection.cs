@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using n8Tracks.Application.Auth;
 using n8Tracks.Application.Backups;
+using n8Tracks.Application.Catalog;
 using n8Tracks.Application.Configuration;
 using n8Tracks.Application.Credentials;
 using n8Tracks.Application.Health;
@@ -54,6 +55,7 @@ public static class DependencyInjection
         services.AddScoped<ICredentialStore, CredentialStore>();
         services.AddScoped<IJobStore, JobStore>();
         services.AddScoped<ISongStore, SongStore>();
+        services.AddScoped<IGenreStore, GenreStore>();
         services.AddScoped<IVersionStore, VersionStore>();
         services.AddScoped<IEditorRevisionStore, EditorRevisionStore>();
         services.AddScoped<IWorkflowStateStore, WorkflowStateStore>();

@@ -39,7 +39,8 @@ public sealed class DatabaseStartupTests : IDisposable
             migration => Assert.Matches("^[0-9]{14}_AddGenerations\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AddVersionInputs\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AddSpeechAndSoundInputs\\|10\\.0\\.", migration),
-            migration => Assert.Matches("^[0-9]{14}_AddSunoModels\\|10\\.0\\.", migration));
+            migration => Assert.Matches("^[0-9]{14}_AddSunoModels\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddGenresAndSongNotes\\|10\\.0\\.", migration));
 
         // ISO 8601 UTC with milliseconds and Z, taken when the migration ran.
         var initialized = TestDatabase.SchemaInitializedUtc(directory.Path);
@@ -58,7 +59,7 @@ public sealed class DatabaseStartupTests : IDisposable
         Start();
 
         Assert.Equal(
-            ["__EFMigrationsHistory", "administrators", "app_metadata", "credentials", "editor_revisions", "generations", "jobs", "sessions", "settings", "shortcode_sequence", "songs", "suno_models", "used_version_numbers", "versions", "workflow_states"],
+            ["__EFMigrationsHistory", "administrators", "app_metadata", "credentials", "editor_revisions", "generations", "genres", "jobs", "sessions", "settings", "shortcode_sequence", "song_genres", "songs", "suno_models", "used_version_numbers", "versions", "workflow_states"],
             TestDatabase.Rows(
                 directory.Path,
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> '__EFMigrationsLock' ORDER BY name;"));
@@ -173,7 +174,7 @@ public sealed class DatabaseStartupTests : IDisposable
 
         Assert.Equal(MigrationStatus.UpToDate, state.Status);
         Assert.Equal(TestDatabase.History(directory.Path)[^1].Split('|')[0], state.LastAppliedMigrationId);
-        Assert.EndsWith("_AddSunoModels", state.LastAppliedMigrationId, StringComparison.Ordinal);
+        Assert.EndsWith("_AddGenresAndSongNotes", state.LastAppliedMigrationId, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -44,9 +44,15 @@ function song(number: number, overrides: Partial<Song> = {}): Song {
     createdAt: '2026-10-01T09:00:00Z',
     updatedAt: '2026-10-01T09:00:00Z',
     revision: 1,
+    notes: null,
+    genres: [],
     ...overrides,
   };
 }
+
+const FOLK = { id: '0199b1a0-0000-7000-a000-000000000001', name: 'Folk', songCount: 2 };
+const ROCK = { id: '0199b1a0-0000-7000-a000-000000000003', name: 'Rock', songCount: 1 };
+const GENRES = [FOLK, ROCK];
 
 function page(items: Song[], extra: Partial<SongPage> = {}): SongPage {
   return { items, page: 1, pageSize: 50, total: items.length, ...extra };
@@ -92,6 +98,9 @@ function backend({ list, song: one, create, states = STATES }: Backend) {
     }
     if (path.endsWith('/api/v1/workflow-states')) {
       return Promise.resolve(jsonResponse(200, { revision: 1, items: states }));
+    }
+    if (path.endsWith('/api/v1/genres')) {
+      return Promise.resolve(jsonResponse(200, { items: GENRES }));
     }
     if (path.endsWith('/api/v1/songs') && method === 'GET' && list) {
       const url = new URL(
@@ -349,6 +358,35 @@ describe('Songs', () => {
     expect(await screen.findByText('No Songs are in the chosen states.')).toBeVisible();
 
     await user.click(within(filter).getByRole('button', { name: 'Show every state' }));
+    await waitFor(() => {
+      expect(listRequests(mock).at(-1)).toBe('');
+    });
+    expect(await screen.findByRole('table', { name: 'Songs' })).toBeVisible();
+  });
+
+  it('filters by any of several Genres or by none, alongside the states', async () => {
+    const mock = backend({
+      list: (search) =>
+        jsonResponse(200, search.getAll('genre').includes(ROCK.id) ? page([]) : page([song(1)])),
+    });
+    const user = userEvent.setup();
+
+    renderApp(`/songs?state=${IDEA.id}`);
+
+    const filter = await screen.findByRole('combobox', { name: 'Genre' });
+    await user.click(filter);
+    await user.click(await screen.findByRole('option', { name: 'Folk' }));
+    await waitFor(() => {
+      expect(listRequests(mock).at(-1)).toBe(`?state=${IDEA.id}&genre=${FOLK.id}`);
+    });
+    await user.click(await screen.findByRole('option', { name: 'No Genre' }));
+    await waitFor(() => {
+      expect(listRequests(mock).at(-1)).toBe(`?state=${IDEA.id}&genre=${FOLK.id}&genre=none`);
+    });
+    await user.click(await screen.findByRole('option', { name: 'Rock' }));
+    expect(await screen.findByText('No Songs match the chosen filters.')).toBeVisible();
+
+    await user.click(screen.getByRole('button', { name: 'Show every Song' }));
     await waitFor(() => {
       expect(listRequests(mock).at(-1)).toBe('');
     });
