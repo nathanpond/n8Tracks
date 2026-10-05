@@ -13,6 +13,9 @@ public sealed class GenreRecord
     /// so no two Genres differ only in letter case.
     /// </summary>
     public required string NameKey { get; set; }
+
+    /// <summary>Starts at 1 and goes up by one on each rename, and when other Genres are merged into it.</summary>
+    public int Revision { get; set; } = 1;
 }
 
 /// <summary>One row of <c>song_genres</c>: a Song has a Genre (once).</summary>

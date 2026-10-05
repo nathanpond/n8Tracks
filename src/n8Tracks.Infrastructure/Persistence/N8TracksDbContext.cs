@@ -300,8 +300,8 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
             songGenre.HasKey(record => new { record.SongId, record.GenreId });
             songGenre.HasIndex(record => record.GenreId);
 
-            // A Song's Genres go with it; a Genre on any Song is never removed by accident (removing
-            // or merging Genres is #84's, which moves each affected Song's revision on).
+            // A Song's Genres go with it; a Genre on any Song is never removed by accident: removing
+            // or merging Genres (GenreService) moves each affected Song's rows and revision itself.
             songGenre.HasOne<SongRecord>()
                 .WithMany()
                 .HasForeignKey(record => record.SongId)

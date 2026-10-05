@@ -98,6 +98,7 @@ test.describe(
         'Account',
         'Credentials',
         'Workflow',
+        'Genres',
         'Suno',
         'Backups',
         'System',
