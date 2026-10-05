@@ -28,17 +28,17 @@ public static class RestoreStartup
                 startupLog.Warning(
                     "A restart interrupted restore {RestoreId}; the data from before it was put back, and the instance is open. The safety backup is {SafetyBackupPath}",
                     journal?.RestoreId,
-                    journal?.SafetyBackup.Path);
+                    journal?.SafetyBackup?.Path);
                 break;
 
             case RestoreRecoveryOutcome.PutBackFailed:
                 startupLog.Error(
                     recovery.Error,
                     "The instance stays in maintenance: restore {RestoreId} was interrupted and its previous data could not be put back. The safety backup is {SafetyBackupPath}. "
-                    + "Stop the container and run `{RestoreCommand}` in it, or move the files in {PreviousDataFolder} back into the data path by hand, replacing the database and the assets folder there.",
+                    + "Stop the container and run `{RestoreCommand}` from the image with the same volumes (docker run --rm), or move the files in {PreviousDataFolder} back into the data path by hand, replacing the database and the assets folder there.",
                     journal?.RestoreId,
-                    journal?.SafetyBackup.Path,
-                    RestoreRunner.RestoreCommand(journal?.SafetyBackup.Path),
+                    journal?.SafetyBackup?.Path,
+                    RestoreRunner.RestoreCommand(journal?.SafetyBackup?.Path),
                     scope.ServiceProvider.GetRequiredService<ILiveDataReplacement>().PreviousDataFolder);
                 break;
 

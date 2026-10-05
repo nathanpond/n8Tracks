@@ -12,6 +12,9 @@ public interface IBackupStorage
     /// </summary>
     BackupDestination ResolveDestination();
 
+    /// <summary>The folder <paramref name="location"/> names, as a path the operator can type.</summary>
+    string FolderPath(BackupLocation location);
+
     /// <summary>Every archive in both folders, each read for its manifest, newest first.</summary>
     Task<IReadOnlyList<BackupArchive>> ListAsync(CancellationToken cancellationToken);
 

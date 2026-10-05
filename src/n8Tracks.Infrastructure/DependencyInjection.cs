@@ -66,6 +66,8 @@ public static class DependencyInjection
         services.TryAddSingleton(new RestoreTestHooks());
         services.AddScoped<ILiveDataReplacement, LiveDataReplacement>();
         services.AddSingleton<ILastRestoreStore, LastRestoreFile>();
+        services.AddSingleton<IDataPathLock, DataPathLockFile>();
+        services.AddSingleton<IFailedUpgradeMarker, UpgradeMarkerFile>();
         services.AddSingleton<RestoreRunner>();
         services.AddSingleton<IRestoreRunner>(static provider => provider.GetRequiredService<RestoreRunner>());
 

@@ -29,6 +29,8 @@ internal sealed partial class BackupFolders(N8TracksOptions options, ILogger<Bac
             ? new BackupDestination(BackupLocation.Mount, options.BackupPath)
             : new BackupDestination(BackupLocation.Data, FallbackPath);
 
+    public string FolderPath(BackupLocation location) => location == BackupLocation.Mount ? options.BackupPath : FallbackPath;
+
     public Task<IReadOnlyList<BackupArchive>> ListAsync(CancellationToken cancellationToken)
     {
         var archives = new List<BackupArchive>();

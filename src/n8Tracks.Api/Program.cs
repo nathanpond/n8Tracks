@@ -57,6 +57,8 @@ public sealed class Program
     /// and writes nothing to <paramref name="output"/> (see <see cref="ResetPasswordCommand"/>). With
     /// <c>seed-generation</c> first, it starts nothing and runs that test-only command, which writes
     /// the new Generation's shortcode to <paramref name="output"/> (see <see cref="SeedGenerationCommand"/>). With
+    /// <c>restore</c> or <c>list-backups</c> first, it starts nothing and runs that disaster-recovery
+    /// command (see <see cref="RestoreCommand"/> and <see cref="ListBackupsCommand"/>). With
     /// <c>--healthcheck</c> among them it starts nothing and reports on the app that is already
     /// running (see <see cref="HealthCheckCommand"/>). Those are the only arguments with a meaning:
     /// every other one is ignored, and none reaches the host's configuration.
@@ -74,6 +76,18 @@ public sealed class Program
         if (ResetPasswordCommand.IsRequested(args))
         {
             return await ResetPasswordCommand.RunAsync(args[1..], environment, console, cancellationToken).ConfigureAwait(false);
+        }
+
+        // The disaster-recovery commands, run from the image with the server stopped (restore) or
+        // at any time (list-backups): their own output, and no server.
+        if (RestoreCommand.IsRequested(args))
+        {
+            return await RestoreCommand.RunAsync(args[1..], environment, console, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (ListBackupsCommand.IsRequested(args))
+        {
+            return await ListBackupsCommand.RunAsync(args[1..], environment, output, console, cancellationToken).ConfigureAwait(false);
         }
 
         // A test-only command, refused unless test seeding is switched on: it never starts the server.
@@ -191,6 +205,18 @@ public sealed class Program
                     startupLog.Error("Invalid configuration: {Variable} {Reason}", error.Variable, error.Reason);
                 }
 
+                return 1;
+            }
+
+            // One process per data path: the lock is held until the host is disposed, and the
+            // container's restore command, run with the server stopped, takes it too.
+            var dataPathLock = app.Services.GetRequiredService<IDataPathLock>();
+            if (!dataPathLock.TryAcquire())
+            {
+                startupLog.Error(
+                    "Startup failed: {Variable} {Reason}",
+                    EnvironmentOptionsLoader.DataPath,
+                    $"is in use by another n8Tracks process (another container, or the restore command) that holds {dataPathLock.LockFile}. Stop it first.");
                 return 1;
             }
 

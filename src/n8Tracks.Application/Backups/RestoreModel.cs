@@ -75,7 +75,7 @@ public sealed record RestoreRefusal(
     public bool NeedsNewerVersion => Reason is RestoreRefusalReason.NewerSchema or RestoreRefusalReason.NewerFormat;
 }
 
-/// <summary>An archive to restore from: one listed in the backup folders, or an upload.</summary>
+/// <summary>An archive to restore from: one listed in the backup folders, an upload, or a file the container command names.</summary>
 public abstract record RestoreSource
 {
     private RestoreSource()
@@ -87,6 +87,12 @@ public abstract record RestoreSource
 
     /// <summary>An upload, held in a temporary file under the data path until it is restored or expires.</summary>
     public sealed record Uploaded(Guid UploadId, string FileName) : RestoreSource;
+
+    /// <summary>
+    /// A file named by the operator on the container's command line (<c>n8tracks restore &lt;archive&gt;</c>),
+    /// by its full path. Only that command makes one; no request can.
+    /// </summary>
+    public sealed record File(string FullPath) : RestoreSource;
 }
 
 /// <summary>What the confirmation shows of a valid archive.</summary>
@@ -216,9 +222,12 @@ public sealed record SafetyBackupRecord(BackupLocation Location, string Name, st
 /// </summary>
 /// <param name="RestoreId">The restore's ID.</param>
 /// <param name="ArchiveName">The archive restored from (an upload's name as the browser sent it).</param>
-/// <param name="SafetyBackup">The verified safety backup taken just before.</param>
+/// <param name="SafetyBackup">
+/// The verified safety backup taken just before; null for the container command, which keeps the
+/// previous files themselves instead.
+/// </param>
 /// <param name="StartedUtc">When the replacement began.</param>
-public sealed record RestoreJournalEntry(Guid RestoreId, string ArchiveName, SafetyBackupRecord SafetyBackup, DateTimeOffset StartedUtc);
+public sealed record RestoreJournalEntry(Guid RestoreId, string ArchiveName, SafetyBackupRecord? SafetyBackup, DateTimeOffset StartedUtc);
 
 /// <summary>A restore's journal as found under the data path.</summary>
 /// <param name="Entry">What it records.</param>

@@ -47,6 +47,7 @@ public static class DependencyInjection
         services.AddSingleton<RestoreReads>();
         services.AddScoped<RestoreValidator>();
         services.AddScoped<RestoreService>();
+        services.AddScoped<OfflineRestoreService>();
 
         return services;
     }

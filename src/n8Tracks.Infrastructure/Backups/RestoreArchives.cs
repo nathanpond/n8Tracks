@@ -139,6 +139,7 @@ internal sealed partial class RestoreArchives(
                 {
                     RestoreSource.Listed listed => (listed.Name, (BackupLocation?)listed.Location),
                     RestoreSource.Uploaded uploaded => (uploaded.FileName, null),
+                    RestoreSource.File file => (Path.GetFileName(file.FullPath), null),
                     _ => throw new ArgumentOutOfRangeException(nameof(source)),
                 };
 
@@ -422,6 +423,17 @@ internal sealed partial class RestoreArchives(
                 try
                 {
                     return new FileStream(UploadPath(uploaded.UploadId), FileMode.Open, FileAccess.Read, FileShare.Read, 81920, FileOptions.Asynchronous);
+                }
+                catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+                {
+                    return null;
+                }
+
+            case RestoreSource.File file:
+                // A path the operator typed: read only, and only when it is a regular file (a folder is "not there").
+                try
+                {
+                    return new FileStream(file.FullPath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, FileOptions.Asynchronous | FileOptions.SequentialScan);
                 }
                 catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
                 {

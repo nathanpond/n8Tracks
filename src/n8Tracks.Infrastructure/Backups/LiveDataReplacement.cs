@@ -51,6 +51,9 @@ internal sealed partial class LiveDataReplacement(
     public const string PreviousFolderName = "restore-previous";
     public const string JournalFileName = "restore.json";
 
+    /// <summary>The start of the name of a folder the container command's restore keeps the previous data in.</summary>
+    public const string KeptFolderPrefix = "before-restore-";
+
     /// <summary>What a job the archive recorded as queued or running says once the restore has finished.</summary>
     public const string SupersededError = "superseded by restore";
 
@@ -263,6 +266,39 @@ internal sealed partial class LiveDataReplacement(
         }
     }
 
+    public string? KeepPrevious(DateTimeOffset now)
+    {
+        var journal = ReadJournal();
+        if (journal is not null)
+        {
+            TryDeleteFolder(Path.Combine(options.DataPath, RestoreArchives.WorkFolderName, journal.RestoreId.ToString("N")));
+        }
+
+        var previous = new DirectoryInfo(PreviousDataFolder);
+        if (!previous.Exists || previous.LinkTarget is not null)
+        {
+            return null;
+        }
+
+        File.Delete(JournalPath);
+        if (!previous.EnumerateFileSystemInfos().Any())
+        {
+            previous.Delete();
+            return null;
+        }
+
+        var stamp = now.UtcDateTime.ToString("yyyyMMdd'T'HHmmss'Z'", System.Globalization.CultureInfo.InvariantCulture);
+        var target = Path.Combine(options.DataPath, KeptFolderPrefix + stamp);
+        for (var attempt = 2; Directory.Exists(target) || File.Exists(target); attempt++)
+        {
+            target = Path.Combine(options.DataPath, string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{KeptFolderPrefix}{stamp}-{attempt}"));
+        }
+
+        Directory.Move(PreviousDataFolder, target);
+        LogKept(logger, target);
+        return target;
+    }
+
     /// <summary>Closes every idle pooled connection, so no handle is left on a file about to move.</summary>
     private static void CloseConnections() => SqliteConnection.ClearAllPools();
 
@@ -348,9 +384,9 @@ internal sealed partial class LiveDataReplacement(
     private sealed record StoredJournal(
         Guid RestoreId,
         string ArchiveName,
-        string SafetyBackupLocation,
-        string SafetyBackupName,
-        string SafetyBackupPath,
+        string? SafetyBackupLocation,
+        string? SafetyBackupName,
+        string? SafetyBackupPath,
         DateTimeOffset StartedUtc,
         bool SwapBegan,
         string[] Existed)
@@ -358,9 +394,9 @@ internal sealed partial class LiveDataReplacement(
         public static StoredJournal From(RestoreJournalEntry entry, bool swapBegan, string[] existed) => new(
             entry.RestoreId,
             entry.ArchiveName,
-            entry.SafetyBackup.Location == BackupLocation.Mount ? "mount" : "data",
-            entry.SafetyBackup.Name,
-            entry.SafetyBackup.Path,
+            entry.SafetyBackup is null ? null : entry.SafetyBackup.Location == BackupLocation.Mount ? "mount" : "data",
+            entry.SafetyBackup?.Name,
+            entry.SafetyBackup?.Path,
             entry.StartedUtc,
             swapBegan,
             existed);
@@ -368,7 +404,9 @@ internal sealed partial class LiveDataReplacement(
         public RestoreJournalEntry Entry() => new(
             RestoreId,
             ArchiveName,
-            new SafetyBackupRecord(SafetyBackupLocation == "mount" ? BackupLocation.Mount : BackupLocation.Data, SafetyBackupName, SafetyBackupPath),
+            SafetyBackupName is null || SafetyBackupPath is null
+                ? null
+                : new SafetyBackupRecord(SafetyBackupLocation == "mount" ? BackupLocation.Mount : BackupLocation.Data, SafetyBackupName, SafetyBackupPath),
             StartedUtc);
     }
 
@@ -383,6 +421,9 @@ internal sealed partial class LiveDataReplacement(
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Removed the data a finished restore had moved aside")]
     private static partial void LogDiscarded(ILogger logger);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Kept the data from before the restore in {KeptFolder}")]
+    private static partial void LogKept(ILogger logger, string keptFolder);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "The folder of a restore's previous data was not empty after putting it back, so it was left in place")]
     private static partial void LogPreviousFolderLeft(ILogger logger, Exception exception);

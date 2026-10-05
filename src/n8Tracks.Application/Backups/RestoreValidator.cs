@@ -82,6 +82,19 @@ public sealed class RestoreValidator(
     }
 
     /// <summary>
+    /// Validates an archive the container command names by its full path, with exactly the checks a
+    /// listed archive or an upload gets: the manifest, the room to unpack it, every checksum, the
+    /// database's integrity, and its migration history. Nothing is copied first; the file is only read.
+    /// </summary>
+    public async Task<RestoreValidationOutcome> ValidateFileAsync(string fullPath, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(fullPath);
+
+        return await ValidateAsync(new RestoreSource.File(fullPath), cancellationToken).ConfigureAwait(false)
+            ?? new RestoreValidationOutcome.NotFound();
+    }
+
+    /// <summary>
     /// Checks a validated archive again, fully, as a restore begins: it may have changed since. Null
     /// when it still passes.
     /// </summary>

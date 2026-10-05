@@ -4,6 +4,12 @@
 #   docker exec -it <container> n8tracks reset-password
 #   printf '%s\n' "$NEW_PASSWORD" | docker exec -i <container> n8tracks reset-password --password-stdin
 #
+# With the container stopped, the same image restores a backup, as a one-off container with the
+# instance's volumes (the entrypoint passes "n8tracks <command>" on to this wrapper):
+#
+#   docker run --rm -v <data>:/data -v <backup>:/backup <image> n8tracks list-backups
+#   docker run --rm -v <data>:/data -v <backup>:/backup <image> n8tracks restore /backup/<file>
+#
 # It also passes on seed-generation, a test-only command the app refuses unless test seeding is
 # switched on (N8TRACKS_ENABLE_TEST_SEEDING=1, which only the end-to-end containers set).
 #
@@ -19,7 +25,7 @@ set -eu
 export HOME=/tmp
 
 usage() {
-    printf '%s\n' 'Usage: n8tracks reset-password [--password-stdin]' >&2
+    printf '%s\n' 'Usage: n8tracks reset-password [--password-stdin] | n8tracks list-backups | n8tracks restore <backup archive>' >&2
 }
 
 if [ "$#" -eq 0 ]; then
@@ -28,7 +34,7 @@ if [ "$#" -eq 0 ]; then
 fi
 
 case "$1" in
-    reset-password | seed-generation) ;;
+    reset-password | seed-generation | list-backups | restore) ;;
     *)
         printf 'Unknown command.\n' >&2
         usage

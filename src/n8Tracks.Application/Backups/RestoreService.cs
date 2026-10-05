@@ -228,7 +228,13 @@ public sealed class RestoreService(
             ? $"The restore failed while {StageWords(stage)}, and putting the data from before it back failed at first; it was put back when n8Tracks started again."
             : $"A restart interrupted the restore while {StageWords(stage)}, and the data from before it was put back when n8Tracks started again.";
         maintenance.End(MaintenanceOutcome.RolledBack);
-        Record(MaintenanceOutcome.RolledBack, journal.Entry.ArchiveName, stage, detail, journal.Entry.SafetyBackup);
+
+        // The container command's restore takes no safety backup, and the Backups page notes only those that did.
+        if (journal.Entry.SafetyBackup is { } safety)
+        {
+            Record(MaintenanceOutcome.RolledBack, journal.Entry.ArchiveName, stage, detail, safety);
+        }
+
         Tidy();
         return new RestoreRecovery(RestoreRecoveryOutcome.PutBack, journal.Entry, null);
     }

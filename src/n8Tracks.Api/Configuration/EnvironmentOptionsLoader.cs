@@ -136,6 +136,25 @@ internal static class EnvironmentOptionsLoader
     }
 
     /// <summary>
+    /// Loads and validates only the three paths, for a command that works on the files of a stopped
+    /// instance: the data path (which must be a writable directory), and the media and backup mounts
+    /// as configured. Every other setting has its default value here, whatever the environment says.
+    /// </summary>
+    /// <exception cref="ConfigurationValidationException">The data path is not a writable directory.</exception>
+    public static N8TracksOptions LoadPathsOnly(EnvironmentSnapshot environment)
+    {
+        ArgumentNullException.ThrowIfNull(environment);
+
+        var options = LoadDataPathOnly(environment);
+        var variables = environment.Variables;
+        return options with
+        {
+            MediaPath = ResolvePath(Value(variables, MediaPath) ?? DefaultMediaPath, environment.WorkingDirectory),
+            BackupPath = ResolvePath(Value(variables, BackupPath) ?? DefaultBackupPath, environment.WorkingDirectory),
+        };
+    }
+
+    /// <summary>
     /// Names that start with <c>N8TRACKS_</c>, have a value, and are not settings the app knows: usually a typo.
     /// </summary>
     public static IReadOnlyList<string> FindUnknownVariables(EnvironmentSnapshot environment)

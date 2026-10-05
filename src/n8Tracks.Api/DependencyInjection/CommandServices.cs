@@ -14,15 +14,21 @@ internal static class CommandServices
     /// and nothing that starts on its own. No logging provider is registered, so the database layer
     /// writes no line of its own.
     /// </summary>
-    public static ServiceProvider Build(N8TracksOptions options)
+    /// <param name="options">The settings.</param>
+    /// <param name="testServices">Test-only: changes to the registrations (a test hook), applied last.</param>
+    public static ServiceProvider Build(N8TracksOptions options, Action<IServiceCollection>? testServices = null)
     {
         ArgumentNullException.ThrowIfNull(options);
 
         var services = new ServiceCollection();
         services.AddSingleton(options);
         services.AddSingleton(new ApplicationVersion(ProductVersion.Current));
+
+        // Loggers that write nowhere: a command reports on its console, not in the application log.
+        services.AddLogging();
         services.AddApplication();
         services.AddInfrastructure();
+        testServices?.Invoke(services);
 
         return services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
     }

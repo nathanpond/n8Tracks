@@ -86,6 +86,43 @@ public interface ILiveDataReplacement
 
     /// <summary>After a restore ended (or never moved anything): deletes the journal, the previous files, and the work folder.</summary>
     void Discard();
+
+    /// <summary>
+    /// After a restore by the container command succeeded: deletes the journal and the work folder,
+    /// and renames the folder of previous files to <c>before-restore-&lt;UTC time&gt;</c> under the
+    /// data path, where nothing removes it, so the operator still has the data from before. Returns
+    /// that folder's path, or null when there were no previous files to keep.
+    /// </summary>
+    string? KeepPrevious(DateTimeOffset now);
+}
+
+/// <summary>
+/// The lock that says the data path is in use: an operating-system file lock on
+/// <c>.n8tracks.lock</c> under the data path, held by the server from start to exit and by the
+/// restore command while it runs. The operating system releases it when the process ends, however
+/// it ends, so a crashed container leaves no stale lock.
+/// </summary>
+public interface IDataPathLock
+{
+    /// <summary>The lock file's path, for messages.</summary>
+    string LockFile { get; }
+
+    /// <summary>
+    /// Takes the lock for this process, until the container is disposed. False when another process
+    /// (or another host in this one) holds it. Taking it again once held is true and changes nothing.
+    /// </summary>
+    bool TryAcquire();
+}
+
+/// <summary>
+/// The marker a failed or interrupted database upgrade leaves under the data path
+/// (<c>upgrade-state.json</c>, written by the upgrade's safety backup, #76). A restore that put a
+/// whole database back makes it obsolete.
+/// </summary>
+public interface IFailedUpgradeMarker
+{
+    /// <summary>Deletes the marker; false when there was none.</summary>
+    bool Clear();
 }
 
 /// <summary>

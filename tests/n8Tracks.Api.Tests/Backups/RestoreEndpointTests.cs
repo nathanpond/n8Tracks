@@ -674,7 +674,7 @@ public sealed class RestoreEndpointTests
     }
 
     /// <summary>The good archive, broken in the way <paramref name="reason"/> names.</summary>
-    private static byte[] Break(byte[] good, string reason) => reason switch
+    internal static byte[] Break(byte[] good, string reason) => reason switch
     {
         "not-a-zip" => Encoding.UTF8.GetBytes("This is a text file, not a backup."),
         "missing-manifest" => RestoreApi.Zip(BackupApi.Entries(good).Where(static entry => entry.Key != "manifest.json").ToDictionary(StringComparer.Ordinal)),

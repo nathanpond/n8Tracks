@@ -226,6 +226,38 @@ Backups also run on a schedule: daily at 03:00 in the configured time zone (`TZ`
 
 **A backup contains the administrator's password hash, the sessions, and the credential hashes, because it is a full copy of the instance. Store backups as carefully as the data folder.**
 
+### Disaster recovery
+
+When n8Tracks still starts, restore from Settings → Backups. When it does not start, or it stays in maintenance, restore from the image with the container stopped. Two commands run in a one-off container that has the instance's volumes. They take the same `PUID` and `PGID` as the app, so the files they write belong to the same user. With the Compose example, from the folder that holds it:
+
+```sh
+docker compose stop n8tracks
+
+# The backups in /backup and in the data folder's backups/, newest first: date, kind, version, path.
+docker compose run --rm --no-deps n8tracks n8tracks list-backups
+
+# Restore one by the path the listing shows.
+docker compose run --rm --no-deps n8tracks n8tracks restore /backup/n8tracks-backup-20261005-030000-v0.1.0.zip
+
+docker compose start n8tracks
+```
+
+Without Compose, use the same volumes and environment as the app: `docker run --rm -v <data>:/data -v <backup>:/backup <image> n8tracks list-backups`, and the same with `n8tracks restore /backup/<file>`. An archive can be anywhere inside the container, so a downloaded backup can be mounted in on its own path (`-v ./n8tracks-backup-….zip:/restore.zip:ro`) and restored from `/restore.zip`. Archives inside the media mount are refused.
+
+`n8tracks restore`:
+
+- Validates the archive exactly as the Backups page does: the manifest, every checksum, the database's integrity, and a migration history this version knows. It needs enough free space to unpack the archive. A backup made by a newer version is refused, and the message names the version it needs.
+- Refuses to run while the app is running on the same data folder. The app holds an operating-system lock on `.n8tracks.lock` in the data folder from start to exit, and the command holds it while it runs, so neither can start while the other is using the folder. A crashed container leaves no stale lock.
+- Moves the current database and `assets/` aside into `restore-previous/` in the data folder, then moves the archive's in. If anything fails, it moves the previous files back and says so. After a success, it keeps them in `before-restore-<UTC time>/` in the data folder and names that folder. Delete it once you no longer need it; nothing deletes it for you.
+- Ends every session and marks the jobs the backup had recorded as queued or running as failed. It clears a stuck maintenance state and the marker a failed upgrade leaves (`upgrade-state.json`), so the app starts normally. It applies no migration: the app applies the ones a restored database lacks when it next starts.
+- Exits 0 on success. On any refusal or failure it exits 1 and prints one line saying why; a refusal changes nothing. It writes to standard error and prints only paths, the archive's name, and what went wrong, never a secret.
+
+`n8tracks list-backups` reads only the archives' manifests. It can run at any time, including in the running container with `docker exec n8tracks n8tracks list-backups`. It exits 0, also when there are no backups.
+
+**After a failed upgrade.** An upgrade that fails leaves the app refusing to start on that version, with its reason in the log and the safety backup it took listed with the kind `safety`. Either restore that safety backup with the command above and keep running the version you had (change the image tag back first), or restore it and try the new version again once the cause is fixed. A successful restore removes the failed-upgrade marker.
+
+**After a restore that could not be rolled back.** If a restore from the Backups page fails and putting the previous data back fails too, the instance stays in maintenance and the log names the safety backup taken just before. The next start tries to put the data back again. If the instance is still in maintenance after that, stop the container and run `n8tracks restore` with that safety backup's path (or any other backup). The command first puts back what the failed restore moved aside, then restores the archive you gave it and ends maintenance. If even that cannot put the files back, it says so and names `restore-previous/` in the data folder. Move the database (`n8tracks.db` and any `n8tracks.db-wal`, `n8tracks.db-shm`) and `assets/` from there back into the data folder, replacing what is there, delete the folder, and run the command again.
+
 ### Settings
 
 The app reads the variables under [Configuration](#configuration); the Compose example lists each with its default. In a container, leave `N8TRACKS_DATA_PATH`, `N8TRACKS_MEDIA_PATH`, and `N8TRACKS_BACKUP_PATH` alone and change what is mounted there. If you change `N8TRACKS_PORT`, change the container side of the port mapping too (`"8787:9000"` for port 9000). `ASPNETCORE_ENVIRONMENT` is `Production` in the image.

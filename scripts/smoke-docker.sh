@@ -547,6 +547,94 @@ section "Data and read-only media mounted, PUID=$RUN_UID PGID=$RUN_GID" mounted
 
 # ---------------------------------------------------------------------------------------------------
 
+# api JAR METHOD PATH [BODY]: an API call with the session in the file JAR (and the anti-forgery
+# header), printing the HTTP status on the last line after the body.
+api() {
+    curl --silent --max-time 10 --cookie "$1" --header 'X-N8Tracks-Request: 1' \
+        --header 'Content-Type: application/json' --request "$2" ${4:+--data "$4"} \
+        --write-out '\n%{http_code}' "$(url "$3")" || true
+}
+
+# song_titles JAR: the titles of every Song, sorted and joined with commas.
+song_titles() {
+    api "$1" GET /api/v1/songs | sed '$d' | python3 -c '
+import json, sys
+
+print(",".join(sorted(song["title"] for song in json.load(sys.stdin)["items"])))
+' 2>/dev/null || true
+}
+
+# The Demo of disaster recovery: a backup made through the API, the container stopped, the backup
+# restored by the command from the image with the same volumes, and the next start serving it.
+disaster_recovery() {
+    local name="$PREFIX-recovery" backup="$WORK/recovery-backup" jar="$WORK/cookies-recovery" job="" status="" result archive listed deadline
+    mkdir -p "$backup"
+
+    # /data is a named volume: the lock between the app and the command is a file lock, which a
+    # bind mount through a desktop VM's file sharing need not carry between containers.
+    run_app() {
+        docker run --detach --name "$name" --publish "$HOST_PORT:8787" \
+            --env PUID="$RUN_UID" --env PGID="$RUN_GID" \
+            --volume "$PREFIX-data:/data" --volume "$backup:/backup" "$IMAGE" >/dev/null
+    }
+
+    # run_command ARGS...: n8tracks ARGS in a one-off container with the instance's volumes.
+    run_command() {
+        docker run --rm --env PUID="$RUN_UID" --env PGID="$RUN_GID" \
+            --volume "$PREFIX-data:/data" --volume "$backup:/backup" "$IMAGE" n8tracks "$@"
+    }
+
+    run_app
+    wait_for_http "$name" /health
+    expect "setup of the instance to restore" 201 "$(submit_setup)" "$name"
+    expect "signing in to the instance to restore" 201 "$(sign_in "$jar")" "$name"
+    expect "creating the Song the backup holds" 201 "$(api "$jar" POST /api/v1/songs '{"title":"Before the backup"}' | tail -n 1)" "$name"
+
+    job="$(api "$jar" POST /api/v1/backups | sed '$d' | json_field jobId 2>/dev/null || true)"
+    deadline=$((SECONDS + WAIT_SECONDS))
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        status="$(api "$jar" GET "/api/v1/jobs/$job" | sed '$d' | json_field status 2>/dev/null || true)"
+        case "$status" in succeeded | failed) break ;; esac
+        sleep 1
+    done
+    [ "$status" = "succeeded" ] || stop "the backup through the API succeeds (its job is '$status')" "$name"
+    pass "a backup through the API"
+    result="$(api "$jar" GET "/api/v1/jobs/$job" | sed '$d' | json_field result)"
+    archive="$(printf '%s' "$result" | json_field name)"
+    case "$(printf '%s' "$result" | json_field location)" in
+        mount) archive="/backup/$archive" ;;
+        *) archive="/data/backups/$archive" ;;
+    esac
+
+    expect "creating a Song after the backup" 201 "$(api "$jar" POST /api/v1/songs '{"title":"After the backup"}' | tail -n 1)" "$name"
+    expect "the catalog before the restore" "After the backup,Before the backup" "$(song_titles "$jar")" "$name"
+
+    refute "n8tracks restore refuses while the app runs on the data path" "$name" run_command restore "$archive"
+    expect "the catalog after the refused restore" "After the backup,Before the backup" "$(song_titles "$jar")" "$name"
+
+    docker stop "$name" >/dev/null
+    listed="$(run_command list-backups 2>/dev/null || true)"
+    case "$listed" in
+        *manual*"$archive"*) pass "n8tracks list-backups lists the backup with its kind and path" ;;
+        *) fail "n8tracks list-backups lists the backup with its kind and path (got: $listed)" "$name" ;;
+    esac
+    verify "n8tracks restore $archive with the container stopped" "$name" run_command restore "$archive"
+
+    docker start "$name" >/dev/null
+    wait_for_http "$name" /health
+    expect "the old session after the restore" 401 "$(session_status "$jar")" "$name"
+    expect "signing in after the restore" 201 "$(sign_in "$jar")" "$name"
+    expect "the catalog after the restore is the backup's" "Before the backup" "$(song_titles "$jar")" "$name"
+    expect "the database after the restore belongs to PUID:PGID" "$RUN_UID:$RUN_GID" \
+        "$(docker exec "$name" stat -c '%u:%g' /data/n8tracks.db)" "$name"
+    assert_log_is_json "$name"
+    remove "$name"
+}
+
+section "Disaster recovery: back up, stop, restore with the command, start" disaster_recovery
+
+# ---------------------------------------------------------------------------------------------------
+
 no_media() {
     local name="$PREFIX-nomedia"
     mkdir -p "$WORK/data-nomedia"

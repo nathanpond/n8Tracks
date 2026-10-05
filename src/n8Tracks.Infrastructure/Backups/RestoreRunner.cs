@@ -116,7 +116,7 @@ internal sealed partial class RestoreRunner(IServiceScopeFactory scopes, ILogger
     [LoggerMessage(
         Level = LogLevel.Critical,
         Message = "Restore {RestoreId} could not put the previous data back: {Detail} The safety backup is {SafetyBackupPath}. "
-            + "Stop the container and run `{RestoreCommand}` in it, or move the files in {PreviousDataFolder} back into the data path by hand, replacing the database and the assets folder there.")]
+            + "Stop the container and run `{RestoreCommand}` from the image with the same volumes (docker run --rm), or move the files in {PreviousDataFolder} back into the data path by hand, replacing the database and the assets folder there.")]
     private static partial void LogPutBackFailed(
         ILogger logger,
         Exception? exception,
