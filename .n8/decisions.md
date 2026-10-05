@@ -1780,3 +1780,9 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** `BackupsPage.test.tsx` "shows the schedule…" waits for the `backup-schedule-status` element itself (5 s explicit timeout) and for "Times are in UTC." before it reads the times.
   **Why:** The Schedule heading renders at once. The status follows the backup list, and its times follow the configured zone, which is a separate `/health` request. The test read the status synchronously after the heading (#275).
   **Issue:** #275
+
+## /n8-exec M2 fix pass — 2026-10-05
+
+- **Decision:** #277 is fixed with a test only (`ATokenNeverExpiresLongAfterEverySessionLifetime` in `CredentialEndpointTests`). It uses the token once, advances the `TestClock` 365 days, checks that the session has lapsed (401), and then gets 200 with the token.
+  **Why:** The behaviour was already correct. The token is used once first because an idle-expiry change keyed on `last_used_utc` would not fire on a token that was never used, and the bite proof showed that the never-used version missed it. The session check makes sure the 200 can only come from the token.
+  **Issue:** #277 (story #56)
