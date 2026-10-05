@@ -14,7 +14,10 @@ public static class GenreRules
     public const int NameMaximumLength = 50;
 
     /// <summary>The errors of a name, empty when it is valid on its own (uniqueness is <see cref="NameKey"/>'s).</summary>
-    public static string[] NameErrors(string? name)
+    public static string[] NameErrors(string? name) => NameErrors(name, NameMaximumLength);
+
+    /// <summary>The errors of a name by the Genre rule with another length limit (an Artist's is longer).</summary>
+    internal static string[] NameErrors(string? name, int maximumLength)
     {
         if (name is null || NormaliseName(name) is not { Length: > 0 } normalised)
         {
@@ -31,8 +34,8 @@ public static class GenreRules
             return ["A name cannot contain unpaired surrogate characters."];
         }
 
-        return normalised.Length > NameMaximumLength
-            ? [string.Create(CultureInfo.InvariantCulture, $"Use at most {NameMaximumLength:N0} characters.")]
+        return normalised.Length > maximumLength
+            ? [string.Create(CultureInfo.InvariantCulture, $"Use at most {maximumLength:N0} characters.")]
             : [];
     }
 

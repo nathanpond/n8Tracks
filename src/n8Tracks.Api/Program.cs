@@ -291,6 +291,7 @@ public sealed class Program
             app.MapSongs();
             app.MapGenres();
             app.MapTags();
+            app.MapArtists();
             app.MapWorkflowStates();
             app.MapVersions();
             app.MapResolve();

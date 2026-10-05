@@ -95,6 +95,7 @@ test.describe(
       await expect(page).toHaveURL(`${FRESH_URL}settings/account`);
       await expect(sidebar(page).getByRole('link')).toHaveText([
         'Songs',
+        'Artists',
         'Account',
         'Credentials',
         'Workflow',

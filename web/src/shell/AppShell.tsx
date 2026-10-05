@@ -33,7 +33,7 @@ function SidebarLink({
 
 /**
  * The signed-in shell: the header (sidebar toggle, product name, colour control, Go to box, user menu), the
- * sidebar, and the current page. The sidebar lists Songs and Settings, and Settings has Account,
+ * sidebar, and the current page. The sidebar lists Songs, Artists, and Settings, and Settings has Account,
  * Credentials, Workflow, Genres, Tags, Suno, Backups, and System; later stories add pages. On a narrow screen the sidebar is hidden until the toggle opens
  * it, and choosing a page closes it again.
  */
@@ -59,6 +59,7 @@ export function SignedInShell() {
       <AppShell.Navbar p="xs" id="app-navigation" aria-label="Main">
         <Stack gap={4}>
           <SidebarLink to="/songs" label="Songs" onNavigate={close} />
+          <SidebarLink to="/artists" label="Artists" onNavigate={close} />
           <Text
             id="navigation-settings"
             size="xs"

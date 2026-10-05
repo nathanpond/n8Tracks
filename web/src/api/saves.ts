@@ -53,7 +53,7 @@ export function ifMatch(revision: number): string {
 }
 
 /** Why a write that was answered (but neither saved, nor a conflict, nor invalid) failed. */
-function failureOf(status: number, answer: unknown): FailureReason {
+export function failureOf(status: number, answer: unknown): FailureReason {
   if (status === 401) {
     return 'signed-out';
   }

@@ -37,6 +37,8 @@ public sealed class ReferenceParameterGuardTests
         "PATCH /api/v1/tags/{id:guid}: id",
         "POST /api/v1/tags/{id:guid}/merge: id",
         "DELETE /api/v1/tags/{id:guid}: id",
+        "GET /api/v1/artists/{id:guid}: id",
+        "PATCH /api/v1/artists/{id:guid}: id",
         "GET /api/v1/versions/{reference}/snapshots/{snapshotId:guid}: snapshotId",
         "POST /api/v1/versions/{reference}/snapshots/{snapshotId:guid}/restore: snapshotId",
     };

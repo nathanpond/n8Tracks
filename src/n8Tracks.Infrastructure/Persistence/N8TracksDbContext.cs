@@ -65,6 +65,12 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
 
     public DbSet<SongTagRecord> SongTags => Set<SongTagRecord>();
 
+    public DbSet<ArtistRecord> Artists => Set<ArtistRecord>();
+
+    public DbSet<ArtistAliasRecord> ArtistAliases => Set<ArtistAliasRecord>();
+
+    public DbSet<ArtistLinkRecord> ArtistLinks => Set<ArtistLinkRecord>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         ArgumentNullException.ThrowIfNull(configurationBuilder);
@@ -348,6 +354,40 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                 .WithMany()
                 .HasForeignKey(record => record.TagId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<ArtistRecord>(artist =>
+        {
+            artist.ToTable("artists", static table => table.HasCheckConstraint("ck_artists_name", "length(name) > 0"));
+            artist.HasKey(record => record.Id);
+
+            // The list's order: by name ignoring case, then the earlier created. Not unique: a shared
+            // name is allowed once the user confirms it.
+            artist.HasIndex(record => new { record.NameKey, record.CreatedUtc });
+        });
+
+        modelBuilder.Entity<ArtistAliasRecord>(alias =>
+        {
+            alias.ToTable("artist_aliases", static table => table.HasCheckConstraint("ck_artist_aliases_name", "length(name) > 0"));
+            alias.HasKey(record => new { record.ArtistId, record.Position });
+
+            // An Artist has an alias at most once, ignoring case.
+            alias.HasIndex(record => new { record.ArtistId, record.NameKey }).IsUnique();
+            alias.HasIndex(record => record.NameKey);
+            alias.HasOne<ArtistRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.ArtistId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ArtistLinkRecord>(link =>
+        {
+            link.ToTable("artist_links", static table => table.HasCheckConstraint("ck_artist_links_url", "url LIKE 'http://%' OR url LIKE 'https://%'"));
+            link.HasKey(record => new { record.ArtistId, record.Position });
+            link.HasOne<ArtistRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.ArtistId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }
