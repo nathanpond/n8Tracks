@@ -112,16 +112,36 @@ public static class VersionRules
     /// A new, mutable, active Version of <paramref name="source"/>'s Song numbered
     /// <paramref name="number"/>, holding a copy of every creation input the source has (lyrics and
     /// styles) and none of its annotations: the name is <paramref name="name"/>, normalised, and there
-    /// are no notes. The source is not changed. The number must already have been checked against
-    /// <see cref="VersionNumbering.Options"/>, and the name against <see cref="NameErrors"/>.
+    /// are no notes. <paramref name="lyrics"/> or <paramref name="styles"/>, when given, replace the
+    /// copied text (line endings normalised), so text that could not go into a frozen source can start
+    /// the new Version. The source is not changed. The number must already have been checked against
+    /// <see cref="VersionNumbering.Options"/>, the name against <see cref="NameErrors"/>, and any
+    /// lyrics or styles against <see cref="LyricsErrors"/> and <see cref="StylesErrors"/>.
     /// </summary>
-    public static SongVersion CreateFrom(SongVersion source, Guid id, VersionNumber number, string? name, DateTimeOffset now)
+    public static SongVersion CreateFrom(
+        SongVersion source,
+        Guid id,
+        VersionNumber number,
+        string? name,
+        DateTimeOffset now,
+        string? lyrics = null,
+        string? styles = null)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(number);
         if (NameErrors(name).Length > 0)
         {
             throw new ArgumentException("The name is not valid.", nameof(name));
+        }
+
+        if (lyrics is not null && LyricsErrors(lyrics).Length > 0)
+        {
+            throw new ArgumentException("The lyrics are not valid.", nameof(lyrics));
+        }
+
+        if (styles is not null && StylesErrors(styles).Length > 0)
+        {
+            throw new ArgumentException("The styles are not valid.", nameof(styles));
         }
 
         return new SongVersion(
@@ -131,8 +151,8 @@ public static class VersionRules
             NormaliseName(name),
             Notes: null,
             VersionVisibility.Active,
-            source.Lyrics,
-            source.Styles,
+            lyrics is null ? source.Lyrics : NormaliseInput(lyrics),
+            styles is null ? source.Styles : NormaliseInput(styles),
             now,
             now,
             Revision: 1);

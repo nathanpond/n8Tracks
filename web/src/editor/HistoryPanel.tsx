@@ -90,6 +90,7 @@ function SnapshotView({
   timeZone,
   restoreBlocked,
   onRestore,
+  onRestoreIntoNew,
 }: {
   summary: SnapshotSummary;
   versionId: string;
@@ -97,6 +98,7 @@ function SnapshotView({
   timeZone: string;
   restoreBlocked: string | undefined;
   onRestore: (snapshot: Snapshot) => Promise<RestoreResult>;
+  onRestoreIntoNew: ((snapshot: Snapshot) => void) | undefined;
 }) {
   const [read, setRead] = useState<{ id: string; result: SnapshotReadResult } | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -162,23 +164,39 @@ function SnapshotView({
       </Text>
       <Comparison label="Lyrics" before={snapshot.lyrics} after={current.lyrics} />
       <Comparison label="Styles" before={snapshot.styles} after={current.styles} />
-      <Group gap="sm" align="center" wrap="wrap">
-        <Button
-          disabled={restoreBlocked !== undefined || restoring}
-          loading={restoring}
-          aria-describedby={restoreBlocked === undefined ? undefined : reasonId}
-          onClick={() => {
-            setConfirming(true);
-          }}
-        >
-          Restore this snapshot
-        </Button>
-        {restoreBlocked !== undefined && (
-          <Text size="sm" id={reasonId} style={{ flex: '1 1 16rem' }}>
-            {restoreBlocked}
+      {onRestoreIntoNew !== undefined ? (
+        <Group gap="sm" align="center" wrap="wrap">
+          <Button
+            onClick={() => {
+              onRestoreIntoNew(snapshot);
+            }}
+          >
+            Restore into a new Version
+          </Button>
+          <Text size="sm" style={{ flex: '1 1 16rem' }}>
+            This Version’s lyrics and styles can no longer change, so the snapshot can start a new
+            Version instead.
           </Text>
-        )}
-      </Group>
+        </Group>
+      ) : (
+        <Group gap="sm" align="center" wrap="wrap">
+          <Button
+            disabled={restoreBlocked !== undefined || restoring}
+            loading={restoring}
+            aria-describedby={restoreBlocked === undefined ? undefined : reasonId}
+            onClick={() => {
+              setConfirming(true);
+            }}
+          >
+            Restore this snapshot
+          </Button>
+          {restoreBlocked !== undefined && (
+            <Text size="sm" id={reasonId} style={{ flex: '1 1 16rem' }}>
+              {restoreBlocked}
+            </Text>
+          )}
+        </Group>
+      )}
       {message !== undefined && (
         <Text size="sm" role="status">
           {message}
@@ -223,6 +241,7 @@ function HistoryContent({
   refreshKey,
   restoreBlocked,
   onRestore,
+  onRestoreIntoNew,
 }: Omit<HistoryPanelProps, 'versionId'> & { versionId: string }) {
   const { state, reload } = useSnapshotList(versionId);
   const [selected, setSelected] = useState<string | undefined>();
@@ -304,6 +323,7 @@ function HistoryContent({
           timeZone={timeZone}
           restoreBlocked={restoreBlocked}
           onRestore={onRestore}
+          onRestoreIntoNew={onRestoreIntoNew}
         />
       )}
     </Stack>
@@ -321,13 +341,19 @@ export interface HistoryPanelProps {
   restoreBlocked: string | undefined;
   /** Restores the snapshot (after the user confirmed it). */
   onRestore: (snapshot: Snapshot) => Promise<RestoreResult>;
+  /**
+   * Given for a frozen Version: Restore is replaced by "Restore into a new Version", which hands
+   * the snapshot on (to the branching dialog) instead of writing anything.
+   */
+  onRestoreIntoNew?: (snapshot: Snapshot) => void;
 }
 
 /**
  * A Version's History: shown on request, it lists the snapshots of its lyrics and styles, newest
  * first, with their time. Choosing one shows it compared, line by line, with the text in the
  * editor now, and offers Restore (confirmed first), which is unavailable while the editor has
- * unsaved or conflicted changes and says why.
+ * unsaved or conflicted changes and says why. On a frozen Version the list and the comparison
+ * stay, and Restore becomes "Restore into a new Version".
  */
 export function HistoryPanel(props: HistoryPanelProps) {
   const [open, setOpen] = useState(false);

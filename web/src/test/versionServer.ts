@@ -18,6 +18,7 @@ export function testVersion(number: string, change: Partial<VersionDetail> = {})
     createdAt: '2026-10-01T09:00:00Z',
     updatedAt: '2026-10-01T09:00:00Z',
     revision: 1,
+    isFrozen: false,
     lyrics: '',
     styles: '',
     ...change,
@@ -27,7 +28,7 @@ export function testVersion(number: string, change: Partial<VersionDetail> = {})
 /** A Version as the list answers it: without its lyrics and styles. */
 function summary(version: VersionDetail): Version {
   const { id, songId, number, shortcode, name, notes, archived, current } = version;
-  const { createdAt, updatedAt, revision } = version;
+  const { createdAt, updatedAt, revision, isFrozen } = version;
   return {
     id,
     songId,
@@ -40,6 +41,7 @@ function summary(version: VersionDetail): Version {
     createdAt,
     updatedAt,
     revision,
+    isFrozen,
   };
 }
 
@@ -81,7 +83,8 @@ export interface ReceivedWrite {
  * Versions, one Version with its lyrics and styles, a Version's next numbers, creating a Version
  * (which becomes current), making one current, and editing a Version's name, notes, archived flag,
  * lyrics, or styles on its revision (lyrics and styles kept as sent, line endings aside, and refused
- * over their limits). A test changes `server.versions` to play another client, or sets `server.next` to
+ * over their limits, or with 409 `version_frozen` when the Version is frozen; a create may carry
+ * its own lyrics and styles). A test changes `server.versions` to play another client, or sets `server.next` to
  * answer the next write some other way.
  */
 export function versionServer(versions: VersionDetail[], song: Song = baseSong) {
@@ -181,6 +184,9 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     const ifMatch = new Headers(init?.headers).get('If-Match');
     if (ifMatch !== `"${String(version.revision)}"`) {
       return jsonResponse(409, { code: 'revision_conflict', current: version });
+    }
+    if (version.isFrozen) {
+      return jsonResponse(409, { code: 'version_frozen', versionId: version.id });
     }
     keep(versionId, version.lyrics, version.styles, '2026-10-01T10:00:00Z');
     const restored: VersionDetail = {
@@ -297,6 +303,13 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
       if (Object.keys(errors).length > 0) {
         return jsonResponse(422, { code: 'validation_failed', errors });
       }
+      if (
+        version.isFrozen &&
+        (('lyrics' in body && input(body.lyrics) !== version.lyrics) ||
+          ('styles' in body && input(body.styles) !== version.styles))
+      ) {
+        return jsonResponse(409, { code: 'version_frozen', versionId: version.id });
+      }
       const changed: VersionDetail = {
         ...version,
         ...('name' in body ? { name: text(body.name) } : {}),
@@ -372,8 +385,8 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
       const created = testVersion(body.number, {
         name,
         current: true,
-        lyrics: source.lyrics,
-        styles: source.styles,
+        lyrics: typeof body.lyrics === 'string' ? body.lyrics : source.lyrics,
+        styles: typeof body.styles === 'string' ? body.styles : source.styles,
       });
       server.versions.push(created);
       makeCurrent(created);

@@ -24,8 +24,15 @@ public abstract record NextNumbersOutcome
 /// <summary>
 /// What creating a Version from another asks for, as the caller sent it: the source's ID or
 /// shortcode and the chosen number as unread text, and an optional name. Any of them may be missing.
+/// <paramref name="Lyrics"/> and <paramref name="Styles"/>, when given, replace the text copied from
+/// the source (carrying text a frozen source could not take into the new Version); null copies it.
 /// </summary>
-public sealed record VersionCreateRequest(string? SourceVersionId, string? Number, string? Name);
+public sealed record VersionCreateRequest(
+    string? SourceVersionId,
+    string? Number,
+    string? Name,
+    string? Lyrics = null,
+    string? Styles = null);
 
 /// <summary>How creating a Version from another ended.</summary>
 public abstract record VersionCreateOutcome
@@ -190,7 +197,8 @@ public sealed class VersionService(
 
     /// <summary>
     /// Creates a Version of the Song with <paramref name="songId"/> from one of its Versions, numbered
-    /// with one of that source's options and holding a copy of its lyrics and styles, and makes it the
+    /// with one of that source's options and holding a copy of its lyrics and styles (or the request's
+    /// own, when it sends them, a frozen source included), and makes it the
     /// Song's current Version. The number is checked against the options inside the transaction that
     /// stores it, so a number taken meanwhile is refused (with the options as they are now) and nothing
     /// is stored. The source is not changed.
@@ -214,6 +222,16 @@ public sealed class VersionService(
         if (VersionRules.NameErrors(request.Name) is { Length: > 0 } nameErrors)
         {
             errors[NameField] = nameErrors;
+        }
+
+        if (request.Lyrics is not null && VersionRules.LyricsErrors(request.Lyrics) is { Length: > 0 } lyricsErrors)
+        {
+            errors[LyricsField] = lyricsErrors;
+        }
+
+        if (request.Styles is not null && VersionRules.StylesErrors(request.Styles) is { Length: > 0 } stylesErrors)
+        {
+            errors[StylesField] = stylesErrors;
         }
 
         if (errors.Count > 0)
@@ -251,7 +269,7 @@ public sealed class VersionService(
                 }
 
                 var now = time.GetUtcNow();
-                var version = VersionRules.CreateFrom(source, Guid.CreateVersion7(now), number, request.Name, now);
+                var version = VersionRules.CreateFrom(source, Guid.CreateVersion7(now), number, request.Name, now, request.Lyrics, request.Styles);
                 await versions.AddAsync(version, ct).ConfigureAwait(false);
                 await versions.SetCurrentAsync(songId, version.Id, now, ct).ConfigureAwait(false);
 

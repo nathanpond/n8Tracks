@@ -65,6 +65,7 @@ export function versionLabel(version: Version): string {
     version.name,
     version.current ? 'current working Version' : null,
     version.archived ? 'archived' : null,
+    version.isFrozen ? 'frozen' : null,
   ]
     .filter((part) => part !== null)
     .join(', ');

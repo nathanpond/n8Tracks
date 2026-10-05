@@ -42,6 +42,14 @@ public sealed class VersionRulesTests
         // Complement: without a name it has none, and an invalid name is never stored.
         Assert.Null(VersionRules.CreateFrom(source, id, VersionNumber.Parse("2"), "   ", Now).Name);
         Assert.Throws<ArgumentException>(() => VersionRules.CreateFrom(source, id, VersionNumber.Parse("2"), "a\nb", Now));
+
+        // Lyrics or styles given replace the copy (line endings normalised); invalid ones are never stored.
+        var carried = VersionRules.CreateFrom(source, id, VersionNumber.Parse("2"), null, Now, "Carried\r\nwords", styles: null);
+        Assert.Equal("Carried\nwords", carried.Lyrics);
+        Assert.Equal(source.Styles, carried.Styles);
+        Assert.Equal("", VersionRules.CreateFrom(source, id, VersionNumber.Parse("2"), null, Now, lyrics: null, styles: "").Styles);
+        Assert.Throws<ArgumentException>(() => VersionRules.CreateFrom(source, id, VersionNumber.Parse("2"), null, Now, new string('a', VersionRules.LyricsMaximumLength + 1)));
+        Assert.Throws<ArgumentException>(() => VersionRules.CreateFrom(source, id, VersionNumber.Parse("2"), null, Now, styles: "a\0b"));
     }
 
     [Theory]

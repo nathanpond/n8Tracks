@@ -241,12 +241,13 @@ describe('the lyrics editor', () => {
     const user = userEvent.setup();
     const { server } = versionServer([ONE]);
     await openVersion();
-    server.next = () => jsonResponse(409, { code: 'version_frozen' });
+    // A refusal that is not a freeze (a freeze shows the frozen notice instead: FrozenVersion.test).
+    server.next = () => jsonResponse(403, { code: 'forbidden' });
 
-    typeLyrics('Frozen');
+    typeLyrics('Refused');
     await waitFor(
       () => {
-        expect(indicator()).toHaveTextContent(/Create a new Version from it/);
+        expect(indicator()).toHaveTextContent(/n8Tracks refused the change/);
       },
       { timeout: 4_000 },
     );

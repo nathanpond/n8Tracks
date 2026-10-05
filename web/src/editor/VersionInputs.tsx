@@ -12,18 +12,21 @@ function asTyped(text: string): string {
  * A Version's creation inputs: the lyrics editor and the Styles field, showing the drafts the
  * Version pane holds. There is no Save: the pane saves them automatically (`useAutosave`), with
  * the name and notes, and says whether they are stored. Text over a limit can be typed or pasted;
- * the counter and a message say so, and it is not sent until it is back under.
+ * the counter and a message say so, and it is not sent until it is back under. `readOnly` (a frozen
+ * Version) shows both as they are stored, readable and selectable but not editable.
  */
 export function VersionInputs({
   lyrics,
   styles,
   onLyrics,
   onStyles,
+  readOnly = false,
 }: {
   lyrics: string;
   styles: string;
   onLyrics: (lyrics: string) => void;
   onStyles: (styles: string) => void;
+  readOnly?: boolean;
 }) {
   const stylesExcess = styles.length - VERSION_STYLES_MAXIMUM_LENGTH;
 
@@ -37,12 +40,14 @@ export function VersionInputs({
         onChange={onLyrics}
         label="Lyrics"
         maximumLength={VERSION_LYRICS_MAXIMUM_LENGTH}
+        readOnly={readOnly}
       />
       <Textarea
         label="Styles"
         description={`${formatCount(styles.length)} / ${formatCount(VERSION_STYLES_MAXIMUM_LENGTH)} characters`}
         rows={3}
         resize="vertical"
+        readOnly={readOnly}
         value={styles}
         onChange={(event) => {
           onStyles(asTyped(event.currentTarget.value));

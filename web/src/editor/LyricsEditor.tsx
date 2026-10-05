@@ -1,7 +1,7 @@
 import { Box, List, Stack, Text } from '@mantine/core';
-import { EditorState } from '@codemirror/state';
+import { Compartment, EditorState, type Extension } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
-import { useEffect, useId, useMemo, useRef } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { formatCount } from './counts';
 import { analyseLyrics } from './lyricsLanguage';
 import { lyricsExtensions } from './lyricsExtensions';
@@ -15,17 +15,21 @@ import { lyricsExtensions } from './lyricsExtensions';
  * pasted; the counter and a message say so, and the caller refuses to save it.
  *
  * Controlled: a `value` that differs from the editor's text (a reload, a discard) replaces it.
+ * `readOnly` (a frozen Version) keeps the text focusable and selectable but refuses every edit,
+ * and says so to assistive technology (`aria-readonly`).
  */
 export function LyricsEditor({
   value,
   onChange,
   label,
   maximumLength,
+  readOnly = false,
 }: {
   value: string;
   onChange: (value: string) => void;
   label: string;
   maximumLength: number;
+  readOnly?: boolean;
 }) {
   const id = useId();
   const labelId = `${id}-label`;
@@ -35,6 +39,8 @@ export function LyricsEditor({
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const latestChange = useRef(onChange);
+  const [editable] = useState(() => new Compartment());
+  const initialReadOnly = useRef(readOnly);
 
   useEffect(() => {
     latestChange.current = onChange;
@@ -50,13 +56,16 @@ export function LyricsEditor({
       parent: host.current,
       state: EditorState.create({
         doc: initial.current,
-        extensions: lyricsExtensions({
-          labelledBy: labelId,
-          describedBy: `${helpId} ${countId} ${warningsId}`,
-          onChange: (text) => {
-            latestChange.current(text);
-          },
-        }),
+        extensions: [
+          lyricsExtensions({
+            labelledBy: labelId,
+            describedBy: `${helpId} ${countId} ${warningsId}`,
+            onChange: (text) => {
+              latestChange.current(text);
+            },
+          }),
+          editable.of(readOnlyExtension(initialReadOnly.current)),
+        ],
       }),
     });
     view.current = editor;
@@ -64,7 +73,11 @@ export function LyricsEditor({
       editor.destroy();
       view.current = null;
     };
-  }, [labelId, helpId, countId, warningsId]);
+  }, [labelId, helpId, countId, warningsId, editable]);
+
+  useEffect(() => {
+    view.current?.dispatch({ effects: editable.reconfigure(readOnlyExtension(readOnly)) });
+  }, [editable, readOnly]);
 
   useEffect(() => {
     const editor = view.current;
@@ -82,8 +95,9 @@ export function LyricsEditor({
         {label}
       </Text>
       <Text id={helpId} size="xs" c="var(--n8-color-secondary-text)">
-        Tags such as [Verse] are bold; backing vocals such as (ooh) are italic. Type [ for common
-        tags. Tab inserts a tab; press Escape, then Tab, to move on.
+        {readOnly
+          ? 'Read only. Tags such as [Verse] are bold; backing vocals such as (ooh) are italic.'
+          : 'Tags such as [Verse] are bold; backing vocals such as (ooh) are italic. Type [ for common tags. Tab inserts a tab; press Escape, then Tab, to move on.'}
       </Text>
       <Box ref={host} data-testid="lyrics-editor" />
       <Text
@@ -122,4 +136,11 @@ export function LyricsEditor({
       </div>
     </Stack>
   );
+}
+
+/** What makes the editor refuse edits (and say so), or nothing when it takes them. */
+function readOnlyExtension(readOnly: boolean): Extension {
+  return readOnly
+    ? [EditorState.readOnly.of(true), EditorView.contentAttributes.of({ 'aria-readonly': 'true' })]
+    : [];
 }

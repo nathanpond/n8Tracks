@@ -41,6 +41,10 @@ const SILENT_RETRIES = 5;
  * compared field differs (or only saved fields, already holding the values being saved) it is
  * retried on the current revision without asking; otherwise the dialog asks the user, and asks
  * again if reapplying meets another change. Render `dialog` once in the page.
+ *
+ * `refuses`, when given, is asked first about a stale save's current record: a reason it returns
+ * ends the save as failed for that reason, the current record taken in, without the dialog (a
+ * Version frozen meanwhile cannot take new lyrics, so there is nothing to choose between).
  */
 export function useRevisionedSave<T extends Revisioned>({
   record,
@@ -48,6 +52,7 @@ export function useRevisionedSave<T extends Revisioned>({
   fields,
   send,
   subject,
+  refuses,
 }: {
   /** The record as the page has it now. */
   record: T;
@@ -58,13 +63,15 @@ export function useRevisionedSave<T extends Revisioned>({
   send: (base: T, edit: Readonly<Record<string, FieldValue>>) => Promise<SaveResult<T>>;
   /** What the record is, as a sentence names it: "This Song". */
   subject: string;
+  /** Why the current record cannot take `edit` at all, or undefined when it can. */
+  refuses?: (current: T, edit: Readonly<Record<string, FieldValue>>) => FailureReason | undefined;
 }): {
   save: (key: string, value: FieldValue) => Promise<SaveOutcome>;
   saveFields: (edit: Readonly<Record<string, FieldValue>>) => Promise<SaveOutcome>;
   dialog: ReactNode;
 } {
   const latest = useRef(record);
-  const options = useRef({ onRecord, fields, send });
+  const options = useRef({ onRecord, fields, send, refuses });
   const [enqueue] = useState(createSaveQueue);
   const [conflict, setConflict] = useState<{
     rows: ConflictRow[];
@@ -77,8 +84,8 @@ export function useRevisionedSave<T extends Revisioned>({
     latest.current = record;
   }, [record]);
   useEffect(() => {
-    options.current = { onRecord, fields, send };
-  }, [onRecord, fields, send]);
+    options.current = { onRecord, fields, send, refuses };
+  }, [onRecord, fields, send, refuses]);
 
   const saveFields = useCallback(
     (edit: Readonly<Record<string, FieldValue>>) =>
@@ -101,6 +108,10 @@ export function useRevisionedSave<T extends Revisioned>({
 
           const current = result.current;
           adopt(current);
+          const refusal = options.current.refuses?.(current, edit);
+          if (refusal !== undefined) {
+            return { kind: 'failed', reason: refusal };
+          }
           const { fields } = options.current;
           const differing = differingFields(fields, base, current, edit);
           if (differing.length === 0) {

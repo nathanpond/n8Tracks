@@ -8,11 +8,17 @@ import {
   type ReactNode,
 } from 'react';
 import type { Version } from '../api/versions';
+import type { EditorText } from '../editor/useSnapshots';
 import { nestVersions, versionLabel, type VersionNode } from './versionNesting';
 
 /** What can be done with a Version, from its actions menu in the tree or the selected Version's header. */
 export interface VersionActions {
-  onCreateFrom: (version: Version) => void;
+  /**
+   * Opens the branching dialog for `version`. `content`, when given, is the lyrics and styles the
+   * new Version starts with instead of the source's (text a frozen Version could not take, or a
+   * snapshot restored into a new Version).
+   */
+  onCreateFrom: (version: Version, content?: EditorText) => void;
   onMakeCurrent: (version: Version) => void;
   onSetArchived: (version: Version, archived: boolean) => void;
 }
@@ -73,7 +79,8 @@ function ActionItems({ version, actions }: { version: Version; actions: VersionA
  * A Song's Versions as an ARIA tree drawn from their numbers: each under its nearest drawn ancestor
  * (`1.1` under `1`; a Version whose parent is missing or hidden goes under the nearest one that is
  * drawn), siblings in numeric order, every branch expanded at first. The selected Version is
- * `aria-selected`; the current working Version is `aria-current` and marked. Archived Versions are
+ * `aria-selected`; the current working Version is `aria-current` and marked; a frozen one (it has a
+ * Generation) shows a lock, which its accessible name also says. Archived Versions are
  * drawn, dimmed, only while "Show archived" is on; the current one is always drawn.
  *
  * One node is in the tab order at a time (roving tabindex). Up and Down move between drawn nodes,
@@ -302,6 +309,18 @@ export function VersionTree({
                 <Badge size="sm" variant="filled" radius="sm" tt="none">
                   Current
                 </Badge>
+              )}
+              {version.isFrozen && (
+                <Text
+                  span
+                  size="sm"
+                  role="img"
+                  aria-label="Frozen: has a Generation"
+                  title="Frozen: has a Generation, so its lyrics and styles are locked"
+                  data-testid="frozen-lock"
+                >
+                  🔒
+                </Text>
               )}
               {version.archived && (
                 <Text span size="xs">

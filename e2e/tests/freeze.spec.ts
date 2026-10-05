@@ -33,7 +33,7 @@ function saveStatus(page: Page) {
  * Walks #69's Demo steps 1 and 3 against the real image: a Generation is attached with the
  * test-only seeding command, after which the Version's lyrics are refused with 409
  * `version_frozen` while its name and notes still save from the Version page. The read-only editor
- * and its Create New Version From action (steps 2 and 4) arrive with #70.
+ * and its Create New Version From action (#70) are walked in `frozen-editor.spec.ts`.
  */
 test.describe('freezing a Version once a Generation is attached', () => {
   test('refuses changing the inputs and keeps the name and notes editable', async ({

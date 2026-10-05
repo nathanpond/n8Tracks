@@ -19,7 +19,10 @@ export const VERSION_LYRICS_MAXIMUM_LENGTH = 5_000;
 /** The longest styles the API takes, in UTF-16 code units once line endings are `\n` (Suno's limit). */
 export const VERSION_STYLES_MAXIMUM_LENGTH = 1_000;
 
-/** A Version as the tree shows it: no creation inputs. Times are UTC ISO 8601. */
+/**
+ * A Version as the tree shows it: no creation inputs. Times are UTC ISO 8601. `isFrozen` is true
+ * once a Generation is attached: its lyrics and styles can no longer change.
+ */
 export interface Version {
   id: string;
   songId: string;
@@ -32,6 +35,7 @@ export interface Version {
   createdAt: string;
   updatedAt: string;
   revision: number;
+  isFrozen: boolean;
 }
 
 /** A number a new Version may take: the next `sibling` after its source, or a `child` under it. */
@@ -54,7 +58,8 @@ export function isVersion(value: unknown): value is Version {
     typeof value.current === 'boolean' &&
     typeof value.createdAt === 'string' &&
     typeof value.updatedAt === 'string' &&
-    typeof value.revision === 'number'
+    typeof value.revision === 'number' &&
+    typeof value.isFrozen === 'boolean'
   );
 }
 
@@ -130,6 +135,10 @@ export interface NewVersion {
   sourceVersionId: string;
   number: string;
   name: string;
+  /** Lyrics to start with instead of the source's (text a frozen source could not take). */
+  lyrics?: string;
+  /** Styles to start with instead of the source's. */
+  styles?: string;
 }
 
 /**
@@ -151,7 +160,10 @@ function isErrorMap(value: unknown): value is Record<string, string[]> {
   );
 }
 
-/** Creates a Version of Song `songId` from one of its Versions; it becomes the current one. */
+/**
+ * Creates a Version of Song `songId` from one of its Versions; it becomes the current one. It holds
+ * the source's lyrics and styles, or the request's when it carries them.
+ */
 export async function createVersion(
   songId: string,
   request: NewVersion,

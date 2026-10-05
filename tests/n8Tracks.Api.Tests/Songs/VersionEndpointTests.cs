@@ -171,6 +171,84 @@ public sealed class VersionEndpointTests
     }
 
     [Fact]
+    public async Task CreatingFromAFrozenVersionCanCarryNewLyricsAndStylesAndTheSourceStaysAsItWas()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var song = await SongApi.CreateAsync(client, "Carried");
+        var songId = song.GetProperty("id").GetString()!;
+        TestDatabase.Execute(
+            factory.DataPath,
+            "UPDATE versions SET lyrics = 'Frozen words', styles = 'frozen style', name = 'Frozen', notes = 'Kept', updated_utc = updated_utc WHERE number = '1';");
+        await SongApi.AttachGenerationAsync(factory, "n8-1-v1");
+        var sourceBefore = SourceRow(factory.DataPath, "1");
+
+        using var response = await CreateAsync(client, songId, """{"sourceVersionId":"n8-1-v1","number":"2","lyrics":"[Verse]\r\nCarried words","styles":"carried style"}""");
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var created = await SetupApi.JsonAsync(response);
+        Assert.True(created.GetProperty("current").GetBoolean());
+        Assert.False(created.GetProperty("isFrozen").GetBoolean());
+        Assert.Equal(
+            "[Verse]\nCarried words|carried style",
+            TestDatabase.Scalar(factory.DataPath, "SELECT lyrics || '|' || styles FROM versions WHERE number = '2';"));
+        Assert.Equal(sourceBefore, SourceRow(factory.DataPath, "1"));
+
+        // Only one of them: the other is copied. An empty string clears it; null copies it.
+        using (var lyricsOnly = await CreateAsync(client, songId, """{"sourceVersionId":"n8-1-v1","number":"1.1","lyrics":"","styles":null}"""))
+        {
+            Assert.Equal(HttpStatusCode.Created, lyricsOnly.StatusCode);
+        }
+
+        Assert.Equal(
+            "|frozen style",
+            TestDatabase.Scalar(factory.DataPath, "SELECT lyrics || '|' || styles FROM versions WHERE number = '1.1';"));
+
+        // The new Version is an ordinary, editable one.
+        var detail = await SetupApi.JsonAsync(await client.GetAsync(new Uri("/api/v1/versions/n8-1-v2", UriKind.Relative)));
+        using var request = new HttpRequestMessage(HttpMethod.Patch, new Uri("/api/v1/versions/n8-1-v2", UriKind.Relative))
+        {
+            Content = new StringContent("""{"lyrics":"Edited"}""", System.Text.Encoding.UTF8, "application/json"),
+        };
+        request.Headers.Add(SessionApi.AntiforgeryHeader, "1");
+        request.Headers.TryAddWithoutValidation("If-Match", SongApi.Quoted(detail.GetProperty("revision").GetInt32()));
+        using var edit = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, edit.StatusCode);
+    }
+
+    [Fact]
+    public async Task CarriedLyricsOrStylesThatAreNotValidAreRefusedAndNothingIsStored()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var song = await SongApi.CreateAsync(client, "Carried refusals");
+        var songId = song.GetProperty("id").GetString()!;
+
+        async Task<List<string>> RefusedFieldsAsync(string extra)
+        {
+            using var response = await CreateAsync(client, songId, $$"""{"sourceVersionId":"n8-1-v1","number":"2",{{extra}}}""");
+            var problem = await SetupApi.ProblemAsync(response, HttpStatusCode.UnprocessableEntity, ApiProblem.ValidationFailedCode);
+            return [.. problem.GetProperty("errors").EnumerateObject().Select(static error => error.Name).Order(StringComparer.Ordinal)];
+        }
+
+        Assert.Equal(["lyrics"], await RefusedFieldsAsync($$"""
+            "lyrics":"{{new string('a', VersionRules.LyricsMaximumLength + 1)}}"
+            """));
+        Assert.Equal(["styles"], await RefusedFieldsAsync($$"""
+            "styles":"{{new string('a', VersionRules.StylesMaximumLength + 1)}}"
+            """));
+        Assert.Equal(["lyrics", "styles"], await RefusedFieldsAsync("\"lyrics\":5,\"styles\":[\"x\"]"));
+        Assert.Equal(["lyrics"], await RefusedFieldsAsync("\"lyrics\":\"a\\u0000b\""));
+        Assert.Equal(["styles"], await RefusedFieldsAsync("\"styles\":\"\\ud83c\""));
+
+        Assert.Equal(["1"], TestDatabase.Rows(factory.DataPath, "SELECT number FROM versions;"));
+
+        // Complement: exactly at the limits is taken.
+        using var limit = await CreateAsync(client, songId, $$"""{"sourceVersionId":"n8-1-v1","number":"2","lyrics":"{{new string('a', VersionRules.LyricsMaximumLength)}}","styles":"{{new string('b', VersionRules.StylesMaximumLength)}}"}""");
+        Assert.Equal(HttpStatusCode.Created, limit.StatusCode);
+    }
+
+    [Fact]
     public async Task AnyVersionArchivedOrNotCanBeMadeCurrentWithoutARevision()
     {
         var clock = new TestClock();

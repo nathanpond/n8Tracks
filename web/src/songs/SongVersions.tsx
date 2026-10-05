@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router';
 import type { Song } from '../api/songs';
 import { setCurrentVersion, setVersionArchived, type Version } from '../api/versions';
+import type { EditorText } from '../editor/useSnapshots';
 import { CreateVersionDialog } from './CreateVersionDialog';
 import { VersionDetails } from './VersionDetails';
 import { VersionTree, type VersionActions } from './VersionTree';
@@ -57,7 +58,7 @@ export function SongVersions({
   const [versions, setVersions] = useState(loaded);
   const [showArchived, setShowArchived] = useState(storedShowArchived);
   const [seenNumber, setSeenNumber] = useState<string | undefined | null>(null);
-  const [source, setSource] = useState<Version | undefined>();
+  const [source, setSource] = useState<{ version: Version; content?: EditorText } | undefined>();
   const [notice, setNotice] = useState<Notice>();
   const [busy, setBusy] = useState(false);
 
@@ -111,8 +112,8 @@ export function SongVersions({
   };
 
   const actions: VersionActions = {
-    onCreateFrom: (version) => {
-      setSource(latest(version));
+    onCreateFrom: (version, content) => {
+      setSource({ version: latest(version), content });
     },
     onMakeCurrent: (version) => {
       setBusy(true);
@@ -228,7 +229,8 @@ export function SongVersions({
         </Grid.Col>
         <CreateVersionDialog
           songId={song.id}
-          source={source}
+          source={source?.version}
+          content={source?.content}
           onClose={() => {
             setSource(undefined);
           }}

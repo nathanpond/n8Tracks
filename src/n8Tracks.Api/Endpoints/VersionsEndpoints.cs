@@ -334,9 +334,10 @@ internal static class VersionsEndpoints
     }
 
     /// <summary>
-    /// 201 with the new Version, now current; 404 when there is no such Song; 422
-    /// <c>validation_failed</c> on a missing or wrong field (the source not being one of the Song's
-    /// Versions included); 422 <c>version_number_not_offered</c> or 409 <c>version_number_taken</c>,
+    /// 201 with the new Version, now current, holding the source's lyrics and styles or the ones sent
+    /// (a frozen source's included); 404 when there is no such Song; 422 <c>validation_failed</c> on
+    /// a missing or wrong field (the source not being one of the Song's Versions, or lyrics or styles
+    /// over their limits, included); 422 <c>version_number_not_offered</c> or 409 <c>version_number_taken</c>,
     /// each with the source's <c>options</c> as they are now. Nothing is stored unless the answer is 201.
     /// </summary>
     private static async Task<Results<Created<VersionResponse>, ProblemHttpResult>> CreateAsync(
@@ -355,9 +356,17 @@ internal static class VersionsEndpoints
             return SongsEndpoints.NoSuchSong(context);
         }
 
+        var typeErrors = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        var lyrics = CarriedText(request?.Lyrics, VersionService.LyricsField, typeErrors);
+        var styles = CarriedText(request?.Styles, VersionService.StylesField, typeErrors);
+        if (typeErrors.Count > 0)
+        {
+            return ApiProblem.ValidationFailed(context, typeErrors);
+        }
+
         var outcome = await versions.CreateFromAsync(
             id,
-            new VersionCreateRequest(request?.SourceVersionId, request?.Number, request?.Name),
+            new VersionCreateRequest(request?.SourceVersionId, request?.Number, request?.Name, lyrics, styles),
             cancellationToken);
         switch (outcome)
         {
@@ -561,6 +570,16 @@ internal static class VersionsEndpoints
     }
 
     /// <summary>
+    /// Lyrics or styles sent with a create: missing or <c>null</c> copies the source's (null), and
+    /// text replaces it. Any other JSON, or a string with half a surrogate pair, is an error.
+    /// </summary>
+    private static string? CarriedText(JsonElement? sent, string name, Dictionary<string, string[]> errors)
+    {
+        var field = TextField(sent, name, errors, "Send text, or leave it out to copy the source's.");
+        return field.IsSent ? field.Value : null;
+    }
+
+    /// <summary>
     /// The text of a JSON string, or null when it escapes half a surrogate pair (<c>"\ud83c"</c>),
     /// which .NET cannot read as a string: a field error, not a server error.
     /// </summary>
@@ -642,8 +661,12 @@ internal sealed record NextNumbersResponse(NextNumberResponse[] Options)
 /// <summary>One number: <c>kind</c> is <c>sibling</c> or <c>child</c>.</summary>
 internal sealed record NextNumberResponse(string Number, string Kind, bool Proposed);
 
-/// <summary>The create form: the source Version's ID or shortcode, the chosen number, and an optional name.</summary>
-internal sealed record CreateVersionRequest(string? SourceVersionId, string? Number, string? Name);
+/// <summary>
+/// The create form: the source Version's ID or shortcode, the chosen number, an optional name, and
+/// optional lyrics and styles to start with instead of the source's. The two texts are read as raw
+/// JSON, so a non-text value is a field error rather than a binding failure.
+/// </summary>
+internal sealed record CreateVersionRequest(string? SourceVersionId, string? Number, string? Name, JsonElement Lyrics, JsonElement Styles);
 
 /// <summary>
 /// An edit: any of the five fields, each left alone when missing. A missing field and a null one

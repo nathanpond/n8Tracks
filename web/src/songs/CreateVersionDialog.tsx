@@ -8,6 +8,7 @@ import {
   type Version,
 } from '../api/versions';
 import { Notice } from '../components/Notice';
+import type { EditorText } from '../editor/useSnapshots';
 import { nameError, singleLine } from './songRules';
 
 const FAILED_MESSAGE =
@@ -35,11 +36,13 @@ function describe(option: NumberOption, source: string): string {
 function CreateVersionForm({
   songId,
   source,
+  content,
   onClose,
   onCreated,
 }: {
   songId: string;
   source: Version;
+  content: EditorText | undefined;
   onClose: () => void;
   onCreated: (version: Version) => void;
 }) {
@@ -48,6 +51,7 @@ function CreateVersionForm({
   const [number, setNumber] = useState<string | undefined>();
   const [name, setName] = useState('');
   const [nameProblem, setNameProblem] = useState<string | undefined>();
+  const [contentProblem, setContentProblem] = useState<string | undefined>();
   const [refusal, setRefusal] = useState<string | undefined>();
   const [failed, setFailed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -83,7 +87,13 @@ function CreateVersionForm({
     }
 
     setSubmitting(true);
-    const result = await createVersion(songId, { sourceVersionId: source.id, number, name });
+    setContentProblem(undefined);
+    const result = await createVersion(songId, {
+      sourceVersionId: source.id,
+      number,
+      name,
+      ...(content === undefined ? {} : { lyrics: content.lyrics, styles: content.styles }),
+    });
     setSubmitting(false);
 
     switch (result.kind) {
@@ -99,10 +109,17 @@ function CreateVersionForm({
             : `Version ${number} is no longer offered. The numbers below are the ones free now.`,
         );
         return;
-      case 'invalid':
+      case 'invalid': {
+        const carried = [...(result.errors.lyrics ?? []), ...(result.errors.styles ?? [])];
         setNameProblem(result.errors.name?.join(' '));
-        setFailed(result.errors.name === undefined);
+        setContentProblem(
+          carried.length === 0
+            ? undefined
+            : `The lyrics or styles it would start with cannot be stored: ${carried.join(' ')}`,
+        );
+        setFailed(result.errors.name === undefined && carried.length === 0);
         return;
+      }
       case 'failed':
         setFailed(true);
     }
@@ -151,8 +168,10 @@ function CreateVersionForm({
     >
       <Stack gap="md">
         <Text size="sm">
-          The new Version starts with a copy of {source.number}’s lyrics and styles. {source.number}{' '}
-          itself is not changed.
+          {content === undefined
+            ? `The new Version starts with a copy of ${source.number}’s lyrics and styles.`
+            : `The new Version starts with the lyrics and styles carried over, not ${source.number}’s.`}{' '}
+          {source.number} itself is not changed.
         </Text>
         <div role="status">
           {refusal !== undefined && (
@@ -190,6 +209,11 @@ function CreateVersionForm({
           data-autofocus
         />
         <div role="status">
+          {contentProblem !== undefined && (
+            <Notice title="Version not created">
+              <Text>{contentProblem}</Text>
+            </Notice>
+          )}
           {failed && (
             <Notice title="Version not created">
               <Text>{FAILED_MESSAGE}</Text>
@@ -211,16 +235,20 @@ function CreateVersionForm({
 
 /**
  * "Create New Version From" a source Version: the valid numbers (the proposal preselected) and an
- * optional name. `onCreated` gets the new Version, which the API has made the current one.
+ * optional name. `onCreated` gets the new Version, which the API has made the current one. With
+ * `content` the new Version holds that text rather than a copy of the source's.
  */
 export function CreateVersionDialog({
   songId,
   source,
+  content,
   onClose,
   onCreated,
 }: {
   songId: string;
   source: Version | undefined;
+  /** The lyrics and styles to start with instead of the source's, if any. */
+  content?: EditorText;
   onClose: () => void;
   onCreated: (version: Version) => void;
 }) {
@@ -237,6 +265,7 @@ export function CreateVersionDialog({
           key={source.id}
           songId={songId}
           source={source}
+          content={content}
           onClose={onClose}
           onCreated={onCreated}
         />

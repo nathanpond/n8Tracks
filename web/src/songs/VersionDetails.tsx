@@ -12,7 +12,7 @@ import {
   Title,
 } from '@mantine/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { FieldValue } from '../api/saves';
+import type { FailureReason, FieldValue } from '../api/saves';
 import { restoreSnapshot, type Snapshot } from '../api/snapshots';
 import { useConfiguredTimeZone } from '../api/timeZone';
 import {
@@ -31,6 +31,7 @@ import { ConflictValue } from '../common/ConflictDialog';
 import { ShortcodeBadge } from '../common/ShortcodeBadge';
 import { useRevisionedSave, type SavedField } from '../common/useRevisionedSave';
 import { AutosaveIndicator } from '../editor/AutosaveIndicator';
+import { FrozenNotice } from '../editor/FrozenNotice';
 import { HistoryPanel, type RestoreResult } from '../editor/HistoryPanel';
 import { LeaveGuard } from '../editor/LeaveGuard';
 import { useAutosave, type AutosaveStatus, type Edit } from '../editor/useAutosave';
@@ -82,10 +83,19 @@ const DRAFTED: readonly {
   { key: 'styles', read: (version) => version.styles, normalise: (draft) => draft },
 ];
 
-/** The fields whose drafts differ from `stored`, with the values they would be saved as. */
+/** The creation inputs: the fields a frozen Version can no longer take. */
+const INPUTS: readonly (keyof Drafts)[] = ['lyrics', 'styles'];
+
+/**
+ * The fields whose drafts differ from `stored`, with the values they would be saved as. A frozen
+ * Version's lyrics and styles are never sent.
+ */
 function editOf(drafts: Drafts, stored: VersionDetail): Edit {
   const edit: Record<string, FieldValue> = {};
   for (const field of DRAFTED) {
+    if (stored.isFrozen && INPUTS.includes(field.key)) {
+      continue;
+    }
     const value = field.normalise(drafts[field.key]);
     if (value !== field.read(stored)) {
       edit[field.key] = value;
@@ -118,6 +128,24 @@ function follow(
     }
   }
   return next;
+}
+
+/** Whether `drafts` hold lyrics or styles that `stored` does not. */
+function inputsDiffer(drafts: Drafts, stored: VersionDetail): boolean {
+  return drafts.lyrics !== stored.lyrics || drafts.styles !== stored.styles;
+}
+
+/**
+ * Why `current` cannot take `edit` at all: it is frozen and the edit changes its lyrics or styles.
+ * A stale save meeting that is not a conflict to resolve; the text goes to a new Version instead.
+ */
+function refusesInputs(
+  current: VersionDetail,
+  edit: Readonly<Record<string, FieldValue>>,
+): FailureReason | undefined {
+  const changes = (key: 'lyrics' | 'styles') =>
+    Object.hasOwn(edit, key) && edit[key] !== current[key];
+  return current.isFrozen && (changes('lyrics') || changes('styles')) ? 'frozen' : undefined;
 }
 
 /** Why the drafts cannot be saved as they are, or undefined when they can. */
@@ -314,7 +342,13 @@ function LoadedVersionDetails({
     if (version.revision > record.revision) {
       const next = isVersionDetail(version)
         ? version
-        : { ...record, name: version.name, notes: version.notes, archived: version.archived };
+        : {
+            ...record,
+            name: version.name,
+            notes: version.notes,
+            archived: version.archived,
+            isFrozen: version.isFrozen,
+          };
       setRecord(next);
       setDraftsState(follow(drafts, record, next));
     }
@@ -377,7 +411,36 @@ function LoadedVersionDetails({
     fields,
     send,
     subject: 'This Version',
+    refuses: refusesInputs,
   });
+
+  // A freeze met with unsaved lyrics or styles: that text cannot go into this Version, so it is
+  // kept (`carried`, and a snapshot in History) to start a new one, and the editor goes back to
+  // the stored text, read only. The name and notes are unaffected and go on saving.
+  const [carried, setCarried] = useState<EditorText | undefined>();
+  const takeFrozen = useCallback(
+    (stored: VersionDetail) => {
+      const now = latestDrafts.current;
+      if (!inputsDiffer(now, stored)) {
+        return;
+      }
+      capture();
+      setCarried({ lyrics: now.lyrics, styles: now.styles });
+      setDrafts({ ...now, lyrics: stored.lyrics, styles: stored.styles });
+      rebase({ lyrics: stored.lyrics, styles: stored.styles }, false);
+    },
+    [capture, rebase, setDrafts],
+  );
+
+  /** A 409 `version_frozen` on a Version the page did not know was frozen: it is now. */
+  const markFrozen = useCallback(() => {
+    if (!latest.current.isFrozen) {
+      const frozen = { ...latest.current, isFrozen: true };
+      latest.current = frozen;
+      setRecord(frozen);
+      onVersion(frozen);
+    }
+  }, [onVersion]);
 
   const autosave = useAutosave({
     pending: useCallback(() => editOf(latestDrafts.current, latest.current), []),
@@ -386,12 +449,25 @@ function LoadedVersionDetails({
       async (edit: Edit) => {
         sending.current = edit;
         try {
-          return await saveFields(edit);
+          const outcome = await saveFields(edit);
+          if (outcome.kind !== 'failed' || outcome.reason !== 'frozen') {
+            return outcome;
+          }
+          // The Version froze: its lyrics and styles are carried to a new Version, and the rest of
+          // the edit (name, notes) is saved as usual, so the frozen notice, not a failure, shows.
+          markFrozen();
+          takeFrozen(latest.current);
+          const rest = editOf(latestDrafts.current, latest.current);
+          if (Object.keys(rest).length === 0) {
+            return { kind: 'saved' } as const;
+          }
+          sending.current = rest;
+          return await saveFields(rest);
         } finally {
           sending.current = null;
         }
       },
-      [saveFields],
+      [markFrozen, saveFields, takeFrozen],
     ),
     onReloaded: useCallback(() => {
       // The text being discarded goes into history first; the text taken in may be new to it.
@@ -401,6 +477,14 @@ function LoadedVersionDetails({
     }, [capture, rebase, setDrafts]),
   });
   const { changed, flush } = autosave;
+
+  // A freeze learnt any other way (the Version read again from the tree) carries the text too.
+  useEffect(() => {
+    if (record.isFrozen && inputsDiffer(latestDrafts.current, record)) {
+      takeFrozen(record);
+      changed();
+    }
+  }, [record, takeFrozen, changed]);
 
   const snapshotChanged = snapshots.changed;
   const change = useCallback(
@@ -430,9 +514,12 @@ function LoadedVersionDetails({
         onRecord(result.current);
         return 'changed-elsewhere';
       }
+      if (result.kind === 'failed' && result.reason === 'frozen') {
+        markFrozen();
+      }
       return 'failed';
     },
-    [onRecord, rebase, setDrafts],
+    [markFrozen, onRecord, rebase, setDrafts],
   );
 
   // Ctrl/Cmd+S anywhere in the pane (the lyrics editor included) saves now, not after the pause.
@@ -462,11 +549,22 @@ function LoadedVersionDetails({
   }, [snapshotAsPageCloses]);
 
   const shown: Version = { ...record, current: version.current };
+  const frozen = record.isFrozen;
+  // On a frozen Version, branching from it carries any text it could not take.
+  const paneActions: VersionActions = useMemo(
+    () => ({
+      ...actions,
+      onCreateFrom: (target, content) => {
+        actions.onCreateFrom(target, content ?? (target.id === record.id ? carried : undefined));
+      },
+    }),
+    [actions, carried, record.id],
+  );
 
   return (
     <Paper p="md" withBorder component="section" aria-labelledby="version-heading" ref={panel}>
       <Stack gap="sm">
-        <VersionHeader version={shown} actions={actions} busy={busy} />
+        <VersionHeader version={shown} actions={paneActions} busy={busy} />
         <AutosaveIndicator
           status={autosave.status}
           onRetry={autosave.retry}
@@ -489,7 +587,19 @@ function LoadedVersionDetails({
           Created <RelativeTime utc={record.createdAt} timeZone={timeZone} />
         </Text>
         <Divider />
+        <div role="status">
+          {frozen && (
+            <FrozenNotice
+              number={record.number}
+              carried={carried !== undefined}
+              onCreate={() => {
+                paneActions.onCreateFrom(shown);
+              }}
+            />
+          )}
+        </div>
         <VersionInputs
+          readOnly={frozen}
           lyrics={drafts.lyrics}
           styles={drafts.styles}
           onLyrics={(value) => {
@@ -507,6 +617,16 @@ function LoadedVersionDetails({
           refreshKey={historyKey}
           restoreBlocked={restoreBlockedBy(autosave.status)}
           onRestore={restore}
+          onRestoreIntoNew={
+            frozen
+              ? (snapshot) => {
+                  actions.onCreateFrom(shown, {
+                    lyrics: snapshot.lyrics,
+                    styles: snapshot.styles,
+                  });
+                }
+              : undefined
+          }
         />
       </Stack>
       {dialog}
