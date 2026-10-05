@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using n8Tracks.Application.Auth;
 using n8Tracks.Application.Configuration;
+using n8Tracks.Application.Credentials;
 using n8Tracks.Application.Health;
 using n8Tracks.Application.Persistence;
 using n8Tracks.Application.Setup;
@@ -39,6 +40,7 @@ public static class DependencyInjection
         services.AddScoped<IAccountPasswords>(static provider => provider.GetRequiredService<SessionStore>());
         services.AddScoped<ISignInThrottleStore, SignInThrottleStore>();
         services.AddScoped<IExclusiveTransaction, ExclusiveTransaction>();
+        services.AddScoped<ICredentialStore, CredentialStore>();
 
         return services;
     }

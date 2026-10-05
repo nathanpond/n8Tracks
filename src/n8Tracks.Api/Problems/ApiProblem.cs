@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
+using n8Tracks.Api.Auth;
 
 namespace n8Tracks.Api.Problems;
 
@@ -58,6 +59,7 @@ internal static class ApiProblem
         endpoints.MapFallback(
             VersionPrefix + "/{**path}",
             static (HttpContext context) => For(context, StatusCodes.Status404NotFound, NotFoundCode, "There is no such API resource."))
+            .AnyCaller()
             .ExcludeFromDescription();
 
         return endpoints;

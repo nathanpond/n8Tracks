@@ -16,6 +16,8 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
 
     public DbSet<SessionRecord> Sessions => Set<SessionRecord>();
 
+    public DbSet<CredentialRecord> Credentials => Set<CredentialRecord>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         ArgumentNullException.ThrowIfNull(configurationBuilder);
@@ -53,6 +55,17 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                 .HasForeignKey(record => record.AdministratorId)
                 .OnDelete(DeleteBehavior.Cascade);
             session.HasIndex(record => record.LastUsedUtc);
+        });
+
+        modelBuilder.Entity<CredentialRecord>(credential =>
+        {
+            credential.ToTable("credentials", static table =>
+            {
+                table.HasCheckConstraint("ck_credentials_scopes", "length(scopes) > 0");
+                table.HasCheckConstraint("ck_credentials_revision", "revision >= 1");
+            });
+            credential.HasKey(record => record.Id);
+            credential.HasIndex(record => record.TokenHash).IsUnique();
         });
     }
 }

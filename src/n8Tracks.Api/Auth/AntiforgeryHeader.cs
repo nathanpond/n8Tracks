@@ -14,7 +14,8 @@ internal sealed class AntiforgeryHeaderRequired
 /// <see cref="AntiforgeryHeaderRequired"/>, must carry <c>X-N8Tracks-Request: 1</c>. A cross-site
 /// form cannot set a custom header, and a cross-site script cannot without a CORS preflight this
 /// app never grants. Runs after authorization, so a request without a session is 401 first.
-/// Bearer requests (a later story) are exempt: they carry no ambient credential.
+/// Requests authenticated by a Bearer token are exempt: a token is no ambient credential a browser
+/// sends on its own.
 /// </summary>
 internal sealed class AntiforgeryHeaderMiddleware(RequestDelegate next)
 {

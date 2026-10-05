@@ -1,0 +1,176 @@
+using System.Net;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
+using n8Tracks.Api.Auth;
+using n8Tracks.Api.Tests.Setup;
+using n8Tracks.Application.Credentials;
+
+namespace n8Tracks.Api.Tests.Auth;
+
+/// <summary>
+/// Every <c>/api/v1</c> endpoint declares what a token needs to call it: exactly one of
+/// <c>RequireScope(...)</c>, <c>SessionOnly()</c>, or <c>AllowAnonymous()</c>. The one exception is
+/// the API's own 404 fallback, marked <c>AnyCaller()</c>, and no other endpoint may carry that.
+/// </summary>
+public sealed class EndpointScopeGuardTests
+{
+    private const string ApiNotFoundPattern = "/api/v1/{**path}";
+
+    [Fact]
+    public void EveryApiEndpointDeclaresExactlyOneScopeMarker()
+    {
+        using var factory = new N8TracksApiFactory();
+        var endpoints = ApiEndpoints(factory);
+
+        Assert.Empty(Violations(endpoints));
+
+        // Complement: the check looked at the endpoints there are, of each kind.
+        var markers = endpoints.ToDictionary(Describe, Marker, StringComparer.Ordinal);
+        Assert.Equal("anonymous", markers["GET /api/v1/setup/status"]);
+        Assert.Equal("anonymous", markers["POST /api/v1/setup"]);
+        Assert.Equal("anonymous", markers["POST /api/v1/session"]);
+        Assert.Equal("session-only", markers["GET /api/v1/session"]);
+        Assert.Equal("session-only", markers["DELETE /api/v1/session"]);
+        Assert.Equal("session-only", markers["DELETE /api/v1/sessions"]);
+        Assert.Equal("session-only", markers["POST /api/v1/account/password"]);
+        Assert.Equal("any-caller", markers["* " + ApiNotFoundPattern]);
+    }
+
+    /// <summary>Proves the check bites: an endpoint added to the test host without a marker fails it.</summary>
+    [Fact]
+    public void AnUnmarkedEndpointInTheTestHostFailsTheCheck()
+    {
+        using var factory = TestEndpoints.Host(withUnmarked: true);
+
+        Assert.Equal(["GET /api/v1/test/unmarked: no scope marker"], Violations(ApiEndpoints(factory)));
+
+        // Complement: the same host without it passes, its scoped endpoints included.
+        using var marked = TestEndpoints.Host(withUnmarked: false);
+        var endpoints = ApiEndpoints(marked);
+        Assert.Contains(endpoints, static endpoint => endpoint.RoutePattern.RawText == TestEndpoints.BulkWrite.OriginalString);
+        Assert.Empty(Violations(endpoints));
+    }
+
+    [Fact]
+    public void TwoMarkersOnOneEndpointAndAnyCallerOutsideTheFallbackAreReported()
+    {
+        using var factory = TestEndpoints.Host(static endpoints =>
+        {
+            endpoints.MapGet("/api/v1/test/both", static () => "x").RequireScope(CredentialScopes.CatalogRead).SessionOnly();
+            endpoints.MapGet("/api/v1/test/open", static () => "x").AnyCaller();
+            endpoints.MapGet("/api/v1/test/fine", static () => "x").AllowAnonymous();
+        });
+
+        Assert.Equal(
+            ["GET /api/v1/test/both: 2 scope markers", "GET /api/v1/test/open: AnyCaller() is for the API's 404 only"],
+            Violations(ApiEndpoints(factory)));
+    }
+
+    [Fact]
+    public void AScopeMarkerNeedsAtLeastOneKnownScope()
+    {
+        Assert.Throws<ArgumentException>(static () => new RequiredScopes([]));
+        Assert.Throws<ArgumentException>(static () => new RequiredScopes(["catalog.write"]));
+        Assert.Throws<ArgumentException>(static () => new RequiredScopes(["Catalog.Read"]));
+
+        // Complement: known scopes are kept, each once.
+        Assert.Equal(
+            [CredentialScopes.SongsWrite, CredentialScopes.CatalogBulkWrite],
+            new RequiredScopes([CredentialScopes.SongsWrite, CredentialScopes.CatalogBulkWrite, CredentialScopes.SongsWrite]).Scopes);
+    }
+
+    /// <summary>
+    /// The same, from outside: a token holding every scope is refused every session-only endpoint
+    /// with 403 <c>session_required</c>, and is ignored on every anonymous one.
+    /// </summary>
+    [Fact]
+    public async Task ATokenWithEveryScopeIsRefusedEverySessionOnlyEndpointAndIgnoredOnAnonymousOnes()
+    {
+        using var factory = new N8TracksApiFactory();
+        using var client = factory.CreateClient();
+        await SetupApi.CompleteAsync(client);
+        var token = await CredentialApi.CreateTokenAsync(factory, [.. CredentialScopes.All]);
+
+        var sessionOnly = 0;
+        foreach (var endpoint in ApiEndpoints(factory).Where(static endpoint => Marker(endpoint) == "session-only"))
+        {
+            foreach (var method in endpoint.Metadata.GetMetadata<HttpMethodMetadata>()!.HttpMethods)
+            {
+                using var response = await CredentialApi.SendAsync(client, new HttpMethod(method), new Uri(endpoint.RoutePattern.RawText!, UriKind.Relative), token);
+                Assert.True(response.StatusCode == HttpStatusCode.Forbidden, $"{method} {endpoint.RoutePattern.RawText}: {response.StatusCode}");
+                await SetupApi.ProblemAsync(response, HttpStatusCode.Forbidden, SessionOnlyMiddleware.RequiredCode);
+                sessionOnly++;
+            }
+        }
+
+        Assert.Equal(4, sessionOnly);
+
+        // An anonymous endpoint answers as it would without the header, even to a token that is not one.
+        using var status = await CredentialApi.SendRawAsync(client, HttpMethod.Get, SetupApi.Status, "Bearer not-a-token");
+        Assert.Equal(HttpStatusCode.OK, status.StatusCode);
+        using var signIn = await CredentialApi.SendAsync(client, HttpMethod.Post, SessionApi.Session, token);
+        await SetupApi.ProblemAsync(signIn, HttpStatusCode.Forbidden, AntiforgeryHeaderMiddleware.RequiredCode);
+    }
+
+    private static List<RouteEndpoint> ApiEndpoints(N8TracksApiFactory factory) =>
+        [.. factory.Services.GetRequiredService<EndpointDataSource>().Endpoints
+            .OfType<RouteEndpoint>()
+            .Where(static endpoint => endpoint.RoutePattern.RawText?.StartsWith("/api/v1/", StringComparison.Ordinal) == true)];
+
+    private static List<string> Violations(IEnumerable<RouteEndpoint> endpoints)
+    {
+        var violations = new List<string>();
+        foreach (var endpoint in endpoints)
+        {
+            var count = Markers(endpoint).Count;
+            if (count == 0)
+            {
+                violations.Add($"{Describe(endpoint)}: no scope marker");
+            }
+            else if (count > 1)
+            {
+                violations.Add($"{Describe(endpoint)}: {count} scope markers");
+            }
+            else if (Marker(endpoint) == "any-caller" && endpoint.RoutePattern.RawText != ApiNotFoundPattern)
+            {
+                violations.Add($"{Describe(endpoint)}: AnyCaller() is for the API's 404 only");
+            }
+        }
+
+        return [.. violations.Order(StringComparer.Ordinal)];
+    }
+
+    private static List<string> Markers(RouteEndpoint endpoint)
+    {
+        var metadata = endpoint.Metadata;
+        var markers = new List<string>();
+        if (metadata.GetMetadata<RequiredScopes>() is not null)
+        {
+            markers.Add("scope");
+        }
+
+        if (metadata.GetMetadata<SessionOnlyEndpoint>() is not null)
+        {
+            markers.Add("session-only");
+        }
+
+        if (metadata.GetMetadata<IAllowAnonymous>() is not null)
+        {
+            markers.Add("anonymous");
+        }
+
+        if (metadata.GetMetadata<AnyCallerEndpoint>() is not null)
+        {
+            markers.Add("any-caller");
+        }
+
+        return markers;
+    }
+
+    private static string Marker(RouteEndpoint endpoint) => string.Join('+', Markers(endpoint));
+
+    private static string Describe(RouteEndpoint endpoint) =>
+        $"{(endpoint.Metadata.GetMetadata<HttpMethodMetadata>()?.HttpMethods is { Count: > 0 } methods ? string.Join(',', methods) : "*")} {endpoint.RoutePattern.RawText}";
+}

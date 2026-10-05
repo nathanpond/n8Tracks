@@ -218,6 +218,41 @@ public sealed class LogRedactionGuardTests
         Assert.DoesNotContain(n8Tracks.Application.Auth.SessionToken.Hash(token), captured, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A credential's token travels in the Authorization header of every call. At Debug, through a
+    /// call the token's scope allows, one it refuses, and one with a token that does not exist,
+    /// neither the token nor its stored hash reaches the log, while the requests themselves are logged.
+    /// </summary>
+    [Fact]
+    public async Task AValidTokenAndItsHashNeverReachTheLog()
+    {
+        using var factory = new LoggingApiFactory("Debug") { TestServices = static services => TestEndpoints.Register(services) };
+        using var client = factory.CreateClient();
+        await SetupApi.CompleteAsync(client);
+        var token = await CredentialApi.CreateTokenAsync(factory, n8Tracks.Application.Credentials.CredentialScopes.CatalogRead);
+        var unknown = n8Tracks.Application.Credentials.CredentialToken.Create();
+
+        foreach (var (method, uri, bearer, status) in new[]
+        {
+            (HttpMethod.Get, TestEndpoints.Read, token, HttpStatusCode.OK),
+            (HttpMethod.Post, TestEndpoints.Write, token, HttpStatusCode.Forbidden),
+            (HttpMethod.Get, TestEndpoints.Read, unknown, HttpStatusCode.Unauthorized),
+        })
+        {
+            using var response = await CredentialApi.SendAsync(client, method, uri, bearer);
+            Assert.Equal(status, response.StatusCode);
+            await factory.CompletionLine(LoggingApiFactory.RequestId(response));
+        }
+
+        var captured = factory.CapturedText;
+        Assert.Contains("/api/v1/test/read", captured, StringComparison.Ordinal);
+        Assert.Contains("/api/v1/test/songs", captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(token, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(token[4..], captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(n8Tracks.Application.Credentials.CredentialToken.Hash(token), captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(unknown[4..], captured, StringComparison.Ordinal);
+    }
+
     /// <summary>Sends the request that carries every sentinel and returns its request ID.</summary>
     private static async Task<string> SendTheSentinels(LoggingApiFactory factory)
     {

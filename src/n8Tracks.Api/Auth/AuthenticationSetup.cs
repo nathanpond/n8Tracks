@@ -6,23 +6,32 @@ using Microsoft.AspNetCore.HttpOverrides;
 namespace n8Tracks.Api.Auth;
 
 /// <summary>
-/// Puts the app behind the sign-in. Every endpoint needs a session (the fallback policy) unless it
-/// is marked <c>AllowAnonymous</c>: health, the setup status and submission, and sign-in. Requests
-/// that reach no endpoint (the frontend's shell and files, and 404s) are not checked, and the
-/// session is not even looked up for them: the shell is served to anyone, and it asks the API who
-/// is signed in.
+/// Puts the app behind the sign-in. Every endpoint needs a session or a credential's token (the
+/// fallback policy) unless it is marked <c>AllowAnonymous</c>: health, the setup status and
+/// submission, and sign-in. A request carrying <c>Authorization: Bearer</c> is authenticated by the
+/// token alone, any other by the session cookie (the selector scheme picks one; they are never
+/// combined). What a token may then call is decided by the endpoint's scope marker
+/// (<see cref="ScopeMiddleware"/>). Requests that reach no endpoint (the frontend's shell and
+/// files, and 404s) are not checked, and neither session nor token is even looked up for them:
+/// the shell is served to anyone, and it asks the API who is signed in.
 /// </summary>
 internal static class AuthenticationSetup
 {
+    /// <summary>The scheme that forwards to the Bearer handler or the session handler, by the request's headers.</summary>
+    public const string SelectorScheme = "SessionOrBearer";
+
     public static IServiceCollection AddSessionAuthentication(this IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
 
-        services.AddAuthentication(SessionAuthenticationHandler.SchemeName)
-            .AddScheme<AuthenticationSchemeOptions, SessionAuthenticationHandler>(SessionAuthenticationHandler.SchemeName, null);
+        services.AddAuthentication(SelectorScheme)
+            .AddPolicyScheme(SelectorScheme, null, static selector => selector.ForwardDefaultSelector = static context =>
+                BearerHeader.IsPresent(context.Request) ? BearerAuthenticationHandler.SchemeName : SessionAuthenticationHandler.SchemeName)
+            .AddScheme<AuthenticationSchemeOptions, SessionAuthenticationHandler>(SessionAuthenticationHandler.SchemeName, null)
+            .AddScheme<AuthenticationSchemeOptions, BearerAuthenticationHandler>(BearerAuthenticationHandler.SchemeName, null);
 
         services.AddAuthorizationBuilder()
-            .SetFallbackPolicy(new AuthorizationPolicyBuilder(SessionAuthenticationHandler.SchemeName).RequireAuthenticatedUser().Build());
+            .SetFallbackPolicy(new AuthorizationPolicyBuilder(SelectorScheme).RequireAuthenticatedUser().Build());
         services.AddSingleton<IAuthorizationMiddlewareResultHandler, EndpointOnlyAuthorizationResultHandler>();
 
         // The app runs as one container behind the operator's own proxy, whose address is not known
@@ -41,7 +50,7 @@ internal static class AuthenticationSetup
     }
 
     /// <summary>
-    /// The session-only check, authentication, authorization, and the anti-forgery check. Call it on the app itself (so the
+    /// The session-only check, authentication, authorization, the scope check, and the anti-forgery check. Call it on the app itself (so the
     /// host does not add its own authentication in front of the path base), inside the path base,
     /// and after the setup gate (before setup there is no one to sign in).
     /// </summary>
@@ -53,6 +62,7 @@ internal static class AuthenticationSetup
             .UseMiddleware<SessionOnlyMiddleware>()
             .UseAuthentication()
             .UseAuthorization()
+            .UseMiddleware<ScopeMiddleware>()
             .UseMiddleware<AntiforgeryHeaderMiddleware>();
     }
 }

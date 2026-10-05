@@ -37,6 +37,7 @@ public static class RedactionPolicy
         "session",
         "sessionid",
         "idhash",
+        "tokenhash",
         "authorization",
         "apikey",
         "lyrics",

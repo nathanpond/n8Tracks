@@ -8,7 +8,7 @@ public sealed class RedactionPolicyTests
     public void TheSensitiveNameListIsTheAgreedOne()
     {
         Assert.Equal(
-            ["password", "passwordconfirmation", "passwordhash", "token", "secret", "cookie", "session", "sessionid", "idhash", "authorization", "apikey", "lyrics", "prompt", "style", "rawpayload", "providerpayload"],
+            ["password", "passwordconfirmation", "passwordhash", "token", "secret", "cookie", "session", "sessionid", "idhash", "tokenhash", "authorization", "apikey", "lyrics", "prompt", "style", "rawpayload", "providerpayload"],
             RedactionPolicy.SensitiveNames);
     }
 
@@ -36,6 +36,8 @@ public sealed class RedactionPolicyTests
     [InlineData("session_id")]
     [InlineData("IdHash")]
     [InlineData("id_hash")]
+    [InlineData("TokenHash")]
+    [InlineData("token_hash")]
     [InlineData("Authorization")]
     [InlineData("Proxy-Authorization")]
     [InlineData("ApiKey")]
