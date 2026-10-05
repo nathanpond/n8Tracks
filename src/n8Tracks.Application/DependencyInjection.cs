@@ -4,6 +4,7 @@ using n8Tracks.Application.Auth;
 using n8Tracks.Application.Credentials;
 using n8Tracks.Application.Jobs;
 using n8Tracks.Application.Setup;
+using n8Tracks.Application.Songs;
 
 namespace n8Tracks.Application;
 
@@ -26,6 +27,8 @@ public static class DependencyInjection
         services.AddSingleton<JobQueue>();
         services.AddSingleton<IJobQueue>(static provider => provider.GetRequiredService<JobQueue>());
         services.AddScoped<JobService>();
+        services.AddScoped<SongService>();
+        services.AddScoped<WorkflowStateService>();
 
         return services;
     }

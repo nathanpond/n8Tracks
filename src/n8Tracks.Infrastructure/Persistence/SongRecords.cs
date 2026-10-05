@@ -1,0 +1,113 @@
+namespace n8Tracks.Infrastructure.Persistence;
+
+/// <summary>
+/// One row of <c>songs</c>. Its shortcode (<c>n8-&lt;n&gt;</c>) is worked out from
+/// <see cref="ShortcodeNumber"/>, which comes from <c>shortcode_sequence</c> and is never reused.
+/// </summary>
+public sealed class SongRecord
+{
+    public required Guid Id { get; set; }
+
+    /// <summary>Unique; from 1.</summary>
+    public required long ShortcodeNumber { get; set; }
+
+    /// <summary>Trimmed, 1 to 300 UTF-16 code units. Not unique.</summary>
+    public required string Title { get; set; }
+
+    /// <summary>What titles are ordered by: NFC-normalised and lower-cased invariantly.</summary>
+    public required string TitleSortKey { get; set; }
+
+    /// <summary>Up to 2,000 UTF-16 code units; null when there is none.</summary>
+    public string? Concept { get; set; }
+
+    public required Guid WorkflowStateId { get; set; }
+
+    /// <summary>
+    /// The current working Version. Null only inside the transaction that creates the Song, between
+    /// writing the Song and writing its first Version.
+    /// </summary>
+    public Guid? CurrentVersionId { get; set; }
+
+    /// <summary>UTC, ISO 8601, millisecond precision.</summary>
+    public required string CreatedUtc { get; set; }
+
+    /// <summary>
+    /// UTC, ISO 8601, millisecond precision. Moved by an edit of the Song and, through the triggers on
+    /// <c>versions</c>, by adding or changing any of its Versions.
+    /// </summary>
+    public required string UpdatedUtc { get; set; }
+
+    /// <summary>Starts at 1 and goes up by one on each edit of the Song itself; Version changes leave it alone.</summary>
+    public int Revision { get; set; } = 1;
+}
+
+/// <summary>One row of <c>versions</c>: a Version of a Song, its creation inputs, and its annotations.</summary>
+public sealed class VersionRecord
+{
+    public const string Active = "active";
+    public const string Archived = "archived";
+
+    public required Guid Id { get; set; }
+
+    public required Guid SongId { get; set; }
+
+    /// <summary>The hierarchical display number, such as <c>1</c> or <c>2.1</c>; unique within the Song.</summary>
+    public required string Number { get; set; }
+
+    /// <summary>The number with each part zero-padded to ten digits, so text order is tree order.</summary>
+    public required string NumberSortKey { get; set; }
+
+    public string? Name { get; set; }
+
+    public string? Notes { get; set; }
+
+    /// <summary><see cref="Active"/> or <see cref="Archived"/>.</summary>
+    public required string Visibility { get; set; }
+
+    /// <summary>Empty when there are none.</summary>
+    public required string Lyrics { get; set; }
+
+    /// <summary>Empty when there are none.</summary>
+    public required string Styles { get; set; }
+
+    /// <summary>UTC, ISO 8601, millisecond precision.</summary>
+    public required string CreatedUtc { get; set; }
+
+    /// <summary>UTC, ISO 8601, millisecond precision. Every write sets it, which moves the Song's too.</summary>
+    public required string UpdatedUtc { get; set; }
+
+    /// <summary>Starts at 1 and goes up by one on each edit.</summary>
+    public int Revision { get; set; } = 1;
+}
+
+/// <summary>One row of <c>workflow_states</c>.</summary>
+public sealed class WorkflowStateRecord
+{
+    public required Guid Id { get; set; }
+
+    public required string Name { get; set; }
+
+    /// <summary>What names are compared by: NFC-normalised and upper-cased invariantly; unique.</summary>
+    public required string NameKey { get; set; }
+
+    /// <summary>The name of a palette colour.</summary>
+    public required string Colour { get; set; }
+
+    /// <summary>The state's place in the workflow, from 1; unique.</summary>
+    public required int Position { get; set; }
+
+    public required bool Hidden { get; set; }
+}
+
+/// <summary>
+/// The one row of <c>shortcode_sequence</c>: the last Song shortcode number taken. It only ever goes
+/// up, so a number is never given out twice, even after its Song is gone.
+/// </summary>
+public sealed class ShortcodeSequenceRecord
+{
+    public const int OnlySlot = 1;
+
+    public required int Slot { get; set; }
+
+    public required long LastValue { get; set; }
+}

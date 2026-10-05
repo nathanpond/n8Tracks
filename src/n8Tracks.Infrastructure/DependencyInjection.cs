@@ -8,6 +8,7 @@ using n8Tracks.Application.Health;
 using n8Tracks.Application.Jobs;
 using n8Tracks.Application.Persistence;
 using n8Tracks.Application.Setup;
+using n8Tracks.Application.Songs;
 using n8Tracks.Infrastructure.Health;
 using n8Tracks.Infrastructure.Jobs;
 using n8Tracks.Infrastructure.Persistence;
@@ -47,6 +48,8 @@ public static class DependencyInjection
         services.AddScoped<IExclusiveTransaction, ExclusiveTransaction>();
         services.AddScoped<ICredentialStore, CredentialStore>();
         services.AddScoped<IJobStore, JobStore>();
+        services.AddScoped<ISongStore, SongStore>();
+        services.AddScoped<IWorkflowStateStore, WorkflowStateStore>();
 
         return services;
     }

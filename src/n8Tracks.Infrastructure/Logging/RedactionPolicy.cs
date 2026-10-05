@@ -43,6 +43,9 @@ public static class RedactionPolicy
         "lyrics",
         "prompt",
         "style",
+
+        // A Version's styles field (names ending in "style" do not cover the plural).
+        "styles",
         "rawpayload",
         "providerpayload",
 
