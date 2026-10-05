@@ -19,6 +19,17 @@ class ResizeObserverStub implements ResizeObserver {
   }
 }
 
+// jsdom's Range has no geometry at all. CodeMirror measures its text through a Range when an
+// animation frame comes round, and without these that throws as an uncaught error against whichever
+// test is running; on a slow machine the frame comes round often enough to fail the run. Nothing
+// is laid out in jsdom, so a Range has what an element has there: no boxes, and an empty rectangle.
+Range.prototype.getClientRects = function getClientRects() {
+  return document.createElement('span').getClientRects();
+};
+Range.prototype.getBoundingClientRect = function getBoundingClientRect() {
+  return document.createElement('span').getBoundingClientRect();
+};
+
 beforeEach(() => {
   vi.stubGlobal('ResizeObserver', ResizeObserverStub);
   vi.stubGlobal('matchMedia', (query: string): MediaQueryList => ({

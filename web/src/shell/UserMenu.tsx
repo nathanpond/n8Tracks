@@ -10,8 +10,15 @@ export function UserMenu() {
 
   return (
     // No focus placeholder: Mantine's is a focusable element with role="presentation" inside the
-    // menu, which axe reports as a child a menu may not have (aria-required-children).
-    <Menu position="bottom-end" withinPortal withInitialFocusPlaceholder={false}>
+    // menu, which axe reports as a child a menu may not have (aria-required-children). Not hidden
+    // when the button scrolls out of view, as the other menus: the header button never does, and
+    // the check hides the open menu as soon as it is positioned where nothing is laid out (jsdom).
+    <Menu
+      position="bottom-end"
+      withinPortal
+      withInitialFocusPlaceholder={false}
+      hideDetached={false}
+    >
       <Menu.Target>
         <Button variant="default" size="xs" data-testid="user-menu">
           {session.username}

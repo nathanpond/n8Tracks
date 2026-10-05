@@ -445,7 +445,11 @@ describe('Settings → Backups: the schedule', () => {
     renderApp('/settings/backups');
 
     expect(await screen.findByRole('heading', { level: 3, name: 'Schedule' })).toBeVisible();
-    await within(scheduleStatus()).findByText('Daily at 03:00, keep 7');
+    // The heading is there at once; the status follows the backup list, and its times follow the
+    // configured zone (a request of its own). Wait for both before reading the times.
+    const status = await screen.findByTestId('backup-schedule-status', {}, { timeout: 5_000 });
+    await within(status).findByText('Daily at 03:00, keep 7');
+    await within(status).findByText('Times are in UTC.');
     expect(screen.getByTestId('last-success')).toHaveTextContent(
       formatDateTime(valid.createdAt, 'UTC'),
     );
