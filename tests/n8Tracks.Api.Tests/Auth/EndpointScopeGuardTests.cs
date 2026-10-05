@@ -53,6 +53,7 @@ public sealed class EndpointScopeGuardTests
         Assert.Equal("scope", markers["GET /api/v1/versions/{reference}/snapshots/{snapshotId:guid}"]);
         Assert.Equal("scope", markers["POST /api/v1/versions/{reference}/snapshots/{snapshotId:guid}/restore"]);
         Assert.Equal("scope", markers["GET /api/v1/resolve/{reference}"]);
+        Assert.Equal("scope", markers["GET /api/v1/suno/create-fields"]);
         Assert.Equal("scope", markers["GET /api/v1/workflow-states"]);
         Assert.Equal("session-only", markers["POST /api/v1/workflow-states"]);
         Assert.Equal("session-only", markers["PATCH /api/v1/workflow-states/{id:guid}"]);

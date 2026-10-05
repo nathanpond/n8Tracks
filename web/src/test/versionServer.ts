@@ -1,6 +1,7 @@
 import type { Snapshot } from '../api/snapshots';
 import type { Song } from '../api/songs';
 import type { NumberOption, Version, VersionDetail } from '../api/versions';
+import { CREATE_FIELDS, DEFAULT_INPUTS } from './createFieldsFixture';
 import { healthyReport, jsonResponse, requestPath, stubFetch } from './helpers';
 import { baseSong, STATES } from './songServer';
 
@@ -21,11 +22,12 @@ export function testVersion(number: string, change: Partial<VersionDetail> = {})
     isFrozen: false,
     lyrics: '',
     styles: '',
+    inputs: DEFAULT_INPUTS,
     ...change,
   };
 }
 
-/** A Version as the list answers it: without its lyrics and styles. */
+/** A Version as the list answers it: without its lyrics, styles, and options. */
 function summary(version: VersionDetail): Version {
   const { id, songId, number, shortcode, name, notes, archived, current } = version;
   const { createdAt, updatedAt, revision, isFrozen } = version;
@@ -82,9 +84,10 @@ export interface ReceivedWrite {
  * A fake n8Tracks holding `baseSong` and its Versions, answering as the API does: the Song, its
  * Versions, one Version with its lyrics and styles, a Version's next numbers, creating a Version
  * (which becomes current), making one current, and editing a Version's name, notes, archived flag,
- * lyrics, or styles on its revision (lyrics and styles kept as sent, line endings aside, and refused
- * over their limits, or with 409 `version_frozen` when the Version is frozen; a create may carry
- * its own lyrics and styles). A test changes `server.versions` to play another client, or sets `server.next` to
+ * lyrics, styles, or options on its revision (lyrics and styles kept as sent, line endings aside,
+ * and refused over their limits; options merged key by key; 409 `version_frozen` when a frozen
+ * Version's inputs would change; a create may carry its own lyrics and styles and copies the
+ * source's options), and Suno's Create-screen fields ({@link CREATE_FIELDS}). A test changes `server.versions` to play another client, or sets `server.next` to
  * answer the next write some other way.
  */
 export function versionServer(versions: VersionDetail[], song: Song = baseSong) {
@@ -250,6 +253,9 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     if (path.endsWith('/api/v1/workflow-states')) {
       return jsonResponse(200, { items: STATES });
     }
+    if (path.endsWith('/api/v1/suno/create-fields')) {
+      return jsonResponse(200, CREATE_FIELDS);
+    }
     const resolve = /\/api\/v1\/resolve\/([^/]+)$/.exec(path);
     if (resolve) {
       return answerResolve(decodeURIComponent(resolve[1] ?? ''));
@@ -303,10 +309,16 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
       if (Object.keys(errors).length > 0) {
         return jsonResponse(422, { code: 'validation_failed', errors });
       }
+      const options =
+        typeof body.inputs === 'object' && body.inputs !== null
+          ? (body.inputs as VersionDetail['inputs'])
+          : {};
+      const inputs = { ...version.inputs, ...options };
       if (
         version.isFrozen &&
         (('lyrics' in body && input(body.lyrics) !== version.lyrics) ||
-          ('styles' in body && input(body.styles) !== version.styles))
+          ('styles' in body && input(body.styles) !== version.styles) ||
+          JSON.stringify(inputs) !== JSON.stringify(version.inputs))
       ) {
         return jsonResponse(409, { code: 'version_frozen', versionId: version.id });
       }
@@ -317,6 +329,7 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
         ...(typeof body.archived === 'boolean' ? { archived: body.archived } : {}),
         ...('lyrics' in body ? { lyrics: input(body.lyrics) } : {}),
         ...('styles' in body ? { styles: input(body.styles) } : {}),
+        inputs,
         revision: version.revision + 1,
       };
       server.versions = server.versions.map((other) => (other.id === version.id ? changed : other));
@@ -387,6 +400,7 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
         current: true,
         lyrics: typeof body.lyrics === 'string' ? body.lyrics : source.lyrics,
         styles: typeof body.styles === 'string' ? body.styles : source.styles,
+        inputs: source.inputs,
       });
       server.versions.push(created);
       makeCurrent(created);

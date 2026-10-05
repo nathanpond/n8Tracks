@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace n8Tracks.Application.Suno;
 
@@ -122,7 +123,7 @@ public sealed class CreateFieldInventory
 /// <param name="Max">A range's or number's highest value.</param>
 /// <param name="Condition">When it is shown, in words.</param>
 /// <param name="Notes">Suno's explanation and the capture's remarks.</param>
-public sealed record CreateField(
+public sealed partial record CreateField(
     string Key,
     string Label,
     string Tab,
@@ -147,4 +148,31 @@ public sealed record CreateField(
 
     /// <summary>Whether its default is recorded as <c>null</c>: nothing chosen, which a Version may then hold too.</summary>
     public bool DefaultsToNull => HasDefault && Default.ValueKind == JsonValueKind.Null;
+
+    /// <summary>
+    /// Suno's own explanation of the field, as its notes quote it (<c>Tooltip: '...'</c>); a tooltip
+    /// Suno shows only at one value (<c>Tooltip at Max: '...'</c>) is prefixed with that value
+    /// (<c>At Max: ...</c>). Null when the capture recorded none: the notes' other remarks are the
+    /// capture's, not Suno's.
+    /// </summary>
+    public string? Help
+    {
+        get
+        {
+            if (Notes is null)
+            {
+                return null;
+            }
+
+            var tooltips = TooltipPattern().Matches(Notes)
+                .Select(static match => match.Groups["at"].Success
+                    ? $"At {match.Groups["at"].Value}: {match.Groups["text"].Value}"
+                    : match.Groups["text"].Value)
+                .ToList();
+            return tooltips.Count == 0 ? null : string.Join(" ", tooltips);
+        }
+    }
+
+    [GeneratedRegex(@"Tooltip(?: at (?<at>\w+))?: '(?<text>[^']+)'", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex TooltipPattern();
 }

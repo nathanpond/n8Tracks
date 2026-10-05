@@ -1,6 +1,7 @@
 import { resolveAppUrl } from './baseUrl';
 import { apiFetch } from './client';
-import { ifMatch, patchWithRevision, type SaveResult } from './saves';
+import type { OptionValue } from './createFields';
+import { ifMatch, patchWithRevision, type FieldValue, type SaveResult } from './saves';
 import { ANTIFORGERY_HEADER } from './session';
 import { body, isRecord, isSong, useResource, type Song } from './songs';
 
@@ -63,10 +64,32 @@ export function isVersion(value: unknown): value is Version {
   );
 }
 
+/**
+ * A Version's kind, modes, and Suno options, by the API's camelCase names (`kind`, `songMode`,
+ * `weirdness`…), applicable to the kind and mode or not: every one is kept when they change.
+ */
+export type VersionOptions = Readonly<Record<string, OptionValue>>;
+
+/** The option that says what a Version creates: `song`, `speech`, or `sound`. */
+export const KIND_OPTION = 'kind';
+
+/** The option that says which form a Song is described in: `simple` or `advanced`. */
+export const SONG_MODE_OPTION = 'songMode';
+
 /** A Version with its creation inputs, exactly as stored: empty strings when there are none. */
 export interface VersionDetail extends Version {
   lyrics: string;
   styles: string;
+  inputs: VersionOptions;
+}
+
+function isOptions(value: unknown): value is VersionOptions {
+  return (
+    isRecord(value) &&
+    Object.values(value).every(
+      (option) => option === null || ['string', 'number', 'boolean'].includes(typeof option),
+    )
+  );
 }
 
 export function isVersionDetail(value: unknown): value is VersionDetail {
@@ -74,7 +97,8 @@ export function isVersionDetail(value: unknown): value is VersionDetail {
     isVersion(value) &&
     isRecord(value) &&
     typeof value.lyrics === 'string' &&
-    typeof value.styles === 'string'
+    typeof value.styles === 'string' &&
+    isOptions(value.inputs)
   );
 }
 
@@ -222,18 +246,58 @@ export async function setCurrentVersion(
   }
 }
 
-/** An edit of a Version: only the fields given change. Lyrics and styles are sent as typed. */
+/**
+ * An edit of a Version: only the fields given change. Lyrics and styles are sent as typed; `inputs`
+ * holds the options to change, each kept as it is when not sent.
+ */
 export interface VersionEdit {
   name?: string | null;
   notes?: string | null;
   archived?: boolean;
   lyrics?: string;
   styles?: string;
+  inputs?: Record<string, OptionValue>;
+}
+
+/**
+ * The prefix of an option's key in an edit as the shared save helper holds it (`inputs.weirdness`),
+ * where every value is text: the option's value is held as its JSON ({@link optionText}).
+ */
+export const OPTION_EDIT_PREFIX = 'inputs.';
+
+/** An option's value as an edit holds it, and as conflicts compare it: its JSON. */
+export function optionText(value: OptionValue | undefined): string {
+  return JSON.stringify(value ?? null);
+}
+
+/** The option an edit's text holds ({@link optionText}). */
+export function optionFromText(text: FieldValue): OptionValue {
+  return text === null ? null : (JSON.parse(text) as OptionValue);
+}
+
+/**
+ * The edit the API takes for one the shared save helper holds: each `inputs.<key>` field goes into
+ * `inputs`, as its value; the rest are sent as they are.
+ */
+export function versionEditOf(edit: Readonly<Record<string, FieldValue>>): VersionEdit {
+  const fields: Record<string, unknown> = {};
+  const inputs: Record<string, OptionValue> = {};
+  for (const [key, value] of Object.entries(edit)) {
+    if (key.startsWith(OPTION_EDIT_PREFIX)) {
+      inputs[key.slice(OPTION_EDIT_PREFIX.length)] = optionFromText(value);
+    } else {
+      fields[key] = value;
+    }
+  }
+  return {
+    ...(fields as VersionEdit),
+    ...(Object.keys(inputs).length > 0 ? { inputs } : {}),
+  };
 }
 
 const acceptVersionDetail = (answer: unknown) => (isVersionDetail(answer) ? answer : undefined);
 
-/** One Version with its lyrics and styles. */
+/** One Version with its lyrics, styles, and options. */
 export function useVersionDetail(versionId: string) {
   return useResource(`${VERSIONS_PATH}/${encodeURIComponent(versionId)}`, acceptVersionDetail);
 }

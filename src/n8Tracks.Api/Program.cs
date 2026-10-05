@@ -292,6 +292,7 @@ public sealed class Program
             app.MapWorkflowStates();
             app.MapVersions();
             app.MapResolve();
+            app.MapSuno();
             app.MapBackups();
             app.MapSettings();
             app.MapRestores();

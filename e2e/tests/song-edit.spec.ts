@@ -71,7 +71,7 @@ test.describe('editing a Song', () => {
     // 2. Tab A changes the title (Enter saves) and the state (from the menu); both save.
     const newTitle = `Renamed in tab A ${stamp}`;
     await tabA.getByRole('button', { name: 'Edit title' }).click();
-    const titleInput = tabA.getByRole('textbox', { name: 'Title' });
+    const titleInput = tabA.getByRole('textbox', { name: 'Title', exact: true });
     await expect(titleInput).toBeFocused();
     await titleInput.fill(newTitle);
     await expectNoA11yViolations(tabA);
@@ -133,11 +133,11 @@ test.describe('editing a Song', () => {
 
     // A title edited to empty stays open with an error, and nothing is saved.
     await tabB.getByRole('button', { name: 'Edit title' }).click();
-    await tabB.getByRole('textbox', { name: 'Title' }).fill('   ');
-    await tabB.getByRole('textbox', { name: 'Title' }).press('Enter');
+    await tabB.getByRole('textbox', { name: 'Title', exact: true }).fill('   ');
+    await tabB.getByRole('textbox', { name: 'Title', exact: true }).press('Enter');
     await expect(tabB.getByText('Enter a title.')).toBeVisible();
     await expectNoA11yViolations(tabB);
-    await tabB.getByRole('textbox', { name: 'Title' }).press('Escape');
+    await tabB.getByRole('textbox', { name: 'Title', exact: true }).press('Escape');
     await expect(tabB.getByRole('heading', { level: 2, name: newTitle })).toBeVisible();
     expect((await read()).revision).toBe(4);
   });

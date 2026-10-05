@@ -12,13 +12,18 @@ import {
   Title,
 } from '@mantine/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCreateFields, type CreateFields, type OptionValue } from '../api/createFields';
 import type { FailureReason, FieldValue } from '../api/saves';
 import { restoreSnapshot, type Snapshot } from '../api/snapshots';
 import { useConfiguredTimeZone } from '../api/timeZone';
 import {
   isVersionDetail,
+  OPTION_EDIT_PREFIX,
+  optionFromText,
+  optionText,
   sendVersionAsPageCloses,
   updateVersion,
+  versionEditOf,
   useVersionDetail,
   VERSION_LYRICS_MAXIMUM_LENGTH,
   VERSION_NAME_MAXIMUM_LENGTH,
@@ -26,6 +31,7 @@ import {
   VERSION_STYLES_MAXIMUM_LENGTH,
   type Version,
   type VersionDetail,
+  type VersionOptions,
 } from '../api/versions';
 import { ConflictValue } from '../common/ConflictDialog';
 import { ShortcodeBadge } from '../common/ShortcodeBadge';
@@ -37,6 +43,8 @@ import { LeaveGuard } from '../editor/LeaveGuard';
 import { useAutosave, type AutosaveStatus, type Edit } from '../editor/useAutosave';
 import { useSnapshots, type EditorText } from '../editor/useSnapshots';
 import { VersionInputs } from '../editor/VersionInputs';
+import { SongOptions } from './inputs/SongOptions';
+import { choiceLabel } from './inputs/optionFormat';
 import { RelativeTime } from './SongParts';
 import { nameError, notesError, singleLine } from './songRules';
 import type { VersionActions } from './VersionTree';
@@ -53,13 +61,17 @@ function normaliseNotes(draft: string): FieldValue {
   return normalised === '' ? null : normalised;
 }
 
-/** The text in the Version's editable fields, as the user has it on screen. */
+/** The Version's editable fields as the user has them on screen: its text, and its options. */
 interface Drafts {
   name: string;
   notes: string;
   lyrics: string;
   styles: string;
+  inputs: VersionOptions;
 }
+
+/** The text fields of {@link Drafts}. */
+type TextKey = Exclude<keyof Drafts, 'inputs'>;
 
 function draftsOf(version: VersionDetail): Drafts {
   return {
@@ -67,12 +79,18 @@ function draftsOf(version: VersionDetail): Drafts {
     notes: version.notes ?? '',
     lyrics: version.lyrics,
     styles: version.styles,
+    inputs: version.inputs,
   };
+}
+
+/** Every option key either side holds. */
+function optionKeys(...sides: VersionOptions[]): string[] {
+  return [...new Set(sides.flatMap((side) => Object.keys(side)))];
 }
 
 /** Each editable field: how its stored value is read, and how a draft of it is saved. */
 const DRAFTED: readonly {
-  key: keyof Drafts;
+  key: TextKey;
   read: (version: VersionDetail) => FieldValue;
   normalise: (draft: string) => FieldValue;
 }[] = [
@@ -83,12 +101,13 @@ const DRAFTED: readonly {
   { key: 'styles', read: (version) => version.styles, normalise: (draft) => draft },
 ];
 
-/** The creation inputs: the fields a frozen Version can no longer take. */
-const INPUTS: readonly (keyof Drafts)[] = ['lyrics', 'styles'];
+/** The creation inputs: the fields a frozen Version can no longer take (its options too). */
+const INPUTS: readonly TextKey[] = ['lyrics', 'styles'];
 
 /**
- * The fields whose drafts differ from `stored`, with the values they would be saved as. A frozen
- * Version's lyrics and styles are never sent.
+ * The fields whose drafts differ from `stored`, with the values they would be saved as; each option
+ * that differs is `inputs.<key>`, holding its JSON. A frozen Version's lyrics, styles, and options
+ * are never sent.
  */
 function editOf(drafts: Drafts, stored: VersionDetail): Edit {
   const edit: Record<string, FieldValue> = {};
@@ -99,6 +118,14 @@ function editOf(drafts: Drafts, stored: VersionDetail): Edit {
     const value = field.normalise(drafts[field.key]);
     if (value !== field.read(stored)) {
       edit[field.key] = value;
+    }
+  }
+  if (!stored.isFrozen) {
+    for (const key of optionKeys(drafts.inputs)) {
+      const value = optionText(drafts.inputs[key]);
+      if (value !== optionText(stored.inputs[key])) {
+        edit[OPTION_EDIT_PREFIX + key] = value;
+      }
     }
   }
   return edit;
@@ -127,17 +154,40 @@ function follow(
       next = { ...next, [field.key]: draftsOf(after)[field.key] };
     }
   }
+  for (const key of optionKeys(before.inputs, after.inputs)) {
+    const was = optionText(before.inputs[key]);
+    if (
+      !Object.hasOwn(sending, OPTION_EDIT_PREFIX + key) &&
+      optionText(after.inputs[key]) !== was &&
+      optionText(next.inputs[key]) === was
+    ) {
+      next = { ...next, inputs: { ...next.inputs, [key]: after.inputs[key] ?? null } };
+    }
+  }
   return next;
 }
 
 /** Whether `drafts` hold lyrics or styles that `stored` does not. */
-function inputsDiffer(drafts: Drafts, stored: VersionDetail): boolean {
+function textDiffers(drafts: Drafts, stored: VersionDetail): boolean {
   return drafts.lyrics !== stored.lyrics || drafts.styles !== stored.styles;
 }
 
+/** Whether `drafts` hold an option `stored` does not. */
+function optionsDiffer(drafts: Drafts, stored: VersionDetail): boolean {
+  return optionKeys(drafts.inputs, stored.inputs).some(
+    (key) => optionText(drafts.inputs[key]) !== optionText(stored.inputs[key]),
+  );
+}
+
+/** Whether `drafts` hold creation inputs (lyrics, styles, options) that `stored` does not. */
+function inputsDiffer(drafts: Drafts, stored: VersionDetail): boolean {
+  return textDiffers(drafts, stored) || optionsDiffer(drafts, stored);
+}
+
 /**
- * Why `current` cannot take `edit` at all: it is frozen and the edit changes its lyrics or styles.
- * A stale save meeting that is not a conflict to resolve; the text goes to a new Version instead.
+ * Why `current` cannot take `edit` at all: it is frozen and the edit changes its lyrics, styles, or
+ * an option. A stale save meeting that is not a conflict to resolve; the text goes to a new Version
+ * instead.
  */
 function refusesInputs(
   current: VersionDetail,
@@ -145,16 +195,33 @@ function refusesInputs(
 ): FailureReason | undefined {
   const changes = (key: 'lyrics' | 'styles') =>
     Object.hasOwn(edit, key) && edit[key] !== current[key];
-  return current.isFrozen && (changes('lyrics') || changes('styles')) ? 'frozen' : undefined;
+  const changesOption = Object.entries(edit).some(
+    ([key, value]) =>
+      key.startsWith(OPTION_EDIT_PREFIX) &&
+      value !== optionText(current.inputs[key.slice(OPTION_EDIT_PREFIX.length)]),
+  );
+  return current.isFrozen && (changes('lyrics') || changes('styles') || changesOption)
+    ? 'frozen'
+    : undefined;
 }
 
 /** Why the drafts cannot be saved as they are, or undefined when they can. */
-function problemOf(drafts: Drafts): string | undefined {
+function problemOf(drafts: Drafts, createFields: CreateFields | undefined): string | undefined {
+  const optionProblems = (createFields?.fields ?? []).map((field) => {
+    const value = field.option === null ? undefined : drafts.inputs[field.option];
+    return (
+      typeof value === 'string' &&
+      field.maxLength !== undefined &&
+      value.length > field.maxLength &&
+      `${field.label} is over its limit.`
+    );
+  });
   const problems = [
     nameError(singleLine(drafts.name)) && 'The name is over its limit.',
     notesError(drafts.notes) && 'The notes are over their limit.',
     drafts.lyrics.length > VERSION_LYRICS_MAXIMUM_LENGTH && 'The lyrics are over their limit.',
     drafts.styles.length > VERSION_STYLES_MAXIMUM_LENGTH && 'The styles are over their limit.',
+    ...optionProblems,
   ].filter((problem): problem is string => typeof problem === 'string');
   return problems.length === 0 ? undefined : `${problems.join(' ')} Shorten the text to save.`;
 }
@@ -288,16 +355,18 @@ function VersionHeader({ version, actions, busy }: Omit<DetailsProps, 'onVersion
  */
 export function VersionDetails(props: DetailsProps) {
   const { state, reload } = useVersionDetail(props.version.id);
+  const { state: fieldsState, reload: reloadFields } = useCreateFields();
 
-  if (state.phase === 'ready') {
-    return <LoadedVersionDetails {...props} loaded={state.data} />;
+  if (state.phase === 'ready' && fieldsState.phase === 'ready') {
+    return <LoadedVersionDetails {...props} loaded={state.data} createFields={fieldsState.data} />;
   }
 
   return (
     <Paper p="md" withBorder component="section" aria-labelledby="version-heading">
       <Stack gap="sm">
         <VersionHeader version={props.version} actions={props.actions} busy={props.busy} />
-        {state.phase === 'loading' ? (
+        {state.phase === 'loading' ||
+        (state.phase === 'ready' && fieldsState.phase === 'loading') ? (
           <Group gap="sm">
             <Loader size="sm" aria-hidden="true" />
             <Text role="status">Loading the lyrics and styles…</Text>
@@ -309,7 +378,18 @@ export function VersionDetails(props: DetailsProps) {
                 ? 'This Version is no longer there.'
                 : 'The lyrics and styles could not be loaded.'}
             </Text>
-            <Button variant="default" size="compact-sm" onClick={reload}>
+            <Button
+              variant="default"
+              size="compact-sm"
+              onClick={() => {
+                if (state.phase !== 'ready') {
+                  reload();
+                }
+                if (fieldsState.phase !== 'ready') {
+                  reloadFields();
+                }
+              }}
+            >
               Try again
             </Button>
           </Group>
@@ -325,7 +405,8 @@ function LoadedVersionDetails({
   actions,
   busy,
   loaded,
-}: DetailsProps & { loaded: VersionDetail }) {
+  createFields,
+}: DetailsProps & { loaded: VersionDetail; createFields: CreateFields }) {
   const timeZone = useConfiguredTimeZone();
   const [record, setRecord] = useState(loaded);
   const latest = useRef(loaded);
@@ -365,18 +446,50 @@ function LoadedVersionDetails({
     setDraftsState(next);
   }, []);
 
+  const optionNames = Object.keys(loaded.inputs).join(',');
   const fields = useMemo((): SavedField<VersionDetail>[] => {
     const show = (value: FieldValue) => <ConflictValue value={value} />;
+    // An option is compared by its JSON and shown as the page writes its value.
+    const showOption = (value: FieldValue) => {
+      const option = optionFromText(value);
+      return (
+        <ConflictValue
+          value={
+            option === null
+              ? null
+              : typeof option === 'string'
+                ? choiceLabel(option)
+                : typeof option === 'boolean'
+                  ? option
+                    ? 'On'
+                    : 'Off'
+                  : String(option)
+          }
+        />
+      );
+    };
+    const labelOf = (key: string) =>
+      createFields.fields.find((field) => field.option === key)?.label ?? choiceLabel(key);
     return [
       { key: 'name', label: 'Name', read: (current) => current.name, show },
       { key: 'notes', label: 'Notes', read: (current) => current.notes, show },
       { key: 'lyrics', label: 'Lyrics', read: (current) => current.lyrics, show },
       { key: 'styles', label: 'Styles', read: (current) => current.styles, show },
+      ...optionNames
+        .split(',')
+        .filter((key) => key !== '')
+        .map((key): SavedField<VersionDetail> => ({
+          key: OPTION_EDIT_PREFIX + key,
+          label: labelOf(key),
+          read: (current) => optionText(current.inputs[key]),
+          show: showOption,
+        })),
     ];
-  }, []);
+  }, [createFields, optionNames]);
 
   const send = useCallback(
-    (base: VersionDetail, edit: Readonly<Record<string, FieldValue>>) => updateVersion(base, edit),
+    (base: VersionDetail, edit: Readonly<Record<string, FieldValue>>) =>
+      updateVersion(base, versionEditOf(edit)),
     [],
   );
 
@@ -416,7 +529,8 @@ function LoadedVersionDetails({
 
   // A freeze met with unsaved lyrics or styles: that text cannot go into this Version, so it is
   // kept (`carried`, and a snapshot in History) to start a new one, and the editor goes back to
-  // the stored text, read only. The name and notes are unaffected and go on saving.
+  // the stored text, read only. Unsaved options go back to the stored ones (a new Version copies
+  // those). The name and notes are unaffected and go on saving.
   const [carried, setCarried] = useState<EditorText | undefined>();
   const takeFrozen = useCallback(
     (stored: VersionDetail) => {
@@ -424,10 +538,12 @@ function LoadedVersionDetails({
       if (!inputsDiffer(now, stored)) {
         return;
       }
-      capture();
-      setCarried({ lyrics: now.lyrics, styles: now.styles });
-      setDrafts({ ...now, lyrics: stored.lyrics, styles: stored.styles });
-      rebase({ lyrics: stored.lyrics, styles: stored.styles }, false);
+      if (textDiffers(now, stored)) {
+        capture();
+        setCarried({ lyrics: now.lyrics, styles: now.styles });
+        rebase({ lyrics: stored.lyrics, styles: stored.styles }, false);
+      }
+      setDrafts({ ...now, lyrics: stored.lyrics, styles: stored.styles, inputs: stored.inputs });
     },
     [capture, rebase, setDrafts],
   );
@@ -444,7 +560,7 @@ function LoadedVersionDetails({
 
   const autosave = useAutosave({
     pending: useCallback(() => editOf(latestDrafts.current, latest.current), []),
-    problem: useCallback(() => problemOf(latestDrafts.current), []),
+    problem: useCallback(() => problemOf(latestDrafts.current, createFields), [createFields]),
     send: useCallback(
       async (edit: Edit) => {
         sending.current = edit;
@@ -488,7 +604,7 @@ function LoadedVersionDetails({
 
   const snapshotChanged = snapshots.changed;
   const change = useCallback(
-    (key: keyof Drafts, value: string) => {
+    (key: TextKey, value: string) => {
       setDrafts({ ...latestDrafts.current, [key]: value });
       changed();
       if (key === 'lyrics' || key === 'styles') {
@@ -496,6 +612,15 @@ function LoadedVersionDetails({
       }
     },
     [changed, setDrafts, snapshotChanged],
+  );
+
+  const changeOption = useCallback(
+    (key: string, value: OptionValue) => {
+      const now = latestDrafts.current;
+      setDrafts({ ...now, inputs: { ...now.inputs, [key]: value } });
+      changed();
+    },
+    [changed, setDrafts],
   );
 
   const restore = useCallback(
@@ -542,11 +667,14 @@ function LoadedVersionDetails({
   const onPageHide = useCallback(() => {
     // The save goes first: the browser limits how much may still be sent as a page closes.
     const edit = editOf(latestDrafts.current, latest.current);
-    if (Object.keys(edit).length > 0 && problemOf(latestDrafts.current) === undefined) {
-      sendVersionAsPageCloses(latest.current, edit);
+    if (
+      Object.keys(edit).length > 0 &&
+      problemOf(latestDrafts.current, createFields) === undefined
+    ) {
+      sendVersionAsPageCloses(latest.current, versionEditOf(edit));
     }
     snapshotAsPageCloses();
-  }, [snapshotAsPageCloses]);
+  }, [createFields, snapshotAsPageCloses]);
 
   const shown: Version = { ...record, current: version.current };
   const frozen = record.isFrozen;
@@ -598,16 +726,26 @@ function LoadedVersionDetails({
             />
           )}
         </div>
-        <VersionInputs
+        <SongOptions
+          fields={createFields}
+          options={drafts.inputs}
+          onOption={changeOption}
           readOnly={frozen}
-          lyrics={drafts.lyrics}
-          styles={drafts.styles}
-          onLyrics={(value) => {
-            change('lyrics', value);
-          }}
-          onStyles={(value) => {
-            change('styles', value);
-          }}
+          text={(sections) => (
+            <VersionInputs
+              readOnly={frozen}
+              lyrics={drafts.lyrics}
+              styles={drafts.styles}
+              showLyrics={sections.lyrics}
+              showStyles={sections.styles}
+              onLyrics={(value) => {
+                change('lyrics', value);
+              }}
+              onStyles={(value) => {
+                change('styles', value);
+              }}
+            />
+          )}
         />
         <Divider />
         <HistoryPanel
