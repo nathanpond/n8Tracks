@@ -1792,3 +1792,6 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** #283 is fixed with a test only (`EffectiveInputsIsReadOnlyAndSendingItChangesNothing` in `VersionOptionsEndpointTests`). It keeps the current behaviour, where a PATCH carrying `effectiveInputs` answers 200 and changes nothing, and does not change it to a refusal.
   **Why:** The issue accepts either. Answering 200 is how the API already treats unknown members, and changing it to a refusal would change an existing API contract (Rule 4). The test asserts that the inputs, `effectiveInputs`, and revision are unchanged. As a complement, the same option sent in `inputs` is stored.
   **Issue:** #283 (story #111)
+- **Decision:** #287 is fixed with a test only (`ThereIsNoLimitOnStatesAndColoursAreReusedOnceAllTwelveAreTaken` in `WorkflowStateEndpointTests`). It adds 8 states through the API, for 15 in all, and each answers 201. States 8–12 take the five free colours in palette order, and states 13–15 take the first palette colour (gray).
+  **Why:** The issue asked for 13 or more. Going to 15 also shows that reuse continues past the first repeat. Two bite proofs were run: capping at 12 states, and changing the fallback colour.
+  **Issue:** #287 (story #67)

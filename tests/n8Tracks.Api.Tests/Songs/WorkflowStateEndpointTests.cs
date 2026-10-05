@@ -70,6 +70,35 @@ public sealed class WorkflowStateEndpointTests
     }
 
     [Fact]
+    public async Task ThereIsNoLimitOnStatesAndColoursAreReusedOnceAllTwelveAreTaken()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+
+        // The seven defaults leave five colours free; the next five states take them in palette order.
+        var revision = 1;
+        string[] free = [StateColours.Red, StateColours.Pink, StateColours.Grape, StateColours.Indigo, StateColours.Cyan];
+        for (var number = 8; number <= 15; number++)
+        {
+            using var response = await SendAsync(client, HttpMethod.Post, SongApi.WorkflowStates, revision, $$"""{"name":"Step {{number}}"}""");
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            var added = Items(await SetupApi.JsonAsync(response))[^1];
+            revision++;
+            Assert.Equal($"Step {number}", added.GetProperty("name").GetString());
+            Assert.Equal(number, added.GetProperty("order").GetInt32());
+
+            // From the 13th state on, every colour is in use, so each new state takes the first again.
+            var expected = number <= 12 ? free[number - 8] : StateColours.All[0].Name;
+            Assert.Equal(expected, added.GetProperty("colour").GetString());
+        }
+
+        var list = await ListAsync(client);
+        Assert.Equal(15, Items(list).Count);
+        Assert.Equal(StateColours.Gray, Items(list)[12].GetProperty("colour").GetString());
+        Assert.Equal(StateColours.Gray, Items(list)[14].GetProperty("colour").GetString());
+    }
+
+    [Fact]
     public async Task ABadOrTakenNameOrAnUnknownColourIsRefusedAndNothingChanges()
     {
         using var factory = SongApi.Host();
