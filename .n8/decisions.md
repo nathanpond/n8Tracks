@@ -1833,3 +1833,9 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** #286 is fixed with a test only. `SongsPage.test.tsx` gains "shows all of a long concept on hover": hovering the concept cell shows a tooltip with the full concept, without the cell having focus, and moving away hides it. The test uses a component test rather than e2e.
   **Why:** Hover is the Tooltip's `events.hover`, which jsdom drives faithfully through user-event. The issue asks for one test of the hover path. Bite proof: `events.hover: false` failed it with `Unable to find role="tooltip"`. After the change was restored, it passed.
   **Issue:** #286 (story #58)
+- **Decision:** #290 is fixed with a test only. `BackupsPage.test.tsx` gains "labels each backup with the kind it was made as, safety backups included". It renders safety, scheduled, manual, and unknown-kind rows and checks each `backup-kind` label, including "Safety".
+  **Why:** All four branches of the label are covered in one place. Bite proof: changing `BACKUP_KIND_LABELS.safety` to "Safety backup" failed the test with `expected 'Safety backup' to be 'Safety'`. After the change was restored, it passed.
+  **Issue:** #290 (story #76)
+- **Decision:** A one-off failure of `FrozenVersion.test.tsx`, seen under full-suite load, was filed as #293 and not fixed.
+  **Why:** The failure is out of scope and unrelated to the slider styling. The file passed 3 of 3 runs on its own, and the next full suite passed.
+  **Issue:** #284
