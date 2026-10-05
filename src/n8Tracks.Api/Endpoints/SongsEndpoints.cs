@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Http.HttpResults;
 using n8Tracks.Api.Auth;
 using n8Tracks.Api.Problems;
@@ -8,14 +9,15 @@ using n8Tracks.Domain.Songs;
 namespace n8Tracks.Api.Endpoints;
 
 /// <summary>
-/// Songs: create one (<c>songs.write</c>), list them, and read one by ID or shortcode
-/// (<c>catalog.read</c>); and the workflow states a Song can be in (<c>catalog.read</c>). Every
-/// answer is <c>no-store</c>, and one carrying a Song sends its revision as the <c>ETag</c>.
+/// Songs: create one and edit its details (<c>songs.write</c>), list them, and read one by ID or
+/// shortcode (<c>catalog.read</c>); and the workflow states a Song can be in (<c>catalog.read</c>).
+/// Every answer is <c>no-store</c>, and one carrying a Song sends its revision as the <c>ETag</c>.
 /// </summary>
 internal static class SongsEndpoints
 {
     public const string SongsPath = ApiProblem.VersionPrefix + "/songs";
     public const string SongPath = SongsPath + "/{reference}";
+    public const string SongByIdPath = SongsPath + "/{id:guid}";
     public const string WorkflowStatesPath = ApiProblem.VersionPrefix + "/workflow-states";
 
     public static IEndpointRouteBuilder MapSongs(this IEndpointRouteBuilder endpoints)
@@ -48,6 +50,19 @@ internal static class SongsEndpoints
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
+
+        endpoints.MapPatch(SongByIdPath, UpdateAsync)
+            .WithName("UpdateSong")
+            .WithSummary("Edits a Song's title, concept, or workflow state (only the fields sent), given the revision read in If-Match.")
+            .RequireScope(CredentialScopes.SongsWrite)
+            .Produces<SongResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
         endpoints.MapGet(WorkflowStatesPath, ListStatesAsync)
             .WithName("ListWorkflowStates")
@@ -139,6 +154,85 @@ internal static class SongsEndpoints
         return TypedResults.Ok(SongResponse.From(song));
     }
 
+    /// <summary>
+    /// 200 with the Song as it is now (unchanged when the edit changed nothing); 409
+    /// <c>revision_conflict</c> with <c>current</c> on a stale revision; 422 <c>validation_failed</c>
+    /// on a wrong field; 404 when there is no such Song. Nothing is changed unless the answer is 200.
+    /// </summary>
+    private static async Task<Results<Ok<SongResponse>, ProblemHttpResult>> UpdateAsync(
+        Guid id,
+        UpdateSongRequest? request,
+        SongService songs,
+        HttpContext context,
+        ILoggerFactory loggers,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        var (revision, problem) = Revisions.Read(context);
+        if (problem is not null)
+        {
+            return problem;
+        }
+
+        var typeErrors = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        var edit = new SongEdit(
+            Field(request?.Title, SongService.TitleField, typeErrors),
+            Field(request?.Concept, SongService.ConceptField, typeErrors),
+            Field(request?.StateId, SongService.StateIdField, typeErrors));
+        if (typeErrors.Count > 0)
+        {
+            return ApiProblem.ValidationFailed(context, typeErrors);
+        }
+
+        switch (await songs.UpdateAsync(id, edit, revision!.Value, cancellationToken))
+        {
+            case SongUpdateOutcome.Updated updated:
+                if (updated.Song.Revision != revision)
+                {
+                    loggers.CreateLogger(typeof(SongsEndpoints)).LogInformation(
+                        "Song edited: {SongId} to revision {SongRevision}",
+                        updated.Song.Id,
+                        updated.Song.Revision);
+                }
+
+                Revisions.SetETag(context, updated.Song.Revision);
+                return TypedResults.Ok(SongResponse.From(updated.Song));
+
+            case SongUpdateOutcome.Conflict conflict:
+                return Revisions.Conflict(context, SongResponse.From(conflict.Current));
+
+            case SongUpdateOutcome.Invalid invalid:
+                return ApiProblem.ValidationFailed(context, invalid.Errors);
+
+            case SongUpdateOutcome.NotFound:
+                return ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "There is no such Song.");
+
+            default:
+                throw new InvalidOperationException("Unknown edit outcome.");
+        }
+    }
+
+    /// <summary>
+    /// A field of an edit as sent: missing is left alone, and <c>null</c> or text is a value. Any
+    /// other JSON is an error for that field.
+    /// </summary>
+    private static SongEditField Field(JsonElement? sent, string name, Dictionary<string, string[]> errors)
+    {
+        switch (sent?.ValueKind)
+        {
+            case null or JsonValueKind.Undefined:
+                return SongEditField.Unsent;
+            case JsonValueKind.Null:
+                return SongEditField.Of(null);
+            case JsonValueKind.String:
+                return SongEditField.Of(sent.Value.GetString());
+            default:
+                errors[name] = ["Send text or null."];
+                return SongEditField.Unsent;
+        }
+    }
+
     /// <summary>200 with every state.</summary>
     private static async Task<Ok<WorkflowStateListResponse>> ListStatesAsync(
         WorkflowStateService states,
@@ -162,6 +256,12 @@ internal static class SongsEndpoints
 
 /// <summary>The create form. Either field may be missing.</summary>
 internal sealed record CreateSongRequest(string? Title, string? Concept);
+
+/// <summary>
+/// An edit: any of the three fields, each left alone when missing. A missing field and a null one
+/// differ, so each is read as raw JSON (a missing one is <see cref="JsonValueKind.Undefined"/>).
+/// </summary>
+internal sealed record UpdateSongRequest(JsonElement Title, JsonElement Concept, JsonElement StateId);
 
 /// <summary>A Song as the API shows it. Times are UTC.</summary>
 internal sealed record SongResponse(

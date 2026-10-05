@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from './client';
+import { patchWithRevision, type SaveResult } from './saves';
 
 const SONGS_PATH = 'api/v1/songs';
 const WORKFLOW_STATES_PATH = 'api/v1/workflow-states';
@@ -263,4 +264,24 @@ export async function createSong(request: NewSong): Promise<CreateSongResult> {
   } catch {
     return { kind: 'failed' };
   }
+}
+
+/** An edit of a Song's details: only the fields given change. A null or blank concept clears it. */
+export interface SongEdit {
+  title?: string;
+  concept?: string | null;
+  stateId?: string;
+}
+
+/** Edits a Song, based on `song`'s revision; a stale revision comes back as a conflict. */
+export function updateSong(
+  song: Pick<Song, 'id' | 'revision'>,
+  edit: SongEdit,
+): Promise<SaveResult<Song>> {
+  return patchWithRevision(
+    `${SONGS_PATH}/${encodeURIComponent(song.id)}`,
+    song.revision,
+    { ...edit },
+    acceptSong,
+  );
 }

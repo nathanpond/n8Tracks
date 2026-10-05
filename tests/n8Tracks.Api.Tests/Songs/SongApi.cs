@@ -45,6 +45,39 @@ internal static class SongApi
         return await client.SendAsync(request);
     }
 
+    /// <summary>
+    /// PATCHes an edit of the Song with <paramref name="id"/>, with the anti-forgery header and, when
+    /// given, <paramref name="ifMatch"/> exactly as written; the caller reads the answer.
+    /// <paramref name="json"/> is sent as it is, so a test can leave a field out or send it as null.
+    /// </summary>
+    public static async Task<HttpResponseMessage> PatchAsync(HttpClient client, string id, string? ifMatch, string json)
+    {
+        ArgumentNullException.ThrowIfNull(client);
+
+        using var request = new HttpRequestMessage(HttpMethod.Patch, Song(id))
+        {
+            Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json"),
+        };
+        request.Headers.Add(SessionApi.AntiforgeryHeader, "1");
+        if (ifMatch is not null)
+        {
+            Assert.True(request.Headers.TryAddWithoutValidation("If-Match", ifMatch));
+        }
+
+        return await client.SendAsync(request);
+    }
+
+    /// <summary>Edits a Song at <paramref name="revision"/> and returns it, asserting 200.</summary>
+    public static async Task<JsonElement> EditAsync(HttpClient client, string id, int revision, string json)
+    {
+        using var response = await PatchAsync(client, id, Quoted(revision), json);
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        return await SetupApi.JsonAsync(response);
+    }
+
+    /// <summary>A revision as <c>If-Match</c> carries it.</summary>
+    public static string Quoted(int revision) => string.Create(System.Globalization.CultureInfo.InvariantCulture, $"\"{revision}\"");
+
     /// <summary>Creates a Song and returns it, asserting it was created.</summary>
     public static async Task<JsonElement> CreateAsync(HttpClient client, string title, string? concept = null)
     {

@@ -1,8 +1,9 @@
-import { Anchor, Button, Group, Loader, Paper, Stack, Text, Title } from '@mantine/core';
+import { Anchor, Button, Loader, Stack, Text, Title } from '@mantine/core';
+import { useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router';
-import { useSong } from '../api/songs';
+import { useSong, type Song } from '../api/songs';
 import { Notice } from '../components/Notice';
-import { StateBadge } from './SongParts';
+import { SongHeader } from './SongHeader';
 import type { FromSongs } from './SongsPage';
 
 const FAILED_MESSAGE =
@@ -29,9 +30,18 @@ function BackToSongs() {
 }
 
 /**
- * A Song: its shortcode, title, concept, and workflow state. It is found by the shortcode in the
- * page URL (`/songs/n8-12`), or by its ID. Later stories add editing, the Version tree, and the
- * editor to this page.
+ * A loaded Song, kept as the page's own copy from then on: each save, and each refused save's
+ * current Song, replaces it, so the next save is based on the newest revision the page has seen.
+ */
+function LoadedSong({ loaded }: { loaded: Song }) {
+  const [song, setSong] = useState(loaded);
+  return <SongHeader song={song} onSong={setSong} />;
+}
+
+/**
+ * A Song: its shortcode, title, concept, and workflow state, each edited in place. It is found by
+ * the shortcode in the page URL (`/songs/n8-12`), or by its ID. Later stories add the Version tree
+ * and the editor to this page.
  */
 export function SongPage() {
   const { reference = '' } = useParams();
@@ -60,40 +70,7 @@ export function SongPage() {
           </Notice>
         </>
       )}
-      {state.phase === 'ready' && (
-        <>
-          <Stack gap={4}>
-            <Text
-              ff="monospace"
-              size="sm"
-              c="var(--n8-color-secondary-text)"
-              data-testid="shortcode"
-            >
-              {state.data.shortcode}
-            </Text>
-            <Group gap="sm" align="center">
-              <Title order={2} style={{ overflowWrap: 'anywhere' }}>
-                {state.data.title}
-              </Title>
-              <StateBadge name={state.data.state.name} colour={state.data.state.colour} />
-            </Group>
-          </Stack>
-          <Paper p="md" withBorder component="section" aria-labelledby="song-concept">
-            <Stack gap={4}>
-              <Title order={3} size="h5" id="song-concept">
-                Concept
-              </Title>
-              {state.data.concept === null ? (
-                <Text c="var(--n8-color-secondary-text)">No concept yet.</Text>
-              ) : (
-                <Text style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
-                  {state.data.concept}
-                </Text>
-              )}
-            </Stack>
-          </Paper>
-        </>
-      )}
+      {state.phase === 'ready' && <LoadedSong key={state.data.id} loaded={state.data} />}
     </Stack>
   );
 }

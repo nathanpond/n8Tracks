@@ -58,6 +58,12 @@ public sealed record SongListQuery(SongSort Sort, bool Descending, IReadOnlyList
 /// <summary>A page of Songs and how many match in all.</summary>
 public sealed record SongPage(IReadOnlyList<SongSummary> Items, int Page, int PageSize, int Total);
 
+/// <summary>A Song's editable details, as they are to be stored: valid and normalised.</summary>
+/// <param name="Title">Trimmed.</param>
+/// <param name="Concept">Normalised; null when there is none.</param>
+/// <param name="StateId">The ID of a workflow state, hidden or not.</param>
+public sealed record SongDetails(string Title, string? Concept, Guid StateId);
+
 /// <summary>Where Songs and their Versions are kept.</summary>
 public interface ISongStore
 {
@@ -78,6 +84,13 @@ public interface ISongStore
 
     /// <summary>A page of Songs; a page past the end has no items.</summary>
     Task<SongPage> ListAsync(SongListQuery query, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Stores <paramref name="details"/> on the Song if it is at <paramref name="revision"/>, raising
+    /// the revision by one and setting its updated time, in one statement. False when the Song is
+    /// gone or at another revision, which leaves it as it is.
+    /// </summary>
+    Task<bool> TryUpdateAsync(Guid id, SongDetails details, int revision, DateTimeOffset updatedUtc, CancellationToken cancellationToken);
 }
 
 /// <summary>Where workflow states are kept.</summary>

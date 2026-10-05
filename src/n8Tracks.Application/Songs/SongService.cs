@@ -24,6 +24,42 @@ public abstract record SongOutcome
     public sealed record Invalid(IReadOnlyDictionary<string, string[]> Errors) : SongOutcome;
 }
 
+/// <summary>One field of an edit: left as it is when not sent; when sent, its value, which may be null.</summary>
+public readonly record struct SongEditField(bool IsSent, string? Value)
+{
+    /// <summary>A field the edit leaves alone.</summary>
+    public static SongEditField Unsent => default;
+
+    /// <summary>A field the edit sets to <paramref name="value"/>.</summary>
+    public static SongEditField Of(string? value) => new(IsSent: true, value);
+}
+
+/// <summary>
+/// An edit of a Song's details: a partial merge, so only the fields sent change. <c>StateId</c> is
+/// the unread text of a workflow state's ID.
+/// </summary>
+public sealed record SongEdit(SongEditField Title, SongEditField Concept, SongEditField StateId);
+
+/// <summary>How editing a Song ended.</summary>
+public abstract record SongUpdateOutcome
+{
+    private SongUpdateOutcome()
+    {
+    }
+
+    /// <summary>The Song as it is now: changed, at its next revision, or unchanged when the edit changed nothing.</summary>
+    public sealed record Updated(SongSummary Song) : SongUpdateOutcome;
+
+    /// <summary>There is no Song with that ID.</summary>
+    public sealed record NotFound : SongUpdateOutcome;
+
+    /// <summary>The Song is at another revision than the edit was based on. Nothing was changed.</summary>
+    public sealed record Conflict(SongSummary Current) : SongUpdateOutcome;
+
+    /// <summary>A field is wrong. Nothing was changed. The errors are keyed by field name.</summary>
+    public sealed record Invalid(IReadOnlyDictionary<string, string[]> Errors) : SongUpdateOutcome;
+}
+
 /// <summary>How listing Songs ended.</summary>
 public abstract record SongListOutcome
 {
@@ -38,15 +74,17 @@ public abstract record SongListOutcome
 }
 
 /// <summary>
-/// Creating and finding Songs. A Song needs only a title; it is created with a shortcode from a
-/// sequence that never repeats, in the first visible workflow state, and with an empty, mutable
-/// Version <c>1</c> as its current Version, all in one transaction.
+/// Creating, finding, and editing Songs. A Song needs only a title; it is created with a shortcode
+/// from a sequence that never repeats, in the first visible workflow state, and with an empty,
+/// mutable Version <c>1</c> as its current Version, all in one transaction. Its details are edited
+/// against the revision the caller read, so a stale edit never overwrites a newer one.
 /// </summary>
 public sealed class SongService(ISongStore songs, IWorkflowStateStore states, IExclusiveTransaction transaction, TimeProvider time)
 {
     /// <summary>The field names validation errors are keyed by, as the API spells them.</summary>
     public const string TitleField = "title";
     public const string ConceptField = "concept";
+    public const string StateIdField = "stateId";
 
     /// <summary>The list parameters, as the API spells them.</summary>
     public const string SortParameter = "sort";
@@ -109,6 +147,79 @@ public sealed class SongService(ISongStore songs, IWorkflowStateStore states, IE
         return Shortcodes.TryParseSong(reference, out var number)
             ? songs.FindByShortcodeNumberAsync(number, cancellationToken)
             : Task.FromResult<SongSummary?>(null);
+    }
+
+    /// <summary>
+    /// Edits a Song's title, concept, or workflow state, given the revision the caller read. Only the
+    /// fields sent change: the title follows the creation rule, a null or blank concept clears it, and
+    /// the state may be any state, hidden ones included, so a Song can move from any state to any
+    /// other. A stale revision (lower or higher) changes nothing and answers the Song as it is now.
+    /// An edit that changes nothing once normalised is not written and answers the Song unchanged.
+    /// </summary>
+    public Task<SongUpdateOutcome> UpdateAsync(Guid id, SongEdit edit, int revision, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(edit);
+
+        // Checked, compared, and written in one transaction, so the state chosen still exists when
+        // the Song is moved into it.
+        return transaction.RunAsync<SongUpdateOutcome>(
+            async ct =>
+            {
+                var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
+                if (edit.Title.IsSent && SongRules.TitleErrors(edit.Title.Value) is { Length: > 0 } titleErrors)
+                {
+                    errors[TitleField] = titleErrors;
+                }
+
+                if (edit.Concept.IsSent && SongRules.ConceptErrors(edit.Concept.Value) is { Length: > 0 } conceptErrors)
+                {
+                    errors[ConceptField] = conceptErrors;
+                }
+
+                var stateId = Guid.Empty;
+                if (edit.StateId.IsSent
+                    && (!Guid.TryParseExact(edit.StateId.Value, "D", out stateId)
+                        || !(await states.ListAsync(ct).ConfigureAwait(false)).Any(state => state.Id == stateId)))
+                {
+                    errors[StateIdField] = ["Choose one of the workflow states."];
+                }
+
+                if (errors.Count > 0)
+                {
+                    return new SongUpdateOutcome.Invalid(errors);
+                }
+
+                if (await songs.FindAsync(id, ct).ConfigureAwait(false) is not { } current)
+                {
+                    return new SongUpdateOutcome.NotFound();
+                }
+
+                if (current.Revision != revision)
+                {
+                    return new SongUpdateOutcome.Conflict(current);
+                }
+
+                var details = new SongDetails(
+                    edit.Title.IsSent ? SongRules.NormaliseTitle(edit.Title.Value!) : current.Title,
+                    edit.Concept.IsSent ? SongRules.NormaliseConcept(edit.Concept.Value) : current.Concept,
+                    edit.StateId.IsSent ? stateId : current.State.Id);
+                if (details == new SongDetails(current.Title, current.Concept, current.State.Id))
+                {
+                    return new SongUpdateOutcome.Updated(current);
+                }
+
+                if (!await songs.TryUpdateAsync(id, details, revision, time.GetUtcNow(), ct).ConfigureAwait(false))
+                {
+                    return await songs.FindAsync(id, ct).ConfigureAwait(false) is { } changed
+                        ? new SongUpdateOutcome.Conflict(changed)
+                        : new SongUpdateOutcome.NotFound();
+                }
+
+                var updated = await songs.FindAsync(id, ct).ConfigureAwait(false)
+                    ?? throw new InvalidOperationException("The Song just edited cannot be read back.");
+                return new SongUpdateOutcome.Updated(updated);
+            },
+            cancellationToken);
     }
 
     /// <summary>

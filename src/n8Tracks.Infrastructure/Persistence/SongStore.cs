@@ -122,6 +122,33 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
         return new SongPage(await SummariesAsync(records, cancellationToken).ConfigureAwait(false), query.Page, query.PageSize, total);
     }
 
+    public async Task<bool> TryUpdateAsync(Guid id, SongDetails details, int revision, DateTimeOffset updatedUtc, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(details);
+
+        var title = details.Title;
+        var titleSortKey = TitleSortKey(title);
+        var concept = details.Concept;
+        var stateId = details.StateId;
+        var updated = UtcText.From(updatedUtc);
+
+        // One conditional statement: the revision check and the write cannot be split by another writer.
+        var count = await context.Songs
+            .Where(song => song.Id == id && song.Revision == revision)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(song => song.Title, title)
+                    .SetProperty(song => song.TitleSortKey, titleSortKey)
+                    .SetProperty(song => song.Concept, concept)
+                    .SetProperty(song => song.WorkflowStateId, stateId)
+                    .SetProperty(song => song.UpdatedUtc, updated)
+                    .SetProperty(song => song.Revision, song => song.Revision + 1),
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return count == 1;
+    }
+
     /// <summary>What titles are ordered by: NFC-normalised and lower-cased invariantly, so case is ignored.</summary>
     internal static string TitleSortKey(string title) => title.Normalize(System.Text.NormalizationForm.FormC).ToLowerInvariant();
 
