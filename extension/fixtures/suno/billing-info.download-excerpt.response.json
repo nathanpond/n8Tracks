@@ -1,0 +1,39 @@
+{
+  "download_usage": {
+    "current_period_downloads_used": 0,
+    "current_period_downloads_limit": 60,
+    "additional_download_remaining": 0,
+    "current_period_download_top_ups_purchased": 0,
+    "current_period_download_top_up_purchase_limit": 60
+  },
+  "download_credit_packs": [
+    {
+      "id": "00000000-0000-4000-8000-00000000013a",
+      "amount": 1,
+      "price_usd": 0,
+      "price_amount": "2.99000",
+      "price_currency_code": "USD"
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000013b",
+      "amount": 3,
+      "price_usd": 0,
+      "price_amount": "8.95000",
+      "price_currency_code": "USD"
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000013c",
+      "amount": 5,
+      "price_usd": 0,
+      "price_amount": "14.95000",
+      "price_currency_code": "USD"
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000013d",
+      "amount": 10,
+      "price_usd": 0,
+      "price_amount": "29.90000",
+      "price_currency_code": "USD"
+    }
+  ]
+}

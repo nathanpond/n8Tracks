@@ -1,0 +1,528 @@
+{
+  "personas": [
+    {
+      "id": "00000000-0000-4000-8000-000000000133",
+      "name": "<redacted 21 chars>",
+      "description": "",
+      "image_s3_id": "https://cdn2.suno.ai/image_00000000-0000-4000-8000-000000000134.jpeg",
+      "root_clip_id": "00000000-0000-4000-8000-000000000135",
+      "clip": {
+        "status": "complete",
+        "title": "<redacted 16 chars>",
+        "play_count": 70,
+        "upvote_count": 1,
+        "allow_comments": true,
+        "is_verified": false,
+        "id": "00000000-0000-4000-8000-000000000135",
+        "entity_type": "song_schema",
+        "video_url": "https://cdn1.suno.ai/00000000-0000-4000-8000-000000000135.mp4",
+        "audio_url": "https://studio-api.prod.suno.com/api/forbidden",
+        "media_urls": [
+          {
+            "url": "https://d2lwuy8qc234o3.cloudfront.net/1/clip/00000000-0000-4000-8000-000000000135.m4a",
+            "content_type": "m4a-opus",
+            "delivery": "progressive",
+            "encoding": "1.0.0"
+          }
+        ],
+        "image_url": "https://cdn2.suno.ai/image_00000000-0000-4000-8000-000000000134.jpeg",
+        "image_large_url": "https://cdn2.suno.ai/image_large_00000000-0000-4000-8000-000000000134.jpeg",
+        "major_model_version": "v5.5",
+        "model_name": "chirp-fenix",
+        "metadata": {
+          "tags": "<redacted 856 chars>",
+          "prompt": "<redacted 28 chars>\n<redacted 27 chars>\n<redacted 31 chars>\n<redacted 28 chars>\n<redacted 0 chars>\n<redacted 31 chars>\n<redacted 27 chars>\n<redacted 35 chars>\n<redacted 26 chars>\n<redacted 0 chars>\n<redacted 27 chars>\n<redacted 32 chars>\n<redacted 38 chars>\n<redacted 32 chars>\n<redacted 0 chars>\n<redacted 28 chars>\n<redacted 31 chars>\n<redacted 35 chars>\n<redacted 26 chars>\n<redacted 0 chars>\n<redacted 23 chars>\n<redacted 29 chars>\n<redacted 31 chars>\n<redacted 24 chars>\n<redacted 0 chars>\n<redacted 26 chars>\n<redacted 24 chars>\n<redacted 38 chars>\n<redacted 25 chars>\n<redacted 0 chars>\n<redacted 32 chars>\n<redacted 27 chars>\n<redacted 35 chars>\n<redacted 21 chars>\n<redacted 0 chars>\n<redacted 33 chars>\n<redacted 25 chars>\n<redacted 32 chars>\n<redacted 34 chars>\n<redacted 0 chars>\n<redacted 31 chars>\n<redacted 25 chars>\n<redacted 33 chars>\n<redacted 26 chars>\n<redacted 0 chars>\n<redacted 28 chars>\n<redacted 31 chars>\n<redacted 32 chars>\n<redacted 24 chars>\n<redacted 0 chars>\n<redacted 22 chars>\n<redacted 29 chars>\n<redacted 31 chars>\n<redacted 24 chars>\n<redacted 0 chars>\n<redacted 26 chars>\n<redacted 24 chars>\n<redacted 38 chars>\n<redacted 25 chars>\n<redacted 0 chars>\n<redacted 30 chars>\n<redacted 29 chars>\n<redacted 31 chars>\n<redacted 28 chars>\n<redacted 0 chars>\n<redacted 26 chars>\n<redacted 35 chars>\n<redacted 35 chars>\n<redacted 25 chars>\n<redacted 0 chars>\n<redacted 29 chars>\n<redacted 26 chars>\n<redacted 34 chars>\n<redacted 25 chars>\n<redacted 0 chars>\n<redacted 30 chars>\n<redacted 24 chars>\n<redacted 32 chars>\n<redacted 30 chars>\n<redacted 0 chars>\n<redacted 22 chars>\n<redacted 29 chars>\n<redacted 31 chars>\n<redacted 24 chars>\n<redacted 0 chars>\n<redacted 26 chars>\n<redacted 24 chars>\n<redacted 38 chars>\n<redacted 25 chars>\n<redacted 0 chars>\n<redacted 30 chars>\n<redacted 26 chars>\n<redacted 25 chars>\n<redacted 30 chars>\n<redacted 0 chars>\n<redacted 30 chars>\n<redacted 27 chars>\n<redacted 33 chars>\n<redacted 27 chars>\n<redacted 0 chars>\n<redacted 37 chars>\n<redacted 31 chars>\n<redacted 39 chars>\n<redacted 27 chars>\n<redacted 0 chars>\n<redacted 34 chars>\n<redacted 29 chars>\n<redacted 38 chars>\n<redacted 23 chars>\n<redacted 0 chars>\n<redacted 22 chars>\n<redacted 29 chars>\n<redacted 35 chars>\n<redacted 24 chars>\n<redacted 0 chars>\n<redacted 33 chars>\n<redacted 29 chars>\n<redacted 32 chars>\n<redacted 29 chars>\n<redacted 0 chars>\n<redacted 33 chars>\n<redacted 32 chars>\n<redacted 34 chars>\n<redacted 29 chars>\n<redacted 0 chars>\n<redacted 27 chars>\n<redacted 30 chars>\n<redacted 31 chars>\n<redacted 0 chars>\n<redacted 27 chars>",
+          "type": "gen",
+          "duration": 442.8,
+          "refund_credits": false,
+          "stream": true,
+          "make_instrumental": false,
+          "vox_render_mode": "strict",
+          "can_remix": true,
+          "is_remix": false,
+          "priority": 10,
+          "has_stem": false,
+          "video_is_stale": false,
+          "uses_latest_model": false,
+          "model_badges": {
+            "songcard": {
+              "display_name": "V5.5",
+              "light": {
+                "text_color": "A3A3A3"
+              },
+              "dark": {
+                "text_color": "A3A3A3"
+              }
+            },
+            "songrow": {
+              "display_name": "V5.5",
+              "light": {
+                "text_color": "A3A3A3"
+              },
+              "dark": {
+                "text_color": "A3A3A3"
+              }
+            }
+          },
+          "image_config": {
+            "use_image_config_template": true,
+            "id": "camcorder",
+            "default_cover_style": "brand_refresh"
+          },
+          "is_mumble": false
+        },
+        "caption": "<redacted 150 chars>",
+        "is_liked": true,
+        "user_id": "00000000-0000-4000-8000-000000000103",
+        "display_name": "<redacted 11 chars>",
+        "handle": "<redacted 10 chars>",
+        "is_handle_updated": true,
+        "avatar_image_url": "<redacted url>",
+        "is_trashed": false,
+        "is_hidden": false,
+        "created_at": "2026-08-30T01:06:43.488Z",
+        "is_public": true,
+        "reaction": {
+          "play_count": 94,
+          "skip_count": 0,
+          "flagged": false,
+          "reaction_type": "L",
+          "updated_at": "2026-09-28T01:18:04.681Z"
+        },
+        "persona": {
+          "id": "00000000-0000-4000-8000-000000000133",
+          "name": "<redacted 21 chars>",
+          "image_s3_id": "https://cdn2.suno.ai/image_00000000-0000-4000-8000-000000000134.jpeg",
+          "root_clip_id": "00000000-0000-4000-8000-000000000135",
+          "user_handle": "<redacted 10 chars>",
+          "user_display_name": "<redacted 11 chars>",
+          "user_image_url": "<redacted url>",
+          "user_is_verified": false,
+          "is_owned": true,
+          "is_public": false,
+          "is_trashed": false,
+          "is_hidden": false,
+          "is_voice_persona": false,
+          "persona_type": "vox"
+        },
+        "is_persona_root": true,
+        "is_following_creator": false,
+        "albums": [],
+        "explicit": false,
+        "comment_count": 0,
+        "flag_count": 0,
+        "display_tags": "<redacted 32 chars>",
+        "is_download_unlocked": false,
+        "is_contest_clip": false,
+        "has_hook": false,
+        "batch_index": 0,
+        "action_config": {
+          "actions": [
+            {
+              "action_type": "add_to_playlist",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "like_song",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "share_song",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "dislike_song",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "report_song",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "remove_from_playlist",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "play_next",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "add_to_queue",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "delete_song",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "edit_song_details",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "create_hook",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "download_song",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "open_in_studio",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "unpublish_song",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "remaster",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "allow_comments_toggle_song",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "allow_remix",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "pin_to_profile",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "remix_extend",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "remix_cover",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "remix_reuse_style",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "create_voice",
+              "disabled": false,
+              "visible": true
+            }
+          ]
+        }
+      },
+      "user_display_name": "<redacted 11 chars>",
+      "user_handle": "<redacted 10 chars>",
+      "user_image_url": "<redacted url>",
+      "user_is_verified": false,
+      "is_suno_persona": false,
+      "is_trashed": false,
+      "is_owned": true,
+      "is_public": false,
+      "is_public_approved": false,
+      "is_loved": false,
+      "is_hidden": false,
+      "upvote_count": 0,
+      "is_vox_persona": true,
+      "is_following": false,
+      "follower_count": 0,
+      "persona_type": "vox",
+      "source": "generated_clip"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000136",
+      "name": "<redacted 13 chars>",
+      "description": "",
+      "image_s3_id": "https://cdn1.suno.ai/<redacted image name>",
+      "clip": {
+        "status": "complete",
+        "title": "<redacted 19 chars>",
+        "play_count": 4,
+        "upvote_count": 1,
+        "allow_comments": true,
+        "is_verified": false,
+        "id": "00000000-0000-4000-8000-000000000137",
+        "entity_type": "song_schema",
+        "video_url": "https://cdn1.suno.ai/00000000-0000-4000-8000-000000000137.mp4",
+        "audio_url": "https://studio-api.prod.suno.com/api/forbidden",
+        "media_urls": [
+          {
+            "url": "https://d2lwuy8qc234o3.cloudfront.net/1/clip/00000000-0000-4000-8000-000000000137.m4a",
+            "content_type": "m4a-opus",
+            "delivery": "progressive",
+            "encoding": "1.0.0"
+          }
+        ],
+        "image_url": "https://cdn2.suno.ai/00000000-0000-4000-8000-000000000138.jpeg",
+        "image_large_url": "https://cdn2.suno.ai/00000000-0000-4000-8000-000000000138.jpeg",
+        "major_model_version": "v6",
+        "model_name": "chirp-hawk",
+        "metadata": {
+          "tags": "<redacted 553 chars>",
+          "prompt": "<redacted 31 chars>\n<redacted 11 chars>\n<redacted 15 chars>\n<redacted 24 chars>\n<redacted 51 chars>\n<redacted 0 chars>\n<redacted 29 chars>\n<redacted 0 chars>\n<redacted 6 chars>\n<redacted 0 chars>\n<redacted 9 chars>\n<redacted 34 chars>\n<redacted 35 chars>\n<redacted 47 chars>\n<redacted 43 chars>\n<redacted 0 chars>\n<redacted 37 chars>\n<redacted 31 chars>\n<redacted 44 chars>\n<redacted 43 chars>\n<redacted 0 chars>\n<redacted 12 chars>\n<redacted 39 chars>\n<redacted 54 chars>\n<redacted 0 chars>\n<redacted 8 chars>\n<redacted 34 chars>\n<redacted 41 chars>\n<redacted 42 chars>\n<redacted 23 chars>\n<redacted 11 chars>\n<redacted 0 chars>\n<redacted 34 chars>\n<redacted 36 chars>\n<redacted 53 chars>\n<redacted 26 chars>\n<redacted 14 chars>\n<redacted 0 chars>\n<redacted 9 chars>\n<redacted 34 chars>\n<redacted 46 chars>\n<redacted 49 chars>\n<redacted 49 chars>\n<redacted 0 chars>\n<redacted 39 chars>\n<redacted 35 chars>\n<redacted 48 chars>\n<redacted 38 chars>\n<redacted 0 chars>\n<redacted 12 chars>\n<redacted 49 chars>\n<redacted 51 chars>\n<redacted 0 chars>\n<redacted 8 chars>\n<redacted 34 chars>\n<redacted 40 chars>\n<redacted 45 chars>\n<redacted 47 chars>\n<redacted 0 chars>\n<redacted 34 chars>\n<redacted 38 chars>\n<redacted 45 chars>\n<redacted 26 chars>\n<redacted 14 chars>\n<redacted 0 chars>\n<redacted 46 chars>\n<redacted 0 chars>\n<redacted 44 chars>\n<redacted 11 chars>\n<redacted 0 chars>\n<redacted 11 chars>\n<redacted 0 chars>\n<redacted 35 chars>\n<redacted 0 chars>\n<redacted 37 chars>\n<redacted 48 chars>\n<redacted 0 chars>\n<redacted 21 chars>\n<redacted 0 chars>\n<redacted 6 chars>\n<redacted 21 chars>\n<redacted 19 chars>\n<redacted 30 chars>\n<redacted 28 chars>\n<redacted 0 chars>\n<redacted 23 chars>\n<redacted 26 chars>\n<redacted 36 chars>\n<redacted 51 chars>\n<redacted 0 chars>\n<redacted 11 chars>\n<redacted 23 chars>\n<redacted 20 chars>\n<redacted 30 chars>\n<redacted 19 chars>\n<redacted 0 chars>\n<redacted 21 chars>\n<redacted 26 chars>\n<redacted 28 chars>\n<redacted 22 chars>\n<redacted 0 chars>\n<redacted 33 chars>\n<redacted 34 chars>\n<redacted 49 chars>\n<redacted 54 chars>\n<redacted 36 chars>\n<redacted 0 chars>\n<redacted 34 chars>\n<redacted 40 chars>\n<redacted 48 chars>\n<redacted 27 chars>\n<redacted 0 chars>\n<redacted 6 chars>\n<redacted 0 chars>\n<redacted 5 chars>\n<redacted 25 chars>\n<redacted 0 chars>\n<redacted 11 chars>\n<redacted 14 chars>\n<redacted 0 chars>\n<redacted 34 chars>\n<redacted 21 chars>\n<redacted 0 chars>\n<redacted 36 chars>",
+          "type": "gen",
+          "duration": 262.28,
+          "refund_credits": false,
+          "stream": true,
+          "has_vocal": false,
+          "can_publish_with_vocal": true,
+          "make_instrumental": false,
+          "control_sliders": {
+            "audio_weight": 0.79,
+            "aug_creativity": 3
+          },
+          "persona_id": "00000000-0000-4000-8000-000000000136",
+          "vox_render_mode": "beautified",
+          "task": "vox",
+          "can_remix": true,
+          "is_remix": false,
+          "priority": 10,
+          "has_stem": false,
+          "video_is_stale": false,
+          "uses_latest_model": true,
+          "model_badges": {
+            "songcard": {
+              "display_name": "V6",
+              "light": {
+                "text_color": "FD429C",
+                "background_color": "0000004D",
+                "border_color": "00000000"
+              },
+              "dark": {
+                "text_color": "FD429C",
+                "background_color": "0000004D",
+                "border_color": "00000000"
+              }
+            },
+            "songrow": {
+              "display_name": "V6",
+              "light": {
+                "text_color": "FD429C",
+                "text_color_gradient": [
+                  "FD429C",
+                  "FF5126"
+                ]
+              },
+              "dark": {
+                "text_color": "FD429C",
+                "text_color_gradient": [
+                  "FD429C",
+                  "FF5126"
+                ]
+              }
+            }
+          },
+          "image_config": {
+            "use_image_config_template": true,
+            "id": "cyanotype",
+            "default_cover_style": "brand_refresh"
+          },
+          "is_mumble": false
+        },
+        "caption": "<redacted 374 chars>",
+        "is_liked": true,
+        "user_id": "00000000-0000-4000-8000-000000000103",
+        "display_name": "<redacted 11 chars>",
+        "handle": "<redacted 10 chars>",
+        "is_handle_updated": true,
+        "avatar_image_url": "<redacted url>",
+        "is_trashed": false,
+        "is_hidden": false,
+        "created_at": "2026-09-11T14:33:46.949Z",
+        "is_public": true,
+        "reaction": {
+          "play_count": 4,
+          "skip_count": 0,
+          "flagged": false,
+          "reaction_type": "L",
+          "updated_at": "2026-09-23T00:37:22.631Z"
+        },
+        "persona": {
+          "id": "00000000-0000-4000-8000-000000000136",
+          "name": "<redacted 13 chars>",
+          "image_s3_id": "https://cdn1.suno.ai/<redacted image name>",
+          "user_handle": "<redacted 10 chars>",
+          "user_display_name": "<redacted 11 chars>",
+          "user_image_url": "<redacted url>",
+          "user_is_verified": false,
+          "is_owned": true,
+          "is_public": false,
+          "is_trashed": false,
+          "is_hidden": false,
+          "is_voice_persona": true,
+          "persona_type": "vox"
+        },
+        "is_persona_root": false,
+        "is_following_creator": false,
+        "albums": [],
+        "explicit": false,
+        "comment_count": 0,
+        "flag_count": 0,
+        "display_tags": "<redacted 21 chars>",
+        "is_download_unlocked": true,
+        "download_unlocked_at": "2026-09-21T15:34:34.072Z",
+        "is_contest_clip": false,
+        "has_hook": false,
+        "batch_index": 1,
+        "action_config": {
+          "actions": [
+            {
+              "action_type": "add_to_playlist",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "like_song",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "share_song",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "dislike_song",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "report_song",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "remove_from_playlist",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "play_next",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "add_to_queue",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "delete_song",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "edit_song_details",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "create_hook",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "download_song",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "open_in_studio",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "unpublish_song",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "remaster",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "allow_comments_toggle_song",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "allow_remix",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "pin_to_profile",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "remix_extend",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "remix_cover",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "remix_reuse_style",
+              "disabled": false,
+              "visible": true
+            },
+            {
+              "action_type": "view_voice",
+              "disabled": false,
+              "visible": true,
+              "metadata": {
+                "persona_id": "00000000-0000-4000-8000-000000000136"
+              }
+            }
+          ]
+        }
+      },
+      "user_display_name": "<redacted 11 chars>",
+      "user_handle": "<redacted 10 chars>",
+      "user_image_url": "<redacted url>",
+      "user_is_verified": false,
+      "is_suno_persona": false,
+      "is_trashed": false,
+      "is_owned": true,
+      "is_public": false,
+      "is_public_approved": false,
+      "is_loved": false,
+      "is_hidden": false,
+      "upvote_count": 0,
+      "is_vox_persona": true,
+      "is_following": false,
+      "follower_count": 0,
+      "persona_type": "vox",
+      "source": "recording"
+    }
+  ],
+  "current_page": 1,
+  "total_results": 2,
+  "voice_persona_count": 2,
+  "max_voice_personas": 1000
+}

@@ -1,0 +1,36 @@
+{
+  "num_total_results": 96,
+  "current_page": 5,
+  "projects": [
+    {
+      "id": "00000000-0000-4000-8000-000000000126",
+      "name": "<redacted 15 chars>",
+      "description": "",
+      "clip_count": 1,
+      "last_updated_clip": "2026-08-30T14:18:47.292Z",
+      "shared": false,
+      "can_invite": false,
+      "created_at": "2026-08-30T14:18:07.755Z"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000127",
+      "name": "<redacted 17 chars>",
+      "description": "",
+      "clip_count": 1,
+      "last_updated_clip": "2026-08-30T13:55:42.651Z",
+      "shared": false,
+      "can_invite": false,
+      "created_at": "2026-08-30T02:23:02.791Z"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000128",
+      "name": "<redacted 26 chars>",
+      "description": "",
+      "clip_count": 1,
+      "last_updated_clip": "2026-08-30T13:49:50.390Z",
+      "shared": false,
+      "can_invite": false,
+      "created_at": "2026-08-30T13:49:08.434Z"
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 # Suno integration design
 
-Shared design the M4 stories refer to as "the Suno integration design". A story's own acceptance criteria and discretion lines take precedence where they differ. Evidence for Suno's behaviour is in `docs/spikes/TS-001.md`, `docs/spikes/TS-002.md`, and the fixtures under `extension/fixtures/suno/`.
+Shared design the M4 stories refer to as "the Suno integration design". A story's own acceptance criteria and discretion lines take precedence where they differ. Evidence for Suno's behaviour is in `docs/spikes/TS-001.md` through `TS-004.md`, `docs/suno-import-field-map.md`, and the fixtures under `extension/fixtures/suno/`.
 
 ## Terms
 
@@ -12,8 +12,14 @@ Shared design the M4 stories refer to as "the Suno integration design". A story'
 
 - The n8Tracks server never contacts Suno. Every Suno record, image, and status arrives through the extension. Suno URLs are stored as text and never fetched by the server.
 - The extension never constructs its own authenticated request to Suno and never reads Suno cookies or authorization headers. It reads Suno's data by observing the responses to the page's own requests (a wrapper around `fetch` in the page, as spike TS-001 did) and causes those requests by operating the page (navigating, scrolling, opening menus).
-- One exception to observing: a clip's cover image is read with a plain request that carries no cookies or authorization, sent only to hosts the adapter lists as Suno image hosts.
-- The extension changes Suno in exactly one way: it may create a workspace. It never clicks Create, Publish, Delete, Trash, or Remove controls (invariant 4).
+- Two exceptions to observing:
+  - A clip's cover image is read with a plain request that carries no cookies or authorization, sent only to hosts the adapter lists as Suno image hosts.
+  - An audio address is handed to the browser's downloads interface, which fetches it with no credential added by the extension. The address is either one the page's own traffic exposed (a signed `download_url` from `GET /api/download/clip/<id>?format=…`, valid for one hour) or a clip's `media_urls` playback address. It is used only when it is on a listed Suno audio host: `suno-data-uploads.s3.amazonaws.com` and `d2lwuy8qc234o3.cloudfront.net` (spike TS-004).
+- The extension changes Suno in exactly two ways:
+  - It may create a workspace.
+  - It may unlock a clip for download by clicking the Download dialog's "Unlock & Download". This spends one of the user's plan downloads, and only after the user has confirmed, before the run, how many unlocks the run uses against the allowance remaining. It never buys download packs. (Maintainer's decision on TS-004, 2026-10-05.)
+- It never clicks Create, Publish, Delete, Trash, or Remove controls (invariant 4).
+- Filling lyrics into the Create form makes Suno save a draft in the user's Saved lyrics (`POST /api/lyrics-projects`, spike TS-003). This is Suno's own behaviour, not an extension action.
 - Nothing reaches the catalog from a library export until the signed-in user confirms it on the review page (invariant 3). The extension's token can stage an export; it cannot commit one.
 
 ## Scopes

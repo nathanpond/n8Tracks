@@ -1,0 +1,39 @@
+{
+  "project_id": "00000000-0000-4000-8000-000000000105",
+  "token": null,
+  "generation_type": "TEXT",
+  "title": "",
+  "tags": "<redacted 18 chars>",
+  "negative_tags": "",
+  "mv": "chirp-goose",
+  "prompt": "<redacted 40 chars>",
+  "make_instrumental": false,
+  "user_uploaded_images_b64": null,
+  "metadata": {
+    "web_client_pathname": "/create",
+    "create_surface": "desktop_create_form",
+    "create_mode": "custom",
+    "user_tier": "<redacted user_tier>",
+    "create_session_token": "<redacted create_session_token>",
+    "disable_volume_normalization": false,
+    "vocal_gender": "f",
+    "is_speech": true,
+    "backing_music": false,
+    "control_sliders": {
+      "aug_creativity": 2
+    }
+  },
+  "override_fields": [],
+  "cover_clip_id": null,
+  "cover_start_s": null,
+  "cover_end_s": null,
+  "persona_id": null,
+  "artist_clip_id": null,
+  "artist_start_s": null,
+  "artist_end_s": null,
+  "continue_clip_id": null,
+  "continued_aligned_prompt": null,
+  "continue_at": null,
+  "transaction_uuid": "00000000-0000-4000-8000-000000000113",
+  "token_provider": null
+}

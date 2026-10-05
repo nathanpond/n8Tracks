@@ -1,0 +1,389 @@
+{
+  "clips": [
+    {
+      "status": "complete",
+      "title": "<redacted 16 chars>",
+      "play_count": 0,
+      "upvote_count": 0,
+      "allow_comments": true,
+      "is_verified": false,
+      "id": "00000000-0000-4000-8000-000000000112",
+      "entity_type": "song_schema",
+      "video_url": "",
+      "audio_url": "https://studio-api.prod.suno.com/api/forbidden",
+      "media_urls": [
+        {
+          "url": "https://d2lwuy8qc234o3.cloudfront.net/1/clip/00000000-0000-4000-8000-000000000112.m4a",
+          "content_type": "m4a-opus",
+          "delivery": "progressive",
+          "encoding": "1.0.0"
+        }
+      ],
+      "image_url": "https://cdn2.suno.ai/image_00000000-0000-4000-8000-000000000112.jpeg",
+      "image_large_url": "https://cdn2.suno.ai/image_large_00000000-0000-4000-8000-000000000112.jpeg",
+      "major_model_version": "v6",
+      "model_name": "chirp-goose",
+      "metadata": {
+        "tags": "<redacted 96 chars>",
+        "prompt": "<redacted 40 chars>",
+        "type": "gen",
+        "duration": 50.0,
+        "refund_credits": false,
+        "stream": true,
+        "make_instrumental": false,
+        "is_speech": true,
+        "control_sliders": {
+          "aug_creativity": 2
+        },
+        "vox_render_mode": "strict",
+        "can_remix": true,
+        "is_remix": false,
+        "priority": 10,
+        "has_stem": false,
+        "max_bpm": 157.89,
+        "min_bpm": 142.86,
+        "avg_bpm": 150.07,
+        "key": "A_minor",
+        "uses_latest_model": true,
+        "secondary_badges": [
+          {
+            "display_name": "SPEECH",
+            "light": {
+              "text_color": "A3A3A3"
+            },
+            "dark": {
+              "text_color": "A3A3A3"
+            }
+          }
+        ],
+        "image_config": {
+          "use_image_config_template": true,
+          "id": "airbrush",
+          "default_cover_style": "brand_refresh"
+        },
+        "is_mumble": false
+      },
+      "is_liked": false,
+      "user_id": "00000000-0000-4000-8000-000000000103",
+      "display_name": "<redacted 11 chars>",
+      "handle": "<redacted 10 chars>",
+      "is_handle_updated": true,
+      "avatar_image_url": "<redacted url>",
+      "is_trashed": false,
+      "is_hidden": false,
+      "created_at": "2026-10-05T03:45:11.708Z",
+      "is_public": false,
+      "is_persona_root": false,
+      "is_following_creator": false,
+      "project": {
+        "id": "00000000-0000-4000-8000-000000000105",
+        "name": "<redacted 14 chars>",
+        "description": "",
+        "is_trashed": false,
+        "is_public": false
+      },
+      "albums": [],
+      "ownership": {
+        "ownership_reason": "subscribed"
+      },
+      "comment_count": 0,
+      "flag_count": 0,
+      "is_download_unlocked": false,
+      "is_contest_clip": false,
+      "has_hook": false,
+      "batch_index": 1,
+      "action_config": {
+        "actions": [
+          {
+            "action_type": "add_to_playlist",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "like_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "share_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "dislike_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "report_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "remove_from_playlist",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "play_next",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "add_to_queue",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "delete_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "edit_song_details",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "create_hook",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "download_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "open_in_studio",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "publish_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "remaster",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "remix_extend",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "remix_cover",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "remix_reuse_style",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "create_voice",
+            "disabled": false,
+            "visible": true
+          }
+        ]
+      }
+    },
+    {
+      "status": "complete",
+      "title": "<redacted 16 chars>",
+      "play_count": 0,
+      "upvote_count": 0,
+      "allow_comments": true,
+      "is_verified": false,
+      "id": "00000000-0000-4000-8000-000000000111",
+      "entity_type": "song_schema",
+      "video_url": "",
+      "audio_url": "https://studio-api.prod.suno.com/api/forbidden",
+      "media_urls": [
+        {
+          "url": "https://d2lwuy8qc234o3.cloudfront.net/1/clip/00000000-0000-4000-8000-000000000111.m4a",
+          "content_type": "m4a-opus",
+          "delivery": "progressive",
+          "encoding": "1.0.0"
+        }
+      ],
+      "image_url": "https://cdn2.suno.ai/image_00000000-0000-4000-8000-000000000111.jpeg",
+      "image_large_url": "https://cdn2.suno.ai/image_large_00000000-0000-4000-8000-000000000111.jpeg",
+      "major_model_version": "v6",
+      "model_name": "chirp-goose",
+      "metadata": {
+        "tags": "<redacted 93 chars>",
+        "prompt": "<redacted 40 chars>",
+        "type": "gen",
+        "duration": 65.68,
+        "refund_credits": false,
+        "stream": true,
+        "make_instrumental": false,
+        "is_speech": true,
+        "control_sliders": {
+          "aug_creativity": 2
+        },
+        "vox_render_mode": "strict",
+        "can_remix": true,
+        "is_remix": false,
+        "priority": 10,
+        "has_stem": false,
+        "max_bpm": 157.89,
+        "min_bpm": 130.43,
+        "avg_bpm": 149.67,
+        "key": "A_minor",
+        "uses_latest_model": true,
+        "secondary_badges": [
+          {
+            "display_name": "SPEECH",
+            "light": {
+              "text_color": "A3A3A3"
+            },
+            "dark": {
+              "text_color": "A3A3A3"
+            }
+          }
+        ],
+        "image_config": {
+          "use_image_config_template": true,
+          "id": "airbrush",
+          "default_cover_style": "brand_refresh"
+        },
+        "is_mumble": false
+      },
+      "is_liked": false,
+      "user_id": "00000000-0000-4000-8000-000000000103",
+      "display_name": "<redacted 11 chars>",
+      "handle": "<redacted 10 chars>",
+      "is_handle_updated": true,
+      "avatar_image_url": "<redacted url>",
+      "is_trashed": false,
+      "is_hidden": false,
+      "created_at": "2026-10-05T03:45:11.708Z",
+      "is_public": false,
+      "is_persona_root": false,
+      "is_following_creator": false,
+      "project": {
+        "id": "00000000-0000-4000-8000-000000000105",
+        "name": "<redacted 14 chars>",
+        "description": "",
+        "is_trashed": false,
+        "is_public": false
+      },
+      "albums": [],
+      "ownership": {
+        "ownership_reason": "subscribed"
+      },
+      "comment_count": 0,
+      "flag_count": 0,
+      "is_download_unlocked": false,
+      "is_contest_clip": false,
+      "has_hook": false,
+      "batch_index": 0,
+      "action_config": {
+        "actions": [
+          {
+            "action_type": "add_to_playlist",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "like_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "share_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "dislike_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "report_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "remove_from_playlist",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "play_next",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "add_to_queue",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "delete_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "edit_song_details",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "create_hook",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "download_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "open_in_studio",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "publish_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "remaster",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "remix_extend",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "remix_cover",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "remix_reuse_style",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "create_voice",
+            "disabled": false,
+            "visible": true
+          }
+        ]
+      }
+    }
+  ],
+  "has_more": false
+}

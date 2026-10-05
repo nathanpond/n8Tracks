@@ -1,0 +1,320 @@
+{
+  "id": "00000000-0000-4000-8000-000000000114",
+  "clips": [
+    {
+      "status": "submitted",
+      "title": "<redacted 31 chars>",
+      "play_count": 0,
+      "upvote_count": 0,
+      "allow_comments": true,
+      "is_verified": false,
+      "id": "00000000-0000-4000-8000-000000000115",
+      "entity_type": "song_schema",
+      "video_url": "",
+      "audio_url": "",
+      "major_model_version": "",
+      "model_name": "chirp-seeds",
+      "metadata": {
+        "tags": "<redacted 31 chars>",
+        "prompt": "",
+        "type": "gen",
+        "stream": true,
+        "make_instrumental": true,
+        "vox_render_mode": "strict",
+        "task": "sound",
+        "sound_configs": {
+          "user_tempo": 120,
+          "user_key": "Am",
+          "user_loop": true
+        },
+        "can_remix": true,
+        "is_remix": false,
+        "priority": 10,
+        "image_config": {
+          "use_image_config_template": true,
+          "id": "polaroid",
+          "default_cover_style": "brand_refresh"
+        },
+        "is_mumble": false
+      },
+      "is_liked": false,
+      "user_id": "00000000-0000-4000-8000-000000000103",
+      "display_name": "<redacted 11 chars>",
+      "handle": "<redacted 10 chars>",
+      "is_handle_updated": true,
+      "avatar_image_url": "<redacted url>",
+      "is_trashed": false,
+      "is_hidden": false,
+      "created_at": "2026-10-05T03:45:45.365Z",
+      "is_public": false,
+      "is_persona_root": false,
+      "flag_count": 0,
+      "is_contest_clip": false,
+      "has_hook": false,
+      "batch_index": 0,
+      "action_config": {
+        "actions": [
+          {
+            "action_type": "add_to_playlist",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "like_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "share_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "dislike_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "report_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "remove_from_playlist",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "play_next",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "add_to_queue",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "delete_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "edit_song_details",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "create_hook",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "download_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "open_in_studio",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "remix_extend",
+            "disabled": true,
+            "visible": true,
+            "action_override": {
+              "type": "toast",
+              "text": "<redacted 50 chars>"
+            }
+          },
+          {
+            "action_type": "remix_cover",
+            "disabled": true,
+            "visible": true,
+            "action_override": {
+              "type": "toast",
+              "text": "<redacted 50 chars>"
+            }
+          },
+          {
+            "action_type": "remix_reuse_style",
+            "disabled": false,
+            "visible": true
+          }
+        ]
+      }
+    },
+    {
+      "status": "submitted",
+      "title": "<redacted 31 chars>",
+      "play_count": 0,
+      "upvote_count": 0,
+      "allow_comments": true,
+      "is_verified": false,
+      "id": "00000000-0000-4000-8000-000000000116",
+      "entity_type": "song_schema",
+      "video_url": "",
+      "audio_url": "",
+      "major_model_version": "",
+      "model_name": "chirp-seeds",
+      "metadata": {
+        "tags": "<redacted 31 chars>",
+        "prompt": "",
+        "type": "gen",
+        "stream": true,
+        "make_instrumental": true,
+        "vox_render_mode": "strict",
+        "task": "sound",
+        "sound_configs": {
+          "user_tempo": 120,
+          "user_key": "Am",
+          "user_loop": true
+        },
+        "can_remix": true,
+        "is_remix": false,
+        "priority": 10,
+        "image_config": {
+          "use_image_config_template": true,
+          "id": "polaroid",
+          "default_cover_style": "brand_refresh"
+        },
+        "is_mumble": false
+      },
+      "is_liked": false,
+      "user_id": "00000000-0000-4000-8000-000000000103",
+      "display_name": "<redacted 11 chars>",
+      "handle": "<redacted 10 chars>",
+      "is_handle_updated": true,
+      "avatar_image_url": "<redacted url>",
+      "is_trashed": false,
+      "is_hidden": false,
+      "created_at": "2026-10-05T03:45:45.365Z",
+      "is_public": false,
+      "is_persona_root": false,
+      "flag_count": 0,
+      "is_contest_clip": false,
+      "has_hook": false,
+      "batch_index": 1,
+      "action_config": {
+        "actions": [
+          {
+            "action_type": "add_to_playlist",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "like_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "share_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "dislike_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "report_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "remove_from_playlist",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "play_next",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "add_to_queue",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "delete_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "edit_song_details",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "create_hook",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "download_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "open_in_studio",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "remix_extend",
+            "disabled": true,
+            "visible": true,
+            "action_override": {
+              "type": "toast",
+              "text": "<redacted 50 chars>"
+            }
+          },
+          {
+            "action_type": "remix_cover",
+            "disabled": true,
+            "visible": true,
+            "action_override": {
+              "type": "toast",
+              "text": "<redacted 50 chars>"
+            }
+          },
+          {
+            "action_type": "remix_reuse_style",
+            "disabled": false,
+            "visible": true
+          }
+        ]
+      }
+    }
+  ],
+  "metadata": {
+    "tags": "<redacted 31 chars>",
+    "prompt": "",
+    "type": "gen",
+    "stream": true,
+    "make_instrumental": true,
+    "vox_render_mode": "strict",
+    "task": "sound",
+    "sound_configs": {
+      "user_tempo": 120,
+      "user_key": "Am",
+      "user_loop": true
+    },
+    "can_remix": true,
+    "is_remix": false,
+    "priority": 10,
+    "image_config": {
+      "use_image_config_template": true,
+      "id": "polaroid",
+      "default_cover_style": "brand_refresh"
+    },
+    "is_mumble": false
+  },
+  "major_model_version": "",
+  "status": "running",
+  "created_at": "2026-10-05T03:45:45.315Z",
+  "batch_size": 2
+}

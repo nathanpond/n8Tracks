@@ -1,0 +1,232 @@
+{
+  "capturedOn": "2026-10-05",
+  "spike": "TS-003 (#127)",
+  "evidence": "extension/fixtures/suno/ (generate-v2-web.<mode>.response.json, feed-v3.<mode>.response.json); request bodies are described in extension/fixtures/suno/README.md",
+  "pathRoots": {
+    "feed": "one clip in `clips[]` of the response to POST /api/feed/v3 (what import reads)",
+    "create": "one clip in `clips[]` of the response to POST /api/generate/v2-web/ (what the observed-Create story reads)",
+    "createRequest": "the JSON body of POST /api/generate/v2-web/; readable only by a page-side wrapper in the tab that clicked Create"
+  },
+  "kindMarkers": {
+    "song": "neither marker below",
+    "speech": "metadata.is_speech === true",
+    "sound": "metadata.task === \"sound\" (model_name chirp-sfx in the feed, chirp-seeds in the Create response; major_model_version is empty)"
+  },
+  "modeMarkers": {
+    "simple": "metadata.gpt_description_prompt is present and metadata.task === \"agentic_thinking\" (feed and create); createRequest.metadata.create_mode === \"simple\"",
+    "advanced": "metadata.gpt_description_prompt is absent; createRequest.metadata.create_mode === \"custom\" (Sounds also sends \"custom\")",
+    "note": "A clip with a TS-002 lineage task (cover, extend, …) is marked by that task instead; create_mode is never returned in feed or create."
+  },
+  "fields": {
+    "model": {
+      "paths": { "feed": "metadata.model_badges.songrow.display_name", "create": null, "createRequest": "mv" },
+      "encoding": "enum",
+      "values": { "v6-mini": "V6-MINI", "v6": "unverified", "v6-wild": "unverified (the trash page shows a V6-WILD badge)" },
+      "example": "V6-MINI",
+      "notes": "Songs only; Speech clips carry no badge. model_name (chirp-goose) and major_model_version (v6) are the same for every model label seen, so neither identifies the label. createRequest.mv was chirp-goose for v6-mini; other labels were not exercised."
+    },
+    "simple_prompt": {
+      "paths": { "feed": "metadata.gpt_description_prompt", "create": "metadata.gpt_description_prompt", "createRequest": "gpt_description_prompt" },
+      "encoding": "text",
+      "example": "short upbeat acoustic folk tune about a test"
+    },
+    "simple_add_lyrics": {
+      "paths": { "feed": null, "create": null, "createRequest": null },
+      "encoding": "text",
+      "unverified": "Not exercised. Expected in metadata.prompt, as in Advanced mode."
+    },
+    "simple_add_styles": {
+      "paths": { "feed": null, "create": null, "createRequest": null },
+      "encoding": "text",
+      "unverified": "Not exercised. Expected in metadata.tags, which the feed rewrites (see styles)."
+    },
+    "simple_add_playlist": {
+      "paths": { "feed": "metadata.playlist_id", "create": "metadata.playlist_id", "createRequest": null },
+      "encoding": "text",
+      "notes": "Lineage per TS-002 (playlist_condition); in the Create response playlist_id is the literal \"inspiration\". Not re-exercised in TS-003."
+    },
+    "simple_add_image": {
+      "paths": { "feed": null, "create": null, "createRequest": "user_uploaded_images_b64" },
+      "encoding": "text",
+      "notReturned": { "checked": "Not exercised; feed and Create response carry no image input field (image_url is Suno's generated cover). createRequest.user_uploaded_images_b64 was null in every run." }
+    },
+    "simple_add_video": {
+      "paths": { "feed": null, "create": null, "createRequest": null },
+      "encoding": "text",
+      "notReturned": { "checked": "Not exercised; no video input field in any captured body (video_url is Suno's output, empty for every clip)." }
+    },
+    "audio": {
+      "paths": { "feed": "metadata.task", "create": "metadata.task", "createRequest": "cover_clip_id" },
+      "encoding": "enum",
+      "values": { "cover": "metadata.cover_clip_id", "mashup": "metadata.mashup_clip_ids", "sample": "clip_roots.clips", "extend": "metadata.edited_clip_id" },
+      "example": "cover",
+      "notes": "Source identifiers per action are listed in docs/spikes/TS-002.md. createRequest carries cover_clip_id, artist_clip_id, continue_clip_id and their start/end seconds, all null for plain generations."
+    },
+    "voice": {
+      "paths": { "feed": "metadata.persona_id", "create": "metadata.persona_id", "createRequest": "persona_id" },
+      "encoding": "text",
+      "example": "00000000-0000-4000-8000-000000000133",
+      "notes": "Per TS-002. The top-level persona object also names the persona."
+    },
+    "inspiration": {
+      "paths": { "feed": "metadata.playlist_clip_ids", "create": "metadata.playlist_clip_ids", "createRequest": null },
+      "encoding": "text",
+      "notes": "Per TS-002: metadata.playlist_id plus playlist_clip_ids."
+    },
+    "lyrics": {
+      "paths": { "feed": "metadata.prompt", "create": "metadata.prompt", "createRequest": "prompt" },
+      "encoding": "text",
+      "example": "[Verse]\nTesting one two three\nThis is just a test for me",
+      "notes": "Returned unchanged. For a Simple-mode clip, metadata.prompt holds the lyrics Suno wrote, not user input."
+    },
+    "styles": {
+      "paths": { "feed": null, "create": "metadata.tags", "createRequest": "tags" },
+      "encoding": "text",
+      "example": "acoustic folk, banjo",
+      "notReturned": { "checked": "feed metadata.tags holds Suno's rewritten style description (\"acoustic folk, banjo\" came back as a 205-character description), not the submitted text; display_tags is a short genre summary (\"folk, acoustic\"). Only the Create response and request hold the submitted value." }
+    },
+    "exclude_styles": {
+      "paths": { "feed": "metadata.negative_tags", "create": "metadata.negative_tags", "createRequest": "negative_tags" },
+      "encoding": "text",
+      "example": "electric guitar"
+    },
+    "vocal_gender": {
+      "paths": { "feed": null, "create": null, "createRequest": "metadata.vocal_gender" },
+      "encoding": "enum",
+      "values": { "female": "f", "male": "unverified (expected m)", "none": "key absent" },
+      "example": "f",
+      "notReturned": { "checked": "Every key of the finished clip and its metadata in the feed, and the Create response clip." }
+    },
+    "duration_mode": {
+      "paths": { "feed": null, "create": null, "createRequest": "duration" },
+      "encoding": "enum",
+      "values": { "custom": "duration key present", "auto": "duration key absent" },
+      "example": "custom",
+      "notReturned": { "checked": "feed metadata.duration is the measured length of the audio (29.6 and 30.28 for a 30-second request), not the setting." }
+    },
+    "duration_seconds": {
+      "paths": { "feed": null, "create": null, "createRequest": "duration" },
+      "encoding": "seconds",
+      "example": 30,
+      "notReturned": { "checked": "As duration_mode. The Custom slider moves in 5-second steps from 10 to 360." }
+    },
+    "max_mode": {
+      "paths": { "feed": "metadata.is_max_mode", "create": "metadata.is_max_mode", "createRequest": "metadata.is_max_mode" },
+      "encoding": "bool",
+      "example": true,
+      "notes": "Exercised on v6-mini, where Suno accepted it."
+    },
+    "weirdness": {
+      "paths": { "feed": "metadata.control_sliders.weirdness_constraint", "create": "metadata.control_sliders.weirdness_constraint", "createRequest": "metadata.control_sliders.weirdness_constraint" },
+      "encoding": "percent",
+      "scale": 0.01,
+      "example": 0.7,
+      "notes": "Form 70 is sent as 0.7. Absent when left at the default 50 (Songs Simple)."
+    },
+    "style_influence": {
+      "paths": { "feed": "metadata.control_sliders.style_weight", "create": "metadata.control_sliders.style_weight", "createRequest": "metadata.control_sliders.style_weight" },
+      "encoding": "percent",
+      "scale": 0.01,
+      "example": 0.3
+    },
+    "variety": {
+      "paths": { "feed": "metadata.control_sliders.aug_creativity", "create": "metadata.control_sliders.aug_creativity", "createRequest": "metadata.control_sliders.aug_creativity" },
+      "encoding": "enum",
+      "values": { "off": "0 (unverified)", "normal": "1 (unverified)", "high": 2, "extra": "3 (unverified)", "max": 4 },
+      "example": 2,
+      "notes": "Songs Simple also sent aug_creativity (4, the Advanced form's value at the time), so a Simple clip carries the Advanced form's Variety."
+    },
+    "personalize": {
+      "paths": { "feed": null, "create": null, "createRequest": "use_personalization" },
+      "encoding": "bool",
+      "example": true,
+      "notReturned": { "checked": "Every key of the finished clip and its metadata, and the Create response clip." }
+    },
+    "title": {
+      "paths": { "feed": "title", "create": "title", "createRequest": "title" },
+      "encoding": "text",
+      "example": "Spike Advanced",
+      "notes": "Top-level on the clip. A blank title is replaced by one Suno writes, so on import a title cannot be told apart from a submitted one."
+    },
+    "workspace": {
+      "paths": { "feed": "project.id", "create": null, "createRequest": "project_id" },
+      "encoding": "text",
+      "example": "00000000-0000-4000-8000-000000000105",
+      "notes": "The Create response clip has no project; project.name also comes with the feed clip."
+    },
+    "speech_prompt": {
+      "paths": { "feed": "metadata.gpt_description_prompt", "create": "metadata.gpt_description_prompt", "createRequest": "gpt_description_prompt" },
+      "encoding": "text",
+      "example": "a calm narrator saying this is a short test"
+    },
+    "speech_script": {
+      "paths": { "feed": "metadata.prompt", "create": "metadata.prompt", "createRequest": "prompt" },
+      "encoding": "text",
+      "example": "This is a short test of the speech tool."
+    },
+    "speech_tone": {
+      "paths": { "feed": null, "create": "metadata.tags", "createRequest": "tags" },
+      "encoding": "text",
+      "example": "cheerful and quick",
+      "notReturned": { "checked": "feed metadata.tags holds Suno's rewritten delivery description, as for styles." }
+    },
+    "speech_vocal_gender": {
+      "paths": { "feed": null, "create": null, "createRequest": "metadata.vocal_gender" },
+      "encoding": "enum",
+      "values": { "female": "f", "male": "unverified (expected m)", "none": "key absent" },
+      "example": "f",
+      "notReturned": { "checked": "Every key of the finished clip and its metadata, and the Create response clip." }
+    },
+    "speech_background_music": {
+      "paths": { "feed": null, "create": null, "createRequest": "metadata.backing_music" },
+      "encoding": "bool",
+      "example": false,
+      "notReturned": { "checked": "Every key of the finished clip and its metadata, and the Create response clip." }
+    },
+    "speech_variety": {
+      "paths": { "feed": "metadata.control_sliders.aug_creativity", "create": "metadata.control_sliders.aug_creativity", "createRequest": "metadata.control_sliders.aug_creativity" },
+      "encoding": "enum",
+      "values": { "high": 2, "others": "as variety (unverified)" },
+      "example": 2,
+      "notes": "Speech Simple sends no control_sliders."
+    },
+    "sounds_model": {
+      "paths": { "feed": null, "create": null, "createRequest": "mv" },
+      "encoding": "enum",
+      "values": { "v6-mini": "chirp-goose in the request", "v6": "unverified", "v6-wild": "unverified" },
+      "example": "chirp-goose",
+      "notReturned": { "checked": "Sound clips carry no model badge; model_name is chirp-sfx (feed) or chirp-seeds (Create response) and major_model_version is empty, whatever the selected label." }
+    },
+    "sound_description": {
+      "paths": { "feed": "metadata.tags", "create": "metadata.tags", "createRequest": "tags" },
+      "encoding": "text",
+      "example": "simple kick and snare drum loop",
+      "notes": "Unlike Songs and Speech, Suno keeps the submitted text for Sounds. The page also sends it, title-cased, as the title."
+    },
+    "sound_type": {
+      "paths": { "feed": "metadata.sound_configs.user_loop", "create": "metadata.sound_configs.user_loop", "createRequest": "metadata.sound_configs.user_loop" },
+      "encoding": "bool",
+      "values": { "loop": true, "one_shot": "false or absent (unverified)" },
+      "example": true
+    },
+    "sound_bpm": {
+      "paths": { "feed": "metadata.sound_configs.user_tempo", "create": "metadata.sound_configs.user_tempo", "createRequest": "metadata.sound_configs.user_tempo" },
+      "encoding": "number",
+      "example": 120,
+      "notes": "Auto (empty) is unverified, expected absent. metadata.avg_bpm is Suno's measurement (82 for a 120 request) and is not the setting."
+    },
+    "sound_key": {
+      "paths": { "feed": "metadata.sound_configs.user_key", "create": "metadata.sound_configs.user_key", "createRequest": "metadata.sound_configs.user_key" },
+      "encoding": "enum",
+      "values": { "A": "A (followed by m for minor)", "any": "unverified (expected absent)", "others": "unverified" },
+      "example": "Am",
+      "notes": "Key and scale share one string: note name, then m for minor. metadata.key (e.g. Ab_minor) is Suno's measurement."
+    },
+    "sound_scale": {
+      "paths": { "feed": "metadata.sound_configs.user_key", "create": "metadata.sound_configs.user_key", "createRequest": "metadata.sound_configs.user_key" },
+      "encoding": "enum",
+      "values": { "minor": "trailing m", "major": "no suffix (unverified)" },
+      "example": "Am"
+    }
+  }
+}
