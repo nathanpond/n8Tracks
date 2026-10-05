@@ -46,6 +46,11 @@ public static class RedactionPolicy
 
         // A Version's styles field (names ending in "style" do not cover the plural).
         "styles",
+
+        // A Version's Suno options holding prompt text (already covered by "prompt" and "styles";
+        // named so a rename of either word cannot uncover them).
+        "simpleprompt",
+        "excludestyles",
         "rawpayload",
         "providerpayload",
 

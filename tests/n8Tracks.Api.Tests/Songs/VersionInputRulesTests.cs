@@ -1,0 +1,157 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using n8Tracks.Application.Songs;
+using n8Tracks.Application.Suno;
+using n8Tracks.Domain.Songs;
+
+namespace n8Tracks.Api.Tests.Songs;
+
+/// <summary>
+/// The rules of a Version's options, read from the embedded inventory: defaults, what each option
+/// accepts, the merge, and which options apply to a kind and mode.
+/// </summary>
+public sealed class VersionInputRulesTests
+{
+    private static readonly CreateFieldInventory Inventory = CreateFieldInventory.Embedded;
+
+    private static readonly string[] Models = ["v6", "v6-wild", "v6-mini"];
+
+    [Fact]
+    public void TheEmbeddedInventoryIsTheCommittedFile()
+    {
+        var committed = File.ReadAllText(Path.Combine(RepositoryRoot(), "docs", "suno-create-field-inventory.json"));
+
+        Assert.Equal(committed, Inventory.Json);
+        Assert.Equal(35, Inventory.Fields.Count);
+        Assert.Equal(100, Inventory.Get("weirdness").Max);
+        Assert.True(Inventory.Get("vocal_gender").DefaultsToNull);
+        Assert.False(Inventory.Get("simple_add_lyrics").HasDefault);
+        Assert.Null(Inventory.Find("not_a_field"));
+    }
+
+    [Fact]
+    public void DefaultsAreTheInventorysWithAnAdvancedSongAndTheSongsTitle()
+    {
+        var defaults = VersionInputRules.Defaults(Inventory, "Pack");
+
+        Assert.Equal(
+            new VersionInputs(
+                VersionKind.Song, CreationMode.Advanced, CreationMode.Advanced, null, "", false, false, "", null, "auto", 180, false, 50, 50, "normal", false, "Pack"),
+            defaults);
+
+        // Each default with one is the inventory's, so a re-captured default changes it.
+        var copy = JsonNode.Parse(Inventory.Json)!;
+        copy["fields"]!.AsArray().Single(static field => field!["key"]!.GetValue<string>() == "weirdness")!["default"] = 30;
+        Assert.Equal(30, VersionInputRules.Defaults(CreateFieldInventory.Parse(copy.ToJsonString()), "Pack").Weirdness);
+    }
+
+    [Theory]
+    [InlineData(100, 100)]
+    [InlineData(300, 100)]
+    [InlineData(5, 5)]
+    public void SunosTitleIsTheSongsCutToItsLimit(int length, int expected)
+    {
+        Assert.Equal(expected, VersionInputRules.Defaults(Inventory, new string('t', length)).Title.Length);
+    }
+
+    [Fact]
+    public void ACutNeverSplitsASurrogatePair()
+    {
+        Assert.Equal("ab", VersionInputRules.Cut("ab🎸", 3));
+        Assert.Equal("ab🎸", VersionInputRules.Cut("ab🎸", 4));
+        Assert.Equal("ab🎸", VersionInputRules.Cut("ab🎸c", 4));
+    }
+
+    [Fact]
+    public void ValuesInsideTheInventorysBoundsAreValidAndOthersAreErrorsNamingTheOption()
+    {
+        Assert.Empty(Errors("""{"weirdness":0,"styleInfluence":100,"variety":"max","vocalGender":null,"model":"v6-mini","kind":"sound","songMode":"simple","maxMode":true,"title":""}"""));
+
+        var errors = Errors("""{"weirdness":101,"variety":"loud","model":"v5","unknown":1,"personalize":0}""");
+
+        Assert.Equal(
+            ["inputs.model", "inputs.personalize", "inputs.unknown", "inputs.variety", "inputs.weirdness"],
+            errors.Keys.Order(StringComparer.Ordinal));
+        Assert.StartsWith("Weirdness", errors["inputs.weirdness"][0], StringComparison.Ordinal);
+        Assert.StartsWith("Personalize (My Taste)", errors["inputs.personalize"][0], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheModelIsCheckedAgainstTheModelListNotTheInventory()
+    {
+        Assert.Empty(VersionInputRules.Errors(Inventory, ["v7"], Sent("""{"model":"v7"}""")));
+        Assert.NotEmpty(VersionInputRules.Errors(Inventory, ["v7"], Sent("""{"model":"v6"}""")));
+    }
+
+    [Fact]
+    public void AnEditMergesKeyByKeyAndNormalisesLineEndings()
+    {
+        var current = VersionInputRules.Defaults(Inventory, "Pack");
+
+        var merged = VersionInputRules.Apply(current, Sent("""{"weirdness":80,"simplePrompt":"a\r\nb\rc","vocalGender":"female","kind":"speech"}"""));
+
+        Assert.Equal(current with { Weirdness = 80, SimplePrompt = "a\nb\nc", VocalGender = "female", Kind = VersionKind.Speech }, merged);
+        Assert.Same(current, VersionInputRules.Apply(current, Sent("{}")));
+    }
+
+    [Fact]
+    public void EffectiveInputsHoldOnlyWhatAppliesToTheKindAndMode()
+    {
+        var advanced = VersionInputRules.Defaults(Inventory, "Pack") with { SimplePrompt = "prompt", DurationSeconds = 200 };
+
+        var effective = VersionInputRules.Effective(Inventory, advanced, "words", "punk");
+        Assert.Equal("words", effective["lyrics"]!.GetValue<string>());
+        Assert.False(effective.ContainsKey("simplePrompt"));
+        Assert.False(effective.ContainsKey("durationSeconds"));
+        Assert.Equal(200, VersionInputRules.Effective(Inventory, advanced with { DurationMode = "custom" }, "", "")["durationSeconds"]!.GetValue<int>());
+
+        // Simple: no Advanced-only option; lyrics and styles only when their section is added.
+        var simple = advanced with { SongMode = CreationMode.Simple };
+        var simpleEffective = VersionInputRules.Effective(Inventory, simple, "words", "punk");
+        Assert.Equal(["kind", "songMode", "model", "simplePrompt", "simpleLyricsAdded", "simpleStylesAdded"], simpleEffective.Select(static option => option.Key));
+        Assert.Equal(
+            ["kind", "songMode", "model", "simplePrompt", "simpleLyricsAdded", "simpleStylesAdded", "styles"],
+            VersionInputRules.Effective(Inventory, simple with { SimpleStylesAdded = true }, "words", "punk").Select(static option => option.Key));
+
+        // Speech and Sound: no Song option.
+        Assert.Equal("""{"kind":"speech","speechMode":"advanced"}""", VersionInputRules.Effective(Inventory, advanced with { Kind = VersionKind.Speech }, "words", "punk").ToJsonString());
+        Assert.Equal("""{"kind":"sound"}""", VersionInputRules.Effective(Inventory, advanced with { Kind = VersionKind.Sound }, "words", "punk").ToJsonString());
+    }
+
+    [Fact]
+    public void TheJsonFormIsEveryKeyInCamelCaseAndReadsBackTheSame()
+    {
+        var inputs = VersionInputRules.Defaults(Inventory, "Pack") with { Kind = VersionKind.Sound, SongMode = CreationMode.Simple };
+
+        var json = VersionInputRules.ToJson(inputs);
+
+        Assert.Equal(VersionInputRules.Keys, json.Select(static option => option.Key));
+        Assert.Equal("sound", json["kind"]!.GetValue<string>());
+        Assert.Equal(inputs, VersionInputRules.FromJson(json));
+
+        // A document missing an option is refused, not read with a made-up value.
+        json.Remove("weirdness");
+        Assert.ThrowsAny<JsonException>(() => VersionInputRules.FromJson(json));
+    }
+
+    private static Dictionary<string, string[]> Errors(string json) => VersionInputRules.Errors(Inventory, Models, Sent(json));
+
+    private static Dictionary<string, JsonElement> Sent(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        return document.RootElement.EnumerateObject().ToDictionary(static option => option.Name, static option => option.Value.Clone(), StringComparer.Ordinal);
+    }
+
+    private static string RepositoryRoot()
+    {
+        for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "n8Tracks.sln")))
+            {
+                return directory.FullName;
+            }
+        }
+
+        throw new InvalidOperationException("The repository root was not found.");
+    }
+}

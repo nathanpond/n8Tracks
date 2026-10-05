@@ -1,6 +1,7 @@
 using System.Globalization;
 using n8Tracks.Application.Auth;
 using n8Tracks.Application.References;
+using n8Tracks.Application.Suno;
 using n8Tracks.Domain.Songs;
 
 namespace n8Tracks.Application.Songs;
@@ -104,7 +105,9 @@ public sealed class SongService(ISongStore songs, IWorkflowStateStore states, IE
 
     /// <summary>
     /// Creates a Song. The title is required and the concept optional, by <see cref="SongRules"/>;
-    /// when either is wrong nothing is stored and no shortcode number is used.
+    /// when either is wrong nothing is stored and no shortcode number is used. Its Version 1 starts
+    /// with the default options (<see cref="VersionInputRules.Defaults"/>), Suno's title pre-filled
+    /// with the Song's.
     /// </summary>
     public async Task<SongOutcome> CreateAsync(SongRequest request, CancellationToken cancellationToken)
     {
@@ -122,7 +125,8 @@ public sealed class SongService(ISongStore songs, IWorkflowStateStore states, IE
                     ?? throw new InvalidOperationException("Every workflow state is hidden, so a new Song has no state to start in.");
                 var number = await songs.NextShortcodeNumberAsync(ct).ConfigureAwait(false);
                 var now = time.GetUtcNow();
-                var (song, version) = Song.Create(Guid.CreateVersion7(now), Guid.CreateVersion7(now), number, request.Title!, request.Concept, initial, now);
+                var inputs = VersionInputRules.Defaults(CreateFieldInventory.Embedded, SongRules.NormaliseTitle(request.Title!));
+                var (song, version) = Song.Create(Guid.CreateVersion7(now), Guid.CreateVersion7(now), number, request.Title!, request.Concept, initial, inputs, now);
                 await songs.AddAsync(song, version, ct).ConfigureAwait(false);
 
                 return song.Id;

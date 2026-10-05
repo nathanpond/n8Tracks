@@ -1,10 +1,12 @@
 using System.Net;
 using System.Reflection;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using n8Tracks.Api.Tests.Auth;
+using n8Tracks.Api.Tests.Inventory;
 using n8Tracks.Api.Tests.Persistence;
 using n8Tracks.Api.Tests.Setup;
 using n8Tracks.Api.Tests.Songs;
@@ -20,7 +22,8 @@ namespace n8Tracks.Api.Tests.Invariants;
 /// Version's creation inputs cannot change through any path. It fails when
 /// <list type="bullet">
 /// <item>a property of the Version entity, or a column of <c>versions</c>, is in none of the three
-/// lists below (a creation input added later cannot escape the rule unnoticed);</item>
+/// lists below (a creation input added later cannot escape the rule unnoticed), or a key of the
+/// options document (<see cref="VersionInputs"/>) is not one every write below changes in turn;</item>
 /// <item>an entity method that changes an input does not throw on a frozen Version;</item>
 /// <item>an unsafe <c>/api/v1</c> endpoint, or a public method of an application service, is one it
 /// has not been told how to exercise (or why it touches no Version); or</item>
@@ -33,8 +36,18 @@ namespace n8Tracks.Api.Tests.Invariants;
 /// </summary>
 public sealed class VersionImmutabilityGuardTests
 {
-    /// <summary>Frozen once a Generation is attached. Lineage sources and the Suno settings join this list when they are added.</summary>
-    private static readonly string[] CreationInputs = [nameof(SongVersion.Lyrics), nameof(SongVersion.Styles)];
+    /// <summary>
+    /// Frozen once a Generation is attached: the lyrics, the styles, and the Suno options (each key of
+    /// <see cref="VersionInputs"/> in turn, below). Lineage sources join this list when they are added.
+    /// </summary>
+    private static readonly string[] CreationInputs = [nameof(SongVersion.Lyrics), nameof(SongVersion.Styles), nameof(SongVersion.Inputs)];
+
+    /// <summary>The same, column by column: the options are stored as the kind, the model, and one JSON document.</summary>
+    private static readonly string[] CreationInputColumns =
+        [nameof(VersionRecord.Lyrics), nameof(VersionRecord.Styles), nameof(VersionRecord.Kind), nameof(VersionRecord.Model), nameof(VersionRecord.Inputs)];
+
+    /// <summary>The text inputs, sent as top-level fields of an edit; the options go in its <c>inputs</c> object.</summary>
+    private static readonly string[] TextInputs = [nameof(SongVersion.Lyrics), nameof(SongVersion.Styles)];
 
     /// <summary>Always editable, frozen or not.</summary>
     private static readonly string[] EditableMetadata = [nameof(SongVersion.Name), nameof(SongVersion.Notes), nameof(SongVersion.Visibility)];
@@ -62,7 +75,7 @@ public sealed class VersionImmutabilityGuardTests
     {
         var properties = typeof(SongVersion).GetProperties(BindingFlags.Public | BindingFlags.Instance).Select(static property => property.Name).ToList();
 
-        AssertClassified(properties, SystemFields);
+        AssertClassified(properties, CreationInputs, SystemFields);
 
         // No property can be set from outside, so `with` cannot change an input.
         Assert.All(
@@ -84,15 +97,33 @@ public sealed class VersionImmutabilityGuardTests
         var model = scope.ServiceProvider.GetRequiredService<N8TracksDbContext>().Model.FindEntityType(typeof(VersionRecord))!;
         var columns = model.GetProperties().Select(static property => property.Name).ToList();
 
-        AssertClassified(columns, SystemColumns);
+        AssertClassified(columns, CreationInputColumns, SystemColumns);
 
         // Every creation input is compared by the trigger that refuses changing a frozen Version.
         var trigger = TestDatabase.Scalar(factory.DataPath, $"SELECT sql FROM sqlite_master WHERE name = '{N8TracksDbContext.VersionFrozenTrigger}';");
-        foreach (var input in CreationInputs)
+        foreach (var input in CreationInputColumns)
         {
             var column = model.FindProperty(input)!.GetColumnName();
             Assert.Contains($"NEW.{column} IS NOT OLD.{column}", trigger, StringComparison.Ordinal);
         }
+    }
+
+    /// <summary>
+    /// Every key of the options document is one the writes below change in turn: the entity's
+    /// properties, the rules' keys, and the API's <c>inputs</c> agree, so a new option cannot be left out.
+    /// </summary>
+    [Fact]
+    public async Task EveryKeyOfTheOptionsDocumentIsACreationInputTheGuardChanges()
+    {
+        var properties = typeof(VersionInputs).GetProperties(BindingFlags.Public | BindingFlags.Instance).Select(static property => Camel(property.Name)).ToList();
+
+        Assert.Equal(properties, VersionInputRules.Keys);
+
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var target = await TargetAsync(factory, client, "Options guard", frozen: false);
+        var inputs = (await target.ReadAsync()).GetProperty("inputs");
+        Assert.Equal(properties, inputs.EnumerateObject().Select(static option => option.Name));
     }
 
     [Fact]
@@ -100,15 +131,21 @@ public sealed class VersionImmutabilityGuardTests
     {
         var mutable = new SongVersion(
             Guid.CreateVersion7(), Guid.CreateVersion7(), "1", "Name", "Notes", VersionVisibility.Active, "Lyrics", "Styles",
-            DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch, Revision: 1);
+            InputValues.Defaults(), DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch, Revision: 1);
         var frozen = mutable.AttachGeneration(Guid.CreateVersion7(), DateTimeOffset.UnixEpoch).Version;
 
-        // Each public method of the entity: how it would change an input, or why it cannot.
+        // Each public method of the entity: how it would change an input, or why it cannot. Every
+        // option is changed alone.
         var changesInputs = new Dictionary<string, Func<SongVersion, SongVersion>>(StringComparer.Ordinal)
         {
-            [nameof(SongVersion.WithInputs)] = static version => version.WithInputs(Changed, version.Styles),
-            [nameof(SongVersion.WithInputs) + " (styles)"] = static version => version.WithInputs(version.Lyrics, Changed),
+            [nameof(SongVersion.WithInputs)] = static version => version.WithInputs(Changed, version.Styles, version.Inputs),
+            [nameof(SongVersion.WithInputs) + " (styles)"] = static version => version.WithInputs(version.Lyrics, Changed, version.Inputs),
         };
+        foreach (var key in VersionInputRules.Keys)
+        {
+            changesInputs[$"{nameof(SongVersion.WithInputs)} (inputs.{key})"] = version => version.WithInputs(version.Lyrics, version.Styles, InputValues.WithChanged(version.Inputs, key));
+        }
+
         var changesNoInput = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             [nameof(SongVersion.EnsureMutable)] = "the check itself",
@@ -131,7 +168,7 @@ public sealed class VersionImmutabilityGuardTests
         {
             Assert.Throws<VersionFrozenException>(() => change(frozen));
             var changed = change(mutable);
-            Assert.NotEqual((mutable.Lyrics, mutable.Styles), (changed.Lyrics, changed.Styles));
+            Assert.NotEqual((mutable.Lyrics, mutable.Styles, mutable.Inputs), (changed.Lyrics, changed.Styles, changed.Inputs));
         }
     }
 
@@ -220,7 +257,7 @@ public sealed class VersionImmutabilityGuardTests
     {
         ["POST /api/v1/songs"] = new(async target =>
         {
-            using var response = await SongApi.SendJsonAsync(target.Client, HttpMethod.Post, SongApi.Songs, InputsJson("""{"title":"Another Song",""", "}"));
+            using var response = await SongApi.SendJsonAsync(target.Client, HttpMethod.Post, SongApi.Songs, await target.InputsJsonAsync("""{"title":"Another Song",""", "}"));
             Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         }),
         ["PATCH /api/v1/songs/{reference}"] = new(async target =>
@@ -228,7 +265,7 @@ public sealed class VersionImmutabilityGuardTests
             foreach (var reference in new[] { target.SongId.ToString(), target.SongShortcode })
             {
                 var song = await SetupApi.JsonAsync(await target.Client.GetAsync(SongApi.Song(reference)));
-                using var response = await SongApi.PatchAsync(target.Client, reference, SongApi.Quoted(song.GetProperty("revision").GetInt32()), InputsJson("""{"title":"Renamed",""", "}"));
+                using var response = await SongApi.PatchAsync(target.Client, reference, SongApi.Quoted(song.GetProperty("revision").GetInt32()), await target.InputsJsonAsync("""{"title":"Renamed",""", "}"));
                 Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             }
         }),
@@ -240,7 +277,7 @@ public sealed class VersionImmutabilityGuardTests
                 target.Client,
                 HttpMethod.Post,
                 new Uri($"/api/v1/songs/{target.SongShortcode}/versions", UriKind.Relative),
-                InputsJson($$"""{"sourceVersionId":"{{target.VersionShortcode}}","number":"{{number}}",""", "}"));
+                await target.InputsJsonAsync($$"""{"sourceVersionId":"{{target.VersionShortcode}}","number":"{{number}}",""", "}"));
             Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         }),
         ["PUT /api/v1/songs/{reference}/current-version"] = new(async target =>
@@ -249,27 +286,31 @@ public sealed class VersionImmutabilityGuardTests
                 target.Client,
                 HttpMethod.Put,
                 new Uri($"/api/v1/songs/{target.SongShortcode}/current-version", UriKind.Relative),
-                InputsJson($$"""{"versionId":"{{target.VersionShortcode}}",""", "}"));
+                await target.InputsJsonAsync($$"""{"versionId":"{{target.VersionShortcode}}",""", "}"));
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         }),
         ["PATCH /api/v1/versions/{reference}"] = new(
             async target =>
             {
-                // Each input alone, then both; by ID and by shortcode; with metadata and without.
-                var bodies = CreationInputs.Select(input => $$"""{"{{Camel(input)}}":"{{Changed}} {{input}}"}""")
-                    .Append(InputsJson("{", "}"))
-                    .Append(InputsJson("""{"name":"Renamed","notes":"Noted",""", "}"));
+                // Each text input alone, each option alone, then all of them; by ID and by shortcode;
+                // with metadata and without. Each body is worked out from the Version as it is now.
+                var bodies = TextInputs.Select(input => (Func<Task<string>>)(() => Task.FromResult($$"""{"{{Camel(input)}}":"{{Changed}} {{input}} {{Guid.NewGuid()}}"}""")))
+                    .Concat(VersionInputRules.Keys.Select(key => (Func<Task<string>>)(async () =>
+                        $$$"""{"inputs":{"{{{key}}}":{{{InputValues.ChangedJson(key, (await target.ReadAsync()).GetProperty("inputs").GetProperty(key))}}}}}""")))
+                    .Append(() => target.InputsJsonAsync("{", "}"))
+                    .Append(() => target.InputsJsonAsync("""{"name":"Renamed","notes":"Noted",""", "}"));
                 foreach (var (body, index) in bodies.Select(static (body, index) => (body, index)))
                 {
                     var reference = index % 2 == 0 ? target.VersionId.ToString() : target.VersionShortcode;
-                    using var response = await SendAsync(target.Client, HttpMethod.Patch, new Uri($"/api/v1/versions/{reference}", UriKind.Relative), await target.IfMatchAsync(), body);
-                    await target.ExpectInputsWriteAsync(response);
+                    var json = await body();
+                    using var response = await SendAsync(target.Client, HttpMethod.Patch, new Uri($"/api/v1/versions/{reference}", UriKind.Relative), await target.IfMatchAsync(), json);
+                    await target.ExpectInputsWriteAsync(response, json);
                 }
             },
             ChangesInputs: true),
         ["POST /api/v1/versions/{reference}/snapshots"] = new(async target =>
         {
-            using var response = await SongApi.SendJsonAsync(target.Client, HttpMethod.Post, new Uri($"/api/v1/versions/{target.VersionShortcode}/snapshots", UriKind.Relative), InputsJson("{", "}"));
+            using var response = await SongApi.SendJsonAsync(target.Client, HttpMethod.Post, new Uri($"/api/v1/versions/{target.VersionShortcode}/snapshots", UriKind.Relative), await target.InputsJsonAsync("{", "}"));
             Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         }),
         ["POST /api/v1/versions/{reference}/snapshots/{snapshotId:guid}/restore"] = new(
@@ -283,7 +324,7 @@ public sealed class VersionImmutabilityGuardTests
                         new Uri($"/api/v1/versions/{target.VersionShortcode}/snapshots/{snapshot}/restore", UriKind.Relative),
                         await target.IfMatchAsync(),
                         json: null);
-                    await target.ExpectInputsWriteAsync(response);
+                    await target.ExpectInputsWriteAsync(response, "restore");
                 }
             },
             ChangesInputs: true),
@@ -378,21 +419,41 @@ public sealed class VersionImmutabilityGuardTests
         ["WorkflowStateService.DeleteAsync(Guid, String, Int32, CancellationToken)"] = "workflow states; moves Songs to another state, never a Version",
     };
 
-    /// <summary>The Version's edit through the service: each input alone, both, and both with metadata.</summary>
+    /// <summary>The Version's edit through the service: each input alone (every option in turn), all of them, and all with metadata.</summary>
     private static async Task EachInputEditAsync(Target target, Func<VersionService, Guid, VersionEdit, int, Task<VersionUpdateOutcome>> update)
     {
-        var edits = new[]
+        var edits = new List<Func<JsonElement, VersionEdit>>
         {
-            new VersionEdit(SongEditField.Unsent, SongEditField.Unsent, null, SongEditField.Of(Changed + " lyrics " + Guid.NewGuid()), SongEditField.Unsent),
-            new VersionEdit(SongEditField.Unsent, SongEditField.Unsent, null, SongEditField.Unsent, SongEditField.Of(Changed + " styles " + Guid.NewGuid())),
-            new VersionEdit(SongEditField.Of("Renamed"), SongEditField.Of("Noted"), true, SongEditField.Of(Changed + Guid.NewGuid()), SongEditField.Of(Changed + Guid.NewGuid())),
+            static _ => new VersionEdit(SongEditField.Unsent, SongEditField.Unsent, null, SongEditField.Of(Changed + " lyrics " + Guid.NewGuid()), SongEditField.Unsent),
+            static _ => new VersionEdit(SongEditField.Unsent, SongEditField.Unsent, null, SongEditField.Unsent, SongEditField.Of(Changed + " styles " + Guid.NewGuid())),
         };
-        foreach (var edit in edits)
+        edits.AddRange(VersionInputRules.Keys.Select(key => (Func<JsonElement, VersionEdit>)(inputs =>
+            new VersionEdit(SongEditField.Unsent, SongEditField.Unsent, null, SongEditField.Unsent, SongEditField.Unsent, Options(new JsonObject
+            {
+                [key] = JsonNode.Parse(InputValues.ChangedJson(key, inputs.GetProperty(key))),
+            })))));
+        edits.Add(static inputs => new VersionEdit(
+            SongEditField.Of("Renamed"),
+            SongEditField.Of("Noted"),
+            true,
+            SongEditField.Of(Changed + Guid.NewGuid()),
+            SongEditField.Of(Changed + Guid.NewGuid()),
+            Options(InputValues.EveryOptionChanged(inputs))));
+        foreach (var editFor in edits)
         {
-            var revision = (await target.ReadAsync()).GetProperty("revision").GetInt32();
+            var read = await target.ReadAsync();
+            var revision = read.GetProperty("revision").GetInt32();
+            var edit = editFor(read.GetProperty("inputs"));
             var outcome = await InScopeAsync<VersionService, VersionUpdateOutcome>(target, service => update(service, target.VersionId, edit, revision));
             Assert.IsType(target.Frozen ? typeof(VersionUpdateOutcome.Frozen) : typeof(VersionUpdateOutcome.Updated), outcome);
         }
+    }
+
+    /// <summary>Options as an edit carries them, from a JSON object.</summary>
+    private static Dictionary<string, JsonElement> Options(JsonObject options)
+    {
+        using var document = JsonDocument.Parse(options.ToJsonString());
+        return document.RootElement.EnumerateObject().ToDictionary(static option => option.Name, static option => option.Value.Clone(), StringComparer.Ordinal);
     }
 
     private static Exerciser Service<TService>(Func<TService, Target, Task> call)
@@ -488,28 +549,31 @@ public sealed class VersionImmutabilityGuardTests
         $"{method.DeclaringType!.Name}.{method.Name}({string.Join(", ", method.GetParameters().Select(static parameter => parameter.ParameterType.Name))})";
 
     /// <summary>Each name is in exactly one of the three lists.</summary>
-    private static void AssertClassified(List<string> names, string[] systemFields)
+    private static void AssertClassified(List<string> names, string[] creationInputs, string[] systemFields)
     {
-        var lists = new[] { CreationInputs, EditableMetadata, systemFields };
+        var lists = new[] { creationInputs, EditableMetadata, systemFields };
         Assert.All(names, name => Assert.True(
             lists.Count(list => list.Contains(name, StringComparer.Ordinal)) == 1,
             $"{name} is not classified: a creation input (frozen once a Generation is attached), editable metadata, or a system field."));
         Assert.Equal(lists.SelectMany(static list => list).Order(StringComparer.Ordinal), names.Order(StringComparer.Ordinal));
     }
 
-    /// <summary>The body fields for every creation input, with changed values, between <paramref name="prefix"/> and <paramref name="suffix"/>.</summary>
-    private static string InputsJson(string prefix, string suffix) =>
-        prefix + string.Join(',', CreationInputs.Select(input => $$"""
+    /// <summary>
+    /// The body fields for every creation input, with changed values (every option in <c>inputs</c>,
+    /// changed from <paramref name="inputs"/>), between <paramref name="prefix"/> and <paramref name="suffix"/>.
+    /// </summary>
+    private static string InputsJson(string prefix, string suffix, JsonElement inputs) =>
+        prefix + string.Join(',', TextInputs.Select(input => $$"""
             "{{Camel(input)}}":"{{Changed}} {{input}} {{Guid.NewGuid()}}"
-            """)) + suffix;
+            """)) + ",\"inputs\":" + InputValues.EveryOptionChanged(inputs).ToJsonString() + suffix;
 
     private static string Camel(string name) => char.ToLowerInvariant(name[0]) + name[1..];
 
-    /// <summary>The Version's creation inputs exactly as stored, each hex-encoded, so the comparison is byte for byte.</summary>
+    /// <summary>The Version's creation inputs exactly as stored, each column hex-encoded, so the comparison is byte for byte.</summary>
     private static string Stored(N8TracksApiFactory factory, Guid id) =>
         TestDatabase.Scalar(
             factory.DataPath,
-            $"SELECT {string.Join(" || '|' || ", CreationInputs.Select(static input => $"hex({Snake(input)})"))} FROM versions WHERE id = '{id.ToString().ToUpperInvariant()}';");
+            $"SELECT {string.Join(" || '|' || ", CreationInputColumns.Select(static input => $"hex({Snake(input)})"))} FROM versions WHERE id = '{id.ToString().ToUpperInvariant()}';");
 
     private static string Snake(string name) =>
         string.Concat(name.Select(static (letter, index) => char.IsUpper(letter) ? (index > 0 ? "_" : string.Empty) + char.ToLowerInvariant(letter) : letter.ToString()));
@@ -551,16 +615,20 @@ public sealed class VersionImmutabilityGuardTests
         /// <summary>The Version's current revision, so the freeze, not a stale revision, is what refuses.</summary>
         public async Task<string> IfMatchAsync() => SongApi.Quoted((await ReadAsync()).GetProperty("revision").GetInt32());
 
-        /// <summary>A write of inputs: 409 <c>version_frozen</c> on a frozen Version, 200 on a mutable one.</summary>
-        public async Task ExpectInputsWriteAsync(HttpResponseMessage response)
+        /// <summary>Body fields changing every creation input of the Version as it is now (<see cref="InputsJson"/>).</summary>
+        public async Task<string> InputsJsonAsync(string prefix, string suffix) => InputsJson(prefix, suffix, (await ReadAsync()).GetProperty("inputs"));
+
+        /// <summary>A write of inputs (<paramref name="what"/>): 409 <c>version_frozen</c> on a frozen Version, 200 on a mutable one.</summary>
+        public async Task ExpectInputsWriteAsync(HttpResponseMessage response, string what)
         {
             if (Frozen)
             {
+                Assert.True(response.StatusCode == HttpStatusCode.Conflict, $"{what}: {await response.Content.ReadAsStringAsync()}");
                 await SetupApi.ProblemAsync(response, HttpStatusCode.Conflict, "version_frozen");
             }
             else
             {
-                Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+                Assert.True(response.StatusCode == HttpStatusCode.OK, $"{what}: {await response.Content.ReadAsStringAsync()}");
             }
         }
     }

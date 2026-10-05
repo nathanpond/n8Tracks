@@ -35,6 +35,9 @@ RUN dotnet restore src/n8Tracks.Api/n8Tracks.Api.csproj -a "$TARGETARCH"
 
 COPY src/ src/
 
+# Suno's Create-screen field inventory, which the Application project embeds when it is built.
+COPY docs/suno-create-field-inventory.json docs/
+
 # The product version: the VERSION build argument, or the root VERSION file when it is empty.
 # It is stamped as the informational version, which is what the health endpoint reports. It is not
 # passed as -p:Version: that one must also be a valid NuGet version, and an edge version whose short

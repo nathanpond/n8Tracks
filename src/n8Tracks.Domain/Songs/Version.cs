@@ -4,7 +4,8 @@ namespace n8Tracks.Domain.Songs;
 /// One Version of a Song: a set of inputs intended for, or used in, generation. (Named so it does not
 /// collide with <see cref="System.Version"/>.)
 /// <para>
-/// Its creation inputs (<see cref="Lyrics"/> and <see cref="Styles"/>) are frozen once a Generation
+/// Its creation inputs (<see cref="Lyrics"/>, <see cref="Styles"/>, and every Suno option in
+/// <see cref="Inputs"/>) are frozen once a Generation
 /// is attached (<see cref="IsFrozen"/>), and stay frozen for good: the inputs that produced a
 /// Generation can always be trusted to be what they were. No property has a setter, so a copy with
 /// other values comes only from the methods below, and every one that changes an input goes through
@@ -19,6 +20,7 @@ namespace n8Tracks.Domain.Songs;
 /// <param name="Visibility">Active or Archived: organisation only, never finality or deletion.</param>
 /// <param name="Lyrics">Empty when there are none. A creation input.</param>
 /// <param name="Styles">Empty when there are none. A creation input.</param>
+/// <param name="Inputs">Its kind, modes, and every Suno option, applicable or not. Creation inputs.</param>
 /// <param name="CreatedUtc">When it was created.</param>
 /// <param name="UpdatedUtc">When it last changed.</param>
 /// <param name="Revision">Starts at 1 and goes up by one on each edit, and when a Generation is attached.</param>
@@ -36,6 +38,7 @@ public sealed record SongVersion(
     VersionVisibility Visibility,
     string Lyrics,
     string Styles,
+    VersionInputs Inputs,
     DateTimeOffset CreatedUtc,
     DateTimeOffset UpdatedUtc,
     int Revision,
@@ -58,6 +61,8 @@ public sealed record SongVersion(
     public string Lyrics { get; } = Lyrics ?? throw new ArgumentNullException(nameof(Lyrics));
 
     public string Styles { get; } = Styles ?? throw new ArgumentNullException(nameof(Styles));
+
+    public VersionInputs Inputs { get; } = Inputs ?? throw new ArgumentNullException(nameof(Inputs));
 
     public DateTimeOffset CreatedUtc { get; } = CreatedUtc;
 
@@ -84,23 +89,27 @@ public sealed record SongVersion(
     }
 
     /// <summary>
-    /// This Version with <paramref name="lyrics"/> and <paramref name="styles"/> as its creation
-    /// inputs, already normalised. Inputs identical to the ones it holds (ordinal comparison) are no
+    /// This Version with <paramref name="lyrics"/>, <paramref name="styles"/>, and
+    /// <paramref name="inputs"/> as its creation inputs, already valid and normalised. Inputs identical
+    /// to the ones it holds (ordinal comparison for text, value equality for the options) are no
     /// change, and allowed even when frozen; any other change of a frozen Version throws
     /// <see cref="VersionFrozenException"/>. The revision and updated time are the store's to move.
     /// </summary>
-    public SongVersion WithInputs(string lyrics, string styles)
+    public SongVersion WithInputs(string lyrics, string styles, VersionInputs inputs)
     {
         ArgumentNullException.ThrowIfNull(lyrics);
         ArgumentNullException.ThrowIfNull(styles);
+        ArgumentNullException.ThrowIfNull(inputs);
 
-        if (string.Equals(lyrics, Lyrics, StringComparison.Ordinal) && string.Equals(styles, Styles, StringComparison.Ordinal))
+        if (string.Equals(lyrics, Lyrics, StringComparison.Ordinal)
+            && string.Equals(styles, Styles, StringComparison.Ordinal)
+            && inputs == Inputs)
         {
             return this;
         }
 
         EnsureMutable();
-        return Copy(Name, Notes, Visibility, lyrics, styles, Revision, UpdatedUtc, IsFrozen, LastGenerationOrdinal);
+        return Copy(Name, Notes, Visibility, lyrics, styles, inputs, Revision, UpdatedUtc, IsFrozen, LastGenerationOrdinal);
     }
 
     /// <summary>
@@ -108,7 +117,7 @@ public sealed record SongVersion(
     /// whether or not it is frozen, since none of them is a creation input.
     /// </summary>
     public SongVersion WithAnnotations(string? name, string? notes, VersionVisibility visibility) =>
-        Copy(name, notes, visibility, Lyrics, Styles, Revision, UpdatedUtc, IsFrozen, LastGenerationOrdinal);
+        Copy(name, notes, visibility, Lyrics, Styles, Inputs, Revision, UpdatedUtc, IsFrozen, LastGenerationOrdinal);
 
     /// <summary>
     /// Attaches a new Generation, with the next ordinal (one more than the last ever given, from 1),
@@ -119,7 +128,7 @@ public sealed record SongVersion(
     {
         var ordinal = checked(LastGenerationOrdinal + 1);
         var generation = new Generation(generationId, Id, SongId, ordinal, now);
-        var frozen = Copy(Name, Notes, Visibility, Lyrics, Styles, checked(Revision + 1), now, isFrozen: true, ordinal);
+        var frozen = Copy(Name, Notes, Visibility, Lyrics, Styles, Inputs, checked(Revision + 1), now, isFrozen: true, ordinal);
 
         return (frozen, generation);
     }
@@ -130,11 +139,12 @@ public sealed record SongVersion(
         VersionVisibility visibility,
         string lyrics,
         string styles,
+        VersionInputs inputs,
         int revision,
         DateTimeOffset updatedUtc,
         bool isFrozen,
         int lastGenerationOrdinal) =>
-        new(Id, SongId, Number, name, notes, visibility, lyrics, styles, CreatedUtc, updatedUtc, revision, isFrozen, lastGenerationOrdinal);
+        new(Id, SongId, Number, name, notes, visibility, lyrics, styles, inputs, CreatedUtc, updatedUtc, revision, isFrozen, lastGenerationOrdinal);
 }
 
 /// <summary>Whether a Version is shown by default. Archiving changes nothing else about it.</summary>
@@ -170,7 +180,7 @@ public sealed class VersionFrozenException : InvalidOperationException
 
     /// <summary>What a refusal says, wherever it is shown.</summary>
     public const string DefaultMessage =
-        "A Generation is attached to this Version, so its lyrics and styles can no longer change. Create a new Version from it to change them.";
+        "A Generation is attached to this Version, so its lyrics, styles, and Suno options can no longer change. Create a new Version from it to change them.";
 
     /// <summary>The frozen Version.</summary>
     public Guid VersionId { get; }

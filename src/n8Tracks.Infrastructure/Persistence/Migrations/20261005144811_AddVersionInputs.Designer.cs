@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using n8Tracks.Infrastructure.Persistence;
 
@@ -10,9 +11,11 @@ using n8Tracks.Infrastructure.Persistence;
 namespace n8Tracks.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(N8TracksDbContext))]
-    partial class N8TracksDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261005144811_AddVersionInputs")]
+    partial class AddVersionInputs
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.12");

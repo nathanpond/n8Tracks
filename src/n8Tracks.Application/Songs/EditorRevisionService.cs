@@ -150,7 +150,7 @@ public sealed class EditorRevisionService(
             return Task.FromResult<SnapshotOutcome>(new SnapshotOutcome.Invalid(errors));
         }
 
-        var inputs = new VersionInputs(VersionRules.NormaliseInput(request.Lyrics!), VersionRules.NormaliseInput(request.Styles!));
+        var inputs = new VersionText(VersionRules.NormaliseInput(request.Lyrics!), VersionRules.NormaliseInput(request.Styles!));
         return transaction.RunAsync<SnapshotOutcome>(
             async ct =>
             {
@@ -205,8 +205,8 @@ public sealed class EditorRevisionService(
                     return new RestoreOutcome.Conflict(current);
                 }
 
-                var restored = new VersionInputs(snapshot.Lyrics, snapshot.Styles);
-                var held = new VersionInputs(current.Lyrics, current.Styles);
+                var restored = new VersionText(snapshot.Lyrics, snapshot.Styles);
+                var held = new VersionText(current.Lyrics, current.Styles);
                 if (restored == held)
                 {
                     return new RestoreOutcome.Restored(current);
@@ -240,7 +240,7 @@ public sealed class EditorRevisionService(
     internal static async Task<(EditorRevision Revision, bool Created)> KeepAsync(
         IEditorRevisionStore store,
         Guid versionId,
-        VersionInputs inputs,
+        VersionText inputs,
         DateTimeOffset capturedUtc,
         DateTimeOffset now,
         CancellationToken cancellationToken)

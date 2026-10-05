@@ -1,4 +1,6 @@
 using System.Globalization;
+using n8Tracks.Application.Songs;
+using n8Tracks.Application.Suno;
 using n8Tracks.Domain.Songs;
 
 namespace n8Tracks.Api.Tests.Songs;
@@ -8,13 +10,15 @@ public sealed class SongRulesTests
 {
     private static readonly DateTimeOffset Now = new(2026, 10, 5, 12, 0, 0, TimeSpan.Zero);
 
+    private static readonly VersionInputs Inputs = VersionInputRules.Defaults(CreateFieldInventory.Embedded, "Running in a Pack");
+
     [Fact]
-    public void CreatingASongCreatesAnEmptyMutableVersionOneAndMakesItCurrent()
+    public void CreatingASongCreatesAMutableVersionOneWithTheGivenOptionsAndMakesItCurrent()
     {
         var songId = Guid.CreateVersion7();
         var versionId = Guid.CreateVersion7();
 
-        var (song, version) = Song.Create(songId, versionId, 7, "  Running in a Pack ", " A pack song \r\n", DefaultWorkflowStates.Idea, Now);
+        var (song, version) = Song.Create(songId, versionId, 7, "  Running in a Pack ", " A pack song \r\n", DefaultWorkflowStates.Idea, Inputs, Now);
 
         Assert.Equal(songId, song.Id);
         Assert.Equal("n8-7", song.Shortcode);
@@ -34,6 +38,7 @@ public sealed class SongRulesTests
         Assert.Equal(VersionVisibility.Active, version.Visibility);
         Assert.Equal(string.Empty, version.Lyrics);
         Assert.Equal(string.Empty, version.Styles);
+        Assert.Same(Inputs, version.Inputs);
         Assert.Equal(1, version.Revision);
         Assert.Equal("n8-7-v1", Shortcodes.ForVersion(song.ShortcodeNumber, version.Number));
     }
@@ -43,9 +48,9 @@ public sealed class SongRulesTests
     {
         var state = DefaultWorkflowStates.Idea;
 
-        Assert.Throws<ArgumentException>(() => Song.Create(Guid.CreateVersion7(), Guid.CreateVersion7(), 1, "   ", null, state, Now));
-        Assert.Throws<ArgumentException>(() => Song.Create(Guid.CreateVersion7(), Guid.CreateVersion7(), 1, "Title", "\u0007", state, Now));
-        Assert.Throws<ArgumentOutOfRangeException>(() => Song.Create(Guid.CreateVersion7(), Guid.CreateVersion7(), 0, "Title", null, state, Now));
+        Assert.Throws<ArgumentException>(() => Song.Create(Guid.CreateVersion7(), Guid.CreateVersion7(), 1, "   ", null, state, Inputs, Now));
+        Assert.Throws<ArgumentException>(() => Song.Create(Guid.CreateVersion7(), Guid.CreateVersion7(), 1, "Title", "\u0007", state, Inputs, Now));
+        Assert.Throws<ArgumentOutOfRangeException>(() => Song.Create(Guid.CreateVersion7(), Guid.CreateVersion7(), 0, "Title", null, state, Inputs, Now));
     }
 
     [Theory]

@@ -116,7 +116,8 @@ public static class VersionRules
     /// copied text (line endings normalised), so text that could not go into a frozen source can start
     /// the new Version. The source is not changed. The number must already have been checked against
     /// <see cref="VersionNumbering.Options"/>, the name against <see cref="NameErrors"/>, and any
-    /// lyrics or styles against <see cref="LyricsErrors"/> and <see cref="StylesErrors"/>.
+    /// lyrics or styles against <see cref="LyricsErrors"/> and <see cref="StylesErrors"/>. Every Suno
+    /// option (<see cref="SongVersion.Inputs"/>, applicable or not) is copied as it is.
     /// </summary>
     public static SongVersion CreateFrom(
         SongVersion source,
@@ -153,12 +154,19 @@ public static class VersionRules
             VersionVisibility.Active,
             lyrics is null ? source.Lyrics : NormaliseInput(lyrics),
             styles is null ? source.Styles : NormaliseInput(styles),
+            source.Inputs,
             now,
             now,
             Revision: 1);
     }
 
-    private static string[] InputErrors(string? text, int maximumLength, string what)
+    /// <summary>
+    /// The errors of a text creation input (lyrics, styles, or a text option) as sent, empty when it
+    /// is valid: text (null refused), up to <paramref name="maximumLength"/> code units once line
+    /// endings are <c>\n</c>, with no U+0000 and no broken surrogate pairs. <paramref name="what"/>
+    /// names it in the messages.
+    /// </summary>
+    public static string[] InputErrors(string? text, int maximumLength, string what)
     {
         if (text is null)
         {

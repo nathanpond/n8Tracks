@@ -8,6 +8,7 @@ using n8Tracks.Application.Maintenance;
 using n8Tracks.Application.References;
 using n8Tracks.Application.Setup;
 using n8Tracks.Application.Songs;
+using n8Tracks.Application.Suno;
 
 namespace n8Tracks.Application;
 
@@ -30,6 +31,7 @@ public static class DependencyInjection
         services.AddSingleton<JobQueue>();
         services.AddSingleton<IJobQueue>(static provider => provider.GetRequiredService<JobQueue>());
         services.AddScoped<JobService>();
+        services.TryAddSingleton<ISunoModelList, InventoryModelList>();
         services.AddScoped<SongService>();
         services.AddScoped<VersionService>();
         services.AddScoped<EditorRevisionService>();

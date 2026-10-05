@@ -1,5 +1,7 @@
+using System.Text.Json;
 using n8Tracks.Application.Auth;
 using n8Tracks.Application.References;
+using n8Tracks.Application.Suno;
 using n8Tracks.Domain.Songs;
 
 namespace n8Tracks.Application.Songs;
@@ -79,10 +81,18 @@ public abstract record SetCurrentOutcome
 
 /// <summary>
 /// An edit of a Version: any of its annotations (name, notes, archived flag) and its creation inputs
-/// (lyrics, styles), each left alone when unsent. Name and notes are text or null; lyrics and styles
-/// must be text (null is refused); <paramref name="Archived"/> is null when unsent.
+/// (lyrics, styles, and its Suno options), each left alone when unsent. Name and notes are text or
+/// null; lyrics and styles must be text (null is refused); <paramref name="Archived"/> is null when
+/// unsent. <paramref name="Inputs"/> holds the options sent, by API name, as sent: merged key by key,
+/// so options not sent are kept (<see cref="VersionInputRules"/>); null or empty sends none.
 /// </summary>
-public sealed record VersionEdit(SongEditField Name, SongEditField Notes, bool? Archived, SongEditField Lyrics, SongEditField Styles)
+public sealed record VersionEdit(
+    SongEditField Name,
+    SongEditField Notes,
+    bool? Archived,
+    SongEditField Lyrics,
+    SongEditField Styles,
+    IReadOnlyDictionary<string, JsonElement>? Inputs = null)
 {
     /// <summary>An edit of the annotations only.</summary>
     public VersionEdit(SongEditField Name, SongEditField Notes, bool? Archived)
@@ -152,6 +162,7 @@ public sealed class VersionService(
     IVersionStore versions,
     ISongStore songs,
     IEditorRevisionStore revisions,
+    ISunoModelList models,
     IExclusiveTransaction transaction,
     TimeProvider time)
 {
@@ -164,6 +175,7 @@ public sealed class VersionService(
     public const string ArchivedField = "archived";
     public const string LyricsField = "lyrics";
     public const string StylesField = "styles";
+    public const string InputsField = VersionInputRules.InputsField;
 
     /// <summary>
     /// The valid numbers for a new Version created from the Version with <paramref name="id"/>
@@ -198,7 +210,8 @@ public sealed class VersionService(
     /// <summary>
     /// Creates a Version of the Song with <paramref name="songId"/> from one of its Versions, numbered
     /// with one of that source's options and holding a copy of its lyrics and styles (or the request's
-    /// own, when it sends them, a frozen source included), and makes it the
+    /// own, when it sends them, a frozen source included) and of every one of its Suno options, the
+    /// ones that do not apply to its kind and mode included, and makes it the
     /// Song's current Version. The number is checked against the options inside the transaction that
     /// stores it, so a number taken meanwhile is refused (with the options as they are now) and nothing
     /// is stored. The source is not changed.
@@ -315,7 +328,7 @@ public sealed class VersionService(
             },
             cancellationToken);
 
-    /// <summary>The Version with <paramref name="id"/>, with its lyrics and styles; null when there is none.</summary>
+    /// <summary>The Version with <paramref name="id"/>, with its lyrics, styles, and options; null when there is none.</summary>
     public Task<VersionDetail?> FindAsync(Guid id, CancellationToken cancellationToken) =>
         versions.FindDetailAsync(id, cancellationToken);
 
@@ -323,13 +336,15 @@ public sealed class VersionService(
     /// Edits the Version with <paramref name="id"/> (only the fields sent) if it is still at
     /// <paramref name="revision"/>. Name and notes are trimmed and blank is none; they may change
     /// whether or not the Version's inputs are frozen, as they are not creation inputs. Lyrics and
-    /// styles are stored as written apart from line endings (<see cref="VersionRules.NormaliseInput"/>)
-    /// and are changed only through <see cref="StoreAsync"/>. Archiving and unarchiving change
-    /// visibility only: never the number, lyrics, styles, the descendants, or which Version is current.
-    /// An edit that changes nothing leaves the revision alone. One wrong field refuses the whole edit.
-    /// On a frozen Version (a Generation attached) an edit whose lyrics and styles are unchanged is a
-    /// metadata edit; one that changes either is refused whole as <see cref="VersionUpdateOutcome.Frozen"/>,
-    /// after the revision check.
+    /// styles are stored as written apart from line endings (<see cref="VersionRules.NormaliseInput"/>);
+    /// the options sent are checked against the inventory and the model list and merged key by key
+    /// (<see cref="VersionInputRules"/>), and switching the kind or mode clears nothing. Inputs are
+    /// changed only through <see cref="StoreAsync"/>. Archiving and unarchiving change visibility
+    /// only: never the number, the inputs, the descendants, or which Version is current. An edit that
+    /// changes nothing leaves the revision alone. One wrong field refuses the whole edit. On a frozen
+    /// Version (a Generation attached) an edit whose inputs are unchanged is a metadata edit; one that
+    /// changes any of them is refused whole as <see cref="VersionUpdateOutcome.Frozen"/>, after the
+    /// revision check.
     /// </summary>
     public Task<VersionUpdateOutcome> UpdateAsync(Guid id, VersionEdit edit, int revision, CancellationToken cancellationToken) =>
         UpdateAsync(id, edit, revision, VersionEditSource.Session, cancellationToken);
@@ -338,10 +353,13 @@ public sealed class VersionService(
     /// As <see cref="UpdateAsync(Guid, VersionEdit, int, CancellationToken)"/>; when the edit comes
     /// from a <see cref="VersionEditSource.Credential"/> and changes the lyrics or styles, the text it
     /// replaces is snapshotted first (<see cref="EditorRevisionService"/>), in the same transaction.
+    /// The history covers the lyrics and styles only, not the options.
     /// </summary>
-    public Task<VersionUpdateOutcome> UpdateAsync(Guid id, VersionEdit edit, int revision, VersionEditSource source, CancellationToken cancellationToken)
+    public async Task<VersionUpdateOutcome> UpdateAsync(Guid id, VersionEdit edit, int revision, VersionEditSource source, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(edit);
+
+        var sentInputs = edit.Inputs ?? new Dictionary<string, JsonElement>(StringComparer.Ordinal);
 
         var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
         if (edit.Name.IsSent && VersionRules.NameErrors(edit.Name.Value) is { Length: > 0 } nameErrors)
@@ -364,12 +382,21 @@ public sealed class VersionService(
             errors[StylesField] = stylesErrors;
         }
 
-        if (errors.Count > 0)
+        if (sentInputs.Count > 0)
         {
-            return Task.FromResult<VersionUpdateOutcome>(new VersionUpdateOutcome.Invalid(errors));
+            var modelList = await models.ListAsync(cancellationToken).ConfigureAwait(false);
+            foreach (var (field, messages) in VersionInputRules.Errors(CreateFieldInventory.Embedded, [.. modelList], sentInputs))
+            {
+                errors[field] = messages;
+            }
         }
 
-        return transaction.RunAsync<VersionUpdateOutcome>(
+        if (errors.Count > 0)
+        {
+            return new VersionUpdateOutcome.Invalid(errors);
+        }
+
+        return await transaction.RunAsync<VersionUpdateOutcome>(
             async ct =>
             {
                 if (await versions.FindDetailAsync(id, ct).ConfigureAwait(false) is not { } current)
@@ -387,10 +414,13 @@ public sealed class VersionService(
                     edit.Name.IsSent ? VersionRules.NormaliseName(edit.Name.Value) : summary.Name,
                     edit.Notes.IsSent ? VersionRules.NormaliseNotes(edit.Notes.Value) : summary.Notes,
                     edit.Archived ?? summary.Archived);
-                var inputs = new VersionInputs(
+                var text = new VersionText(
                     edit.Lyrics.IsSent ? VersionRules.NormaliseInput(edit.Lyrics.Value!) : current.Lyrics,
                     edit.Styles.IsSent ? VersionRules.NormaliseInput(edit.Styles.Value!) : current.Styles);
-                var inputsChange = inputs != new VersionInputs(current.Lyrics, current.Styles);
+                var held = new VersionText(current.Lyrics, current.Styles);
+                var inputs = VersionInputRules.Apply(current.Inputs, sentInputs);
+                var textChange = text != held;
+                var inputsChange = textChange || inputs != current.Inputs;
                 if (!inputsChange && annotations == new VersionAnnotations(summary.Name, summary.Notes, summary.Archived))
                 {
                     return new VersionUpdateOutcome.Updated(current);
@@ -401,10 +431,10 @@ public sealed class VersionService(
                 {
                     // A credential's edit keeps the text it replaces in the history first, once the
                     // edit is known to be allowed.
-                    Func<CancellationToken, Task>? keepReplaced = source == VersionEditSource.Credential
-                        ? token => EditorRevisionService.KeepAsync(revisions, id, new VersionInputs(current.Lyrics, current.Styles), now, now, token)
+                    Func<CancellationToken, Task>? keepReplaced = source == VersionEditSource.Credential && textChange
+                        ? token => EditorRevisionService.KeepAsync(revisions, id, held, now, now, token)
                         : null;
-                    switch (await StoreAsync(current, annotations, inputs, keepReplaced, now, ct).ConfigureAwait(false))
+                    switch (await StoreAsync(current, annotations, text, inputs, keepReplaced, now, ct).ConfigureAwait(false))
                     {
                         case InputsWrite.Frozen:
                             return new VersionUpdateOutcome.Frozen(current);
@@ -421,17 +451,17 @@ public sealed class VersionService(
                     ?? throw new InvalidOperationException("The Version just edited cannot be read back.");
                 return new VersionUpdateOutcome.Updated(updated);
             },
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
-    /// Inside the caller's transaction: stores <paramref name="inputs"/> on <paramref name="current"/>,
-    /// keeping its annotations, through <see cref="StoreAsync"/> (restoring a snapshot), after running
-    /// <paramref name="beforeWrite"/> once the write is known to be allowed.
+    /// Inside the caller's transaction: stores <paramref name="text"/> on <paramref name="current"/>,
+    /// keeping its annotations and options, through <see cref="StoreAsync"/> (restoring a snapshot),
+    /// after running <paramref name="beforeWrite"/> once the write is known to be allowed.
     /// </summary>
     internal Task<InputsWrite> StoreInputsAsync(
         VersionDetail current,
-        VersionInputs inputs,
+        VersionText text,
         Func<CancellationToken, Task>? beforeWrite,
         DateTimeOffset now,
         CancellationToken cancellationToken)
@@ -439,7 +469,7 @@ public sealed class VersionService(
         ArgumentNullException.ThrowIfNull(current);
 
         var summary = current.Summary;
-        return StoreAsync(current, new VersionAnnotations(summary.Name, summary.Notes, summary.Archived), inputs, beforeWrite, now, cancellationToken);
+        return StoreAsync(current, new VersionAnnotations(summary.Name, summary.Notes, summary.Archived), text, current.Inputs, beforeWrite, now, cancellationToken);
     }
 
     /// <summary>
@@ -452,6 +482,7 @@ public sealed class VersionService(
     private async Task<InputsWrite> StoreAsync(
         VersionDetail current,
         VersionAnnotations annotations,
+        VersionText text,
         VersionInputs inputs,
         Func<CancellationToken, Task>? beforeWrite,
         DateTimeOffset now,
@@ -469,7 +500,7 @@ public sealed class VersionService(
         {
             changed = version
                 .WithAnnotations(annotations.Name, annotations.Notes, annotations.Archived ? VersionVisibility.Archived : VersionVisibility.Active)
-                .WithInputs(inputs.Lyrics, inputs.Styles);
+                .WithInputs(text.Lyrics, text.Styles, inputs);
         }
         catch (VersionFrozenException)
         {
@@ -484,7 +515,8 @@ public sealed class VersionService(
         var stored = await versions.TryUpdateInputsAsync(
             summary.Id,
             new VersionAnnotations(changed.Name, changed.Notes, changed.Visibility == VersionVisibility.Archived),
-            new VersionInputs(changed.Lyrics, changed.Styles),
+            new VersionText(changed.Lyrics, changed.Styles),
+            changed.Inputs,
             summary.Revision,
             now,
             cancellationToken).ConfigureAwait(false);

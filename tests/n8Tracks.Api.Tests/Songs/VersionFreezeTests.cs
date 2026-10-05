@@ -1,4 +1,6 @@
 using n8Tracks.Application.References;
+using n8Tracks.Application.Songs;
+using n8Tracks.Application.Suno;
 using n8Tracks.Domain.Songs;
 
 namespace n8Tracks.Api.Tests.Songs;
@@ -19,9 +21,10 @@ public sealed class VersionFreezeTests
 
         Assert.False(version.IsFrozen);
         version.EnsureMutable();
-        var changed = version.WithInputs("[Chorus]\nNew", "new style");
+        var changed = version.WithInputs("[Chorus]\nNew", "new style", version.Inputs with { Weirdness = 80 });
         Assert.Equal("[Chorus]\nNew", changed.Lyrics);
         Assert.Equal("new style", changed.Styles);
+        Assert.Equal(80, changed.Inputs.Weirdness);
 
         // The revision and updated time are the store's to move; nothing else changes.
         Assert.Equal(version.Revision, changed.Revision);
@@ -39,13 +42,19 @@ public sealed class VersionFreezeTests
         var ensure = Assert.Throws<VersionFrozenException>(frozen.EnsureMutable);
         Assert.Equal(frozen.Id, ensure.VersionId);
         Assert.Contains("Create a new Version from it", ensure.Message, StringComparison.Ordinal);
-        Assert.Throws<VersionFrozenException>(() => frozen.WithInputs("changed", frozen.Styles));
-        Assert.Throws<VersionFrozenException>(() => frozen.WithInputs(frozen.Lyrics, "changed"));
-        Assert.Throws<VersionFrozenException>(() => frozen.WithInputs(string.Empty, string.Empty));
+        Assert.Throws<VersionFrozenException>(() => frozen.WithInputs("changed", frozen.Styles, frozen.Inputs));
+        Assert.Throws<VersionFrozenException>(() => frozen.WithInputs(frozen.Lyrics, "changed", frozen.Inputs));
+        Assert.Throws<VersionFrozenException>(() => frozen.WithInputs(string.Empty, string.Empty, frozen.Inputs));
 
         // Byte for byte: a different line ending or a trailing space is a change.
-        Assert.Throws<VersionFrozenException>(() => frozen.WithInputs(frozen.Lyrics.Replace("\n", "\r\n", StringComparison.Ordinal), frozen.Styles));
-        Assert.Throws<VersionFrozenException>(() => frozen.WithInputs(frozen.Lyrics, frozen.Styles + " "));
+        Assert.Throws<VersionFrozenException>(() => frozen.WithInputs(frozen.Lyrics.Replace("\n", "\r\n", StringComparison.Ordinal), frozen.Styles, frozen.Inputs));
+        Assert.Throws<VersionFrozenException>(() => frozen.WithInputs(frozen.Lyrics, frozen.Styles + " ", frozen.Inputs));
+
+        // Every option, the ones that do not apply to the kind and mode included.
+        Assert.Throws<VersionFrozenException>(() => frozen.WithInputs(frozen.Lyrics, frozen.Styles, frozen.Inputs with { Kind = VersionKind.Speech }));
+        Assert.Throws<VersionFrozenException>(() => frozen.WithInputs(frozen.Lyrics, frozen.Styles, frozen.Inputs with { SpeechMode = CreationMode.Simple }));
+        Assert.Throws<VersionFrozenException>(() => frozen.WithInputs(frozen.Lyrics, frozen.Styles, frozen.Inputs with { DurationSeconds = 181 }));
+        Assert.Throws<VersionFrozenException>(() => frozen.WithInputs(frozen.Lyrics, frozen.Styles, frozen.Inputs with { Title = frozen.Inputs.Title + " " }));
     }
 
     [Fact]
@@ -53,7 +62,7 @@ public sealed class VersionFreezeTests
     {
         var frozen = Frozen();
 
-        Assert.Same(frozen, frozen.WithInputs(new string(frozen.Lyrics.AsSpan()), new string(frozen.Styles.AsSpan())));
+        Assert.Same(frozen, frozen.WithInputs(new string(frozen.Lyrics.AsSpan()), new string(frozen.Styles.AsSpan()), frozen.Inputs with { }));
     }
 
     [Theory]
@@ -70,6 +79,7 @@ public sealed class VersionFreezeTests
         Assert.Equal(VersionVisibility.Archived, changed.Visibility);
         Assert.Equal(version.Lyrics, changed.Lyrics);
         Assert.Equal(version.Styles, changed.Styles);
+        Assert.Equal(version.Inputs, changed.Inputs);
         Assert.Equal(frozen, changed.IsFrozen);
         Assert.Equal(VersionVisibility.Active, changed.WithAnnotations(null, null, VersionVisibility.Active).Visibility);
     }
@@ -88,6 +98,7 @@ public sealed class VersionFreezeTests
         Assert.Equal(Now, frozen.UpdatedUtc);
         Assert.Equal(version.Lyrics, frozen.Lyrics);
         Assert.Equal(version.Styles, frozen.Styles);
+        Assert.Equal(version.Inputs, frozen.Inputs);
         Assert.Equal(version.Name, frozen.Name);
         Assert.Equal(new Generation(generationId, version.Id, version.SongId, 1, Now), generation);
 
@@ -110,12 +121,12 @@ public sealed class VersionFreezeTests
         // next one is never a reused one, and a recorded ordinal means frozen whatever the flag says.
         var reread = new SongVersion(
             twice.Id, twice.SongId, twice.Number, twice.Name, twice.Notes, twice.Visibility, twice.Lyrics, twice.Styles,
-            twice.CreatedUtc, twice.UpdatedUtc, twice.Revision, IsFrozen: false, LastGenerationOrdinal: 2);
+            twice.Inputs, twice.CreatedUtc, twice.UpdatedUtc, twice.Revision, IsFrozen: false, LastGenerationOrdinal: 2);
         Assert.True(reread.IsFrozen);
         Assert.Equal(3, reread.AttachGeneration(Guid.CreateVersion7(), Now).Generation.Ordinal);
         Assert.Throws<ArgumentOutOfRangeException>(() => new SongVersion(
             twice.Id, twice.SongId, twice.Number, null, null, VersionVisibility.Active, string.Empty, string.Empty,
-            Created, Created, 1, LastGenerationOrdinal: -1));
+            twice.Inputs, Created, Created, 1, LastGenerationOrdinal: -1));
     }
 
     [Fact]
@@ -129,7 +140,8 @@ public sealed class VersionFreezeTests
         Assert.Equal(0, branch.LastGenerationOrdinal);
         Assert.Equal(frozen.Lyrics, branch.Lyrics);
         Assert.Equal(frozen.Styles, branch.Styles);
-        Assert.Equal("edited", branch.WithInputs("edited", branch.Styles).Lyrics);
+        Assert.Equal(frozen.Inputs, branch.Inputs);
+        Assert.Equal("edited", branch.WithInputs("edited", branch.Styles, branch.Inputs).Lyrics);
     }
 
     [Theory]
@@ -185,6 +197,7 @@ public sealed class VersionFreezeTests
             VersionVisibility.Active,
             "[Verse]\nRun",
             "punk, fast",
+            VersionInputRules.Defaults(CreateFieldInventory.Embedded, "Run") with { Weirdness = 70, VocalGender = "female" },
             Created,
             Created,
             Revision: 3);

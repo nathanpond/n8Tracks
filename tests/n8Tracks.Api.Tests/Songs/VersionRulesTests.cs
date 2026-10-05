@@ -1,3 +1,5 @@
+using n8Tracks.Application.Songs;
+using n8Tracks.Application.Suno;
 using n8Tracks.Domain.Songs;
 
 namespace n8Tracks.Api.Tests.Songs;
@@ -20,6 +22,7 @@ public sealed class VersionRulesTests
             VersionVisibility.Archived,
             "[Verse]\nRun",
             "punk, fast",
+            VersionInputRules.Defaults(CreateFieldInventory.Embedded, "Run") with { Kind = VersionKind.Speech, SongMode = CreationMode.Simple, SimplePrompt = "fast", Weirdness = 10 },
             Created,
             Created,
             Revision: 4);
@@ -35,6 +38,9 @@ public sealed class VersionRulesTests
         Assert.Equal(VersionVisibility.Active, version.Visibility);
         Assert.Equal(source.Lyrics, version.Lyrics);
         Assert.Equal(source.Styles, version.Styles);
+
+        // Every option is copied, the ones that do not apply to the kind and mode included.
+        Assert.Equal(source.Inputs, version.Inputs);
         Assert.Equal(Now, version.CreatedUtc);
         Assert.Equal(Now, version.UpdatedUtc);
         Assert.Equal(1, version.Revision);

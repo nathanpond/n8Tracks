@@ -1,19 +1,21 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Http.HttpResults;
 using n8Tracks.Api.Auth;
 using n8Tracks.Api.Problems;
 using n8Tracks.Application.Credentials;
 using n8Tracks.Application.References;
 using n8Tracks.Application.Songs;
+using n8Tracks.Application.Suno;
 using n8Tracks.Domain.Songs;
 
 namespace n8Tracks.Api.Endpoints;
 
 /// <summary>
 /// Versions: the numbers a new Version may take when it branches from one, a Song's Versions as a
-/// flat list, one Version with its lyrics and styles, and its editing history (<c>catalog.read</c>);
-/// creating a Version from another, choosing a Song's current Version, editing a Version's name,
-/// notes, archived flag, lyrics, and styles, and taking and restoring snapshots of its lyrics and
+/// flat list, one Version with its lyrics, styles, and Suno options, and its editing history
+/// (<c>catalog.read</c>); creating a Version from another, choosing a Song's current Version, editing
+/// a Version's name, notes, archived flag, lyrics, styles, and options, and taking and restoring snapshots of its lyrics and
 /// styles (<c>versions.write</c>). A Song or a Version is named by its ID or its shortcode
 /// (<see cref="CatalogReference"/>), in the route and in body fields alike; a reference of the other
 /// kind, or a Version of another Song, is not found. Every answer is <c>no-store</c>, and a single
@@ -40,7 +42,7 @@ internal static class VersionsEndpoints
     public const string TooDeepCode = "version_number_too_deep";
 
     /// <summary>
-    /// The write would change a creation input (lyrics, styles) of a Version a Generation is attached
+    /// The write would change a creation input (lyrics, styles, an option) of a Version a Generation is attached
     /// to. The answer carries <c>versionId</c> and <c>versionShortcode</c>, so a client can create a
     /// new Version from it.
     /// </summary>
@@ -95,7 +97,7 @@ internal static class VersionsEndpoints
 
         endpoints.MapGet(VersionPath, GetAsync)
             .WithName("GetVersion")
-            .WithSummary("One Version with its lyrics and styles (empty strings when there are none).")
+            .WithSummary("One Version with its lyrics and styles (empty strings when there are none), every Suno option in inputs, and the ones that apply to its kind and mode in effectiveInputs.")
             .RequireScope(CredentialScopes.CatalogRead)
             .Produces<VersionDetailResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
@@ -104,7 +106,7 @@ internal static class VersionsEndpoints
 
         endpoints.MapPatch(VersionPath, UpdateAsync)
             .WithName("UpdateVersion")
-            .WithSummary("Edits a Version's name, notes, archived flag, lyrics, or styles (only the fields sent), given the revision read in If-Match. Lyrics and styles are stored as sent, with line endings as \\n.")
+            .WithSummary("Edits a Version's name, notes, archived flag, lyrics, styles, or Suno options (only the fields sent; inputs merged key by key), given the revision read in If-Match. Lyrics and styles are stored as sent, with line endings as \\n.")
             .RequireScope(CredentialScopes.VersionsWrite)
             .Produces<VersionDetailResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
@@ -461,8 +463,9 @@ internal static class VersionsEndpoints
     /// <summary>
     /// 200 with the Version as it is now (unchanged when the edit changed nothing); 409
     /// <c>revision_conflict</c> with <c>current</c> on a stale revision; 409 <c>version_frozen</c>
-    /// when a Generation is attached and the edit changes the lyrics or styles (sending them unchanged
-    /// is fine); 422 <c>validation_failed</c> on a wrong field; 404 when there is no such Version.
+    /// when a Generation is attached and the edit changes the lyrics, styles, or an option (sending
+    /// them unchanged is fine); 422 <c>validation_failed</c> on a wrong field (an option's errors are
+    /// keyed <c>inputs.&lt;key&gt;</c>); 404 when there is no such Version.
     /// Nothing is changed unless the answer is 200.
     /// </summary>
     private static async Task<Results<Ok<VersionDetailResponse>, ProblemHttpResult>> UpdateAsync(
@@ -493,7 +496,8 @@ internal static class VersionsEndpoints
             TextField(request?.Notes, VersionService.NotesField, typeErrors),
             FlagField(request?.Archived, VersionService.ArchivedField, typeErrors),
             TextField(request?.Lyrics, VersionService.LyricsField, typeErrors, "Send text."),
-            TextField(request?.Styles, VersionService.StylesField, typeErrors, "Send text."));
+            TextField(request?.Styles, VersionService.StylesField, typeErrors, "Send text."),
+            InputsField(request?.Inputs, typeErrors));
         if (typeErrors.Count > 0)
         {
             return ApiProblem.ValidationFailed(context, typeErrors);
@@ -595,6 +599,30 @@ internal static class VersionsEndpoints
         }
     }
 
+    /// <summary>
+    /// The options an edit sends: missing sends none, and an object sends each of its keys, as sent,
+    /// for the service to check. Anything else is an error.
+    /// </summary>
+    private static Dictionary<string, JsonElement>? InputsField(JsonElement? sent, Dictionary<string, string[]> errors)
+    {
+        switch (sent?.ValueKind)
+        {
+            case null or JsonValueKind.Undefined:
+                return null;
+            case JsonValueKind.Object:
+                var options = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+                foreach (var option in sent.Value.EnumerateObject())
+                {
+                    options[option.Name] = option.Value;
+                }
+
+                return options;
+            default:
+                errors[VersionService.InputsField] = ["Send an object of options, each one to change."];
+                return null;
+        }
+    }
+
     /// <summary>A true-or-false field of an edit as sent: missing is left alone (null). Anything but <c>true</c> or <c>false</c> is an error.</summary>
     private static bool? FlagField(JsonElement? sent, string name, Dictionary<string, string[]> errors)
     {
@@ -669,17 +697,18 @@ internal sealed record NextNumberResponse(string Number, string Kind, bool Propo
 internal sealed record CreateVersionRequest(string? SourceVersionId, string? Number, string? Name, JsonElement Lyrics, JsonElement Styles);
 
 /// <summary>
-/// An edit: any of the five fields, each left alone when missing. A missing field and a null one
-/// differ, so each is read as raw JSON (a missing one is <see cref="JsonValueKind.Undefined"/>).
+/// An edit: any of the six fields, each left alone when missing; <c>inputs</c> is an object of the
+/// options to change. A missing field and a null one differ, so each is read as raw JSON (a missing
+/// one is <see cref="JsonValueKind.Undefined"/>).
 /// </summary>
-internal sealed record UpdateVersionRequest(JsonElement Name, JsonElement Notes, JsonElement Archived, JsonElement Lyrics, JsonElement Styles);
+internal sealed record UpdateVersionRequest(JsonElement Name, JsonElement Notes, JsonElement Archived, JsonElement Lyrics, JsonElement Styles, JsonElement Inputs);
 
 /// <summary>The set-current form: the ID or shortcode of one of the Song's Versions.</summary>
 internal sealed record SetCurrentVersionRequest(string? VersionId);
 
 /// <summary>
 /// A Version as the tree shows it, without its creation inputs. Times are UTC. <c>isFrozen</c> is
-/// true once a Generation has been attached: its lyrics and styles can no longer change.
+/// true once a Generation has been attached: its lyrics, styles, and options can no longer change.
 /// </summary>
 internal sealed record VersionResponse(
     Guid Id,
@@ -717,7 +746,10 @@ internal sealed record VersionResponse(
 
 /// <summary>
 /// One Version with its creation inputs: everything <see cref="VersionResponse"/> has, plus its
-/// lyrics and styles exactly as stored (empty strings when there are none). Times are UTC.
+/// lyrics and styles exactly as stored (empty strings when there are none), <c>inputs</c> (its kind,
+/// modes, and every Suno option, applicable or not), and the read-only <c>effectiveInputs</c> (the
+/// ones that apply to its kind and mode, lyrics and styles included when they do: what is sent to
+/// Suno). Times are UTC.
 /// </summary>
 internal sealed record VersionDetailResponse(
     Guid Id,
@@ -733,7 +765,9 @@ internal sealed record VersionDetailResponse(
     int Revision,
     bool IsFrozen,
     string Lyrics,
-    string Styles)
+    string Styles,
+    JsonObject Inputs,
+    JsonObject EffectiveInputs)
 {
     public static VersionDetailResponse From(VersionDetail version)
     {
@@ -754,7 +788,9 @@ internal sealed record VersionDetailResponse(
             summary.Revision,
             summary.IsFrozen,
             version.Lyrics,
-            version.Styles);
+            version.Styles,
+            VersionInputRules.ToJson(version.Inputs),
+            VersionInputRules.Effective(CreateFieldInventory.Embedded, version.Inputs, version.Lyrics, version.Styles));
     }
 }
 

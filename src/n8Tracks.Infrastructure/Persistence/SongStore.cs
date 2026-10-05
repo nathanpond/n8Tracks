@@ -45,21 +45,7 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
             UpdatedUtc = UtcText.From(song.UpdatedUtc),
             Revision = song.Revision,
         };
-        var versionRecord = new VersionRecord
-        {
-            Id = version.Id,
-            SongId = version.SongId,
-            Number = version.Number,
-            NumberSortKey = VersionNumbers.SortKey(version.Number),
-            Name = version.Name,
-            Notes = version.Notes,
-            Visibility = version.Visibility == VersionVisibility.Archived ? VersionRecord.Archived : VersionRecord.Active,
-            Lyrics = version.Lyrics,
-            Styles = version.Styles,
-            CreatedUtc = UtcText.From(version.CreatedUtc),
-            UpdatedUtc = UtcText.From(version.UpdatedUtc),
-            Revision = version.Revision,
-        };
+        var versionRecord = VersionStore.ToRecord(version);
 
         context.Songs.Add(songRecord);
         await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);

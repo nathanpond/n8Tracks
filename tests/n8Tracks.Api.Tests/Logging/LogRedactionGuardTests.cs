@@ -307,14 +307,16 @@ public sealed class LogRedactionGuardTests
     }
 
     /// <summary>
-    /// A Version's lyrics and styles, saved and then refused for length, at Debug: the edit (and the
-    /// Version's ID) reaches the log, neither text does.
+    /// A Version's lyrics and styles, and its Simple prompt and excluded styles, saved and then refused
+    /// for length, at Debug: the edit (and the Version's ID) reaches the log, no text does.
     /// </summary>
     [Fact]
     public async Task AVersionsLyricsAndStylesNeverReachTheLog()
     {
         const string LyricsEditSentinel = "sentinel-version-lyrics-4c1e";
         const string StylesEditSentinel = "sentinel-version-styles-8d02";
+        const string PromptEditSentinel = "sentinel-version-prompt-2b7f";
+        const string ExcludeEditSentinel = "sentinel-version-exclude-91ce";
 
         using var factory = new LoggingApiFactory("Debug");
         using var client = await SessionApi.SignedInClientAsync(factory);
@@ -336,11 +338,30 @@ public sealed class LogRedactionGuardTests
             Assert.Equal(expected, response.StatusCode);
         }
 
+        // The prompt-like options, saved and then refused, inside the inputs object.
+        foreach (var (revision, prompt, expected) in new[]
+        {
+            ("\"2\"", PromptEditSentinel, HttpStatusCode.OK),
+            ("\"3\"", PromptEditSentinel + new string('x', 1_000), HttpStatusCode.UnprocessableEntity),
+        })
+        {
+            using var request = Antiforgery(new HttpRequestMessage(HttpMethod.Patch, new Uri($"/api/v1/versions/{id}", UriKind.Relative))
+            {
+                Content = new StringContent(JsonSerializer.Serialize(new { inputs = new { simplePrompt = prompt, excludeStyles = ExcludeEditSentinel } }), Encoding.UTF8, "application/json"),
+            });
+            Assert.True(request.Headers.TryAddWithoutValidation("If-Match", revision));
+            using var response = await client.SendAsync(request);
+            Assert.Equal(expected, response.StatusCode);
+        }
+
         var captured = factory.CapturedText;
         Assert.Contains("Version edited", captured, StringComparison.Ordinal);
         Assert.Contains(id, captured, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(LyricsEditSentinel, captured, StringComparison.Ordinal);
         Assert.DoesNotContain(StylesEditSentinel, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(PromptEditSentinel, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(ExcludeEditSentinel, captured, StringComparison.Ordinal);
+        Assert.True(n8Tracks.Infrastructure.Logging.RedactionPolicy.IsSensitive("simplePrompt") && n8Tracks.Infrastructure.Logging.RedactionPolicy.IsSensitive("excludeStyles"));
     }
 
     /// <summary>

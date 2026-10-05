@@ -183,12 +183,16 @@ public sealed record VersionAnnotations(string? Name, string? Notes, bool Archiv
 /// <param name="Summary">The Version as the tree shows it.</param>
 /// <param name="Lyrics">As stored; empty when there are none.</param>
 /// <param name="Styles">As stored; empty when there are none.</param>
-public sealed record VersionDetail(VersionSummary Summary, string Lyrics, string Styles);
+/// <param name="Inputs">Its kind, modes, and every Suno option.</param>
+public sealed record VersionDetail(VersionSummary Summary, string Lyrics, string Styles, VersionInputs Inputs);
 
-/// <summary>A Version's creation inputs, as they are to be stored: valid, line endings as <c>\n</c>, otherwise as written.</summary>
+/// <summary>
+/// A Version's lyrics and styles, as they are to be stored: valid, line endings as <c>\n</c>,
+/// otherwise as written. The text the editing history snapshots and restores.
+/// </summary>
 /// <param name="Lyrics">Empty when there are none.</param>
 /// <param name="Styles">Empty when there are none.</param>
-public sealed record VersionInputs(string Lyrics, string Styles);
+public sealed record VersionText(string Lyrics, string Styles);
 
 /// <summary>A Generation with what its shortcode is worked out from.</summary>
 /// <param name="Generation">The Generation.</param>
@@ -219,7 +223,7 @@ public interface IVersionStore
     /// <summary>The Version with <paramref name="id"/> as the tree shows it; null when there is none.</summary>
     Task<VersionSummary?> FindSummaryAsync(Guid id, CancellationToken cancellationToken);
 
-    /// <summary>The Version with <paramref name="id"/> with its lyrics and styles; null when there is none.</summary>
+    /// <summary>The Version with <paramref name="id"/> with its lyrics, styles, and options; null when there is none.</summary>
     Task<VersionDetail?> FindDetailAsync(Guid id, CancellationToken cancellationToken);
 
     /// <summary>Every Version of the Song with <paramref name="songId"/>, archived ones included, in tree order.</summary>
@@ -247,15 +251,16 @@ public interface IVersionStore
     Task<bool> TryUpdateAnnotationsAsync(Guid id, VersionAnnotations annotations, int revision, DateTimeOffset updatedUtc, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Stores <paramref name="annotations"/> and <paramref name="inputs"/> on the Version if it is at
-    /// <paramref name="revision"/>, raising the revision by one and setting its updated time, in one
-    /// statement. The one write of a Version's creation inputs after it is created: the caller decides,
-    /// through <see cref="SongVersion.WithInputs"/>, whether they may change. False when the Version
-    /// is gone, at another revision, or frozen, which leaves it as it is.
+    /// Stores <paramref name="annotations"/>, <paramref name="text"/>, and <paramref name="inputs"/> on
+    /// the Version if it is at <paramref name="revision"/>, raising the revision by one and setting its
+    /// updated time, in one statement. The one write of a Version's creation inputs after it is
+    /// created: the caller decides, through <see cref="SongVersion.WithInputs"/>, whether they may
+    /// change. False when the Version is gone, at another revision, or frozen, which leaves it as it is.
     /// </summary>
     Task<bool> TryUpdateInputsAsync(
         Guid id,
         VersionAnnotations annotations,
+        VersionText text,
         VersionInputs inputs,
         int revision,
         DateTimeOffset updatedUtc,

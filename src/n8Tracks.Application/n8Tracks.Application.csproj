@@ -4,6 +4,11 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.12" />
   </ItemGroup>
 
+  <!-- Suno's Create-screen field inventory: the one source of option limits, ranges, lists, and defaults. -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\docs\suno-create-field-inventory.json" Link="Suno\suno-create-field-inventory.json" LogicalName="n8Tracks.Application.Suno.suno-create-field-inventory.json" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\n8Tracks.Domain\n8Tracks.Domain.csproj" />
   </ItemGroup>

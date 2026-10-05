@@ -21,7 +21,7 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
     /// <summary>The trigger that refuses any change to a Version's number or Song.</summary>
     public const string VersionNumberFixedTrigger = "tr_versions_number_never_changes";
 
-    /// <summary>The trigger that refuses changing a frozen Version's lyrics or styles, or unfreezing it.</summary>
+    /// <summary>The trigger that refuses changing a frozen Version's lyrics, styles, kind, model, or options, or unfreezing it.</summary>
     public const string VersionFrozenTrigger = "tr_versions_frozen_inputs_never_change";
 
     /// <summary>The trigger that refuses any change to a Generation's Version, Song, or ordinal.</summary>

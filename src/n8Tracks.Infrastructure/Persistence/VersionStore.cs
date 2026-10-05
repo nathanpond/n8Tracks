@@ -45,6 +45,7 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
                 record.Visibility == VersionRecord.Archived ? VersionVisibility.Archived : VersionVisibility.Active,
                 record.Lyrics,
                 record.Styles,
+                VersionInputsColumns.Read(record.Kind, record.Model, record.Inputs),
                 UtcText.Parse(record.CreatedUtc),
                 UtcText.Parse(record.UpdatedUtc),
                 record.Revision,
@@ -82,11 +83,13 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
 
         var inputs = await context.Versions.AsNoTracking()
             .Where(version => version.Id == id)
-            .Select(static version => new { version.Lyrics, version.Styles })
+            .Select(static version => new { version.Lyrics, version.Styles, version.Kind, version.Model, version.Inputs })
             .SingleOrDefaultAsync(cancellationToken)
             .ConfigureAwait(false);
 
-        return inputs is null ? null : new VersionDetail(summary, inputs.Lyrics, inputs.Styles);
+        return inputs is null
+            ? null
+            : new VersionDetail(summary, inputs.Lyrics, inputs.Styles, VersionInputsColumns.Read(inputs.Kind, inputs.Model, inputs.Inputs));
     }
 
     public async Task<IReadOnlyList<VersionSummary>> ListAsync(Guid songId, CancellationToken cancellationToken)
@@ -101,7 +104,7 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
             return [];
         }
 
-        // The lyrics and styles are left in the database: the tree does not show them.
+        // The inputs are left in the database: the tree does not show them.
         var records = await context.Versions.AsNoTracking()
             .Where(version => version.SongId == songId)
             .OrderBy(static version => version.NumberSortKey)
@@ -140,7 +143,17 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
         ArgumentNullException.ThrowIfNull(version);
 
         // The AFTER INSERT trigger records the number in used_version_numbers.
-        var record = new VersionRecord
+        var record = ToRecord(version);
+        context.Versions.Add(record);
+        await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        context.Entry(record).State = EntityState.Detached;
+    }
+
+    /// <summary>The row a new Version is stored as.</summary>
+    internal static VersionRecord ToRecord(SongVersion version)
+    {
+        var (kind, model, inputs) = VersionInputsColumns.From(version.Inputs);
+        return new VersionRecord
         {
             Id = version.Id,
             SongId = version.SongId,
@@ -151,16 +164,15 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
             Visibility = version.Visibility == VersionVisibility.Archived ? VersionRecord.Archived : VersionRecord.Active,
             Lyrics = version.Lyrics,
             Styles = version.Styles,
+            Kind = kind,
+            Model = model,
+            Inputs = inputs,
             CreatedUtc = UtcText.From(version.CreatedUtc),
             UpdatedUtc = UtcText.From(version.UpdatedUtc),
             Revision = version.Revision,
             IsFrozen = version.IsFrozen,
             LastGenerationOrdinal = version.LastGenerationOrdinal,
         };
-
-        context.Versions.Add(record);
-        await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        context.Entry(record).State = EntityState.Detached;
     }
 
     public async Task SetCurrentAsync(Guid songId, Guid versionId, DateTimeOffset updatedUtc, CancellationToken cancellationToken)
@@ -210,19 +222,22 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
     public async Task<bool> TryUpdateInputsAsync(
         Guid id,
         VersionAnnotations annotations,
+        VersionText text,
         VersionInputs inputs,
         int revision,
         DateTimeOffset updatedUtc,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(annotations);
+        ArgumentNullException.ThrowIfNull(text);
         ArgumentNullException.ThrowIfNull(inputs);
 
         var name = annotations.Name;
         var notes = annotations.Notes;
         var visibility = annotations.Archived ? VersionRecord.Archived : VersionRecord.Active;
-        var lyrics = inputs.Lyrics;
-        var styles = inputs.Styles;
+        var lyrics = text.Lyrics;
+        var styles = text.Styles;
+        var (kind, model, options) = VersionInputsColumns.From(inputs);
         var updated = UtcText.From(updatedUtc);
 
         // One conditional statement, as for the annotations, that also sets the creation inputs. A
@@ -236,6 +251,9 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
                     .SetProperty(version => version.Visibility, visibility)
                     .SetProperty(version => version.Lyrics, lyrics)
                     .SetProperty(version => version.Styles, styles)
+                    .SetProperty(version => version.Kind, kind)
+                    .SetProperty(version => version.Model, model)
+                    .SetProperty(version => version.Inputs, options)
                     .SetProperty(version => version.UpdatedUtc, updated)
                     .SetProperty(version => version.Revision, version => version.Revision + 1),
                 cancellationToken)

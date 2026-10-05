@@ -27,9 +27,10 @@ public sealed record Song(
     public string Shortcode => Shortcodes.ForSong(ShortcodeNumber);
 
     /// <summary>
-    /// The creation rule: a new Song in <paramref name="state"/> with mutable, empty Version
-    /// <c>1</c> as its current working Version, both at revision 1. The title and concept are
-    /// normalised here and must be valid.
+    /// The creation rule: a new Song in <paramref name="state"/> with mutable Version <c>1</c> as its
+    /// current working Version, both at revision 1. The Version has no lyrics or styles and holds
+    /// <paramref name="inputs"/> (the defaults, worked out by the caller from Suno's field inventory).
+    /// The title and concept are normalised here and must be valid.
     /// </summary>
     public static (Song Song, SongVersion Version) Create(
         Guid songId,
@@ -38,9 +39,11 @@ public sealed record Song(
         string title,
         string? concept,
         WorkflowState state,
+        VersionInputs inputs,
         DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(state);
+        ArgumentNullException.ThrowIfNull(inputs);
         ArgumentOutOfRangeException.ThrowIfLessThan(shortcodeNumber, 1);
         if (SongRules.TitleErrors(title).Length > 0)
         {
@@ -71,6 +74,7 @@ public sealed record Song(
             VersionVisibility.Active,
             Lyrics: string.Empty,
             Styles: string.Empty,
+            inputs,
             now,
             now,
             Revision: 1);

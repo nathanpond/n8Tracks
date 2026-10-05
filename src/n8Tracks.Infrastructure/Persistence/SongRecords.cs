@@ -70,6 +70,18 @@ public sealed class VersionRecord
     /// <summary>Empty when there are none.</summary>
     public required string Styles { get; set; }
 
+    /// <summary>What the Version creates: <c>song</c>, <c>speech</c>, or <c>sound</c>. A column of its own so lists can filter on it.</summary>
+    public required string Kind { get; set; }
+
+    /// <summary>The Suno model, from the model list; null when none is chosen. A column of its own so lists can filter on it.</summary>
+    public string? Model { get; set; }
+
+    /// <summary>
+    /// Every other Suno option, as one JSON document whose keys are the API's (<see cref="VersionInputsColumns"/>):
+    /// the modes and one value per field of Suno's Create screen, applicable or not.
+    /// </summary>
+    public required string Inputs { get; set; }
+
     /// <summary>UTC, ISO 8601, millisecond precision.</summary>
     public required string CreatedUtc { get; set; }
 
@@ -80,8 +92,8 @@ public sealed class VersionRecord
     public int Revision { get; set; } = 1;
 
     /// <summary>
-    /// Set when the first Generation is attached and never cleared: the lyrics and styles of a frozen
-    /// Version never change. A trigger refuses either.
+    /// Set when the first Generation is attached and never cleared: the lyrics, styles, kind, model,
+    /// and options of a frozen Version never change. A trigger refuses either.
     /// </summary>
     public bool IsFrozen { get; set; }
 
