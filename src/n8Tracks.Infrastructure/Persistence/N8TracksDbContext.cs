@@ -43,6 +43,8 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
 
     public DbSet<UsedVersionNumberRecord> UsedVersionNumbers => Set<UsedVersionNumberRecord>();
 
+    public DbSet<EditorRevisionRecord> EditorRevisions => Set<EditorRevisionRecord>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         ArgumentNullException.ThrowIfNull(configurationBuilder);
@@ -203,6 +205,23 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
             used.HasOne<SongRecord>()
                 .WithMany()
                 .HasForeignKey(record => record.SongId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<EditorRevisionRecord>(revision =>
+        {
+            revision.ToTable("editor_revisions");
+            revision.HasKey(record => record.Id);
+            revision.Property(record => record.Sequence).ValueGeneratedNever();
+            revision.HasIndex(record => record.Sequence).IsUnique();
+
+            // Newest first, per Version: the History list, the duplicate check, and pruning.
+            revision.HasIndex(record => new { record.VersionId, record.CreatedUtc, record.Sequence });
+
+            // A Version's history goes with it (Version deletion is M3's).
+            revision.HasOne<VersionRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.VersionId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
     }

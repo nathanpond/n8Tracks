@@ -81,6 +81,32 @@ public sealed class VersionRecord
 }
 
 /// <summary>
+/// One row of <c>editor_revisions</c>: a snapshot of a Version's lyrics and styles (never its name or
+/// notes), kept so earlier text can be compared and restored. Each Version keeps its 50 newest.
+/// </summary>
+public sealed class EditorRevisionRecord
+{
+    public required Guid Id { get; set; }
+
+    public required Guid VersionId { get; set; }
+
+    /// <summary>
+    /// The order snapshots were stored in, from 1 across all Versions; unique. It breaks a tie
+    /// between two snapshots of one Version captured in the same millisecond.
+    /// </summary>
+    public required long Sequence { get; set; }
+
+    /// <summary>Line endings as <c>\n</c>, otherwise as written; empty when there were none.</summary>
+    public required string Lyrics { get; set; }
+
+    /// <summary>Line endings as <c>\n</c>, otherwise as written; empty when there were none.</summary>
+    public required string Styles { get; set; }
+
+    /// <summary>UTC, ISO 8601, millisecond precision: when the text was captured.</summary>
+    public required string CreatedUtc { get; set; }
+}
+
+/// <summary>
 /// One row of <c>used_version_numbers</c>: a number some Version of the Song has or once had. It is
 /// written by a trigger whenever a Version is added and is never removed when the Version goes, so a
 /// number is never given out twice within a Song. Keyed on the Song and the number.

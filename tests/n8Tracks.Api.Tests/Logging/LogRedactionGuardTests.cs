@@ -343,6 +343,60 @@ public sealed class LogRedactionGuardTests
         Assert.DoesNotContain(StylesEditSentinel, captured, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A Version's history at Debug: a snapshot taken, read back, and restored, and a credential's
+    /// edit snapshotting the text it replaces. The snapshot and Version IDs reach the log; no text does.
+    /// </summary>
+    [Fact]
+    public async Task SnapshotTextNeverReachesTheLog()
+    {
+        const string SnapshotLyricsSentinel = "sentinel-snapshot-lyrics-71b9";
+        const string SnapshotStylesSentinel = "sentinel-snapshot-styles-e3a0";
+        const string ToolLyricsSentinel = "sentinel-tool-lyrics-5c44";
+
+        using var factory = new LoggingApiFactory("Debug");
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var song = await Songs.SongApi.CreateAsync(client, "Remembered");
+        var id = song.GetProperty("currentVersion").GetProperty("id").GetString()!;
+
+        using var taken = await client.SendAsync(Antiforgery(new HttpRequestMessage(HttpMethod.Post, new Uri($"/api/v1/versions/{id}/snapshots", UriKind.Relative))
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { lyrics = SnapshotLyricsSentinel, styles = SnapshotStylesSentinel }), Encoding.UTF8, "application/json"),
+        }));
+        Assert.Equal(HttpStatusCode.Created, taken.StatusCode);
+        var snapshot = (await SetupApi.JsonAsync(taken)).GetProperty("id").GetString()!;
+        using var read = await client.GetAsync(new Uri($"/api/v1/versions/{id}/snapshots/{snapshot}", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.OK, read.StatusCode);
+
+        var token = await CredentialApi.CreateTokenAsync(factory, n8Tracks.Application.Credentials.CredentialScopes.VersionsWrite);
+        using var tool = factory.CreateClient();
+        using (var request = new HttpRequestMessage(HttpMethod.Patch, new Uri($"/api/v1/versions/{id}", UriKind.Relative))
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { lyrics = ToolLyricsSentinel }), Encoding.UTF8, "application/json"),
+        })
+        {
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+            Assert.True(request.Headers.TryAddWithoutValidation("If-Match", "\"1\""));
+            using var edited = await tool.SendAsync(request);
+            Assert.Equal(HttpStatusCode.OK, edited.StatusCode);
+        }
+
+        using (var request = Antiforgery(new HttpRequestMessage(HttpMethod.Post, new Uri($"/api/v1/versions/{id}/snapshots/{snapshot}/restore", UriKind.Relative))))
+        {
+            Assert.True(request.Headers.TryAddWithoutValidation("If-Match", "\"2\""));
+            using var restored = await client.SendAsync(request);
+            Assert.Equal(HttpStatusCode.OK, restored.StatusCode);
+        }
+
+        var captured = factory.CapturedText;
+        Assert.Contains("Version snapshot kept", captured, StringComparison.Ordinal);
+        Assert.Contains("Version snapshot restored", captured, StringComparison.Ordinal);
+        Assert.Contains(snapshot, captured, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(SnapshotLyricsSentinel, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(SnapshotStylesSentinel, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(ToolLyricsSentinel, captured, StringComparison.Ordinal);
+    }
+
     private static HttpRequestMessage Antiforgery(HttpRequestMessage request)
     {
         request.Headers.Add(SessionApi.AntiforgeryHeader, "1");

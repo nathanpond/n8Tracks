@@ -13,6 +13,7 @@ import {
 } from '@mantine/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FieldValue } from '../api/saves';
+import { restoreSnapshot, type Snapshot } from '../api/snapshots';
 import { useConfiguredTimeZone } from '../api/timeZone';
 import {
   isVersionDetail,
@@ -29,8 +30,10 @@ import {
 import { ConflictValue } from '../common/ConflictDialog';
 import { useRevisionedSave, type SavedField } from '../common/useRevisionedSave';
 import { AutosaveIndicator } from '../editor/AutosaveIndicator';
+import { HistoryPanel, type RestoreResult } from '../editor/HistoryPanel';
 import { LeaveGuard } from '../editor/LeaveGuard';
-import { useAutosave, type Edit } from '../editor/useAutosave';
+import { useAutosave, type AutosaveStatus, type Edit } from '../editor/useAutosave';
+import { useSnapshots, type EditorText } from '../editor/useSnapshots';
 import { VersionInputs } from '../editor/VersionInputs';
 import { RelativeTime } from './SongParts';
 import { nameError, notesError, singleLine } from './songRules';
@@ -125,6 +128,26 @@ function problemOf(drafts: Drafts): string | undefined {
     drafts.styles.length > VERSION_STYLES_MAXIMUM_LENGTH && 'The styles are over their limit.',
   ].filter((problem): problem is string => typeof problem === 'string');
   return problems.length === 0 ? undefined : `${problems.join(' ')} Shorten the text to save.`;
+}
+
+/** The lyrics and styles of the drafts, or undefined when they are over a limit (the API refuses them). */
+function snapshotTextOf(drafts: Drafts): EditorText | undefined {
+  return drafts.lyrics.length > VERSION_LYRICS_MAXIMUM_LENGTH ||
+    drafts.styles.length > VERSION_STYLES_MAXIMUM_LENGTH
+    ? undefined
+    : { lyrics: drafts.lyrics, styles: drafts.styles };
+}
+
+/** Why Restore is unavailable while the editor's work is in `status`, or undefined when it is available. */
+function restoreBlockedBy(status: AutosaveStatus): string | undefined {
+  switch (status.kind) {
+    case 'saved':
+      return undefined;
+    case 'conflict':
+      return 'Restore is unavailable while this Version has a conflict to resolve. Choose Reload or Reapply my change first.';
+    default:
+      return 'Restore is unavailable while your changes are not saved. It is available again once they are.';
+  }
 }
 
 /** The name, on one line, always editable; saved automatically as the user types. */
@@ -338,6 +361,17 @@ function LoadedVersionDetails({
     [onVersion, setDrafts],
   );
 
+  // History: snapshots of the lyrics and styles on screen, taken on a pause and on leaving.
+  const [historyKey, setHistoryKey] = useState(0);
+  const snapshots = useSnapshots({
+    versionId: loaded.id,
+    read: useCallback(() => snapshotTextOf(latestDrafts.current), []),
+    onStored: useCallback(() => {
+      setHistoryKey((key) => key + 1);
+    }, []),
+  });
+  const { capture, rebase } = snapshots;
+
   const { saveFields, dialog } = useRevisionedSave({
     record,
     onRecord,
@@ -361,17 +395,45 @@ function LoadedVersionDetails({
       [saveFields],
     ),
     onReloaded: useCallback(() => {
+      // The text being discarded goes into history first; the text taken in may be new to it.
+      capture();
       setDrafts(draftsOf(latest.current));
-    }, [setDrafts]),
+      rebase({ lyrics: latest.current.lyrics, styles: latest.current.styles }, true);
+    }, [capture, rebase, setDrafts]),
   });
   const { changed, flush } = autosave;
 
+  const snapshotChanged = snapshots.changed;
   const change = useCallback(
     (key: keyof Drafts, value: string) => {
       setDrafts({ ...latestDrafts.current, [key]: value });
       changed();
+      if (key === 'lyrics' || key === 'styles') {
+        snapshotChanged();
+      }
     },
-    [changed, setDrafts],
+    [changed, setDrafts, snapshotChanged],
+  );
+
+  const restore = useCallback(
+    async (snapshot: Snapshot): Promise<RestoreResult> => {
+      const result = await restoreSnapshot(latest.current, snapshot.id);
+      if (result.kind === 'saved') {
+        const restored = result.record;
+        onRecord(restored);
+        setDrafts({ ...latestDrafts.current, lyrics: restored.lyrics, styles: restored.styles });
+        // The restored text is the snapshot's, and the text it replaced the API has kept.
+        rebase({ lyrics: restored.lyrics, styles: restored.styles }, false);
+        setHistoryKey((key) => key + 1);
+        return 'restored';
+      }
+      if (result.kind === 'conflict') {
+        onRecord(result.current);
+        return 'changed-elsewhere';
+      }
+      return 'failed';
+    },
+    [onRecord, rebase, setDrafts],
   );
 
   // Ctrl/Cmd+S anywhere in the pane (the lyrics editor included) saves now, not after the pause.
@@ -390,12 +452,15 @@ function LoadedVersionDetails({
     };
   }, [flush]);
 
+  const snapshotAsPageCloses = snapshots.onPageHide;
   const onPageHide = useCallback(() => {
+    // The save goes first: the browser limits how much may still be sent as a page closes.
     const edit = editOf(latestDrafts.current, latest.current);
     if (Object.keys(edit).length > 0 && problemOf(latestDrafts.current) === undefined) {
       sendVersionAsPageCloses(latest.current, edit);
     }
-  }, []);
+    snapshotAsPageCloses();
+  }, [snapshotAsPageCloses]);
 
   const shown: Version = { ...record, current: version.current };
 
@@ -434,6 +499,15 @@ function LoadedVersionDetails({
           onStyles={(value) => {
             change('styles', value);
           }}
+        />
+        <Divider />
+        <HistoryPanel
+          versionId={record.id}
+          current={{ lyrics: drafts.lyrics, styles: drafts.styles }}
+          timeZone={timeZone}
+          refreshKey={historyKey}
+          restoreBlocked={restoreBlockedBy(autosave.status)}
+          onRestore={restore}
         />
       </Stack>
       {dialog}

@@ -1,6 +1,7 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, vi } from 'vitest';
+import { resetSnapshots } from '../editor/useSnapshots';
 
 // jsdom has neither of these, and Mantine needs both.
 class ResizeObserverStub implements ResizeObserver {
@@ -33,6 +34,8 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  // Snapshots not yet sent are held for the whole page, so one test's would reach the next.
+  resetSnapshots();
   vi.useRealTimers();
   vi.unstubAllGlobals();
   window.localStorage.clear();

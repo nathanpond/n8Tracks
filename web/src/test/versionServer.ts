@@ -1,3 +1,4 @@
+import type { Snapshot } from '../api/snapshots';
 import type { Song } from '../api/songs';
 import type { NumberOption, Version, VersionDetail } from '../api/versions';
 import { healthyReport, jsonResponse, requestPath, stubFetch } from './helpers';
@@ -88,6 +89,12 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     song: { ...song },
     versions: versions.map((version) => ({ ...version })),
     writes: [] as ReceivedWrite[],
+    /** Every snapshot stored, oldest first (the API's deduplication applied). */
+    snapshots: [] as Snapshot[],
+    /** Every snapshot request received, stored or not. */
+    snapshotRequests: [] as Record<string, unknown>[],
+    /** When set, answers the next snapshot request (once) instead of the fake API. */
+    nextSnapshot: undefined as (() => Response | Promise<Response>) | undefined,
     /** When set, answers the next write (once) instead of the fake API. */
     next: undefined as (() => Response | Promise<Response>) | undefined,
     /** Plays another client creating a Version with `number`. */
@@ -105,6 +112,86 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
   };
 
   const used = () => new Set(server.versions.map((version) => version.number));
+  let snapshotCount = 0;
+
+  const keep = (versionId: string, lyrics: string, styles: string, createdAt: string) => {
+    const own = server.snapshots.filter((snapshot) => snapshot.versionId === versionId);
+    const newest = own[own.length - 1];
+    if (newest?.lyrics === lyrics && newest.styles === styles) {
+      return { snapshot: newest, created: false };
+    }
+    snapshotCount++;
+    const snapshot: Snapshot = {
+      id: `0199b1a0-5000-7000-9000-${String(snapshotCount).padStart(12, '0')}`,
+      versionId,
+      createdAt,
+      lyrics,
+      styles,
+    };
+    server.snapshots.push(snapshot);
+    return { snapshot, created: true };
+  };
+
+  /** The snapshots API: take one, list them newest first, read one, restore one on a revision. */
+  const answerHistory = async (
+    versionId: string,
+    snapshotId: string | undefined,
+    restore: boolean,
+    method: string,
+    init: RequestInit | undefined,
+  ): Promise<Response> => {
+    const version = server.versions.find((candidate) => candidate.id === versionId);
+    if (!version) {
+      return jsonResponse(404, { code: 'not_found' });
+    }
+    if (snapshotId === undefined && method === 'POST') {
+      const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as Record<
+        string,
+        unknown
+      >;
+      server.snapshotRequests.push(body);
+      const next = server.nextSnapshot;
+      if (next) {
+        server.nextSnapshot = undefined;
+        return next();
+      }
+      const { snapshot, created } = keep(
+        versionId,
+        String(body.lyrics),
+        String(body.styles),
+        typeof body.capturedAt === 'string' ? body.capturedAt : '2026-10-01T09:30:00Z',
+      );
+      return jsonResponse(created ? 201 : 200, snapshot);
+    }
+    const own = server.snapshots.filter((snapshot) => snapshot.versionId === versionId);
+    if (snapshotId === undefined) {
+      return jsonResponse(200, {
+        items: [...own].reverse().map(({ id, createdAt }) => ({ id, versionId, createdAt })),
+      });
+    }
+    await Promise.resolve();
+    const snapshot = own.find((candidate) => candidate.id === snapshotId);
+    if (!snapshot) {
+      return jsonResponse(404, { code: 'not_found' });
+    }
+    if (!restore) {
+      return jsonResponse(200, snapshot);
+    }
+    server.writes.push({ method, path: `restore ${snapshotId}`, body: {} });
+    const ifMatch = new Headers(init?.headers).get('If-Match');
+    if (ifMatch !== `"${String(version.revision)}"`) {
+      return jsonResponse(409, { code: 'revision_conflict', current: version });
+    }
+    keep(versionId, version.lyrics, version.styles, '2026-10-01T10:00:00Z');
+    const restored: VersionDetail = {
+      ...version,
+      lyrics: snapshot.lyrics,
+      styles: snapshot.styles,
+      revision: version.revision + 1,
+    };
+    server.versions = server.versions.map((other) => (other.id === version.id ? restored : other));
+    return jsonResponse(200, restored);
+  };
 
   const mock = stubFetch();
   mock.mockImplementation(async (input, init) => {
@@ -122,6 +209,10 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
       return source
         ? jsonResponse(200, { options: optionsFor(source.number, used()) })
         : jsonResponse(404, { code: 'not_found' });
+    }
+    const history = /\/api\/v1\/versions\/([^/]+)\/snapshots(?:\/([^/]+))?(\/restore)?$/.exec(path);
+    if (history) {
+      return answerHistory(history[1] ?? '', history[2], history[3] !== undefined, method, init);
     }
     const edited = /\/api\/v1\/versions\/([^/]+)$/.exec(path);
     if (edited && method === 'GET') {

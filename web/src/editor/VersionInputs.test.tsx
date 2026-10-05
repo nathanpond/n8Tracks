@@ -448,5 +448,14 @@ describe('leaving with changes not saved', () => {
     expect(JSON.parse(typeof body === 'string' ? body : '')).toEqual({
       lyrics: '[Verse]\nRun (ooh)\nLast words',
     });
+
+    // History gets the text too, after the opening text it replaced: snapshots as the page goes.
+    const snapshots = mock.mock.calls
+      .filter(([, init]) => init?.keepalive === true && init.method === 'POST')
+      .map(([, init]) => JSON.parse(typeof init?.body === 'string' ? init.body : '') as unknown);
+    expect(snapshots).toEqual([
+      expect.objectContaining({ lyrics: '[Verse]\nRun (ooh)\n', styles: 'punk' }),
+      expect.objectContaining({ lyrics: '[Verse]\nRun (ooh)\nLast words' }),
+    ]);
   });
 });

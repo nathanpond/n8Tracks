@@ -10,9 +10,10 @@ namespace n8Tracks.Api.Endpoints;
 
 /// <summary>
 /// Versions: the numbers a new Version may take when it branches from one, a Song's Versions as a
-/// flat list, and one Version with its lyrics and styles (<c>catalog.read</c>); creating a Version
-/// from another, choosing a Song's current Version, and editing a Version's name, notes, archived
-/// flag, lyrics, and styles (<c>versions.write</c>). Every answer is <c>no-store</c>, and a single
+/// flat list, one Version with its lyrics and styles, and its editing history (<c>catalog.read</c>);
+/// creating a Version from another, choosing a Song's current Version, editing a Version's name,
+/// notes, archived flag, lyrics, and styles, and taking and restoring snapshots of its lyrics and
+/// styles (<c>versions.write</c>). Every answer is <c>no-store</c>, and a single
 /// Version sends its revision as the <c>ETag</c>.
 /// </summary>
 internal static class VersionsEndpoints
@@ -23,6 +24,9 @@ internal static class VersionsEndpoints
     public const string SongVersionsPath = SongsEndpoints.SongPath + "/versions";
     public const string SongVersionsByIdPath = SongsEndpoints.SongByIdPath + "/versions";
     public const string CurrentVersionPath = SongsEndpoints.SongPath + "/current-version";
+    public const string SnapshotsPath = VersionByIdPath + "/snapshots";
+    public const string SnapshotByIdPath = SnapshotsPath + "/{snapshotId:guid}";
+    public const string RestorePath = SnapshotByIdPath + "/restore";
 
     /// <summary>The number sent is not one of the options for the source.</summary>
     public const string NotOfferedCode = "version_number_not_offered";
@@ -102,7 +106,177 @@ internal static class VersionsEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
+        endpoints.MapPost(SnapshotsPath, SnapshotAsync)
+            .WithName("CreateVersionSnapshot")
+            .WithSummary("Keeps a snapshot of a Version's lyrics and styles as the editor has them (capturedAt optional). Needs no revision; text identical to the newest snapshot answers 200 with that one. Each Version keeps its 50 newest.")
+            .RequireScope(CredentialScopes.VersionsWrite)
+            .Produces<SnapshotDetailResponse>(StatusCodes.Status201Created)
+            .Produces<SnapshotDetailResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        endpoints.MapGet(SnapshotsPath, ListSnapshotsAsync)
+            .WithName("ListVersionSnapshots")
+            .WithSummary("A Version's snapshots, newest first, without their text.")
+            .RequireScope(CredentialScopes.CatalogRead)
+            .Produces<SnapshotListResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        endpoints.MapGet(SnapshotByIdPath, GetSnapshotAsync)
+            .WithName("GetVersionSnapshot")
+            .WithSummary("One of a Version's snapshots with its lyrics and styles.")
+            .RequireScope(CredentialScopes.CatalogRead)
+            .Produces<SnapshotDetailResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        endpoints.MapPost(RestorePath, RestoreAsync)
+            .WithName("RestoreVersionSnapshot")
+            .WithSummary("Replaces a Version's lyrics and styles with one of its snapshots, given the revision read in If-Match, after snapshotting the text it replaces.")
+            .RequireScope(CredentialScopes.VersionsWrite)
+            .Produces<VersionDetailResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
         return endpoints;
+    }
+
+    /// <summary>
+    /// 201 with the new snapshot; 200 with the Version's newest snapshot when the text is identical
+    /// to it; 404 when there is no such Version; 422 <c>validation_failed</c> on a missing or wrong
+    /// field. Nothing is stored unless the answer is 201.
+    /// </summary>
+    private static async Task<Results<Created<SnapshotDetailResponse>, Ok<SnapshotDetailResponse>, ProblemHttpResult>> SnapshotAsync(
+        Guid id,
+        SnapshotRequest? request,
+        EditorRevisionService history,
+        HttpContext context,
+        ILoggerFactory loggers,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        var typeErrors = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        var lyrics = TextField(request?.Lyrics, VersionService.LyricsField, typeErrors, "Send text.");
+        var styles = TextField(request?.Styles, VersionService.StylesField, typeErrors, "Send text.");
+        var capturedAt = TextField(request?.CapturedAt, EditorRevisionService.CapturedAtField, typeErrors, "Send a UTC ISO 8601 time, or leave it out.");
+        if (typeErrors.Count > 0)
+        {
+            return ApiProblem.ValidationFailed(context, typeErrors);
+        }
+
+        switch (await history.SnapshotAsync(id, new EditorRevisionRequest(lyrics.Value, styles.Value, capturedAt.Value), cancellationToken))
+        {
+            case SnapshotOutcome.Created created:
+                loggers.CreateLogger(typeof(VersionsEndpoints)).LogInformation(
+                    "Version snapshot kept: {SnapshotId} of {VersionId}",
+                    created.Revision.Id,
+                    created.Revision.VersionId);
+                return TypedResults.Created((string?)null, SnapshotDetailResponse.From(created.Revision));
+
+            case SnapshotOutcome.Unchanged unchanged:
+                return TypedResults.Ok(SnapshotDetailResponse.From(unchanged.Revision));
+
+            case SnapshotOutcome.Invalid invalid:
+                return ApiProblem.ValidationFailed(context, invalid.Errors);
+
+            case SnapshotOutcome.NotFound:
+                return ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "There is no such Version.");
+
+            default:
+                throw new InvalidOperationException("Unknown snapshot outcome.");
+        }
+    }
+
+    /// <summary>200 with the Version's snapshots, newest first; 404 <c>not_found</c> when there is no such Version.</summary>
+    private static async Task<Results<Ok<SnapshotListResponse>, ProblemHttpResult>> ListSnapshotsAsync(
+        Guid id,
+        EditorRevisionService history,
+        HttpContext context,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        if (await history.ListAsync(id, cancellationToken) is not { } list)
+        {
+            return ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "There is no such Version.");
+        }
+
+        return TypedResults.Ok(new SnapshotListResponse([.. list.Select(SnapshotResponse.From)]));
+    }
+
+    /// <summary>200 with the snapshot and its text; 404 <c>not_found</c> when the Version has no such snapshot.</summary>
+    private static async Task<Results<Ok<SnapshotDetailResponse>, ProblemHttpResult>> GetSnapshotAsync(
+        Guid id,
+        Guid snapshotId,
+        EditorRevisionService history,
+        HttpContext context,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        if (await history.FindAsync(id, snapshotId, cancellationToken) is not { } snapshot)
+        {
+            return ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "There is no such snapshot of this Version.");
+        }
+
+        return TypedResults.Ok(SnapshotDetailResponse.From(snapshot));
+    }
+
+    /// <summary>
+    /// 200 with the Version holding the snapshot's lyrics and styles; 409 <c>revision_conflict</c>
+    /// with <c>current</c> on a stale revision; 404 when there is no such Version or the Version has
+    /// no such snapshot. Nothing is changed unless the answer is 200.
+    /// </summary>
+    private static async Task<Results<Ok<VersionDetailResponse>, ProblemHttpResult>> RestoreAsync(
+        Guid id,
+        Guid snapshotId,
+        EditorRevisionService history,
+        HttpContext context,
+        ILoggerFactory loggers,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        var (revision, problem) = Revisions.Read(context);
+        if (problem is not null)
+        {
+            return problem;
+        }
+
+        switch (await history.RestoreAsync(id, snapshotId, revision!.Value, cancellationToken))
+        {
+            case RestoreOutcome.Restored restored:
+                var summary = restored.Version.Summary;
+                loggers.CreateLogger(typeof(VersionsEndpoints)).LogInformation(
+                    "Version snapshot restored: {SnapshotId} into {VersionId} at revision {VersionRevision}",
+                    snapshotId,
+                    summary.Id,
+                    summary.Revision);
+                Revisions.SetETag(context, summary.Revision);
+                return TypedResults.Ok(VersionDetailResponse.From(restored.Version));
+
+            case RestoreOutcome.Conflict conflict:
+                return Revisions.Conflict(context, VersionDetailResponse.From(conflict.Current));
+
+            case RestoreOutcome.VersionNotFound:
+                return ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "There is no such Version.");
+
+            case RestoreOutcome.SnapshotNotFound:
+                return ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "There is no such snapshot of this Version.");
+
+            default:
+                throw new InvalidOperationException("Unknown restore outcome.");
+        }
     }
 
     /// <summary>200 with every Version of the Song; 404 <c>not_found</c> when the reference names none.</summary>
@@ -259,7 +433,9 @@ internal static class VersionsEndpoints
             return ApiProblem.ValidationFailed(context, typeErrors);
         }
 
-        switch (await versions.UpdateAsync(id, edit, revision!.Value, cancellationToken))
+        // A tool's edit of the lyrics or styles is snapshotted first; the web editor takes its own.
+        var source = CredentialPrincipal.IsCredential(context.User) ? VersionEditSource.Credential : VersionEditSource.Session;
+        switch (await versions.UpdateAsync(id, edit, revision!.Value, source, cancellationToken))
         {
             case VersionUpdateOutcome.Updated updated:
                 var summary = updated.Version.Summary;
@@ -475,3 +651,34 @@ internal sealed record VersionDetailResponse(
 
 /// <summary>Every Version of a Song, in tree order.</summary>
 internal sealed record VersionListResponse(VersionResponse[] Items);
+
+/// <summary>
+/// A snapshot request: the lyrics and styles as the editor has them (both required) and, optionally,
+/// when it captured them. Read as raw JSON, so a wrong type is a field error.
+/// </summary>
+internal sealed record SnapshotRequest(JsonElement Lyrics, JsonElement Styles, JsonElement CapturedAt);
+
+/// <summary>A snapshot as the History list shows it: when it was taken. Times are UTC.</summary>
+internal sealed record SnapshotResponse(Guid Id, Guid VersionId, DateTime CreatedAt)
+{
+    public static SnapshotResponse From(EditorRevisionSummary snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+
+        return new(snapshot.Id, snapshot.VersionId, snapshot.CreatedUtc.UtcDateTime);
+    }
+}
+
+/// <summary>One snapshot with its lyrics and styles. Times are UTC.</summary>
+internal sealed record SnapshotDetailResponse(Guid Id, Guid VersionId, DateTime CreatedAt, string Lyrics, string Styles)
+{
+    public static SnapshotDetailResponse From(EditorRevision snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+
+        return new(snapshot.Id, snapshot.VersionId, snapshot.CreatedUtc.UtcDateTime, snapshot.Lyrics, snapshot.Styles);
+    }
+}
+
+/// <summary>A Version's snapshots, newest first.</summary>
+internal sealed record SnapshotListResponse(SnapshotResponse[] Items);

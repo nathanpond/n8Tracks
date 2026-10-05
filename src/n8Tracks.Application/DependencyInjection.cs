@@ -29,6 +29,7 @@ public static class DependencyInjection
         services.AddScoped<JobService>();
         services.AddScoped<SongService>();
         services.AddScoped<VersionService>();
+        services.AddScoped<EditorRevisionService>();
         services.AddScoped<WorkflowStateService>();
 
         return services;

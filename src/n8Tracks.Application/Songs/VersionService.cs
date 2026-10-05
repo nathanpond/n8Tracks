@@ -83,6 +83,16 @@ public sealed record VersionEdit(SongEditField Name, SongEditField Notes, bool? 
     }
 }
 
+/// <summary>Who an edit of a Version comes from, which decides whether the text it replaces is snapshotted.</summary>
+public enum VersionEditSource
+{
+    /// <summary>The web editor (a browser session), whose own idle and leave snapshots cover its edits.</summary>
+    Session,
+
+    /// <summary>A tool calling the API with a credential: the lyrics and styles it replaces are snapshotted first.</summary>
+    Credential,
+}
+
 /// <summary>How an edit of a Version ended.</summary>
 public abstract record VersionUpdateOutcome
 {
@@ -111,7 +121,12 @@ public abstract record VersionUpdateOutcome
 /// Version current is a command, not an edit of content someone may have changed, so it carries no
 /// revision and leaves the Song's alone: the last request wins.
 /// </summary>
-public sealed class VersionService(IVersionStore versions, ISongStore songs, IExclusiveTransaction transaction, TimeProvider time)
+public sealed class VersionService(
+    IVersionStore versions,
+    ISongStore songs,
+    IEditorRevisionStore revisions,
+    IExclusiveTransaction transaction,
+    TimeProvider time)
 {
     /// <summary>The field names validation errors are keyed by, as the API spells them.</summary>
     public const string SourceVersionIdField = "sourceVersionId";
@@ -271,7 +286,15 @@ public sealed class VersionService(IVersionStore versions, ISongStore songs, IEx
     /// visibility only: never the number, lyrics, styles, the descendants, or which Version is current.
     /// An edit that changes nothing leaves the revision alone. One wrong field refuses the whole edit.
     /// </summary>
-    public Task<VersionUpdateOutcome> UpdateAsync(Guid id, VersionEdit edit, int revision, CancellationToken cancellationToken)
+    public Task<VersionUpdateOutcome> UpdateAsync(Guid id, VersionEdit edit, int revision, CancellationToken cancellationToken) =>
+        UpdateAsync(id, edit, revision, VersionEditSource.Session, cancellationToken);
+
+    /// <summary>
+    /// As <see cref="UpdateAsync(Guid, VersionEdit, int, CancellationToken)"/>; when the edit comes
+    /// from a <see cref="VersionEditSource.Credential"/> and changes the lyrics or styles, the text it
+    /// replaces is snapshotted first (<see cref="EditorRevisionService"/>), in the same transaction.
+    /// </summary>
+    public Task<VersionUpdateOutcome> UpdateAsync(Guid id, VersionEdit edit, int revision, VersionEditSource source, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(edit);
 
@@ -329,6 +352,12 @@ public sealed class VersionService(IVersionStore versions, ISongStore songs, IEx
                 }
 
                 var now = time.GetUtcNow();
+                if (inputsChange && source == VersionEditSource.Credential)
+                {
+                    await EditorRevisionService.KeepAsync(revisions, id, new VersionInputs(current.Lyrics, current.Styles), now, now, ct)
+                        .ConfigureAwait(false);
+                }
+
                 var stored = inputsChange
                     ? await StoreAsync(current, annotations, inputs, now, ct).ConfigureAwait(false)
                     : await versions.TryUpdateAnnotationsAsync(id, annotations, revision, now, ct).ConfigureAwait(false);
@@ -347,9 +376,22 @@ public sealed class VersionService(IVersionStore versions, ISongStore songs, IEx
     }
 
     /// <summary>
+    /// Inside the caller's transaction: stores <paramref name="inputs"/> on <paramref name="current"/>,
+    /// keeping its annotations, through <see cref="StoreAsync"/> (restoring a snapshot). False when
+    /// the Version is gone or no longer at <paramref name="current"/>'s revision.
+    /// </summary>
+    internal Task<bool> StoreInputsAsync(VersionDetail current, VersionInputs inputs, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+
+        var summary = current.Summary;
+        return StoreAsync(current, new VersionAnnotations(summary.Name, summary.Notes, summary.Archived), inputs, now, cancellationToken);
+    }
+
+    /// <summary>
     /// The one place a Version's creation inputs change after it is created, together with whatever
     /// annotations the same edit changes. Whether a Version's inputs may still change (the freeze once
-    /// a Generation is attached, #69) is decided here.
+    /// a Generation is attached, #69) is decided here. Restoring a snapshot comes through here too.
     /// </summary>
     private Task<bool> StoreAsync(VersionDetail current, VersionAnnotations annotations, VersionInputs inputs, DateTimeOffset now, CancellationToken cancellationToken) =>
         versions.TryUpdateInputsAsync(current.Summary.Id, annotations, inputs, current.Summary.Revision, now, cancellationToken);

@@ -72,7 +72,22 @@ function failureOf(status: number, answer: unknown): FailureReason {
  * with its field errors; anything else (a 404, a timeout, a body it does not take) has failed, with
  * the reason ({@link FailureReason}).
  */
-export async function patchWithRevision<T>(
+export function patchWithRevision<T>(
+  path: string,
+  revision: number,
+  body: Record<string, unknown>,
+  accept: (answer: unknown) => T | undefined,
+): Promise<SaveResult<T>> {
+  return writeWithRevision('PATCH', path, revision, body, accept);
+}
+
+/**
+ * Sends `body` to `path` with `method`, based on `revision`, and reads the answer as
+ * {@link patchWithRevision} does: for a command on a revisioned record that is not a PATCH of its
+ * fields (restoring a snapshot).
+ */
+export async function writeWithRevision<T>(
+  method: 'PATCH' | 'POST',
   path: string,
   revision: number,
   body: Record<string, unknown>,
@@ -80,7 +95,7 @@ export async function patchWithRevision<T>(
 ): Promise<SaveResult<T>> {
   try {
     const response = await apiFetch(path, {
-      method: 'PATCH',
+      method,
       headers: { 'Content-Type': 'application/json', 'If-Match': ifMatch(revision) },
       body: JSON.stringify(body),
     });

@@ -50,6 +50,7 @@ public static class DependencyInjection
         services.AddScoped<IJobStore, JobStore>();
         services.AddScoped<ISongStore, SongStore>();
         services.AddScoped<IVersionStore, VersionStore>();
+        services.AddScoped<IEditorRevisionStore, EditorRevisionStore>();
         services.AddScoped<IWorkflowStateStore, WorkflowStateStore>();
 
         return services;
