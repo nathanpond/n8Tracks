@@ -37,6 +37,8 @@ public static class DependencyInjection
         services.AddScoped<ReferenceResolver>();
         services.AddSingleton<BackupStartLock>();
         services.AddScoped<BackupService>();
+        services.AddSingleton<BackupScheduleProcess>();
+        services.AddScoped<BackupScheduleService>();
         services.AddJobHandler<BackupJobHandler>(BackupService.JobType);
 
         return services;

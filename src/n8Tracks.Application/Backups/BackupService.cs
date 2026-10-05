@@ -18,12 +18,19 @@ public sealed class BackupService(IBackupStorage storage, IJobStore jobs, IJobQu
     /// <summary>The job type every backup runs as, whatever its kind.</summary>
     public const string JobType = "backup";
 
+    /// <summary>How the payload is written: camelCase, as the handler reads it.</summary>
+    internal static readonly JsonSerializerOptions PayloadJson = new(JsonSerializerDefaults.Web);
+
     /// <summary>
     /// Queues a backup of <paramref name="kind"/>, unless one is queued or running already, in which
     /// case that job is returned and nothing is queued. The check and the enqueue happen under one
-    /// lock, so two requests at once queue one job.
+    /// lock, so two requests at once queue one job. <paramref name="retry"/> marks a scheduled
+    /// backup as the one retry after a failure.
     /// </summary>
-    public async Task<BackupStart> StartAsync(BackupKind kind, CancellationToken cancellationToken)
+    public Task<BackupStart> StartAsync(BackupKind kind, CancellationToken cancellationToken) => StartAsync(kind, retry: false, cancellationToken);
+
+    /// <inheritdoc cref="StartAsync(BackupKind, CancellationToken)"/>
+    public async Task<BackupStart> StartAsync(BackupKind kind, bool retry, CancellationToken cancellationToken)
     {
         await startLock.Gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -33,7 +40,7 @@ public sealed class BackupService(IBackupStorage storage, IJobStore jobs, IJobQu
                 return new BackupStart(active, AlreadyInProgress: true);
             }
 
-            var payload = JsonSerializer.SerializeToElement(new BackupJobPayload(BackupKinds.Text(kind)));
+            var payload = JsonSerializer.SerializeToElement(new BackupJobPayload(BackupKinds.Text(kind), retry), PayloadJson);
             var id = await queue.EnqueueAsync(JobType, payload, cancellationToken).ConfigureAwait(false);
             return new BackupStart(id, AlreadyInProgress: false);
         }
@@ -97,15 +104,20 @@ public static class BackupKinds
     };
 }
 
-/// <summary>What a backup job is enqueued with.</summary>
-public sealed record BackupJobPayload(string Kind);
+/// <summary>What a backup job is enqueued with, written camelCase.</summary>
+/// <param name="Kind">The kind's text (<see cref="BackupKinds.Text"/>).</param>
+/// <param name="Retry">Whether a scheduled backup is the one retry after a failure.</param>
+public sealed record BackupJobPayload(string Kind, bool Retry = false);
 
 /// <summary>
-/// Runs a <c>backup</c> job: resolves the destination when the job starts, then copies, archives,
-/// and verifies, reporting the three phases. It cannot be cancelled; only shutdown stops it, and the
-/// half-built archive is then removed. The result names the archive.
+/// Runs a <c>backup</c> job: removes what earlier interrupted runs left behind, resolves the
+/// destination when the job starts, then copies, archives, and verifies, reporting the three
+/// phases. A scheduled backup is recorded as the latest attempt when it starts and, once it has
+/// succeeded, retention deletes the scheduled backups beyond the number kept; a failed one deletes
+/// nothing. It cannot be cancelled; only shutdown stops it, and the half-built archive is then
+/// removed. The result names the archive.
 /// </summary>
-public sealed class BackupJobHandler(IBackupStorage storage, IBackupWriter writer) : IJobHandler
+public sealed class BackupJobHandler(IBackupStorage storage, IBackupWriter writer, BackupScheduleService schedule) : IJobHandler
 {
     /// <summary>The share of the progress bar each phase ends at.</summary>
     private const int CopyEnd = 70;
@@ -116,11 +128,24 @@ public sealed class BackupJobHandler(IBackupStorage storage, IBackupWriter write
     {
         ArgumentNullException.ThrowIfNull(context);
 
-        var kind = context.Payload is { ValueKind: JsonValueKind.Object } payload
+        var payload = context.Payload is { ValueKind: JsonValueKind.Object } value ? value : default;
+        var kind = payload.ValueKind == JsonValueKind.Object
             && payload.TryGetProperty("kind", out var text)
+            && text.ValueKind == JsonValueKind.String
             && BackupKinds.Parse(text.GetString()) is { } parsed
                 ? parsed
                 : BackupKind.Manual;
+        var retry = payload.ValueKind == JsonValueKind.Object
+            && payload.TryGetProperty("retry", out var flag)
+            && flag.ValueKind == JsonValueKind.True;
+
+        if (kind == BackupKind.Scheduled)
+        {
+            await schedule.RecordStartAsync(context.JobId, retry, cancellationToken).ConfigureAwait(false);
+        }
+
+        // Only one backup runs at a time, so any temporary folder now is a leftover.
+        storage.RemoveLeftoverTemporaryFolders();
 
         var destination = storage.ResolveDestination();
         var created = await writer.CreateAsync(
@@ -129,6 +154,11 @@ public sealed class BackupJobHandler(IBackupStorage storage, IBackupWriter write
             kind,
             (phase, percent) => context.Report(Overall(phase, percent), Message(phase)),
             cancellationToken).ConfigureAwait(false);
+
+        if (kind == BackupKind.Scheduled)
+        {
+            await schedule.ApplyRetentionAsync(cancellationToken).ConfigureAwait(false);
+        }
 
         return JsonSerializer.SerializeToElement(
             new

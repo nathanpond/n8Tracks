@@ -8,15 +8,22 @@ import {
   TextInput,
   Title,
 } from '@mantine/core';
-import { useEffect, useRef, useState, type ReactNode, type SyntheticEvent } from 'react';
+import { useState, type SyntheticEvent } from 'react';
+import { DEFAULT_SCHEDULE, type ScheduleSettings } from '../api/backups';
 import { submitSetup, type SetupStatus } from '../api/setup';
 import { CheckBadge } from '../components/CheckBadge';
 import { Notice } from '../components/Notice';
+import { apiFieldErrors, type ScheduleFieldErrors } from '../settings/scheduleDraft';
+import { BackupStep } from './BackupStep';
+import { StepActions, StepHeading } from './StepParts';
 
 const STORAGE_STEP = 0;
 const MEDIA_STEP = 1;
-// Step 2 is reserved for backup defaults: shown, and skipped until the scheduled-backup story fills it in.
+const BACKUP_STEP = 2;
 const ADMINISTRATOR_STEP = 3;
+
+/** The prefix the API puts before the backup schedule's field names in a refused submission. */
+const BACKUP_FIELD_PREFIX = 'backupSchedule.';
 
 type Field = 'username' | 'password' | 'passwordConfirmation';
 
@@ -28,28 +35,6 @@ export interface SetupWizardProps {
   onRecheck: () => void;
   /** Setup is complete (by this browser or another one). */
   onComplete: () => void;
-}
-
-/** A step's heading. It takes the focus when its step opens, so keyboard and screen-reader users land on it. */
-function StepHeading({ children }: { children: string }) {
-  const heading = useRef<HTMLHeadingElement>(null);
-  useEffect(() => {
-    heading.current?.focus();
-  }, []);
-
-  return (
-    <Title order={3} ref={heading} tabIndex={-1}>
-      {children}
-    </Title>
-  );
-}
-
-function StepActions({ children }: { children: ReactNode }) {
-  return (
-    <Group gap="sm" mt="md">
-      {children}
-    </Group>
-  );
 }
 
 function StorageStep({
@@ -148,13 +133,19 @@ function MediaStep({
 }
 
 function AdministratorStep({
+  schedule,
   onBack,
   onComplete,
   onStorageFailed,
+  onScheduleRefused,
 }: {
+  /** The backup step's choice, sent with the administrator. */
+  schedule: ScheduleSettings;
   onBack: () => void;
   onComplete: () => void;
   onStorageFailed: () => void;
+  /** The API refused the backup step's choice: back to that step with its errors. */
+  onScheduleRefused: (errors: ScheduleFieldErrors) => void;
 }) {
   const [values, setValues] = useState<Record<Field, string>>({
     username: '',
@@ -174,7 +165,7 @@ function AdministratorStep({
     event.preventDefault();
     setSubmitting(true);
     setOutcome(undefined);
-    const result = await submitSetup(values);
+    const result = await submitSetup({ ...values, backupSchedule: schedule });
     setSubmitting(false);
 
     switch (result.kind) {
@@ -188,13 +179,18 @@ function AdministratorStep({
       case 'storageNotWritable':
         onStorageFailed();
         return;
-      case 'invalid':
+      case 'invalid': {
+        const scheduleErrors = apiFieldErrors(result.errors, BACKUP_FIELD_PREFIX);
+        if (Object.keys(scheduleErrors).length > 0) {
+          onScheduleRefused(scheduleErrors);
+        }
         setErrors({
           username: result.errors.username?.join(' '),
           password: result.errors.password?.join(' '),
           passwordConfirmation: result.errors.passwordConfirmation?.join(' '),
         });
         return;
+      }
       case 'failed':
         setOutcome('failed');
         return;
@@ -286,12 +282,17 @@ function AdministratorStep({
 }
 
 /**
- * First-run setup: storage, media, backups (reserved and skipped for now), then the administrator,
- * whose creation completes setup. Storage must be writable to go on; unavailable media is a warning.
+ * First-run setup: storage, media, the backup schedule, then the administrator, whose creation
+ * completes setup. Storage must be writable to go on; unavailable media is a warning. The backup
+ * step's choice is held here and sent with the administrator, so nothing is saved before then.
  */
 export function SetupWizard({ status, checking, onRecheck, onComplete }: SetupWizardProps) {
   const [active, setActive] = useState(STORAGE_STEP);
   const [storageLost, setStorageLost] = useState(false);
+  const [schedule, setSchedule] = useState<ScheduleSettings>(
+    status.backups?.defaults ?? DEFAULT_SCHEDULE,
+  );
+  const [scheduleRefused, setScheduleRefused] = useState<ScheduleFieldErrors>({});
   const writable = status.storage?.writable ?? false;
   const available = status.media?.available ?? false;
 
@@ -329,16 +330,34 @@ export function SetupWizard({ status, checking, onRecheck, onComplete }: SetupWi
               setActive(STORAGE_STEP);
             }}
             onNext={() => {
+              setActive(BACKUP_STEP);
+            }}
+          />
+        </Stepper.Step>
+        <Stepper.Step label="Backups" description="Schedule">
+          <BackupStep
+            backups={status.backups}
+            schedule={schedule}
+            errors={scheduleRefused}
+            onBack={() => {
+              setActive(MEDIA_STEP);
+            }}
+            onNext={(chosen) => {
+              setSchedule(chosen);
+              setScheduleRefused({});
               setActive(ADMINISTRATOR_STEP);
             }}
           />
         </Stepper.Step>
-        {/* Never opened: the media step goes straight to the administrator. */}
-        <Stepper.Step label="Backups" description="Skipped for now" />
         <Stepper.Step label="Administrator" description="Your account">
           <AdministratorStep
+            schedule={schedule}
             onBack={() => {
-              setActive(MEDIA_STEP);
+              setActive(BACKUP_STEP);
+            }}
+            onScheduleRefused={(errors) => {
+              setScheduleRefused(errors);
+              setActive(BACKUP_STEP);
             }}
             onComplete={onComplete}
             onStorageFailed={() => {

@@ -56,22 +56,25 @@ public static class DependencyInjection
         services.AddScoped<IWorkflowStateStore, WorkflowStateStore>();
         services.AddSingleton<IBackupStorage, BackupFolders>();
         services.AddSingleton<IBackupWriter, BackupWriter>();
+        services.AddScoped<IBackupScheduleStore, BackupScheduleStore>();
         services.TryAddSingleton(new BackupTestHooks());
 
         return services;
     }
 
     /// <summary>
-    /// Adds the background worker that runs queued jobs. Only the server adds it: a command run in
-    /// the container starts nothing on its own.
+    /// Adds the background worker that runs queued jobs and the backup scheduler. Only the server
+    /// adds them: a command run in the container starts nothing on its own.
     /// </summary>
     public static IServiceCollection AddJobWorker(this IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
 
         services.TryAddSingleton(new JobWorkerOptions());
+        services.TryAddSingleton(new BackupSchedulerOptions());
         services.AddHostedService<BackupStartupCleanup>();
         services.AddHostedService<JobWorker>();
+        services.AddHostedService<BackupScheduler>();
 
         return services;
     }

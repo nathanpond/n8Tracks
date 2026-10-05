@@ -65,12 +65,21 @@ internal static class BackupsEndpoints
         return endpoints;
     }
 
-    /// <summary>200 with the archives, the destination, whether it shares a disk with the data, and the backup in progress.</summary>
-    private static async Task<Ok<BackupListResponse>> ListAsync(BackupService backups, HttpContext context, CancellationToken cancellationToken)
+    /// <summary>
+    /// 200 with the archives, the destination, whether it shares a disk with the data, the backup in
+    /// progress, the last successful backup, and the schedule's state.
+    /// </summary>
+    private static async Task<Ok<BackupListResponse>> ListAsync(
+        BackupService backups,
+        BackupScheduleService schedules,
+        HttpContext context,
+        CancellationToken cancellationToken)
     {
         SessionEndpoints.NoStore(context);
 
-        return TypedResults.Ok(BackupListResponse.From(await backups.ListAsync(cancellationToken)));
+        var listing = await backups.ListAsync(cancellationToken);
+        var schedule = await schedules.GetStatusAsync(cancellationToken);
+        return TypedResults.Ok(BackupListResponse.From(listing, schedule));
     }
 
     /// <summary>202 with the job ID (and the job as <c>Location</c>); 409 <c>backup_in_progress</c> with the running job's ID.</summary>
@@ -167,13 +176,21 @@ internal sealed record BackupResponse(
 
 /// <summary>
 /// The Backups page: where the next backup goes (<c>mount</c> or <c>data</c>), whether that shares a
-/// disk with the data, the backup job queued or running (or null), and every archive, newest first.
+/// disk with the data, the backup job queued or running (or null), every archive, newest first, when
+/// the newest valid archive of any kind was made (or null), and the schedule's state.
 /// </summary>
-internal sealed record BackupListResponse(string Destination, bool SharesDiskWithData, Guid? ActiveJobId, BackupResponse[] Items)
+internal sealed record BackupListResponse(
+    string Destination,
+    bool SharesDiskWithData,
+    Guid? ActiveJobId,
+    BackupResponse[] Items,
+    DateTime? LastSuccessAt,
+    BackupScheduleStatusResponse Schedule)
 {
-    public static BackupListResponse From(BackupListing listing)
+    public static BackupListResponse From(BackupListing listing, BackupScheduleStatus schedule)
     {
         ArgumentNullException.ThrowIfNull(listing);
+        ArgumentNullException.ThrowIfNull(schedule);
 
         return new(
             BackupsEndpoints.LocationText(listing.Destination),
@@ -186,6 +203,48 @@ internal sealed record BackupListResponse(string Destination, bool SharesDiskWit
                 archive.CreatedUtc.UtcDateTime,
                 archive.ApplicationVersion,
                 archive.Kind,
-                archive.Validity))]);
+                archive.Validity))],
+            listing.LastSuccessUtc?.UtcDateTime,
+            BackupScheduleStatusResponse.From(schedule));
     }
 }
+
+/// <summary>
+/// The schedule as the Backups page shows it: the settings, the next planned time (null when off),
+/// and the latest scheduled attempt (null before the first), which stays until the next replaces it.
+/// </summary>
+internal sealed record BackupScheduleStatusResponse(
+    bool Enabled,
+    string Frequency,
+    string Time,
+    int Keep,
+    DateTime? NextAt,
+    BackupAttemptResponse? LastAttempt)
+{
+    public static BackupScheduleStatusResponse From(BackupScheduleStatus status)
+    {
+        ArgumentNullException.ThrowIfNull(status);
+
+        var schedule = status.Stored.Schedule;
+        return new(
+            schedule.Enabled,
+            BackupSchedule.FrequencyText(schedule.Frequency),
+            BackupSchedule.TimeText(schedule.Time),
+            schedule.Keep,
+            status.NextUtc?.UtcDateTime,
+            status.LastAttempt is { } attempt
+                ? new BackupAttemptResponse(
+                    attempt.Outcome,
+                    attempt.StartedUtc.UtcDateTime,
+                    attempt.FinishedUtc?.UtcDateTime,
+                    attempt.Error,
+                    status.RetryUtc?.UtcDateTime)
+                : null);
+    }
+}
+
+/// <summary>
+/// One scheduled attempt: <c>outcome</c> is <c>running</c>, <c>succeeded</c>, or <c>failed</c> with
+/// <c>error</c>; <c>retryAt</c> is when a first failure's one retry runs, or null.
+/// </summary>
+internal sealed record BackupAttemptResponse(BackupAttemptOutcome Outcome, DateTime StartedAt, DateTime? FinishedAt, string? Error, DateTime? RetryAt);

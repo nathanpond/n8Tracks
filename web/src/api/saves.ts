@@ -84,10 +84,10 @@ export function patchWithRevision<T>(
 /**
  * Sends `body` to `path` with `method`, based on `revision`, and reads the answer as
  * {@link patchWithRevision} does: for a command on a revisioned record that is not a PATCH of its
- * fields (restoring a snapshot).
+ * fields (restoring a snapshot), or a PUT replacing a whole setting.
  */
 export async function writeWithRevision<T>(
-  method: 'PATCH' | 'POST',
+  method: 'PATCH' | 'POST' | 'PUT',
   path: string,
   revision: number,
   body: Record<string, unknown>,

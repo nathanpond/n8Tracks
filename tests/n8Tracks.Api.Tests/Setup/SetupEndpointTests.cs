@@ -35,9 +35,16 @@ public sealed class SetupEndpointTests
             ["complete"] = false,
             ["storage"] = new JsonObject { ["writable"] = true },
             ["media"] = new JsonObject { ["available"] = true },
+            ["backups"] = new JsonObject
+            {
+                ["destination"] = "data",
+                ["sharesDiskWithData"] = true,
+                ["defaults"] = new JsonObject { ["enabled"] = true, ["frequency"] = "daily", ["time"] = "03:00", ["keep"] = 7 },
+            },
         };
         Assert.True(JsonNode.DeepEquals(expected, JsonNode.Parse(body)), body);
         Assert.DoesNotContain(factory.DataPath, body, StringComparison.Ordinal);
+        Assert.DoesNotContain(factory.BackupPath, body, StringComparison.Ordinal);
     }
 
     [Fact]

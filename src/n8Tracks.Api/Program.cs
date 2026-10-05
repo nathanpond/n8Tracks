@@ -231,6 +231,7 @@ public sealed class Program
             app.MapVersions();
             app.MapResolve();
             app.MapBackups();
+            app.MapSettings();
             app.MapApiNotFound();
 
             // After the endpoints, and inside the path base: the frontend answers only what no endpoint does.

@@ -2,14 +2,22 @@ import { MantineProvider } from '@mantine/core';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import type { SetupStatus } from '../api/setup';
+import type { SetupBackups, SetupStatus } from '../api/setup';
 import { jsonResponse, requestPath, stubAllFetch } from '../test/helpers';
+import { BACKUP_SHARED_DISK_TITLE } from './BackupStep';
 import { SetupWizard } from './SetupWizard';
+
+const dataFolderBackups: SetupBackups = {
+  destination: 'data',
+  sharesDiskWithData: true,
+  defaults: { enabled: true, frequency: 'daily', time: '03:00', keep: 7 },
+};
 
 const ready: SetupStatus = {
   complete: false,
   storage: { writable: true },
   media: { available: true },
+  backups: dataFolderBackups,
 };
 
 function renderWizard(status: SetupStatus = ready, checking = false) {
@@ -32,10 +40,25 @@ function stepHeading(name: string): HTMLElement {
   return screen.getByRole('heading', { level: 3, name });
 }
 
-async function goToAdministrator(user: ReturnType<typeof userEvent.setup>) {
+async function goToBackups(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: 'Next' }));
+  await user.click(screen.getByRole('button', { name: 'Next' }));
+  expect(stepHeading('Backups')).toBeVisible();
+}
+
+async function goToAdministrator(user: ReturnType<typeof userEvent.setup>) {
+  await goToBackups(user);
   await user.click(screen.getByRole('button', { name: 'Next' }));
   expect(stepHeading('Administrator')).toBeVisible();
+}
+
+/** The body of the one setup submission. */
+function submitted(fetchMock: ReturnType<typeof stubAllFetch>): unknown {
+  const calls = fetchMock.mock.calls.filter(
+    ([input, init]) => requestPath(input) === '/api/v1/setup' && init?.method === 'POST',
+  );
+  expect(calls).toHaveLength(1);
+  return JSON.parse(calls[0]?.[1]?.body as string);
 }
 
 async function fillAndSubmit(
@@ -124,7 +147,7 @@ describe('the media step', () => {
 
     expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
     await user.click(screen.getByRole('button', { name: 'Next' }));
-    expect(stepHeading('Administrator')).toBeVisible();
+    expect(stepHeading('Backups')).toBeVisible();
   });
 
   it('goes back to the storage step', async () => {
@@ -138,7 +161,7 @@ describe('the media step', () => {
 });
 
 describe('the backup step', () => {
-  it('is shown in the steps, before the administrator, and skipped', async () => {
+  it('is the third step, and shows the defaults and the data folder with the shared-disk warning', async () => {
     const user = userEvent.setup();
     const { container } = renderWizard();
 
@@ -146,10 +169,111 @@ describe('the backup step', () => {
       (label) => label.textContent,
     );
     expect(labels).toEqual(['Storage', 'Media', 'Backups', 'Administrator']);
-    expect(screen.getByText('Skipped for now')).toBeVisible();
 
+    await goToBackups(user);
+    expect(stepHeading('Backups')).toHaveFocus();
+    expect(screen.getByTestId('backup-step-schedule')).toHaveTextContent('Daily at 03:00, keep 7');
+    expect(screen.getByTestId('backup-step-location')).toHaveTextContent(
+      'the data folder (/data/backups)',
+    );
+    expect(screen.getByText(BACKUP_SHARED_DISK_TITLE)).toBeVisible();
+    // The fields stay closed until the owner asks to change the schedule.
+    expect(screen.queryByLabelText(/^Scheduled backups to keep/)).not.toBeInTheDocument();
+  });
+
+  it('shows the backup folder, without a warning, when one is mounted', async () => {
+    const user = userEvent.setup();
+    renderWizard({
+      ...ready,
+      backups: { ...dataFolderBackups, destination: 'mount', sharesDiskWithData: false },
+    });
+
+    await goToBackups(user);
+    expect(screen.getByTestId('backup-step-location')).toHaveTextContent(
+      'the backup folder (/backup)',
+    );
+    expect(screen.queryByText(BACKUP_SHARED_DISK_TITLE)).not.toBeInTheDocument();
+  });
+
+  it('sends the accepted defaults with the administrator', async () => {
+    const fetchMock = stubAllFetch().mockResolvedValue(
+      jsonResponse(201, { id: '0199a1b2-0000-7000-8000-000000000000', username: 'owner' }),
+    );
+    const user = userEvent.setup();
+    renderWizard();
     await goToAdministrator(user);
-    expect(screen.queryByRole('heading', { level: 3, name: 'Backups' })).not.toBeInTheDocument();
+
+    await fillAndSubmit(user, 'owner', 'correct horse battery', 'correct horse battery');
+
+    await waitFor(() => {
+      expect(submitted(fetchMock)).toMatchObject({
+        backupSchedule: { enabled: true, frequency: 'daily', time: '03:00', keep: 7 },
+      });
+    });
+  });
+
+  it('sends a changed schedule, and keeps it when the owner comes back to the step', async () => {
+    const fetchMock = stubAllFetch().mockResolvedValue(
+      jsonResponse(201, { id: '0199a1b2-0000-7000-8000-000000000000', username: 'owner' }),
+    );
+    const user = userEvent.setup();
+    renderWizard();
+    await goToBackups(user);
+
+    await user.click(screen.getByRole('button', { name: 'Change the schedule' }));
+    await user.click(screen.getByRole('radio', { name: 'Weekly, on Sundays' }));
+    const keep = screen.getByLabelText(/^Scheduled backups to keep/);
+    await user.clear(keep);
+    await user.type(keep, '14');
+    expect(screen.getByTestId('backup-step-schedule')).toHaveTextContent(
+      'Weekly on Sunday at 03:00, keep 14',
+    );
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await user.click(screen.getByRole('button', { name: 'Back' }));
+    expect(screen.getByTestId('backup-step-schedule')).toHaveTextContent(
+      'Weekly on Sunday at 03:00, keep 14',
+    );
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+
+    await fillAndSubmit(user, 'owner', 'correct horse battery', 'correct horse battery');
+
+    await waitFor(() => {
+      expect(submitted(fetchMock)).toMatchObject({
+        backupSchedule: { enabled: true, frequency: 'weekly', time: '03:00', keep: 14 },
+      });
+    });
+  });
+
+  it('refuses a number kept outside 1 to 365 and stays on the step', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await goToBackups(user);
+    await user.click(screen.getByRole('button', { name: 'Change the schedule' }));
+
+    const keep = screen.getByLabelText(/^Scheduled backups to keep/);
+    await user.clear(keep);
+    await user.type(keep, '400');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+
+    expect(screen.getByText('Keep from 1 to 365 backups.')).toBeVisible();
+    expect(keep).toHaveAttribute('aria-invalid', 'true');
+    expect(stepHeading('Backups')).toBeVisible();
+  });
+
+  it('goes back to the backup step with its errors when the API refuses the schedule', async () => {
+    stubAllFetch().mockResolvedValue(
+      problem(422, 'validation_failed', {
+        errors: { 'backupSchedule.keep': ['Keep from 1 to 365 backups.'] },
+      }),
+    );
+    const user = userEvent.setup();
+    renderWizard();
+    await goToAdministrator(user);
+
+    await fillAndSubmit(user, 'owner', 'correct horse battery', 'correct horse battery');
+
+    expect(await screen.findByRole('heading', { level: 3, name: 'Backups' })).toBeVisible();
+    expect(screen.getByText('Keep from 1 to 365 backups.')).toBeVisible();
   });
 });
 
@@ -167,14 +291,11 @@ describe('the administrator step', () => {
     await waitFor(() => {
       expect(onComplete).toHaveBeenCalledTimes(1);
     });
-    const [input, init] = fetchMock.mock.calls[0] ?? [];
-    expect(input && requestPath(input)).toBe('/api/v1/setup');
-    expect(init?.method).toBe('POST');
-    expect(typeof init?.body).toBe('string');
-    expect(JSON.parse(init?.body as string)).toEqual({
+    expect(submitted(fetchMock)).toEqual({
       username: 'owner',
       password: 'correct horse battery',
       passwordConfirmation: 'correct horse battery',
+      backupSchedule: { enabled: true, frequency: 'daily', time: '03:00', keep: 7 },
     });
   });
 
@@ -245,12 +366,12 @@ describe('the administrator step', () => {
     expect(screen.getByLabelText('Username', { exact: false })).toHaveValue('owner');
   });
 
-  it('goes back to the media step', async () => {
+  it('goes back to the backup step', async () => {
     const user = userEvent.setup();
     renderWizard();
     await goToAdministrator(user);
 
     await user.click(screen.getByRole('button', { name: 'Back' }));
-    expect(stepHeading('Media library')).toBeVisible();
+    expect(stepHeading('Backups')).toBeVisible();
   });
 });

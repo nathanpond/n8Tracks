@@ -1,7 +1,14 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import { formatSize, type Backup, type BackupList } from '../api/backups';
+import {
+  DEFAULT_SCHEDULE,
+  formatSize,
+  type Backup,
+  type BackupList,
+  type BackupScheduleRecord,
+  type BackupScheduleStatus,
+} from '../api/backups';
 import { ANTIFORGERY_HEADER } from '../api/session';
 import { formatDateTime } from '../api/timeZone';
 import { healthyReport, jsonResponse, renderApp, requestPath, stubFetch } from '../test/helpers';
@@ -49,8 +56,22 @@ const created: Backup = {
   status: 'valid',
 };
 
+const schedule: BackupScheduleStatus = {
+  ...DEFAULT_SCHEDULE,
+  nextAt: '2026-10-06T03:00:00Z',
+  lastAttempt: null,
+};
+
 function list(items: Backup[], change: Partial<BackupList> = {}): BackupList {
-  return { destination: 'mount', sharesDiskWithData: false, activeJobId: null, items, ...change };
+  return {
+    destination: 'mount',
+    sharesDiskWithData: false,
+    activeJobId: null,
+    items,
+    lastSuccessAt: items.find((item) => item.status === 'valid')?.createdAt ?? null,
+    schedule,
+    ...change,
+  };
 }
 
 function job(status: string, progress: number, extra: Record<string, unknown> = {}) {
@@ -75,9 +96,15 @@ function job(status: string, progress: number, extra: Record<string, unknown> = 
  */
 function backend(
   initial: BackupList,
-  options: { jobs?: unknown[]; start?: () => Response; onStart?: () => void } = {},
+  options: {
+    jobs?: unknown[];
+    start?: () => Response;
+    onStart?: () => void;
+    put?: (body: Record<string, unknown>, ifMatch: string | null) => Response;
+  } = {},
 ) {
-  const state = { list: initial, jobs: [...(options.jobs ?? [])] };
+  const firstSchedule: BackupScheduleRecord = { ...DEFAULT_SCHEDULE, revision: 1 };
+  const state = { list: initial, jobs: [...(options.jobs ?? [])], schedule: firstSchedule };
   const mock = stubFetch();
   mock.mockImplementation((input, init) => {
     const path = requestPath(input);
@@ -87,6 +114,21 @@ function backend(
     }
     if (method === 'GET' && path.endsWith('/api/v1/backups')) {
       return Promise.resolve(jsonResponse(200, state.list));
+    }
+    if (path.endsWith('/api/v1/settings/backup-schedule')) {
+      if (method === 'GET') {
+        return Promise.resolve(jsonResponse(200, state.schedule));
+      }
+      const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+      const ifMatch = new Headers(init?.headers).get('If-Match');
+      if (options.put) {
+        return Promise.resolve(options.put(body, ifMatch));
+      }
+      state.schedule = {
+        ...(body as unknown as BackupScheduleRecord),
+        revision: state.schedule.revision + 1,
+      };
+      return Promise.resolve(jsonResponse(200, state.schedule));
     }
     if (method === 'POST' && path.endsWith('/api/v1/backups')) {
       options.onStart?.();
@@ -312,5 +354,188 @@ describe('Settings → Backups', () => {
     expect(deletes).toHaveLength(1);
     expect(new Headers(deletes[0]?.[1]?.headers).get(ANTIFORGERY_HEADER)).toBe('1');
     expect(row(valid.name)).toBeInTheDocument();
+  });
+});
+
+describe('Settings → Backups: the schedule', () => {
+  function scheduleStatus(): HTMLElement {
+    return screen.getByTestId('backup-schedule-status');
+  }
+
+  it('shows the schedule, the last successful backup, and the next planned time in the configured zone', async () => {
+    backend(list([valid]));
+
+    renderApp('/settings/backups');
+
+    expect(await screen.findByRole('heading', { level: 3, name: 'Schedule' })).toBeVisible();
+    await within(scheduleStatus()).findByText('Daily at 03:00, keep 7');
+    expect(screen.getByTestId('last-success')).toHaveTextContent(
+      formatDateTime(valid.createdAt, 'UTC'),
+    );
+    expect(screen.getByTestId('next-planned')).toHaveTextContent(
+      formatDateTime('2026-10-06T03:00:00Z', 'UTC'),
+    );
+    expect(within(scheduleStatus()).getByText('Times are in UTC.')).toBeVisible();
+
+    // The form starts from the stored schedule.
+    const form = await screen.findByRole('form', { name: 'Backup schedule' });
+    expect(within(form).getByRole('switch', { name: 'Back up on a schedule' })).toBeChecked();
+    expect(within(form).getByRole('radio', { name: 'Daily' })).toBeChecked();
+    expect(within(form).getByLabelText(/^Time of day/)).toHaveValue('03:00');
+    expect(within(form).getByLabelText(/^Scheduled backups to keep/)).toHaveValue('7');
+  });
+
+  it('shows a failed scheduled backup with its reason and the pending retry', async () => {
+    backend(
+      list([valid], {
+        schedule: {
+          ...schedule,
+          lastAttempt: {
+            outcome: 'failed',
+            startedAt: '2026-10-05T03:00:00Z',
+            finishedAt: '2026-10-05T03:00:09Z',
+            error: 'System.IO.IOException: The backup disk is full.',
+            retryAt: '2026-10-05T04:00:09Z',
+          },
+        },
+      }),
+    );
+
+    renderApp('/settings/backups');
+
+    expect(await screen.findByText('The latest scheduled backup failed')).toBeVisible();
+    expect(within(scheduleStatus()).getByText(/The backup disk is full/)).toBeVisible();
+    expect(
+      within(scheduleStatus()).getByText(
+        new RegExp(`tried once more at ${formatDateTime('2026-10-05T04:00:09Z', 'UTC')}`),
+      ),
+    ).toBeVisible();
+    expect(within(scheduleStatus()).getByText(/Earlier backups were left/)).toBeVisible();
+    expect(row(valid.name)).toBeInTheDocument();
+  });
+
+  it('says a failed retry waits for the next planned time, and shows a running or successful attempt', async () => {
+    const failedRetry = list([], {
+      schedule: {
+        ...schedule,
+        lastAttempt: {
+          outcome: 'failed',
+          startedAt: '2026-10-05T04:00:09Z',
+          finishedAt: '2026-10-05T04:00:12Z',
+          error: 'disk full',
+          retryAt: null,
+        },
+      },
+    });
+    const { state } = backend(failedRetry);
+    const view = renderApp('/settings/backups');
+    expect(await screen.findByText(/The next attempt is at the next planned time/)).toBeVisible();
+    view.unmount();
+
+    state.list = list([], {
+      schedule: {
+        ...schedule,
+        lastAttempt: {
+          outcome: 'running',
+          startedAt: '2026-10-06T03:00:00Z',
+          finishedAt: null,
+          error: null,
+          retryAt: null,
+        },
+      },
+    });
+    const running = renderApp('/settings/backups');
+    expect(await screen.findByText(/A scheduled backup is running/)).toBeVisible();
+    running.unmount();
+
+    state.list = list([], {
+      schedule: {
+        ...schedule,
+        enabled: false,
+        nextAt: null,
+        lastAttempt: {
+          outcome: 'succeeded',
+          startedAt: '2026-10-06T03:00:00Z',
+          finishedAt: '2026-10-06T03:00:05Z',
+          error: null,
+          retryAt: null,
+        },
+      },
+    });
+    renderApp('/settings/backups');
+    expect(await screen.findByText(/The latest scheduled backup succeeded/)).toBeVisible();
+    expect(within(scheduleStatus()).getByText('Off')).toBeVisible();
+    expect(screen.queryByTestId('next-planned')).not.toBeInTheDocument();
+    expect(screen.getByTestId('last-success')).toHaveTextContent('none yet');
+  });
+
+  it('saves a changed schedule with its revision, then reloads the page data', async () => {
+    const user = userEvent.setup();
+    const { mock } = backend(list([valid]));
+
+    renderApp('/settings/backups');
+    const form = await screen.findByRole('form', { name: 'Backup schedule' });
+    await user.click(within(form).getByRole('radio', { name: 'Weekly, on Sundays' }));
+    const time = within(form).getByLabelText(/^Time of day/);
+    await user.clear(time);
+    await user.type(time, '22:15');
+    const keep = within(form).getByLabelText(/^Scheduled backups to keep/);
+    await user.clear(keep);
+    await user.type(keep, '30');
+    const listsBefore = calls(mock, 'GET', '/api/v1/backups').length;
+    await user.click(within(form).getByRole('button', { name: 'Save schedule' }));
+
+    expect(
+      await within(screen.getByTestId('schedule-save-status')).findByText('Schedule saved.'),
+    ).toBeVisible();
+    const puts = calls(mock, 'PUT', '/api/v1/settings/backup-schedule');
+    expect(puts).toHaveLength(1);
+    const headers = new Headers(puts[0]?.[1]?.headers);
+    expect(headers.get('If-Match')).toBe('"1"');
+    expect(headers.get(ANTIFORGERY_HEADER)).toBe('1');
+    expect(JSON.parse(puts[0]?.[1]?.body as string)).toEqual({
+      enabled: true,
+      frequency: 'weekly',
+      time: '22:15',
+      keep: 30,
+    });
+    await waitFor(() => {
+      expect(calls(mock, 'GET', '/api/v1/backups').length).toBeGreaterThan(listsBefore);
+    });
+  });
+
+  it('refuses a number kept outside 1 to 365 without sending it', async () => {
+    const user = userEvent.setup();
+    const { mock } = backend(list([]));
+
+    renderApp('/settings/backups');
+    const form = await screen.findByRole('form', { name: 'Backup schedule' });
+    const keep = within(form).getByLabelText(/^Scheduled backups to keep/);
+    for (const value of ['0', '366']) {
+      await user.clear(keep);
+      await user.type(keep, value);
+      await user.click(within(form).getByRole('button', { name: 'Save schedule' }));
+      expect(await within(form).findByText('Keep from 1 to 365 backups.')).toBeVisible();
+      expect(keep).toHaveAttribute('aria-invalid', 'true');
+    }
+    expect(calls(mock, 'PUT', '/api/v1/settings/backup-schedule')).toHaveLength(0);
+  });
+
+  it('shows the current schedule when it was changed elsewhere', async () => {
+    const user = userEvent.setup();
+    const current = { ...DEFAULT_SCHEDULE, keep: 12, revision: 4 };
+    backend(list([]), {
+      put: () => jsonResponse(409, { status: 409, code: 'revision_conflict', title: 'x', current }),
+    });
+
+    renderApp('/settings/backups');
+    const form = await screen.findByRole('form', { name: 'Backup schedule' });
+    const keep = within(form).getByLabelText(/^Scheduled backups to keep/);
+    await user.clear(keep);
+    await user.type(keep, '3');
+    await user.click(within(form).getByRole('button', { name: 'Save schedule' }));
+
+    expect(await screen.findByText('The schedule was changed elsewhere')).toBeVisible();
+    expect(keep).toHaveValue('12');
   });
 });

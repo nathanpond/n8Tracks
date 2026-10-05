@@ -222,6 +222,8 @@ Audio under `/media` is never included. A backup is verified before it is listed
 
 Backups go to `/backup` when it is mounted and writable, and otherwise to `backups/` in the data folder. The page then warns that the backups share a disk with the data they protect; mount `/backup` on another disk to keep them apart. The page lists the archives in both folders, and each can be downloaded or deleted. A ZIP named `n8tracks-backup-*.zip` that you copy into either folder is listed too, as invalid if its manifest cannot be read.
 
+Backups also run on a schedule: daily at 03:00 in the configured time zone (`TZ`), keeping the seven most recent scheduled backups. The setup wizard shows this and lets you change it; Settings → Backups changes it later (on or off, daily or weekly on Sundays, the time of day, and 1 to 365 kept) and shows the last successful backup, the next planned one, and how the latest scheduled backup went. After each successful scheduled backup, the oldest scheduled ones beyond the number kept are deleted; manual backups are never deleted. If the app was not running at the planned time, one backup runs within a minute or two of its next start. A failed scheduled backup is retried once, an hour later, and leaves earlier backups alone. A scheduled backup that falls due while another backup runs waits for it. On the day clocks go forward, a time that does not exist runs at the next valid minute; on the day they go back, a time that happens twice runs once.
+
 **A backup contains the administrator's password hash, the sessions, and the credential hashes, because it is a full copy of the instance. Store backups as carefully as the data folder.**
 
 ### Settings

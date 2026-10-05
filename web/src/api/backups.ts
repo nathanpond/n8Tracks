@@ -1,8 +1,82 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { resolveAppUrl } from './baseUrl';
 import { apiFetch } from './client';
+import { writeWithRevision, type SaveResult } from './saves';
 
 const BACKUPS_PATH = 'api/v1/backups';
+const SCHEDULE_PATH = 'api/v1/settings/backup-schedule';
+
+export const MIN_KEEP = 1;
+export const MAX_KEEP = 365;
+
+export type BackupFrequency = 'daily' | 'weekly';
+
+/** The backup schedule's four settings. `time` is `HH:mm` in the configured time zone; weekly runs on Sundays. */
+export interface ScheduleSettings {
+  enabled: boolean;
+  frequency: BackupFrequency;
+  time: string;
+  keep: number;
+}
+
+/** The schedule as `GET /api/v1/settings/backup-schedule` answers it, with its revision. */
+export interface BackupScheduleRecord extends ScheduleSettings {
+  revision: number;
+}
+
+/** The latest scheduled attempt. Times are UTC ISO 8601. */
+export interface BackupAttempt {
+  outcome: 'running' | 'succeeded' | 'failed';
+  startedAt: string;
+  finishedAt: string | null;
+  error: string | null;
+  /** When a first failure's one retry runs; null when none is pending. */
+  retryAt: string | null;
+}
+
+/** The schedule as the Backups page shows it. */
+export interface BackupScheduleStatus extends ScheduleSettings {
+  /** The next planned time; null when scheduling is off. */
+  nextAt: string | null;
+  lastAttempt: BackupAttempt | null;
+}
+
+/** The defaults: on, daily at 03:00, keeping seven. */
+export const DEFAULT_SCHEDULE: ScheduleSettings = {
+  enabled: true,
+  frequency: 'daily',
+  time: '03:00',
+  keep: 7,
+};
+
+const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/** The client-side checks of a schedule, keyed by field, as the API words them. Empty when valid. */
+export function scheduleErrors(
+  settings: Omit<ScheduleSettings, 'keep'> & { keep: number | string },
+): Partial<Record<keyof ScheduleSettings, string>> {
+  const errors: Partial<Record<keyof ScheduleSettings, string>> = {};
+  if (!TIME_PATTERN.test(settings.time)) {
+    errors.time = 'Enter a time of day as HH:mm, from 00:00 to 23:59.';
+  }
+  const keep = settings.keep;
+  if (typeof keep !== 'number' || !Number.isInteger(keep) || keep < MIN_KEEP || keep > MAX_KEEP) {
+    errors.keep = `Keep from ${String(MIN_KEEP)} to ${String(MAX_KEEP)} backups.`;
+  }
+  return errors;
+}
+
+/** The schedule in a few words: "Daily at 03:00, keep 7", or "Off". */
+export function describeSchedule(settings: ScheduleSettings): string {
+  if (!settings.enabled) {
+    return 'Off';
+  }
+  const when =
+    settings.frequency === 'weekly'
+      ? `Weekly on Sunday at ${settings.time}`
+      : `Daily at ${settings.time}`;
+  return `${when}, keep ${String(settings.keep)}`;
+}
 
 /** How often a running backup's job is read. */
 export const BACKUP_POLL_MS = 1_000;
@@ -39,12 +113,17 @@ export interface Backup {
   status: BackupStatus;
 }
 
-/** The Backups page's data: where the next backup goes, the one in progress, and every archive. */
+/**
+ * The Backups page's data: where the next backup goes, the one in progress, every archive, the
+ * newest valid one of any kind, and the schedule's state.
+ */
 export interface BackupList {
   destination: BackupLocation;
   sharesDiskWithData: boolean;
   activeJobId: string | null;
   items: Backup[];
+  lastSuccessAt: string | null;
+  schedule: BackupScheduleStatus;
 }
 
 /** A backup job as `GET /api/v1/jobs/{id}` answers it, the fields the page reads. */
@@ -82,6 +161,40 @@ export function isBackup(value: unknown): value is Backup {
   );
 }
 
+export function isScheduleSettings(value: unknown): value is ScheduleSettings {
+  return (
+    isRecord(value) &&
+    typeof value.enabled === 'boolean' &&
+    (value.frequency === 'daily' || value.frequency === 'weekly') &&
+    typeof value.time === 'string' &&
+    typeof value.keep === 'number'
+  );
+}
+
+function isScheduleRecord(value: unknown): value is BackupScheduleRecord {
+  return isScheduleSettings(value) && isRecord(value) && typeof value.revision === 'number';
+}
+
+function isAttempt(value: unknown): value is BackupAttempt {
+  return (
+    isRecord(value) &&
+    (value.outcome === 'running' || value.outcome === 'succeeded' || value.outcome === 'failed') &&
+    typeof value.startedAt === 'string' &&
+    isNullableString(value.finishedAt) &&
+    isNullableString(value.error) &&
+    isNullableString(value.retryAt)
+  );
+}
+
+function isScheduleStatus(value: unknown): value is BackupScheduleStatus {
+  return (
+    isScheduleSettings(value) &&
+    isRecord(value) &&
+    isNullableString(value.nextAt) &&
+    (value.lastAttempt === null || isAttempt(value.lastAttempt))
+  );
+}
+
 export function isBackupList(value: unknown): value is BackupList {
   return (
     isRecord(value) &&
@@ -89,7 +202,9 @@ export function isBackupList(value: unknown): value is BackupList {
     typeof value.sharesDiskWithData === 'boolean' &&
     isNullableString(value.activeJobId) &&
     Array.isArray(value.items) &&
-    value.items.every(isBackup)
+    value.items.every(isBackup) &&
+    isNullableString(value.lastSuccessAt) &&
+    isScheduleStatus(value.schedule)
   );
 }
 
@@ -260,4 +375,62 @@ export function useBackupJob(
   }, [jobId]);
 
   return seen !== null && seen.jobId === jobId ? seen.job : null;
+}
+
+export type BackupScheduleState =
+  { phase: 'loading' } | { phase: 'error' } | { phase: 'ready'; record: BackupScheduleRecord };
+
+/** The schedule with its revision, loaded once and again on `reload`; `replace` sets what a save answered. */
+export function useBackupSchedule(): {
+  state: BackupScheduleState;
+  reload: () => void;
+  replace: (record: BackupScheduleRecord) => void;
+} {
+  const [state, setState] = useState<BackupScheduleState>({ phase: 'loading' });
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const load = async () => {
+      try {
+        const response = await apiFetch(SCHEDULE_PATH, { signal: controller.signal });
+        const answer = await body(response);
+        if (controller.signal.aborted) {
+          return;
+        }
+        setState(
+          response.ok && isScheduleRecord(answer)
+            ? { phase: 'ready', record: answer }
+            : { phase: 'error' },
+        );
+      } catch {
+        if (!controller.signal.aborted) {
+          setState({ phase: 'error' });
+        }
+      }
+    };
+    void load();
+    return () => {
+      controller.abort();
+    };
+  }, [attempt]);
+
+  const reload = useCallback(() => {
+    setAttempt((previous) => previous + 1);
+  }, []);
+  const replace = useCallback((record: BackupScheduleRecord) => {
+    setState({ phase: 'ready', record });
+  }, []);
+
+  return { state, reload, replace };
+}
+
+/** Replaces the schedule, based on `revision`. */
+export function saveBackupSchedule(
+  revision: number,
+  settings: ScheduleSettings,
+): Promise<SaveResult<BackupScheduleRecord>> {
+  return writeWithRevision('PUT', SCHEDULE_PATH, revision, { ...settings }, (answer) =>
+    isScheduleRecord(answer) ? answer : undefined,
+  );
 }

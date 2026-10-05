@@ -29,6 +29,34 @@ public interface IBackupStorage
 
     /// <summary>Removes the temporary folders a backup interrupted by a restart left behind, in both folders.</summary>
     void RemoveLeftoverTemporaryFolders();
+
+    /// <summary>
+    /// Deletes each archive for retention and returns how many went. One that cannot be deleted is
+    /// logged as a warning and skipped; nothing is thrown.
+    /// </summary>
+    int DeleteForRetention(IEnumerable<BackupArchive> archives);
+}
+
+/// <summary>
+/// The stored backup schedule and the latest scheduled attempt: two rows of <c>settings</c>, so
+/// the job recording an attempt never races an administrator changing the schedule.
+/// </summary>
+public interface IBackupScheduleStore
+{
+    /// <summary>The stored schedule, or null when the instance has none yet.</summary>
+    Task<StoredBackupSchedule?> FindAsync(CancellationToken cancellationToken);
+
+    /// <summary>Writes the schedule, replacing any. Callers check the revision first, in an exclusive transaction.</summary>
+    Task WriteAsync(StoredBackupSchedule schedule, CancellationToken cancellationToken);
+
+    /// <summary>Writes the schedule only when none is stored; false when one was.</summary>
+    Task<bool> TryAddAsync(StoredBackupSchedule schedule, CancellationToken cancellationToken);
+
+    /// <summary>The latest scheduled attempt, or null when there has been none.</summary>
+    Task<BackupAttempt?> FindAttemptAsync(CancellationToken cancellationToken);
+
+    /// <summary>Writes the latest scheduled attempt, replacing the one before.</summary>
+    Task WriteAttemptAsync(BackupAttempt attempt, CancellationToken cancellationToken);
 }
 
 /// <summary>Builds, verifies, and moves into place one backup archive.</summary>

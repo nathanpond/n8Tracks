@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { isScheduleSettings, type BackupLocation, type ScheduleSettings } from './backups';
 import { resolveAppUrl } from './baseUrl';
 
 export const SETUP_TIMEOUT_MS = 10_000;
@@ -6,17 +7,27 @@ export const SETUP_TIMEOUT_MS = 10_000;
 const STATUS_PATH = 'api/v1/setup/status';
 const SUBMIT_PATH = 'api/v1/setup';
 
+/** Where backups would be written now, and the schedule the backup step starts from. */
+export interface SetupBackups {
+  destination: BackupLocation;
+  sharesDiskWithData: boolean;
+  defaults: ScheduleSettings;
+}
+
 /** Where setup stands. The checks are present only while setup is incomplete. */
 export interface SetupStatus {
   complete: boolean;
   storage?: { writable: boolean };
   media?: { available: boolean };
+  backups?: SetupBackups;
 }
 
 export interface SetupSubmission {
   username: string;
   password: string;
   passwordConfirmation: string;
+  /** The backup step's choices; the API stores the defaults when they are missing. */
+  backupSchedule?: ScheduleSettings;
 }
 
 /** How a submission ended, by the API's answer. */
@@ -40,12 +51,22 @@ function hasBoolean(value: unknown, key: string): boolean {
   return isRecord(value) && typeof value[key] === 'boolean';
 }
 
+function isSetupBackups(value: unknown): value is SetupBackups {
+  return (
+    isRecord(value) &&
+    (value.destination === 'mount' || value.destination === 'data') &&
+    typeof value.sharesDiskWithData === 'boolean' &&
+    isScheduleSettings(value.defaults)
+  );
+}
+
 export function isSetupStatus(value: unknown): value is SetupStatus {
   return (
     isRecord(value) &&
     typeof value.complete === 'boolean' &&
     (value.storage === undefined || hasBoolean(value.storage, 'writable')) &&
-    (value.media === undefined || hasBoolean(value.media, 'available'))
+    (value.media === undefined || hasBoolean(value.media, 'available')) &&
+    (value.backups === undefined || isSetupBackups(value.backups))
   );
 }
 

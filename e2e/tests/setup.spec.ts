@@ -77,10 +77,25 @@ test.describe('first-run setup', { tag: '@root-only' }, () => {
     await expect(page.getByText('available', { exact: true })).toBeVisible();
     await expectAccessibleInLightAndDark(page);
 
-    // The backup step is skipped: the next step is the administrator.
+    // The backup step: the defaults (daily, keep 7) and where backups go. No backup folder is
+    // mounted, so they go to the data folder and the step warns about the shared disk.
+    await page.getByRole('button', { name: 'Next' }).click();
+    await expect(stepHeading(page, 'Backups')).toBeVisible();
+    await expect(page.getByTestId('backup-step-schedule')).toHaveText('Daily at 03:00, keep 7');
+    await expect(page.getByTestId('backup-step-location')).toHaveText(
+      'the data folder (/data/backups)',
+    );
+    await expect(page.getByText('Backups will share a disk with your data')).toBeVisible();
+    await expectAccessibleInLightAndDark(page);
+
+    // The owner can open the fields; accepting them as they are keeps the defaults.
+    await page.getByRole('button', { name: 'Change the schedule' }).click();
+    await expect(page.getByLabel(/^Scheduled backups to keep/)).toHaveValue('7');
+    await expectAccessibleInLightAndDark(page);
+
+    // Accept: the next step is the administrator.
     await page.getByRole('button', { name: 'Next' }).click();
     await expect(stepHeading(page, 'Administrator')).toBeVisible();
-    await expect(page.getByText('Skipped for now')).toBeVisible();
     await expectAccessibleInLightAndDark(page);
 
     // A refused submission shows its field errors (the API checks the confirmation).
@@ -104,6 +119,14 @@ test.describe('first-run setup', { tag: '@root-only' }, () => {
     await expect(page.getByRole('heading', { level: 2, name: 'Songs' })).toBeVisible();
     await expect(userMenu(page)).toHaveText(OWNER.username);
     await expect(page).toHaveURL(`${FRESH_URL}songs`);
+    await expectAccessibleInLightAndDark(page);
+
+    // The accepted schedule is stored: Settings → Backups shows it, with no backup yet.
+    await page.goto(`${FRESH_URL}settings/backups`);
+    const schedule = page.getByTestId('backup-schedule-status');
+    await expect(schedule.getByText('Daily at 03:00, keep 7')).toBeVisible();
+    await expect(page.getByTestId('last-success')).toHaveText('none yet');
+    await expect(page.getByTestId('next-planned')).toBeVisible();
     await expectAccessibleInLightAndDark(page);
 
     // 5. Reload any URL: the wizard does not come back.

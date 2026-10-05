@@ -25,6 +25,7 @@ import {
 } from '../api/backups';
 import { formatDateTime, useConfiguredTimeZone } from '../api/timeZone';
 import { Notice } from '../components/Notice';
+import { BackupSchedulePanel } from './BackupSchedulePanel';
 
 const FAILED_MESSAGE = 'Check your connection and try again.';
 
@@ -33,6 +34,12 @@ export const SHARED_DISK_TITLE = 'Backups share a disk with your data';
 const LOCATION_LABELS: Record<BackupLocation, string> = {
   mount: 'Backup folder',
   data: 'Data folder',
+};
+
+const KIND_LABELS: Record<string, string> = {
+  manual: 'Manual',
+  scheduled: 'Scheduled',
+  safety: 'Safety',
 };
 
 const STATUS_LABELS: Record<BackupStatus, string> = {
@@ -195,6 +202,11 @@ function BackupTable({
               <Table.Th scope="row">
                 <Stack gap={0}>
                   <Text size="sm">{formatDateTime(backup.createdAt, timeZone)}</Text>
+                  <Text size="xs" c="var(--n8-color-secondary-text)" data-testid="backup-kind">
+                    {backup.kind === null
+                      ? 'Unknown kind'
+                      : (KIND_LABELS[backup.kind] ?? backup.kind)}
+                  </Text>
                   <Text size="xs" c="var(--n8-color-secondary-text)">
                     {backup.name}
                   </Text>
@@ -240,8 +252,9 @@ function BackupTable({
 }
 
 /**
- * Settings → Backups: back up the whole instance now, follow the job, and download or delete the
- * archives in the backup folder and the data folder. A backup still being written is not listed.
+ * Settings → Backups: back up the whole instance now, follow the job, see and change the schedule,
+ * and download or delete the archives in the backup folder and the data folder. A backup still
+ * being written is not listed.
  */
 export function BackupsPage() {
   const { state, reload } = useBackups();
@@ -324,6 +337,13 @@ export function BackupsPage() {
         </Button>
       </Group>
       <BackupProgress job={job} outcome={outcome} />
+
+      <BackupSchedulePanel
+        status={state.phase === 'ready' ? state.list.schedule : null}
+        lastSuccessAt={state.phase === 'ready' ? state.list.lastSuccessAt : null}
+        timeZone={timeZone}
+        onSaved={reload}
+      />
 
       {state.phase === 'loading' && <Loader aria-label="Loading backups" />}
       {state.phase === 'error' && (

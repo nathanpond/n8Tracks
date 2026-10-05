@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.Net.Http.Headers;
 using n8Tracks.Api.Problems;
+using n8Tracks.Application.Backups;
 using n8Tracks.Application.Setup;
 
 namespace n8Tracks.Api.Endpoints;
@@ -49,7 +50,10 @@ internal static class SetupEndpoints
         return TypedResults.Ok(new SetupStatusResponse(
             status.Complete,
             status.StorageWritable is { } writable ? new StorageCheckResponse(writable) : null,
-            status.MediaAvailable is { } available ? new MediaCheckResponse(available) : null));
+            status.MediaAvailable is { } available ? new MediaCheckResponse(available) : null,
+            status.Backups is { } backups
+                ? new BackupCheckResponse(BackupsEndpoints.LocationText(backups.Location), backups.SharesDiskWithData, BackupScheduleDefaultsResponse.From(BackupSchedule.Default))
+                : null));
     }
 
     private static async Task<Results<Created<AdministratorResponse>, ProblemHttpResult>> SubmitAsync(
@@ -58,7 +62,10 @@ internal static class SetupEndpoints
         HttpContext context,
         CancellationToken cancellationToken)
     {
-        var submission = new SetupSubmission(request?.Username, request?.Password, request?.PasswordConfirmation);
+        var schedule = request?.BackupSchedule is { } backups
+            ? new BackupScheduleInput(backups.Enabled, backups.Frequency, backups.Time, backups.Keep)
+            : null;
+        var submission = new SetupSubmission(request?.Username, request?.Password, request?.PasswordConfirmation, schedule);
 
         return await setup.CompleteAsync(submission, cancellationToken) switch
         {
@@ -74,14 +81,35 @@ internal static class SetupEndpoints
     }
 }
 
-/// <summary>The setup submission. The confirmation is checked by the API, not only by the page.</summary>
-internal sealed record SetupRequest(string? Username, string? Password, string? PasswordConfirmation);
+/// <summary>
+/// The setup submission. The confirmation is checked by the API, not only by the page. The backup
+/// step's choices are optional: missing, the defaults are stored.
+/// </summary>
+internal sealed record SetupRequest(string? Username, string? Password, string? PasswordConfirmation, BackupScheduleRequest? BackupSchedule);
 
 /// <summary>Fixed answers only: never a path or an error text. The checks are left out once setup is complete.</summary>
 internal sealed record SetupStatusResponse(
     bool Complete,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] StorageCheckResponse? Storage,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] MediaCheckResponse? Media);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] MediaCheckResponse? Media,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] BackupCheckResponse? Backups);
+
+/// <summary>
+/// Where backups would be written (<c>mount</c> or <c>data</c>, never a path), whether that shares a
+/// disk with the data, and the default schedule the backup step offers.
+/// </summary>
+internal sealed record BackupCheckResponse(string Destination, bool SharesDiskWithData, BackupScheduleDefaultsResponse Defaults);
+
+/// <summary>A schedule with no revision: what the backup step starts from.</summary>
+internal sealed record BackupScheduleDefaultsResponse(bool Enabled, string Frequency, string Time, int Keep)
+{
+    public static BackupScheduleDefaultsResponse From(BackupSchedule schedule)
+    {
+        ArgumentNullException.ThrowIfNull(schedule);
+
+        return new(schedule.Enabled, BackupSchedule.FrequencyText(schedule.Frequency), BackupSchedule.TimeText(schedule.Time), schedule.Keep);
+    }
+}
 
 internal sealed record StorageCheckResponse(bool Writable);
 

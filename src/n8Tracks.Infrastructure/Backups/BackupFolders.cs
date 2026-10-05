@@ -130,6 +130,29 @@ internal sealed partial class BackupFolders(N8TracksOptions options, ILogger<Bac
         }
     }
 
+    public int DeleteForRetention(IEnumerable<BackupArchive> archives)
+    {
+        ArgumentNullException.ThrowIfNull(archives);
+
+        var deleted = 0;
+        foreach (var archive in archives)
+        {
+            try
+            {
+                if (Delete(archive))
+                {
+                    deleted++;
+                }
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                LogRetentionDeleteFailed(logger, exception, archive.Location, archive.Name);
+            }
+        }
+
+        return deleted;
+    }
+
     /// <summary>Whether <paramref name="name"/> could name an archive: the prefix and extension, and nothing that is a path.</summary>
     public static bool IsCandidateName(string name) =>
         name.StartsWith(ArchivePrefix, StringComparison.Ordinal)
@@ -252,6 +275,9 @@ internal sealed partial class BackupFolders(N8TracksOptions options, ILogger<Bac
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Could not remove a temporary backup folder")]
     private static partial void LogCleanupFailed(ILogger logger, Exception exception);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Retention could not delete backup {BackupLocation} {BackupName}; it is tried again after the next scheduled backup")]
+    private static partial void LogRetentionDeleteFailed(ILogger logger, Exception exception, BackupLocation backupLocation, string backupName);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Could not list a backup folder")]
     private static partial void LogListFailed(ILogger logger, Exception exception);

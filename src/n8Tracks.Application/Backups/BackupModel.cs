@@ -16,7 +16,7 @@ public enum BackupKind
     /// <summary>"Back up now".</summary>
     Manual,
 
-    /// <summary>Made on the schedule (a later story).</summary>
+    /// <summary>Made on the schedule; retention deletes the oldest beyond the number kept.</summary>
     Scheduled,
 
     /// <summary>Made just before a restore or an upgrade (later stories); the three most recent are kept.</summary>
@@ -69,7 +69,14 @@ public sealed record BackupDestination(BackupLocation Location, string Path)
 /// <param name="Destination">Where the next backup would go.</param>
 /// <param name="ActiveJobId">The backup job that is queued or running, or null.</param>
 /// <param name="Archives">Every archive in both folders, newest first.</param>
-public sealed record BackupListing(BackupLocation Destination, bool SharesDiskWithData, Guid? ActiveJobId, IReadOnlyList<BackupArchive> Archives);
+public sealed record BackupListing(BackupLocation Destination, bool SharesDiskWithData, Guid? ActiveJobId, IReadOnlyList<BackupArchive> Archives)
+{
+    /// <summary>When the newest valid archive of any kind was made, or null when there is none.</summary>
+    public DateTimeOffset? LastSuccessUtc =>
+        Archives.Where(static archive => archive.Validity == BackupValidity.Valid)
+            .Select(static archive => (DateTimeOffset?)archive.CreatedUtc)
+            .Max();
+}
 
 /// <summary>A finished, verified archive, as the job reports it.</summary>
 public sealed record CreatedBackup(BackupLocation Location, string Name, long SizeBytes);
