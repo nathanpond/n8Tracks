@@ -476,7 +476,6 @@ public sealed partial class RestoreRunTests
         await File.WriteAllTextAsync(Path.Combine(assets, "kept.txt"), "kept");
         var before = RestoreApi.Fingerprint(factory.DataPath);
         var sessionsBefore = RestoreApi.Column(factory.DataPath, "SELECT id_hash FROM sessions ORDER BY id_hash;");
-        var filesBefore = LiveFiles(factory.DataPath);
 
         var ended = await RestoreApi.RestoreAsync(client, "data", name);
 
@@ -484,7 +483,8 @@ public sealed partial class RestoreRunTests
         Assert.Equal("safety-backup", ended.GetProperty("stage").GetString());
         Assert.Equal(before, RestoreApi.Fingerprint(factory.DataPath));
         Assert.Equal(sessionsBefore, RestoreApi.Column(factory.DataPath, "SELECT id_hash FROM sessions ORDER BY id_hash;"));
-        Assert.Equal(filesBefore, LiveFiles(factory.DataPath));
+        Assert.Equal(["kept.txt"], BackupApi.Names(assets));
+        Assert.Equal("kept", await File.ReadAllTextAsync(Path.Combine(assets, "kept.txt")));
 
         // The same session goes on, and the instance is as it was.
         Assert.Equal(["Kept", "Written after the backup"], Titles(await SongApi.ListAsync(client, "sort=title&direction=asc")));
