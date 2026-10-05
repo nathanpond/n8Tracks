@@ -443,6 +443,59 @@ public sealed partial class RestoreRunTests
         Assert.False((await SetupApi.JsonAsync(status)).GetProperty("complete").GetBoolean());
     }
 
+    /// <summary>
+    /// A safety backup that cannot be taken (the writer fails) or fails its verification stops the
+    /// restore before anything is replaced: the outcome is failed at the safety-backup stage, every
+    /// row, asset, and session is as it was, no note of a restore is kept, no safety archive or
+    /// journal is left, and the API opens again to the same session.
+    /// </summary>
+    [Theory]
+    [InlineData("verification")]
+    [InlineData("write")]
+    public async Task ARestoreWhoseSafetyBackupFailsChangesNothingAndReopens(string failure)
+    {
+        MaintenanceMode? maintenance = null;
+        var hooks = new BackupTestHooks
+        {
+            // Only the safety backup runs while maintenance is active.
+            AfterDatabaseCopy = (_, _) => maintenance is { IsActive: true }
+                ? throw (failure == "verification"
+                    ? new BackupVerificationException("The backup failed verification (test hook).")
+                    : new IOException("The backup folder refused the archive (test hook)."))
+                : Task.CompletedTask,
+        };
+        using var factory = RestoreApi.Host(hooks);
+        maintenance = factory.Services.GetRequiredService<MaintenanceMode>();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        await SongApi.CreateAsync(client, "Kept");
+        var name = (await BackupApi.BackUpAsync(client)).GetProperty("name").GetString()!;
+        await SongApi.CreateAsync(client, "Written after the backup");
+        var assets = Path.Combine(factory.DataPath, "assets");
+        Directory.CreateDirectory(assets);
+        await File.WriteAllTextAsync(Path.Combine(assets, "kept.txt"), "kept");
+        var before = RestoreApi.Fingerprint(factory.DataPath);
+        var sessionsBefore = RestoreApi.Column(factory.DataPath, "SELECT id_hash FROM sessions ORDER BY id_hash;");
+        var filesBefore = LiveFiles(factory.DataPath);
+
+        var ended = await RestoreApi.RestoreAsync(client, "data", name);
+
+        Assert.Equal("failed", ended.GetProperty("outcome").GetString());
+        Assert.Equal("safety-backup", ended.GetProperty("stage").GetString());
+        Assert.Equal(before, RestoreApi.Fingerprint(factory.DataPath));
+        Assert.Equal(sessionsBefore, RestoreApi.Column(factory.DataPath, "SELECT id_hash FROM sessions ORDER BY id_hash;"));
+        Assert.Equal(filesBefore, LiveFiles(factory.DataPath));
+
+        // The same session goes on, and the instance is as it was.
+        Assert.Equal(["Kept", "Written after the backup"], Titles(await SongApi.ListAsync(client, "sort=title&direction=asc")));
+        var list = await BackupApi.ListAsync(client);
+        Assert.Equal(JsonValueKind.Null, list.GetProperty("lastRestore").ValueKind);
+        Assert.Equal([name], list.GetProperty("items").EnumerateArray().Select(static item => item.GetProperty("name").GetString()));
+        Assert.Equal([name], BackupApi.Names(Path.Combine(factory.DataPath, "backups")));
+        Assert.False(Directory.Exists(Path.Combine(factory.DataPath, LiveDataReplacement.PreviousFolderName)));
+        Assert.Empty(BackupApi.Names(Path.Combine(factory.DataPath, RestoreArchives.WorkFolderName)));
+        await SongApi.CreateAsync(client, "After the failed restore");
+    }
+
     /// <summary>Safety backups are kept to the newest three, but the one a restore reads is never deleted.</summary>
     [Fact]
     public async Task SafetyBackupsAreKeptToTheNewestThreeButNeverTheOneRestoredFrom()
