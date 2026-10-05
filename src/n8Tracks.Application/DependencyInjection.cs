@@ -36,6 +36,7 @@ public static class DependencyInjection
         services.AddScoped<ISunoModelList>(static provider => provider.GetRequiredService<ModelCatalogService>());
         services.AddScoped<VersionDefaultsService>();
         services.AddScoped<GenreService>();
+        services.AddScoped<TagService>();
         services.AddScoped<SongService>();
         services.AddScoped<VersionService>();
         services.AddScoped<EditorRevisionService>();

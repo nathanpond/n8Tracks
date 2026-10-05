@@ -12,7 +12,14 @@ import {
 import { useState, type KeyboardEvent, type ReactNode } from 'react';
 import { createGenre, genreNameError, useGenres, type Genre } from '../api/genres';
 import type { FieldValue } from '../api/saves';
-import { readSong, SONG_NOTES_MAXIMUM_LENGTH, type Song, type SongGenre } from '../api/songs';
+import {
+  readSong,
+  SONG_NOTES_MAXIMUM_LENGTH,
+  type Song,
+  type SongGenre,
+  type SongTag,
+} from '../api/songs';
+import { createTag, tagNameError, useTags, type Tag } from '../api/tags';
 import { TokenPicker } from '../common/TokenPicker';
 import {
   focusOnMount,
@@ -21,9 +28,11 @@ import {
   useInPlaceEdit,
 } from '../common/useInPlaceEdit';
 import type { SaveOutcome } from '../common/useRevisionedSave';
+import { paletteColour } from '../theme/palette';
 import { DETAILS_PANEL_ID, DETAILS_PANEL_WIDTH } from './detailsPanelState';
 import { alphabetical, GENRES_KEY, genresValue } from './genreField';
 import { normaliseNotes, songNotesError } from './songRules';
+import { alphabeticalTags, TAGS_KEY, tagsValue } from './tagField';
 
 type SaveFields = (edit: Readonly<Record<string, FieldValue>>) => Promise<SaveOutcome>;
 
@@ -126,6 +135,114 @@ function GenresSection({
   );
 }
 
+/**
+ * The Song's Tags: chosen from the user's list with the {@link TokenPicker}, each with its colour
+ * as a swatch, or created on the spot, when the new Tag gets the next palette colour (changed in
+ * Settings → Tags). Each change saves the Song's whole new set of Tags under its revision; a Tag
+ * that no longer exists is refused, and the Song's Tags and the list are read again.
+ */
+function TagsSection({
+  song,
+  saveFields,
+  onSong,
+}: {
+  song: Song;
+  saveFields: SaveFields;
+  onSong: (song: Song) => void;
+}) {
+  const { state, reload } = useTags();
+  const [created, setCreated] = useState<Tag[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+  const listed = state.phase === 'ready' ? state.data : undefined;
+  const options =
+    listed === undefined
+      ? undefined
+      : [...listed, ...created.filter((tag) => !listed.some((known) => known.id === tag.id))];
+  const colours = new Map<string, string>([
+    ...(options ?? []).map((tag): [string, string] => [tag.id, tag.colour]),
+    ...song.tags.map((tag): [string, string] => [tag.id, tag.colour]),
+  ]);
+
+  const change = async (next: SongTag[]) => {
+    setBusy(true);
+    setError(undefined);
+    const outcome = await saveFields({ [TAGS_KEY]: tagsValue(next) });
+    const refused = outcome.kind === 'invalid' ? outcome.errors[TAGS_KEY] : undefined;
+    if (refused !== undefined) {
+      const current = await readSong(song.id);
+      if (current !== undefined) {
+        onSong(current);
+      }
+      setCreated([]);
+      reload();
+      setError(`${refused.join(' ')} The Tags have been read again.`);
+    } else {
+      setError(saveError(outcome, TAGS_KEY));
+    }
+    setBusy(false);
+  };
+
+  const create = async (name: string) => {
+    setBusy(true);
+    setError(undefined);
+    const result = await createTag(name);
+    if (result.kind !== 'created') {
+      setBusy(false);
+      setError(
+        result.kind === 'invalid'
+          ? (result.errors.name?.join(' ') ?? SAVE_FAILED_MESSAGE)
+          : SAVE_FAILED_MESSAGE,
+      );
+      return;
+    }
+    const tag = result.tag;
+    setCreated((previous) => [...previous, tag]);
+    if (song.tags.some((chosen) => chosen.id === tag.id)) {
+      setBusy(false);
+      return;
+    }
+    await change([...song.tags, { id: tag.id, name: tag.name, colour: tag.colour }]);
+  };
+
+  return (
+    <Stack gap={4}>
+      <TokenPicker
+        label="Tags"
+        noun="Tag"
+        chosen={alphabeticalTags(song.tags)}
+        options={options}
+        busy={busy}
+        error={error}
+        nameError={tagNameError}
+        colourOf={(tag) => {
+          const colour = colours.get(tag.id);
+          return colour === undefined ? undefined : paletteColour(colour);
+        }}
+        onAdd={(tag) => {
+          void change([...song.tags, { id: tag.id, name: tag.name, colour: tag.colour }]);
+        }}
+        onCreate={(name) => {
+          void create(name);
+        }}
+        onRemove={(tag) => {
+          void change(song.tags.filter((chosen) => chosen.id !== tag.id));
+        }}
+      />
+      {(state.phase === 'error' || state.phase === 'not-found') && (
+        <Group gap="xs">
+          <Text size="sm" c="var(--mantine-color-error)">
+            The Tag list could not be loaded.
+          </Text>
+          <Button variant="default" size="compact-xs" onClick={reload}>
+            Try again
+          </Button>
+        </Group>
+      )}
+    </Stack>
+  );
+}
+
 /** The Song's notes: free-form plain text, edited in place. Blur or Ctrl/Cmd+Enter saves; Escape cancels. */
 function NotesSection({
   song,
@@ -198,7 +315,7 @@ function NotesSection({
   );
 }
 
-/** What the Details panel holds for a Song: its Genres and its notes. Later stories add sections. */
+/** What the Details panel holds for a Song: its Genres, Tags, and notes. Later stories add sections. */
 export function SongDetails({
   song,
   saveFields,
@@ -211,6 +328,7 @@ export function SongDetails({
   return (
     <Stack gap="lg">
       <GenresSection song={song} saveFields={saveFields} onSong={onSong} />
+      <TagsSection song={song} saveFields={saveFields} onSong={onSong} />
       <NotesSection song={song} save={(key, value) => saveFields({ [key]: value })} />
     </Stack>
   );

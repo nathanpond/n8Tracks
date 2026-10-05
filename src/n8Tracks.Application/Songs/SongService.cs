@@ -16,9 +16,17 @@ public sealed record SongRequest(string? Title, string? Concept, IReadOnlyDictio
 
 /// <summary>
 /// A list request as the caller sent it: every value unread text, any of them missing. Each of
-/// <paramref name="Genres"/> is a Genre's ID or <see cref="SongService.NoGenre"/>.
+/// <paramref name="Genres"/> is a Genre's ID or <see cref="SongService.NoGenre"/>, and each of
+/// <paramref name="Tags"/> a Tag's ID or <see cref="SongService.NoTag"/>.
 /// </summary>
-public sealed record SongListRequest(string? Sort, string? Direction, IReadOnlyList<string?> States, string? Page, string? PageSize, IReadOnlyList<string?>? Genres = null);
+public sealed record SongListRequest(
+    string? Sort,
+    string? Direction,
+    IReadOnlyList<string?> States,
+    string? Page,
+    string? PageSize,
+    IReadOnlyList<string?>? Genres = null,
+    IReadOnlyList<string?>? Tags = null);
 
 /// <summary>How creating a Song ended.</summary>
 public abstract record SongOutcome
@@ -47,9 +55,16 @@ public readonly record struct SongEditField(bool IsSent, string? Value)
 /// <summary>
 /// An edit of a Song's details: a partial merge, so only the fields sent change. <c>StateId</c> is
 /// the unread text of a workflow state's ID. <paramref name="GenreIds"/>, when sent (not null), is
-/// the Song's whole new list of Genres, each the unread text of a Genre's ID.
+/// the Song's whole new list of Genres, each the unread text of a Genre's ID; <paramref name="TagIds"/>
+/// likewise for its Tags.
 /// </summary>
-public sealed record SongEdit(SongEditField Title, SongEditField Concept, SongEditField StateId, SongEditField Notes = default, IReadOnlyList<string?>? GenreIds = null);
+public sealed record SongEdit(
+    SongEditField Title,
+    SongEditField Concept,
+    SongEditField StateId,
+    SongEditField Notes = default,
+    IReadOnlyList<string?>? GenreIds = null,
+    IReadOnlyList<string?>? TagIds = null);
 
 /// <summary>How editing a Song ended.</summary>
 public abstract record SongUpdateOutcome
@@ -96,6 +111,7 @@ public sealed class SongService(
     ISunoModelList models,
     VersionDefaultsService defaults,
     GenreService genres,
+    TagService tags,
     IExclusiveTransaction transaction,
     TimeProvider time)
 {
@@ -105,6 +121,7 @@ public sealed class SongService(
     public const string StateIdField = "stateId";
     public const string NotesField = "notes";
     public const string GenreIdsField = "genreIds";
+    public const string TagIdsField = "tagIds";
 
     /// <summary>The list parameters, as the API spells them.</summary>
     public const string SortParameter = "sort";
@@ -116,6 +133,11 @@ public sealed class SongService(
 
     /// <summary>The <see cref="GenreParameter"/> value that matches Songs with no Genre.</summary>
     public const string NoGenre = "none";
+
+    public const string TagParameter = "tag";
+
+    /// <summary>The <see cref="TagParameter"/> value that matches Songs with no Tag.</summary>
+    public const string NoTag = "none";
 
     public const string SortUpdated = "updated";
     public const string SortTitle = "title";
@@ -197,11 +219,11 @@ public sealed class SongService(
     }
 
     /// <summary>
-    /// Edits a Song's title, concept, workflow state, notes, or Genres, given the revision the caller
-    /// read. Only the fields sent change: the title follows the creation rule, a null or blank
+    /// Edits a Song's title, concept, workflow state, notes, Genres, or Tags, given the revision the
+    /// caller read. Only the fields sent change: the title follows the creation rule, a null or blank
     /// concept or notes clears them, the state may be any state, hidden ones included, so a Song can
-    /// move from any state to any other, and the Genres sent replace the Song's (each must be a
-    /// Genre; one taken off stays a Genre). A stale revision (lower or higher) changes nothing and
+    /// move from any state to any other, and the Genres or Tags sent replace the Song's (each must be
+    /// a Genre or Tag; one taken off stays in the list). A stale revision (lower or higher) changes nothing and
     /// answers the Song as it is now. An edit that changes nothing once normalised is not written and
     /// answers the Song unchanged; any other moves its revision and last-updated time.
     /// </summary>
@@ -242,6 +264,18 @@ public sealed class SongService(
                     genreIds = ids;
                 }
 
+                IReadOnlyList<Guid>? tagIds = null;
+                if (edit.TagIds is { } sentTags)
+                {
+                    var (ids, tagError) = await tags.ReadAssignmentAsync(sentTags, ct).ConfigureAwait(false);
+                    if (tagError is not null)
+                    {
+                        errors[TagIdsField] = [tagError];
+                    }
+
+                    tagIds = ids;
+                }
+
                 var stateId = Guid.Empty;
                 if (edit.StateId.IsSent
                     && (!Guid.TryParseExact(edit.StateId.Value, "D", out stateId)
@@ -273,7 +307,10 @@ public sealed class SongService(
                 var genresChange = genreIds is not null && !genreIds.ToHashSet().SetEquals(current.Genres.Select(static genre => genre.Id))
                     ? genreIds
                     : null;
-                if (details == new SongDetails(current.Title, current.Concept, current.State.Id, current.Notes) && genresChange is null)
+                var tagsChange = tagIds is not null && !tagIds.ToHashSet().SetEquals(current.Tags.Select(static tag => tag.Id))
+                    ? tagIds
+                    : null;
+                if (details == new SongDetails(current.Title, current.Concept, current.State.Id, current.Notes) && genresChange is null && tagsChange is null)
                 {
                     return new SongUpdateOutcome.Updated(current);
                 }
@@ -290,6 +327,11 @@ public sealed class SongService(
                     await genres.ReplaceSongGenresAsync(id, genresChange, ct).ConfigureAwait(false);
                 }
 
+                if (tagsChange is not null)
+                {
+                    await tags.ReplaceSongTagsAsync(id, tagsChange, ct).ConfigureAwait(false);
+                }
+
                 var updated = await songs.FindAsync(id, ct).ConfigureAwait(false)
                     ?? throw new InvalidOperationException("The Song just edited cannot be read back.");
                 return new SongUpdateOutcome.Updated(updated);
@@ -301,7 +343,8 @@ public sealed class SongService(
     /// A page of Songs. <c>sort</c> is <c>updated</c> (the default) or <c>title</c>; <c>direction</c>
     /// is <c>asc</c> or <c>desc</c> (by default newest first, and titles A to Z); each <c>state</c> is
     /// the ID of a workflow state; each <c>genre</c> is the ID of a Genre or <see cref="NoGenre"/>,
-    /// and several match Songs with any of them (states and Genres combine by AND); <c>page</c> counts from 1; <c>pageSize</c> is 1 to
+    /// and several match Songs with any of them; each <c>tag</c> likewise is the ID of a Tag or
+    /// <see cref="NoTag"/> (states, Genres, and Tags combine by AND); <c>page</c> counts from 1; <c>pageSize</c> is 1 to
     /// <see cref="MaximumPageSize"/>, <see cref="DefaultPageSize"/> by default.
     /// </summary>
     public async Task<SongListOutcome> ListAsync(SongListRequest request, CancellationToken cancellationToken)
@@ -386,7 +429,30 @@ public sealed class SongService(
             return Invalid($"Each {GenreParameter} must be the ID of a Genre, or {NoGenre}.");
         }
 
-        var query = new SongListQuery(sort, descending, stateIds, page, pageSize, genreIds, noGenre);
+        var tagIds = new List<Guid>();
+        var noTag = false;
+        foreach (var tag in request.Tags ?? [])
+        {
+            if (tag == NoTag)
+            {
+                noTag = true;
+            }
+            else if (!Guid.TryParseExact(tag, "D", out var tagId))
+            {
+                return Invalid($"Each {TagParameter} must be the ID of a Tag, or {NoTag}.");
+            }
+            else if (!tagIds.Contains(tagId))
+            {
+                tagIds.Add(tagId);
+            }
+        }
+
+        if (tagIds.Count > 0 && (await tags.ExistingAsync(tagIds, cancellationToken).ConfigureAwait(false)).Count != tagIds.Count)
+        {
+            return Invalid($"Each {TagParameter} must be the ID of a Tag, or {NoTag}.");
+        }
+
+        var query = new SongListQuery(sort, descending, stateIds, page, pageSize, genreIds, noGenre, tagIds, noTag);
         return new SongListOutcome.Listed(await songs.ListAsync(query, cancellationToken).ConfigureAwait(false));
     }
 

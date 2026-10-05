@@ -6,8 +6,31 @@ import { comparable, hasExactMatch, suggestTokens, type Token } from './tokenMat
 /** The option value that stands for "create a new one with the typed name". */
 const CREATE = 'create-new';
 
+/** A token's colour as a small dot before its name; decorative, since the name is always written. */
+function Swatch({ colour }: { colour: string | undefined }) {
+  if (colour === undefined) {
+    return null;
+  }
+  return (
+    <span
+      aria-hidden="true"
+      data-swatch={colour}
+      style={{
+        display: 'inline-block',
+        width: 8,
+        height: 8,
+        borderRadius: '50%',
+        background: colour,
+        marginInlineEnd: 6,
+        verticalAlign: 'middle',
+        flex: 'none',
+      }}
+    />
+  );
+}
+
 /**
- * A picker for a list the user owns (Genres here; Tags, Artists, and collections later): the
+ * A picker for a list the user owns (Genres, Tags; Artists and collections later): the
  * chosen tokens as pills, and a text field that suggests the others as the user types, by the
  * start of any word in their name, ignoring case (up to ten, leaving out the chosen). When no
  * name matches the typed text exactly, a last option creates one with that name.
@@ -15,6 +38,9 @@ const CREATE = 'create-new';
  * Keyboard: type to filter, ↓/↑ to move through the suggestions, Enter to choose, Escape to close
  * them; Backspace in the empty field removes the last token, and each token's remove button can be
  * reached with Tab. While `busy` (a change being saved), the field is read only and choices wait.
+ *
+ * `colourOf`, when given, draws each token's colour (a CSS colour) as a swatch before its name, in
+ * the chosen tokens and in the suggestions.
  */
 export function TokenPicker<T extends Token>({
   label,
@@ -28,6 +54,7 @@ export function TokenPicker<T extends Token>({
   busy = false,
   error,
   description,
+  colourOf,
 }: {
   label: string;
   /** What one token is, as a sentence names it: "Genre". */
@@ -45,6 +72,7 @@ export function TokenPicker<T extends Token>({
   busy?: boolean;
   error?: string;
   description?: string;
+  colourOf?: (token: Token) => string | undefined;
 }) {
   const id = useId();
   const [search, setSearch] = useState('');
@@ -133,6 +161,7 @@ export function TokenPicker<T extends Token>({
                   },
                 }}
               >
+                <Swatch colour={colourOf?.(token)} />
                 {token.name}
               </Pill>
             ))}
@@ -163,6 +192,7 @@ export function TokenPicker<T extends Token>({
         <Combobox.Options aria-label={`${label} suggestions`}>
           {suggestions.map((token) => (
             <Combobox.Option value={token.id} key={token.id}>
+              <Swatch colour={colourOf?.(token)} />
               {token.name}
             </Combobox.Option>
           ))}

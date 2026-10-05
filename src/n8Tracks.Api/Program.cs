@@ -290,6 +290,7 @@ public sealed class Program
             app.MapJobs();
             app.MapSongs();
             app.MapGenres();
+            app.MapTags();
             app.MapWorkflowStates();
             app.MapVersions();
             app.MapResolve();

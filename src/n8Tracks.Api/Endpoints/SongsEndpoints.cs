@@ -35,7 +35,7 @@ internal static class SongsEndpoints
 
         endpoints.MapGet(SongsPath, ListAsync)
             .WithName("ListSongs")
-            .WithSummary("A page of Songs, sorted by last update or title, optionally only those in given workflow states (state) and with any of given Genres (genre: Genre IDs, or none for Songs with no Genre).")
+            .WithSummary("A page of Songs, sorted by last update or title, optionally only those in given workflow states (state), with any of given Genres (genre: Genre IDs, or none for Songs with no Genre), and with any of given Tags (tag: Tag IDs, or none for Songs with no Tag).")
             .RequireScope(CredentialScopes.CatalogRead)
             .Produces<SongListResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
@@ -53,7 +53,7 @@ internal static class SongsEndpoints
 
         endpoints.MapPatch(SongPath, UpdateAsync)
             .WithName("UpdateSong")
-            .WithSummary("Edits a Song's title, concept, workflow state, notes, or Genres (only the fields sent; genreIds replaces the Song's Genres), given the revision read in If-Match.")
+            .WithSummary("Edits a Song's title, concept, workflow state, notes, Genres, or Tags (only the fields sent; genreIds and tagIds replace the Song's Genres and Tags), given the revision read in If-Match.")
             .RequireScope(CredentialScopes.SongsWrite)
             .Produces<SongResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
@@ -125,14 +125,15 @@ internal static class SongsEndpoints
             [.. query[SongService.StateParameter]],
             Single(query, SongService.PageParameter, out var pageRepeated),
             Single(query, SongService.PageSizeParameter, out var pageSizeRepeated),
-            [.. query[SongService.GenreParameter]]);
+            [.. query[SongService.GenreParameter]],
+            [.. query[SongService.TagParameter]]);
         if (sortRepeated || directionRepeated || pageRepeated || pageSizeRepeated)
         {
             return ApiProblem.For(
                 context,
                 StatusCodes.Status400BadRequest,
                 ApiProblem.InvalidRequestCode,
-                "Only state and genre may be given more than once.");
+                "Only state, genre, and tag may be given more than once.");
         }
 
         return await songs.ListAsync(request, cancellationToken) switch
@@ -189,7 +190,8 @@ internal static class SongsEndpoints
             Field(request?.Concept, SongService.ConceptField, typeErrors),
             Field(request?.StateId, SongService.StateIdField, typeErrors),
             Field(request?.Notes, SongService.NotesField, typeErrors),
-            GenreIds(request?.GenreIds, typeErrors));
+            IdList(request?.GenreIds, SongService.GenreIdsField, "Genre", typeErrors),
+            IdList(request?.TagIds, SongService.TagIdsField, "Tag", typeErrors));
         if (typeErrors.Count > 0)
         {
             return ApiProblem.ValidationFailed(context, typeErrors);
@@ -253,10 +255,10 @@ internal static class SongsEndpoints
     }
 
     /// <summary>
-    /// The Genres of an edit as sent: missing is left alone; a list of text replaces the Song's
-    /// Genres. Anything else (null included) is an error for the field.
+    /// The Genres or Tags of an edit as sent: missing is left alone; a list of text replaces the
+    /// Song's. Anything else (null included) is an error for the field.
     /// </summary>
-    private static List<string?>? GenreIds(JsonElement? sent, Dictionary<string, string[]> errors)
+    private static List<string?>? IdList(JsonElement? sent, string field, string noun, Dictionary<string, string[]> errors)
     {
         switch (sent?.ValueKind)
         {
@@ -265,7 +267,7 @@ internal static class SongsEndpoints
             case JsonValueKind.Array when sent.Value.EnumerateArray().All(static item => item.ValueKind == JsonValueKind.String):
                 return [.. sent.Value.EnumerateArray().Select(static item => item.GetString())];
             default:
-                errors[SongService.GenreIdsField] = ["Send a list of Genre IDs (an empty list for none)."];
+                errors[field] = [$"Send a list of {noun} IDs (an empty list for none)."];
                 return null;
         }
     }
@@ -289,11 +291,11 @@ internal sealed record CreateSongRequest(string? Title, string? Concept, JsonEle
 /// <summary>
 /// An edit: any of the fields, each left alone when missing. A missing field and a null one differ,
 /// so each is read as raw JSON (a missing one is <see cref="JsonValueKind.Undefined"/>).
-/// <c>genreIds</c> is the Song's whole new list of Genre IDs.
+/// <c>genreIds</c> and <c>tagIds</c> are the Song's whole new lists of Genre and Tag IDs.
 /// </summary>
-internal sealed record UpdateSongRequest(JsonElement Title, JsonElement Concept, JsonElement StateId, JsonElement Notes, JsonElement GenreIds);
+internal sealed record UpdateSongRequest(JsonElement Title, JsonElement Concept, JsonElement StateId, JsonElement Notes, JsonElement GenreIds, JsonElement TagIds);
 
-/// <summary>A Song as the API shows it. Times are UTC. <c>genres</c> are alphabetical.</summary>
+/// <summary>A Song as the API shows it. Times are UTC. <c>genres</c> and <c>tags</c> are alphabetical.</summary>
 internal sealed record SongResponse(
     Guid Id,
     string Shortcode,
@@ -306,7 +308,8 @@ internal sealed record SongResponse(
     DateTime UpdatedAt,
     int Revision,
     string? Notes,
-    SongGenreResponse[] Genres)
+    SongGenreResponse[] Genres,
+    SongTagResponse[] Tags)
 {
     public static SongResponse From(SongSummary song)
     {
@@ -328,7 +331,8 @@ internal sealed record SongResponse(
             song.UpdatedUtc.UtcDateTime,
             song.Revision,
             song.Notes,
-            [.. song.Genres.Select(SongGenreResponse.From)]);
+            [.. song.Genres.Select(SongGenreResponse.From)],
+            [.. song.Tags.Select(SongTagResponse.From)]);
     }
 }
 
@@ -357,5 +361,16 @@ internal sealed record SongListResponse(SongResponse[] Items, int Page, int Page
         ArgumentNullException.ThrowIfNull(page);
 
         return new([.. page.Items.Select(SongResponse.From)], page.Page, page.PageSize, page.Total);
+    }
+}
+
+/// <summary>A Tag as a Song shows it: its name and the name of its palette colour.</summary>
+internal sealed record SongTagResponse(Guid Id, string Name, string Colour)
+{
+    public static SongTagResponse From(Tag tag)
+    {
+        ArgumentNullException.ThrowIfNull(tag);
+
+        return new(tag.Id, tag.Name, tag.Colour);
     }
 }

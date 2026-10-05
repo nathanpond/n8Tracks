@@ -362,6 +362,7 @@ public sealed class VersionImmutabilityGuardTests
         ["PATCH /api/v1/genres/{id:guid}"] = "renames a Genre; no assignment and no Version changes",
         ["POST /api/v1/genres/{id:guid}/merge"] = "moves Songs' Genre assignments (song_genres and the Songs' revisions), never a Version",
         ["DELETE /api/v1/genres/{id:guid}"] = "removes or reassigns Songs' Genre assignments (song_genres and the Songs' revisions), never a Version",
+        ["POST /api/v1/tags"] = "adds a Tag to the list; assigning it to a Song is the Song's PATCH, which touches no Version",
         ["PUT /api/v1/suno/models/order"] = "reorders the model list; a Version's model is not touched",
         ["DELETE /api/v1/workflow-states/{id:guid}"] = "workflow states; moves Songs to another state, never a Version",
         ["POST /api/v1/backups"] = "queues a backup: reads the database, writes only an archive file",

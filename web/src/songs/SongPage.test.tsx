@@ -31,6 +31,7 @@ const song: Song = {
   revision: 1,
   notes: null,
   genres: [],
+  tags: [],
 };
 
 /** The query string a request was made with, whatever form `fetch` was given it in. */

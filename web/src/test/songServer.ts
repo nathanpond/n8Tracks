@@ -1,5 +1,6 @@
 import type { Genre } from '../api/genres';
-import type { Song, SongGenre, WorkflowState } from '../api/songs';
+import type { Song, SongGenre, SongTag, WorkflowState } from '../api/songs';
+import type { Tag } from '../api/tags';
 import { healthyReport, jsonResponse, requestPath, stubFetch } from './helpers';
 
 export const IDEA: WorkflowState = {
@@ -51,6 +52,7 @@ export const baseSong: Song = {
   revision: 1,
   notes: null,
   genres: [],
+  tags: [],
 };
 
 export const FOLK: Genre = {
@@ -70,6 +72,42 @@ export const ROCK: Genre = {
 };
 export const GENRES = [FOLK, INDIE_POP, ROCK];
 
+export const RUNNING: Tag = {
+  id: '0199b1a0-0000-7000-b000-000000000001',
+  name: 'running',
+  colour: 'gray',
+  songCount: 2,
+};
+export const SUMMER: Tag = {
+  id: '0199b1a0-0000-7000-b000-000000000002',
+  name: 'Summer',
+  colour: 'red',
+  songCount: 1,
+};
+export const NIGHT: Tag = {
+  id: '0199b1a0-0000-7000-b000-000000000003',
+  name: 'night drive',
+  colour: 'teal',
+  songCount: 0,
+};
+export const TAGS = [RUNNING, SUMMER, NIGHT];
+
+/** The palette order a new Tag's colour is taken from, as the API takes it. */
+const PALETTE = [
+  'gray',
+  'red',
+  'pink',
+  'grape',
+  'violet',
+  'indigo',
+  'blue',
+  'cyan',
+  'teal',
+  'green',
+  'yellow',
+  'orange',
+];
+
 /** One PATCH the fake server received: the revision it named and the edit it sent. */
 export interface ReceivedEdit {
   ifMatch: string | null;
@@ -80,13 +118,17 @@ export interface ReceivedEdit {
  * A fake n8Tracks holding one Song, answering as the API does: GET it, and PATCH it against its
  * revision (409 `revision_conflict` with `current` when stale; its notes and Genres too, 422 on a
  * Genre not in `server.genres`), and the Genre list: GET it, and POST a name (the existing Genre
- * when the name matches ignoring case, otherwise a new one). A test changes `server.song` to play
+ * when the name matches ignoring case, otherwise a new one). Tags likewise (`server.tags`,
+ * `server.createdTags`), a new Tag taking the first palette colour no Tag has. A test changes `server.song` to play
  * another tab, or sets `server.next` to answer the next PATCH some other way.
  */
-export function songServer(song: Song = baseSong, genres: Genre[] = GENRES) {
+export function songServer(song: Song = baseSong, genres: Genre[] = GENRES, tags: Tag[] = TAGS) {
   const server = {
     song: { ...song },
     genres: genres.map((genre) => ({ ...genre })),
+    tags: tags.map((tag) => ({ ...tag })),
+    /** Every name POSTed to the Tag list, in order. */
+    createdTags: [] as string[],
     /** Every name POSTed to the Genre list, in order. */
     created: [] as string[],
     edits: [] as ReceivedEdit[],
@@ -131,6 +173,34 @@ export function songServer(song: Song = baseSong, genres: Genre[] = GENRES) {
       };
       server.genres.push(genre);
       return jsonResponse(201, genre);
+    }
+    if (path.endsWith('/api/v1/tags')) {
+      if ((init?.method ?? 'GET') === 'GET') {
+        return jsonResponse(200, {
+          items: [...server.tags].sort((a, b) =>
+            a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }),
+          ),
+        });
+      }
+      const { name } = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as {
+        name: string;
+      };
+      server.createdTags.push(name);
+      const normalised = name.trim().replace(/\s+/g, ' ');
+      const existing = server.tags.find(
+        (tag) => tag.name.toUpperCase() === normalised.toUpperCase(),
+      );
+      if (existing) {
+        return jsonResponse(200, existing);
+      }
+      const tag: Tag = {
+        id: `0199b1a0-0000-7000-b000-${String(900 + server.tags.length).padStart(12, '0')}`,
+        name: normalised,
+        colour: PALETTE.find((colour) => !server.tags.some((t) => t.colour === colour)) ?? 'gray',
+        songCount: 0,
+      };
+      server.tags.push(tag);
+      return jsonResponse(201, tag);
     }
     const match = /\/api\/v1\/songs\/([^/]+)$/.exec(path);
     if (match?.[1] === undefined) {
@@ -194,12 +264,31 @@ export function songServer(song: Song = baseSong, genres: Genre[] = GENRES) {
       }
       updated.genres = chosen.sort((a, b) => a.name.localeCompare(b.name));
     }
+    if (Array.isArray(body.tagIds)) {
+      const chosen: SongTag[] = [];
+      for (const id of body.tagIds) {
+        const tag = server.tags.find((candidate) => candidate.id === id);
+        if (!tag) {
+          return jsonResponse(422, {
+            code: 'validation_failed',
+            errors: { tagIds: ['A Tag chosen no longer exists. Choose again.'] },
+          });
+        }
+        if (!chosen.some((other) => other.id === tag.id)) {
+          chosen.push({ id: tag.id, name: tag.name, colour: tag.colour });
+        }
+      }
+      updated.tags = chosen.sort((a, b) =>
+        a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }),
+      );
+    }
     const changed =
       updated.title !== server.song.title ||
       updated.concept !== server.song.concept ||
       updated.state.id !== server.song.state.id ||
       updated.notes !== server.song.notes ||
-      JSON.stringify(updated.genres) !== JSON.stringify(server.song.genres);
+      JSON.stringify(updated.genres) !== JSON.stringify(server.song.genres) ||
+      JSON.stringify(updated.tags) !== JSON.stringify(server.song.tags);
     server.song = changed ? { ...updated, revision: server.song.revision + 1 } : server.song;
     return jsonResponse(200, server.song);
   });

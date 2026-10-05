@@ -20,6 +20,7 @@ import {
   defaultDirection,
   kindLabel,
   NO_GENRE,
+  NO_TAG,
   songListParameters,
   songQueryFrom,
   useSongs,
@@ -29,11 +30,16 @@ import {
   type SongSort,
   type WorkflowState,
 } from '../api/songs';
+import { useTags, type Tag } from '../api/tags';
 import { useConfiguredTimeZone } from '../api/timeZone';
 import { statesForFilter } from '../api/workflow';
 import { Notice } from '../components/Notice';
 import { NewSongDialog } from './NewSongDialog';
-import { RelativeTime, StateBadge, TruncatedConcept } from './SongParts';
+import { paletteColour } from '../theme/palette';
+import { RelativeTime, StateBadge, TagLabels, TruncatedConcept } from './SongParts';
+
+/** How many Tags a row of the table shows before "+N". */
+const TAGS_PER_ROW = 3;
 
 const FAILED_MESSAGE =
   'n8Tracks did not answer as expected. Check that it is running and try again.';
@@ -152,6 +158,61 @@ function GenreFilter({
   );
 }
 
+/**
+ * The Tag filter: any number of Tags and "No Tags", matching Songs with any of them; none chosen
+ * means every Song. Each suggestion shows the Tag's colour beside its name.
+ */
+function TagFilter({
+  tags,
+  selected,
+  onChange,
+}: {
+  tags: Tag[];
+  selected: string[];
+  onChange: (tags: string[]) => void;
+}) {
+  const colours = new Map(tags.map((tag) => [tag.id, tag.colour]));
+  return (
+    <MultiSelect
+      label="Tag"
+      placeholder={selected.length === 0 ? 'Any Tag' : undefined}
+      data={[
+        { value: NO_TAG, label: 'No Tags' },
+        ...tags.map((tag) => ({ value: tag.id, label: tag.name })),
+      ]}
+      value={selected}
+      onChange={onChange}
+      renderOption={({ option }) => {
+        const colour = colours.get(option.value);
+        return (
+          <Group gap={6} wrap="nowrap">
+            {colour !== undefined && (
+              <span
+                aria-hidden="true"
+                style={{
+                  display: 'inline-block',
+                  width: 8,
+                  height: 8,
+                  borderRadius: '50%',
+                  background: paletteColour(colour),
+                  flex: 'none',
+                }}
+              />
+            )}
+            {option.label}
+          </Group>
+        );
+      }}
+      searchable
+      clearable
+      clearButtonProps={{ 'aria-label': 'Clear the Tag filter' }}
+      nothingFoundMessage="No Tag has that name."
+      maw={420}
+      comboboxProps={{ withinPortal: false, hideDetached: false }}
+    />
+  );
+}
+
 function SongRow({ song, timeZone, from }: { song: Song; timeZone: string; from: FromSongs }) {
   return (
     <Table.Tr data-song={song.shortcode}>
@@ -171,6 +232,9 @@ function SongRow({ song, timeZone, from }: { song: Song; timeZone: string; from:
       </Table.Td>
       <Table.Td>{kindLabel(song.currentVersion.kind)}</Table.Td>
       <Table.Td ta="end">{song.versionCount}</Table.Td>
+      <Table.Td style={{ maxWidth: 240 }}>
+        {song.tags.length > 0 && <TagLabels tags={song.tags} limit={TAGS_PER_ROW} />}
+      </Table.Td>
       <Table.Td style={{ whiteSpace: 'nowrap' }}>
         <RelativeTime utc={song.updatedAt} timeZone={timeZone} />
       </Table.Td>
@@ -180,7 +244,8 @@ function SongRow({ song, timeZone, from }: { song: Song; timeZone: string; from:
 
 /**
  * Songs: every Song in a table, newest first, sortable by title and by last update, filtered by
- * workflow state and by Genre, fifty to a page. The view (sort, direction, states, Genres, page) is the page URL's query
+ * workflow state, by Genre, and by Tag, fifty to a page. Each row shows its first three Tags and
+ * "+N" for the rest. The view (sort, direction, states, Genres, Tags, page) is the page URL's query
  * string, the list API's own parameters, so going back to it or reloading shows the same rows.
  */
 export function SongsPage() {
@@ -191,6 +256,7 @@ export function SongsPage() {
   const { state, reload } = useSongs(query);
   const { state: statesState } = useWorkflowStates();
   const { state: genresState } = useGenres();
+  const { state: tagsState } = useTags();
   const timeZone = useConfiguredTimeZone();
   const [creating, setCreating] = useState(false);
   const from: FromSongs = { songsSearch: location.search };
@@ -209,9 +275,12 @@ export function SongsPage() {
   const filterGenres = (genres: string[]) => {
     show({ ...query, genres, page: 1 });
   };
+  const filterTags = (tags: string[]) => {
+    show({ ...query, tags, page: 1 });
+  };
 
   const page = state.phase === 'ready' ? state.data : undefined;
-  const filtered = query.states.length > 0 || query.genres.length > 0;
+  const filtered = query.states.length > 0 || query.genres.length > 0 || query.tags.length > 0;
   const empty = page?.total === 0 && !filtered;
   const pages = page === undefined ? 0 : Math.ceil(page.total / page.pageSize);
 
@@ -235,6 +304,9 @@ export function SongsPage() {
       )}
       {genresState.phase === 'ready' && !empty && (
         <GenreFilter genres={genresState.data} selected={query.genres} onChange={filterGenres} />
+      )}
+      {tagsState.phase === 'ready' && !empty && (
+        <TagFilter tags={tagsState.data} selected={query.tags} onChange={filterTags} />
       )}
 
       {state.phase === 'loading' && <Loader aria-label="Loading Songs" />}
@@ -272,14 +344,14 @@ export function SongsPage() {
       {page !== undefined && !empty && page.items.length === 0 && (
         <Paper p="sm" withBorder>
           <Stack gap="xs" align="flex-start">
-            {page.total === 0 && query.genres.length > 0 ? (
+            {page.total === 0 && (query.genres.length > 0 || query.tags.length > 0) ? (
               <>
                 <Text>No Songs match the chosen filters.</Text>
                 <Button
                   variant="default"
                   size="xs"
                   onClick={() => {
-                    show({ ...query, states: [], genres: [], page: 1 });
+                    show({ ...query, states: [], genres: [], tags: [], page: 1 });
                   }}
                 >
                   Show every Song
@@ -317,7 +389,7 @@ export function SongsPage() {
       )}
       {page !== undefined && page.items.length > 0 && (
         <>
-          <Table.ScrollContainer minWidth={760}>
+          <Table.ScrollContainer minWidth={900}>
             <Table withTableBorder aria-label="Songs">
               <Table.Thead>
                 <Table.Tr>
@@ -329,6 +401,7 @@ export function SongsPage() {
                   <Table.Th scope="col" ta="end">
                     Versions
                   </Table.Th>
+                  <Table.Th scope="col">Tags</Table.Th>
                   <SortHeader label="Updated" sort="updated" query={query} onSort={sortBy} />
                 </Table.Tr>
               </Table.Thead>

@@ -15,6 +15,9 @@ export const SONG_NOTES_MAXIMUM_LENGTH = 10_000;
 /** The `genre` filter value that matches Songs with no Genre. */
 export const NO_GENRE = 'none';
 
+/** The `tag` filter value that matches Songs with no Tag. */
+export const NO_TAG = 'none';
+
 /** The page size the list is asked for: the API's default. */
 export const SONGS_PAGE_SIZE = 50;
 
@@ -38,6 +41,13 @@ export interface SongGenre {
   name: string;
 }
 
+/** A Tag as a Song shows it: its name and the name of its palette colour. */
+export interface SongTag {
+  id: string;
+  name: string;
+  colour: string;
+}
+
 /** A Song as the API answers it. Times are UTC ISO 8601. */
 export interface Song {
   id: string;
@@ -55,6 +65,8 @@ export interface Song {
   notes: string | null;
   /** Its Genres, alphabetically. */
   genres: SongGenre[];
+  /** Its Tags, alphabetically ignoring case. */
+  tags: SongTag[];
 }
 
 export interface SongPage {
@@ -84,6 +96,8 @@ export interface SongQuery {
   states: string[];
   /** Genre IDs, and {@link NO_GENRE} for Songs with none: Songs with any of them. */
   genres: string[];
+  /** Tag IDs, and {@link NO_TAG} for Songs with none: Songs with any of them. */
+  tags: string[];
   page: number;
 }
 
@@ -93,6 +107,10 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function isSongGenre(value: unknown): value is SongGenre {
   return isRecord(value) && typeof value.id === 'string' && typeof value.name === 'string';
+}
+
+export function isSongTag(value: unknown): value is SongTag {
+  return isSongGenre(value) && isRecord(value) && typeof value.colour === 'string';
 }
 
 export function isSong(value: unknown): value is Song {
@@ -115,7 +133,9 @@ export function isSong(value: unknown): value is Song {
     typeof value.revision === 'number' &&
     (value.notes === null || typeof value.notes === 'string') &&
     Array.isArray(value.genres) &&
-    value.genres.every(isSongGenre)
+    value.genres.every(isSongGenre) &&
+    Array.isArray(value.tags) &&
+    value.tags.every(isSongTag)
   );
 }
 
@@ -174,6 +194,9 @@ export function songListParameters(query: SongQuery): URLSearchParams {
   for (const genre of query.genres) {
     parameters.append('genre', genre);
   }
+  for (const tag of query.tags) {
+    parameters.append('tag', tag);
+  }
   if (query.page !== 1) {
     parameters.set('page', String(query.page));
   }
@@ -198,6 +221,7 @@ export function songQueryFrom(parameters: URLSearchParams): SongQuery {
     direction: direction === 'asc' || direction === 'desc' ? direction : defaultDirection(sort),
     states: [...new Set(parameters.getAll('state'))],
     genres: [...new Set(parameters.getAll('genre'))],
+    tags: [...new Set(parameters.getAll('tag'))],
     page: Number.isSafeInteger(page) && page >= 1 ? page : 1,
   };
 }
@@ -327,7 +351,7 @@ export async function createSong(request: NewSong): Promise<CreateSongResult> {
 
 /**
  * An edit of a Song's details: only the fields given change. A null or blank concept or notes
- * clears them; `genreIds` replaces the Song's Genres.
+ * clears them; `genreIds` and `tagIds` replace the Song's Genres and Tags.
  */
 export interface SongEdit {
   title?: string;
@@ -335,6 +359,7 @@ export interface SongEdit {
   stateId?: string;
   notes?: string | null;
   genreIds?: string[];
+  tagIds?: string[];
 }
 
 /** Edits a Song, based on `song`'s revision; a stale revision comes back as a conflict. */

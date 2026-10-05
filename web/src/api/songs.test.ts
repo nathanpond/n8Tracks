@@ -4,17 +4,25 @@ import { formatRelativeTime } from './timeZone';
 
 const STATE = '01a10a6e-dc80-7000-8000-000000000001';
 const GENRE = '0199b1a0-0000-7000-a000-000000000001';
+const TAG = '0199b1a0-0000-7000-b000-000000000001';
 
 describe('the Songs view in the URL', () => {
   it('leaves the defaults out: newest first, every state, the first page', () => {
     const query = songQueryFrom(new URLSearchParams());
 
-    expect(query).toEqual({ sort: 'updated', direction: 'desc', states: [], genres: [], page: 1 });
+    expect(query).toEqual({
+      sort: 'updated',
+      direction: 'desc',
+      states: [],
+      genres: [],
+      tags: [],
+      page: 1,
+    });
     expect(songListParameters(query).toString()).toBe('');
   });
 
   it('reads and writes the same parameters the list takes', () => {
-    const search = `sort=title&direction=desc&state=${STATE}&genre=${GENRE}&genre=none&page=3`;
+    const search = `sort=title&direction=desc&state=${STATE}&genre=${GENRE}&genre=none&tag=${TAG}&tag=none&page=3`;
 
     expect(songListParameters(songQueryFrom(new URLSearchParams(search))).toString()).toBe(search);
   });
@@ -26,7 +34,7 @@ describe('the Songs view in the URL', () => {
   it('ignores what it does not understand', () => {
     const query = songQueryFrom(
       new URLSearchParams(
-        `sort=shortcode&direction=up&page=-2&state=${STATE}&state=${STATE}&genre=${GENRE}&genre=${GENRE}`,
+        `sort=shortcode&direction=up&page=-2&state=${STATE}&state=${STATE}&genre=${GENRE}&genre=${GENRE}&tag=${TAG}&tag=${TAG}`,
       ),
     );
 
@@ -35,6 +43,7 @@ describe('the Songs view in the URL', () => {
       direction: 'desc',
       states: [STATE],
       genres: [GENRE],
+      tags: [TAG],
       page: 1,
     });
   });

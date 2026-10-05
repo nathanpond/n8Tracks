@@ -101,6 +101,17 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
                 || (noGenre && !songGenres.Any(songGenre => songGenre.SongId == song.Id)));
         }
 
+        if (query.TagIds.Count > 0 || query.NoTag)
+        {
+            // Any of the Tags, or (when asked) none at all.
+            var tagIds = query.TagIds.ToList();
+            var noTag = query.NoTag;
+            var songTags = context.SongTags;
+            songs = songs.Where(song =>
+                songTags.Any(songTag => songTag.SongId == song.Id && tagIds.Contains(songTag.TagId))
+                || (noTag && !songTags.Any(songTag => songTag.SongId == song.Id)));
+        }
+
         var total = await songs.CountAsync(cancellationToken).ConfigureAwait(false);
 
         // Times are fixed-width UTC text, so text order is time order; the shortcode number breaks ties.
@@ -152,7 +163,7 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
     /// <summary>What titles are ordered by: NFC-normalised and lower-cased invariantly, so case is ignored.</summary>
     internal static string TitleSortKey(string title) => title.Normalize(System.Text.NormalizationForm.FormC).ToLowerInvariant();
 
-    /// <summary>The summaries of <paramref name="records"/>, in their order, with their states, current Versions, Version counts, and Genres.</summary>
+    /// <summary>The summaries of <paramref name="records"/>, in their order, with their states, current Versions, Version counts, Genres, and Tags.</summary>
     private async Task<List<SongSummary>> SummariesAsync(List<SongRecord> records, CancellationToken cancellationToken)
     {
         if (records.Count == 0)
@@ -189,6 +200,16 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
                     .OrderBy(static genre => genre.NameKey, StringComparer.Ordinal)
                     .ThenBy(static genre => genre.Name, StringComparer.Ordinal)
                     .Select(static genre => new Genre(genre.Id, genre.Name))]);
+        var tags = (await context.SongTags.AsNoTracking()
+            .Where(songTag => songIds.Contains(songTag.SongId))
+            .Join(context.Tags, static songTag => songTag.TagId, static tag => tag.Id, static (songTag, tag) => new { songTag.SongId, tag.Id, tag.Name, tag.Colour })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false))
+            .GroupBy(static tag => tag.SongId)
+            .ToDictionary(
+                static group => group.Key,
+                static group => (IReadOnlyList<Tag>)[.. TagStore.Alphabetical(group, static tag => tag.Name)
+                    .Select(static tag => new Tag(tag.Id, tag.Name, tag.Colour))]);
 
         return [.. records.Select(song =>
         {
@@ -208,7 +229,8 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
                 UtcText.Parse(song.UpdatedUtc),
                 song.Revision,
                 song.Notes,
-                genres.GetValueOrDefault(song.Id) ?? []);
+                genres.GetValueOrDefault(song.Id) ?? [],
+                tags.GetValueOrDefault(song.Id) ?? []);
         })];
     }
 }

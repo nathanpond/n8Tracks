@@ -17,7 +17,7 @@ import { CONCEPT_MAXIMUM_LENGTH, type Song, type WorkflowState } from '../api/so
 import { ShortcodeBadge } from '../common/ShortcodeBadge';
 import { focusOnMount, saveError, useInPlaceEdit } from '../common/useInPlaceEdit';
 import type { SaveOutcome } from '../common/useRevisionedSave';
-import { StateBadge } from './SongParts';
+import { StateBadge, TagLabels } from './SongParts';
 import { conceptError, singleLine, titleError } from './songRules';
 
 /** The title as it is saved: one line, trimmed. */
@@ -263,7 +263,8 @@ function StateField({
 
 /**
  * The Song page's header: shortcode, title, workflow state, and concept, each edited where it is
- * shown, and `actions` (the Details control) beside the shortcode. Every save goes through the
+ * shown, the Song's Tags as coloured labels (chosen in the Details panel), and `actions` (the
+ * Details control) beside the shortcode. Every save goes through the
  * page's one `useRevisionedSave` (`save`), so a save based on an old revision is refused and offered
  * for comparison and reapplying instead of overwriting.
  */
@@ -295,6 +296,11 @@ export function SongHeader({
           </div>
           <StateField song={song} states={states} save={save} />
         </Group>
+        {song.tags.length > 0 && (
+          <div role="group" aria-label="Tags" data-testid="song-tags">
+            <TagLabels tags={song.tags} />
+          </div>
+        )}
       </Stack>
       <ConceptField song={song} save={save} />
     </>

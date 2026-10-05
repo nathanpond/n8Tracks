@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
 using n8Tracks.Domain.Suno;
 
@@ -59,6 +60,10 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
     public DbSet<GenreRecord> Genres => Set<GenreRecord>();
 
     public DbSet<SongGenreRecord> SongGenres => Set<SongGenreRecord>();
+
+    public DbSet<TagRecord> Tags => Set<TagRecord>();
+
+    public DbSet<SongTagRecord> SongTags => Set<SongTagRecord>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
@@ -309,6 +314,39 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
             songGenre.HasOne<GenreRecord>()
                 .WithMany()
                 .HasForeignKey(record => record.GenreId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<TagRecord>(tag =>
+        {
+            tag.ToTable("tags", static table =>
+            {
+                table.HasCheckConstraint("ck_tags_name", "length(name) > 0");
+                table.HasCheckConstraint(
+                    "ck_tags_colour",
+                    "colour IN (" + string.Join(", ", TagRules.Palette.Select(static colour => "'" + colour + "'")) + ")");
+            });
+            tag.HasKey(record => record.Id);
+            tag.HasIndex(record => record.NameKey).IsUnique();
+        });
+
+        modelBuilder.Entity<SongTagRecord>(songTag =>
+        {
+            songTag.ToTable("song_tags");
+
+            // A Song has a Tag at most once.
+            songTag.HasKey(record => new { record.SongId, record.TagId });
+            songTag.HasIndex(record => record.TagId);
+
+            // A Song's Tags go with it; a Tag on any Song is never removed by accident (removing or
+            // merging Tags is Settings → Tags', which moves each affected Song's revision on).
+            songTag.HasOne<SongRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.SongId)
+                .OnDelete(DeleteBehavior.Cascade);
+            songTag.HasOne<TagRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.TagId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
     }

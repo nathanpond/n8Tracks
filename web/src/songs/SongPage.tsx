@@ -10,6 +10,7 @@ import { Notice } from '../components/Notice';
 import { DetailsPanel, SongDetails } from './DetailsPanel';
 import { DETAILS_PANEL_ID, useDetailsPanel } from './detailsPanelState';
 import { alphabetical, GENRES_KEY, genresOf, genresValue, mergeGenres } from './genreField';
+import { alphabeticalTags, mergeTags, TAGS_KEY, tagsOf, tagsValue } from './tagField';
 import { SongHeader } from './SongHeader';
 import { StateBadge } from './SongParts';
 import { SongVersions } from './SongVersions';
@@ -40,10 +41,11 @@ function BackToSongs() {
 
 /** A Song edit as the shared save helper holds it, as the API's PATCH takes it. */
 function songEditOf(edit: Readonly<Record<string, FieldValue>>): SongEdit {
-  const { [GENRES_KEY]: genres, ...fields } = edit;
+  const { [GENRES_KEY]: genres, [TAGS_KEY]: tags, ...fields } = edit;
   return {
     ...fields,
     ...(genres === undefined ? {} : { genreIds: genresOf(genres).map((genre) => genre.id) }),
+    ...(tags === undefined ? {} : { tagIds: tagsOf(tags).map((tag) => tag.id) }),
   };
 }
 
@@ -71,6 +73,10 @@ function LoadedSong({ loaded }: { loaded: Song }) {
       const names = alphabetical(genresOf(value)).map((genre) => genre.name);
       return <ConflictValue value={names.length === 0 ? null : names.join(', ')} />;
     };
+    const showTags = (value: FieldValue) => {
+      const names = alphabeticalTags(tagsOf(value)).map((tag) => tag.name);
+      return <ConflictValue value={names.length === 0 ? null : names.join(', ')} />;
+    };
     return [
       { key: 'title', label: 'Title', read: (record) => record.title, show: showText },
       { key: 'concept', label: 'Concept', read: (record) => record.concept, show: showText },
@@ -81,6 +87,13 @@ function LoadedSong({ loaded }: { loaded: Song }) {
         read: (record) => genresValue(record.genres),
         show: showGenres,
         merge: mergeGenres,
+      },
+      {
+        key: TAGS_KEY,
+        label: 'Tags',
+        read: (record) => tagsValue(record.tags),
+        show: showTags,
+        merge: mergeTags,
       },
       { key: 'notes', label: 'Notes', read: (record) => record.notes, show: showText },
     ];

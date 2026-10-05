@@ -16,6 +16,7 @@ namespace n8Tracks.Application.Songs;
 /// <param name="Revision">The Song's own revision.</param>
 /// <param name="Notes">The Song's free-form notes; null when there are none.</param>
 /// <param name="Genres">Its Genres, alphabetically.</param>
+/// <param name="Tags">Its Tags, alphabetically (ignoring case, invariant culture).</param>
 public sealed record SongSummary(
     Guid Id,
     long ShortcodeNumber,
@@ -28,7 +29,8 @@ public sealed record SongSummary(
     DateTimeOffset UpdatedUtc,
     int Revision,
     string? Notes,
-    IReadOnlyList<Genre> Genres)
+    IReadOnlyList<Genre> Genres,
+    IReadOnlyList<Tag> Tags)
 {
     public string Shortcode => Shortcodes.ForSong(ShortcodeNumber);
 }
@@ -60,7 +62,18 @@ public enum SongSort
 /// <param name="PageSize">1 to <see cref="SongService.MaximumPageSize"/>.</param>
 /// <param name="GenreIds">Only Songs with any of these Genres (or, with <paramref name="NoGenre"/>, with none); every Song when both are empty.</param>
 /// <param name="NoGenre">Also Songs with no Genre at all.</param>
-public sealed record SongListQuery(SongSort Sort, bool Descending, IReadOnlyList<Guid> StateIds, int Page, int PageSize, IReadOnlyList<Guid> GenreIds, bool NoGenre);
+/// <param name="TagIds">Only Songs with any of these Tags (or, with <paramref name="NoTag"/>, with none); every Song when both are empty.</param>
+/// <param name="NoTag">Also Songs with no Tag at all.</param>
+public sealed record SongListQuery(
+    SongSort Sort,
+    bool Descending,
+    IReadOnlyList<Guid> StateIds,
+    int Page,
+    int PageSize,
+    IReadOnlyList<Guid> GenreIds,
+    bool NoGenre,
+    IReadOnlyList<Guid> TagIds,
+    bool NoTag);
 
 /// <summary>A page of Songs and how many match in all.</summary>
 public sealed record SongPage(IReadOnlyList<SongSummary> Items, int Page, int PageSize, int Total);
