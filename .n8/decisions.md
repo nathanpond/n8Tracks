@@ -1789,3 +1789,6 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** #278 is fixed with a test only (`AnArchivedSongStaysInTheListUnlessAStateFilterLeavesItOut` in `SongEndpointTests`). It archives the Song through `PATCH /api/v1/songs/{id}` rather than SQL, then checks that the unfiltered list still has it and that an Idea filter leaves it out.
   **Why:** The behaviour was already correct. Archiving through the API exercises the path users take. The existing list test only archived through SQL, and its only unfiltered checks after that were paging totals.
   **Issue:** #278 (story #59)
+- **Decision:** #283 is fixed with a test only (`EffectiveInputsIsReadOnlyAndSendingItChangesNothing` in `VersionOptionsEndpointTests`). It keeps the current behaviour, where a PATCH carrying `effectiveInputs` answers 200 and changes nothing, and does not change it to a refusal.
+  **Why:** The issue accepts either. Answering 200 is how the API already treats unknown members, and changing it to a refusal would change an existing API contract (Rule 4). The test asserts that the inputs, `effectiveInputs`, and revision are unchanged. As a complement, the same option sent in `inputs` is stored.
+  **Issue:** #283 (story #111)
