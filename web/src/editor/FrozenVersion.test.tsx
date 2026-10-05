@@ -1,10 +1,10 @@
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { EditorView } from '@codemirror/view';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Snapshot } from '../api/snapshots';
 import { formatDateTime } from '../api/timeZone';
-import { jsonResponse, renderApp } from '../test/helpers';
+import { advanceTimers, fakeTimeouts, jsonResponse, renderApp } from '../test/helpers';
 import { testVersion, versionServer } from '../test/versionServer';
 import { FROZEN_NOTICE_TEXT } from './FrozenNotice';
 
@@ -13,7 +13,8 @@ const FROZEN = testVersion('1', { current: true, isFrozen: true, revision: 3, ..
 const MUTABLE = testVersion('1', { current: true, ...STORED });
 
 async function openVersion(path = '/songs/n8-7') {
-  const user = userEvent.setup();
+  // On the fake clock (fakeTimeouts), user-event's own pauses must move it too.
+  const user = userEvent.setup(vi.isFakeTimers() ? { advanceTimers } : {});
   const rendered = renderApp(path);
   await screen.findByRole('textbox', { name: 'Lyrics' });
   return { user, ...rendered };
@@ -189,8 +190,13 @@ describe('History on a frozen Version', () => {
   });
 });
 
+// These tests wait for autosave's pause and then look at what the save left behind. They run on the
+// fake clock (fakeTimeouts), so each wait is a step of the app's own timers taken inside act, which
+// also runs React's effects: on real time, a loaded machine makes React's scheduler yield between a
+// commit and its effects, and a wait could end on the notice before the editor's text was put back.
 describe('a Version that freezes while its editor is open', () => {
   it('on a 409 whose current Version is frozen: no conflict dialog, the notice, and the unsaved text carried to a new Version', async () => {
+    fakeTimeouts();
     const { server } = versionServer([MUTABLE]);
     const { user } = await openVersion();
     // A Generation is attached elsewhere: the revision moves and the Version is frozen.
@@ -239,6 +245,7 @@ describe('a Version that freezes while its editor is open', () => {
   }, 10_000);
 
   it('keeps saving the name and notes typed with the text that could not go in', async () => {
+    fakeTimeouts();
     const { server } = versionServer([MUTABLE]);
     const { user } = await openVersion();
     server.changeElsewhere('1', { isFrozen: true });
@@ -255,6 +262,7 @@ describe('a Version that freezes while its editor is open', () => {
   }, 10_000);
 
   it('on a 409 version_frozen on its own revision: the notice too, and the text carried', async () => {
+    fakeTimeouts();
     const { server } = versionServer([MUTABLE]);
     await openVersion();
     server.next = () => jsonResponse(409, { code: 'version_frozen', versionId: MUTABLE.id });
@@ -271,6 +279,7 @@ describe('a Version that freezes while its editor is open', () => {
   });
 
   it('complement: on a mutable Version the same 409 is the ordinary conflict dialog', async () => {
+    fakeTimeouts();
     const { server } = versionServer([MUTABLE]);
     await openVersion();
     server.changeElsewhere('1', { lyrics: 'Theirs' });
