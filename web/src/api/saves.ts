@@ -13,12 +13,26 @@ export interface Revisioned {
   revision: number;
 }
 
+/**
+ * Why a write failed. `unreachable` (no answer: offline, stopped, timed out) and `server` (a server
+ * error, or an answer the client could not read) may go through if the same write is sent again;
+ * the rest will not: `signed-out` (the session ended and was not renewed), `frozen` (the record's
+ * inputs can no longer change), `gone` (the record is no longer there), `refused` (any other
+ * refusal).
+ */
+export type FailureReason = 'unreachable' | 'server' | 'signed-out' | 'frozen' | 'gone' | 'refused';
+
+/** Whether a write that failed for `reason` may go through if it is sent again unchanged. */
+export function isRetryable(reason: FailureReason | undefined): boolean {
+  return reason === undefined || reason === 'unreachable' || reason === 'server';
+}
+
 /** How one write ended, by the API's answer. Never a rejection. */
 export type SaveResult<T> =
   | { kind: 'saved'; record: T }
   | { kind: 'conflict'; current: T }
   | { kind: 'invalid'; errors: Record<string, string[]> }
-  | { kind: 'failed' };
+  | { kind: 'failed'; reason?: FailureReason };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -38,10 +52,25 @@ export function ifMatch(revision: number): string {
   return `"${String(revision)}"`;
 }
 
+/** Why a write that was answered (but neither saved, nor a conflict, nor invalid) failed. */
+function failureOf(status: number, answer: unknown): FailureReason {
+  if (status === 401) {
+    return 'signed-out';
+  }
+  if (status === 404) {
+    return 'gone';
+  }
+  if (status === 409 && isRecord(answer) && answer.code === 'version_frozen') {
+    return 'frozen';
+  }
+  return status >= 500 || status === 408 || status === 429 || status < 400 ? 'server' : 'refused';
+}
+
 /**
  * PATCHes `body` to `path` based on `revision`. 200 with a record `accept` takes is saved; 409
  * `revision_conflict` with a `current` it takes is a conflict; 422 `validation_failed` is invalid
- * with its field errors; anything else (a 404, a timeout, a body it does not take) has failed.
+ * with its field errors; anything else (a 404, a timeout, a body it does not take) has failed, with
+ * the reason ({@link FailureReason}).
  */
 export async function patchWithRevision<T>(
   path: string,
@@ -63,11 +92,15 @@ export async function patchWithRevision<T>(
     }
     if (response.ok) {
       const record = accept(answer);
-      return record === undefined ? { kind: 'failed' } : { kind: 'saved', record };
+      return record === undefined
+        ? { kind: 'failed', reason: 'server' }
+        : { kind: 'saved', record };
     }
     if (response.status === 409 && isRecord(answer) && answer.code === 'revision_conflict') {
       const current = accept(answer.current);
-      return current === undefined ? { kind: 'failed' } : { kind: 'conflict', current };
+      return current === undefined
+        ? { kind: 'failed', reason: 'server' }
+        : { kind: 'conflict', current };
     }
     if (
       response.status === 422 &&
@@ -77,9 +110,9 @@ export async function patchWithRevision<T>(
     ) {
       return { kind: 'invalid', errors: answer.errors };
     }
-    return { kind: 'failed' };
+    return { kind: 'failed', reason: failureOf(response.status, answer) };
   } catch {
-    return { kind: 'failed' };
+    return { kind: 'failed', reason: 'unreachable' };
   }
 }
 

@@ -1384,3 +1384,30 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** `styles` was already on the redaction list (added ahead of this story with `style`); this story adds a guard test that a Version PATCH carrying lyrics and styles sentinels, saved and refused, never puts either in the log at Debug.
   **Why:** AC "styles is added to the log redaction name list in this story" was already true; the test proves the new field path is covered.
   **Issue:** #64
+- **Decision:** #65 delivers autosave only. Snapshots, comparison, restore, and `EditorRevisionService`/`HistoryPanel.tsx` (named in the story's must-haves) are left to #66.
+  **Why:** The story's last Discretion line moves every editing-history criterion, test-plan line, and must-have to the sibling story "Editing history: snapshots, comparison, and restore" (#66).
+  **Issue:** #65
+- **Decision:** Autosave lives in `web/src/editor/useAutosave.ts` over the existing `useRevisionedSave.saveFields`: a 1.5 s debounce, one combined PATCH of every field (name, notes, lyrics, styles) whose draft differs from the stored Version, and one save in flight at a time; what is typed meanwhile is sent when it returns, on its revision. A new keystroke while retrying re-arms the 1.5 s pause but keeps the backoff count; a success resets it.
+  **Why:** Discretion lines (debounce, one queue per Version, no self-conflicts); reusing the shared helper keeps the conflict dialog and the silent same-value retry.
+  **Issue:** #65
+- **Decision:** A failed save now says why: `SaveResult`/`SaveOutcome` `failed` carries an optional `reason` (`unreachable`, `server`, `signed-out`, `frozen`, `gone`, `refused`). No answer, a 5xx, 408, 429, or an unreadable success are retried without limit (2, 4, 8, 16, 30, 30… s); 401 (sign-in prompt dismissed), 404, 409 `version_frozen`, any other 4xx, and 422 stop autosave with a message saying what to do. A stop clears on the next edit or the indicator's "Try again". `version_frozen` is assumed from #69's planned code.
+  **Why:** AC 4. An optional field keeps every other caller of `patchWithRevision` unchanged.
+  **Issue:** #65
+- **Decision:** Name and notes are now always-editable fields that autosave like the lyrics (the #63 Edit buttons, Enter/blur saving, and Escape cancelling are gone). The explicit "Save lyrics and styles" button is removed; Ctrl/Cmd+S stays as "save now" (flush) so the browser's save-page dialog never opens over the editor.
+  **Why:** AC 1 covers name and notes; an Escape that "cancels" cannot undo text already autosaved. The Discretion line removes the Save action; keeping the shortcut as a flush costs nothing and avoids a surprise.
+  **Issue:** #65
+- **Decision:** Leaving inside the app (another page, Song, or Version) while anything is not stored first saves it at once and goes on if that works; only a save that does not go through (or a paused conflict or a refusal) opens "Your changes are not saved" with Stay or Leave without saving. Closing or reloading the tab uses `beforeunload` whenever anything is not stored, and the keepalive PATCH (anti-forgery header, last known revision) is sent on `pagehide`, not `beforeunload`.
+  **Why:** Discretion lines (leave covers navigation, Version switches, tab close; keepalive with anti-forgery header, failure accepted). Sending on `pagehide` means a user who chooses to stay never races their own keepalive save into a self-conflict.
+  **Issue:** #65
+- **Decision:** A conflict left undecided ("Keep editing", Escape) pauses autosave; the indicator then says the Version changed elsewhere and offers Reload and "Reapply my change". Typing on does not resume it.
+  **Why:** AC 3: autosave stops on a conflict; after "Keep editing" the record has already moved to the current revision, so resuming silently would overwrite the other change without a choice.
+  **Issue:** #65
+- **Decision:** Rule 1: when the stored Version moves (a save returns, a conflict is reapplied, the tree archives it), a field whose draft the user has not changed takes the new value; fields of the save in flight never do.
+  **Why:** Without it, reapplying over a change made elsewhere left the other field's old value in its draft, and the next autosave reverted the other client's change; and a field typed back to its old value during a save would be overwritten by the save's answer. Regression test: "sends what was typed during a save after it returns, even typing back to the old text".
+  **Issue:** #65
+- **Decision:** The e2e walk plays "stop the server" (Demo step 5) by refusing every Version PATCH in the browser (`page.route` abort), not by stopping a container; Playwright's clock is not used (it is for #66's 30-second snapshot pause).
+  **Why:** The shared containers serve every other spec; a browser-side refusal is the same "no answer" the client sees from a stopped server.
+  **Issue:** #65
+- **Decision:** The Song-page component tests' `openSong` now waits for the Version pane to finish loading before clicking.
+  **Why:** With the pane drawing more fields, clicks sometimes landed on the loading pane's buttons as they were replaced (a flake seen 3 times in 12 runs; 0 in 10 after).
+  **Issue:** #65

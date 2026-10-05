@@ -2,7 +2,7 @@ import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { EditorView } from '@codemirror/view';
 import { describe, expect, it } from 'vitest';
-import { renderApp } from '../test/helpers';
+import { jsonResponse, renderApp } from '../test/helpers';
 import { testVersion, versionServer } from '../test/versionServer';
 
 const ONE = testVersion('1', { current: true, lyrics: '[Verse]\nRun (ooh)\n', styles: 'punk' });
@@ -48,8 +48,19 @@ function pasteLyrics(text: string) {
   });
 }
 
-function saveButton() {
-  return screen.getByRole('button', { name: 'Save lyrics and styles' });
+/** Waits for the autosave after the user's pause (1.5 s, plus any retry) to have sent `count` writes. */
+async function writesReach(writes: unknown[], count: number, timeout = 4_000) {
+  await waitFor(
+    () => {
+      expect(writes).toHaveLength(count);
+    },
+    { timeout },
+  );
+}
+
+/** The autosave indicator's words. */
+function indicator() {
+  return within(screen.getByTestId('autosave')).getByRole('status');
 }
 
 describe('the lyrics editor', () => {
@@ -66,7 +77,9 @@ describe('the lyrics editor', () => {
     expect([...parentheticals].map((mark) => mark.textContent)).toEqual(['(ooh)']);
     expect(screen.getByRole('textbox', { name: 'Styles' })).toHaveValue('punk');
     expect(screen.getByText('No warnings.')).toBeVisible();
-    expect(saveButton()).toBeDisabled();
+    // Nothing to press: the indicator says the text is stored.
+    expect(indicator()).toHaveTextContent(/^Saved$/);
+    expect(screen.queryByRole('button', { name: /^Save/ })).toBeNull();
   });
 
   it('offers the common tags on [, inserts the whole tag, and can be dismissed', async () => {
@@ -105,7 +118,6 @@ describe('the lyrics editor', () => {
   });
 
   it('warns on an unclosed bracket on its line, exposed to assistive technology, and still saves', async () => {
-    const user = userEvent.setup();
     const { server } = versionServer([ONE]);
     await openVersion();
 
@@ -128,17 +140,16 @@ describe('the lyrics editor', () => {
       true,
     );
 
-    expect(saveButton()).toBeEnabled();
-    await user.click(saveButton());
-
-    expect(await screen.findByText('Saved.')).toBeVisible();
+    await writesReach(server.writes, 1);
     expect(server.writes.map((write) => write.body)).toEqual([
       { lyrics: '[Verse]\nRun (ooh)\n[Bridge' },
     ]);
-    expect(saveButton()).toBeDisabled();
+    await waitFor(() => {
+      expect(indicator()).toHaveTextContent(/^Saved$/);
+    });
   });
 
-  it('saves lyrics exactly as typed and styles in one PATCH, also by Ctrl+S', async () => {
+  it('saves automatically once the user pauses: Saving…, then Saved, in one PATCH', async () => {
     const user = userEvent.setup();
     const { server } = versionServer([ONE]);
     await openVersion();
@@ -146,60 +157,205 @@ describe('the lyrics editor', () => {
     typeLyrics('  \t\n\n');
     const styles = screen.getByRole('textbox', { name: 'Styles' });
     await user.type(styles, ', fast ');
-    expect(screen.getByText('Unsaved changes.')).toBeVisible();
-    await user.keyboard('{Control>}s{/Control}');
+    expect(indicator()).toHaveTextContent('Saving…');
+    expect(server.writes).toEqual([]);
 
-    expect(await screen.findByText('Saved.')).toBeVisible();
+    await writesReach(server.writes, 1);
+    await waitFor(() => {
+      expect(indicator()).toHaveTextContent(/^Saved$/);
+    });
     expect(server.writes.map((write) => write.body)).toEqual([
       { lyrics: '[Verse]\nRun (ooh)\n  \t\n\n', styles: 'punk, fast ' },
     ]);
     expect(server.versions[0]?.revision).toBe(2);
   });
 
-  it('counts over the limit, says so, and refuses to save until it is back under', async () => {
+  it('saves at once on Ctrl+S, without waiting for the pause', async () => {
     const user = userEvent.setup();
-    versionServer([ONE]);
+    const { server } = versionServer([ONE]);
+    await openVersion();
+
+    await user.type(screen.getByRole('textbox', { name: 'Styles' }), '!');
+    await user.keyboard('{Control>}s{/Control}');
+
+    await writesReach(server.writes, 1, 500);
+    expect(server.writes.map((write) => write.body)).toEqual([{ styles: 'punk!' }]);
+  });
+
+  it('counts over the limit, says so, and does not save until it is back under', async () => {
+    const user = userEvent.setup();
+    const { server } = versionServer([ONE]);
     await openVersion();
 
     pasteLyrics('x'.repeat(5_001));
 
     expect(await screen.findByText('5,001 / 5,000 characters')).toBeVisible();
     expect(screen.getByRole('alert')).toHaveTextContent('Over the limit by 1 character.');
-    expect(saveButton()).toBeDisabled();
-
-    pasteLyrics('x'.repeat(5_000));
-    expect(await screen.findByText('5,000 / 5,000 characters')).toBeVisible();
-    expect(saveButton()).toBeEnabled();
+    expect(indicator()).toHaveTextContent(
+      'Not saved: The lyrics are over their limit. Shorten the text to save.',
+    );
 
     await user.type(screen.getByRole('textbox', { name: 'Styles' }), 'y'.repeat(997));
-    expect(screen.getByText(/Over the limit by 1 character\./)).toBeVisible();
-    expect(saveButton()).toBeDisabled();
-  });
+    expect(screen.getAllByText(/Over the limit by 1 character\./)).toHaveLength(2);
+    expect(indicator()).toHaveTextContent(
+      'Not saved: The lyrics are over their limit. The styles are over their limit. Shorten the text to save.',
+    );
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    expect(server.writes).toEqual([]);
 
-  it('opens the shared conflict dialog when the lyrics changed elsewhere', async () => {
+    pasteLyrics('x'.repeat(5_000));
+    await user.type(screen.getByRole('textbox', { name: 'Styles' }), '{Backspace}');
+    expect(await screen.findByText('5,000 / 5,000 characters')).toBeVisible();
+    await writesReach(server.writes, 1);
+    expect(server.writes.map((write) => write.body)).toEqual([
+      { lyrics: 'x'.repeat(5_000), styles: `punk${'y'.repeat(996)}` },
+    ]);
+  }, 10_000);
+
+  it('keeps the text when a save fails, says so, and retries until it is stored', async () => {
+    const { server } = versionServer([ONE]);
+    await openVersion();
+    server.next = () => jsonResponse(503, { code: 'unavailable' });
+
+    typeLyrics('Kept');
+
+    await waitFor(
+      () => {
+        expect(indicator()).toHaveTextContent(
+          'Not saved: n8Tracks could not store the change. Your text is kept here, and saving is retried automatically.',
+        );
+      },
+      { timeout: 4_000 },
+    );
+    expect(editor().state.doc.toString()).toBe('[Verse]\nRun (ooh)\nKept');
+
+    // Retried two seconds later, and stored.
+    await writesReach(server.writes, 2, 4_000);
+    await waitFor(() => {
+      expect(indicator()).toHaveTextContent(/^Saved$/);
+    });
+    expect(server.versions[0]?.lyrics).toBe('[Verse]\nRun (ooh)\nKept');
+  }, 10_000);
+
+  it('stops on a refusal retrying cannot fix, says what to do, and tries again when asked', async () => {
+    const user = userEvent.setup();
+    const { server } = versionServer([ONE]);
+    await openVersion();
+    server.next = () => jsonResponse(409, { code: 'version_frozen' });
+
+    typeLyrics('Frozen');
+    await waitFor(
+      () => {
+        expect(indicator()).toHaveTextContent(/Create a new Version from it/);
+      },
+      { timeout: 4_000 },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 2_500));
+    expect(server.writes).toHaveLength(1);
+
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    await writesReach(server.writes, 2, 1_000);
+    await waitFor(() => {
+      expect(indicator()).toHaveTextContent(/^Saved$/);
+    });
+  }, 10_000);
+
+  it('sends what was typed during a save after it returns, even typing back to the old text', async () => {
+    const { server } = versionServer([ONE]);
+    await openVersion();
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    server.next = async () => {
+      await held;
+      server.changeElsewhere('1', { lyrics: '[Verse]\nRun (ooh)\nX' });
+      return jsonResponse(200, server.versions[0]);
+    };
+
+    typeLyrics('X');
+    await writesReach(server.writes, 1);
+    // Typed back to what was stored before, while the save of "X" is out.
+    act(() => {
+      editor().dispatch({
+        changes: { from: editor().state.doc.length - 1, to: editor().state.doc.length },
+        userEvent: 'delete.backward',
+      });
+    });
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    expect(server.writes).toHaveLength(1);
+
+    release();
+    await writesReach(server.writes, 2, 1_000);
+    expect(editor().state.doc.toString()).toBe('[Verse]\nRun (ooh)\n');
+    expect(server.writes.map((write) => write.body)).toEqual([
+      { lyrics: '[Verse]\nRun (ooh)\nX' },
+      { lyrics: '[Verse]\nRun (ooh)\n' },
+    ]);
+    await waitFor(() => {
+      expect(indicator()).toHaveTextContent(/^Saved$/);
+    });
+  }, 10_000);
+
+  it('opens the shared conflict dialog when the lyrics changed elsewhere; Reload takes theirs', async () => {
     const user = userEvent.setup();
     const { server } = versionServer([ONE]);
     await openVersion();
     server.changeElsewhere('1', { lyrics: 'Theirs' });
 
     typeLyrics('Mine');
-    await user.click(saveButton());
 
-    const dialog = await screen.findByRole('dialog', { name: 'Changed since you loaded it' });
+    const dialog = await screen.findByRole(
+      'dialog',
+      { name: 'Changed since you loaded it' },
+      { timeout: 4_000 },
+    );
     expect(within(dialog).getByText('Theirs')).toBeInTheDocument();
+    // Nothing typed is lost before the user chooses.
+    expect(editor().state.doc.toString()).toBe('[Verse]\nRun (ooh)\nMine');
     await user.click(within(dialog).getByRole('button', { name: 'Reload' }));
 
     await waitFor(() => {
       expect(editor().state.doc.toString()).toBe('Theirs');
     });
-    expect(saveButton()).toBeDisabled();
+    expect(indicator()).toHaveTextContent(/^Saved$/);
+    expect(server.writes).toHaveLength(1);
   });
+
+  it('pauses autosave on a conflict left undecided, until the user reapplies', async () => {
+    const user = userEvent.setup();
+    const { server } = versionServer([ONE]);
+    await openVersion();
+    server.changeElsewhere('1', { lyrics: 'Theirs' });
+
+    typeLyrics('Mine');
+    const dialog = await screen.findByRole(
+      'dialog',
+      { name: 'Changed since you loaded it' },
+      { timeout: 4_000 },
+    );
+    await user.click(within(dialog).getByRole('button', { name: 'Keep editing' }));
+
+    await waitFor(() => {
+      expect(indicator()).toHaveTextContent(/^Not saved: this Version was changed elsewhere/);
+    });
+    typeLyrics(' more');
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    expect(server.writes).toHaveLength(1);
+
+    await user.click(screen.getByRole('button', { name: 'Reapply my change' }));
+    await writesReach(server.writes, 2, 1_000);
+    await waitFor(() => {
+      expect(indicator()).toHaveTextContent(/^Saved$/);
+    });
+    expect(server.versions[0]?.lyrics).toBe('[Verse]\nRun (ooh)\nMine more');
+  }, 10_000);
 });
 
-describe('leaving with unsaved changes', () => {
+describe('leaving with changes not saved', () => {
   const TWO = testVersion('2', { lyrics: 'Two' });
 
-  it('asks first: Stay keeps the edit, Discard leaves it', async () => {
+  it('saves first and goes on without asking', async () => {
     const user = userEvent.setup();
     const { server } = versionServer([ONE, TWO]);
     const { router } = await openVersion();
@@ -207,7 +363,34 @@ describe('leaving with unsaved changes', () => {
     typeLyrics('More');
     await user.click(screen.getByRole('treeitem', { name: /Version 2/ }));
 
-    const dialog = await screen.findByRole('dialog', { name: 'Unsaved lyrics or styles' });
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/songs/n8-7/v/2');
+    });
+    await waitFor(() => {
+      expect(editor().state.doc.toString()).toBe('Two');
+    });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(server.writes.map((write) => write.body)).toEqual([
+      { lyrics: '[Verse]\nRun (ooh)\nMore' },
+    ]);
+  });
+
+  it('asks when the save does not go through: Stay keeps the edit, Leave without saving leaves', async () => {
+    const user = userEvent.setup();
+    const { server } = versionServer([ONE, TWO]);
+    const { router } = await openVersion();
+    const failing = () => {
+      server.next = () => jsonResponse(503, { code: 'unavailable' });
+    };
+
+    failing();
+    typeLyrics('More');
+    act(() => {
+      void router.navigate('/songs');
+    });
+
+    const dialog = await screen.findByRole('dialog', { name: 'Your changes are not saved' });
+    expect(dialog).toHaveTextContent(/n8Tracks could not store the change/);
     await user.click(within(dialog).getByRole('button', { name: 'Stay' }));
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).toBeNull();
@@ -215,11 +398,12 @@ describe('leaving with unsaved changes', () => {
     expect(router.state.location.pathname).toBe('/songs/n8-7');
     expect(editor().state.doc.toString()).toBe('[Verse]\nRun (ooh)\nMore');
 
+    failing();
     await user.click(screen.getByRole('treeitem', { name: /Version 2/ }));
     await user.click(
-      within(await screen.findByRole('dialog', { name: 'Unsaved lyrics or styles' })).getByRole(
+      within(await screen.findByRole('dialog', { name: 'Your changes are not saved' })).getByRole(
         'button',
-        { name: 'Discard' },
+        { name: 'Leave without saving' },
       ),
     );
 
@@ -227,27 +411,7 @@ describe('leaving with unsaved changes', () => {
     await waitFor(() => {
       expect(editor().state.doc.toString()).toBe('Two');
     });
-    expect(server.writes).toEqual([]);
-  });
-
-  it('saves and continues', async () => {
-    const user = userEvent.setup();
-    const { server } = versionServer([ONE, TWO]);
-    const { router } = await openVersion();
-
-    typeLyrics('More');
-    act(() => {
-      void router.navigate('/songs');
-    });
-    const dialog = await screen.findByRole('dialog', { name: 'Unsaved lyrics or styles' });
-    await user.click(within(dialog).getByRole('button', { name: 'Save and continue' }));
-
-    await waitFor(() => {
-      expect(router.state.location.pathname).toBe('/songs');
-    });
-    expect(server.writes.map((write) => write.body)).toEqual([
-      { lyrics: '[Verse]\nRun (ooh)\nMore' },
-    ]);
+    expect(server.versions[0]?.lyrics).toBe('[Verse]\nRun (ooh)\n');
   });
 
   it('does not ask when nothing changed', async () => {
@@ -259,5 +423,30 @@ describe('leaving with unsaved changes', () => {
 
     expect(await screen.findByRole('heading', { level: 3, name: 'Version 2' })).toBeVisible();
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('asks the browser before the tab closes, and sends what is not saved as the page goes', async () => {
+    const { mock } = versionServer([ONE]);
+    await openVersion();
+
+    const quiet = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(quiet);
+    expect(quiet.defaultPrevented).toBe(false);
+
+    typeLyrics('Last words');
+    const ask = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(ask);
+    expect(ask.defaultPrevented).toBe(true);
+
+    window.dispatchEvent(new Event('pagehide'));
+    const sent = mock.mock.calls.find(([, init]) => init?.keepalive === true);
+    expect(sent?.[1]?.method).toBe('PATCH');
+    const headers = new Headers(sent?.[1]?.headers);
+    expect(headers.get('X-N8Tracks-Request')).toBe('1');
+    expect(headers.get('If-Match')).toBe('"1"');
+    const body = sent?.[1]?.body;
+    expect(JSON.parse(typeof body === 'string' ? body : '')).toEqual({
+      lyrics: '[Verse]\nRun (ooh)\nLast words',
+    });
   });
 });

@@ -44,6 +44,11 @@ function archiveNotice() {
 async function openSong(path = '/songs/n8-7') {
   renderApp(path);
   await screen.findByRole('tree', { name: 'Versions' });
+  // The selected Version's pane is drawn again once its lyrics are in: clicking its buttons
+  // before then could land on the loading pane's copies as they are replaced.
+  await waitFor(() => {
+    expect(screen.queryByText('Loading the lyrics and styles…')).toBeNull();
+  });
 }
 
 describe('the Version tree', () => {
@@ -110,7 +115,7 @@ describe('the Version tree', () => {
     expect(screen.getByRole('heading', { level: 3, name: 'Version 2' })).toBeVisible();
     expect(screen.getByRole('switch', { name: 'Show archived' })).toBeChecked();
     expect(node('2')).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByText('Too slow', { selector: 'p' })).toBeVisible();
+    expect(await screen.findByRole('textbox', { name: 'Name' })).toHaveValue('Too slow');
     expect(screen.getByRole('button', { name: 'Make current' })).toBeEnabled();
   });
 
@@ -479,28 +484,35 @@ describe('the tree from the keyboard', () => {
   });
 });
 
+/** Waits for the autosave after the user's pause (1.5 s) to have sent `count` writes. */
+async function writesReach(writes: unknown[], count: number) {
+  await waitFor(
+    () => {
+      expect(writes).toHaveLength(count);
+    },
+    { timeout: 4_000 },
+  );
+}
+
 describe('a Version’s name and notes', () => {
-  it('renames a Version and adds notes, each saved on its revision', async () => {
+  it('saves a new name and notes automatically, each on its revision', async () => {
     const user = userEvent.setup();
     const { server } = versionServer([ONE, testVersion('1.1')]);
 
     await openSong('/songs/n8-7/v/1.1');
-    await user.click(screen.getByRole('button', { name: 'Edit name' }));
-    const name = screen.getByRole('textbox', { name: 'Name' });
-    await user.type(name, '  Guitar experimentation {Enter}');
+    const name = await screen.findByRole('textbox', { name: 'Name' });
+    await user.type(name, '  Guitar experimentation ');
+    await writesReach(server.writes, 1);
 
     await waitFor(() => {
       expect(within(node('1.1')).getByText('Guitar experimentation')).toBeVisible();
     });
     expect(node('1.1')).toHaveAccessibleName('Version 1.1, Guitar experimentation');
+    expect(name).toHaveValue('  Guitar experimentation ');
 
-    await user.click(screen.getByRole('button', { name: 'Edit notes' }));
-    await user.type(
-      screen.getByRole('textbox', { name: 'Notes' }),
-      'Try a capo.{Control>}{Enter}{/Control}',
-    );
-
-    expect(await screen.findByText('Try a capo.', { selector: 'p' })).toBeVisible();
+    await user.type(screen.getByRole('textbox', { name: 'Notes' }), 'Try a capo.');
+    await writesReach(server.writes, 2);
+    expect(await screen.findByText('Saved')).toBeVisible();
     expect(server.writes).toEqual([
       {
         method: 'PATCH',
@@ -514,19 +526,20 @@ describe('a Version’s name and notes', () => {
       },
     ]);
     expect(server.versions.find((version) => version.number === '1.1')?.revision).toBe(3);
-  });
+  }, 10_000);
 
   it('edits the name of an archived Version too, and clears it to none', async () => {
     const user = userEvent.setup();
     const { server } = versionServer([ONE, testVersion('2', { archived: true, name: 'Old' })]);
 
     await openSong('/songs/n8-7/v/2');
-    await user.click(screen.getByRole('button', { name: 'Edit name' }));
-    await user.clear(screen.getByRole('textbox', { name: 'Name' }));
-    await user.keyboard('{Enter}');
+    await user.clear(await screen.findByRole('textbox', { name: 'Name' }));
 
-    expect(await screen.findByText('No name.')).toBeVisible();
+    await writesReach(server.writes, 1);
     expect(server.writes.map((write) => write.body)).toEqual([{ name: null }]);
+    await waitFor(() => {
+      expect(node('2')).toHaveAccessibleName('Version 2, archived');
+    });
   });
 
   it('flags a name over the limit in the field without sending it, and one the API refuses', async () => {
@@ -534,14 +547,16 @@ describe('a Version’s name and notes', () => {
     const { server } = versionServer([ONE]);
 
     await openSong();
-    await user.click(screen.getByRole('button', { name: 'Edit name' }));
-    const name = screen.getByRole('textbox', { name: 'Name' });
+    const name = await screen.findByRole('textbox', { name: 'Name' });
     await user.click(name);
     await user.paste('a'.repeat(201));
-    await user.keyboard('{Enter}');
 
     expect(screen.getByText('Use at most 200 characters.')).toBeVisible();
     expect(name).toHaveAttribute('aria-invalid', 'true');
+    expect(
+      screen.getByText('Not saved: The name is over its limit. Shorten the text to save.'),
+    ).toBeVisible();
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
     expect(server.writes).toEqual([]);
 
     server.next = () =>
@@ -550,13 +565,17 @@ describe('a Version’s name and notes', () => {
         errors: { name: ['A name is one line, with no control characters.'] },
       });
     await user.clear(name);
-    await user.type(name, 'Fine here{Enter}');
+    await user.type(name, 'Fine here');
 
     expect(
-      await screen.findByText('A name is one line, with no control characters.'),
+      await screen.findByText(
+        'Not saved: A name is one line, with no control characters. Change the text to save it.',
+        undefined,
+        { timeout: 4_000 },
+      ),
     ).toBeVisible();
-    expect(name).toHaveAttribute('aria-invalid', 'true');
-  });
+    expect(name).toHaveValue('Fine here');
+  }, 10_000);
 
   it('offers the conflict dialog when the notes changed elsewhere', async () => {
     const user = userEvent.setup();
@@ -564,12 +583,11 @@ describe('a Version’s name and notes', () => {
 
     await openSong();
     server.changeElsewhere('1', { notes: 'Their note' });
-    await user.click(screen.getByRole('button', { name: 'Edit notes' }));
-    await user.type(screen.getByRole('textbox', { name: 'Notes' }), 'My note');
-    await user.keyboard('{Control>}{Enter}{/Control}');
+    await user.type(await screen.findByRole('textbox', { name: 'Notes' }), 'My note');
 
-    const dialog = await screen.findByRole('dialog');
+    const dialog = await screen.findByRole('dialog', undefined, { timeout: 4_000 });
     expect(within(dialog).getByText(/This Version/)).toBeInTheDocument();
     expect(within(dialog).getByText('Their note')).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Notes', hidden: true })).toHaveValue('My note');
   });
 });

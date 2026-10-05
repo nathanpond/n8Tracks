@@ -3,6 +3,7 @@ import {
   createSaveQueue,
   differingFields,
   type ComparedField,
+  type FailureReason,
   type FieldValue,
   type Revisioned,
   type SaveResult,
@@ -23,7 +24,8 @@ export type SaveOutcome =
   /** The user went back to editing; the current record (and its revision) is loaded. */
   | { kind: 'keep-editing' }
   | { kind: 'invalid'; errors: Record<string, string[]> }
-  | { kind: 'failed' };
+  /** Not stored; `reason` says why, when the API's answer told ({@link FailureReason}). */
+  | { kind: 'failed'; reason?: FailureReason };
 
 type Choice = 'reload' | 'reapply' | 'keep-editing';
 

@@ -154,19 +154,18 @@ test.describe('naming, annotating, and archiving Versions', () => {
     // 1. Rename 1.1 to "Guitar experimentation" and add a note.
     await page.goto(`./songs/${song.shortcode}/v/1.1`);
     await expect(page.getByRole('heading', { level: 3, name: 'Version 1.1' })).toBeVisible();
-    await page.getByRole('button', { name: 'Edit name' }).click();
     await page.getByRole('textbox', { name: 'Name' }).fill('Guitar experimentation');
-    await page.getByRole('textbox', { name: 'Name' }).press('Enter');
     await expect(node(page, '1.1')).toContainText('Guitar experimentation');
-    await page.getByRole('button', { name: 'Edit notes' }).click();
     await page.getByRole('textbox', { name: 'Notes' }).fill('Try a capo on the second fret.');
-    // Scanned without the colour control: clicking it would blur the field, which saves it.
     await expectNoA11yViolations(page);
-    await page.getByRole('textbox', { name: 'Notes' }).press('Control+Enter');
-    await expect(page.getByText('Try a capo on the second fret.')).toBeVisible();
+    await expect(page.getByTestId('autosave').getByRole('status')).toHaveText('Saved');
     await expect(
       page.getByRole('treeitem', { name: 'Version 1.1, Guitar experimentation' }),
     ).toBeVisible();
+    await page.reload();
+    await expect(page.getByRole('textbox', { name: 'Notes' })).toHaveValue(
+      'Try a capo on the second fret.',
+    );
     await expectAccessibleInLightAndDark(page);
 
     // 2. Archive 2 from its actions menu; it disappears. Show archived brings it back dimmed.

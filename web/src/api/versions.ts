@@ -1,5 +1,7 @@
+import { resolveAppUrl } from './baseUrl';
 import { apiFetch } from './client';
-import { patchWithRevision, type SaveResult } from './saves';
+import { ifMatch, patchWithRevision, type SaveResult } from './saves';
+import { ANTIFORGERY_HEADER } from './session';
 import { body, isRecord, isSong, useResource, type Song } from './songs';
 
 const SONGS_PATH = 'api/v1/songs';
@@ -238,6 +240,33 @@ export function updateVersion(
     { ...edit },
     acceptVersionDetail,
   );
+}
+
+/**
+ * Sends an edit of a Version as the page closes (the tab is closed or reloaded): a `keepalive`
+ * PATCH, so the browser finishes it after the page is gone, carrying the anti-forgery header and
+ * the revision. Nothing reads its answer: a failure (a conflict, no connection) is accepted, and
+ * the shared fetch helper's sign-in prompt cannot help a page that is going away.
+ */
+export function sendVersionAsPageCloses(
+  version: Pick<Version, 'id' | 'revision'>,
+  edit: VersionEdit,
+): void {
+  try {
+    fetch(resolveAppUrl(`${VERSIONS_PATH}/${encodeURIComponent(version.id)}`), {
+      method: 'PATCH',
+      keepalive: true,
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'If-Match': ifMatch(version.revision),
+        [ANTIFORGERY_HEADER]: '1',
+      },
+      body: JSON.stringify(edit),
+    }).catch(() => undefined);
+  } catch {
+    // The page is going away; there is no one left to tell.
+  }
 }
 
 /** How many times archiving is retried on a newer revision before it gives up. */

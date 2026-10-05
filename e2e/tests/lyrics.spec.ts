@@ -1,9 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import {
-  expectAccessibleInLightAndDark,
-  expectModalAccessibleInBothSchemes,
-  expectNoA11yViolations,
-} from '../support/a11y.ts';
+import { expectAccessibleInLightAndDark, expectNoA11yViolations } from '../support/a11y.ts';
 import { ANTIFORGERY_HEADERS } from '../support/session.ts';
 
 interface Song {
@@ -39,6 +35,11 @@ function lyricsEditor(page: Page) {
   return page.getByRole('textbox', { name: 'Lyrics' });
 }
 
+/** The autosave indicator's words. */
+function saveStatus(page: Page) {
+  return page.getByTestId('autosave').getByRole('status');
+}
+
 function completions(page: Page) {
   return page.getByRole('listbox');
 }
@@ -50,7 +51,7 @@ const EXPECTED =
  * Walks #64's Demo on a Song of its own: tags and parentheticals highlighted differently, `[`
  * offering the common tags, a warning on an unclosed tag that does not stop saving, an invented tag
  * kept, and the text exactly as typed after a reload. Also: Tab inserts a tab and Escape then Tab
- * moves on, and leaving with unsaved changes asks first.
+ * moves on. Saving is automatic (#65; its own walk is `autosave.spec.ts`).
  */
 test.describe('the lyrics editor', () => {
   test('highlights, completes, warns, and saves exactly what was typed', async ({ page }) => {
@@ -120,23 +121,12 @@ test.describe('the lyrics editor', () => {
     await styles.fill('indie rock,\nfast ');
     await expectNoA11yViolations(page);
 
-    // Leaving with unsaved changes asks; Stay keeps them.
-    await page.getByRole('link', { name: /Songs/ }).first().click();
-    const leave = page.getByRole('dialog', { name: 'Unsaved lyrics or styles' });
-    await expect(leave).toBeVisible();
-    await expectModalAccessibleInBothSchemes(page);
-    await leave.getByRole('button', { name: 'Stay' }).click();
-    await expect(leave).toBeHidden();
-    await expect(page.getByRole('heading', { level: 3, name: 'Version 1' })).toBeVisible();
-
-    // 5. Save still works with the warning; reload: the text is exactly as typed.
-    await page.getByRole('button', { name: 'Save lyrics and styles' }).click();
-    await expect(page.getByText('Saved.')).toBeVisible();
+    // 5. Saved automatically, warning and all; the text is stored exactly as typed.
+    await expect(saveStatus(page)).toHaveText('Saved');
     await expectAccessibleInLightAndDark(page);
-    expect(await storedLyrics(page, song)).toEqual({
-      lyrics: EXPECTED,
-      styles: 'indie rock,\nfast ',
-    });
+    await expect
+      .poll(() => storedLyrics(page, song))
+      .toEqual({ lyrics: EXPECTED, styles: 'indie rock,\nfast ' });
 
     await page.reload();
     await expect(lyricsEditor(page)).toBeVisible();
@@ -149,7 +139,7 @@ test.describe('the lyrics editor', () => {
         ),
     ).toBe(EXPECTED);
     await expect(page.getByRole('textbox', { name: 'Styles' })).toHaveValue('indie rock,\nfast ');
-    await expect(page.getByRole('button', { name: 'Save lyrics and styles' })).toBeDisabled();
+    await expect(saveStatus(page)).toHaveText('Saved');
     await expect(
       page.getByRole('button', { name: /^Warning, line 4: This \[ is not closed/ }),
     ).toBeVisible();

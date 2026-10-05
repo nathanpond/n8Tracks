@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { jsonResponse, stubFetch } from '../test/helpers';
-import { createSaveQueue, differingFields, patchWithRevision, type ComparedField } from './saves';
+import {
+  createSaveQueue,
+  differingFields,
+  isRetryable,
+  patchWithRevision,
+  type ComparedField,
+  type FailureReason,
+} from './saves';
 
 interface Item {
   revision: number;
@@ -94,5 +101,46 @@ describe('patchWithRevision', () => {
     });
     expect((await patchWithRevision('api/v1/items/1', 1, {}, accept)).kind).toBe('failed');
     expect((await patchWithRevision('api/v1/items/1', 1, {}, accept)).kind).toBe('failed');
+  });
+
+  it('says why a write failed, and which failures may go through if sent again', async () => {
+    const mock = stubFetch();
+    const answers: (() => Promise<Response>)[] = [
+      () => Promise.reject(new TypeError('Failed to fetch')),
+      () => Promise.resolve(jsonResponse(503, { code: 'unavailable' })),
+      () => Promise.resolve(jsonResponse(200, { unexpected: true })),
+      () => Promise.resolve(jsonResponse(401, { code: 'not_authenticated' })),
+      () => Promise.resolve(jsonResponse(409, { code: 'version_frozen' })),
+      () => Promise.resolve(jsonResponse(404, { code: 'not_found' })),
+      () => Promise.resolve(jsonResponse(403, { code: 'antiforgery_required' })),
+      () => Promise.resolve(jsonResponse(429, { code: 'too_many_requests' })),
+    ];
+    mock.mockImplementation(() => (answers.shift() ?? (() => Promise.reject(new Error())))());
+
+    const reasons: (FailureReason | undefined)[] = [];
+    for (let i = 0; i < 8; i++) {
+      const result = await patchWithRevision('api/v1/items/1', 1, {}, accept);
+      reasons.push(result.kind === 'failed' ? result.reason : undefined);
+    }
+    expect(reasons).toEqual([
+      'unreachable',
+      'server',
+      'server',
+      'signed-out',
+      'frozen',
+      'gone',
+      'refused',
+      'server',
+    ]);
+    expect(reasons.map((reason) => isRetryable(reason))).toEqual([
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+    ]);
   });
 });
