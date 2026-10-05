@@ -15,6 +15,12 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
     /// <summary>The trigger that moves a Song's last-updated time when one of its Versions changes.</summary>
     public const string VersionUpdatedTrigger = "tr_versions_touch_song_after_update";
 
+    /// <summary>The trigger that records a new Version's number as used, failing when it was ever used before.</summary>
+    public const string VersionNumberRecordedTrigger = "tr_versions_record_number_after_insert";
+
+    /// <summary>The trigger that refuses any change to a Version's number or Song.</summary>
+    public const string VersionNumberFixedTrigger = "tr_versions_number_never_changes";
+
     public DbSet<AppMetadataEntry> AppMetadata => Set<AppMetadataEntry>();
 
     public DbSet<AdministratorRecord> Administrators => Set<AdministratorRecord>();
@@ -34,6 +40,8 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
     public DbSet<SongRecord> Songs => Set<SongRecord>();
 
     public DbSet<VersionRecord> Versions => Set<VersionRecord>();
+
+    public DbSet<UsedVersionNumberRecord> UsedVersionNumbers => Set<UsedVersionNumberRecord>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
@@ -173,6 +181,8 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                 table.HasCheckConstraint("ck_versions_revision", "revision >= 1");
                 table.HasTrigger(VersionInsertedTrigger);
                 table.HasTrigger(VersionUpdatedTrigger);
+                table.HasTrigger(VersionNumberRecordedTrigger);
+                table.HasTrigger(VersionNumberFixedTrigger);
             });
             version.HasKey(record => record.Id);
             version.HasIndex(record => new { record.SongId, record.Number }).IsUnique();
@@ -181,6 +191,19 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                 .WithMany()
                 .HasForeignKey(record => record.SongId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<UsedVersionNumberRecord>(used =>
+        {
+            used.ToTable("used_version_numbers", static table =>
+                table.HasCheckConstraint("ck_used_version_numbers_number", $"length(number) BETWEEN 1 AND {VersionNumber.MaximumLength}"));
+
+            // The key is the unique index on Song plus number: a number is used at most once per Song.
+            used.HasKey(record => new { record.SongId, record.Number });
+            used.HasOne<SongRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.SongId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

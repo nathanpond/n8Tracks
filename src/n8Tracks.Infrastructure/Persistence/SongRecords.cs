@@ -80,6 +80,19 @@ public sealed class VersionRecord
     public int Revision { get; set; } = 1;
 }
 
+/// <summary>
+/// One row of <c>used_version_numbers</c>: a number some Version of the Song has or once had. It is
+/// written by a trigger whenever a Version is added and is never removed when the Version goes, so a
+/// number is never given out twice within a Song. Keyed on the Song and the number.
+/// </summary>
+public sealed class UsedVersionNumberRecord
+{
+    public required Guid SongId { get; set; }
+
+    /// <summary>The number as written, such as <c>1.3.2</c>.</summary>
+    public required string Number { get; set; }
+}
+
 /// <summary>One row of <c>workflow_states</c>.</summary>
 public sealed class WorkflowStateRecord
 {

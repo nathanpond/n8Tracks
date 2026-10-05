@@ -99,3 +99,19 @@ public interface IWorkflowStateStore
     /// <summary>Every state, hidden ones included, in order.</summary>
     Task<IReadOnlyList<WorkflowState>> ListAsync(CancellationToken cancellationToken);
 }
+
+/// <summary>
+/// What working out a new Version's number needs about its source: the source's number and every
+/// number its Song has ever used, as stored.
+/// </summary>
+/// <param name="SongId">The Song the source belongs to.</param>
+/// <param name="Number">The source's number.</param>
+/// <param name="UsedNumbers">Every number any Version of the Song has or ever had.</param>
+public sealed record VersionNumberingFacts(Guid SongId, string Number, IReadOnlyList<string> UsedNumbers);
+
+/// <summary>Where Versions are kept, beyond what <see cref="ISongStore"/> reads with their Songs.</summary>
+public interface IVersionStore
+{
+    /// <summary>The numbering facts of the Version with <paramref name="id"/>, archived or not; null when there is none.</summary>
+    Task<VersionNumberingFacts?> FindNumberingAsync(Guid id, CancellationToken cancellationToken);
+}

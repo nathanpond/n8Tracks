@@ -28,6 +28,7 @@ public static class DependencyInjection
         services.AddSingleton<IJobQueue>(static provider => provider.GetRequiredService<JobQueue>());
         services.AddScoped<JobService>();
         services.AddScoped<SongService>();
+        services.AddScoped<VersionService>();
         services.AddScoped<WorkflowStateService>();
 
         return services;

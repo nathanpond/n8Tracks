@@ -217,6 +217,7 @@ public sealed class Program
             app.MapCredentials();
             app.MapJobs();
             app.MapSongs();
+            app.MapVersions();
             app.MapApiNotFound();
 
             // After the endpoints, and inside the path base: the frontend answers only what no endpoint does.

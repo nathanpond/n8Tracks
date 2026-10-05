@@ -114,7 +114,10 @@ public enum VersionVisibility
     Archived,
 }
 
-/// <summary>Hierarchical Version numbers: dot-separated positive integers, such as <c>1</c>, <c>2.1</c>, or <c>1.3.2</c>.</summary>
+/// <summary>
+/// Hierarchical Version numbers as text: dot-separated positive integers, such as <c>1</c>,
+/// <c>2.1</c>, or <c>1.3.2</c>. <see cref="VersionNumber"/> is the parsed form and holds the rules.
+/// </summary>
 public static class VersionNumbers
 {
     /// <summary>The number of the Version every Song is created with.</summary>
@@ -131,12 +134,6 @@ public static class VersionNumbers
     {
         ArgumentException.ThrowIfNullOrEmpty(number);
 
-        var parts = number.Split('.');
-        if (parts.Any(static part => part.Length is 0 or > SortKeyPartWidth || part[0] == '0' || !part.All(char.IsAsciiDigit)))
-        {
-            throw new ArgumentException("A Version number is positive whole numbers separated by dots.", nameof(number));
-        }
-
-        return string.Join('.', parts.Select(static part => part.PadLeft(SortKeyPartWidth, '0')));
+        return VersionNumber.Parse(number).SortKey;
     }
 }

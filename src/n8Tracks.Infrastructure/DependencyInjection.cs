@@ -49,6 +49,7 @@ public static class DependencyInjection
         services.AddScoped<ICredentialStore, CredentialStore>();
         services.AddScoped<IJobStore, JobStore>();
         services.AddScoped<ISongStore, SongStore>();
+        services.AddScoped<IVersionStore, VersionStore>();
         services.AddScoped<IWorkflowStateStore, WorkflowStateStore>();
 
         return services;
