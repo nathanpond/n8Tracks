@@ -67,8 +67,12 @@ public sealed class BackupEndpointTests
         Assert.DoesNotContain(entries.Keys, static entry => entry.EndsWith(".mp3", StringComparison.Ordinal) || entry.EndsWith(".flac", StringComparison.Ordinal));
         Assert.All(audio, static file => Assert.Equal("audio bytes", File.ReadAllText(file)));
 
-        // The manifest: what made it, from which schema, and a checksum of every other file that matches.
+        // The manifest: format v1's fields and no others, what made it, from which schema, and a
+        // checksum of every other file that matches.
         var manifest = JsonDocument.Parse(entries["manifest.json"]).RootElement;
+        Assert.Equal(
+            ["applicationVersion", "createdAt", "files", "formatVersion", "kind", "lastMigration"],
+            manifest.EnumerateObject().Select(static property => property.Name).Order(StringComparer.Ordinal));
         Assert.Equal(1, manifest.GetProperty("formatVersion").GetInt32());
         Assert.Equal(ProductVersion.Current, manifest.GetProperty("applicationVersion").GetString());
         Assert.Equal(
@@ -98,6 +102,36 @@ public sealed class BackupEndpointTests
         await File.WriteAllBytesAsync(restored, entries["n8tracks.db"]);
         Assert.Equal(["Harbour Song", "Northern Lights"], await TitlesAsync(restored));
         Assert.Equal("ok", await ScalarAsync(restored, "PRAGMA integrity_check;"));
+    }
+
+    /// <summary>
+    /// Earlier builds wrote a stray <c>"validity": 0</c> into format v1's manifest. Such an archive is
+    /// still listed as valid, validates for a restore, and restores; the field is read as nothing.
+    /// </summary>
+    [Fact]
+    public async Task AFormatV1ManifestWithTheStrayValidityFieldStillReadsAndRestores()
+    {
+        using var factory = RestoreApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        await SongApi.CreateAsync(client, "Northern Lights");
+        var made = (await BackupApi.BackUpAsync(client)).GetProperty("name").GetString()!;
+        var older = BackupWriter.ArchiveName(new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero), ProductVersion.Current);
+        await File.WriteAllBytesAsync(
+            Path.Combine(factory.DataPath, "backups", older),
+            RestoreApi.Rebuild(await BackupApi.DownloadAsync(client, "data", made), manifest: static manifest => manifest["validity"] = 0));
+        await SongApi.CreateAsync(client, "Written after the backup");
+
+        var item = Assert.Single((await BackupApi.ListAsync(client)).GetProperty("items").EnumerateArray(), item => item.GetProperty("name").GetString() == older);
+        Assert.Equal("valid", item.GetProperty("status").GetString());
+        Assert.Equal("manual", item.GetProperty("kind").GetString());
+
+        Assert.Equal("succeeded", (await RestoreApi.RestoreAsync(client, "data", older)).GetProperty("outcome").GetString());
+        using (var signIn = await SessionApi.SignInAsync(client, SetupApi.TestUsername, SetupApi.TestPassword))
+        {
+            Assert.Equal(HttpStatusCode.Created, signIn.StatusCode);
+        }
+
+        Assert.Equal(["Northern Lights"], (await SongApi.ListAsync(client)).GetProperty("items").EnumerateArray().Select(static song => song.GetProperty("title").GetString()));
     }
 
     [Fact]

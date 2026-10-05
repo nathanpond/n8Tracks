@@ -88,7 +88,12 @@ internal sealed record BackupManifest(
         return (manifest, created);
     }
 
-    /// <summary>A newer format, or a kind this build does not know, is the work of a newer version.</summary>
+    /// <summary>
+    /// A newer format, or a kind this build does not know, is the work of a newer version. Worked out
+    /// on reading, never written: it is not a field of the format. (Earlier builds wrote it as
+    /// <c>"validity"</c>; reading ignores it, as it ignores any member the format does not have.)
+    /// </summary>
+    [JsonIgnore]
     public BackupValidity Validity =>
         FormatVersion > CurrentFormatVersion || BackupKinds.Parse(Kind) is null ? BackupValidity.Newer : BackupValidity.Valid;
 }
