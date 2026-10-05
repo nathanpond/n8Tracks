@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using n8Tracks.Application.Auth;
 using n8Tracks.Application.Credentials;
 using n8Tracks.Application.Jobs;
+using n8Tracks.Application.References;
 using n8Tracks.Application.Setup;
 using n8Tracks.Application.Songs;
 
@@ -31,6 +32,7 @@ public static class DependencyInjection
         services.AddScoped<VersionService>();
         services.AddScoped<EditorRevisionService>();
         services.AddScoped<WorkflowStateService>();
+        services.AddScoped<ReferenceResolver>();
 
         return services;
     }

@@ -28,6 +28,7 @@ import {
   type VersionDetail,
 } from '../api/versions';
 import { ConflictValue } from '../common/ConflictDialog';
+import { ShortcodeBadge } from '../common/ShortcodeBadge';
 import { useRevisionedSave, type SavedField } from '../common/useRevisionedSave';
 import { AutosaveIndicator } from '../editor/AutosaveIndicator';
 import { HistoryPanel, type RestoreResult } from '../editor/HistoryPanel';
@@ -243,9 +244,7 @@ function VersionHeader({ version, actions, busy }: Omit<DetailsProps, 'onVersion
           {version.archived ? 'Unarchive' : 'Archive'}
         </Button>
       </Group>
-      <Text ff="monospace" size="sm" c="var(--n8-color-secondary-text)">
-        {version.shortcode}
-      </Text>
+      <ShortcodeBadge shortcode={version.shortcode} testId="version-shortcode" />
     </>
   );
 }

@@ -50,6 +50,14 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
                 record.Revision);
     }
 
+    public async Task<Guid?> FindIdByShortcodeAsync(long songShortcodeNumber, string number, CancellationToken cancellationToken) =>
+        await context.Versions.AsNoTracking()
+            .Where(version => version.Number == number
+                && context.Songs.Any(song => song.Id == version.SongId && song.ShortcodeNumber == songShortcodeNumber))
+            .Select(static version => (Guid?)version.Id)
+            .SingleOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+
     public async Task<VersionSummary?> FindSummaryAsync(Guid id, CancellationToken cancellationToken)
     {
         var songId = await context.Versions.AsNoTracking()

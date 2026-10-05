@@ -249,8 +249,8 @@ public sealed class VersionEditEndpointTests
             await SetupApi.ProblemAsync(gone, HttpStatusCode.NotFound, ApiProblem.NotFoundCode);
         }
 
-        // Only an ID names a Version to edit: a shortcode falls through to the API's 404.
-        using var byShortcode = await SongApi.SendJsonAsync(client, HttpMethod.Patch, new Uri("/api/v1/versions/n8-1-v1", UriKind.Relative), """{"name":"Ghost"}""");
+        // A Song's shortcode names no Version to edit.
+        using var byShortcode = await SongApi.SendJsonAsync(client, HttpMethod.Patch, new Uri("/api/v1/versions/n8-1", UriKind.Relative), """{"name":"Ghost"}""");
         await SetupApi.ProblemAsync(byShortcode, HttpStatusCode.NotFound, ApiProblem.NotFoundCode);
         Assert.Equal("", TestDatabase.Scalar(factory.DataPath, "SELECT ifnull(name, '') FROM versions;"));
     }

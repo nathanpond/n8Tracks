@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Http.HttpResults;
 using n8Tracks.Api.Auth;
 using n8Tracks.Api.Problems;
 using n8Tracks.Application.Credentials;
+using n8Tracks.Application.References;
 using n8Tracks.Application.Songs;
 using n8Tracks.Domain.Songs;
 
@@ -13,18 +14,19 @@ namespace n8Tracks.Api.Endpoints;
 /// flat list, one Version with its lyrics and styles, and its editing history (<c>catalog.read</c>);
 /// creating a Version from another, choosing a Song's current Version, editing a Version's name,
 /// notes, archived flag, lyrics, and styles, and taking and restoring snapshots of its lyrics and
-/// styles (<c>versions.write</c>). Every answer is <c>no-store</c>, and a single
+/// styles (<c>versions.write</c>). A Song or a Version is named by its ID or its shortcode
+/// (<see cref="CatalogReference"/>), in the route and in body fields alike; a reference of the other
+/// kind, or a Version of another Song, is not found. Every answer is <c>no-store</c>, and a single
 /// Version sends its revision as the <c>ETag</c>.
 /// </summary>
 internal static class VersionsEndpoints
 {
     public const string VersionsPath = ApiProblem.VersionPrefix + "/versions";
-    public const string VersionByIdPath = VersionsPath + "/{id:guid}";
-    public const string NextNumbersPath = VersionByIdPath + "/next-numbers";
+    public const string VersionPath = VersionsPath + "/{reference}";
+    public const string NextNumbersPath = VersionPath + "/next-numbers";
     public const string SongVersionsPath = SongsEndpoints.SongPath + "/versions";
-    public const string SongVersionsByIdPath = SongsEndpoints.SongByIdPath + "/versions";
     public const string CurrentVersionPath = SongsEndpoints.SongPath + "/current-version";
-    public const string SnapshotsPath = VersionByIdPath + "/snapshots";
+    public const string SnapshotsPath = VersionPath + "/snapshots";
     public const string SnapshotByIdPath = SnapshotsPath + "/{snapshotId:guid}";
     public const string RestorePath = SnapshotByIdPath + "/restore";
 
@@ -63,7 +65,7 @@ internal static class VersionsEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
-        endpoints.MapPost(SongVersionsByIdPath, CreateAsync)
+        endpoints.MapPost(SongVersionsPath, CreateAsync)
             .WithName("CreateVersion")
             .WithSummary("Creates a Version from one of the Song's Versions, with one of the source's next numbers, and makes it current.")
             .RequireScope(CredentialScopes.VersionsWrite)
@@ -84,7 +86,7 @@ internal static class VersionsEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
-        endpoints.MapGet(VersionByIdPath, GetAsync)
+        endpoints.MapGet(VersionPath, GetAsync)
             .WithName("GetVersion")
             .WithSummary("One Version with its lyrics and styles (empty strings when there are none).")
             .RequireScope(CredentialScopes.CatalogRead)
@@ -93,7 +95,7 @@ internal static class VersionsEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
-        endpoints.MapPatch(VersionByIdPath, UpdateAsync)
+        endpoints.MapPatch(VersionPath, UpdateAsync)
             .WithName("UpdateVersion")
             .WithSummary("Edits a Version's name, notes, archived flag, lyrics, or styles (only the fields sent), given the revision read in If-Match. Lyrics and styles are stored as sent, with line endings as \\n.")
             .RequireScope(CredentialScopes.VersionsWrite)
@@ -156,7 +158,8 @@ internal static class VersionsEndpoints
     /// field. Nothing is stored unless the answer is 201.
     /// </summary>
     private static async Task<Results<Created<SnapshotDetailResponse>, Ok<SnapshotDetailResponse>, ProblemHttpResult>> SnapshotAsync(
-        Guid id,
+        CatalogReference reference,
+        ReferenceResolver references,
         SnapshotRequest? request,
         EditorRevisionService history,
         HttpContext context,
@@ -164,6 +167,11 @@ internal static class VersionsEndpoints
         CancellationToken cancellationToken)
     {
         SessionEndpoints.NoStore(context);
+
+        if (await references.VersionIdAsync(reference, cancellationToken) is not { } id)
+        {
+            return NoSuchVersion(context);
+        }
 
         var typeErrors = new Dictionary<string, string[]>(StringComparer.Ordinal);
         var lyrics = TextField(request?.Lyrics, VersionService.LyricsField, typeErrors, "Send text.");
@@ -190,7 +198,7 @@ internal static class VersionsEndpoints
                 return ApiProblem.ValidationFailed(context, invalid.Errors);
 
             case SnapshotOutcome.NotFound:
-                return ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "There is no such Version.");
+                return NoSuchVersion(context);
 
             default:
                 throw new InvalidOperationException("Unknown snapshot outcome.");
@@ -199,16 +207,22 @@ internal static class VersionsEndpoints
 
     /// <summary>200 with the Version's snapshots, newest first; 404 <c>not_found</c> when there is no such Version.</summary>
     private static async Task<Results<Ok<SnapshotListResponse>, ProblemHttpResult>> ListSnapshotsAsync(
-        Guid id,
+        CatalogReference reference,
+        ReferenceResolver references,
         EditorRevisionService history,
         HttpContext context,
         CancellationToken cancellationToken)
     {
         SessionEndpoints.NoStore(context);
 
+        if (await references.VersionIdAsync(reference, cancellationToken) is not { } id)
+        {
+            return NoSuchVersion(context);
+        }
+
         if (await history.ListAsync(id, cancellationToken) is not { } list)
         {
-            return ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "There is no such Version.");
+            return NoSuchVersion(context);
         }
 
         return TypedResults.Ok(new SnapshotListResponse([.. list.Select(SnapshotResponse.From)]));
@@ -216,13 +230,19 @@ internal static class VersionsEndpoints
 
     /// <summary>200 with the snapshot and its text; 404 <c>not_found</c> when the Version has no such snapshot.</summary>
     private static async Task<Results<Ok<SnapshotDetailResponse>, ProblemHttpResult>> GetSnapshotAsync(
-        Guid id,
+        CatalogReference reference,
+        ReferenceResolver references,
         Guid snapshotId,
         EditorRevisionService history,
         HttpContext context,
         CancellationToken cancellationToken)
     {
         SessionEndpoints.NoStore(context);
+
+        if (await references.VersionIdAsync(reference, cancellationToken) is not { } id)
+        {
+            return NoSuchVersion(context);
+        }
 
         if (await history.FindAsync(id, snapshotId, cancellationToken) is not { } snapshot)
         {
@@ -238,7 +258,8 @@ internal static class VersionsEndpoints
     /// no such snapshot. Nothing is changed unless the answer is 200.
     /// </summary>
     private static async Task<Results<Ok<VersionDetailResponse>, ProblemHttpResult>> RestoreAsync(
-        Guid id,
+        CatalogReference reference,
+        ReferenceResolver references,
         Guid snapshotId,
         EditorRevisionService history,
         HttpContext context,
@@ -246,6 +267,11 @@ internal static class VersionsEndpoints
         CancellationToken cancellationToken)
     {
         SessionEndpoints.NoStore(context);
+
+        if (await references.VersionIdAsync(reference, cancellationToken) is not { } id)
+        {
+            return NoSuchVersion(context);
+        }
 
         var (revision, problem) = Revisions.Read(context);
         if (problem is not null)
@@ -269,7 +295,7 @@ internal static class VersionsEndpoints
                 return Revisions.Conflict(context, VersionDetailResponse.From(conflict.Current));
 
             case RestoreOutcome.VersionNotFound:
-                return ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "There is no such Version.");
+                return NoSuchVersion(context);
 
             case RestoreOutcome.SnapshotNotFound:
                 return ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "There is no such snapshot of this Version.");
@@ -281,16 +307,16 @@ internal static class VersionsEndpoints
 
     /// <summary>200 with every Version of the Song; 404 <c>not_found</c> when the reference names none.</summary>
     private static async Task<Results<Ok<VersionListResponse>, ProblemHttpResult>> ListAsync(
-        string reference,
+        CatalogReference reference,
         VersionService versions,
         HttpContext context,
         CancellationToken cancellationToken)
     {
         SessionEndpoints.NoStore(context);
 
-        if (await versions.ListAsync(reference, cancellationToken) is not { } list)
+        if (await versions.ListAsync(reference.Text, cancellationToken) is not { } list)
         {
-            return ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "There is no such Song.");
+            return SongsEndpoints.NoSuchSong(context);
         }
 
         return TypedResults.Ok(new VersionListResponse([.. list.Select(VersionResponse.From)]));
@@ -303,7 +329,8 @@ internal static class VersionsEndpoints
     /// each with the source's <c>options</c> as they are now. Nothing is stored unless the answer is 201.
     /// </summary>
     private static async Task<Results<Created<VersionResponse>, ProblemHttpResult>> CreateAsync(
-        Guid id,
+        CatalogReference reference,
+        ReferenceResolver references,
         CreateVersionRequest? request,
         VersionService versions,
         HttpContext context,
@@ -311,6 +338,11 @@ internal static class VersionsEndpoints
         CancellationToken cancellationToken)
     {
         SessionEndpoints.NoStore(context);
+
+        if (await references.SongIdAsync(reference, cancellationToken) is not { } id)
+        {
+            return SongsEndpoints.NoSuchSong(context);
+        }
 
         var outcome = await versions.CreateFromAsync(
             id,
@@ -326,7 +358,7 @@ internal static class VersionsEndpoints
                 return TypedResults.Created((string?)null, VersionResponse.From(created.Version));
 
             case VersionCreateOutcome.SongNotFound:
-                return ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "There is no such Song.");
+                return SongsEndpoints.NoSuchSong(context);
 
             case VersionCreateOutcome.Invalid invalid:
                 return ApiProblem.ValidationFailed(context, invalid.Errors);
@@ -357,7 +389,7 @@ internal static class VersionsEndpoints
     /// <c>validation_failed</c> when <c>versionId</c> is missing or not one of the Song's Versions.
     /// </summary>
     private static async Task<Results<Ok<SongResponse>, ProblemHttpResult>> SetCurrentAsync(
-        string reference,
+        CatalogReference reference,
         SetCurrentVersionRequest? request,
         VersionService versions,
         HttpContext context,
@@ -365,14 +397,14 @@ internal static class VersionsEndpoints
     {
         SessionEndpoints.NoStore(context);
 
-        switch (await versions.SetCurrentAsync(reference, request?.VersionId, cancellationToken))
+        switch (await versions.SetCurrentAsync(reference.Text, request?.VersionId, cancellationToken))
         {
             case SetCurrentOutcome.Updated updated:
                 Revisions.SetETag(context, updated.Song.Revision);
                 return TypedResults.Ok(SongResponse.From(updated.Song));
 
             case SetCurrentOutcome.SongNotFound:
-                return ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "There is no such Song.");
+                return SongsEndpoints.NoSuchSong(context);
 
             case SetCurrentOutcome.Invalid invalid:
                 return ApiProblem.ValidationFailed(context, invalid.Errors);
@@ -384,16 +416,22 @@ internal static class VersionsEndpoints
 
     /// <summary>200 with the Version, its lyrics, and its styles; 404 <c>not_found</c> when there is none.</summary>
     private static async Task<Results<Ok<VersionDetailResponse>, ProblemHttpResult>> GetAsync(
-        Guid id,
+        CatalogReference reference,
+        ReferenceResolver references,
         VersionService versions,
         HttpContext context,
         CancellationToken cancellationToken)
     {
         SessionEndpoints.NoStore(context);
 
+        if (await references.VersionIdAsync(reference, cancellationToken) is not { } id)
+        {
+            return NoSuchVersion(context);
+        }
+
         if (await versions.FindAsync(id, cancellationToken) is not { } version)
         {
-            return ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "There is no such Version.");
+            return NoSuchVersion(context);
         }
 
         Revisions.SetETag(context, version.Summary.Revision);
@@ -406,7 +444,8 @@ internal static class VersionsEndpoints
     /// on a wrong field; 404 when there is no such Version. Nothing is changed unless the answer is 200.
     /// </summary>
     private static async Task<Results<Ok<VersionDetailResponse>, ProblemHttpResult>> UpdateAsync(
-        Guid id,
+        CatalogReference reference,
+        ReferenceResolver references,
         UpdateVersionRequest? request,
         VersionService versions,
         HttpContext context,
@@ -414,6 +453,11 @@ internal static class VersionsEndpoints
         CancellationToken cancellationToken)
     {
         SessionEndpoints.NoStore(context);
+
+        if (await references.VersionIdAsync(reference, cancellationToken) is not { } id)
+        {
+            return NoSuchVersion(context);
+        }
 
         var (revision, problem) = Revisions.Read(context);
         if (problem is not null)
@@ -457,12 +501,16 @@ internal static class VersionsEndpoints
                 return ApiProblem.ValidationFailed(context, invalid.Errors);
 
             case VersionUpdateOutcome.NotFound:
-                return ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "There is no such Version.");
+                return NoSuchVersion(context);
 
             default:
                 throw new InvalidOperationException("Unknown edit outcome.");
         }
     }
+
+    /// <summary>404 <c>not_found</c>: the reference names no Version (an unknown one, or one of another kind).</summary>
+    private static ProblemHttpResult NoSuchVersion(HttpContext context) =>
+        ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "There is no such Version.");
 
     /// <summary>
     /// A text field of an edit as sent: missing is left alone, and <c>null</c> or text is a value
@@ -525,17 +573,23 @@ internal static class VersionsEndpoints
     /// <c>version_number_too_deep</c> when both options would be longer than 64 characters.
     /// </summary>
     private static async Task<Results<Ok<NextNumbersResponse>, ProblemHttpResult>> NextNumbersAsync(
-        Guid id,
+        CatalogReference reference,
+        ReferenceResolver references,
         VersionService versions,
         HttpContext context,
         CancellationToken cancellationToken)
     {
         SessionEndpoints.NoStore(context);
 
+        if (await references.VersionIdAsync(reference, cancellationToken) is not { } id)
+        {
+            return NoSuchVersion(context);
+        }
+
         return await versions.NextNumbersAsync(id, cancellationToken) switch
         {
             NextNumbersOutcome.Found found => TypedResults.Ok(NextNumbersResponse.From(found.Options)),
-            NextNumbersOutcome.NotFound => ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "There is no such Version."),
+            NextNumbersOutcome.NotFound => NoSuchVersion(context),
             NextNumbersOutcome.TooDeep => ApiProblem.For(
                 context,
                 StatusCodes.Status409Conflict,
@@ -563,7 +617,7 @@ internal sealed record NextNumbersResponse(NextNumberResponse[] Options)
 /// <summary>One number: <c>kind</c> is <c>sibling</c> or <c>child</c>.</summary>
 internal sealed record NextNumberResponse(string Number, string Kind, bool Proposed);
 
-/// <summary>The create form: the source Version's ID, the chosen number, and an optional name.</summary>
+/// <summary>The create form: the source Version's ID or shortcode, the chosen number, and an optional name.</summary>
 internal sealed record CreateVersionRequest(string? SourceVersionId, string? Number, string? Name);
 
 /// <summary>
@@ -572,7 +626,7 @@ internal sealed record CreateVersionRequest(string? SourceVersionId, string? Num
 /// </summary>
 internal sealed record UpdateVersionRequest(JsonElement Name, JsonElement Notes, JsonElement Archived, JsonElement Lyrics, JsonElement Styles);
 
-/// <summary>The set-current form: the ID of one of the Song's Versions.</summary>
+/// <summary>The set-current form: the ID or shortcode of one of the Song's Versions.</summary>
 internal sealed record SetCurrentVersionRequest(string? VersionId);
 
 /// <summary>A Version as the tree shows it, without its creation inputs. Times are UTC.</summary>

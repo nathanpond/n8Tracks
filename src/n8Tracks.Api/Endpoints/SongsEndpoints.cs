@@ -3,21 +3,21 @@ using Microsoft.AspNetCore.Http.HttpResults;
 using n8Tracks.Api.Auth;
 using n8Tracks.Api.Problems;
 using n8Tracks.Application.Credentials;
+using n8Tracks.Application.References;
 using n8Tracks.Application.Songs;
 using n8Tracks.Domain.Songs;
 
 namespace n8Tracks.Api.Endpoints;
 
 /// <summary>
-/// Songs: create one and edit its details (<c>songs.write</c>), list them, and read one by ID or
-/// shortcode (<c>catalog.read</c>). The workflow states a Song can be in are <see cref="WorkflowStatesEndpoints"/>.
+/// Songs: create one and edit its details (<c>songs.write</c>), list them, and read one
+/// (<c>catalog.read</c>). A Song is named by its ID or its shortcode (<see cref="CatalogReference"/>). The workflow states a Song can be in are <see cref="WorkflowStatesEndpoints"/>.
 /// Every answer is <c>no-store</c>, and one carrying a Song sends its revision as the <c>ETag</c>.
 /// </summary>
 internal static class SongsEndpoints
 {
     public const string SongsPath = ApiProblem.VersionPrefix + "/songs";
     public const string SongPath = SongsPath + "/{reference}";
-    public const string SongByIdPath = SongsPath + "/{id:guid}";
 
     public static IEndpointRouteBuilder MapSongs(this IEndpointRouteBuilder endpoints)
     {
@@ -50,7 +50,7 @@ internal static class SongsEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
-        endpoints.MapPatch(SongByIdPath, UpdateAsync)
+        endpoints.MapPatch(SongPath, UpdateAsync)
             .WithName("UpdateSong")
             .WithSummary("Edits a Song's title, concept, or workflow state (only the fields sent), given the revision read in If-Match.")
             .RequireScope(CredentialScopes.SongsWrite)
@@ -129,16 +129,16 @@ internal static class SongsEndpoints
 
     /// <summary>200 with the Song; 404 <c>not_found</c> when the reference names none.</summary>
     private static async Task<Results<Ok<SongResponse>, ProblemHttpResult>> GetAsync(
-        string reference,
+        CatalogReference reference,
         SongService songs,
         HttpContext context,
         CancellationToken cancellationToken)
     {
         SessionEndpoints.NoStore(context);
 
-        if (await songs.FindAsync(reference, cancellationToken) is not { } song)
+        if (await songs.FindAsync(reference.Text, cancellationToken) is not { } song)
         {
-            return ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "There is no such Song.");
+            return NoSuchSong(context);
         }
 
         Revisions.SetETag(context, song.Revision);
@@ -151,9 +151,10 @@ internal static class SongsEndpoints
     /// on a wrong field; 404 when there is no such Song. Nothing is changed unless the answer is 200.
     /// </summary>
     private static async Task<Results<Ok<SongResponse>, ProblemHttpResult>> UpdateAsync(
-        Guid id,
+        CatalogReference reference,
         UpdateSongRequest? request,
         SongService songs,
+        ReferenceResolver references,
         HttpContext context,
         ILoggerFactory loggers,
         CancellationToken cancellationToken)
@@ -174,6 +175,11 @@ internal static class SongsEndpoints
         if (typeErrors.Count > 0)
         {
             return ApiProblem.ValidationFailed(context, typeErrors);
+        }
+
+        if (await references.SongIdAsync(reference, cancellationToken) is not { } id)
+        {
+            return NoSuchSong(context);
         }
 
         switch (await songs.UpdateAsync(id, edit, revision!.Value, cancellationToken))
@@ -197,12 +203,16 @@ internal static class SongsEndpoints
                 return ApiProblem.ValidationFailed(context, invalid.Errors);
 
             case SongUpdateOutcome.NotFound:
-                return ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "There is no such Song.");
+                return NoSuchSong(context);
 
             default:
                 throw new InvalidOperationException("Unknown edit outcome.");
         }
     }
+
+    /// <summary>404 <c>not_found</c>: the reference names no Song (an unknown one, or one of another kind).</summary>
+    internal static ProblemHttpResult NoSuchSong(HttpContext context) =>
+        ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "There is no such Song.");
 
     /// <summary>
     /// A field of an edit as sent: missing is left alone, and <c>null</c> or text is a value. Any

@@ -193,6 +193,32 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     return jsonResponse(200, restored);
   };
 
+  /** The resolve endpoint: the Song or one of its Versions, by ID or shortcode in any letter case. */
+  const answerResolve = (reference: string) => {
+    const key = reference.toLowerCase();
+    const song = server.song;
+    if (key === song.shortcode || key === song.id.toLowerCase()) {
+      return jsonResponse(200, {
+        entityType: 'song',
+        id: song.id,
+        shortcode: song.shortcode,
+        status: 'active',
+      });
+    }
+    const version = server.versions.find(
+      (candidate) => key === candidate.shortcode || key === candidate.id.toLowerCase(),
+    );
+    return version
+      ? jsonResponse(200, {
+          entityType: 'version',
+          id: version.id,
+          shortcode: version.shortcode,
+          status: version.archived ? 'archived' : 'active',
+          song: { id: song.id, shortcode: song.shortcode },
+        })
+      : jsonResponse(404, { code: 'reference_not_found' });
+  };
+
   const mock = stubFetch();
   mock.mockImplementation(async (input, init) => {
     const path = requestPath(input);
@@ -202,6 +228,10 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     }
     if (path.endsWith('/api/v1/workflow-states')) {
       return jsonResponse(200, { items: STATES });
+    }
+    const resolve = /\/api\/v1\/resolve\/([^/]+)$/.exec(path);
+    if (resolve) {
+      return answerResolve(decodeURIComponent(resolve[1] ?? ''));
     }
     const numbers = /\/api\/v1\/versions\/([^/]+)\/next-numbers$/.exec(path);
     if (numbers) {

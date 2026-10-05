@@ -150,7 +150,9 @@ public sealed class VersionEndpointTests
         }
 
         Assert.Equal(["number", "sourceVersionId"], await RefusedFieldsAsync("{}"));
-        Assert.Equal(["sourceVersionId"], await RefusedFieldsAsync("""{"sourceVersionId":"n8-1-v1","number":"2"}"""));
+        Assert.Equal(["sourceVersionId"], await RefusedFieldsAsync("""{"sourceVersionId":"n8-1","number":"2"}"""));
+        Assert.Equal(["sourceVersionId"], await RefusedFieldsAsync("""{"sourceVersionId":"n8-2-v1","number":"2"}"""));
+        Assert.Equal(["sourceVersionId"], await RefusedFieldsAsync("""{"sourceVersionId":"n8-1-v9","number":"2"}"""));
         Assert.Equal(["sourceVersionId"], await RefusedFieldsAsync($$"""{"sourceVersionId":"{{othersOne}}","number":"2"}"""));
         Assert.Equal(["sourceVersionId"], await RefusedFieldsAsync($$"""{"sourceVersionId":"{{Guid.CreateVersion7()}}","number":"2"}"""));
         Assert.Equal(["name"], await RefusedFieldsAsync($$"""{"sourceVersionId":"{{one}}","number":"2","name":"{{new string('a', VersionRules.NameMaximumLength + 1)}}"}"""));

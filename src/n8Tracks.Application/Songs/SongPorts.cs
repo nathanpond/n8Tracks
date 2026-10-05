@@ -197,6 +197,12 @@ public interface IVersionStore
     /// <summary>The Version with <paramref name="id"/>, with its creation inputs; null when there is none.</summary>
     Task<SongVersion?> FindAsync(Guid id, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// The ID of the Version numbered <paramref name="number"/> (as stored) of the Song whose shortcode
+    /// is <c>n8-<paramref name="songShortcodeNumber"/></c>, archived or not; null when there is none.
+    /// </summary>
+    Task<Guid?> FindIdByShortcodeAsync(long songShortcodeNumber, string number, CancellationToken cancellationToken);
+
     /// <summary>The Version with <paramref name="id"/> as the tree shows it; null when there is none.</summary>
     Task<VersionSummary?> FindSummaryAsync(Guid id, CancellationToken cancellationToken);
 

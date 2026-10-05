@@ -20,6 +20,7 @@ import {
   type WorkflowState,
 } from '../api/songs';
 import { ConflictValue } from '../common/ConflictDialog';
+import { ShortcodeBadge } from '../common/ShortcodeBadge';
 import { focusOnMount, saveError, useInPlaceEdit } from '../common/useInPlaceEdit';
 import { useRevisionedSave, type SaveOutcome, type SavedField } from '../common/useRevisionedSave';
 import { StateBadge } from './SongParts';
@@ -305,9 +306,7 @@ export function SongHeader({ song, onSong }: { song: Song; onSong: (song: Song) 
   return (
     <>
       <Stack gap={4}>
-        <Text ff="monospace" size="sm" c="var(--n8-color-secondary-text)" data-testid="shortcode">
-          {song.shortcode}
-        </Text>
+        <ShortcodeBadge shortcode={song.shortcode} />
         <Group gap="md" align="flex-start" wrap="wrap">
           <div style={{ flex: '1 1 20rem', minWidth: 0 }}>
             <TitleField song={song} save={save} />

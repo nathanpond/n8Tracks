@@ -167,8 +167,14 @@ public sealed class NextNumbersEndpointTests
             await SetupApi.ProblemAsync(songId, HttpStatusCode.NotFound, ApiProblem.NotFoundCode);
         }
 
-        using var notAnId = await client.GetAsync(new Uri("/api/v1/versions/n8-1-v1/next-numbers", UriKind.Relative));
-        await SetupApi.ProblemAsync(notAnId, HttpStatusCode.NotFound, ApiProblem.NotFoundCode);
+        // Nor is a Song's shortcode, or a Version shortcode the Song does not have.
+        using (var songShortcode = await client.GetAsync(new Uri("/api/v1/versions/n8-1/next-numbers", UriKind.Relative)))
+        {
+            await SetupApi.ProblemAsync(songShortcode, HttpStatusCode.NotFound, ApiProblem.NotFoundCode);
+        }
+
+        using var unknownShortcode = await client.GetAsync(new Uri("/api/v1/versions/n8-1-v9/next-numbers", UriKind.Relative));
+        await SetupApi.ProblemAsync(unknownShortcode, HttpStatusCode.NotFound, ApiProblem.NotFoundCode);
     }
 
     [Fact]

@@ -7,6 +7,7 @@ import { SystemPage } from './settings/SystemPage';
 import { WorkflowPage } from './settings/WorkflowPage';
 import { SetupGate } from './setup/SetupGate';
 import { SignedInShell } from './shell/AppShell';
+import { GoPage } from './shell/GoPage';
 import { NotFoundPage } from './shell/NotFoundPage';
 import { SongPage } from './songs/SongPage';
 import { SongsPage } from './songs/SongsPage';
@@ -29,6 +30,7 @@ export function App() {
               <Route path="songs" element={<SongsPage />} />
               <Route path="songs/:reference" element={<SongPage />} />
               <Route path="songs/:reference/v/:number" element={<SongPage />} />
+              <Route path="go/:reference" element={<GoPage />} />
               <Route path="settings" element={<Navigate to="/settings/account" replace />} />
               <Route path="settings/account" element={<AccountPage />} />
               <Route path="settings/credentials" element={<CredentialsPage />} />

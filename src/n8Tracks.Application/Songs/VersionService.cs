@@ -1,4 +1,5 @@
 using n8Tracks.Application.Auth;
+using n8Tracks.Application.References;
 using n8Tracks.Domain.Songs;
 
 namespace n8Tracks.Application.Songs;
@@ -21,8 +22,8 @@ public abstract record NextNumbersOutcome
 }
 
 /// <summary>
-/// What creating a Version from another asks for, as the caller sent it: the source's ID and the
-/// chosen number as unread text, and an optional name. Any of them may be missing.
+/// What creating a Version from another asks for, as the caller sent it: the source's ID or
+/// shortcode and the chosen number as unread text, and an optional name. Any of them may be missing.
 /// </summary>
 public sealed record VersionCreateRequest(string? SourceVersionId, string? Number, string? Name);
 
@@ -180,7 +181,8 @@ public sealed class VersionService(
         ArgumentNullException.ThrowIfNull(request);
 
         var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
-        if (!Guid.TryParseExact(request.SourceVersionId, "D", out var sourceId))
+        var sourceReference = CatalogReference.Parse(request.SourceVersionId);
+        if (sourceReference.Kind is not (ReferenceKind.Id or ReferenceKind.Version))
         {
             errors[SourceVersionIdField] = ["Choose a Version of this Song to create from."];
         }
@@ -208,7 +210,9 @@ public sealed class VersionService(
                     return new VersionCreateOutcome.SongNotFound();
                 }
 
-                if (await versions.FindAsync(sourceId, ct).ConfigureAwait(false) is not { } source || source.SongId != songId)
+                if (await ReferenceResolver.VersionIdAsync(versions, sourceReference, ct).ConfigureAwait(false) is not { } sourceId
+                    || await versions.FindAsync(sourceId, ct).ConfigureAwait(false) is not { } source
+                    || source.SongId != songId)
                 {
                     return new VersionCreateOutcome.Invalid(new Dictionary<string, string[]>(StringComparer.Ordinal)
                     {
@@ -238,7 +242,8 @@ public sealed class VersionService(
     }
 
     /// <summary>
-    /// Makes a Version (archived or not) the current working Version of the Song a reference names. No
+    /// Makes a Version (archived or not), named by its ID or shortcode, the current working Version of
+    /// the Song a reference names. A Version of another Song is refused as a field error. No
     /// revision is needed and the Song's is not changed; making the current Version current again
     /// changes nothing.
     /// </summary>
@@ -251,7 +256,7 @@ public sealed class VersionService(
                     return new SetCurrentOutcome.SongNotFound();
                 }
 
-                if (!Guid.TryParseExact(versionId, "D", out var id)
+                if (await ReferenceResolver.VersionIdAsync(versions, CatalogReference.Parse(versionId), ct).ConfigureAwait(false) is not { } id
                     || await versions.FindAsync(id, ct).ConfigureAwait(false) is not { } version
                     || version.SongId != song.Id)
                 {

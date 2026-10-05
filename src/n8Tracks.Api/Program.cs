@@ -219,6 +219,7 @@ public sealed class Program
             app.MapSongs();
             app.MapWorkflowStates();
             app.MapVersions();
+            app.MapResolve();
             app.MapApiNotFound();
 
             // After the endpoints, and inside the path base: the frontend answers only what no endpoint does.

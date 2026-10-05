@@ -1,5 +1,6 @@
 using System.Globalization;
 using n8Tracks.Application.Auth;
+using n8Tracks.Application.References;
 using n8Tracks.Domain.Songs;
 
 namespace n8Tracks.Application.Songs;
@@ -142,14 +143,13 @@ public sealed class SongService(ISongStore songs, IWorkflowStateStore states, IE
     /// <summary>The Song a reference names in <paramref name="songs"/>, as <see cref="FindAsync(string?, CancellationToken)"/> reads it.</summary>
     internal static Task<SongSummary?> FindAsync(ISongStore songs, string? reference, CancellationToken cancellationToken)
     {
-        if (Guid.TryParseExact(reference, "D", out var id))
+        var parsed = CatalogReference.Parse(reference);
+        return parsed.Kind switch
         {
-            return songs.FindAsync(id, cancellationToken);
-        }
-
-        return Shortcodes.TryParseSong(reference, out var number)
-            ? songs.FindByShortcodeNumberAsync(number, cancellationToken)
-            : Task.FromResult<SongSummary?>(null);
+            ReferenceKind.Id => songs.FindAsync(parsed.Id, cancellationToken),
+            ReferenceKind.Song => songs.FindByShortcodeNumberAsync(parsed.SongShortcodeNumber, cancellationToken),
+            _ => Task.FromResult<SongSummary?>(null),
+        };
     }
 
     /// <summary>

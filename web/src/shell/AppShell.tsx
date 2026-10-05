@@ -2,6 +2,7 @@ import { AppShell, Container, NavLink, Stack, Text } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { useEffect } from 'react';
 import { Link, Outlet, useLocation } from 'react-router';
+import { GoToBox } from '../common/GoToBox';
 import { AppHeader } from '../components/AppHeader';
 import { UserMenu } from './UserMenu';
 
@@ -31,7 +32,7 @@ function SidebarLink({
 }
 
 /**
- * The signed-in shell: the header (sidebar toggle, product name, colour control, user menu), the
+ * The signed-in shell: the header (sidebar toggle, product name, colour control, Go to box, user menu), the
  * sidebar, and the current page. The sidebar lists Songs and Settings, and Settings has Account,
  * Credentials, Workflow, and System; later stories add pages. On a narrow screen the sidebar is hidden until the toggle opens
  * it, and choosing a page closes it again.
@@ -52,6 +53,7 @@ export function SignedInShell() {
       padding="md"
     >
       <AppHeader navigation={{ opened, toggle }}>
+        <GoToBox />
         <UserMenu />
       </AppHeader>
       <AppShell.Navbar p="xs" id="app-navigation" aria-label="Main">
