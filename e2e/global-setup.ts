@@ -12,6 +12,7 @@ import {
   waitForHealth,
   type Target,
 } from './support/containers.ts';
+import { writeSignedInState } from './support/session.ts';
 import { completeSetup } from './support/setup.ts';
 import {
   FRESH_NAME,
@@ -19,8 +20,10 @@ import {
   NO_MEDIA_PORT,
   NO_MEDIA_URL,
   ROOT_PORT,
+  ROOT_STORAGE_STATE,
   ROOT_URL,
   SUB_PATH_PORT,
+  SUB_PATH_STORAGE_STATE,
   SUB_PATH_URL,
 } from './support/targets.ts';
 
@@ -99,8 +102,10 @@ async function saveContainerLogs(directory: string): Promise<void> {
 
 /**
  * Starts the three containers under test from the application image, completes first-run setup on
- * each through the API with the test administrator (so every test meets a set-up instance), and
- * returns the teardown that removes them and their temporary directories. Runs once per test run.
+ * each through the API with the test administrator (so every test meets a set-up instance), signs
+ * in to the root and sub-path containers and saves each session as the storage state its project
+ * starts every test from, and returns the teardown that removes them, their temporary
+ * directories, and the saved sessions. Runs once per test run.
  * The port for the fresh container the setup test starts must be free too.
  */
 export default async function globalSetup(): Promise<() => Promise<void>> {
@@ -119,6 +124,8 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
     }
     await removeContainers();
     await rm(work, { recursive: true, force: true });
+    await rm(ROOT_STORAGE_STATE, { force: true });
+    await rm(SUB_PATH_STORAGE_STATE, { force: true });
   };
 
   try {
@@ -128,6 +135,9 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
     }
     await Promise.all(targets.map(waitForHealth));
     await Promise.all(targets.map((target) => completeSetup(target.url)));
+    // The signed-in fixture: each project starts every test with a session on its container.
+    await writeSignedInState(ROOT_URL, ROOT_STORAGE_STATE);
+    await writeSignedInState(SUB_PATH_URL, SUB_PATH_STORAGE_STATE);
   } catch (error) {
     await teardown();
     throw error;

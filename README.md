@@ -222,6 +222,12 @@ Behind a reverse proxy that serves n8Tracks at, say, `https://nas.example/n8trac
 
 and have the proxy forward the path unchanged to port 8787. The app then answers only under `/n8tracks` (the page at `/n8tracks/`, health at `/n8tracks/health`); anything outside it is 404. The container health check follows the setting by itself.
 
+### Signing in, HTTP, and HTTPS
+
+Everything but the sign-in page, first-run setup, and `/health` needs the administrator to be signed in. A session lasts 30 days from its last use and survives restarts; "Sign out everywhere" in the user menu ends every session. After five wrong passwords within 15 minutes, sign-in is refused for 15 minutes.
+
+The app works the same over plain HTTP on a trusted network and behind an HTTPS reverse proxy. Have the proxy set `X-Forwarded-Proto` (and `X-Forwarded-Host` if it changes the host name): the session cookie is then marked `Secure`. The app takes these headers from any address, because the address of your proxy is not known in advance, so **publish port 8787 only to the proxy or to a trusted network**, never directly to the internet: anyone who can reach the port can claim the request came over HTTPS.
+
 ### Container health check
 
 The image's health check runs the app binary in a second mode, `dotnet /app/n8Tracks.Api.dll --healthcheck`, so the image needs no `curl`. It requests `<base path>/health` on the loopback interface at `N8TRACKS_PORT`, and passes on 200 (`healthy` or `degraded`); 503, no answer within 4 seconds, or an invalid port or base URL fails it. It runs every 30 seconds (every 5 while starting, on Docker 25 or later), and three failures in a row mark the container `unhealthy`.

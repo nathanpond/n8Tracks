@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
+using n8Tracks.Api.Auth;
 using n8Tracks.Api.Configuration;
 using n8Tracks.Api.DependencyInjection;
 using n8Tracks.Api.Endpoints;
@@ -126,6 +127,7 @@ public sealed class Program
         builder.Services.AddInfrastructure();
         builder.Services.AddEnvironmentConfiguration(environment);
         builder.Services.AddFrontend();
+        builder.Services.AddSessionAuthentication();
 
         var app = builder.Build();
         await using (app.ConfigureAwait(false))
@@ -156,6 +158,10 @@ public sealed class Program
                 return 1;
             }
 
+            // Before anything reads the scheme or host: behind an HTTPS proxy the request is HTTPS,
+            // which is what marks the session cookie Secure.
+            app.UseForwardedHeaders();
+
             // Outermost first: the request ID is on every line and every response, the completion line
             // covers every request, and an unhandled exception is logged once before that line is written.
             app.UseMiddleware<RequestIdMiddleware>();
@@ -168,6 +174,9 @@ public sealed class Program
             // Inside the path base, so it sees the path the routes see.
             app.UseMiddleware<SetupGateMiddleware>();
 
+            // After the setup gate: before setup there is no one to sign in.
+            app.UseSessionAuthentication();
+
             if (app.Environment.IsDevelopment())
             {
                 app.MapOpenApi();
@@ -175,6 +184,7 @@ public sealed class Program
 
             app.MapHealth();
             app.MapSetup();
+            app.MapSessions();
             app.MapApiNotFound();
 
             // After the endpoints, and inside the path base: the frontend answers only what no endpoint does.

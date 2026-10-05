@@ -61,17 +61,32 @@ export function isSetupStatusRequest(input: RequestInfo | URL): boolean {
   return requestPath(input).endsWith('/api/v1/setup/status');
 }
 
+export const signedInSession = { username: 'owner', expiresAt: '2026-11-04T09:00:00Z' };
+
+/** Whether the request reads the current session (a GET of `api/v1/session`). */
+export function isSessionRequest(input: RequestInfo | URL, init?: RequestInit): boolean {
+  return (
+    requestPath(input).endsWith('/api/v1/session') &&
+    (init?.method ?? 'GET').toUpperCase() === 'GET'
+  );
+}
+
 /**
  * Replaces `fetch` with a mock; each test says what it answers. The setup status is answered
- * "complete" outside the mock, so tests of the app's pages see neither the wizard nor that request.
+ * "complete" and the session "signed in" outside the mock, so tests of the app's pages see neither
+ * the wizard nor the sign-in page, nor those requests.
  */
 export function stubFetch(): FetchMock {
   const mock = vi.fn<typeof fetch>();
-  vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) =>
-    isSetupStatusRequest(input)
-      ? Promise.resolve(jsonResponse(200, completeSetup))
-      : mock(input, init),
-  );
+  vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
+    if (isSetupStatusRequest(input)) {
+      return Promise.resolve(jsonResponse(200, completeSetup));
+    }
+    if (isSessionRequest(input, init)) {
+      return Promise.resolve(jsonResponse(200, signedInSession));
+    }
+    return mock(input, init);
+  });
   return mock;
 }
 

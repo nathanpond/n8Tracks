@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using n8Tracks.Api.Tests.Auth;
 using n8Tracks.Api.Tests.Persistence;
 using n8Tracks.Api.Tests.Setup;
 using n8Tracks.Api.Tests.Telemetry;
@@ -44,6 +45,7 @@ public sealed class LogRedactionGuardTests
     private const string TitleSentinel = "sentinel-title-visible-e3b4";
     private const string SetupPasswordSentinel = "sentinel-setup-password-90d1";
     private const string SetupConfirmationSentinel = "sentinel-setup-confirmation-2b7e";
+    private const string SignInPasswordSentinel = "sentinel-sign-in-password-7c41";
 
     private static readonly string[] SensitiveSentinels =
     [
@@ -167,6 +169,53 @@ public sealed class LogRedactionGuardTests
         Assert.DoesNotContain(SetupPasswordSentinel, captured, StringComparison.Ordinal);
         Assert.DoesNotContain(SetupConfirmationSentinel, captured, StringComparison.Ordinal);
         Assert.DoesNotContain(hash, captured, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Signing in carries the password, and every later request carries the session identifier in
+    /// a cookie. At Debug, through a refused sign-in, a successful one, a use of the session, and
+    /// signing out, neither the password, the identifier, nor its stored hash reaches the log,
+    /// while the requests themselves are logged.
+    /// </summary>
+    [Fact]
+    public async Task TheSignInPasswordAndTheSessionIdentifierNeverReachTheLog()
+    {
+        using var factory = new LoggingApiFactory("Debug");
+        using var client = factory.CreateClient();
+        await SetupApi.CompleteAsync(client);
+
+        using (var refused = await SessionApi.SignInAsync(client, SetupApi.TestUsername, SignInPasswordSentinel))
+        {
+            Assert.Equal(HttpStatusCode.Unauthorized, refused.StatusCode);
+            await factory.CompletionLine(LoggingApiFactory.RequestId(refused));
+        }
+
+        string token;
+        using (var signedIn = await SessionApi.SignInAsync(client, SetupApi.TestUsername, SetupApi.TestPassword))
+        {
+            Assert.Equal(HttpStatusCode.Created, signedIn.StatusCode);
+            token = SessionApi.SessionToken(signedIn)!;
+            await factory.CompletionLine(LoggingApiFactory.RequestId(signedIn));
+        }
+
+        using (var used = await client.GetAsync(SessionApi.Session))
+        {
+            await factory.CompletionLine(LoggingApiFactory.RequestId(used));
+        }
+
+        using (var signedOut = await SessionApi.SendAsync(client, HttpMethod.Delete, SessionApi.Session))
+        {
+            Assert.Equal(HttpStatusCode.NoContent, signedOut.StatusCode);
+            await factory.CompletionLine(LoggingApiFactory.RequestId(signedOut));
+        }
+
+        var captured = factory.CapturedText;
+        Assert.Contains("/api/v1/session", captured, StringComparison.Ordinal);
+        Assert.Contains("Signed in", captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(SignInPasswordSentinel, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(SetupApi.TestPassword, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(token, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(n8Tracks.Application.Auth.SessionToken.Hash(token), captured, StringComparison.Ordinal);
     }
 
     /// <summary>Sends the request that carries every sentinel and returns its request ID.</summary>

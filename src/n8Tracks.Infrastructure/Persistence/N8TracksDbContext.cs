@@ -14,6 +14,8 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
 
     public DbSet<SettingRecord> Settings => Set<SettingRecord>();
 
+    public DbSet<SessionRecord> Sessions => Set<SessionRecord>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         ArgumentNullException.ThrowIfNull(configurationBuilder);
@@ -40,6 +42,17 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
         {
             setting.ToTable("settings", static table => table.HasCheckConstraint("ck_settings_value_json", "json_valid(value)"));
             setting.HasKey(record => record.Key);
+        });
+
+        modelBuilder.Entity<SessionRecord>(session =>
+        {
+            session.ToTable("sessions");
+            session.HasKey(record => record.IdHash);
+            session.HasOne<AdministratorRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.AdministratorId)
+                .OnDelete(DeleteBehavior.Cascade);
+            session.HasIndex(record => record.LastUsedUtc);
         });
     }
 }

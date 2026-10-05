@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using n8Tracks.Application.Auth;
 using n8Tracks.Application.Setup;
 
 namespace n8Tracks.Application;
@@ -14,6 +15,8 @@ public static class DependencyInjection
         services.TryAddSingleton(TimeProvider.System);
         services.AddSingleton<SetupCompletion>();
         services.AddScoped<SetupService>();
+        services.AddSingleton<DummyPasswordHash>();
+        services.AddScoped<SessionService>();
 
         return services;
     }

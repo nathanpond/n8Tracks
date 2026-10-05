@@ -1,7 +1,8 @@
 import { AppShell, Group, Title } from '@mantine/core';
 import { ColorSchemeControl } from './ColorSchemeControl';
+import { UserMenu } from './UserMenu';
 
-/** The header every page has: the product name and the colour control. */
+/** The header every page has: the product name, the colour control, and the user menu when signed in. */
 export function AppHeader() {
   return (
     <AppShell.Header>
@@ -9,7 +10,10 @@ export function AppHeader() {
         <Title order={1} size="h3">
           n8Tracks
         </Title>
-        <ColorSchemeControl />
+        <Group gap="sm" wrap="nowrap">
+          <ColorSchemeControl />
+          <UserMenu />
+        </Group>
       </Group>
     </AppShell.Header>
   );

@@ -78,11 +78,11 @@ public sealed class SetupEndpointTests
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         }
 
-        // Complement: once setup is done the same endpoint is answered by routing, not the gate.
+        // Complement: once setup is done the same endpoint is past the gate, and asks for a session.
         await SetupApi.CompleteAsync(client);
         using (var response = await client.GetAsync(OtherEndpoint))
         {
-            await SetupApi.ProblemAsync(response, HttpStatusCode.NotFound, "not_found");
+            await SetupApi.ProblemAsync(response, HttpStatusCode.Unauthorized, "not_authenticated");
         }
     }
 
@@ -147,7 +147,7 @@ public sealed class SetupEndpointTests
         await SetupApi.ProblemAsync(again, HttpStatusCode.Conflict, "setup_already_complete");
 
         using var other = await restarted.GetAsync(OtherEndpoint);
-        Assert.Equal(HttpStatusCode.NotFound, other.StatusCode);
+        await SetupApi.ProblemAsync(other, HttpStatusCode.Unauthorized, "not_authenticated");
     }
 
     [Fact]

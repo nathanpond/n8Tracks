@@ -1,4 +1,5 @@
 using System.Net;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -339,7 +340,7 @@ public class FrontendHostingTests
             {
                 if (context.Request.Path == Path)
                 {
-                    context.SetEndpoint(new Endpoint(claimed => claimed.Response.WriteAsync(Body), EndpointMetadataCollection.Empty, "claimed"));
+                    context.SetEndpoint(new Endpoint(claimed => claimed.Response.WriteAsync(Body), new EndpointMetadataCollection(new AllowAnonymousAttribute()), "claimed"));
                 }
 
                 return following(context);

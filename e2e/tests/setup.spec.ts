@@ -9,6 +9,7 @@ import {
   waitForHealth,
   type Target,
 } from '../support/containers.ts';
+import { signInHeading, signInWithTheForm, userMenu } from '../support/session.ts';
 import { isSetupComplete } from '../support/setup.ts';
 import { FRESH_NAME, FRESH_PORT, FRESH_URL } from '../support/targets.ts';
 
@@ -31,6 +32,9 @@ function stepHeading(page: Page, name: string) {
  * attempt (so a retry meets a new instance too), and removed afterwards.
  */
 test.describe('first-run setup', { tag: '@root-only' }, () => {
+  // A new instance has no session to start from.
+  test.use({ storageState: { cookies: [], origins: [] } });
+
   let work: string | undefined;
 
   test.beforeEach(async () => {
@@ -91,10 +95,15 @@ test.describe('first-run setup', { tag: '@root-only' }, () => {
     await page.getByLabel('Repeat the password').fill(OWNER.password);
     await page.getByRole('button', { name: 'Finish setup' }).click();
 
-    // 4. The app shows the shell (the sign-in page once that story lands).
-    await expect(page.getByRole('heading', { level: 2, name: 'Health' })).toBeVisible();
-    await expect(page).toHaveURL(FRESH_URL);
+    // 4. The app asks the new administrator to sign in, and then shows the shell.
+    await expect(signInHeading(page)).toBeVisible();
+    await expect(page).toHaveURL(`${FRESH_URL}sign-in`);
     expect(await isSetupComplete(FRESH_URL)).toBe(true);
+    await expectAccessibleInLightAndDark(page);
+    await signInWithTheForm(page, OWNER.username, OWNER.password);
+    await expect(page.getByRole('heading', { level: 2, name: 'Health' })).toBeVisible();
+    await expect(userMenu(page)).toHaveText(OWNER.username);
+    await expect(page).toHaveURL(FRESH_URL);
     await expectAccessibleInLightAndDark(page);
 
     // 5. Reload any URL: the wizard does not come back.
@@ -105,12 +114,12 @@ test.describe('first-run setup', { tag: '@root-only' }, () => {
     }
     await expect(page).toHaveURL(FRESH_URL);
 
-    // And the API: setup is refused, the other endpoint is no longer 503.
+    // And the API: setup is refused, the other endpoint is no longer 503 but asks for a session.
     const again = await request.post(`${FRESH_URL}api/v1/setup`, {
       data: { username: 'late', password: OWNER.password, passwordConfirmation: OWNER.password },
     });
     expect(again.status()).toBe(409);
     expect(await again.json()).toMatchObject({ code: 'setup_already_complete' });
-    expect((await request.get(`${FRESH_URL}api/v1/songs`)).status()).toBe(404);
+    expect((await request.get(`${FRESH_URL}api/v1/songs`)).status()).toBe(401);
   });
 });

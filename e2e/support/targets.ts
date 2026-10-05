@@ -1,3 +1,6 @@
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 /** The containers the suite runs against. Global setup starts them; the tests only read this. */
 
 const HOST = 'http://localhost';
@@ -27,3 +30,14 @@ export const FRESH_PORT = 18790;
 export const FRESH_NAME = 'n8tracks-e2e-fresh';
 
 export const FRESH_URL = `${HOST}:${String(FRESH_PORT)}/`;
+
+/**
+ * Where global setup writes the signed-in browser state (the session cookie) of each shared
+ * container, and where the project of the same name reads it from. Outside the repository: it
+ * holds a live session of a test instance.
+ */
+const STORAGE_STATE_DIR = join(tmpdir(), 'n8tracks-e2e-auth');
+
+export const ROOT_STORAGE_STATE = join(STORAGE_STATE_DIR, 'root.json');
+
+export const SUB_PATH_STORAGE_STATE = join(STORAGE_STATE_DIR, 'subpath.json');

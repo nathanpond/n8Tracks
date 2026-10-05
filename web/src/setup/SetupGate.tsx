@@ -1,25 +1,12 @@
-import { AppShell, Button, Container, Group, Loader, Stack, Text } from '@mantine/core';
+import { Button, Group, Loader, Stack, Text } from '@mantine/core';
 import type { ReactNode } from 'react';
 import { Navigate, Route, Routes } from 'react-router';
 import { useSetupStatus } from '../api/setup';
-import { AppHeader } from '../components/AppHeader';
+import { PlainPage as Page } from '../components/PlainPage';
 import { SetupWizard } from './SetupWizard';
 
 /** The route of the setup wizard, relative to the app's base path. */
 export const SETUP_ROUTE = 'setup';
-
-function Page({ children }: { children: ReactNode }) {
-  return (
-    <AppShell header={{ height: 56 }} padding="md">
-      <AppHeader />
-      <AppShell.Main>
-        <Container size="sm" px={0}>
-          {children}
-        </Container>
-      </AppShell.Main>
-    </AppShell>
-  );
-}
 
 /**
  * Asks the backend whether setup is complete before any route renders. Until it is, every page

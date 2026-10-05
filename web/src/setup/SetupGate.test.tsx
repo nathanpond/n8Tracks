@@ -7,9 +7,11 @@ import {
   completeSetup,
   healthyReport,
   incompleteSetup,
+  isSessionRequest,
   isSetupStatusRequest,
   jsonResponse,
   neverAnswers,
+  signedInSession,
   stubAllFetch,
 } from '../test/helpers';
 
@@ -26,12 +28,16 @@ function renderAt(path: string) {
   );
 }
 
-/** Answers the setup status with `status` and every other request with a healthy report. */
+/** Answers the setup status with `status`, the session as signed in, and every other request with a healthy report. */
 function answer(status: unknown) {
   const mock = stubAllFetch();
-  mock.mockImplementation((input) =>
+  mock.mockImplementation((input, init) =>
     Promise.resolve(
-      isSetupStatusRequest(input) ? jsonResponse(200, status) : jsonResponse(200, healthyReport),
+      isSetupStatusRequest(input)
+        ? jsonResponse(200, status)
+        : isSessionRequest(input, init)
+          ? jsonResponse(200, signedInSession)
+          : jsonResponse(200, healthyReport),
     ),
   );
   return mock;
@@ -84,11 +90,13 @@ describe('the setup gate', () => {
   it('shows an error with Retry when the status cannot be read, and Retry asks again', async () => {
     const mock = stubAllFetch();
     mock.mockResolvedValueOnce(jsonResponse(500, { title: 'failed' }));
-    mock.mockImplementation((input) =>
+    mock.mockImplementation((input, init) =>
       Promise.resolve(
         isSetupStatusRequest(input)
           ? jsonResponse(200, incompleteSetup)
-          : jsonResponse(200, healthyReport),
+          : isSessionRequest(input, init)
+            ? jsonResponse(200, signedInSession)
+            : jsonResponse(200, healthyReport),
       ),
     );
     const user = userEvent.setup();

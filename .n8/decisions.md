@@ -1118,3 +1118,33 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** Unit tests for the rules and the hasher live in `tests/n8Tracks.Api.Tests/Setup/`; there is no new Domain or Application test project. The rules live in Application (`AdministratorRules`), not Domain.
   **Why:** No such test project exists, and adding one is build infrastructure the story does not need. The rules are application-service validation; there is no domain entity yet.
   **Issue:** #52
+- **Decision:** The sign-in throttle is one row of the existing `settings` table (key `signIn.throttle`, JSON `{ failuresUtc, lockedUntilUtc }`), not a new table. No row means no failures. Deleting the row clears a lockout at once, which is what the reset command (#82) will do. A row that cannot be read counts as no failures.
+  **Why:** The story says "a database row" and names a new table only for sessions. `settings` already exists, and #82 already plans a state row there (`account.lastPasswordReset`). A broken row must not lock the owner out for good.
+  **Issue:** #53
+- **Decision:** A sign-in runs in one SQLite transaction: read the throttle, check the password, record the failure or clear it, end the old session, create the new one. Microsoft.Data.Sqlite begins transactions `IMMEDIATE`, so concurrent attempts are counted one at a time. A test sends eight wrong attempts in parallel and gets exactly five 401s and three 429s. While the throttle refuses, nothing is checked. The fifth failure is still a 401; the refusal starts with it and clears the failure count, so after it ends a fresh window of five begins. Missing fields are 422 `validation_failed` and are not counted.
+  **Why:** If the read and the write were separate, parallel guesses could pass the limit. The story leaves open what the fifth answer is and what happens after a refusal ends.
+  **Issue:** #53
+- **Decision:** Sign-in answers 201 `{ username, expiresAt }`. 429 carries `Retry-After` in seconds, `retryAt` (UTC), and `detail` "Too many failed sign-in attempts. Try again at HH:mm.", with the time in the configured time zone rounded up to the minute. Every session answer is `no-store`.
+  **Why:** The story fixes the codes and fields but not the success status or the message format. Rounding up means the message never gives a time that is too early.
+  **Issue:** #53
+- **Decision:** An ended session's row is deleted at once (sign-out, sign-out everywhere, signing in again); there is no `revoked` column. A hosted service purges expired rows when the app starts and every 24 hours after that. Expiry is 30 days from the recorded last use. The last use is written, and the cookie re-issued, only when at least a minute has passed since the last write.
+  **Why:** Deleting at once is simpler, and a deleted row cannot be reused. The daily purge therefore only has expired rows left to remove.
+  **Issue:** #53
+- **Decision:** Authentication and authorization run on the app itself, after the path base and the setup gate. The fallback policy requires a session. A custom `IAuthorizationMiddlewareResultHandler` lets through requests that reached no endpoint (the shell, its files, and 404s) and routing's own 405, and the authentication handler does not look up a session for them. The anti-forgery check runs after authorization, so a request without a session gets 401 first. The handler logs nothing (`NullLoggerFactory`); sign-in and sign-out write their own lines, without the username.
+  **Why:** The framework applies the fallback policy to endpoint-less requests too. That turned unknown paths and the frontend into 401s. Calling `UseAuthentication` only in a `UseWhen` branch made the host insert its own copy ahead of the path base. The handler's base class would have added "not authenticated" and "challenged" lines at the app's log level on every request.
+  **Issue:** #53
+- **Decision:** The OpenAPI document (Development only) now needs a session: anonymous requests get 401. `FrameworkSettingsTests` checks 401 instead of 200 for the Development case, and the OpenAPI health test signs in first. The smoke script expects 401 `not_authenticated` after setup, signs in, and checks the session after `docker restart`.
+  **Why:** The story's allow-list is health, setup status, setup, and sign-in, and the OpenAPI document is not on it.
+  **Issue:** #53
+- **Decision:** The cookie handler tries up to four `n8tracks_session` values from the `Cookie` header, not only the first. `session`, `sessionid`, and `idhash` were added to the redaction names.
+  **Why:** Two instances on one host under different paths each set a cookie with that name, and the browser sends both. The redaction names cover the cookie name and the identifier and its hash wherever they are logged.
+  **Issue:** #53
+- **Decision:** `403 session_required` for bearer requests to the session endpoints is not implemented yet.
+  **Why:** No bearer scheme exists until #55. Until then a bearer request carries no session and gets 401. #55 adds the `SessionOnly` marker and must apply it to `/api/v1/session` and `/api/v1/sessions`.
+  **Issue:** #53
+- **Decision:** The UI is a session gate under the setup gate and a sign-in page at `/sign-in` with `returnTo`. `returnTo` is accepted only as a local path: no `//`, no backslash, no control characters. The header has a minimal user menu: the username, "Sign out", and "Sign out everywhere". After setup the new administrator signs in through the form; setup does not sign them in. The Mantine menu is used with `withInitialFocusPlaceholder={false}`.
+  **Why:** The Demo needs both sign-out actions, and the full shell is #54, which moves this menu. axe reports Mantine's focusable `role="presentation"` placeholder inside `role="menu"` as `aria-required-children`.
+  **Issue:** #53
+- **Decision:** e2e: global setup signs in to the root and sub-path containers and saves each session as the Playwright storage state of its project, in `$TMPDIR/n8tracks-e2e-auth/`. Specs that need a signed-out start use an empty storage state. The no-media test signs in for itself through `page.request`. The Demo spec (`tests/sign-in.spec.ts`, `@root-only`) runs on the fresh container, because it restarts that container.
+  **Why:** Cookies ignore ports, so the root and no-media containers (both `localhost`, path `/`) cannot share one stored cookie. Saved sessions are kept out of the repository.
+  **Issue:** #53

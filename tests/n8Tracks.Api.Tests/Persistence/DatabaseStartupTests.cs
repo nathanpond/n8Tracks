@@ -28,7 +28,8 @@ public sealed class DatabaseStartupTests : IDisposable
         Assert.Collection(
             history,
             migration => Assert.Matches("^[0-9]{14}_InitialCreate\\|10\\.0\\.", migration),
-            migration => Assert.Matches("^[0-9]{14}_AddAdministratorsAndSettings\\|10\\.0\\.", migration));
+            migration => Assert.Matches("^[0-9]{14}_AddAdministratorsAndSettings\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddSessions\\|10\\.0\\.", migration));
 
         // ISO 8601 UTC with milliseconds and Z, taken when the migration ran.
         var initialized = TestDatabase.SchemaInitializedUtc(directory.Path);
@@ -47,7 +48,7 @@ public sealed class DatabaseStartupTests : IDisposable
         Start();
 
         Assert.Equal(
-            ["__EFMigrationsHistory", "administrators", "app_metadata", "settings"],
+            ["__EFMigrationsHistory", "administrators", "app_metadata", "sessions", "settings"],
             TestDatabase.Rows(
                 directory.Path,
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> '__EFMigrationsLock' ORDER BY name;"));
@@ -135,7 +136,7 @@ public sealed class DatabaseStartupTests : IDisposable
 
         Assert.Equal(MigrationStatus.UpToDate, state.Status);
         Assert.Equal(TestDatabase.History(directory.Path)[^1].Split('|')[0], state.LastAppliedMigrationId);
-        Assert.EndsWith("_AddAdministratorsAndSettings", state.LastAppliedMigrationId, StringComparison.Ordinal);
+        Assert.EndsWith("_AddSessions", state.LastAppliedMigrationId, StringComparison.Ordinal);
     }
 
     [Fact]

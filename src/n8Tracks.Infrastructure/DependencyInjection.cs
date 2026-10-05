@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using n8Tracks.Application.Auth;
 using n8Tracks.Application.Configuration;
 using n8Tracks.Application.Health;
 using n8Tracks.Application.Persistence;
@@ -31,6 +32,12 @@ public static class DependencyInjection
         services.AddScoped<IAdministratorStore, AdministratorStore>();
         services.AddSingleton<IPasswordHasher, Argon2idPasswordHasher>();
         services.AddSingleton<ISetupChecks, SetupChecks>();
+
+        services.AddScoped<SessionStore>();
+        services.AddScoped<ISessionStore>(static provider => provider.GetRequiredService<SessionStore>());
+        services.AddScoped<ISignInAccounts>(static provider => provider.GetRequiredService<SessionStore>());
+        services.AddScoped<ISignInThrottleStore, SignInThrottleStore>();
+        services.AddScoped<IExclusiveTransaction, ExclusiveTransaction>();
 
         return services;
     }

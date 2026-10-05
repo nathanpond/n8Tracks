@@ -51,9 +51,12 @@ public sealed class FrameworkSettingsTests
         Assert.Equal(HttpStatusCode.NotFound, await StatusOf(OpenApiDocument, source, [(key, "Development")]));
     }
 
-    /// <summary>Complement: the document is there when the variable says <c>Development</c>, and only then.</summary>
+    /// <summary>
+    /// Complement: the document is there when the variable says <c>Development</c>, and only then.
+    /// Like every endpoint it asks for a session (401); without the document there is nothing (404).
+    /// </summary>
     [Theory]
-    [InlineData("Development", HttpStatusCode.OK)]
+    [InlineData("Development", HttpStatusCode.Unauthorized)]
     [InlineData("Production", HttpStatusCode.NotFound)]
     [InlineData(" ", HttpStatusCode.NotFound)]
     public async Task TheEnvironmentVariableNamesTheEnvironment(string value, HttpStatusCode expected)

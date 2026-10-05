@@ -403,6 +403,19 @@ submit_setup() {
         --header 'Content-Type: application/json' --data "$SETUP_BODY" "$(url /api/v1/setup)" || true
 }
 
+# sign_in JAR: signs in as the smoke administrator, keeping the session cookie in the file JAR, and
+# prints the HTTP status. The header is the anti-forgery header every browser request carries.
+sign_in() {
+    curl --silent --output /dev/null --max-time 10 --write-out '%{http_code}' --cookie-jar "$1" \
+        --header 'Content-Type: application/json' --header 'X-N8Tracks-Request: 1' \
+        --data '{"username":"smoke","password":"smoke-test-password"}' "$(url /api/v1/session)" || true
+}
+
+# session_status JAR: the HTTP status of reading the current session with the cookie in the file JAR.
+session_status() {
+    curl --silent --output /dev/null --max-time 10 --write-out '%{http_code}' --cookie "$1" "$(url /api/v1/session)" || true
+}
+
 # ---------------------------------------------------------------------------------------------------
 # Build: without both images nothing below can run, so a failure here ends the run.
 
@@ -477,7 +490,10 @@ mounted() {
     expect "the setup submission" 201 "$(submit_setup)" "$name"
     expect "setup status after setup" true "$(api_field "$(url /api/v1/setup/status)" complete)" "$name"
     expect "a second setup submission" 409 "$(submit_setup)" "$name"
-    expect "the API endpoint after setup is no longer refused" 404 "$(http_status "$(url /api/v1/songs)")" "$name"
+    expect "the API endpoint after setup asks for a session" 401 "$(http_status "$(url /api/v1/songs)")" "$name"
+    expect "the code of the API endpoint without a session" not_authenticated "$(api_field "$(url /api/v1/songs)" code)" "$name"
+    expect "signing in" 201 "$(sign_in "$WORK/cookies-mounted")" "$name"
+    expect "the session after signing in" 200 "$(session_status "$WORK/cookies-mounted")" "$name"
 
     shell="$(curl --silent --max-time 5 "$(url /)")"
     case "$shell" in
@@ -511,6 +527,7 @@ mounted() {
     wait_for_http "$name" /health
     expect "seeded row after docker restart" "$seeded" "$(seeded_timestamp "$data")" "$name"
     expect "setup is still complete after docker restart" true "$(api_field "$(url /api/v1/setup/status)" complete)" "$name"
+    expect "the session after docker restart" 200 "$(session_status "$WORK/cookies-mounted")" "$name"
 
     remove "$name"
     run_main

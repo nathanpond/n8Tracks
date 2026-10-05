@@ -1,5 +1,6 @@
 import { AppShell, Container, MantineProvider } from '@mantine/core';
 import { Route, Routes } from 'react-router';
+import { SessionGate } from './auth/SessionGate';
 import { AppHeader } from './components/AppHeader';
 import { HealthPanel } from './components/HealthPanel';
 import { SetupGate } from './setup/SetupGate';
@@ -18,7 +19,7 @@ function Shell() {
   );
 }
 
-/** The application: providers, the setup gate, and routes. It must be rendered inside a router. */
+/** The application: providers, the setup and session gates, and routes. It must be rendered inside a router. */
 export function App() {
   return (
     <MantineProvider
@@ -28,10 +29,12 @@ export function App() {
       cssVariablesResolver={cssVariablesResolver}
     >
       <SetupGate>
-        <Routes>
-          {/* One catch-all route until real navigation arrives. */}
-          <Route path="*" element={<Shell />} />
-        </Routes>
+        <SessionGate>
+          <Routes>
+            {/* One catch-all route until real navigation arrives. */}
+            <Route path="*" element={<Shell />} />
+          </Routes>
+        </SessionGate>
       </SetupGate>
     </MantineProvider>
   );

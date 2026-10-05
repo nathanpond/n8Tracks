@@ -9,6 +9,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using n8Tracks.Api.Configuration;
 using n8Tracks.Api.Endpoints;
+using n8Tracks.Api.Tests.Auth;
 using n8Tracks.Api.Tests.Logging;
 using n8Tracks.Api.Tests.Persistence;
 
@@ -427,7 +428,7 @@ public class HealthEndpointTests
     public async Task TheOpenApiDocumentDeclaresBothAnswersAndTheStatusNames()
     {
         using var factory = new N8TracksApiFactory();
-        using var client = factory.CreateClient();
+        using var client = await SessionApi.SignedInClientAsync(factory);
 
         var text = await client.GetStringAsync(new Uri("/openapi/v1.json", UriKind.Relative));
         var document = JsonSerializer.Deserialize<JsonElement>(text);

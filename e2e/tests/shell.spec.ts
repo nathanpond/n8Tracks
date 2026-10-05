@@ -10,6 +10,7 @@ import {
   openShell,
   overallStatus,
 } from '../support/shell.ts';
+import { signInThroughApi } from '../support/session.ts';
 import { NO_MEDIA_URL, SUB_PATH, SUB_PATH_ORIGIN } from '../support/targets.ts';
 
 /** The product version: the image is built from the root VERSION file, and the page must show it. */
@@ -88,6 +89,8 @@ test.describe('the shell page', () => {
     'shows degraded when the media library is unavailable',
     { tag: '@root-only' },
     async ({ page }) => {
+      // The project's session is for the root container; this one needs its own.
+      await signInThroughApi(page.request, NO_MEDIA_URL);
       await page.goto(NO_MEDIA_URL);
 
       await expect(overallStatus(page)).toHaveText('degraded');
