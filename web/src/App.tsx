@@ -27,6 +27,7 @@ export function App() {
               <Route index element={<Navigate to="/songs" replace />} />
               <Route path="songs" element={<SongsPage />} />
               <Route path="songs/:reference" element={<SongPage />} />
+              <Route path="songs/:reference/v/:number" element={<SongPage />} />
               <Route path="settings" element={<Navigate to="/settings/account" replace />} />
               <Route path="settings/account" element={<AccountPage />} />
               <Route path="settings/credentials" element={<CredentialsPage />} />

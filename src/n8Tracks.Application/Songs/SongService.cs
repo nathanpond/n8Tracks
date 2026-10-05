@@ -137,7 +137,10 @@ public sealed class SongService(ISongStore songs, IWorkflowStateStore states, IE
     /// The Song a reference names: its ID (hyphenated, any letter case) or its complete shortcode
     /// (any letter case). Null when it names none.
     /// </summary>
-    public Task<SongSummary?> FindAsync(string? reference, CancellationToken cancellationToken)
+    public Task<SongSummary?> FindAsync(string? reference, CancellationToken cancellationToken) => FindAsync(songs, reference, cancellationToken);
+
+    /// <summary>The Song a reference names in <paramref name="songs"/>, as <see cref="FindAsync(string?, CancellationToken)"/> reads it.</summary>
+    internal static Task<SongSummary?> FindAsync(ISongStore songs, string? reference, CancellationToken cancellationToken)
     {
         if (Guid.TryParseExact(reference, "D", out var id))
         {

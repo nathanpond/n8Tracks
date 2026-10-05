@@ -2,8 +2,10 @@ import { Anchor, Button, Loader, Stack, Text, Title } from '@mantine/core';
 import { useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router';
 import { useSong, type Song } from '../api/songs';
+import { useSongVersions } from '../api/versions';
 import { Notice } from '../components/Notice';
 import { SongHeader } from './SongHeader';
+import { SongVersions } from './SongVersions';
 import type { FromSongs } from './SongsPage';
 
 const FAILED_MESSAGE =
@@ -35,13 +37,30 @@ function BackToSongs() {
  */
 function LoadedSong({ loaded }: { loaded: Song }) {
   const [song, setSong] = useState(loaded);
-  return <SongHeader song={song} onSong={setSong} />;
+  const { state, reload } = useSongVersions(loaded.id);
+  return (
+    <>
+      <SongHeader song={song} onSong={setSong} />
+      {state.phase === 'loading' && <Loader aria-label="Loading the Versions" />}
+      {(state.phase === 'error' || state.phase === 'not-found') && (
+        <Notice title="The Versions could not be loaded">
+          <Text>{FAILED_MESSAGE}</Text>
+          <div>
+            <Button variant="default" size="xs" onClick={reload}>
+              Try again
+            </Button>
+          </div>
+        </Notice>
+      )}
+      {state.phase === 'ready' && <SongVersions song={song} loaded={state.data} onSong={setSong} />}
+    </>
+  );
 }
 
 /**
- * A Song: its shortcode, title, concept, and workflow state, each edited in place. It is found by
- * the shortcode in the page URL (`/songs/n8-12`), or by its ID. Later stories add the Version tree
- * and the editor to this page.
+ * A Song: its shortcode, title, concept, and workflow state, each edited in place, and its Version
+ * tree beside the selected Version. It is found by the shortcode in the page URL (`/songs/n8-12`),
+ * or by its ID; `/songs/n8-12/v/1.1` selects a Version. A later story adds the editor.
  */
 export function SongPage() {
   const { reference = '' } = useParams();

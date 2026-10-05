@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using n8Tracks.Application.Songs;
+using n8Tracks.Domain.Songs;
 
 namespace n8Tracks.Infrastructure.Persistence;
 
@@ -25,5 +26,110 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
             .ConfigureAwait(false);
 
         return new VersionNumberingFacts(source.SongId, source.Number, used);
+    }
+
+    public async Task<SongVersion?> FindAsync(Guid id, CancellationToken cancellationToken)
+    {
+        var record = await context.Versions.AsNoTracking()
+            .SingleOrDefaultAsync(version => version.Id == id, cancellationToken)
+            .ConfigureAwait(false);
+
+        return record is null
+            ? null
+            : new SongVersion(
+                record.Id,
+                record.SongId,
+                record.Number,
+                record.Name,
+                record.Notes,
+                record.Visibility == VersionRecord.Archived ? VersionVisibility.Archived : VersionVisibility.Active,
+                record.Lyrics,
+                record.Styles,
+                UtcText.Parse(record.CreatedUtc),
+                UtcText.Parse(record.UpdatedUtc),
+                record.Revision);
+    }
+
+    public async Task<IReadOnlyList<VersionSummary>> ListAsync(Guid songId, CancellationToken cancellationToken)
+    {
+        var song = await context.Songs.AsNoTracking()
+            .Where(song => song.Id == songId)
+            .Select(static song => new { song.ShortcodeNumber, song.CurrentVersionId })
+            .SingleOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (song is null)
+        {
+            return [];
+        }
+
+        // The lyrics and styles are left in the database: the tree does not show them.
+        var records = await context.Versions.AsNoTracking()
+            .Where(version => version.SongId == songId)
+            .OrderBy(static version => version.NumberSortKey)
+            .Select(static version => new
+            {
+                version.Id,
+                version.Number,
+                version.Name,
+                version.Notes,
+                version.Visibility,
+                version.CreatedUtc,
+                version.UpdatedUtc,
+                version.Revision,
+            })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        return [.. records.Select(version => new VersionSummary(
+            version.Id,
+            songId,
+            song.ShortcodeNumber,
+            version.Number,
+            version.Name,
+            version.Notes,
+            version.Visibility == VersionRecord.Archived,
+            version.Id == song.CurrentVersionId,
+            UtcText.Parse(version.CreatedUtc),
+            UtcText.Parse(version.UpdatedUtc),
+            version.Revision))];
+    }
+
+    public async Task AddAsync(SongVersion version, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(version);
+
+        // The AFTER INSERT trigger records the number in used_version_numbers.
+        var record = new VersionRecord
+        {
+            Id = version.Id,
+            SongId = version.SongId,
+            Number = version.Number,
+            NumberSortKey = VersionNumbers.SortKey(version.Number),
+            Name = version.Name,
+            Notes = version.Notes,
+            Visibility = version.Visibility == VersionVisibility.Archived ? VersionRecord.Archived : VersionRecord.Active,
+            Lyrics = version.Lyrics,
+            Styles = version.Styles,
+            CreatedUtc = UtcText.From(version.CreatedUtc),
+            UpdatedUtc = UtcText.From(version.UpdatedUtc),
+            Revision = version.Revision,
+        };
+
+        context.Versions.Add(record);
+        await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        context.Entry(record).State = EntityState.Detached;
+    }
+
+    public async Task SetCurrentAsync(Guid songId, Guid versionId, DateTimeOffset updatedUtc, CancellationToken cancellationToken)
+    {
+        var updated = UtcText.From(updatedUtc);
+        await context.Songs
+            .Where(song => song.Id == songId)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(song => song.CurrentVersionId, (Guid?)versionId)
+                    .SetProperty(song => song.UpdatedUtc, updated),
+                cancellationToken)
+            .ConfigureAwait(false);
     }
 }

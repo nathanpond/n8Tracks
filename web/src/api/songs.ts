@@ -52,7 +52,7 @@ export interface SongQuery {
   page: number;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
@@ -107,7 +107,7 @@ function isErrorMap(value: unknown): value is Record<string, string[]> {
   );
 }
 
-async function body(response: Response): Promise<unknown> {
+export async function body(response: Response): Promise<unknown> {
   try {
     return await response.json();
   } catch {
@@ -161,7 +161,7 @@ export type LoadState<T> =
  * GETs `path` and keeps what `accept` takes from the answer. A new path starts loading again; a 404
  * is `not-found`; anything else unexpected is `error`. `reload` asks again.
  */
-function useResource<T>(
+export function useResource<T>(
   path: string,
   accept: (answer: unknown) => T | undefined,
 ): { state: LoadState<T>; reload: () => void } {

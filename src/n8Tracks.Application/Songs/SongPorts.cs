@@ -109,9 +109,56 @@ public interface IWorkflowStateStore
 /// <param name="UsedNumbers">Every number any Version of the Song has or ever had.</param>
 public sealed record VersionNumberingFacts(Guid SongId, string Number, IReadOnlyList<string> UsedNumbers);
 
+/// <summary>A Version as the tree shows it: its number and annotations, without its creation inputs.</summary>
+/// <param name="Id">A UUIDv7.</param>
+/// <param name="SongId">The Song it belongs to.</param>
+/// <param name="SongShortcodeNumber">The <c>n</c> of its Song's shortcode <c>n8-&lt;n&gt;</c>.</param>
+/// <param name="Number">Its hierarchical display number.</param>
+/// <param name="Name">Null when there is none.</param>
+/// <param name="Notes">Null when there are none.</param>
+/// <param name="Archived">Whether it is archived.</param>
+/// <param name="Current">Whether it is its Song's current working Version.</param>
+/// <param name="CreatedUtc">When it was created.</param>
+/// <param name="UpdatedUtc">When it last changed.</param>
+/// <param name="Revision">The Version's own revision.</param>
+public sealed record VersionSummary(
+    Guid Id,
+    Guid SongId,
+    long SongShortcodeNumber,
+    string Number,
+    string? Name,
+    string? Notes,
+    bool Archived,
+    bool Current,
+    DateTimeOffset CreatedUtc,
+    DateTimeOffset UpdatedUtc,
+    int Revision)
+{
+    public string Shortcode => Shortcodes.ForVersion(SongShortcodeNumber, Number);
+}
+
 /// <summary>Where Versions are kept, beyond what <see cref="ISongStore"/> reads with their Songs.</summary>
 public interface IVersionStore
 {
     /// <summary>The numbering facts of the Version with <paramref name="id"/>, archived or not; null when there is none.</summary>
     Task<VersionNumberingFacts?> FindNumberingAsync(Guid id, CancellationToken cancellationToken);
+
+    /// <summary>The Version with <paramref name="id"/>, with its creation inputs; null when there is none.</summary>
+    Task<SongVersion?> FindAsync(Guid id, CancellationToken cancellationToken);
+
+    /// <summary>Every Version of the Song with <paramref name="songId"/>, archived ones included, in tree order.</summary>
+    Task<IReadOnlyList<VersionSummary>> ListAsync(Guid songId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Stores a new Version. Its number must be unused in its Song: the database records it as used
+    /// and refuses one used before.
+    /// </summary>
+    Task AddAsync(SongVersion version, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Makes the Version with <paramref name="versionId"/> the current working Version of the Song with
+    /// <paramref name="songId"/> and sets the Song's updated time, leaving its revision alone. The
+    /// caller has checked that the Version is the Song's.
+    /// </summary>
+    Task SetCurrentAsync(Guid songId, Guid versionId, DateTimeOffset updatedUtc, CancellationToken cancellationToken);
 }

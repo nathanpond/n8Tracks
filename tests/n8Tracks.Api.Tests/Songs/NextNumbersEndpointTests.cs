@@ -249,22 +249,8 @@ public sealed class NextNumbersEndpointTests
             $"{option.GetProperty("number").GetString()} {option.GetProperty("kind").GetString()}{(option.GetProperty("proposed").GetBoolean() ? " proposed" : string.Empty)}")];
     }
 
-    /// <summary>
-    /// Adds a Version to the Song <c>n8-<paramref name="shortcodeNumber"/></c> straight in the
-    /// database, as the create-Version operation will once there is one, and returns its ID.
-    /// </summary>
-    private static Guid AddVersionDirectly(string dataPath, long shortcodeNumber, string number, string visibility = VersionRecord.Active)
-    {
-        var id = Guid.CreateVersion7();
-        TestDatabase.Execute(
-            dataPath,
-            $"""
-            INSERT INTO versions (id, song_id, number, number_sort_key, visibility, lyrics, styles, created_utc, updated_utc, revision)
-            SELECT '{Upper(id)}', id, '{number}', '{VersionNumbers.SortKey(number)}', '{visibility}', '', '', '2026-10-03T10:00:00.000Z', '2026-10-03T10:00:00.000Z', 1
-            FROM songs WHERE shortcode_number = {shortcodeNumber};
-            """);
-        return id;
-    }
+    private static Guid AddVersionDirectly(string dataPath, long shortcodeNumber, string number, string visibility = VersionRecord.Active) =>
+        SongApi.AddVersionDirectly(dataPath, shortcodeNumber, number, visibility);
 
     private static string VersionInsert(Guid songId, string number) =>
         $"""

@@ -6,6 +6,8 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using n8Tracks.Api.Tests.Auth;
 using n8Tracks.Api.Tests.Persistence;
 using n8Tracks.Api.Tests.Setup;
+using n8Tracks.Domain.Songs;
+using n8Tracks.Infrastructure.Persistence;
 
 namespace n8Tracks.Api.Tests.Songs;
 
@@ -99,6 +101,46 @@ internal static class SongApi
     /// <summary>The shortcodes of a list body's items, in order.</summary>
     public static List<string> Shortcodes(JsonElement list) =>
         [.. list.GetProperty("items").EnumerateArray().Select(static song => song.GetProperty("shortcode").GetString()!)];
+
+    /// <summary>
+    /// Sends <paramref name="json"/> as it is with the anti-forgery header, as the web UI does; the
+    /// caller reads the answer.
+    /// </summary>
+    public static async Task<HttpResponseMessage> SendJsonAsync(HttpClient client, HttpMethod method, Uri uri, string json)
+    {
+        ArgumentNullException.ThrowIfNull(client);
+
+        using var request = new HttpRequestMessage(method, uri)
+        {
+            Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json"),
+        };
+        request.Headers.Add(SessionApi.AntiforgeryHeader, "1");
+        return await client.SendAsync(request);
+    }
+
+    /// <summary>
+    /// Adds a Version to the Song <c>n8-<paramref name="shortcodeNumber"/></c> straight in the
+    /// database, with the lyrics and styles given, and returns its ID. The database records its number
+    /// as used.
+    /// </summary>
+    public static Guid AddVersionDirectly(
+        string dataPath,
+        long shortcodeNumber,
+        string number,
+        string visibility = VersionRecord.Active,
+        string lyrics = "",
+        string styles = "")
+    {
+        var id = Guid.CreateVersion7();
+        TestDatabase.Execute(
+            dataPath,
+            $"""
+            INSERT INTO versions (id, song_id, number, number_sort_key, visibility, lyrics, styles, created_utc, updated_utc, revision)
+            SELECT '{id.ToString().ToUpperInvariant()}', id, '{number}', '{VersionNumbers.SortKey(number)}', '{visibility}', '{lyrics.Replace("'", "''", StringComparison.Ordinal)}', '{styles.Replace("'", "''", StringComparison.Ordinal)}', '2026-10-03T10:00:00.000Z', '2026-10-03T10:00:00.000Z', 1
+            FROM songs WHERE shortcode_number = {shortcodeNumber};
+            """);
+        return id;
+    }
 
     /// <summary>
     /// Removes a Song and its Versions straight from the database, as a deletion would once there is
