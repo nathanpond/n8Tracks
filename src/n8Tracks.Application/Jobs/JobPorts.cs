@@ -29,6 +29,9 @@ public interface IJobStore
     /// <summary>The job with <paramref name="id"/>, or null.</summary>
     Task<JobSummary?> FindAsync(Guid id, CancellationToken cancellationToken);
 
+    /// <summary>The first-enqueued job of <paramref name="type"/> that is queued or running, or null.</summary>
+    Task<Guid?> FindActiveAsync(string type, CancellationToken cancellationToken);
+
     /// <summary>The <paramref name="count"/> most recently enqueued jobs, newest first.</summary>
     Task<IReadOnlyList<JobSummary>> ListRecentAsync(int count, CancellationToken cancellationToken);
 

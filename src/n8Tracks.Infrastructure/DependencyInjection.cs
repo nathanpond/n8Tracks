@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using n8Tracks.Application.Auth;
+using n8Tracks.Application.Backups;
 using n8Tracks.Application.Configuration;
 using n8Tracks.Application.Credentials;
 using n8Tracks.Application.Health;
@@ -9,6 +10,7 @@ using n8Tracks.Application.Jobs;
 using n8Tracks.Application.Persistence;
 using n8Tracks.Application.Setup;
 using n8Tracks.Application.Songs;
+using n8Tracks.Infrastructure.Backups;
 using n8Tracks.Infrastructure.Health;
 using n8Tracks.Infrastructure.Jobs;
 using n8Tracks.Infrastructure.Persistence;
@@ -52,6 +54,9 @@ public static class DependencyInjection
         services.AddScoped<IVersionStore, VersionStore>();
         services.AddScoped<IEditorRevisionStore, EditorRevisionStore>();
         services.AddScoped<IWorkflowStateStore, WorkflowStateStore>();
+        services.AddSingleton<IBackupStorage, BackupFolders>();
+        services.AddSingleton<IBackupWriter, BackupWriter>();
+        services.TryAddSingleton(new BackupTestHooks());
 
         return services;
     }
@@ -65,6 +70,7 @@ public static class DependencyInjection
         ArgumentNullException.ThrowIfNull(services);
 
         services.TryAddSingleton(new JobWorkerOptions());
+        services.AddHostedService<BackupStartupCleanup>();
         services.AddHostedService<JobWorker>();
 
         return services;

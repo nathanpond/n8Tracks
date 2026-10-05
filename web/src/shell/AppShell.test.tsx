@@ -24,7 +24,7 @@ function sidebar(): HTMLElement {
 }
 
 describe('the signed-in shell', () => {
-  it('has a sidebar listing Songs, and Settings with Account, Credentials, Workflow, and System', async () => {
+  it('has a sidebar listing Songs, and Settings with Account, Credentials, Workflow, Backups, and System', async () => {
     stubFetch().mockImplementation(() => Promise.resolve(jsonResponse(200, healthyReport)));
 
     renderAt('/songs');
@@ -36,6 +36,7 @@ describe('the signed-in shell', () => {
       'Account',
       'Credentials',
       'Workflow',
+      'Backups',
       'System',
     ]);
     expect(within(sidebar()).getByRole('group', { name: 'Settings' })).toBeInTheDocument();

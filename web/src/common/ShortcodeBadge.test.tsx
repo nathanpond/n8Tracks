@@ -94,6 +94,12 @@ describe('the shortcode copy control', () => {
     expect(await screen.findByTestId('version-shortcode')).toHaveTextContent('n8-7-v1.1');
     expect(screen.getByTestId('shortcode')).toHaveTextContent(/^n8-7$/);
 
+    // The Version pane is drawn again once its lyrics are in: a click before then could land on the
+    // loading pane's copy button as it is replaced (seen under a loaded full run).
+    await waitFor(() => {
+      expect(screen.queryByText('Loading the lyrics and styles…')).toBeNull();
+    });
+
     await user.click(screen.getByRole('button', { name: 'Copy shortcode n8-7-v1.1' }));
     expect(await navigator.clipboard.readText()).toBe('n8-7-v1.1');
     expect(await screen.findByText('Copied')).toBeVisible();

@@ -14,6 +14,7 @@ using n8Tracks.Api.Logging;
 using n8Tracks.Api.Problems;
 using n8Tracks.Api.Setup;
 using n8Tracks.Application;
+using n8Tracks.Application.Backups;
 using n8Tracks.Application.Configuration;
 using n8Tracks.Infrastructure;
 using n8Tracks.Infrastructure.Logging;
@@ -155,6 +156,7 @@ public sealed class Program
 
         builder.Services.AddOpenApi();
         builder.Services.AddApplication();
+        builder.Services.AddSingleton(new ApplicationVersion(ProductVersion.Current));
         builder.Services.AddInfrastructure();
         builder.Services.AddJobWorker();
 
@@ -228,6 +230,7 @@ public sealed class Program
             app.MapWorkflowStates();
             app.MapVersions();
             app.MapResolve();
+            app.MapBackups();
             app.MapApiNotFound();
 
             // After the endpoints, and inside the path base: the frontend answers only what no endpoint does.

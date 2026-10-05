@@ -304,6 +304,8 @@ public sealed class VersionImmutabilityGuardTests
         ["PATCH /api/v1/workflow-states/{id:guid}"] = "workflow states",
         ["PUT /api/v1/workflow-states/order"] = "workflow states",
         ["DELETE /api/v1/workflow-states/{id:guid}"] = "workflow states; moves Songs to another state, never a Version",
+        ["POST /api/v1/backups"] = "queues a backup: reads the database, writes only an archive file",
+        ["DELETE /api/v1/backups/{location}/{name}"] = "deletes an archive file, never a database row",
     };
 
     /// <summary>How each public method of a catalog service is called, each creation input touched in turn.</summary>

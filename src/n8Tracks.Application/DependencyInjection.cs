@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using n8Tracks.Application.Auth;
+using n8Tracks.Application.Backups;
 using n8Tracks.Application.Credentials;
 using n8Tracks.Application.Jobs;
 using n8Tracks.Application.References;
@@ -34,6 +35,9 @@ public static class DependencyInjection
         services.AddScoped<GenerationService>();
         services.AddScoped<WorkflowStateService>();
         services.AddScoped<ReferenceResolver>();
+        services.AddSingleton<BackupStartLock>();
+        services.AddScoped<BackupService>();
+        services.AddJobHandler<BackupJobHandler>(BackupService.JobType);
 
         return services;
     }

@@ -26,6 +26,7 @@ public class N8TracksApiFactory : WebApplicationFactory<Program>
 {
     private readonly Dictionary<string, string> variables;
     private readonly string temporaryMediaPath;
+    private readonly string temporaryBackupRoot;
 
     public N8TracksApiFactory()
         : this(new Dictionary<string, string>(StringComparer.Ordinal))
@@ -44,6 +45,10 @@ public class N8TracksApiFactory : WebApplicationFactory<Program>
         // Kept apart from the data path, which a test may point at a directory of its own.
         temporaryMediaPath = Directory.CreateTempSubdirectory("n8tracks-test-media-").FullName;
         this.variables.TryAdd(EnvironmentOptionsLoader.MediaPath, temporaryMediaPath);
+
+        // Never the machine's own /backup: a folder that is not there (not mounted) unless a test creates it.
+        temporaryBackupRoot = Directory.CreateTempSubdirectory("n8tracks-test-backup-").FullName;
+        this.variables.TryAdd(EnvironmentOptionsLoader.BackupPath, Path.Combine(temporaryBackupRoot, "backup"));
     }
 
     public string DataPath { get; }
@@ -53,6 +58,12 @@ public class N8TracksApiFactory : WebApplicationFactory<Program>
 
     /// <summary>The media path the host was given: the temporary one unless the variables named another.</summary>
     public string MediaPath => variables[EnvironmentOptionsLoader.MediaPath];
+
+    /// <summary>
+    /// The backup path the host was given: by default a folder that does not exist (no backup mount)
+    /// in a temporary directory of its own, which a test creates to play a mounted one.
+    /// </summary>
+    public string BackupPath => variables[EnvironmentOptionsLoader.BackupPath];
 
     /// <summary>Changes the host's services after the application's own registrations. Set before the first request.</summary>
     internal Action<IServiceCollection>? TestServices { get; init; }
@@ -107,7 +118,7 @@ public class N8TracksApiFactory : WebApplicationFactory<Program>
             return;
         }
 
-        foreach (var directory in new[] { DataPath, temporaryMediaPath, WebRootPath })
+        foreach (var directory in new[] { DataPath, temporaryMediaPath, temporaryBackupRoot, WebRootPath })
         {
             if (Directory.Exists(directory))
             {

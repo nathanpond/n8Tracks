@@ -205,9 +205,24 @@ Only `/data` and `/backup` get this treatment. If you point `N8TRACKS_DATA_PATH`
 | --- | --- | --- |
 | `/data` | The app's own data, the database included. | Required, writable. Declared as a volume: without a mount Docker gives the container an anonymous volume, which is lost when the container is removed with its volumes. Mount a host folder or a named volume. |
 | `/media` | Your media files. | Mount it read-only (`:ro`); n8Tracks never writes there. Not mounted or not reachable: the app still runs, health is `degraded`, and the container stays `healthy`. |
-| `/backup` | Backups. | Optional, writable. |
+| `/backup` | Backups (see [Backups](#backups)). | Optional, writable. Not mounted: backups go to `backups/` in the data folder. |
 
 The image does not contain `/media` or `/backup`: one that is not mounted does not exist in the container.
+
+### Backups
+
+Settings → Backups has **Back up now**. It runs in the background while the app keeps working, and the page shows its progress. A backup is one ZIP archive, `n8tracks-backup-<UTC yyyyMMdd-HHmmss>-v<version>.zip`, holding:
+
+- `n8tracks.db`: a consistent copy of the database, made with SQLite's online backup while the app runs;
+- `settings.json`: the stored settings and the non-secret environment configuration (base URL, time zone, log level);
+- `assets/`: the files n8Tracks manages under the data folder;
+- `manifest.json`: the application version, the last applied migration, when it was made, and a SHA-256 checksum of every other file.
+
+Audio under `/media` is never included. A backup is verified before it is listed: the archive is read back, every checksum must match, and the database copy must pass an integrity check. One that fails is deleted, and the job fails with the reason.
+
+Backups go to `/backup` when it is mounted and writable, and otherwise to `backups/` in the data folder. The page then warns that the backups share a disk with the data they protect; mount `/backup` on another disk to keep them apart. The page lists the archives in both folders, and each can be downloaded or deleted. A ZIP named `n8tracks-backup-*.zip` that you copy into either folder is listed too, as invalid if its manifest cannot be read.
+
+**A backup contains the administrator's password hash, the sessions, and the credential hashes, because it is a full copy of the instance. Store backups as carefully as the data folder.**
 
 ### Settings
 

@@ -1,4 +1,6 @@
+using n8Tracks.Api.Endpoints;
 using n8Tracks.Application;
+using n8Tracks.Application.Backups;
 using n8Tracks.Application.Configuration;
 using n8Tracks.Infrastructure;
 
@@ -18,6 +20,7 @@ internal static class CommandServices
 
         var services = new ServiceCollection();
         services.AddSingleton(options);
+        services.AddSingleton(new ApplicationVersion(ProductVersion.Current));
         services.AddApplication();
         services.AddInfrastructure();
 
