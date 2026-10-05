@@ -29,6 +29,14 @@ public sealed class BackupEndpointTests
         await SongApi.CreateAsync(client, "Northern Lights");
         await SongApi.CreateAsync(client, "Harbour Song");
 
+        // Audio under the media mount, so leaving it out of the archive is something the test sees.
+        var audio = new[] { Path.Combine(factory.MediaPath, "song.mp3"), Path.Combine(factory.MediaPath, "album", "track 01.flac") };
+        Directory.CreateDirectory(Path.Combine(factory.MediaPath, "album"));
+        foreach (var file in audio)
+        {
+            await File.WriteAllTextAsync(file, "audio bytes");
+        }
+
         var result = await BackupApi.BackUpAsync(client);
         var name = result.GetProperty("name").GetString()!;
 
@@ -54,6 +62,10 @@ public sealed class BackupEndpointTests
         Assert.Equal(item.GetProperty("size").GetInt64(), bytes.Length);
         var entries = BackupApi.Entries(bytes);
         Assert.Equal(["assets/", "manifest.json", "n8tracks.db", "settings.json"], entries.Keys.Order(StringComparer.Ordinal));
+
+        // The media audio is in no entry, under any folder, and is untouched.
+        Assert.DoesNotContain(entries.Keys, static entry => entry.EndsWith(".mp3", StringComparison.Ordinal) || entry.EndsWith(".flac", StringComparison.Ordinal));
+        Assert.All(audio, static file => Assert.Equal("audio bytes", File.ReadAllText(file)));
 
         // The manifest: what made it, from which schema, and a checksum of every other file that matches.
         var manifest = JsonDocument.Parse(entries["manifest.json"]).RootElement;

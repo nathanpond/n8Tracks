@@ -1795,3 +1795,6 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** #287 is fixed with a test only (`ThereIsNoLimitOnStatesAndColoursAreReusedOnceAllTwelveAreTaken` in `WorkflowStateEndpointTests`). It adds 8 states through the API, for 15 in all, and each answers 201. States 8–12 take the five free colours in palette order, and states 13–15 take the first palette colour (gray).
   **Why:** The issue asked for 13 or more. Going to 15 also shows that reuse continues past the first repeat. Two bite proofs were run: capping at 12 states, and changing the fallback colour.
   **Issue:** #287 (story #67)
+- **Decision:** #279 is fixed with a test only. `BackUpNowWritesAVerifiedArchiveThatRestoresToTheSameRows` now writes `song.mp3` and `album/track 01.flac` into the test host's media path before the backup, and checks that no entry is audio and that both files are unchanged.
+  **Why:** The behaviour was already correct. A file in a sub-folder covers a recursive copy of the media mount as well as a flat one. The test only writes under the test's own temporary media path, so the product still never writes there (invariant 2). Bite proof: a `BackupWriter` that also archived the media folder failed the test's exact entry-set check.
+  **Issue:** #279 (story #71)
