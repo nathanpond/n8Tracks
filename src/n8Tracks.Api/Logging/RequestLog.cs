@@ -18,6 +18,7 @@ internal static class RequestLog
 {
     private static readonly object ClientAbortedKey = new();
     private static readonly object FailedKey = new();
+    private static readonly object ExpectedRefusalKey = new();
 
     public const string MessageTemplate = "{Method} {Path} responded {Status} in {DurationMs:0.0} ms";
 
@@ -45,11 +46,22 @@ internal static class RequestLog
     /// <summary>Records that the request failed with an unhandled exception, so its completion line is written at Error.</summary>
     public static void MarkFailed(HttpContext context) => context.Items[FailedKey] = true;
 
+    /// <summary>
+    /// Records that a 5xx answer is a deliberate refusal and not a fault (503 <c>setup_required</c>
+    /// before setup), so its completion line is written at Information.
+    /// </summary>
+    public static void MarkExpectedRefusal(HttpContext context) => context.Items[ExpectedRefusalKey] = true;
+
     private static LogEventLevel Level(HttpContext context)
     {
         if (context.Items.ContainsKey(ClientAbortedKey))
         {
             return LogEventLevel.Debug;
+        }
+
+        if (context.Items.ContainsKey(ExpectedRefusalKey) && !context.Items.ContainsKey(FailedKey))
+        {
+            return LogEventLevel.Information;
         }
 
         if (context.Response.StatusCode >= StatusCodes.Status500InternalServerError || context.Items.ContainsKey(FailedKey))

@@ -35,7 +35,8 @@ public sealed class DatabaseStartupFailureTests : IDisposable
     public async Task ADatabaseWithAMigrationThisBuildDoesNotKnowIsRefusedAsNewerThanTheApplication()
     {
         CreateUpToDateDatabase();
-        var latest = Assert.Single(TestDatabase.History(directory.Path)).Split('|')[0];
+        var known = TestDatabase.History(directory.Path).Count;
+        var latest = TestDatabase.History(directory.Path)[^1].Split('|')[0];
         TestDatabase.Execute(
             directory.Path,
             "INSERT INTO \"__EFMigrationsHistory\" (\"MigrationId\", \"ProductVersion\") VALUES ('29990101000000_FromALaterVersion', '99.0.0');");
@@ -49,7 +50,7 @@ public sealed class DatabaseStartupFailureTests : IDisposable
         Assert.Contains(latest, message, StringComparison.Ordinal);
 
         // Refused, not repaired: the unknown row is still there.
-        Assert.Equal(2, TestDatabase.History(directory.Path).Count);
+        Assert.Equal(known + 1, TestDatabase.History(directory.Path).Count);
     }
 
     [Fact]

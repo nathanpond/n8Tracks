@@ -1,0 +1,108 @@
+namespace n8Tracks.Domain.Songs;
+
+/// <summary>
+/// The central object from first idea to release. A Song always has one current working Version;
+/// its title need not be unique.
+/// </summary>
+/// <param name="Id">A UUIDv7: the Song's identity, independent of its title and shortcode.</param>
+/// <param name="ShortcodeNumber">The <c>n</c> of its shortcode <c>n8-&lt;n&gt;</c>, from a sequence that never repeats.</param>
+/// <param name="Title">Valid by <see cref="SongRules.TitleErrors"/>, trimmed.</param>
+/// <param name="Concept">Valid by <see cref="SongRules.ConceptErrors"/>, normalised; null when there is none.</param>
+/// <param name="StateId">Its workflow state.</param>
+/// <param name="CurrentVersionId">The Version the user is working from.</param>
+/// <param name="CreatedUtc">When it was created.</param>
+/// <param name="UpdatedUtc">When it or any of its Versions last changed.</param>
+/// <param name="Revision">Starts at 1 and goes up by one on each edit of the Song itself (not of its Versions).</param>
+public sealed record Song(
+    Guid Id,
+    long ShortcodeNumber,
+    string Title,
+    string? Concept,
+    Guid StateId,
+    Guid CurrentVersionId,
+    DateTimeOffset CreatedUtc,
+    DateTimeOffset UpdatedUtc,
+    int Revision)
+{
+    public string Shortcode => Shortcodes.ForSong(ShortcodeNumber);
+
+    /// <summary>
+    /// The creation rule: a new Song in <paramref name="state"/> with mutable Version <c>1</c> as its
+    /// current working Version, both at revision 1. The Version has no lyrics or styles and holds
+    /// <paramref name="inputs"/> (the defaults, worked out by the caller from Suno's field inventory).
+    /// The title and concept are normalised here and must be valid.
+    /// </summary>
+    public static (Song Song, SongVersion Version) Create(
+        Guid songId,
+        Guid versionId,
+        long shortcodeNumber,
+        string title,
+        string? concept,
+        WorkflowState state,
+        VersionInputs inputs,
+        DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentNullException.ThrowIfNull(inputs);
+        ArgumentOutOfRangeException.ThrowIfLessThan(shortcodeNumber, 1);
+        if (SongRules.TitleErrors(title).Length > 0)
+        {
+            throw new ArgumentException("The title is not valid.", nameof(title));
+        }
+
+        if (SongRules.ConceptErrors(concept).Length > 0)
+        {
+            throw new ArgumentException("The concept is not valid.", nameof(concept));
+        }
+
+        var song = new Song(
+            songId,
+            shortcodeNumber,
+            SongRules.NormaliseTitle(title),
+            SongRules.NormaliseConcept(concept),
+            state.Id,
+            versionId,
+            now,
+            now,
+            Revision: 1);
+        var version = new SongVersion(
+            versionId,
+            songId,
+            VersionNumbers.Initial,
+            Name: null,
+            Notes: null,
+            VersionVisibility.Active,
+            Lyrics: string.Empty,
+            Styles: string.Empty,
+            inputs,
+            now,
+            now,
+            Revision: 1);
+
+        return (song, version);
+    }
+}
+
+/// <summary>
+/// Hierarchical Version numbers as text: dot-separated positive integers, such as <c>1</c>,
+/// <c>2.1</c>, or <c>1.3.2</c>. <see cref="VersionNumber"/> is the parsed form and holds the rules.
+/// </summary>
+public static class VersionNumbers
+{
+    /// <summary>The number of the Version every Song is created with.</summary>
+    public const string Initial = "1";
+
+    /// <summary>How many digits each part is padded to in <see cref="SortKey"/>: enough for any 32-bit part.</summary>
+    public const int SortKeyPartWidth = 10;
+
+    /// <summary>
+    /// A key whose text order is the numbers' tree order: each part zero-padded to
+    /// <see cref="SortKeyPartWidth"/> digits, joined with dots (<c>2.10</c> after <c>2.9</c>).
+    /// </summary>
+    public static string SortKey(string number)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(number);
+
+        return VersionNumber.Parse(number).SortKey;
+    }
+}

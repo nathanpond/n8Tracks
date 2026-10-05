@@ -391,6 +391,31 @@ remove_container_only() { docker rm --force "$1" >/dev/null; }
 # health_field URL FIELD: a field of the health document at the URL; empty when there is no answer.
 health_field() { curl --silent --max-time 10 "$1" | json_field "$2" 2>/dev/null || true; }
 
+# api_field URL FIELD: a field of the JSON document (or Problem Details) at the URL; empty when there is no answer.
+api_field() { curl --silent --max-time 10 "$1" | json_field "$2" 2>/dev/null || true; }
+
+# The setup submission: the smoke test's fixed administrator. Not a real credential.
+readonly SETUP_BODY='{"username":"smoke","password":"smoke-test-password","passwordConfirmation":"smoke-test-password"}'
+
+# submit_setup: posts the setup submission to the app and prints the HTTP status.
+submit_setup() {
+    curl --silent --output /dev/null --max-time 10 --write-out '%{http_code}' \
+        --header 'Content-Type: application/json' --data "$SETUP_BODY" "$(url /api/v1/setup)" || true
+}
+
+# sign_in JAR: signs in as the smoke administrator, keeping the session cookie in the file JAR, and
+# prints the HTTP status. The header is the anti-forgery header every browser request carries.
+sign_in() {
+    curl --silent --output /dev/null --max-time 10 --write-out '%{http_code}' --cookie-jar "$1" \
+        --header 'Content-Type: application/json' --header 'X-N8Tracks-Request: 1' \
+        --data '{"username":"smoke","password":"smoke-test-password"}' "$(url /api/v1/session)" || true
+}
+
+# session_status JAR: the HTTP status of reading the current session with the cookie in the file JAR.
+session_status() {
+    curl --silent --output /dev/null --max-time 10 --write-out '%{http_code}' --cookie "$1" "$(url /api/v1/session)" || true
+}
+
 # ---------------------------------------------------------------------------------------------------
 # Build: without both images nothing below can run, so a failure here ends the run.
 
@@ -458,6 +483,18 @@ mounted() {
     expect "health status" healthy "$(printf '%s' "$health" | json_field status)" "$name"
     expect "health reports the version in the VERSION file" "$expected_version" "$(printf '%s' "$health" | json_field version)" "$name"
 
+    # A new instance refuses its API until the administrator is created; health and setup still answer.
+    expect "setup status before setup" false "$(api_field "$(url /api/v1/setup/status)" complete)" "$name"
+    expect "an API endpoint before setup" 503 "$(http_status "$(url /api/v1/songs)")" "$name"
+    expect "the code of an API endpoint before setup" setup_required "$(api_field "$(url /api/v1/songs)" code)" "$name"
+    expect "the setup submission" 201 "$(submit_setup)" "$name"
+    expect "setup status after setup" true "$(api_field "$(url /api/v1/setup/status)" complete)" "$name"
+    expect "a second setup submission" 409 "$(submit_setup)" "$name"
+    expect "the API endpoint after setup asks for a session" 401 "$(http_status "$(url /api/v1/songs)")" "$name"
+    expect "the code of the API endpoint without a session" not_authenticated "$(api_field "$(url /api/v1/songs)" code)" "$name"
+    expect "signing in" 201 "$(sign_in "$WORK/cookies-mounted")" "$name"
+    expect "the session after signing in" 200 "$(session_status "$WORK/cookies-mounted")" "$name"
+
     shell="$(curl --silent --max-time 5 "$(url /)")"
     case "$shell" in
         *'<div id="root">'*'<base href="/"'* | *'<base href="/"'*'<div id="root">'*) pass "the shell page is served at / with its base href" ;;
@@ -489,16 +526,112 @@ mounted() {
     docker restart "$name" >/dev/null
     wait_for_http "$name" /health
     expect "seeded row after docker restart" "$seeded" "$(seeded_timestamp "$data")" "$name"
+    expect "setup is still complete after docker restart" true "$(api_field "$(url /api/v1/setup/status)" complete)" "$name"
+    expect "the session after docker restart" 200 "$(session_status "$WORK/cookies-mounted")" "$name"
+
+    # A forgotten password, reset from inside the running container: the old session ends at once.
+    verify "n8tracks reset-password --password-stdin on a set-up container" "$name" \
+        sh -c "printf '%s\n' 'smoke-reset-password' | docker exec -i '$name' n8tracks reset-password --password-stdin"
+    expect "the old session after the password reset" 401 "$(session_status "$WORK/cookies-mounted")" "$name"
 
     remove "$name"
     run_main
     wait_for_http "$name" /health
     expect "seeded row after docker rm and a fresh docker run on the same data" "$seeded" "$(seeded_timestamp "$data")" "$name"
     expect "health status after recreating the container" healthy "$(health_field "$(url /health)" status)" "$name"
+    expect "setup is still complete after recreating the container" true "$(api_field "$(url /api/v1/setup/status)" complete)" "$name"
     remove "$name"
 }
 
 section "Data and read-only media mounted, PUID=$RUN_UID PGID=$RUN_GID" mounted
+
+# ---------------------------------------------------------------------------------------------------
+
+# api JAR METHOD PATH [BODY]: an API call with the session in the file JAR (and the anti-forgery
+# header), printing the HTTP status on the last line after the body.
+api() {
+    curl --silent --max-time 10 --cookie "$1" --header 'X-N8Tracks-Request: 1' \
+        --header 'Content-Type: application/json' --request "$2" ${4:+--data "$4"} \
+        --write-out '\n%{http_code}' "$(url "$3")" || true
+}
+
+# song_titles JAR: the titles of every Song, sorted and joined with commas.
+song_titles() {
+    api "$1" GET /api/v1/songs | sed '$d' | python3 -c '
+import json, sys
+
+print(",".join(sorted(song["title"] for song in json.load(sys.stdin)["items"])))
+' 2>/dev/null || true
+}
+
+# The Demo of disaster recovery: a backup made through the API, the container stopped, the backup
+# restored by the command from the image with the same volumes, and the next start serving it.
+disaster_recovery() {
+    local name="$PREFIX-recovery" backup="$WORK/recovery-backup" jar="$WORK/cookies-recovery" job="" status="" result archive listed deadline
+    mkdir -p "$backup"
+
+    # /data is a named volume: the lock between the app and the command is a file lock, which a
+    # bind mount through a desktop VM's file sharing need not carry between containers.
+    run_app() {
+        docker run --detach --name "$name" --publish "$HOST_PORT:8787" \
+            --env PUID="$RUN_UID" --env PGID="$RUN_GID" \
+            --volume "$PREFIX-data:/data" --volume "$backup:/backup" "$IMAGE" >/dev/null
+    }
+
+    # run_command ARGS...: n8tracks ARGS in a one-off container with the instance's volumes.
+    run_command() {
+        docker run --rm --env PUID="$RUN_UID" --env PGID="$RUN_GID" \
+            --volume "$PREFIX-data:/data" --volume "$backup:/backup" "$IMAGE" n8tracks "$@"
+    }
+
+    run_app
+    wait_for_http "$name" /health
+    expect "setup of the instance to restore" 201 "$(submit_setup)" "$name"
+    expect "signing in to the instance to restore" 201 "$(sign_in "$jar")" "$name"
+    expect "creating the Song the backup holds" 201 "$(api "$jar" POST /api/v1/songs '{"title":"Before the backup"}' | tail -n 1)" "$name"
+
+    job="$(api "$jar" POST /api/v1/backups | sed '$d' | json_field jobId 2>/dev/null || true)"
+    deadline=$((SECONDS + WAIT_SECONDS))
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        status="$(api "$jar" GET "/api/v1/jobs/$job" | sed '$d' | json_field status 2>/dev/null || true)"
+        case "$status" in succeeded | failed) break ;; esac
+        sleep 1
+    done
+    [ "$status" = "succeeded" ] || stop "the backup through the API succeeds (its job is '$status')" "$name"
+    pass "a backup through the API"
+    result="$(api "$jar" GET "/api/v1/jobs/$job" | sed '$d' | json_field result)"
+    archive="$(printf '%s' "$result" | json_field name)"
+    case "$(printf '%s' "$result" | json_field location)" in
+        mount) archive="/backup/$archive" ;;
+        *) archive="/data/backups/$archive" ;;
+    esac
+
+    expect "creating a Song after the backup" 201 "$(api "$jar" POST /api/v1/songs '{"title":"After the backup"}' | tail -n 1)" "$name"
+    expect "the catalog before the restore" "After the backup,Before the backup" "$(song_titles "$jar")" "$name"
+
+    refute "n8tracks restore refuses while the app runs on the data path" "$name" run_command restore "$archive"
+    expect "the catalog after the refused restore" "After the backup,Before the backup" "$(song_titles "$jar")" "$name"
+
+    docker stop "$name" >/dev/null
+    listed="$(run_command list-backups 2>/dev/null || true)"
+    case "$listed" in
+        *manual*"$archive"*) pass "n8tracks list-backups lists the backup with its kind and path" ;;
+        *) fail "n8tracks list-backups lists the backup with its kind and path (got: $listed)" "$name" ;;
+    esac
+    verify "n8tracks restore $archive with the container stopped" "$name" run_command restore "$archive"
+
+    docker start "$name" >/dev/null
+    wait_for_http "$name" /health
+    expect "the old session after the restore" 401 "$(session_status "$jar")" "$name"
+    expect "signing in after the restore" 201 "$(sign_in "$jar")" "$name"
+    expect "the catalog after the restore is the backup's" "Before the backup" "$(song_titles "$jar")" "$name"
+    expect "the database after the restore belongs to PUID:PGID" "$RUN_UID:$RUN_GID" \
+        "$(docker exec "$name" stat -c '%u:%g' /data/n8tracks.db)" "$name"
+    assert_log_is_json "$name"
+    remove "$name"
+}
+
+section "Disaster recovery: back up, stop, restore with the command, start" disaster_recovery
 
 # ---------------------------------------------------------------------------------------------------
 

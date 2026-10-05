@@ -10,6 +10,7 @@ import {
   openShell,
   overallStatus,
 } from '../support/shell.ts';
+import { signInThroughApi } from '../support/session.ts';
 import { NO_MEDIA_URL, SUB_PATH, SUB_PATH_ORIGIN } from '../support/targets.ts';
 
 /** The product version: the image is built from the root VERSION file, and the page must show it. */
@@ -18,7 +19,7 @@ const VERSION = readFileSync(new URL('../../VERSION', import.meta.url), 'utf8').
 const STALE_NOTICE = 'This information may be out of date: the last refresh failed.';
 const HEALTH_REFRESH_MS = 30_000;
 
-test.describe('the shell page', () => {
+test.describe('the System page (the M0 shell page)', () => {
   test('loads and shows the product name, the version, and a healthy report', async ({ page }) => {
     await openShell(page);
 
@@ -26,16 +27,27 @@ test.describe('the shell page', () => {
     await expect(page.getByRole('heading', { level: 1, name: 'n8Tracks' })).toBeVisible();
     await expect(page.getByTestId('version')).toHaveText(VERSION);
     await expect(overallStatus(page)).toHaveText('healthy');
-    await expect(componentRows(page)).toHaveCount(4);
+    await expect(componentRows(page)).toHaveCount(5);
     await expect(componentRows(page).getByRole('rowheader')).toHaveText([
       'Application',
       'Database',
       'Database schema',
       'Media library',
+      'Maintenance',
     ]);
     for (const row of await componentRows(page).all()) {
       await expect(row.getByRole('cell').first()).toHaveText('healthy');
     }
+
+    // The schema's row says how the last upgrade went and when the last safety backup was taken
+    // (the shared containers may hold safety backups from other specs, so only that both are there).
+    const schema = componentRows(page).filter({
+      has: page.getByRole('rowheader', { name: 'Database schema' }),
+    });
+    await expect(schema.getByTestId('last-migration-outcome')).toHaveText(/at this start$/);
+    await expect(schema.getByTestId('last-safety-backup')).toHaveText(
+      /^(No safety backup yet|Last safety backup .+)$/,
+    );
 
     await expectAccessibleInLightAndDark(page);
   });
@@ -88,10 +100,12 @@ test.describe('the shell page', () => {
     'shows degraded when the media library is unavailable',
     { tag: '@root-only' },
     async ({ page }) => {
-      await page.goto(NO_MEDIA_URL);
+      // The project's session is for the root container; this one needs its own.
+      await signInThroughApi(page.request, NO_MEDIA_URL);
+      await page.goto(`${NO_MEDIA_URL}settings/system`);
 
       await expect(overallStatus(page)).toHaveText('degraded');
-      await expect(componentRows(page)).toHaveCount(4);
+      await expect(componentRows(page)).toHaveCount(5);
       const media = componentRows(page).filter({ hasText: 'Media library' });
       await expect(media.getByRole('cell').first()).toHaveText('degraded');
       await expect(media.getByRole('cell').last()).not.toBeEmpty();
@@ -141,7 +155,7 @@ test.describe('the shell page', () => {
     await page.getByRole('button', { name: 'Retry' }).click();
     await expect(overallStatus(page)).toHaveText('healthy');
     await expect(page.getByTestId('version')).toHaveText(VERSION);
-    await expect(componentRows(page)).toHaveCount(4);
+    await expect(componentRows(page)).toHaveCount(5);
     await expect(page.getByText('Health information is unavailable.')).toBeHidden();
   });
 
@@ -168,7 +182,7 @@ test.describe('the shell page', () => {
     // The last report is still on the page.
     await expect(overallStatus(page)).toHaveText('healthy');
     await expect(page.getByTestId('version')).toHaveText(VERSION);
-    await expect(componentRows(page)).toHaveCount(4);
+    await expect(componentRows(page)).toHaveCount(5);
 
     await expectAccessibleInLightAndDark(page);
     await expect(page.getByText(STALE_NOTICE)).toBeVisible();
@@ -177,9 +191,14 @@ test.describe('the shell page', () => {
 
 test.describe('the sub-path', { tag: '@subpath-only' }, () => {
   test('serves the page under the sub-path and nothing outside it', async ({ page, request }) => {
-    await openShell(page);
-    expect(new URL(page.url()).pathname).toBe(`${SUB_PATH}/`);
+    // The app root is the Songs page, under the sub-path.
+    await page.goto('./');
+    await expect(page.getByRole('heading', { level: 2, name: 'Songs' })).toBeVisible();
+    expect(new URL(page.url()).pathname).toBe(`${SUB_PATH}/songs`);
     await expect(page.locator('base')).toHaveAttribute('href', `${SUB_PATH}/`);
+
+    await openShell(page);
+    expect(new URL(page.url()).pathname).toBe(`${SUB_PATH}/settings/system`);
     await expect(overallStatus(page)).toHaveText('healthy');
 
     // A base path the app ignored would answer here, at the root, and the suite must not pass.

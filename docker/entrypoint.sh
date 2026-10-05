@@ -6,6 +6,11 @@
 # no supplementary groups, and replaces itself with the app. Started as another user (Docker's
 # --user / Compose's user:), it skips all of that and just runs the app.
 #
+# Given "n8tracks <command>" as the container's command (docker run --rm ... <image> n8tracks
+# restore /backup/<file>), it does the same, then runs that command through the n8tracks wrapper
+# instead of starting the app, so the files a restore writes belong to PUID:PGID too. Any other
+# arguments are ignored: the app is configured by its environment only.
+#
 # Everything it writes is one JSON object per line with the keys of the application log
 # (timestamp, level, message, properties). /media is never touched.
 
@@ -75,8 +80,19 @@ app() {
     exec "$@" dotnet /app/n8Tracks.Api.dll
 }
 
+# A container command ("n8tracks <command> ..."), or nothing: the app.
+command_given=false
+if [ "$#" -gt 0 ] && [ "$1" = n8tracks ]; then
+    command_given=true
+    shift
+fi
+
 # Not root: Docker was told which user to run as, so PUID and PGID do not apply.
 if [ "$(id -u)" != 0 ]; then
+    if [ "$command_given" = true ]; then
+        exec /usr/local/bin/n8tracks "$@"
+    fi
+
     app
 fi
 
@@ -97,6 +113,11 @@ fi
 if ! setpriv --reuid="$puid" --regid="$pgid" --clear-groups true 2>/dev/null; then
     log Error "Could not switch to user $puid:$pgid. The container needs the SETUID and SETGID capabilities to apply PUID and PGID; otherwise start it as that user with Docker's own user setting."
     exit 1
+fi
+
+# The container command runs as the chosen user through the wrapper, which accepts only its own commands.
+if [ "$command_given" = true ]; then
+    exec setpriv --reuid="$puid" --regid="$pgid" --clear-groups /usr/local/bin/n8tracks "$@"
 fi
 
 app setpriv --reuid="$puid" --regid="$pgid" --clear-groups

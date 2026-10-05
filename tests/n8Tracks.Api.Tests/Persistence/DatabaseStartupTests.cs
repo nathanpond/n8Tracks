@@ -15,7 +15,7 @@ public sealed class DatabaseStartupTests : IDisposable
     public void Dispose() => directory.Dispose();
 
     [Fact]
-    public void TheFirstStartCreatesTheDatabaseFileWithTheSeededRowAndOneAppliedMigration()
+    public void TheFirstStartCreatesTheDatabaseFileWithTheSeededRowAndEveryMigrationApplied()
     {
         Assert.False(File.Exists(TestDatabase.FilePath(directory.Path)));
         var before = DateTimeOffset.UtcNow.AddSeconds(-1);
@@ -24,8 +24,22 @@ public sealed class DatabaseStartupTests : IDisposable
 
         Assert.True(File.Exists(TestDatabase.FilePath(directory.Path)));
 
-        var migration = Assert.Single(TestDatabase.History(directory.Path));
-        Assert.Matches("^[0-9]{14}_InitialCreate\\|10\\.0\\.", migration);
+        var history = TestDatabase.History(directory.Path);
+        Assert.Collection(
+            history,
+            migration => Assert.Matches("^[0-9]{14}_InitialCreate\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddAdministratorsAndSettings\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddSessions\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddCredentials\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddCredentialNameKey\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddJobs\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddSongs\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddUsedVersionNumbers\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddEditorRevisions\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddGenerations\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddVersionInputs\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddSpeechAndSoundInputs\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddSunoModels\\|10\\.0\\.", migration));
 
         // ISO 8601 UTC with milliseconds and Z, taken when the migration ran.
         var initialized = TestDatabase.SchemaInitializedUtc(directory.Path);
@@ -44,13 +58,49 @@ public sealed class DatabaseStartupTests : IDisposable
         Start();
 
         Assert.Equal(
-            ["__EFMigrationsHistory", "app_metadata"],
+            ["__EFMigrationsHistory", "administrators", "app_metadata", "credentials", "editor_revisions", "generations", "jobs", "sessions", "settings", "shortcode_sequence", "songs", "suno_models", "used_version_numbers", "versions", "workflow_states"],
             TestDatabase.Rows(
                 directory.Path,
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> '__EFMigrationsLock' ORDER BY name;"));
         Assert.Equal(
             ["key|TEXT|1|1", "value|TEXT|1|0"],
             TestDatabase.Rows(directory.Path, "SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('app_metadata') ORDER BY cid;"));
+        Assert.Equal(
+            ["id|TEXT|1|1", "slot|INTEGER|1|0", "username|TEXT|1|0", "username_key|TEXT|1|0", "password_hash|TEXT|1|0", "created_utc|TEXT|1|0"],
+            TestDatabase.Rows(directory.Path, "SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('administrators') ORDER BY cid;"));
+        Assert.Equal(
+            ["ix_administrators_slot|1", "ix_administrators_username_key|1"],
+            TestDatabase.Rows(directory.Path, "SELECT name, CAST(\"unique\" AS TEXT) FROM pragma_index_list('administrators') WHERE origin = 'c' ORDER BY name;"));
+        Assert.Equal(
+            ["key|TEXT|1|1", "value|TEXT|1|0"],
+            TestDatabase.Rows(directory.Path, "SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('settings') ORDER BY cid;"));
+        Assert.Equal(
+            ["id|TEXT|1|1", "name|TEXT|1|0", "kind|TEXT|1|0", "scopes|TEXT|1|0", "token_hash|TEXT|1|0", "created_utc|TEXT|1|0", "last_used_utc|TEXT|0|0", "revoked_utc|TEXT|0|0", "revision|INTEGER|1|0", "name_key|TEXT|1|0"],
+            TestDatabase.Rows(directory.Path, "SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('credentials') ORDER BY cid;"));
+        Assert.Equal(
+            ["ix_credentials_name_key|1|1", "ix_credentials_token_hash|1|0"],
+            TestDatabase.Rows(directory.Path, "SELECT name, CAST(\"unique\" AS TEXT), CAST(partial AS TEXT) FROM pragma_index_list('credentials') WHERE origin = 'c' ORDER BY name;"));
+        Assert.Equal(
+            ["id|TEXT|1|1", "sequence|INTEGER|1|0", "type|TEXT|1|0", "status|TEXT|1|0", "progress|INTEGER|1|0", "message|TEXT|0|0", "payload|TEXT|0|0", "result|TEXT|0|0", "error|TEXT|0|0", "created_utc|TEXT|1|0", "started_utc|TEXT|0|0", "finished_utc|TEXT|0|0"],
+            TestDatabase.Rows(directory.Path, "SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('jobs') ORDER BY cid;"));
+        Assert.Equal(
+            ["ix_jobs_finished_utc|0", "ix_jobs_sequence|1", "ix_jobs_status_sequence|0"],
+            TestDatabase.Rows(directory.Path, "SELECT name, CAST(\"unique\" AS TEXT) FROM pragma_index_list('jobs') WHERE origin = 'c' ORDER BY name;"));
+        Assert.Equal(
+            ["song_id|TEXT|1|1", "number|TEXT|1|2"],
+            TestDatabase.Rows(directory.Path, "SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('used_version_numbers') ORDER BY cid;"));
+        Assert.Equal(
+            ["tr_versions_frozen_inputs_never_change", "tr_versions_number_never_changes", "tr_versions_record_number_after_insert", "tr_versions_touch_song_after_insert", "tr_versions_touch_song_after_update"],
+            TestDatabase.Rows(directory.Path, "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'versions' ORDER BY name;"));
+        Assert.Equal(
+            ["tr_generations_identity_never_changes"],
+            TestDatabase.Rows(directory.Path, "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'generations' ORDER BY name;"));
+        Assert.Equal(
+            ["id|TEXT|1|1", "version_id|TEXT|1|0", "song_id|TEXT|1|0", "ordinal|INTEGER|1|0", "created_utc|TEXT|1|0"],
+            TestDatabase.Rows(directory.Path, "SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('generations') ORDER BY cid;"));
+        Assert.Equal(
+            ["ix_generations_song_id|0", "ix_generations_version_id_ordinal|1"],
+            TestDatabase.Rows(directory.Path, "SELECT name, CAST(\"unique\" AS TEXT) FROM pragma_index_list('generations') WHERE origin = 'c' ORDER BY name;"));
         Assert.Equal(
             ["MigrationId", "ProductVersion"],
             TestDatabase.Rows(directory.Path, "SELECT name FROM pragma_table_info('__EFMigrationsHistory') ORDER BY cid;"));
@@ -122,8 +172,8 @@ public sealed class DatabaseStartupTests : IDisposable
         var state = host.Services.GetRequiredService<IMigrationStateProvider>().Current;
 
         Assert.Equal(MigrationStatus.UpToDate, state.Status);
-        Assert.Equal(Assert.Single(TestDatabase.History(directory.Path)).Split('|')[0], state.LastAppliedMigrationId);
-        Assert.EndsWith("_InitialCreate", state.LastAppliedMigrationId, StringComparison.Ordinal);
+        Assert.Equal(TestDatabase.History(directory.Path)[^1].Split('|')[0], state.LastAppliedMigrationId);
+        Assert.EndsWith("_AddSunoModels", state.LastAppliedMigrationId, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -144,14 +194,19 @@ public sealed class DatabaseStartupTests : IDisposable
         using var client = host.CreateClient();
         using var response = await client.GetAsync(new Uri("/health", UriKind.Relative));
 
-        var applied = await host.WaitForLine(line => line.GetProperty("message").GetString()!.StartsWith("Applied database migration", StringComparison.Ordinal));
-        Assert.Equal("Information", applied.GetProperty("level").GetString());
-        Assert.EndsWith("_InitialCreate", LoggingApiFactory.Property(applied, "migrationId"), StringComparison.Ordinal);
-
         var summary = await host.WaitForLine(line => line.GetProperty("message").GetString()!.StartsWith("Database is up to date", StringComparison.Ordinal));
         Assert.Equal("Information", summary.GetProperty("level").GetString());
-        Assert.Equal(1, summary.GetProperty("properties").GetProperty("appliedCount").GetInt32());
-        Assert.EndsWith("_InitialCreate", LoggingApiFactory.Property(summary, "lastAppliedMigrationId"), StringComparison.Ordinal);
+        var history = TestDatabase.History(host.DataPath).Select(row => row.Split('|')[0]).ToList();
+        Assert.Equal(history.Count, summary.GetProperty("properties").GetProperty("appliedCount").GetInt32());
+        Assert.Equal(history[^1], LoggingApiFactory.Property(summary, "lastAppliedMigrationId"));
+
+        // One line per migration, in the order they were applied.
+        var applied = host.Lines()
+            .Where(line => line.GetProperty("message").GetString()!.StartsWith("Applied database migration", StringComparison.Ordinal))
+            .ToList();
+        Assert.All(applied, line => Assert.Equal("Information", line.GetProperty("level").GetString()));
+        Assert.Equal(history, applied.Select(line => LoggingApiFactory.Property(line, "migrationId")));
+        Assert.EndsWith("_InitialCreate", history[0], StringComparison.Ordinal);
 
         // Nothing from EF Core itself at Information or below: no SQL in the log.
         Assert.DoesNotContain("CREATE TABLE", host.CapturedText, StringComparison.Ordinal);

@@ -40,7 +40,7 @@ public partial class EnvironmentReadGuardTests
     /// <summary>The only callers of the snapshot readers: each service's <c>Main</c>.</summary>
     private static readonly string[] AllowedSnapshotCalls =
     [
-        "src/n8Tracks.Api/Program.cs: RunAsync(args, ProcessEnvironment.Read(), Console.Out, CancellationToken.None);",
+        "src/n8Tracks.Api/Program.cs: RunAsync(args, ProcessEnvironment.Read(), Console.Out, SystemCommandConsole.Instance, CancellationToken.None);",
         "src/n8Tracks.Gateway/Program.cs: RunAsync(args, ProcessEnvironment.Read(), CancellationToken.None);",
     ];
 

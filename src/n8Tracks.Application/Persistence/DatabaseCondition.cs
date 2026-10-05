@@ -1,0 +1,20 @@
+namespace n8Tracks.Application.Persistence;
+
+/// <summary>What a command that must not change the schema finds in the database (<see cref="IDatabaseSchemaCheck"/>).</summary>
+public enum DatabaseCondition
+{
+    /// <summary>There is no database file: setup has never been completed.</summary>
+    Missing,
+
+    /// <summary>Every migration of this build is applied, and no other.</summary>
+    Current,
+
+    /// <summary>The migration history differs from this build's migrations: older, newer, or empty.</summary>
+    SchemaMismatch,
+
+    /// <summary>The migration lock is held, or a failed or interrupted upgrade left its marker: an upgrade is running, or did not finish.</summary>
+    Upgrading,
+
+    /// <summary>The instance is in maintenance: a restore is running, or was interrupted.</summary>
+    Maintenance,
+}

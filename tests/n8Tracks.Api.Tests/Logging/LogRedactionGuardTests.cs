@@ -1,9 +1,13 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using n8Tracks.Api.Tests.Auth;
+using n8Tracks.Api.Tests.Persistence;
+using n8Tracks.Api.Tests.Setup;
 using n8Tracks.Api.Tests.Telemetry;
 using n8Tracks.TestSupport;
 using OpenTelemetry.Metrics;
@@ -40,6 +44,9 @@ public sealed class LogRedactionGuardTests
     private const string NestedSentinel = "sentinel-nested-api-key-64ab";
     private const string ScopeSentinel = "sentinel-scope-style-1f90";
     private const string TitleSentinel = "sentinel-title-visible-e3b4";
+    private const string SetupPasswordSentinel = "sentinel-setup-password-90d1";
+    private const string SetupConfirmationSentinel = "sentinel-setup-confirmation-2b7e";
+    private const string SignInPasswordSentinel = "sentinel-sign-in-password-7c41";
 
     private static readonly string[] SensitiveSentinels =
     [
@@ -54,6 +61,8 @@ public sealed class LogRedactionGuardTests
         RawPayloadSentinel,
         NestedSentinel,
         ScopeSentinel,
+        SetupPasswordSentinel,
+        SetupConfirmationSentinel,
     ];
 
     [Fact]
@@ -130,6 +139,337 @@ public sealed class LogRedactionGuardTests
         Assert.All(SensitiveSentinels, sentinel => Assert.DoesNotContain(sentinel, everything, StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// The setup submission carries the administrator's password twice. At Debug, whether it is
+    /// refused (the two differ) or accepted, neither the password, the confirmation, nor the stored
+    /// hash reaches the log, while the username does not need hiding and the request is logged.
+    /// </summary>
+    [Fact]
+    public async Task TheSetupPasswordNeverReachesTheLog()
+    {
+        using var factory = new LoggingApiFactory("Debug");
+        using var client = factory.CreateClient();
+
+        using (var refused = await SetupApi.SubmitAsync(client, "owner", SetupPasswordSentinel, SetupConfirmationSentinel))
+        {
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, refused.StatusCode);
+            await factory.CompletionLine(LoggingApiFactory.RequestId(refused));
+        }
+
+        using (var accepted = await SetupApi.SubmitAsync(client, "owner", SetupPasswordSentinel, SetupPasswordSentinel))
+        {
+            Assert.Equal(HttpStatusCode.Created, accepted.StatusCode);
+            var completion = await factory.CompletionLine(LoggingApiFactory.RequestId(accepted));
+            Assert.Equal("/api/v1/setup", completion.GetProperty("properties").GetProperty("path").GetString());
+        }
+
+        var hash = TestDatabase.Scalar(factory.DataPath, "SELECT password_hash FROM administrators;");
+        var captured = factory.CapturedText;
+
+        Assert.Contains("/api/v1/setup", captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(SetupPasswordSentinel, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(SetupConfirmationSentinel, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(hash, captured, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Signing in carries the password, and every later request carries the session identifier in
+    /// a cookie. At Debug, through a refused sign-in, a successful one, a use of the session, and
+    /// signing out, neither the password, the identifier, nor its stored hash reaches the log,
+    /// while the requests themselves are logged.
+    /// </summary>
+    [Fact]
+    public async Task TheSignInPasswordAndTheSessionIdentifierNeverReachTheLog()
+    {
+        using var factory = new LoggingApiFactory("Debug");
+        using var client = factory.CreateClient();
+        await SetupApi.CompleteAsync(client);
+
+        using (var refused = await SessionApi.SignInAsync(client, SetupApi.TestUsername, SignInPasswordSentinel))
+        {
+            Assert.Equal(HttpStatusCode.Unauthorized, refused.StatusCode);
+            await factory.CompletionLine(LoggingApiFactory.RequestId(refused));
+        }
+
+        string token;
+        using (var signedIn = await SessionApi.SignInAsync(client, SetupApi.TestUsername, SetupApi.TestPassword))
+        {
+            Assert.Equal(HttpStatusCode.Created, signedIn.StatusCode);
+            token = SessionApi.SessionToken(signedIn)!;
+            await factory.CompletionLine(LoggingApiFactory.RequestId(signedIn));
+        }
+
+        using (var used = await client.GetAsync(SessionApi.Session))
+        {
+            await factory.CompletionLine(LoggingApiFactory.RequestId(used));
+        }
+
+        using (var signedOut = await SessionApi.SendAsync(client, HttpMethod.Delete, SessionApi.Session))
+        {
+            Assert.Equal(HttpStatusCode.NoContent, signedOut.StatusCode);
+            await factory.CompletionLine(LoggingApiFactory.RequestId(signedOut));
+        }
+
+        var captured = factory.CapturedText;
+        Assert.Contains("/api/v1/session", captured, StringComparison.Ordinal);
+        Assert.Contains("Signed in", captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(SignInPasswordSentinel, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(SetupApi.TestPassword, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(token, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(n8Tracks.Application.Auth.SessionToken.Hash(token), captured, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A credential's token travels in the Authorization header of every call. At Debug, through a
+    /// call the token's scope allows, one it refuses, and one with a token that does not exist,
+    /// neither the token nor its stored hash reaches the log, while the requests themselves are logged.
+    /// </summary>
+    [Fact]
+    public async Task AValidTokenAndItsHashNeverReachTheLog()
+    {
+        using var factory = new LoggingApiFactory("Debug") { TestServices = static services => TestEndpoints.Register(services) };
+        using var client = factory.CreateClient();
+        await SetupApi.CompleteAsync(client);
+        var token = await CredentialApi.CreateTokenAsync(factory, n8Tracks.Application.Credentials.CredentialScopes.CatalogRead);
+        var unknown = n8Tracks.Application.Credentials.CredentialToken.Create();
+
+        foreach (var (method, uri, bearer, status) in new[]
+        {
+            (HttpMethod.Get, TestEndpoints.Read, token, HttpStatusCode.OK),
+            (HttpMethod.Post, TestEndpoints.Write, token, HttpStatusCode.Forbidden),
+            (HttpMethod.Get, TestEndpoints.Read, unknown, HttpStatusCode.Unauthorized),
+        })
+        {
+            using var response = await CredentialApi.SendAsync(client, method, uri, bearer);
+            Assert.Equal(status, response.StatusCode);
+            await factory.CompletionLine(LoggingApiFactory.RequestId(response));
+        }
+
+        var captured = factory.CapturedText;
+        Assert.Contains("/api/v1/test/read", captured, StringComparison.Ordinal);
+        Assert.Contains("/api/v1/test/songs", captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(token, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(token[4..], captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(n8Tracks.Application.Credentials.CredentialToken.Hash(token), captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(unknown[4..], captured, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The token is in one answer only, to the request that creates the credential. At Debug,
+    /// through creating, listing, renaming, revoking, and a call with the token before and after
+    /// revocation, neither the token nor its stored hash reaches the log, while the requests and the
+    /// credential's ID are logged.
+    /// </summary>
+    [Fact]
+    public async Task ACreatedTokenNeverReachesTheLogThroughTheCredentialScreens()
+    {
+        using var factory = new LoggingApiFactory("Debug") { TestServices = static services => TestEndpoints.Register(services) };
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var credentials = new Uri("/api/v1/credentials", UriKind.Relative);
+
+        using var create = Antiforgery(new HttpRequestMessage(HttpMethod.Post, credentials)
+        {
+            Content = JsonContent.Create(new { name = "sentinel script", kind = "api", scopes = new[] { "catalog.read" } }),
+        });
+        using var created = await client.SendAsync(create);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var body = await SetupApi.JsonAsync(created);
+        var id = body.GetProperty("id").GetString()!;
+        var token = body.GetProperty("token").GetString()!;
+        await factory.CompletionLine(LoggingApiFactory.RequestId(created));
+
+        using var rename = Antiforgery(new HttpRequestMessage(HttpMethod.Patch, new Uri($"/api/v1/credentials/{id}", UriKind.Relative))
+        {
+            Content = JsonContent.Create(new { name = "renamed" }),
+        });
+        Assert.True(rename.Headers.TryAddWithoutValidation("If-Match", "\"1\""));
+        var revoke = new Uri($"/api/v1/credentials/{id}/revoke", UriKind.Relative);
+
+        foreach (var request in new Func<Task<HttpResponseMessage>>[]
+        {
+            () => client.GetAsync(credentials),
+            () => CredentialApi.SendAsync(client, HttpMethod.Get, TestEndpoints.Read, token),
+            () => client.SendAsync(rename),
+            () => SessionApi.SendAsync(client, HttpMethod.Post, revoke),
+            () => CredentialApi.SendAsync(client, HttpMethod.Get, TestEndpoints.Read, token),
+        })
+        {
+            using var response = await request();
+            await factory.CompletionLine(LoggingApiFactory.RequestId(response));
+        }
+
+        var captured = factory.CapturedText;
+        Assert.Contains("Credential created", captured, StringComparison.Ordinal);
+        Assert.Contains("Credential revoked", captured, StringComparison.Ordinal);
+        Assert.Contains(id, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(token[4..], captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(n8Tracks.Application.Credentials.CredentialToken.Hash(token), captured, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A Version's lyrics and styles, and its Simple prompt and excluded styles, saved and then refused
+    /// for length, at Debug: the edit (and the Version's ID) reaches the log, no text does.
+    /// </summary>
+    [Fact]
+    public async Task AVersionsLyricsAndStylesNeverReachTheLog()
+    {
+        const string LyricsEditSentinel = "sentinel-version-lyrics-4c1e";
+        const string StylesEditSentinel = "sentinel-version-styles-8d02";
+        const string PromptEditSentinel = "sentinel-version-prompt-2b7f";
+        const string ExcludeEditSentinel = "sentinel-version-exclude-91ce";
+
+        using var factory = new LoggingApiFactory("Debug");
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var song = await Songs.SongApi.CreateAsync(client, "Logged");
+        var id = song.GetProperty("currentVersion").GetProperty("id").GetString()!;
+
+        foreach (var (revision, lyrics, expected) in new[]
+        {
+            ("\"1\"", $"[Verse]\n{LyricsEditSentinel}", HttpStatusCode.OK),
+            ("\"2\"", LyricsEditSentinel + new string('x', 5_000), HttpStatusCode.UnprocessableEntity),
+        })
+        {
+            using var request = Antiforgery(new HttpRequestMessage(HttpMethod.Patch, new Uri($"/api/v1/versions/{id}", UriKind.Relative))
+            {
+                Content = new StringContent(JsonSerializer.Serialize(new { lyrics, styles = StylesEditSentinel }), Encoding.UTF8, "application/json"),
+            });
+            Assert.True(request.Headers.TryAddWithoutValidation("If-Match", revision));
+            using var response = await client.SendAsync(request);
+            Assert.Equal(expected, response.StatusCode);
+        }
+
+        // The prompt-like options, saved and then refused, inside the inputs object.
+        foreach (var (revision, prompt, expected) in new[]
+        {
+            ("\"2\"", PromptEditSentinel, HttpStatusCode.OK),
+            ("\"3\"", PromptEditSentinel + new string('x', 1_000), HttpStatusCode.UnprocessableEntity),
+        })
+        {
+            using var request = Antiforgery(new HttpRequestMessage(HttpMethod.Patch, new Uri($"/api/v1/versions/{id}", UriKind.Relative))
+            {
+                Content = new StringContent(JsonSerializer.Serialize(new { inputs = new { simplePrompt = prompt, excludeStyles = ExcludeEditSentinel } }), Encoding.UTF8, "application/json"),
+            });
+            Assert.True(request.Headers.TryAddWithoutValidation("If-Match", revision));
+            using var response = await client.SendAsync(request);
+            Assert.Equal(expected, response.StatusCode);
+        }
+
+        var captured = factory.CapturedText;
+        Assert.Contains("Version edited", captured, StringComparison.Ordinal);
+        Assert.Contains(id, captured, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(LyricsEditSentinel, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(StylesEditSentinel, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(PromptEditSentinel, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(ExcludeEditSentinel, captured, StringComparison.Ordinal);
+        Assert.True(n8Tracks.Infrastructure.Logging.RedactionPolicy.IsSensitive("simplePrompt") && n8Tracks.Infrastructure.Logging.RedactionPolicy.IsSensitive("excludeStyles"));
+    }
+
+    /// <summary>
+    /// A Speech's description, script, and tone, and a Sound's description, saved and then refused
+    /// for length, at Debug: the edit reaches the log, no text does.
+    /// </summary>
+    [Fact]
+    public async Task SpeechAndSoundTextNeverReachesTheLog()
+    {
+        string[] sentinels =
+            ["sentinel-speech-prompt-6a3d", "sentinel-speech-script-e2b0", "sentinel-speech-tone-17fc", "sentinel-sound-description-c94a"];
+
+        using var factory = new LoggingApiFactory("Debug");
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var song = await Songs.SongApi.CreateAsync(client, "Logged");
+        var id = song.GetProperty("currentVersion").GetProperty("id").GetString()!;
+
+        foreach (var (revision, padding, expected) in new[]
+        {
+            ("\"1\"", string.Empty, HttpStatusCode.OK),
+            ("\"2\"", new string('x', 5_000), HttpStatusCode.UnprocessableEntity),
+        })
+        {
+            var inputs = new
+            {
+                kind = "speech",
+                speechPrompt = sentinels[0] + padding,
+                speechScript = sentinels[1] + padding,
+                speechTone = sentinels[2] + padding,
+                soundDescription = sentinels[3] + padding,
+            };
+            using var request = Antiforgery(new HttpRequestMessage(HttpMethod.Patch, new Uri($"/api/v1/versions/{id}", UriKind.Relative))
+            {
+                Content = new StringContent(JsonSerializer.Serialize(new { inputs }), Encoding.UTF8, "application/json"),
+            });
+            Assert.True(request.Headers.TryAddWithoutValidation("If-Match", revision));
+            using var response = await client.SendAsync(request);
+            Assert.Equal(expected, response.StatusCode);
+        }
+
+        var captured = factory.CapturedText;
+        Assert.Contains("Version edited", captured, StringComparison.Ordinal);
+        Assert.All(sentinels, sentinel => Assert.DoesNotContain(sentinel, captured, StringComparison.Ordinal));
+        Assert.All(
+            ["speechPrompt", "speechScript", "speechTone", "soundDescription", "speech_script", "sound_description"],
+            name => Assert.True(n8Tracks.Infrastructure.Logging.RedactionPolicy.IsSensitive(name), name));
+    }
+
+    /// <summary>
+    /// A Version's history at Debug: a snapshot taken, read back, and restored, and a credential's
+    /// edit snapshotting the text it replaces. The snapshot and Version IDs reach the log; no text does.
+    /// </summary>
+    [Fact]
+    public async Task SnapshotTextNeverReachesTheLog()
+    {
+        const string SnapshotLyricsSentinel = "sentinel-snapshot-lyrics-71b9";
+        const string SnapshotStylesSentinel = "sentinel-snapshot-styles-e3a0";
+        const string ToolLyricsSentinel = "sentinel-tool-lyrics-5c44";
+
+        using var factory = new LoggingApiFactory("Debug");
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var song = await Songs.SongApi.CreateAsync(client, "Remembered");
+        var id = song.GetProperty("currentVersion").GetProperty("id").GetString()!;
+
+        using var taken = await client.SendAsync(Antiforgery(new HttpRequestMessage(HttpMethod.Post, new Uri($"/api/v1/versions/{id}/snapshots", UriKind.Relative))
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { lyrics = SnapshotLyricsSentinel, styles = SnapshotStylesSentinel }), Encoding.UTF8, "application/json"),
+        }));
+        Assert.Equal(HttpStatusCode.Created, taken.StatusCode);
+        var snapshot = (await SetupApi.JsonAsync(taken)).GetProperty("id").GetString()!;
+        using var read = await client.GetAsync(new Uri($"/api/v1/versions/{id}/snapshots/{snapshot}", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.OK, read.StatusCode);
+
+        var token = await CredentialApi.CreateTokenAsync(factory, n8Tracks.Application.Credentials.CredentialScopes.VersionsWrite);
+        using var tool = factory.CreateClient();
+        using (var request = new HttpRequestMessage(HttpMethod.Patch, new Uri($"/api/v1/versions/{id}", UriKind.Relative))
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { lyrics = ToolLyricsSentinel }), Encoding.UTF8, "application/json"),
+        })
+        {
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+            Assert.True(request.Headers.TryAddWithoutValidation("If-Match", "\"1\""));
+            using var edited = await tool.SendAsync(request);
+            Assert.Equal(HttpStatusCode.OK, edited.StatusCode);
+        }
+
+        using (var request = Antiforgery(new HttpRequestMessage(HttpMethod.Post, new Uri($"/api/v1/versions/{id}/snapshots/{snapshot}/restore", UriKind.Relative))))
+        {
+            Assert.True(request.Headers.TryAddWithoutValidation("If-Match", "\"2\""));
+            using var restored = await client.SendAsync(request);
+            Assert.Equal(HttpStatusCode.OK, restored.StatusCode);
+        }
+
+        var captured = factory.CapturedText;
+        Assert.Contains("Version snapshot kept", captured, StringComparison.Ordinal);
+        Assert.Contains("Version snapshot restored", captured, StringComparison.Ordinal);
+        Assert.Contains(snapshot, captured, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(SnapshotLyricsSentinel, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(SnapshotStylesSentinel, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(ToolLyricsSentinel, captured, StringComparison.Ordinal);
+    }
+
+    private static HttpRequestMessage Antiforgery(HttpRequestMessage request)
+    {
+        request.Headers.Add(SessionApi.AntiforgeryHeader, "1");
+        return request;
+    }
+
     /// <summary>Sends the request that carries every sentinel and returns its request ID.</summary>
     private static async Task<string> SendTheSentinels(LoggingApiFactory factory)
     {
@@ -147,6 +487,38 @@ public sealed class LogRedactionGuardTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         return LoggingApiFactory.RequestId(response);
+    }
+
+    /// <summary>
+    /// A background job that reports progress and then throws, each with a sensitive assignment in
+    /// its text, and was enqueued with a sensitive value in its payload: at Debug, none of the three
+    /// reaches the log, while the job's failure (and its ID) does.
+    /// </summary>
+    [Fact]
+    public async Task AFailingJobsErrorProgressAndPayloadNeverReachTheLog()
+    {
+        const string ErrorSentinel = "sentinel-job-error-6a1d";
+        const string MessageSentinel = "sentinel-job-message-2f83";
+        const string PayloadSentinel = "sentinel-job-payload-b45e";
+
+        using var factory = new LoggingApiFactory("Debug") { TestServices = static services => Jobs.TestJobs.Register(services) };
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var id = await Jobs.TestJobs.EnqueueAsync(factory, new
+        {
+            name = "A",
+            prompt = PayloadSentinel,
+            progress = 50,
+            message = $"halfway, password={MessageSentinel}",
+            @throw = $"refused: token={ErrorSentinel}",
+        });
+        await Jobs.TestJobs.WaitForStatusAsync(client, id, "failed");
+        await Jobs.TestJobs.WaitUntilAsync(() => factory.CapturedText.Contains($"Job {id}", StringComparison.Ordinal) && factory.CapturedText.Contains("failed", StringComparison.Ordinal), "the failure line");
+
+        var captured = factory.CapturedText;
+        Assert.Contains("token=[REDACTED]", captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(ErrorSentinel, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(MessageSentinel, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(PayloadSentinel, captured, StringComparison.Ordinal);
     }
 
     /// <summary>

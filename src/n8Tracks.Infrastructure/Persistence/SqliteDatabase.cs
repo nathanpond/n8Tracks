@@ -59,12 +59,14 @@ public static class SqliteDatabase
         return options
             .UseSqlite(ConnectionString(filePath))
 
-            // EF Core logs a failed command or connection at Error and then throws. The exception
-            // reaches a caller that logs it once (database startup, or the request's exception
-            // handler), so EF's own line would be a second Error for the same failure.
+            // EF Core logs a failed command, connection, or save at Error and then throws. The
+            // exception reaches a caller that either handles it as an expected outcome (the loser of
+            // the race to create the administrator) or logs it once (database startup, or the
+            // request's exception handler), so EF's own line would be a false or a second Error.
             .ConfigureWarnings(static warnings => warnings.Log(
                 (RelationalEventId.CommandError, LogLevel.Debug),
-                (RelationalEventId.ConnectionError, LogLevel.Debug)))
+                (RelationalEventId.ConnectionError, LogLevel.Debug),
+                (CoreEventId.SaveChangesFailed, LogLevel.Debug)))
             .AddInterceptors(ConnectionSettingsInterceptor.Instance);
     }
 }

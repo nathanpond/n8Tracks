@@ -29,9 +29,23 @@ public class HealthReportTests
             new HealthComponent(application, "a"),
             new HealthComponent(database, "b"),
             new MigrationsHealthComponent(migrations, "c", null),
-            new HealthComponent(media, "d"));
+            new HealthComponent(media, "d"),
+            new HealthComponent(H, "e"));
 
         Assert.Equal(expected, report.Status);
+    }
+
+    [Fact]
+    public void MaintenanceIsDegradedNotUnhealthy()
+    {
+        var report = new HealthReport(
+            new HealthComponent(H, HealthDetails.ApplicationRunning),
+            new HealthComponent(D, HealthDetails.DatabaseInMaintenance),
+            new MigrationsHealthComponent(H, HealthDetails.MigrationsUpToDate, null),
+            new HealthComponent(H, HealthDetails.MediaAvailable),
+            new HealthComponent(D, HealthDetails.MaintenanceRestoring));
+
+        Assert.Equal(D, report.Status);
     }
 
     [Fact]
@@ -51,7 +65,7 @@ public class HealthReportTests
             .Select(field => (string)field.GetRawConstantValue()!)
             .ToList();
 
-        Assert.Equal(7, details.Count);
+        Assert.Equal(10, details.Count);
         Assert.All(details, detail => Assert.Matches("^[a-z ]{1,20}$", detail));
     }
 }

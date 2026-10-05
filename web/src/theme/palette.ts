@@ -17,34 +17,72 @@ export interface SchemePalette {
   body: ColorPair;
   /** Less prominent text (details, captions) on the page background. */
   secondaryText: string;
+  /** A field's error message, and the text and border of an invalid field, on the page background. */
+  errorText: string;
   /** The out-of-date notice. */
   notice: ColorPair & { border: string };
   /** Status badges. */
   status: Record<KnownStatus, ColorPair>;
+  /**
+   * The lyrics editor, on the page background: tags (also bold), parentheticals (also italic), and
+   * warning marks (also underlined, with a marker), so none relies on colour alone.
+   */
+  lyrics: { tag: string; parenthetical: string; warning: string };
 }
 
 export const palette: Record<'light' | 'dark', SchemePalette> = {
   light: {
     body: { background: '#ffffff', text: '#1a1b1e' },
     secondaryText: '#495057',
+    errorText: '#c92a2a',
     notice: { background: '#fff3bf', text: '#1a1b1e', border: '#8a5a00' },
     status: {
       healthy: { background: '#1e6b30', text: '#ffffff' },
       degraded: { background: '#8a5a00', text: '#ffffff' },
       unhealthy: { background: '#c92a2a', text: '#ffffff' },
     },
+    lyrics: { tag: '#1864ab', parenthetical: '#862e9c', warning: '#8a5a00' },
   },
   dark: {
     body: { background: '#1a1b1e', text: '#e9ecef' },
     secondaryText: '#adb5bd',
+    errorText: '#ffa8a8',
     notice: { background: '#3d2c00', text: '#fff3bf', border: '#ffd43b' },
     status: {
       healthy: { background: '#8ce99a', text: '#0b2e13' },
       degraded: { background: '#ffd43b', text: '#3d2c00' },
       unhealthy: { background: '#ffa8a8', text: '#4a0b0b' },
     },
+    lyrics: { tag: '#74c0fc', parenthetical: '#e599f7', warning: '#ffd43b' },
   },
 };
+
+/**
+ * The twelve workflow-state colours, by the name a state stores, each with the value drawn on the
+ * light page and the one drawn on the dark page. They mirror `StateColours` in the domain
+ * (`src/n8Tracks.Domain/Songs/WorkflowState.cs`); `WebStateColoursTests` fails when the two differ. A state's name
+ * is drawn as text in its colour, so each value is checked for text contrast on its page.
+ */
+export const stateColours = {
+  gray: { light: '#495057', dark: '#ced4da' },
+  red: { light: '#c92a2a', dark: '#ff8787' },
+  pink: { light: '#a61e4d', dark: '#f783ac' },
+  grape: { light: '#862e9c', dark: '#e599f7' },
+  violet: { light: '#5f3dc4', dark: '#b197fc' },
+  indigo: { light: '#364fc7', dark: '#91a7ff' },
+  blue: { light: '#1864ab', dark: '#74c0fc' },
+  cyan: { light: '#0b7285', dark: '#66d9e8' },
+  teal: { light: '#087f5b', dark: '#63e6be' },
+  green: { light: '#2b7a37', dark: '#8ce99a' },
+  yellow: { light: '#8a5a00', dark: '#ffd43b' },
+  orange: { light: '#b43c0b', dark: '#ffa94d' },
+} as const satisfies Record<string, Record<'light' | 'dark', string>>;
+
+export type StateColourName = keyof typeof stateColours;
+
+export function isStateColour(name: string): name is StateColourName {
+  return Object.hasOwn(stateColours, name);
+}
 
 export function isKnownStatus(status: string): status is KnownStatus {
   return (knownStatuses as readonly string[]).includes(status);

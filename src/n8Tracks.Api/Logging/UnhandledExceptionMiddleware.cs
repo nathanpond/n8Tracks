@@ -1,11 +1,14 @@
 using Microsoft.AspNetCore.Mvc;
+using n8Tracks.Api.Problems;
 
 namespace n8Tracks.Api.Logging;
 
 /// <summary>
 /// The one place an unhandled exception is logged: once, at Error. The client gets a Problem Details
 /// 500 that carries the request ID and nothing about the exception. A request the client aborted is
-/// not an error and is logged at Debug.
+/// not an error and is logged at Debug. A request the server could not read (malformed JSON, a body
+/// of the wrong type) is the client's mistake, not a fault: it is answered with a Problem Details 400
+/// <c>invalid_request</c> (or the status the framework chose) and logged at Debug.
 /// </summary>
 internal sealed partial class UnhandledExceptionMiddleware(RequestDelegate next, ILogger<UnhandledExceptionMiddleware> logger)
 {
@@ -31,6 +34,17 @@ internal sealed partial class UnhandledExceptionMiddleware(RequestDelegate next,
             {
                 context.Response.StatusCode = ClientClosedRequest;
             }
+        }
+        catch (BadHttpRequestException exception) when (!context.Response.HasStarted)
+        {
+            LogBadRequest(logger, exception.StatusCode);
+            context.Response.Clear();
+
+            await ApiProblem.For(
+                context,
+                exception.StatusCode,
+                ApiProblem.InvalidRequestCode,
+                "The request could not be read.").ExecuteAsync(context);
         }
         catch (Exception exception)
         {
@@ -64,6 +78,9 @@ internal sealed partial class UnhandledExceptionMiddleware(RequestDelegate next,
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Unhandled exception")]
     private static partial void LogUnhandledException(ILogger logger, Exception exception);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "The request could not be read and was answered {StatusCode}")]
+    private static partial void LogBadRequest(ILogger logger, int statusCode);
 
     [LoggerMessage(Level = LogLevel.Debug, Message = "The client aborted the request")]
     private static partial void LogRequestAborted(ILogger logger);

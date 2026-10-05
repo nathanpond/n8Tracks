@@ -1,5 +1,10 @@
 import { defineConfig, devices } from '@playwright/test';
-import { ROOT_URL, SUB_PATH_URL } from './support/targets.ts';
+import {
+  ROOT_STORAGE_STATE,
+  ROOT_URL,
+  SUB_PATH_STORAGE_STATE,
+  SUB_PATH_URL,
+} from './support/targets.ts';
 
 /** GitHub Actions sets `CI`. */
 const CI = Boolean(process.env.CI);
@@ -7,7 +12,8 @@ const CI = Boolean(process.env.CI);
 /**
  * Chromium only, against containers that global setup starts from the application image: once at
  * the root of a hostname and once under a sub-path. A test tagged `@root-only` or `@subpath-only`
- * runs in that project alone.
+ * runs in that project alone. Each project starts every test signed in to its container (the
+ * storage state global setup saved); a test that needs to be signed out says so.
  *
  * In CI a failing test is retried once, and the retry records a trace. A test that passes on the
  * retry is flaky: the run stays green, and `scripts/summarize.ts` lists it from the JSON report.
@@ -37,12 +43,12 @@ export default defineConfig({
   projects: [
     {
       name: 'root',
-      use: { baseURL: ROOT_URL },
+      use: { baseURL: ROOT_URL, storageState: ROOT_STORAGE_STATE },
       grepInvert: /@subpath-only/,
     },
     {
       name: 'subpath',
-      use: { baseURL: SUB_PATH_URL },
+      use: { baseURL: SUB_PATH_URL, storageState: SUB_PATH_STORAGE_STATE },
       grepInvert: /@root-only/,
     },
   ],

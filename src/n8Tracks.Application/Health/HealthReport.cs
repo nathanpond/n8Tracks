@@ -5,14 +5,16 @@ namespace n8Tracks.Application.Health;
 /// <param name="Database">Whether the database answers a trivial query.</param>
 /// <param name="Migrations">The schema state captured at startup.</param>
 /// <param name="Media">Whether the media mount is there and readable.</param>
+/// <param name="Maintenance">Whether a restore has the instance in maintenance: degraded while it does, so the container stays healthy.</param>
 public sealed record HealthReport(
     HealthComponent Application,
     HealthComponent Database,
     MigrationsHealthComponent Migrations,
-    HealthComponent Media)
+    HealthComponent Media,
+    HealthComponent Maintenance)
 {
     /// <summary>The overall status, by <see cref="Aggregate"/>.</summary>
-    public HealthStatus Status => Aggregate([Application.Status, Database.Status, Migrations.Status, Media.Status]);
+    public HealthStatus Status => Aggregate([Application.Status, Database.Status, Migrations.Status, Media.Status, Maintenance.Status]);
 
     /// <summary>
     /// The aggregation rule: unhealthy if any component is unhealthy, else degraded if any is degraded,

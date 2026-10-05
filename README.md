@@ -175,11 +175,13 @@ Without Compose:
 
 ```sh
 docker build -t n8tracks:dev .
-docker run -d --name n8tracks -p 8787:8787 \
+docker run -d --name n8tracks -p 8787:8787 --stop-timeout 45 \
   -e PUID=1000 -e PGID=1000 -e TZ=Etc/UTC \
   -v "$PWD/data:/data" -v "$PWD/media:/media:ro" \
   n8tracks:dev
 ```
+
+`--stop-timeout 45` (`stop_grace_period: 45s` in the Compose example) gives a running background job, such as a backup, the 30 seconds it is allowed to finish when the container stops. With Docker's default of 10 seconds the job is cut off; it is then marked failed, "interrupted by restart", when the app next starts.
 
 ### The user the app runs as: `PUID` and `PGID`
 
@@ -203,9 +205,60 @@ Only `/data` and `/backup` get this treatment. If you point `N8TRACKS_DATA_PATH`
 | --- | --- | --- |
 | `/data` | The app's own data, the database included. | Required, writable. Declared as a volume: without a mount Docker gives the container an anonymous volume, which is lost when the container is removed with its volumes. Mount a host folder or a named volume. |
 | `/media` | Your media files. | Mount it read-only (`:ro`); n8Tracks never writes there. Not mounted or not reachable: the app still runs, health is `degraded`, and the container stays `healthy`. |
-| `/backup` | Backups. | Optional, writable. |
+| `/backup` | Backups (see [Backups](#backups)). | Optional, writable. Not mounted: backups go to `backups/` in the data folder. |
 
 The image does not contain `/media` or `/backup`: one that is not mounted does not exist in the container.
+
+### Backups
+
+Settings → Backups has **Back up now**. It runs in the background while the app keeps working, and the page shows its progress. A backup is one ZIP archive, `n8tracks-backup-<UTC yyyyMMdd-HHmmss>-v<version>.zip`, holding:
+
+- `n8tracks.db`: a consistent copy of the database, made with SQLite's online backup while the app runs;
+- `settings.json`: the stored settings and the non-secret environment configuration (base URL, time zone, log level);
+- `assets/`: the files n8Tracks manages under the data folder;
+- `manifest.json`: the application version, the last applied migration, when it was made, and a SHA-256 checksum of every other file.
+
+Audio under `/media` is never included. A backup is verified before it is listed: the archive is read back, every checksum must match, and the database copy must pass an integrity check. One that fails is deleted, and the job fails with the reason.
+
+Backups go to `/backup` when it is mounted and writable, and otherwise to `backups/` in the data folder. The page then warns that the backups share a disk with the data they protect; mount `/backup` on another disk to keep them apart. The page lists the archives in both folders, and each can be downloaded or deleted. A ZIP named `n8tracks-backup-*.zip` that you copy into either folder is listed too, as invalid if its manifest cannot be read.
+
+Backups also run on a schedule: daily at 03:00 in the configured time zone (`TZ`), keeping the seven most recent scheduled backups. The setup wizard shows this and lets you change it; Settings → Backups changes it later (on or off, daily or weekly on Sundays, the time of day, and 1 to 365 kept) and shows the last successful backup, the next planned one, and how the latest scheduled backup went. After each successful scheduled backup, the oldest scheduled ones beyond the number kept are deleted; manual backups are never deleted. If the app was not running at the planned time, one backup runs within a minute or two of its next start. A failed scheduled backup is retried once, an hour later, and leaves earlier backups alone. A scheduled backup that falls due while another backup runs waits for it. On the day clocks go forward, a time that does not exist runs at the next valid minute; on the day they go back, a time that happens twice runs once.
+
+**A backup contains the administrator's password hash, the sessions, and the credential hashes, because it is a full copy of the instance. Store backups as carefully as the data folder.**
+
+### Disaster recovery
+
+When n8Tracks still starts, restore from Settings → Backups. When it does not start, or it stays in maintenance, restore from the image with the container stopped. Two commands run in a one-off container that has the instance's volumes. They take the same `PUID` and `PGID` as the app, so the files they write belong to the same user. With the Compose example, from the folder that holds it:
+
+```sh
+docker compose stop n8tracks
+
+# The backups in /backup and in the data folder's backups/, newest first: date, kind, version, path.
+docker compose run --rm --no-deps n8tracks n8tracks list-backups
+
+# Restore one by the path the listing shows.
+docker compose run --rm --no-deps n8tracks n8tracks restore /backup/n8tracks-backup-20261005-030000-v0.1.0.zip
+
+docker compose start n8tracks
+```
+
+Without Compose, use the same volumes and environment as the app: `docker run --rm -v <data>:/data -v <backup>:/backup <image> n8tracks list-backups`, and the same with `n8tracks restore /backup/<file>`. An archive can be anywhere inside the container, so a downloaded backup can be mounted in on its own path (`-v ./n8tracks-backup-….zip:/restore.zip:ro`) and restored from `/restore.zip`. Archives inside the media mount are refused.
+
+`n8tracks restore`:
+
+- Validates the archive exactly as the Backups page does: the manifest, every checksum, the database's integrity, and a migration history this version knows. It needs enough free space to unpack the archive. A backup made by a newer version is refused, and the message names the version it needs.
+- Refuses to run while the app is running on the same data folder. The app holds an operating-system lock on `.n8tracks.lock` in the data folder from start to exit, and the command holds it while it runs, so neither can start while the other is using the folder. A crashed container leaves no stale lock.
+- Moves the current database and `assets/` aside into `restore-previous/` in the data folder, then moves the archive's in. If anything fails, it moves the previous files back and says so. After a success, it keeps them in `before-restore-<UTC time>/` in the data folder and names that folder. Delete it once you no longer need it; nothing deletes it for you.
+- Ends every session and marks the jobs the backup had recorded as queued or running as failed. It clears a stuck maintenance state and the marker a failed upgrade leaves (`upgrade-state.json`), so the app starts normally. It applies no migration: the app applies the ones a restored database lacks when it next starts.
+- Exits 0 on success. On any refusal or failure it exits 1 and prints one line saying why; a refusal changes nothing. It writes to standard error and prints only paths, the archive's name, and what went wrong, never a secret.
+
+`n8tracks list-backups` reads only the archives' manifests. It can run at any time, including in the running container with `docker exec n8tracks n8tracks list-backups`. It exits 0, also when there are no backups.
+
+**Upgrades.** When a new version starts on a database that already has data and has migrations to apply, it first takes and verifies a safety backup (to the backup mount when it is writable, otherwise `backups/` in the data folder), then writes `upgrade-state.json` in the data folder, then upgrades. If the safety backup cannot be taken, nothing is changed and the app exits with the reason. After a successful upgrade the marker goes, the safety backup is kept (the three newest safety backups are), and Settings → System shows when the last one was taken.
+
+**After a failed upgrade.** If a migration fails, the app puts the safety backup back, checks the restored database, keeps the half-upgraded one beside it as `n8tracks.db.failed-upgrade` for diagnosis, and exits; the log names the migration that failed. The same thing happens at the next start if the container was stopped part way through an upgrade. That version then refuses to start, with one line saying so, and takes no further backup: change the image tag back to the version you had, or, once the cause is fixed, delete `upgrade-state.json` to let it try again. A different version clears the marker and upgrades the database itself. If putting the safety backup back fails too, the database is left as the upgrade left it and the log names the safety backup: restore it with the command above. A successful restore removes the failed-upgrade marker.
+
+**After a restore that could not be rolled back.** If a restore from the Backups page fails and putting the previous data back fails too, the instance stays in maintenance and the log names the safety backup taken just before. The next start tries to put the data back again. If the instance is still in maintenance after that, stop the container and run `n8tracks restore` with that safety backup's path (or any other backup). The command first puts back what the failed restore moved aside, then restores the archive you gave it and ends maintenance. If even that cannot put the files back, it says so and names `restore-previous/` in the data folder. Move the database (`n8tracks.db` and any `n8tracks.db-wal`, `n8tracks.db-shm`) and `assets/` from there back into the data folder, replacing what is there, delete the folder, and run the command again.
 
 ### Settings
 
@@ -221,6 +274,30 @@ Behind a reverse proxy that serves n8Tracks at, say, `https://nas.example/n8trac
 ```
 
 and have the proxy forward the path unchanged to port 8787. The app then answers only under `/n8tracks` (the page at `/n8tracks/`, health at `/n8tracks/health`); anything outside it is 404. The container health check follows the setting by itself.
+
+### Signing in, HTTP, and HTTPS
+
+Everything but the sign-in page, first-run setup, and `/health` needs the administrator to be signed in. A session lasts 30 days from its last use and survives restarts; "Sign out everywhere" in the user menu ends every session. After five wrong passwords within 15 minutes, sign-in is refused for 15 minutes. Settings → Account changes the password (the current one is required, and wrong guesses count toward the same limit); changing it ends every other session. If a session ends while a page is open, a sign-in prompt appears over the page, and once you sign in again the action you took goes through and the page stays as it was.
+
+The app works the same over plain HTTP on a trusted network and behind an HTTPS reverse proxy. Have the proxy set `X-Forwarded-Proto` (and `X-Forwarded-Host` if it changes the host name): the session cookie is then marked `Secure`. The app takes these headers from any address, because the address of your proxy is not known in advance, so **publish port 8787 only to the proxy or to a trusted network**, never directly to the internet: anyone who can reach the port can claim the request came over HTTPS.
+
+### Forgot your password
+
+There is no email reset. With a shell on the Docker host, set a new password from inside the running container (the name is `n8tracks` in the Compose example):
+
+```sh
+docker exec -it n8tracks n8tracks reset-password
+```
+
+It asks for the new password twice without showing it, holds it to the same rule as setup (12 to 256 characters), and names the administrator it changed. The app can keep running: every browser session ends, so a signed-in browser goes to the sign-in page at its next request, and a sign-in lockout from wrong passwords is cleared. API, extension, and gateway credentials keep working. Nothing else changes.
+
+For a script, give the password on standard input instead; the first line is the password, without its line ending:
+
+```sh
+printf '%s\n' "$NEW_PASSWORD" | docker exec -i n8tracks n8tracks reset-password --password-stdin
+```
+
+Without a terminal and without `--password-stdin` the command refuses. It also refuses, changing nothing, when setup has never been completed, when the database schema does not match the image's version (start the app first, so it upgrades the database; the command never applies a migration), or while an upgrade holds the migration lock or a failed one has left `upgrade-state.json`. It runs as the `PUID`/`PGID` user, as the app does. Prompts and messages go to standard error, the password is never printed or logged, and the exit code is 0 on success and 1 otherwise. The command writes one Information line recording the reset (without the password), and the app logs the reset at the next sign-in.
 
 ### Container health check
 
@@ -348,7 +425,7 @@ rm -rf src/n8Tracks.Api/wwwroot && cp -R web/dist src/n8Tracks.Api/wwwroot
 
 The build uses relative URLs and resolves every request against the page's base URL, so the same `web/dist` works at the root of a hostname and under a sub-path.
 
-The shell page shows the version and the health report, refreshed every 30 seconds while the tab is visible. The colour scheme (light, dark, or auto, which follows the system) is chosen in the header and remembered in the browser. Every colour pair that carries text is in `web/src/theme/palette.ts`, and a test holds each to WCAG 2.1 AA contrast.
+Settings → System shows the version and the health report, refreshed every 30 seconds while the tab is visible. The colour scheme (light, dark, or auto, which follows the system) is chosen in the header and remembered in the browser. Every colour pair that carries text is in `web/src/theme/palette.ts`, and a test holds each to WCAG 2.1 AA contrast.
 
 ## End-to-end tests
 
@@ -500,7 +577,9 @@ Relative paths resolve against the working directory.
 
 The variables in the table, the optional `OTEL_` variables under [Telemetry](#telemetry), and `ASPNETCORE_ENVIRONMENT` (below) are all the app reads; the image's entrypoint also reads `PUID` and `PGID`. The app takes no setting from anywhere else .NET would look: not from a command-line argument (`--healthcheck` is the only argument with a meaning: the image's [container health check](#container-health-check)), not from any other environment variable (with an `ASPNETCORE_` or `DOTNET_` prefix or without one), and not from an `appsettings.json`. So no setting of .NET or ASP.NET Core changes what the app does, whichever of those it comes from: not `ASPNETCORE_URLS`, `ASPNETCORE_HTTP_PORTS`, `--urls`, or an entry under `Kestrel:Endpoints` (`N8TRACKS_PORT` is the only way to set the listen address, and nothing adds a second one), not a `Logging` section, not `AllowedHosts`, not `--environment` or `--contentRoot`. Variables the .NET runtime reads for itself before the app's code runs (its garbage collector and diagnostics switches, such as `DOTNET_gcServer`) are outside this rule: they tune the runtime, not n8Tracks.
 
-`ASPNETCORE_ENVIRONMENT` is the one variable of .NET's own that the app honours, and it is for development: with the value `Development` the app also serves its OpenAPI document at `/openapi/v1.json` (under the base URL path, if there is one). Unset, blank, or any other value, there is no such document; the image sets `Production`. Only the environment variable of exactly that name counts.
+`ASPNETCORE_ENVIRONMENT` is the one variable of .NET's own that the app honours, and it is for development: with the value `Development` the app also serves its OpenAPI document at `/openapi/v1.json` (under the base URL path, if there is one), and makes the test-only `seed-generation` command available (below). Unset, blank, or any other value, there is no such document; the image sets `Production`. Only the environment variable of exactly that name counts.
+
+`N8TRACKS_ENABLE_TEST_SEEDING` is **for test instances only**, which is why it is not in the table: never set it on an instance that holds your catalog. With the value `1` it makes the `seed-generation` command available outside `Development`; the end-to-end containers set it. `docker exec <container> n8tracks seed-generation n8-12-v1.1` attaches a new Generation to that Version (each run adds another, archived Versions included), which freezes its lyrics and styles for good, and prints the new Generation's shortcode (`n8-12-v1.1-g1`) on standard output. It exits with 1, changing nothing, for an unknown shortcode, and refuses unless test seeding is on. It stands in for Generations until they arrive with the Suno import.
 
 An invalid value stops the app before it listens, with exit code 1 and one line per problem naming the variable and the reason, for example:
 

@@ -8,7 +8,7 @@ public sealed class RedactionPolicyTests
     public void TheSensitiveNameListIsTheAgreedOne()
     {
         Assert.Equal(
-            ["password", "token", "secret", "cookie", "authorization", "apikey", "lyrics", "prompt", "style", "rawpayload", "providerpayload"],
+            ["password", "passwordconfirmation", "passwordhash", "token", "secret", "cookie", "session", "sessionid", "idhash", "tokenhash", "authorization", "apikey", "lyrics", "prompt", "style", "styles", "simpleprompt", "excludestyles", "speechprompt", "speechscript", "speechtone", "sounddescription", "rawpayload", "providerpayload", "payload"],
             RedactionPolicy.SensitiveNames);
     }
 
@@ -16,6 +16,8 @@ public sealed class RedactionPolicyTests
     [InlineData("password")]
     [InlineData("Password")]
     [InlineData("PASSWORD")]
+    [InlineData("passwordConfirmation")]
+    [InlineData("password_hash")]
     [InlineData("token")]
     [InlineData("secret")]
     [InlineData("cookie")]
@@ -24,11 +26,20 @@ public sealed class RedactionPolicyTests
     [InlineData("lyrics")]
     [InlineData("prompt")]
     [InlineData("style")]
+    [InlineData("styles")]
+    [InlineData("VersionStyles")]
     [InlineData("rawpayload")]
     [InlineData("providerpayload")]
     [InlineData("AccessToken")]
     [InlineData("refresh_token")]
     [InlineData("Set-Cookie")]
+    [InlineData("n8tracks_session")]
+    [InlineData("SessionId")]
+    [InlineData("session_id")]
+    [InlineData("IdHash")]
+    [InlineData("id_hash")]
+    [InlineData("TokenHash")]
+    [InlineData("token_hash")]
     [InlineData("Authorization")]
     [InlineData("Proxy-Authorization")]
     [InlineData("ApiKey")]
@@ -41,6 +52,8 @@ public sealed class RedactionPolicyTests
     [InlineData("raw_payload")]
     [InlineData("ProviderPayload")]
     [InlineData("song.lyrics")]
+    [InlineData("payload")]
+    [InlineData("JobPayload")]
     public void ANameThatIsOrEndsWithASensitiveWordIsSensitive(string name)
     {
         Assert.True(RedactionPolicy.IsSensitive(name));

@@ -1,6 +1,17 @@
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 /** The containers the suite runs against. Global setup starts them; the tests only read this. */
 
 const HOST = 'http://localhost';
+
+/** The containers of the two projects, by project name: `docker exec` runs commands in them. */
+export const ROOT_NAME = 'n8tracks-e2e-root';
+export const SUB_PATH_NAME = 'n8tracks-e2e-subpath';
+export const CONTAINER_BY_PROJECT: Readonly<Record<string, string>> = {
+  root: ROOT_NAME,
+  subpath: SUB_PATH_NAME,
+};
 
 /** The sub-path the second container is served under. */
 export const SUB_PATH = '/n8tracks';
@@ -20,3 +31,21 @@ export const SUB_PATH_ORIGIN = `${HOST}:${String(SUB_PATH_PORT)}`;
 
 /** No media mounted, at the root of the hostname: reports degraded. */
 export const NO_MEDIA_URL = `${HOST}:${String(NO_MEDIA_PORT)}/`;
+
+export const FRESH_PORT = 18790;
+
+/** The container the setup test starts for itself, never set up before the test: at the root. */
+export const FRESH_NAME = 'n8tracks-e2e-fresh';
+
+export const FRESH_URL = `${HOST}:${String(FRESH_PORT)}/`;
+
+/**
+ * Where global setup writes the signed-in browser state (the session cookie) of each shared
+ * container, and where the project of the same name reads it from. Outside the repository: it
+ * holds a live session of a test instance.
+ */
+const STORAGE_STATE_DIR = join(tmpdir(), 'n8tracks-e2e-auth');
+
+export const ROOT_STORAGE_STATE = join(STORAGE_STATE_DIR, 'root.json');
+
+export const SUB_PATH_STORAGE_STATE = join(STORAGE_STATE_DIR, 'subpath.json');

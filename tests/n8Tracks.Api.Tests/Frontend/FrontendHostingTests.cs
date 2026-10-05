@@ -1,4 +1,5 @@
 using System.Net;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -56,7 +57,7 @@ public class FrontendHostingTests
         using var client = Client(factory);
         var shell = await client.GetStringAsync(Relative(pathBase + "/"));
 
-        foreach (var deepLink in new[] { "/songs", "/songs/0198c0de/versions", "/apiary", "/healthy/x", "/index.html", "/songs?tab=lyrics" })
+        foreach (var deepLink in new[] { "/songs", "/songs/0198c0de/versions", "/apiary", "/healthy/x", "/index.html", "/songs?tab=lyrics", "/songs/n8-1/v/1.1", "/songs/n8-1/v/1.10.2", "/go/n8-1", "/go/N8-1-V1.1", "/go/n8-1-v1.10.2" })
         {
             using var response = await client.GetAsync(Relative(pathBase + deepLink));
 
@@ -154,6 +155,8 @@ public class FrontendHostingTests
     [InlineData("", "/assets/missing")]
     [InlineData("", "/missing.css")]
     [InlineData("", "/songs/cover.png")]
+    [InlineData("", "/songs/n8-1/v/cover.png")]
+    [InlineData("", "/songs/n8-1/v/1.png")]
     [InlineData("/n8tracks", "/api/unknown")]
     [InlineData("/n8tracks", "/openapi/unknown")]
     [InlineData("/n8tracks", "/health/unknown")]
@@ -339,7 +342,7 @@ public class FrontendHostingTests
             {
                 if (context.Request.Path == Path)
                 {
-                    context.SetEndpoint(new Endpoint(claimed => claimed.Response.WriteAsync(Body), EndpointMetadataCollection.Empty, "claimed"));
+                    context.SetEndpoint(new Endpoint(claimed => claimed.Response.WriteAsync(Body), new EndpointMetadataCollection(new AllowAnonymousAttribute()), "claimed"));
                 }
 
                 return following(context);

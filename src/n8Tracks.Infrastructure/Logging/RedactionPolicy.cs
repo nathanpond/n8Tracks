@@ -29,16 +29,40 @@ public static class RedactionPolicy
     public static IReadOnlyList<string> SensitiveNames { get; } =
     [
         "password",
+        "passwordconfirmation",
+        "passwordhash",
         "token",
         "secret",
         "cookie",
+        "session",
+        "sessionid",
+        "idhash",
+        "tokenhash",
         "authorization",
         "apikey",
         "lyrics",
         "prompt",
         "style",
+
+        // A Version's styles field (names ending in "style" do not cover the plural).
+        "styles",
+
+        // A Version's Suno options holding prompt text (already covered by "prompt" and "styles";
+        // named so a rename of either word cannot uncover them).
+        "simpleprompt",
+        "excludestyles",
+
+        // A Speech's description, script, and tone, and a Sound's description: prompt text too, under
+        // names no word above covers (only the first ends in "prompt").
+        "speechprompt",
+        "speechscript",
+        "speechtone",
+        "sounddescription",
         "rawpayload",
         "providerpayload",
+
+        // A job's payload: whatever the code that enqueued it passed, which may be any of the above.
+        "payload",
     ];
 
     /// <summary>Names that end with a sensitive word but never hold a sensitive value.</summary>

@@ -4,14 +4,21 @@ using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
+using n8Tracks.Api.Auth;
+using n8Tracks.Api.Cli;
 using n8Tracks.Api.Configuration;
 using n8Tracks.Api.DependencyInjection;
 using n8Tracks.Api.Endpoints;
 using n8Tracks.Api.Frontend;
 using n8Tracks.Api.Logging;
+using n8Tracks.Api.Maintenance;
+using n8Tracks.Api.Problems;
+using n8Tracks.Api.Setup;
 using n8Tracks.Application;
+using n8Tracks.Application.Backups;
 using n8Tracks.Application.Configuration;
 using n8Tracks.Infrastructure;
+using n8Tracks.Infrastructure.Backups;
 using n8Tracks.Infrastructure.Logging;
 using n8Tracks.Infrastructure.Persistence;
 using n8Tracks.ServiceDefaults;
@@ -28,23 +35,81 @@ public sealed class Program
     }
 
     private static Task<int> Main(string[] args) =>
-        RunAsync(args, ProcessEnvironment.Read(), Console.Out, CancellationToken.None);
+        RunAsync(args, ProcessEnvironment.Read(), Console.Out, SystemCommandConsole.Instance, CancellationToken.None);
+
+    /// <summary>
+    /// As the overload with a console, with one that has no input and discards what is written to it:
+    /// for every mode but a command run in the container.
+    /// </summary>
+    internal static Task<int> RunAsync(
+        string[] args,
+        EnvironmentSnapshot environment,
+        TextWriter output,
+        CancellationToken cancellationToken) =>
+        RunAsync(args, environment, output, new CommandConsole(TextReader.Null, TextWriter.Null, isTerminal: false), cancellationToken);
 
     /// <summary>
     /// Builds and runs the app until shutdown or <paramref name="cancellationToken"/>. Every log line
     /// goes to <paramref name="output"/> as JSON. Returns the process exit code: 1 when the
     /// configuration is invalid, the database cannot be opened or upgraded, the port cannot be bound,
-    /// or startup fails unexpectedly, otherwise 0. With <c>--healthcheck</c> among
-    /// <paramref name="args"/> it starts nothing and reports on the app that is already running
-    /// (see <see cref="HealthCheckCommand"/>). That is the only argument with a meaning: every other
-    /// one is ignored, and none reaches the host's configuration.
+    /// or startup fails unexpectedly, otherwise 0. With <c>reset-password</c> as the first of
+    /// <paramref name="args"/> it starts nothing, runs that command on <paramref name="console"/>,
+    /// and writes nothing to <paramref name="output"/> (see <see cref="ResetPasswordCommand"/>). With
+    /// <c>seed-generation</c> first, it starts nothing and runs that test-only command, which writes
+    /// the new Generation's shortcode to <paramref name="output"/> (see <see cref="SeedGenerationCommand"/>). With
+    /// <c>restore</c> or <c>list-backups</c> first, it starts nothing and runs that disaster-recovery
+    /// command (see <see cref="RestoreCommand"/> and <see cref="ListBackupsCommand"/>). With
+    /// <c>--healthcheck</c> among them it starts nothing and reports on the app that is already
+    /// running (see <see cref="HealthCheckCommand"/>). Those are the only arguments with a meaning:
+    /// every other one is ignored, and none reaches the host's configuration.
+    /// </summary>
+    internal static Task<int> RunAsync(
+        string[] args,
+        EnvironmentSnapshot environment,
+        TextWriter output,
+        CommandConsole console,
+        CancellationToken cancellationToken) =>
+        RunAsync(args, environment, output, console, testServices: null, cancellationToken);
+
+    /// <summary>
+    /// As the overload above, with <paramref name="testServices"/> changing the server's services after
+    /// the application's own registrations: for tests that need the exit code of a start the in-memory
+    /// test host cannot report. The app always passes null.
     /// </summary>
     internal static async Task<int> RunAsync(
         string[] args,
         EnvironmentSnapshot environment,
         TextWriter output,
+        CommandConsole console,
+        Action<IServiceCollection>? testServices,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(args);
+
+        // A command for the owner at a shell in the container: its own output, on standard error.
+        if (ResetPasswordCommand.IsRequested(args))
+        {
+            return await ResetPasswordCommand.RunAsync(args[1..], environment, console, cancellationToken).ConfigureAwait(false);
+        }
+
+        // The disaster-recovery commands, run from the image with the server stopped (restore) or
+        // at any time (list-backups): their own output, and no server.
+        if (RestoreCommand.IsRequested(args))
+        {
+            return await RestoreCommand.RunAsync(args[1..], environment, console, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (ListBackupsCommand.IsRequested(args))
+        {
+            return await ListBackupsCommand.RunAsync(args[1..], environment, output, console, cancellationToken).ConfigureAwait(false);
+        }
+
+        // A test-only command, refused unless test seeding is switched on: it never starts the server.
+        if (SeedGenerationCommand.IsRequested(args))
+        {
+            return await SeedGenerationCommand.RunAsync(args[1..], environment, output, console, cancellationToken).ConfigureAwait(false);
+        }
+
         // One sink for the startup lines and the application log, so both have the same shape.
         var sink = new JsonLinesSink(output);
         using var startupLog = LoggingRegistration.CreateStartupLogger(sink);
@@ -57,7 +122,7 @@ public sealed class Program
                 return await HealthCheckCommand.RunAsync(environment, startupLog, cancellationToken).ConfigureAwait(false);
             }
 
-            return await RunAsync(environment, sink, startupLog, cancellationToken).ConfigureAwait(false);
+            return await RunAsync(environment, sink, startupLog, testServices, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -74,6 +139,7 @@ public sealed class Program
         EnvironmentSnapshot environment,
         JsonLinesSink sink,
         Serilog.ILogger startupLog,
+        Action<IServiceCollection>? testServices,
         CancellationToken cancellationToken)
     {
         // The host starts empty: it reads no command-line argument, no environment variable (with an
@@ -115,11 +181,25 @@ public sealed class Program
         builder.Services.ConfigureHttpJsonOptions(static json =>
             json.SerializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase, allowIntegerValues: false)));
 
+        // A body that cannot be read throws, in every environment, so the exception middleware answers
+        // it with Problem Details instead of the framework's empty 400.
+        builder.Services.Configure<RouteHandlerOptions>(static routeHandlers => routeHandlers.ThrowOnBadRequest = true);
+
         builder.Services.AddOpenApi();
         builder.Services.AddApplication();
+        builder.Services.AddSingleton(new ApplicationVersion(ProductVersion.Current));
         builder.Services.AddInfrastructure();
+        builder.Services.AddJobWorker();
+
+        // A graceful shutdown gives the running job its grace period to stop, with time to spare for
+        // the rest of the host; the framework's default would cut the job's grace short.
+        builder.Services.Configure<HostOptions>(static host => host.ShutdownTimeout = n8Tracks.Infrastructure.DependencyInjection.JobShutdownGrace + TimeSpan.FromSeconds(10));
         builder.Services.AddEnvironmentConfiguration(environment);
         builder.Services.AddFrontend();
+        builder.Services.AddSessionAuthentication();
+        builder.Services.AddSingleton<RequestDrain>();
+        builder.Services.AddSingleton<n8Tracks.Application.Maintenance.IRequestDrain>(static provider => provider.GetRequiredService<RequestDrain>());
+        testServices?.Invoke(builder.Services);
 
         var app = builder.Build();
         await using (app.ConfigureAwait(false))
@@ -144,11 +224,39 @@ public sealed class Program
                 return 1;
             }
 
-            // The schema is brought up to date before anything listens; a failure stops the process.
-            if (!await DatabaseStartup.RunAsync(app.Services, startupLog, cancellationToken).ConfigureAwait(false))
+            // One process per data path: the lock is held until the host is disposed, and the
+            // container's restore command, run with the server stopped, takes it too.
+            var dataPathLock = app.Services.GetRequiredService<IDataPathLock>();
+            if (!dataPathLock.TryAcquire())
+            {
+                startupLog.Error(
+                    "Startup failed: {Variable} {Reason}",
+                    EnvironmentOptionsLoader.DataPath,
+                    $"is in use by another n8Tracks process (another container, or the restore command) that holds {dataPathLock.LockFile}. Stop it first.");
+                return 1;
+            }
+
+            // Before anything else touches the data: an upgrade that failed or was interrupted has its
+            // safety backup put back, and the version whose upgrade failed refuses to start.
+            if (!await DatabaseStartup.RecoverFailedUpgradeAsync(app.Services, startupLog, cancellationToken).ConfigureAwait(false))
             {
                 return 1;
             }
+
+            // A restore that a restart interrupted is put back before the database is opened. An
+            // instance still in maintenance after that starts closed, its database left untouched.
+            var inMaintenance = RestoreStartup.Recover(app.Services);
+
+            // The schema is brought up to date before anything listens, behind a safety backup when
+            // the database has data; a failure puts that backup back and stops the process.
+            if (!inMaintenance && !await DatabaseStartup.RunAsync(app.Services, startupLog, cancellationToken).ConfigureAwait(false))
+            {
+                return 1;
+            }
+
+            // Before anything reads the scheme or host: behind an HTTPS proxy the request is HTTPS,
+            // which is what marks the session cookie Secure.
+            app.UseForwardedHeaders();
 
             // Outermost first: the request ID is on every line and every response, the completion line
             // covers every request, and an unhandled exception is logged once before that line is written.
@@ -159,12 +267,37 @@ public sealed class Program
 
             app.UseConfiguredPathBase(options);
 
+            // Inside the path base, so it sees the path the routes see; before the setup gate and
+            // authentication, which read the database a restore may be replacing.
+            app.UseMiddleware<MaintenanceMiddleware>();
+
+            // Inside the path base, so it sees the path the routes see.
+            app.UseMiddleware<SetupGateMiddleware>();
+
+            // After the setup gate: before setup there is no one to sign in.
+            app.UseSessionAuthentication();
+
             if (app.Environment.IsDevelopment())
             {
                 app.MapOpenApi();
             }
 
             app.MapHealth();
+            app.MapSetup();
+            app.MapSessions();
+            app.MapAccount();
+            app.MapCredentials();
+            app.MapJobs();
+            app.MapSongs();
+            app.MapWorkflowStates();
+            app.MapVersions();
+            app.MapResolve();
+            app.MapSuno();
+            app.MapBackups();
+            app.MapSettings();
+            app.MapRestores();
+            app.MapMaintenance();
+            app.MapApiNotFound();
 
             // After the endpoints, and inside the path base: the frontend answers only what no endpoint does.
             app.UseFrontend(options);

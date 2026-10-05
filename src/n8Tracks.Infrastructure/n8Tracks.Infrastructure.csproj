@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <PackageReference Include="Geralt" Version="4.4.0" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
     <!-- Design-time only (dotnet ef): never flows to the projects that reference this one. -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.12">
@@ -9,6 +10,7 @@
     </PackageReference>
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.12" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.12" />
     <PackageReference Include="Serilog" Version="4.4.0" />
   </ItemGroup>
 

@@ -9,6 +9,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using n8Tracks.Api.Configuration;
 using n8Tracks.Api.Endpoints;
+using n8Tracks.Api.Tests.Auth;
 using n8Tracks.Api.Tests.Logging;
 using n8Tracks.Api.Tests.Persistence;
 
@@ -44,8 +45,18 @@ public class HealthEndpointTests
             {
                 ["application"] = new JsonObject { ["status"] = "healthy", ["detail"] = "running" },
                 ["database"] = new JsonObject { ["status"] = "healthy", ["detail"] = "reachable" },
-                ["migrations"] = new JsonObject { ["status"] = "healthy", ["detail"] = "up to date", ["lastApplied"] = lastApplied },
+                ["migrations"] = new JsonObject
+                {
+                    ["status"] = "healthy",
+                    ["detail"] = "up to date",
+                    ["lastApplied"] = lastApplied,
+
+                    // This start created the database, so it applied every migration, with no safety backup to take.
+                    ["lastOutcome"] = "succeeded",
+                    ["lastSafetyBackupAt"] = null,
+                },
                 ["media"] = new JsonObject { ["status"] = "healthy", ["detail"] = "available" },
+                ["maintenance"] = new JsonObject { ["status"] = "healthy", ["detail"] = "off" },
             },
         };
 
@@ -427,7 +438,7 @@ public class HealthEndpointTests
     public async Task TheOpenApiDocumentDeclaresBothAnswersAndTheStatusNames()
     {
         using var factory = new N8TracksApiFactory();
-        using var client = factory.CreateClient();
+        using var client = await SessionApi.SignedInClientAsync(factory);
 
         var text = await client.GetStringAsync(new Uri("/openapi/v1.json", UriKind.Relative));
         var document = JsonSerializer.Deserialize<JsonElement>(text);
@@ -490,7 +501,7 @@ public class HealthEndpointTests
         Assert.Equal(status, component.GetProperty("status").GetString());
         Assert.Equal(detail, component.GetProperty("detail").GetString());
         Assert.Equal(
-            name == "migrations" ? ["detail", "lastApplied", "status"] : ["detail", "status"],
+            name == "migrations" ? ["detail", "lastApplied", "lastOutcome", "lastSafetyBackupAt", "status"] : ["detail", "status"],
             component.EnumerateObject().Select(member => member.Name).Order(StringComparer.Ordinal));
     }
 

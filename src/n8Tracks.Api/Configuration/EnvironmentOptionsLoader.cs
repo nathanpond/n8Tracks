@@ -18,6 +18,12 @@ internal static class EnvironmentOptionsLoader
     public const string BackupPath = "N8TRACKS_BACKUP_PATH";
 
     /// <summary>
+    /// Test-only: <c>1</c> makes the <c>seed-generation</c> command available outside Development. The
+    /// end-to-end containers set it; a real instance never should.
+    /// </summary>
+    public const string EnableTestSeeding = "N8TRACKS_ENABLE_TEST_SEEDING";
+
+    /// <summary>
     /// The one variable of the .NET host that is honoured, read like every other from the environment
     /// snapshot: the environment name. It is for development: <c>Development</c> adds the OpenAPI document.
     /// </summary>
@@ -37,7 +43,7 @@ internal static class EnvironmentOptionsLoader
 
     private static readonly HashSet<string> KnownVariables = new(StringComparer.Ordinal)
     {
-        Port, BaseUrl, TimeZone, LogLevel, DataPath, MediaPath, BackupPath,
+        Port, BaseUrl, TimeZone, LogLevel, DataPath, MediaPath, BackupPath, EnableTestSeeding,
     };
 
     private static readonly Dictionary<string, N8TracksLogLevel> LogLevels =
@@ -98,6 +104,54 @@ internal static class EnvironmentOptionsLoader
         }
 
         return (port, pathBase);
+    }
+
+    /// <summary>
+    /// Loads and validates only the data path, for a command that works on the database of the app
+    /// in its own container and listens on nothing. Every other setting has its default value here,
+    /// whatever the environment says, so a setting the command has no use for cannot stop it.
+    /// </summary>
+    /// <exception cref="ConfigurationValidationException">The data path is not a writable directory.</exception>
+    public static N8TracksOptions LoadDataPathOnly(EnvironmentSnapshot environment)
+    {
+        ArgumentNullException.ThrowIfNull(environment);
+
+        var errors = new List<ConfigurationError>();
+        var dataPath = ReadDataPath(environment.Variables, environment.WorkingDirectory, errors);
+
+        if (errors.Count > 0)
+        {
+            throw new ConfigurationValidationException(errors);
+        }
+
+        return new N8TracksOptions(
+            DefaultPort,
+            new Uri($"http://localhost:{DefaultPort.ToString(CultureInfo.InvariantCulture)}"),
+            string.Empty,
+            TimeZoneInfo.Utc,
+            DefaultLogLevel,
+            dataPath,
+            ResolvePath(DefaultMediaPath, environment.WorkingDirectory),
+            ResolvePath(DefaultBackupPath, environment.WorkingDirectory));
+    }
+
+    /// <summary>
+    /// Loads and validates only the three paths, for a command that works on the files of a stopped
+    /// instance: the data path (which must be a writable directory), and the media and backup mounts
+    /// as configured. Every other setting has its default value here, whatever the environment says.
+    /// </summary>
+    /// <exception cref="ConfigurationValidationException">The data path is not a writable directory.</exception>
+    public static N8TracksOptions LoadPathsOnly(EnvironmentSnapshot environment)
+    {
+        ArgumentNullException.ThrowIfNull(environment);
+
+        var options = LoadDataPathOnly(environment);
+        var variables = environment.Variables;
+        return options with
+        {
+            MediaPath = ResolvePath(Value(variables, MediaPath) ?? DefaultMediaPath, environment.WorkingDirectory),
+            BackupPath = ResolvePath(Value(variables, BackupPath) ?? DefaultBackupPath, environment.WorkingDirectory),
+        };
     }
 
     /// <summary>
