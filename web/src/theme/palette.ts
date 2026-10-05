@@ -23,6 +23,11 @@ export interface SchemePalette {
   notice: ColorPair & { border: string };
   /** Status badges. */
   status: Record<KnownStatus, ColorPair>;
+  /**
+   * The lyrics editor, on the page background: tags (also bold), parentheticals (also italic), and
+   * warning marks (also underlined, with a marker), so none relies on colour alone.
+   */
+  lyrics: { tag: string; parenthetical: string; warning: string };
 }
 
 export const palette: Record<'light' | 'dark', SchemePalette> = {
@@ -36,6 +41,7 @@ export const palette: Record<'light' | 'dark', SchemePalette> = {
       degraded: { background: '#8a5a00', text: '#ffffff' },
       unhealthy: { background: '#c92a2a', text: '#ffffff' },
     },
+    lyrics: { tag: '#1864ab', parenthetical: '#862e9c', warning: '#8a5a00' },
   },
   dark: {
     body: { background: '#1a1b1e', text: '#e9ecef' },
@@ -47,6 +53,7 @@ export const palette: Record<'light' | 'dark', SchemePalette> = {
       degraded: { background: '#ffd43b', text: '#3d2c00' },
       unhealthy: { background: '#ffa8a8', text: '#4a0b0b' },
     },
+    lyrics: { tag: '#74c0fc', parenthetical: '#e599f7', warning: '#ffd43b' },
   },
 };
 

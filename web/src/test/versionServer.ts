@@ -1,10 +1,10 @@
 import type { Song } from '../api/songs';
-import type { NumberOption, Version } from '../api/versions';
+import type { NumberOption, Version, VersionDetail } from '../api/versions';
 import { healthyReport, jsonResponse, requestPath, stubFetch } from './helpers';
 import { baseSong, STATES } from './songServer';
 
-/** A Version of `baseSong` numbered `number`, with an ID built from the number. */
-export function testVersion(number: string, change: Partial<Version> = {}): Version {
+/** A Version of `baseSong` numbered `number`, with an ID built from the number and no lyrics or styles. */
+export function testVersion(number: string, change: Partial<VersionDetail> = {}): VersionDetail {
   return {
     id: `0199b1a0-0000-7000-9000-${number.replace(/\./g, '0').padStart(12, '0')}`,
     songId: baseSong.id,
@@ -17,7 +17,28 @@ export function testVersion(number: string, change: Partial<Version> = {}): Vers
     createdAt: '2026-10-01T09:00:00Z',
     updatedAt: '2026-10-01T09:00:00Z',
     revision: 1,
+    lyrics: '',
+    styles: '',
     ...change,
+  };
+}
+
+/** A Version as the list answers it: without its lyrics and styles. */
+function summary(version: VersionDetail): Version {
+  const { id, songId, number, shortcode, name, notes, archived, current } = version;
+  const { createdAt, updatedAt, revision } = version;
+  return {
+    id,
+    songId,
+    number,
+    shortcode,
+    name,
+    notes,
+    archived,
+    current,
+    createdAt,
+    updatedAt,
+    revision,
   };
 }
 
@@ -56,11 +77,13 @@ export interface ReceivedWrite {
 
 /**
  * A fake n8Tracks holding `baseSong` and its Versions, answering as the API does: the Song, its
- * Versions, a Version's next numbers, creating a Version (which becomes current), making one
- * current, and editing a Version's name, notes, or archived flag on its revision. A test changes `server.versions` to play another client, or sets `server.next` to
+ * Versions, one Version with its lyrics and styles, a Version's next numbers, creating a Version
+ * (which becomes current), making one current, and editing a Version's name, notes, archived flag,
+ * lyrics, or styles on its revision (lyrics and styles kept as sent, line endings aside, and refused
+ * over their limits). A test changes `server.versions` to play another client, or sets `server.next` to
  * answer the next write some other way.
  */
-export function versionServer(versions: Version[], song: Song = baseSong) {
+export function versionServer(versions: VersionDetail[], song: Song = baseSong) {
   const server = {
     song: { ...song },
     versions: versions.map((version) => ({ ...version })),
@@ -72,7 +95,7 @@ export function versionServer(versions: Version[], song: Song = baseSong) {
       server.versions.push(testVersion(number));
     },
     /** Plays another client editing the Version numbered `number`: its revision goes up by one. */
-    changeElsewhere(number: string, change: Partial<Version>) {
+    changeElsewhere(number: string, change: Partial<VersionDetail>) {
       server.versions = server.versions.map((version) =>
         version.number === number
           ? { ...version, ...change, revision: version.revision + 1 }
@@ -101,6 +124,10 @@ export function versionServer(versions: Version[], song: Song = baseSong) {
         : jsonResponse(404, { code: 'not_found' });
     }
     const edited = /\/api\/v1\/versions\/([^/]+)$/.exec(path);
+    if (edited && method === 'GET') {
+      const version = server.versions.find((candidate) => candidate.id === edited[1]);
+      return version ? jsonResponse(200, version) : jsonResponse(404, { code: 'not_found' });
+    }
     if (edited && method === 'PATCH') {
       const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as Record<
         string,
@@ -122,11 +149,25 @@ export function versionServer(versions: Version[], song: Song = baseSong) {
       }
       const text = (value: unknown) =>
         typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
-      const changed: Version = {
+      const input = (value: unknown) =>
+        typeof value === 'string' ? value.replace(/\r\n|\r/g, '\n') : '';
+      const errors: Record<string, string[]> = {};
+      if ('lyrics' in body && input(body.lyrics).length > 5_000) {
+        errors.lyrics = ['Use at most 5,000 characters.'];
+      }
+      if ('styles' in body && input(body.styles).length > 1_000) {
+        errors.styles = ['Use at most 1,000 characters.'];
+      }
+      if (Object.keys(errors).length > 0) {
+        return jsonResponse(422, { code: 'validation_failed', errors });
+      }
+      const changed: VersionDetail = {
         ...version,
         ...('name' in body ? { name: text(body.name) } : {}),
         ...('notes' in body ? { notes: text(body.notes) } : {}),
         ...(typeof body.archived === 'boolean' ? { archived: body.archived } : {}),
+        ...('lyrics' in body ? { lyrics: input(body.lyrics) } : {}),
+        ...('styles' in body ? { styles: input(body.styles) } : {}),
         revision: version.revision + 1,
       };
       server.versions = server.versions.map((other) => (other.id === version.id ? changed : other));
@@ -141,7 +182,7 @@ export function versionServer(versions: Version[], song: Song = baseSong) {
     const resource = match?.[2];
     if (method === 'GET') {
       return resource === '/versions'
-        ? jsonResponse(200, { items: server.versions })
+        ? jsonResponse(200, { items: server.versions.map(summary) })
         : jsonResponse(200, server.song);
     }
 
@@ -156,7 +197,7 @@ export function versionServer(versions: Version[], song: Song = baseSong) {
       return next();
     }
 
-    const makeCurrent = (version: Version) => {
+    const makeCurrent = (version: VersionDetail) => {
       server.versions = server.versions.map((other) => ({
         ...other,
         current: other.id === version.id,
@@ -192,11 +233,16 @@ export function versionServer(versions: Version[], song: Song = baseSong) {
       }
       const name =
         typeof body.name === 'string' && body.name.trim() !== '' ? body.name.trim() : null;
-      const created = testVersion(body.number, { name, current: true });
+      const created = testVersion(body.number, {
+        name,
+        current: true,
+        lyrics: source.lyrics,
+        styles: source.styles,
+      });
       server.versions.push(created);
       makeCurrent(created);
       server.song = { ...server.song, versionCount: server.versions.length };
-      return jsonResponse(201, created);
+      return jsonResponse(201, summary(created));
     }
 
     return jsonResponse(404, { code: 'not_found' });

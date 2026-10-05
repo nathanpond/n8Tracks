@@ -23,17 +23,17 @@ describe('differingFields', () => {
 
   it('compares the loaded record with the current one, field by field', () => {
     const current = { revision: 2, title: 'B', concept: null };
-    expect(
-      differingFields(fields, base, current, { key: 'concept', value: 'x' }).map((f) => f.key),
-    ).toEqual(['title']);
+    expect(differingFields(fields, base, current, { concept: 'x' }).map((f) => f.key)).toEqual([
+      'title',
+    ]);
   });
 
   it('does not count a field both sides changed to the same value', () => {
     const current = { revision: 2, title: 'A', concept: 'x' };
-    expect(differingFields(fields, base, current, { key: 'concept', value: 'x' })).toEqual([]);
-    expect(
-      differingFields(fields, base, current, { key: 'concept', value: 'y' }).map((f) => f.key),
-    ).toEqual(['concept']);
+    expect(differingFields(fields, base, current, { concept: 'x' })).toEqual([]);
+    expect(differingFields(fields, base, current, { concept: 'y' }).map((f) => f.key)).toEqual([
+      'concept',
+    ]);
   });
 });
 

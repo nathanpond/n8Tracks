@@ -134,6 +134,8 @@ public sealed class VersionEditEndpointTests
             ($$"""{"notes":"{{new string('x', VersionRules.NotesMaximumLength + 1)}}"}""", "notes"),
             ("""{"notes":"tab\there"}""", "notes"),
             ("""{"notes":["a"]}""", "notes"),
+            ("""{"notes":"\ud83c"}""", "notes"),
+            ("""{"name":"x\udfb8"}""", "name"),
             ("""{"archived":"yes"}""", "archived"),
             ("""{"archived":null}""", "archived"),
             ("""{"archived":1}""", "archived"),

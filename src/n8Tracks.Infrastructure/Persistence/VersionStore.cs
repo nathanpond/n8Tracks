@@ -63,6 +63,22 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
             : null;
     }
 
+    public async Task<VersionDetail?> FindDetailAsync(Guid id, CancellationToken cancellationToken)
+    {
+        if (await FindSummaryAsync(id, cancellationToken).ConfigureAwait(false) is not { } summary)
+        {
+            return null;
+        }
+
+        var inputs = await context.Versions.AsNoTracking()
+            .Where(version => version.Id == id)
+            .Select(static version => new { version.Lyrics, version.Styles })
+            .SingleOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        return inputs is null ? null : new VersionDetail(summary, inputs.Lyrics, inputs.Styles);
+    }
+
     public async Task<IReadOnlyList<VersionSummary>> ListAsync(Guid songId, CancellationToken cancellationToken)
     {
         var song = await context.Songs.AsNoTracking()
@@ -169,6 +185,42 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
                     .SetProperty(version => version.Name, name)
                     .SetProperty(version => version.Notes, notes)
                     .SetProperty(version => version.Visibility, visibility)
+                    .SetProperty(version => version.UpdatedUtc, updated)
+                    .SetProperty(version => version.Revision, version => version.Revision + 1),
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return count == 1;
+    }
+
+    public async Task<bool> TryUpdateInputsAsync(
+        Guid id,
+        VersionAnnotations annotations,
+        VersionInputs inputs,
+        int revision,
+        DateTimeOffset updatedUtc,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(annotations);
+        ArgumentNullException.ThrowIfNull(inputs);
+
+        var name = annotations.Name;
+        var notes = annotations.Notes;
+        var visibility = annotations.Archived ? VersionRecord.Archived : VersionRecord.Active;
+        var lyrics = inputs.Lyrics;
+        var styles = inputs.Styles;
+        var updated = UtcText.From(updatedUtc);
+
+        // One conditional statement, as for the annotations, that also sets the creation inputs.
+        var count = await context.Versions
+            .Where(version => version.Id == id && version.Revision == revision)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(version => version.Name, name)
+                    .SetProperty(version => version.Notes, notes)
+                    .SetProperty(version => version.Visibility, visibility)
+                    .SetProperty(version => version.Lyrics, lyrics)
+                    .SetProperty(version => version.Styles, styles)
                     .SetProperty(version => version.UpdatedUtc, updated)
                     .SetProperty(version => version.Revision, version => version.Revision + 1),
                 cancellationToken)

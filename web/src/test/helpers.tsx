@@ -1,5 +1,5 @@
 import { render } from '@testing-library/react';
-import { MemoryRouter } from 'react-router';
+import { createMemoryRouter, RouterProvider } from 'react-router';
 import { vi } from 'vitest';
 import { App } from '../App';
 import type { HealthReport } from '../api/health';
@@ -111,10 +111,10 @@ export function setVisibility(state: DocumentVisibilityState): void {
   document.dispatchEvent(new Event('visibilitychange'));
 }
 
+/** Renders the app at `path` in a data router, as `main.tsx` does; `router` navigates it. */
 export function renderApp(path = '/') {
-  return render(
-    <MemoryRouter initialEntries={[path]}>
-      <App />
-    </MemoryRouter>,
-  );
+  const router = createMemoryRouter([{ path: '*', element: <App /> }], {
+    initialEntries: [path],
+  });
+  return { ...render(<RouterProvider router={router} />), router };
 }

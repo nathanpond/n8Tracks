@@ -9,10 +9,11 @@ using n8Tracks.Domain.Songs;
 namespace n8Tracks.Api.Endpoints;
 
 /// <summary>
-/// Versions: the numbers a new Version may take when it branches from one, and a Song's Versions as
-/// a flat list (<c>catalog.read</c>); creating a Version from another, choosing a Song's current
-/// Version, and editing a Version's name, notes, and archived flag (<c>versions.write</c>). Every
-/// answer is <c>no-store</c>, and an edited Version sends its revision as the <c>ETag</c>.
+/// Versions: the numbers a new Version may take when it branches from one, a Song's Versions as a
+/// flat list, and one Version with its lyrics and styles (<c>catalog.read</c>); creating a Version
+/// from another, choosing a Song's current Version, and editing a Version's name, notes, archived
+/// flag, lyrics, and styles (<c>versions.write</c>). Every answer is <c>no-store</c>, and a single
+/// Version sends its revision as the <c>ETag</c>.
 /// </summary>
 internal static class VersionsEndpoints
 {
@@ -79,11 +80,20 @@ internal static class VersionsEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        endpoints.MapGet(VersionByIdPath, GetAsync)
+            .WithName("GetVersion")
+            .WithSummary("One Version with its lyrics and styles (empty strings when there are none).")
+            .RequireScope(CredentialScopes.CatalogRead)
+            .Produces<VersionDetailResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
         endpoints.MapPatch(VersionByIdPath, UpdateAsync)
             .WithName("UpdateVersion")
-            .WithSummary("Edits a Version's name, notes, or archived flag (only the fields sent), given the revision read in If-Match. Its creation inputs are never changed here.")
+            .WithSummary("Edits a Version's name, notes, archived flag, lyrics, or styles (only the fields sent), given the revision read in If-Match. Lyrics and styles are stored as sent, with line endings as \\n.")
             .RequireScope(CredentialScopes.VersionsWrite)
-            .Produces<VersionResponse>(StatusCodes.Status200OK)
+            .Produces<VersionDetailResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
@@ -198,12 +208,30 @@ internal static class VersionsEndpoints
         }
     }
 
+    /// <summary>200 with the Version, its lyrics, and its styles; 404 <c>not_found</c> when there is none.</summary>
+    private static async Task<Results<Ok<VersionDetailResponse>, ProblemHttpResult>> GetAsync(
+        Guid id,
+        VersionService versions,
+        HttpContext context,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        if (await versions.FindAsync(id, cancellationToken) is not { } version)
+        {
+            return ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "There is no such Version.");
+        }
+
+        Revisions.SetETag(context, version.Summary.Revision);
+        return TypedResults.Ok(VersionDetailResponse.From(version));
+    }
+
     /// <summary>
     /// 200 with the Version as it is now (unchanged when the edit changed nothing); 409
     /// <c>revision_conflict</c> with <c>current</c> on a stale revision; 422 <c>validation_failed</c>
     /// on a wrong field; 404 when there is no such Version. Nothing is changed unless the answer is 200.
     /// </summary>
-    private static async Task<Results<Ok<VersionResponse>, ProblemHttpResult>> UpdateAsync(
+    private static async Task<Results<Ok<VersionDetailResponse>, ProblemHttpResult>> UpdateAsync(
         Guid id,
         UpdateVersionRequest? request,
         VersionService versions,
@@ -223,7 +251,9 @@ internal static class VersionsEndpoints
         var edit = new VersionEdit(
             TextField(request?.Name, VersionService.NameField, typeErrors),
             TextField(request?.Notes, VersionService.NotesField, typeErrors),
-            FlagField(request?.Archived, VersionService.ArchivedField, typeErrors));
+            FlagField(request?.Archived, VersionService.ArchivedField, typeErrors),
+            TextField(request?.Lyrics, VersionService.LyricsField, typeErrors, "Send text."),
+            TextField(request?.Styles, VersionService.StylesField, typeErrors, "Send text."));
         if (typeErrors.Count > 0)
         {
             return ApiProblem.ValidationFailed(context, typeErrors);
@@ -232,19 +262,20 @@ internal static class VersionsEndpoints
         switch (await versions.UpdateAsync(id, edit, revision!.Value, cancellationToken))
         {
             case VersionUpdateOutcome.Updated updated:
-                if (updated.Version.Revision != revision)
+                var summary = updated.Version.Summary;
+                if (summary.Revision != revision)
                 {
                     loggers.CreateLogger(typeof(VersionsEndpoints)).LogInformation(
                         "Version edited: {VersionId} to revision {VersionRevision}",
-                        updated.Version.Id,
-                        updated.Version.Revision);
+                        summary.Id,
+                        summary.Revision);
                 }
 
-                Revisions.SetETag(context, updated.Version.Revision);
-                return TypedResults.Ok(VersionResponse.From(updated.Version));
+                Revisions.SetETag(context, summary.Revision);
+                return TypedResults.Ok(VersionDetailResponse.From(updated.Version));
 
             case VersionUpdateOutcome.Conflict conflict:
-                return Revisions.Conflict(context, VersionResponse.From(conflict.Current));
+                return Revisions.Conflict(context, VersionDetailResponse.From(conflict.Current));
 
             case VersionUpdateOutcome.Invalid invalid:
                 return ApiProblem.ValidationFailed(context, invalid.Errors);
@@ -257,8 +288,11 @@ internal static class VersionsEndpoints
         }
     }
 
-    /// <summary>A text field of an edit as sent: missing is left alone, and <c>null</c> or text is a value. Any other JSON is an error.</summary>
-    private static SongEditField TextField(JsonElement? sent, string name, Dictionary<string, string[]> errors)
+    /// <summary>
+    /// A text field of an edit as sent: missing is left alone, and <c>null</c> or text is a value
+    /// (whether null is allowed is the service's rule). Any other JSON is an error, <paramref name="expected"/>.
+    /// </summary>
+    private static SongEditField TextField(JsonElement? sent, string name, Dictionary<string, string[]> errors, string expected = "Send text or null.")
     {
         switch (sent?.ValueKind)
         {
@@ -266,11 +300,30 @@ internal static class VersionsEndpoints
                 return SongEditField.Unsent;
             case JsonValueKind.Null:
                 return SongEditField.Of(null);
+            case JsonValueKind.String when TryGetString(sent.Value) is { } text:
+                return SongEditField.Of(text);
             case JsonValueKind.String:
-                return SongEditField.Of(sent.Value.GetString());
-            default:
-                errors[name] = ["Send text or null."];
+                errors[name] = ["The text cannot contain unpaired surrogate characters."];
                 return SongEditField.Unsent;
+            default:
+                errors[name] = [expected];
+                return SongEditField.Unsent;
+        }
+    }
+
+    /// <summary>
+    /// The text of a JSON string, or null when it escapes half a surrogate pair (<c>"\ud83c"</c>),
+    /// which .NET cannot read as a string: a field error, not a server error.
+    /// </summary>
+    private static string? TryGetString(JsonElement element)
+    {
+        try
+        {
+            return element.GetString();
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
         }
     }
 
@@ -338,10 +391,10 @@ internal sealed record NextNumberResponse(string Number, string Kind, bool Propo
 internal sealed record CreateVersionRequest(string? SourceVersionId, string? Number, string? Name);
 
 /// <summary>
-/// An edit: any of the three fields, each left alone when missing. A missing field and a null one
+/// An edit: any of the five fields, each left alone when missing. A missing field and a null one
 /// differ, so each is read as raw JSON (a missing one is <see cref="JsonValueKind.Undefined"/>).
 /// </summary>
-internal sealed record UpdateVersionRequest(JsonElement Name, JsonElement Notes, JsonElement Archived);
+internal sealed record UpdateVersionRequest(JsonElement Name, JsonElement Notes, JsonElement Archived, JsonElement Lyrics, JsonElement Styles);
 
 /// <summary>The set-current form: the ID of one of the Song's Versions.</summary>
 internal sealed record SetCurrentVersionRequest(string? VersionId);
@@ -376,6 +429,47 @@ internal sealed record VersionResponse(
             version.CreatedUtc.UtcDateTime,
             version.UpdatedUtc.UtcDateTime,
             version.Revision);
+    }
+}
+
+/// <summary>
+/// One Version with its creation inputs: everything <see cref="VersionResponse"/> has, plus its
+/// lyrics and styles exactly as stored (empty strings when there are none). Times are UTC.
+/// </summary>
+internal sealed record VersionDetailResponse(
+    Guid Id,
+    Guid SongId,
+    string Number,
+    string Shortcode,
+    string? Name,
+    string? Notes,
+    bool Archived,
+    bool Current,
+    DateTime CreatedAt,
+    DateTime UpdatedAt,
+    int Revision,
+    string Lyrics,
+    string Styles)
+{
+    public static VersionDetailResponse From(VersionDetail version)
+    {
+        ArgumentNullException.ThrowIfNull(version);
+
+        var summary = VersionResponse.From(version.Summary);
+        return new(
+            summary.Id,
+            summary.SongId,
+            summary.Number,
+            summary.Shortcode,
+            summary.Name,
+            summary.Notes,
+            summary.Archived,
+            summary.Current,
+            summary.CreatedAt,
+            summary.UpdatedAt,
+            summary.Revision,
+            version.Lyrics,
+            version.Styles);
     }
 }
 

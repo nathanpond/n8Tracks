@@ -97,4 +97,39 @@ public sealed class VersionRulesTests
         Assert.Empty(VersionRules.NotesErrors($"\n{new string('a', VersionRules.NotesMaximumLength)}\n"));
         Assert.Empty(VersionRules.NotesErrors("🎸\nriff"));
     }
+
+    [Theory]
+    [InlineData("a\r\nb", "a\nb")]
+    [InlineData("a\rb", "a\nb")]
+    [InlineData("a\r\r\nb\r", "a\n\nb\n")]
+    [InlineData("  [Verse]  \n\tline\t\n\n", "  [Verse]  \n\tline\t\n\n")]
+    [InlineData("", "")]
+    public void InputsOnlyHaveTheirLineEndingsConverted(string sent, string stored)
+    {
+        Assert.Equal(stored, VersionRules.NormaliseInput(sent));
+    }
+
+    [Fact]
+    public void LyricsAndStylesAcceptAnyUnicodeTextUpToTheirLimits()
+    {
+        Assert.Empty(VersionRules.LyricsErrors(""));
+        Assert.Empty(VersionRules.LyricsErrors("[Verse]\n\u05e9\u05dc\u05d5\u05dd e\u0301 \ud83c\udfb8 (ooh)\t\u0007"));
+        Assert.Empty(VersionRules.LyricsErrors(new string('x', VersionRules.LyricsMaximumLength)));
+        Assert.Empty(VersionRules.StylesErrors(new string('x', VersionRules.StylesMaximumLength)));
+
+        // The limit counts code units after line endings are converted: 5,000 CRLF pairs are 5,000.
+        Assert.Empty(VersionRules.LyricsErrors(string.Concat(Enumerable.Repeat("\r\n", VersionRules.LyricsMaximumLength))));
+    }
+
+    [Fact]
+    public void LyricsAndStylesOverTheLimitNullTheNullCharacterAndBrokenPairsAreRefused()
+    {
+        Assert.Equal(["Use at most 5,000 characters."], VersionRules.LyricsErrors(new string('x', VersionRules.LyricsMaximumLength + 1)));
+        Assert.Equal(["Use at most 1,000 characters."], VersionRules.StylesErrors(new string('x', VersionRules.StylesMaximumLength + 1)));
+        Assert.Equal(["Send text: an empty string clears the lyrics."], VersionRules.LyricsErrors(null));
+        Assert.Equal(["Send text: an empty string clears the styles."], VersionRules.StylesErrors(null));
+        Assert.Single(VersionRules.LyricsErrors("a\0b"));
+        Assert.Single(VersionRules.StylesErrors("\ud83c"));
+        Assert.Single(VersionRules.LyricsErrors("x\udfb8"));
+    }
 }

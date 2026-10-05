@@ -11,6 +11,12 @@ export const VERSION_NAME_MAXIMUM_LENGTH = 200;
 /** The longest Version notes the API take, in UTF-16 code units once line endings are `\n` and trimmed. */
 export const VERSION_NOTES_MAXIMUM_LENGTH = 10_000;
 
+/** The longest lyrics the API takes, in UTF-16 code units once line endings are `\n` (Suno's limit). */
+export const VERSION_LYRICS_MAXIMUM_LENGTH = 5_000;
+
+/** The longest styles the API takes, in UTF-16 code units once line endings are `\n` (Suno's limit). */
+export const VERSION_STYLES_MAXIMUM_LENGTH = 1_000;
+
 /** A Version as the tree shows it: no creation inputs. Times are UTC ISO 8601. */
 export interface Version {
   id: string;
@@ -47,6 +53,21 @@ export function isVersion(value: unknown): value is Version {
     typeof value.createdAt === 'string' &&
     typeof value.updatedAt === 'string' &&
     typeof value.revision === 'number'
+  );
+}
+
+/** A Version with its creation inputs, exactly as stored: empty strings when there are none. */
+export interface VersionDetail extends Version {
+  lyrics: string;
+  styles: string;
+}
+
+export function isVersionDetail(value: unknown): value is VersionDetail {
+  return (
+    isVersion(value) &&
+    isRecord(value) &&
+    typeof value.lyrics === 'string' &&
+    typeof value.styles === 'string'
   );
 }
 
@@ -187,25 +208,35 @@ export async function setCurrentVersion(
   }
 }
 
-/** An edit of a Version's annotations: only the fields given change. */
+/** An edit of a Version: only the fields given change. Lyrics and styles are sent as typed. */
 export interface VersionEdit {
   name?: string | null;
   notes?: string | null;
   archived?: boolean;
+  lyrics?: string;
+  styles?: string;
 }
 
-const acceptVersion = (answer: unknown) => (isVersion(answer) ? answer : undefined);
+const acceptVersionDetail = (answer: unknown) => (isVersionDetail(answer) ? answer : undefined);
 
-/** Edits a Version's name, notes, or archived flag, based on the revision it was read at. */
+/** One Version with its lyrics and styles. */
+export function useVersionDetail(versionId: string) {
+  return useResource(`${VERSIONS_PATH}/${encodeURIComponent(versionId)}`, acceptVersionDetail);
+}
+
+/**
+ * Edits a Version's name, notes, archived flag, lyrics, or styles, based on the revision it was
+ * read at. The answer (and a conflict's current Version) carries the lyrics and styles.
+ */
 export function updateVersion(
   version: Pick<Version, 'id' | 'revision'>,
   edit: VersionEdit,
-): Promise<SaveResult<Version>> {
+): Promise<SaveResult<VersionDetail>> {
   return patchWithRevision(
     `${VERSIONS_PATH}/${encodeURIComponent(version.id)}`,
     version.revision,
     { ...edit },
-    acceptVersion,
+    acceptVersionDetail,
   );
 }
 

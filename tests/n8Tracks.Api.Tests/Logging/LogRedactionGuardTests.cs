@@ -306,6 +306,43 @@ public sealed class LogRedactionGuardTests
         Assert.DoesNotContain(n8Tracks.Application.Credentials.CredentialToken.Hash(token), captured, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A Version's lyrics and styles, saved and then refused for length, at Debug: the edit (and the
+    /// Version's ID) reaches the log, neither text does.
+    /// </summary>
+    [Fact]
+    public async Task AVersionsLyricsAndStylesNeverReachTheLog()
+    {
+        const string LyricsEditSentinel = "sentinel-version-lyrics-4c1e";
+        const string StylesEditSentinel = "sentinel-version-styles-8d02";
+
+        using var factory = new LoggingApiFactory("Debug");
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var song = await Songs.SongApi.CreateAsync(client, "Logged");
+        var id = song.GetProperty("currentVersion").GetProperty("id").GetString()!;
+
+        foreach (var (revision, lyrics, expected) in new[]
+        {
+            ("\"1\"", $"[Verse]\n{LyricsEditSentinel}", HttpStatusCode.OK),
+            ("\"2\"", LyricsEditSentinel + new string('x', 5_000), HttpStatusCode.UnprocessableEntity),
+        })
+        {
+            using var request = Antiforgery(new HttpRequestMessage(HttpMethod.Patch, new Uri($"/api/v1/versions/{id}", UriKind.Relative))
+            {
+                Content = new StringContent(JsonSerializer.Serialize(new { lyrics, styles = StylesEditSentinel }), Encoding.UTF8, "application/json"),
+            });
+            Assert.True(request.Headers.TryAddWithoutValidation("If-Match", revision));
+            using var response = await client.SendAsync(request);
+            Assert.Equal(expected, response.StatusCode);
+        }
+
+        var captured = factory.CapturedText;
+        Assert.Contains("Version edited", captured, StringComparison.Ordinal);
+        Assert.Contains(id, captured, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(LyricsEditSentinel, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(StylesEditSentinel, captured, StringComparison.Ordinal);
+    }
+
     private static HttpRequestMessage Antiforgery(HttpRequestMessage request)
     {
         request.Headers.Add(SessionApi.AntiforgeryHeader, "1");

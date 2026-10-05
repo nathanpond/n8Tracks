@@ -70,12 +70,20 @@ public abstract record SetCurrentOutcome
 }
 
 /// <summary>
-/// An edit of a Version's annotations: any of its name, notes, and archived flag, each left alone
-/// when unsent. Name and notes are text or null; <paramref name="Archived"/> is null when unsent.
+/// An edit of a Version: any of its annotations (name, notes, archived flag) and its creation inputs
+/// (lyrics, styles), each left alone when unsent. Name and notes are text or null; lyrics and styles
+/// must be text (null is refused); <paramref name="Archived"/> is null when unsent.
 /// </summary>
-public sealed record VersionEdit(SongEditField Name, SongEditField Notes, bool? Archived);
+public sealed record VersionEdit(SongEditField Name, SongEditField Notes, bool? Archived, SongEditField Lyrics, SongEditField Styles)
+{
+    /// <summary>An edit of the annotations only.</summary>
+    public VersionEdit(SongEditField Name, SongEditField Notes, bool? Archived)
+        : this(Name, Notes, Archived, SongEditField.Unsent, SongEditField.Unsent)
+    {
+    }
+}
 
-/// <summary>How an edit of a Version's annotations ended.</summary>
+/// <summary>How an edit of a Version ended.</summary>
 public abstract record VersionUpdateOutcome
 {
     private VersionUpdateOutcome()
@@ -83,10 +91,10 @@ public abstract record VersionUpdateOutcome
     }
 
     /// <summary>The Version as it is now: edited, or unchanged when the edit changed nothing.</summary>
-    public sealed record Updated(VersionSummary Version) : VersionUpdateOutcome;
+    public sealed record Updated(VersionDetail Version) : VersionUpdateOutcome;
 
     /// <summary>The Version is at another revision than the one the edit was based on. Nothing was changed.</summary>
-    public sealed record Conflict(VersionSummary Current) : VersionUpdateOutcome;
+    public sealed record Conflict(VersionDetail Current) : VersionUpdateOutcome;
 
     /// <summary>A field is wrong. Nothing was changed. The errors are keyed by field name.</summary>
     public sealed record Invalid(IReadOnlyDictionary<string, string[]> Errors) : VersionUpdateOutcome;
@@ -112,6 +120,8 @@ public sealed class VersionService(IVersionStore versions, ISongStore songs, IEx
     public const string VersionIdField = "versionId";
     public const string NotesField = "notes";
     public const string ArchivedField = "archived";
+    public const string LyricsField = "lyrics";
+    public const string StylesField = "styles";
 
     /// <summary>
     /// The valid numbers for a new Version created from the Version with <paramref name="id"/>
@@ -248,13 +258,18 @@ public sealed class VersionService(IVersionStore versions, ISongStore songs, IEx
             },
             cancellationToken);
 
+    /// <summary>The Version with <paramref name="id"/>, with its lyrics and styles; null when there is none.</summary>
+    public Task<VersionDetail?> FindAsync(Guid id, CancellationToken cancellationToken) =>
+        versions.FindDetailAsync(id, cancellationToken);
+
     /// <summary>
-    /// Edits the annotations of the Version with <paramref name="id"/> (only the fields sent) if it
-    /// is still at <paramref name="revision"/>. Name and notes are trimmed and blank is none; they may
-    /// change whether or not the Version's inputs are frozen, as they are not creation inputs.
-    /// Archiving and unarchiving change visibility only: never the number, lyrics, styles, the
-    /// descendants, or which Version is current. An edit that changes nothing leaves the revision
-    /// alone.
+    /// Edits the Version with <paramref name="id"/> (only the fields sent) if it is still at
+    /// <paramref name="revision"/>. Name and notes are trimmed and blank is none; they may change
+    /// whether or not the Version's inputs are frozen, as they are not creation inputs. Lyrics and
+    /// styles are stored as written apart from line endings (<see cref="VersionRules.NormaliseInput"/>)
+    /// and are changed only through <see cref="StoreAsync"/>. Archiving and unarchiving change
+    /// visibility only: never the number, lyrics, styles, the descendants, or which Version is current.
+    /// An edit that changes nothing leaves the revision alone. One wrong field refuses the whole edit.
     /// </summary>
     public Task<VersionUpdateOutcome> UpdateAsync(Guid id, VersionEdit edit, int revision, CancellationToken cancellationToken)
     {
@@ -271,6 +286,16 @@ public sealed class VersionService(IVersionStore versions, ISongStore songs, IEx
             errors[NotesField] = notesErrors;
         }
 
+        if (edit.Lyrics.IsSent && VersionRules.LyricsErrors(edit.Lyrics.Value) is { Length: > 0 } lyricsErrors)
+        {
+            errors[LyricsField] = lyricsErrors;
+        }
+
+        if (edit.Styles.IsSent && VersionRules.StylesErrors(edit.Styles.Value) is { Length: > 0 } stylesErrors)
+        {
+            errors[StylesField] = stylesErrors;
+        }
+
         if (errors.Count > 0)
         {
             return Task.FromResult<VersionUpdateOutcome>(new VersionUpdateOutcome.Invalid(errors));
@@ -279,38 +304,55 @@ public sealed class VersionService(IVersionStore versions, ISongStore songs, IEx
         return transaction.RunAsync<VersionUpdateOutcome>(
             async ct =>
             {
-                if (await versions.FindSummaryAsync(id, ct).ConfigureAwait(false) is not { } current)
+                if (await versions.FindDetailAsync(id, ct).ConfigureAwait(false) is not { } current)
                 {
                     return new VersionUpdateOutcome.NotFound();
                 }
 
-                if (current.Revision != revision)
+                var summary = current.Summary;
+                if (summary.Revision != revision)
                 {
                     return new VersionUpdateOutcome.Conflict(current);
                 }
 
                 var annotations = new VersionAnnotations(
-                    edit.Name.IsSent ? VersionRules.NormaliseName(edit.Name.Value) : current.Name,
-                    edit.Notes.IsSent ? VersionRules.NormaliseNotes(edit.Notes.Value) : current.Notes,
-                    edit.Archived ?? current.Archived);
-                if (annotations == new VersionAnnotations(current.Name, current.Notes, current.Archived))
+                    edit.Name.IsSent ? VersionRules.NormaliseName(edit.Name.Value) : summary.Name,
+                    edit.Notes.IsSent ? VersionRules.NormaliseNotes(edit.Notes.Value) : summary.Notes,
+                    edit.Archived ?? summary.Archived);
+                var inputs = new VersionInputs(
+                    edit.Lyrics.IsSent ? VersionRules.NormaliseInput(edit.Lyrics.Value!) : current.Lyrics,
+                    edit.Styles.IsSent ? VersionRules.NormaliseInput(edit.Styles.Value!) : current.Styles);
+                var inputsChange = inputs != new VersionInputs(current.Lyrics, current.Styles);
+                if (!inputsChange && annotations == new VersionAnnotations(summary.Name, summary.Notes, summary.Archived))
                 {
                     return new VersionUpdateOutcome.Updated(current);
                 }
 
-                if (!await versions.TryUpdateAnnotationsAsync(id, annotations, revision, time.GetUtcNow(), ct).ConfigureAwait(false))
+                var now = time.GetUtcNow();
+                var stored = inputsChange
+                    ? await StoreAsync(current, annotations, inputs, now, ct).ConfigureAwait(false)
+                    : await versions.TryUpdateAnnotationsAsync(id, annotations, revision, now, ct).ConfigureAwait(false);
+                if (!stored)
                 {
-                    return await versions.FindSummaryAsync(id, ct).ConfigureAwait(false) is { } changed
+                    return await versions.FindDetailAsync(id, ct).ConfigureAwait(false) is { } changed
                         ? new VersionUpdateOutcome.Conflict(changed)
                         : new VersionUpdateOutcome.NotFound();
                 }
 
-                var updated = await versions.FindSummaryAsync(id, ct).ConfigureAwait(false)
+                var updated = await versions.FindDetailAsync(id, ct).ConfigureAwait(false)
                     ?? throw new InvalidOperationException("The Version just edited cannot be read back.");
                 return new VersionUpdateOutcome.Updated(updated);
             },
             cancellationToken);
     }
+
+    /// <summary>
+    /// The one place a Version's creation inputs change after it is created, together with whatever
+    /// annotations the same edit changes. Whether a Version's inputs may still change (the freeze once
+    /// a Generation is attached, #69) is decided here.
+    /// </summary>
+    private Task<bool> StoreAsync(VersionDetail current, VersionAnnotations annotations, VersionInputs inputs, DateTimeOffset now, CancellationToken cancellationToken) =>
+        versions.TryUpdateInputsAsync(current.Summary.Id, annotations, inputs, current.Summary.Revision, now, cancellationToken);
 
     /// <summary>The options for the source <paramref name="facts"/> describe. Stored numbers were valid when assigned, so each parses.</summary>
     private static IReadOnlyList<VersionNumberOption> Options(VersionNumberingFacts facts) =>

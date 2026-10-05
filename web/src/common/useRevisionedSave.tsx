@@ -31,12 +31,12 @@ type Choice = 'reload' | 'reapply' | 'keep-editing';
 const SILENT_RETRIES = 5;
 
 /**
- * The shared save helper of the web UI: saves one field of a revisioned record and routes a stale
- * save to the {@link ConflictDialog}. Saves of one record run one after another, each based on the
+ * The shared save helper of the web UI: saves one field (`save`) or several in one write
+ * (`saveFields`) of a revisioned record and routes a stale save to the {@link ConflictDialog}. Saves of one record run one after another, each based on the
  * revision the one before it left, so a user never conflicts with their own save in flight.
  *
  * A refused save compares the record it was based on with the current one, field by field. When no
- * compared field differs (or only the saved field, already holding the value being saved) it is
+ * compared field differs (or only saved fields, already holding the values being saved) it is
  * retried on the current revision without asking; otherwise the dialog asks the user, and asks
  * again if reapplying meets another change. Render `dialog` once in the page.
  */
@@ -52,11 +52,15 @@ export function useRevisionedSave<T extends Revisioned>({
   /** Takes a newer record: one just saved, or the current one a conflict brought back. */
   onRecord: (record: T) => void;
   fields: readonly SavedField<T>[];
-  /** Saves `value` into the field `key`, based on `base`'s revision. */
-  send: (base: T, key: string, value: FieldValue) => Promise<SaveResult<T>>;
+  /** Saves the fields of `edit` (key to value), and only those, based on `base`'s revision. */
+  send: (base: T, edit: Readonly<Record<string, FieldValue>>) => Promise<SaveResult<T>>;
   /** What the record is, as a sentence names it: "This Song". */
   subject: string;
-}): { save: (key: string, value: FieldValue) => Promise<SaveOutcome>; dialog: ReactNode } {
+}): {
+  save: (key: string, value: FieldValue) => Promise<SaveOutcome>;
+  saveFields: (edit: Readonly<Record<string, FieldValue>>) => Promise<SaveOutcome>;
+  dialog: ReactNode;
+} {
   const latest = useRef(record);
   const options = useRef({ onRecord, fields, send });
   const [enqueue] = useState(createSaveQueue);
@@ -74,8 +78,8 @@ export function useRevisionedSave<T extends Revisioned>({
     options.current = { onRecord, fields, send };
   }, [onRecord, fields, send]);
 
-  const save = useCallback(
-    (key: string, value: FieldValue) =>
+  const saveFields = useCallback(
+    (edit: Readonly<Record<string, FieldValue>>) =>
       enqueue(async (): Promise<SaveOutcome> => {
         const adopt = (next: T) => {
           latest.current = next;
@@ -84,7 +88,7 @@ export function useRevisionedSave<T extends Revisioned>({
         let base = latest.current;
         let silent = 0;
         for (;;) {
-          const result = await options.current.send(base, key, value);
+          const result = await options.current.send(base, edit);
           if (result.kind !== 'conflict') {
             if (result.kind === 'saved') {
               adopt(result.record);
@@ -96,7 +100,7 @@ export function useRevisionedSave<T extends Revisioned>({
           const current = result.current;
           adopt(current);
           const { fields } = options.current;
-          const differing = differingFields(fields, base, current, { key, value });
+          const differing = differingFields(fields, base, current, edit);
           if (differing.length === 0) {
             silent += 1;
             if (silent > SILENT_RETRIES) {
@@ -108,7 +112,7 @@ export function useRevisionedSave<T extends Revisioned>({
 
           const rows = fields.flatMap((field): ConflictRow[] => {
             const changedElsewhere = differing.includes(field);
-            const mine = field.key === key;
+            const mine = Object.hasOwn(edit, field.key);
             if (!changedElsewhere && !mine) {
               return [];
             }
@@ -116,7 +120,7 @@ export function useRevisionedSave<T extends Revisioned>({
               {
                 key: field.key,
                 label: field.label,
-                yours: field.show(mine ? value : field.read(base)),
+                yours: field.show(mine ? (edit[field.key] ?? null) : field.read(base)),
                 current: field.show(field.read(current)),
                 change: changedElsewhere && mine ? 'both' : mine ? 'yours' : 'elsewhere',
               },
@@ -137,6 +141,11 @@ export function useRevisionedSave<T extends Revisioned>({
         }
       }),
     [enqueue],
+  );
+
+  const save = useCallback(
+    (key: string, value: FieldValue) => saveFields({ [key]: value }),
+    [saveFields],
   );
 
   const choose = (choice: Choice) => {
@@ -163,5 +172,5 @@ export function useRevisionedSave<T extends Revisioned>({
     />
   );
 
-  return { save, dialog };
+  return { save, saveFields, dialog };
 }

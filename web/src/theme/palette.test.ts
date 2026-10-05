@@ -51,6 +51,16 @@ describe.each(['light', 'dark'] as const)('the %s scheme', (schemeName) => {
     );
   });
 
+  it.each(['tag', 'parenthetical', 'warning'] as const)(
+    'has readable lyrics %s text that differs from body text',
+    (kind) => {
+      const colour = scheme.lyrics[kind];
+
+      expect(contrastRatio(colour, scheme.body.background)).toBeGreaterThanOrEqual(TEXT);
+      expect(colour).not.toBe(scheme.body.text);
+    },
+  );
+
   it.each(knownStatuses)('has a readable %s badge that stands out from the page', (status) => {
     const badge = scheme.status[status];
 

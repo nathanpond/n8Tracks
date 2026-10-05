@@ -98,7 +98,9 @@ test.describe('the Version tree', () => {
     // Archive 2 (#63): it is current, so it stays drawn, dimmed. Once 1 is current (step 5) it
     // disappears; "Show archived" brings it back dimmed.
     await page.getByRole('button', { name: 'Archive' }).click();
-    await expect(page.getByRole('status')).toContainText('Version 2 archived.');
+    await expect(page.getByRole('status').filter({ hasText: 'archived.' })).toContainText(
+      'Version 2 archived.',
+    );
     await expect(node(page, '2')).toHaveAttribute('data-archived', 'true');
 
     // 5. Select 1 and make it current: the marker moves.
@@ -171,7 +173,9 @@ test.describe('naming, annotating, and archiving Versions', () => {
     await node(page, '2').getByRole('button', { name: 'Actions for Version 2' }).click();
     await expectNoA11yViolations(page);
     await page.getByRole('menuitem', { name: 'Archive' }).click();
-    await expect(page.getByRole('status')).toContainText('Version 2 archived.');
+    await expect(page.getByRole('status').filter({ hasText: 'archived.' })).toContainText(
+      'Version 2 archived.',
+    );
     await expect(node(page, '2')).toHaveCount(0);
     await expectAccessibleInLightAndDark(page);
     await page.getByRole('switch', { name: 'Show archived' }).click();
@@ -185,7 +189,9 @@ test.describe('naming, annotating, and archiving Versions', () => {
     await node(page, '1').click();
     await expect(page.getByRole('heading', { level: 3, name: 'Version 1' })).toBeVisible();
     await page.getByRole('button', { name: 'Archive' }).click();
-    await expect(page.getByRole('status')).toContainText('Version 1 archived.');
+    await expect(page.getByRole('status').filter({ hasText: 'archived.' })).toContainText(
+      'Version 1 archived.',
+    );
     await expect(
       page.getByRole('treeitem', { name: 'Version 1, current working Version, archived' }),
     ).toBeVisible();

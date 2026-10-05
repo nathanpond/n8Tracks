@@ -36,6 +36,11 @@ function shape(container: Element | null = tree()): string {
     .join(' ');
 }
 
+/** The notice an archive leaves, with its Undo. */
+function archiveNotice() {
+  return screen.findByText(/archived\./, { selector: 'p' });
+}
+
 async function openSong(path = '/songs/n8-7') {
   renderApp(path);
   await screen.findByRole('tree', { name: 'Versions' });
@@ -303,7 +308,7 @@ describe('archiving Versions', () => {
     await user.click(screen.getByRole('button', { name: 'Actions for Version 2' }));
     await user.click(await screen.findByRole('menuitem', { name: 'Archive' }));
 
-    expect(await screen.findByRole('status')).toHaveTextContent('Version 2 archived.');
+    expect(await archiveNotice()).toHaveTextContent('Version 2 archived.');
     // 2 is hidden; its child stays, drawn under the nearest visible ancestor (none: the top).
     expect(shape()).toBe('1 2.1');
     expect(server.writes).toEqual([
@@ -323,7 +328,7 @@ describe('archiving Versions', () => {
       { archived: true },
       { archived: false },
     ]);
-    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.queryByText(/archived\./)).toBeNull();
   });
 
   it('moves the selection to the current Version when the selected one is archived and hidden', async () => {
@@ -346,7 +351,7 @@ describe('archiving Versions', () => {
     await openSong();
     await user.click(screen.getByRole('button', { name: 'Archive' }));
 
-    expect(await screen.findByRole('status')).toHaveTextContent('Version 1 archived.');
+    expect(await archiveNotice()).toHaveTextContent('Version 1 archived.');
     expect(shape()).toBe('1 2');
     expect(node('1')).toHaveAttribute('data-archived', 'true');
     expect(node('1')).toHaveAttribute('aria-current', 'true');

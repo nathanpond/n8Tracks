@@ -92,19 +92,19 @@ export interface ComparedField<T> {
 
 /**
  * The fields that differ between `base` (what the client loaded) and `current` (what the server
- * has now), field by field. The field being saved is left out when the server already holds the
+ * has now), field by field. A field being saved is left out when the server already holds the
  * value being saved: both sides changed it to the same value, which is not a conflict.
  */
 export function differingFields<T>(
   fields: readonly ComparedField<T>[],
   base: T,
   current: T,
-  edit: { key: string; value: FieldValue },
+  edit: Readonly<Record<string, FieldValue>>,
 ): ComparedField<T>[] {
   return fields.filter(
     (field) =>
       field.read(base) !== field.read(current) &&
-      !(field.key === edit.key && field.read(current) === edit.value),
+      !(Object.hasOwn(edit, field.key) && field.read(current) === edit[field.key]),
   );
 }
 

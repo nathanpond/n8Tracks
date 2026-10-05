@@ -290,7 +290,7 @@ export function SongHeader({ song, onSong }: { song: Song; onSong: (song: Song) 
   }, [states]);
 
   const send = useCallback(
-    (base: Song, key: string, value: FieldValue) => updateSong(base, { [key]: value }),
+    (base: Song, edit: Readonly<Record<string, FieldValue>>) => updateSong(base, edit),
     [],
   );
 

@@ -43,6 +43,9 @@ function schemeVariables(
     '--n8-notice-background': scheme.notice.background,
     '--n8-notice-text': scheme.notice.text,
     '--n8-notice-border': scheme.notice.border,
+    '--n8-lyrics-tag': scheme.lyrics.tag,
+    '--n8-lyrics-parenthetical': scheme.lyrics.parenthetical,
+    '--n8-lyrics-warning': scheme.lyrics.warning,
   };
 
   for (const status of knownStatuses) {
