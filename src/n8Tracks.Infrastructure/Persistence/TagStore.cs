@@ -82,6 +82,97 @@ internal sealed class TagStore(N8TracksDbContext context) : ITagStore
         context.Entry(record).State = EntityState.Detached;
     }
 
+    public async Task<bool> TryUpdateAsync(Guid id, string name, string colour, int revision, CancellationToken cancellationToken)
+    {
+        var nameKey = TagRules.NameKey(name);
+
+        // One conditional statement: the revision check and the write cannot be split by another writer.
+        var count = await context.Tags
+            .Where(tag => tag.Id == id && tag.Revision == revision)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(tag => tag.Name, name)
+                    .SetProperty(tag => tag.NameKey, nameKey)
+                    .SetProperty(tag => tag.Colour, colour)
+                    .SetProperty(tag => tag.Revision, tag => tag.Revision + 1),
+                cancellationToken)
+            .ConfigureAwait(false);
+        return count == 1;
+    }
+
+    public async Task<bool> TryRaiseRevisionAsync(Guid id, int revision, CancellationToken cancellationToken)
+    {
+        var count = await context.Tags
+            .Where(tag => tag.Id == id && tag.Revision == revision)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(tag => tag.Revision, tag => tag.Revision + 1), cancellationToken)
+            .ConfigureAwait(false);
+        return count == 1;
+    }
+
+    public async Task<int> MoveSongsAsync(IReadOnlyCollection<Guid> from, Guid? to, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(from);
+
+        var sources = from.ToList();
+        var songIds = await context.SongTags.AsNoTracking()
+            .Where(songTag => sources.Contains(songTag.TagId))
+            .Select(static songTag => songTag.SongId)
+            .Distinct()
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (songIds.Count == 0)
+        {
+            return 0;
+        }
+
+        await context.SongTags
+            .Where(songTag => sources.Contains(songTag.TagId))
+            .ExecuteDeleteAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        if (to is { } target)
+        {
+            var holding = await context.SongTags.AsNoTracking()
+                .Where(songTag => songTag.TagId == target && songIds.Contains(songTag.SongId))
+                .Select(static songTag => songTag.SongId)
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+            var added = songIds.Except(holding).Select(songId => new SongTagRecord { SongId = songId, TagId = target }).ToList();
+            if (added.Count > 0)
+            {
+                context.SongTags.AddRange(added);
+                await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+                foreach (var record in added)
+                {
+                    context.Entry(record).State = EntityState.Detached;
+                }
+            }
+        }
+
+        // Each Song's Tag list was written as a whole, so a client holding the old list gets a conflict.
+        var updated = UtcText.From(now);
+        await context.Songs
+            .Where(song => songIds.Contains(song.Id))
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(song => song.UpdatedUtc, updated)
+                    .SetProperty(song => song.Revision, song => song.Revision + 1),
+                cancellationToken)
+            .ConfigureAwait(false);
+        return songIds.Count;
+    }
+
+    public async Task DeleteAsync(IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+
+        var doomed = ids.ToList();
+        await context.Tags
+            .Where(tag => doomed.Contains(tag.Id))
+            .ExecuteDeleteAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
     public async Task ReplaceSongTagsAsync(Guid songId, IReadOnlyCollection<Guid> tagIds, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(tagIds);

@@ -17,7 +17,7 @@ public sealed class TagRecord
     /// <summary>The name of one of the twelve palette colours.</summary>
     public required string Colour { get; set; }
 
-    /// <summary>Starts at 1; Settings → Tags raises it on each change of the Tag itself.</summary>
+    /// <summary>Starts at 1; Settings → Tags raises it on a rename, a recolour, or a merge into the Tag.</summary>
     public int Revision { get; set; } = 1;
 }
 

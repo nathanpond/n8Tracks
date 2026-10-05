@@ -7,6 +7,7 @@ import { BackupsPage } from './settings/BackupsPage';
 import { CredentialsPage } from './settings/CredentialsPage';
 import { GenresPage } from './settings/GenresPage';
 import { SunoPage } from './settings/SunoPage';
+import { TagsPage } from './settings/TagsPage';
 import { SystemPage } from './settings/SystemPage';
 import { WorkflowPage } from './settings/WorkflowPage';
 import { SetupGate } from './setup/SetupGate';
@@ -44,6 +45,7 @@ export function App() {
                 <Route path="settings/credentials" element={<CredentialsPage />} />
                 <Route path="settings/workflow" element={<WorkflowPage />} />
                 <Route path="settings/genres" element={<GenresPage />} />
+                <Route path="settings/tags" element={<TagsPage />} />
                 <Route path="settings/suno" element={<SunoPage />} />
                 <Route path="settings/backups" element={<BackupsPage />} />
                 <Route path="settings/system" element={<SystemPage />} />

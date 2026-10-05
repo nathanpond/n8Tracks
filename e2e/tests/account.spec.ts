@@ -99,6 +99,7 @@ test.describe(
         'Credentials',
         'Workflow',
         'Genres',
+        'Tags',
         'Suno',
         'Backups',
         'System',

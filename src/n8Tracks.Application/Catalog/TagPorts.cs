@@ -2,7 +2,7 @@ using n8Tracks.Domain.Catalog;
 
 namespace n8Tracks.Application.Catalog;
 
-/// <summary>A Tag, how many Songs have it, and its revision (raised by the management story's changes).</summary>
+/// <summary>A Tag, how many Songs have it, and its revision (raised by a rename, a recolour, or a merge into it).</summary>
 public sealed record TagUsage(Tag Tag, int SongCount, int Revision);
 
 /// <summary>
@@ -28,6 +28,29 @@ public interface ITagStore
 
     /// <summary>Stores a new Tag. Its name key must be unused; the database refuses a taken one.</summary>
     Task AddAsync(Tag tag, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Sets the name and colour of the Tag with <paramref name="id"/> and raises its revision, when
+    /// its revision is still <paramref name="revision"/>. False when it is not (or there is no such Tag).
+    /// </summary>
+    Task<bool> TryUpdateAsync(Guid id, string name, string colour, int revision, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Raises the revision of the Tag with <paramref name="id"/>, when it is still
+    /// <paramref name="revision"/>. False when it is not (or there is no such Tag).
+    /// </summary>
+    Task<bool> TryRaiseRevisionAsync(Guid id, int revision, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Takes the Tags <paramref name="from"/> off every Song that has any of them, gives each of
+    /// those Songs <paramref name="to"/> instead (once, whether or not it had it) unless it is null,
+    /// and moves each of those Songs' last-updated time to <paramref name="now"/> and its revision on.
+    /// Answers how many Songs changed. The Tags themselves stay.
+    /// </summary>
+    Task<int> MoveSongsAsync(IReadOnlyCollection<Guid> from, Guid? to, DateTimeOffset now, CancellationToken cancellationToken);
+
+    /// <summary>Removes the Tags <paramref name="ids"/>, which no Song may have any more.</summary>
+    Task DeleteAsync(IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken);
 
     /// <summary>
     /// Makes <paramref name="tagIds"/> (each a Tag, each once) the Tags of the Song with
