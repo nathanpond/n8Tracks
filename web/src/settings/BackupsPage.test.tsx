@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_SCHEDULE,
   formatSize,
+  isBackupList,
   type Backup,
   type BackupList,
   type BackupScheduleRecord,
@@ -70,6 +71,7 @@ function list(items: Backup[], change: Partial<BackupList> = {}): BackupList {
     items,
     lastSuccessAt: items.find((item) => item.status === 'valid')?.createdAt ?? null,
     schedule,
+    lastRestore: null,
     ...change,
   };
 }
@@ -354,6 +356,81 @@ describe('Settings → Backups', () => {
     expect(deletes).toHaveLength(1);
     expect(new Headers(deletes[0]?.[1]?.headers).get(ANTIFORGERY_HEADER)).toBe('1');
     expect(row(valid.name)).toBeInTheDocument();
+  });
+});
+
+describe('Settings → Backups: the last restore', () => {
+  const safetyBackup = {
+    location: 'data' as const,
+    name: 'n8tracks-backup-20261005-091500-v0.1.0.zip',
+    path: '/data/backups/n8tracks-backup-20261005-091500-v0.1.0.zip',
+  };
+
+  it('shows a successful restore with the safety backup taken before it', async () => {
+    backend(
+      list([valid], {
+        lastRestore: {
+          outcome: 'succeeded',
+          finishedAt: '2026-10-05T09:16:00Z',
+          archive: valid.name,
+          failedStage: null,
+          detail: "The instance now holds the backup's data, and every session was ended.",
+          safetyBackup,
+        },
+      }),
+    );
+
+    renderApp('/settings/backups');
+
+    const note = await screen.findByTestId('last-restore');
+    expect(note).toHaveTextContent('Last restore');
+    expect(note).toHaveTextContent(`Restored from ${valid.name}`);
+    expect(note).toHaveTextContent('every session was ended');
+    expect(note).toHaveTextContent(safetyBackup.name);
+    expect(note).toHaveTextContent(safetyBackup.path);
+    expect(note).not.toHaveTextContent('failed');
+  });
+
+  it('shows a rolled-back restore with the stage it failed at and where the safety backup is', async () => {
+    backend(
+      list([valid], {
+        lastRestore: {
+          outcome: 'rolled-back',
+          finishedAt: '2026-10-05T09:16:00Z',
+          archive: 'from-elsewhere.zip',
+          failedStage: 'migrating',
+          detail:
+            'The restore failed while updating the restored database, and the data from before it was put back. The server log has the details.',
+          safetyBackup,
+        },
+      }),
+    );
+
+    renderApp('/settings/backups');
+
+    const note = await screen.findByTestId('last-restore');
+    expect(note).toHaveTextContent('The last restore failed and was undone');
+    expect(note).toHaveTextContent('Restoring from from-elsewhere.zip failed');
+    expect(note).toHaveTextContent('while updating the database');
+    expect(note).toHaveTextContent('the data from before it was put back');
+    expect(note).toHaveTextContent(safetyBackup.path);
+  });
+
+  it('shows nothing when no restore has replaced data', async () => {
+    backend(list([valid]));
+
+    renderApp('/settings/backups');
+
+    await waitFor(() => {
+      expect(row(valid.name)).toBeVisible();
+    });
+    expect(screen.queryByTestId('last-restore')).toBeNull();
+  });
+
+  it('refuses a list whose last restore is malformed', () => {
+    expect(isBackupList({ ...list([valid]), lastRestore: { outcome: 'maybe' } })).toBe(false);
+    expect(isBackupList({ ...list([valid]), lastRestore: undefined })).toBe(false);
+    expect(isBackupList(list([valid]))).toBe(true);
   });
 });
 

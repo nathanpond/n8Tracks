@@ -85,6 +85,13 @@ public sealed class SetupEndpointTests
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         }
 
+        // The maintenance status answers too: a restore can bring back a database with no administrator,
+        // and the maintenance page must still see the restore end.
+        using (var response = await client.GetAsync(new Uri("/api/v1/maintenance", UriKind.Relative)))
+        {
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+
         // Complement: once setup is done the same endpoint is past the gate, and asks for a session.
         await SetupApi.CompleteAsync(client);
         using (var response = await client.GetAsync(OtherEndpoint))

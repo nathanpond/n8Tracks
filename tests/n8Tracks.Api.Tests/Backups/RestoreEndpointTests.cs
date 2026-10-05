@@ -22,7 +22,8 @@ namespace n8Tracks.Api.Tests.Backups;
 /// <summary>
 /// Restore validation and maintenance mode, through the API, against real archives: every refusal
 /// leaves the instance as it was; a confirmed restore closes the API (503 <c>maintenance</c>) before
-/// the safety backup while health, the frontend, and the maintenance status keep answering.
+/// the safety backup while health, the frontend, and the maintenance status keep answering. What the
+/// restore itself does to the data is in <see cref="RestoreRunTests"/>.
 /// </summary>
 public sealed class RestoreEndpointTests
 {
@@ -261,9 +262,19 @@ public sealed class RestoreEndpointTests
 
         release.SetResult();
         var ended = await RestoreApi.WaitForEndAsync(client);
+        Assert.Equal("succeeded", ended.GetProperty("outcome").GetString());
 
-        // Replacement is the next story: until then the run ends having changed nothing.
-        Assert.Equal("failed", ended.GetProperty("outcome").GetString());
+        // The restore ended every session; signed in again, the archive's catalog is there.
+        using (var signedOut = await client.GetAsync(SongApi.Songs))
+        {
+            Assert.Equal(HttpStatusCode.Unauthorized, signedOut.StatusCode);
+        }
+
+        using (var signIn = await SessionApi.SignInAsync(client, SetupApi.TestUsername, SetupApi.TestPassword))
+        {
+            Assert.Equal(HttpStatusCode.Created, signIn.StatusCode);
+        }
+
         Assert.Equal(["Northern Lights"], (await SongApi.ListAsync(client)).GetProperty("items").EnumerateArray().Select(static s => s.GetProperty("title").GetString()));
 
         // Complement: the same call succeeds now, and the safety backup is listed.
@@ -555,6 +566,49 @@ public sealed class RestoreEndpointTests
             Assert.Equal(HttpStatusCode.OK, api.StatusCode);
             Assert.Contains("\"active\": false", await File.ReadAllTextAsync(Path.Combine(data.Path, "maintenance.json")), StringComparison.Ordinal);
         }
+    }
+
+    /// <summary>
+    /// The maintenance status is answered without the database, signed in or not: with the database
+    /// moved away, as a restore moves it, it still answers and no new database file appears.
+    /// </summary>
+    [Fact]
+    public async Task TheMaintenanceStatusNeverOpensTheDatabase()
+    {
+        using var factory = RestoreApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var maintenance = factory.Services.GetRequiredService<MaintenanceMode>();
+        Assert.True(maintenance.TryBegin(MaintenanceStage.Replacing));
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        var away = Path.Combine(factory.DataPath, "away");
+        Directory.CreateDirectory(away);
+        var files = Directory.GetFiles(factory.DataPath, "n8tracks.db*");
+        foreach (var file in files)
+        {
+            File.Move(file, Path.Combine(away, Path.GetFileName(file)));
+        }
+
+        try
+        {
+            foreach (var reader in new[] { client, factory.CreateClient() })
+            {
+                Assert.True((await RestoreApi.StatusAsync(reader)).GetProperty("active").GetBoolean());
+            }
+
+            Assert.Empty(Directory.GetFiles(factory.DataPath, "n8tracks.db*"));
+        }
+        finally
+        {
+            foreach (var file in Directory.GetFiles(away))
+            {
+                File.Move(file, Path.Combine(factory.DataPath, Path.GetFileName(file)));
+            }
+
+            maintenance.End(MaintenanceOutcome.Failed);
+        }
+
+        // Complement: with the database back and maintenance over, the session works as before.
+        Assert.Empty((await SongApi.ListAsync(client)).GetProperty("items").EnumerateArray());
     }
 
     [Fact]

@@ -63,6 +63,9 @@ public static class DependencyInjection
         services.AddSingleton<IMaintenanceStateStore, MaintenanceStateFile>();
         services.AddScoped<IRestoreArchives, RestoreArchives>();
         services.TryAddSingleton<IDiskSpace, DataDiskSpace>();
+        services.TryAddSingleton(new RestoreTestHooks());
+        services.AddScoped<ILiveDataReplacement, LiveDataReplacement>();
+        services.AddSingleton<ILastRestoreStore, LastRestoreFile>();
         services.AddSingleton<RestoreRunner>();
         services.AddSingleton<IRestoreRunner>(static provider => provider.GetRequiredService<RestoreRunner>());
 

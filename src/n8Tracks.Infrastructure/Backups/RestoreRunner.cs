@@ -74,6 +74,17 @@ internal sealed partial class RestoreRunner(IServiceScopeFactory scopes, ILogger
                 {
                     LogSucceeded(logger, plan.Id, result.SafetyBackup);
                 }
+                else if (result.Outcome == MaintenanceOutcome.RollbackFailed)
+                {
+                    LogPutBackFailed(
+                        logger,
+                        result.Error,
+                        plan.Id,
+                        result.Detail,
+                        result.Safety?.Path,
+                        result.PreviousDataFolder,
+                        RestoreCommand(result.Safety?.Path));
+                }
                 else
                 {
                     LogFailed(logger, result.Error, plan.Id, result.Outcome, result.Detail, result.SafetyBackup);
@@ -97,6 +108,23 @@ internal sealed partial class RestoreRunner(IServiceScopeFactory scopes, ILogger
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Restore {RestoreId} ended {RestoreOutcome}: {Detail} Safety backup: {SafetyBackup}")]
     private static partial void LogFailed(ILogger logger, Exception? exception, Guid restoreId, MaintenanceOutcome restoreOutcome, string detail, string? safetyBackup);
+
+    /// <summary>The container command that restores <paramref name="safetyBackupPath"/> with the server stopped.</summary>
+    public static string RestoreCommand(string? safetyBackupPath) =>
+        $"n8tracks restore {(string.IsNullOrEmpty(safetyBackupPath) ? "<safety backup>" : safetyBackupPath)}";
+
+    [LoggerMessage(
+        Level = LogLevel.Critical,
+        Message = "Restore {RestoreId} could not put the previous data back: {Detail} The safety backup is {SafetyBackupPath}. "
+            + "Stop the container and run `{RestoreCommand}` in it, or move the files in {PreviousDataFolder} back into the data path by hand, replacing the database and the assets folder there.")]
+    private static partial void LogPutBackFailed(
+        ILogger logger,
+        Exception? exception,
+        Guid restoreId,
+        string detail,
+        string? safetyBackupPath,
+        string? previousDataFolder,
+        string restoreCommand);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Restore {RestoreId} could not run; maintenance has ended and nothing was changed")]
     private static partial void LogCrashed(ILogger logger, Exception exception, Guid restoreId);

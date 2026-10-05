@@ -24,7 +24,9 @@ import {
   type BackupJob,
   type BackupLocation,
   type BackupStatus,
+  type LastRestore,
 } from '../api/backups';
+import { stageWhile } from '../api/maintenance';
 import { formatDateTime, useConfiguredTimeZone } from '../api/timeZone';
 import { Notice } from '../components/Notice';
 import { BackupSchedulePanel } from './BackupSchedulePanel';
@@ -100,6 +102,47 @@ function BackupProgress({ job, outcome }: { job: BackupJob | null; outcome: Outc
 }
 
 /** Asks before deleting an archive: it cannot be undone. */
+/**
+ * How the last restore that began replacing data ended, until the next one: what it restored from,
+ * when, and the safety backup taken before it, with its path for restoring by hand.
+ */
+function LastRestoreNote({ restore, timeZone }: { restore: LastRestore; timeZone: string }) {
+  const when = formatDateTime(restore.finishedAt, timeZone);
+  const safety = (
+    <Text>
+      The safety backup taken just before it is <strong>{restore.safetyBackup.name}</strong>, at{' '}
+      <Text span ff="monospace">
+        {restore.safetyBackup.path}
+      </Text>
+      .
+    </Text>
+  );
+  if (restore.outcome === 'rolled-back') {
+    return (
+      <div data-testid="last-restore">
+        <Notice title="The last restore failed and was undone">
+          <Text>
+            Restoring from {restore.archive} failed on {when}, while{' '}
+            {stageWhile(restore.failedStage)}. {restore.detail}
+          </Text>
+          {safety}
+        </Notice>
+      </div>
+    );
+  }
+  return (
+    <Paper p="sm" withBorder data-testid="last-restore">
+      <Stack gap={4}>
+        <Text fw={700}>Last restore</Text>
+        <Text>
+          Restored from {restore.archive} on {when}. {restore.detail}
+        </Text>
+        {safety}
+      </Stack>
+    </Paper>
+  );
+}
+
 function DeleteDialog({
   backup,
   onClose,
@@ -332,6 +375,10 @@ export function BackupsPage() {
         credentials, the settings, and the files n8Tracks manages. Audio in the media folder is not
         included. Keep backups as safe as the data folder itself.
       </Text>
+
+      {state.phase === 'ready' && state.list.lastRestore !== null && (
+        <LastRestoreNote restore={state.list.lastRestore} timeZone={timeZone} />
+      )}
 
       {state.phase === 'ready' && state.list.sharesDiskWithData && (
         <Notice title={SHARED_DISK_TITLE}>

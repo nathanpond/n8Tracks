@@ -10,7 +10,8 @@ namespace n8Tracks.Api.Maintenance;
 /// <summary>
 /// While the instance is in maintenance every <c>/api/v1</c> request except the maintenance status
 /// is answered 503 <c>maintenance</c> before it reaches the setup gate, authentication, or any
-/// endpoint, so nothing reads or writes the catalog. Health, the frontend's files, and anything
+/// endpoint, so nothing reads or writes the catalog. The maintenance status itself is answered here,
+/// in and out of maintenance, so reading it never opens the database. Health, the frontend's files, and anything
 /// outside <c>/api/v1</c> are untouched. Outside maintenance each API request is counted while it
 /// runs, so a restore can let the ones in flight finish (<see cref="RequestDrain"/>).
 /// </summary>
@@ -32,6 +33,15 @@ internal sealed class MaintenanceMiddleware(RequestDelegate next)
 
         // Routing matches in any letter case, so the gate does too.
         var path = context.Request.Path;
+        if (path.Equals(StatusPath, StringComparison.OrdinalIgnoreCase) && HttpMethods.IsGet(context.Request.Method))
+        {
+            // Answered here, never past the setup gate or authentication: both read the database,
+            // which a restore may be moving at this moment, and a session cookie would be looked up.
+            context.Response.Headers[HeaderNames.CacheControl] = "no-store";
+            await TypedResults.Ok(MaintenanceResponse.From(maintenance.Current)).ExecuteAsync(context);
+            return;
+        }
+
         if (!path.StartsWithSegments(VersionPrefix, StringComparison.OrdinalIgnoreCase)
             || path.Equals(StatusPath, StringComparison.OrdinalIgnoreCase))
         {

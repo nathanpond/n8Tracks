@@ -69,7 +69,13 @@ public sealed record BackupDestination(BackupLocation Location, string Path)
 /// <param name="Destination">Where the next backup would go.</param>
 /// <param name="ActiveJobId">The backup job that is queued or running, or null.</param>
 /// <param name="Archives">Every archive in both folders, newest first.</param>
-public sealed record BackupListing(BackupLocation Destination, bool SharesDiskWithData, Guid? ActiveJobId, IReadOnlyList<BackupArchive> Archives)
+/// <param name="LastRestore">How the last restore that began replacing data ended, or null.</param>
+public sealed record BackupListing(
+    BackupLocation Destination,
+    bool SharesDiskWithData,
+    Guid? ActiveJobId,
+    IReadOnlyList<BackupArchive> Archives,
+    LastRestore? LastRestore = null)
 {
     /// <summary>When the newest valid archive of any kind was made, or null when there is none.</summary>
     public DateTimeOffset? LastSuccessUtc =>

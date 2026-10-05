@@ -5,6 +5,7 @@ import {
   isMaintenanceStatus,
   noticeMaintenance,
   reportMaintenance,
+  stageWhile,
 } from './maintenance';
 
 describe('maintenance', () => {
@@ -15,6 +16,17 @@ describe('maintenance', () => {
     expect(
       isMaintenanceStatus({ active: false, stage: null, percent: 0, outcome: 'rolled-back' }),
     ).toBe(true);
+    expect(
+      isMaintenanceStatus({
+        active: true,
+        stage: 'migrating',
+        percent: 40,
+        outcome: 'rollback-failed',
+      }),
+    ).toBe(true);
+    expect(
+      isMaintenanceStatus({ active: false, stage: null, percent: 0, outcome: 'gave-up' }),
+    ).toBe(false);
     expect(isMaintenanceStatus({ active: true, stage: 'dancing', percent: 3, outcome: null })).toBe(
       false,
     );
@@ -38,5 +50,11 @@ describe('maintenance', () => {
     reportMaintenance();
     clearMaintenance();
     clearMaintenance();
+  });
+
+  it('names what the restore was doing at each stage', () => {
+    expect(stageWhile('migrating')).toBe('updating the database');
+    expect(stageWhile('safety-backup')).toBe('taking the safety backup');
+    expect(stageWhile(null)).toBe('replacing the data');
   });
 });

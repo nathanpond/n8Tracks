@@ -18,6 +18,7 @@ using n8Tracks.Application;
 using n8Tracks.Application.Backups;
 using n8Tracks.Application.Configuration;
 using n8Tracks.Infrastructure;
+using n8Tracks.Infrastructure.Backups;
 using n8Tracks.Infrastructure.Logging;
 using n8Tracks.Infrastructure.Persistence;
 using n8Tracks.ServiceDefaults;
@@ -193,8 +194,12 @@ public sealed class Program
                 return 1;
             }
 
+            // A restore that a restart interrupted is put back before the database is opened. An
+            // instance still in maintenance after that starts closed, its database left untouched.
+            var inMaintenance = RestoreStartup.Recover(app.Services);
+
             // The schema is brought up to date before anything listens; a failure stops the process.
-            if (!await DatabaseStartup.RunAsync(app.Services, startupLog, cancellationToken).ConfigureAwait(false))
+            if (!inMaintenance && !await DatabaseStartup.RunAsync(app.Services, startupLog, cancellationToken).ConfigureAwait(false))
             {
                 return 1;
             }

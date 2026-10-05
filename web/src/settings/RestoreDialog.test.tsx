@@ -32,6 +32,7 @@ const list: BackupList = {
   activeJobId: null,
   items: [valid, newer],
   lastSuccessAt: valid.createdAt,
+  lastRestore: null,
   schedule: { ...DEFAULT_SCHEDULE, nextAt: null, lastAttempt: null },
 };
 

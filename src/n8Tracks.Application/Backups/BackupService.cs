@@ -33,7 +33,8 @@ public sealed class BackupService(
     IJobQueue queue,
     BackupStartLock startLock,
     MaintenanceMode maintenance,
-    RestoreReads restoreReads)
+    RestoreReads restoreReads,
+    ILastRestoreStore lastRestore)
 {
     /// <summary>The job type every backup runs as, whatever its kind.</summary>
     public const string JobType = "backup";
@@ -76,14 +77,14 @@ public sealed class BackupService(
         }
     }
 
-    /// <summary>Where the next backup goes, the backup in progress, and every archive in both folders.</summary>
+    /// <summary>Where the next backup goes, the backup in progress, every archive in both folders, and the last restore's outcome.</summary>
     public async Task<BackupListing> ListAsync(CancellationToken cancellationToken)
     {
         var destination = storage.ResolveDestination();
         var active = await jobs.FindActiveAsync(JobType, cancellationToken).ConfigureAwait(false);
         var archives = await storage.ListAsync(cancellationToken).ConfigureAwait(false);
 
-        return new BackupListing(destination.Location, destination.SharesDiskWithData, active, archives);
+        return new BackupListing(destination.Location, destination.SharesDiskWithData, active, archives, lastRestore.Read());
     }
 
     /// <summary>The archive, or null when there is none by that location and name.</summary>

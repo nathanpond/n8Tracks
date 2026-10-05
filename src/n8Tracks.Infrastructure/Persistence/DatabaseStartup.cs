@@ -165,7 +165,7 @@ public static class DatabaseStartup
     /// a time limit. A process killed in the middle of an upgrade leaves the row behind, so the next
     /// start would wait forever, saying nothing. This turns that wait into a failure the operator can read.
     /// </summary>
-    private static async Task<bool> MigrationLockIsHeldAsync(DbConnection connection, CancellationToken cancellationToken)
+    internal static async Task<bool> MigrationLockIsHeldAsync(DbConnection connection, CancellationToken cancellationToken)
     {
         var tableExists = await CountAsync(
             connection,

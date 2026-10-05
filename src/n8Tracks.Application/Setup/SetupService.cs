@@ -35,7 +35,8 @@ public abstract record SetupOutcome
 
 /// <summary>
 /// Remembers, for the life of the process, that setup is complete. Setup can only be done once, so
-/// once true it never becomes false again; until then every question goes to the database.
+/// once true it stays true, until a restore replaces the database; until then every question goes
+/// to the database.
 /// </summary>
 public sealed class SetupCompletion
 {
@@ -44,6 +45,9 @@ public sealed class SetupCompletion
     public bool IsKnownComplete => complete;
 
     public void MarkComplete() => complete = true;
+
+    /// <summary>After a restore: the database is another one now, so the next question goes to it.</summary>
+    public void Forget() => complete = false;
 }
 
 /// <summary>

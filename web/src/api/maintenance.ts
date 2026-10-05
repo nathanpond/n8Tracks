@@ -12,7 +12,11 @@ export const MAINTENANCE_POLL_MS = 1_000;
 export type MaintenanceStage =
   'validating' | 'safety-backup' | 'replacing' | 'migrating' | 'finishing';
 
-export type MaintenanceOutcome = 'succeeded' | 'failed' | 'rolled-back';
+/**
+ * How the last maintenance ended. `rollback-failed` comes with `active: true`: the restore failed and
+ * its data could not be put back, so the instance stays in maintenance until it is restored by hand.
+ */
+export type MaintenanceOutcome = 'succeeded' | 'failed' | 'rolled-back' | 'rollback-failed';
 
 /** `GET /api/v1/maintenance`: never a path or an error text. */
 export interface MaintenanceStatus {
@@ -29,7 +33,26 @@ const STAGES: readonly string[] = [
   'migrating',
   'finishing',
 ];
-const OUTCOMES: readonly string[] = ['succeeded', 'failed', 'rolled-back'];
+const OUTCOMES: readonly string[] = ['succeeded', 'failed', 'rolled-back', 'rollback-failed'];
+
+/** Each stage as "while …" ends: "The restore failed while updating the database." */
+const STAGE_WHILE: Record<MaintenanceStage, string> = {
+  validating: 'checking the backup',
+  'safety-backup': 'taking the safety backup',
+  replacing: 'replacing the data',
+  migrating: 'updating the database',
+  finishing: 'finishing',
+};
+
+/** What the restore was doing at `stage`, for "The restore failed while …". */
+export function stageWhile(stage: MaintenanceStage | null): string {
+  return stage === null ? 'replacing the data' : STAGE_WHILE[stage];
+}
+
+/** Whether `value` names a maintenance stage. */
+export function isMaintenanceStage(value: unknown): value is MaintenanceStage {
+  return typeof value === 'string' && STAGES.includes(value);
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -39,7 +62,7 @@ export function isMaintenanceStatus(value: unknown): value is MaintenanceStatus 
   return (
     isRecord(value) &&
     typeof value.active === 'boolean' &&
-    (value.stage === null || (typeof value.stage === 'string' && STAGES.includes(value.stage))) &&
+    (value.stage === null || isMaintenanceStage(value.stage)) &&
     typeof value.percent === 'number' &&
     (value.outcome === null ||
       (typeof value.outcome === 'string' && OUTCOMES.includes(value.outcome)))

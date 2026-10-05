@@ -30,6 +30,12 @@ public enum MaintenanceOutcome
 
     /// <summary>The restore failed after replacement began and the safety backup was put back.</summary>
     RolledBack,
+
+    /// <summary>
+    /// The restore failed after replacement began and putting the previous data back failed too. The
+    /// instance stays in maintenance, across restarts, until it is restored; the log says how.
+    /// </summary>
+    RollbackFailed,
 }
 
 /// <summary>
@@ -40,7 +46,10 @@ public enum MaintenanceOutcome
 /// <param name="Active">Whether the API is closed for maintenance.</param>
 /// <param name="Stage">The current stage while active; the last one reached otherwise, or null.</param>
 /// <param name="Percent">0 to 100 within the stage.</param>
-/// <param name="Outcome">How the last maintenance ended; null while active, or before the first.</param>
+/// <param name="Outcome">
+/// How the last maintenance ended; null while active, or before the first. While active it is only
+/// ever <see cref="MaintenanceOutcome.RollbackFailed"/>: the restore has stopped and cannot finish.
+/// </param>
 public sealed record MaintenanceSnapshot(bool Active, MaintenanceStage? Stage, int Percent, MaintenanceOutcome? Outcome)
 {
     /// <summary>No maintenance has ever run.</summary>
@@ -64,12 +73,13 @@ public sealed record MaintenanceSnapshot(bool Active, MaintenanceStage? Stage, i
     public static MaintenanceStage? ParseStage(string? text) =>
         Enum.GetValues<MaintenanceStage>().Select(static stage => (MaintenanceStage?)stage).FirstOrDefault(stage => StageText(stage!.Value) == text);
 
-    /// <summary>The outcome as the API writes it: <c>succeeded</c>, <c>failed</c>, <c>rolled-back</c>.</summary>
+    /// <summary>The outcome as the API writes it: <c>succeeded</c>, <c>failed</c>, <c>rolled-back</c>, <c>rollback-failed</c>.</summary>
     public static string OutcomeText(MaintenanceOutcome outcome) => outcome switch
     {
         MaintenanceOutcome.Succeeded => "succeeded",
         MaintenanceOutcome.Failed => "failed",
         MaintenanceOutcome.RolledBack => "rolled-back",
+        MaintenanceOutcome.RollbackFailed => "rollback-failed",
         _ => throw new ArgumentOutOfRangeException(nameof(outcome), outcome, "Unknown maintenance outcome."),
     };
 
@@ -189,6 +199,20 @@ public sealed class MaintenanceMode
         lock (gate)
         {
             Set(current with { Active = false, Outcome = outcome }, persist: true);
+        }
+    }
+
+    /// <summary>
+    /// Records that the restore stopped and its data could not be put back: maintenance stays on, at
+    /// the stage it reached, with the outcome <see cref="MaintenanceOutcome.RollbackFailed"/>, so the
+    /// maintenance page can say so. Only putting the previous data back (at the next start, or by
+    /// hand) ends it.
+    /// </summary>
+    public void Stall()
+    {
+        lock (gate)
+        {
+            Set(current with { Active = true, Stage = current.Stage ?? MaintenanceStage.Replacing, Outcome = MaintenanceOutcome.RollbackFailed }, persist: true);
         }
     }
 

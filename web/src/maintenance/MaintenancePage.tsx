@@ -1,6 +1,7 @@
 import { Button, Group, Loader, Progress, Stack, Text, Title } from '@mantine/core';
 import { useEffect } from 'react';
 import {
+  stageWhile,
   useMaintenanceStatus,
   type MaintenanceStage,
   type MaintenanceStatus,
@@ -30,22 +31,34 @@ function Progressing({ status }: { status: MaintenanceStatus }) {
 }
 
 function Ended({ status, onDone }: { status: MaintenanceStatus; onDone: () => void }) {
-  const title =
-    status.outcome === 'rolled-back'
-      ? 'The restore failed and was undone'
-      : 'The restore did not complete';
+  const rolledBack = status.outcome === 'rolled-back';
+  const title = rolledBack ? 'The restore failed and was undone' : 'The restore did not complete';
   return (
     <Stack gap="md" align="flex-start">
       <Notice title={title}>
         <Text>
-          {status.outcome === 'rolled-back'
-            ? 'n8Tracks put back the data it had before the restore began.'
+          {rolledBack
+            ? `The restore failed while ${stageWhile(status.stage)}. n8Tracks put back the data it had before the restore began.`
             : 'Nothing was changed.'}{' '}
           Sign in and open Settings → Backups to see what happened.
         </Text>
       </Notice>
       <Button onClick={onDone}>Continue</Button>
     </Stack>
+  );
+}
+
+/** The restore failed and its data could not be put back: maintenance stays on until it is restored by hand. */
+function Stalled({ status }: { status: MaintenanceStatus }) {
+  return (
+    <Notice title="The restore failed and could not be undone">
+      <Text>
+        The restore failed while {stageWhile(status.stage)}, and n8Tracks could not put back the
+        data it had before. It stays unavailable so that nothing changes further. The server log
+        says where the safety backup is and how to restore it; this page updates once n8Tracks is
+        running normally again.
+      </Text>
+    </Notice>
   );
 }
 
@@ -84,7 +97,12 @@ export function MaintenancePage({ onDone }: { onDone: () => void }) {
               <Text>Checking the restore’s progress…</Text>
             </Group>
           )}
-          {status?.active === true && <Progressing status={status} />}
+          {status?.active === true && status.outcome === 'rollback-failed' && (
+            <Stalled status={status} />
+          )}
+          {status?.active === true && status.outcome !== 'rollback-failed' && (
+            <Progressing status={status} />
+          )}
           {failed && <Ended status={status} onDone={onDone} />}
           {finished && <Text>The restore has finished.</Text>}
         </div>

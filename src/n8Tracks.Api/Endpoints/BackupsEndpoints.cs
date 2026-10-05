@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Http.HttpResults;
 using n8Tracks.Api.Auth;
 using n8Tracks.Api.Problems;
 using n8Tracks.Application.Backups;
+using n8Tracks.Application.Maintenance;
 
 namespace n8Tracks.Api.Endpoints;
 
@@ -205,7 +206,8 @@ internal sealed record BackupListResponse(
     Guid? ActiveJobId,
     BackupResponse[] Items,
     DateTime? LastSuccessAt,
-    BackupScheduleStatusResponse Schedule)
+    BackupScheduleStatusResponse Schedule,
+    LastRestoreResponse? LastRestore)
 {
     public static BackupListResponse From(BackupListing listing, BackupScheduleStatus schedule)
     {
@@ -225,9 +227,44 @@ internal sealed record BackupListResponse(
                 archive.Kind,
                 archive.Validity))],
             listing.LastSuccessUtc?.UtcDateTime,
-            BackupScheduleStatusResponse.From(schedule));
+            BackupScheduleStatusResponse.From(schedule),
+            listing.LastRestore is { } lastRestore ? LastRestoreResponse.From(lastRestore) : null);
     }
 }
+
+/// <summary>
+/// How the last restore that began replacing data ended, shown until the next one: <c>outcome</c> is
+/// <c>succeeded</c> or <c>rolled-back</c>; <c>failedStage</c> (null when it succeeded) is the stage it
+/// failed at, as the maintenance status names it; <c>safetyBackup</c> is the backup taken before it,
+/// with its full path for restoring by hand.
+/// </summary>
+internal sealed record LastRestoreResponse(
+    string Outcome,
+    DateTime FinishedAt,
+    string Archive,
+    string? FailedStage,
+    string Detail,
+    SafetyBackupResponse SafetyBackup)
+{
+    public static LastRestoreResponse From(LastRestore lastRestore)
+    {
+        ArgumentNullException.ThrowIfNull(lastRestore);
+
+        return new(
+            MaintenanceSnapshot.OutcomeText(lastRestore.Outcome),
+            lastRestore.FinishedUtc.UtcDateTime,
+            lastRestore.ArchiveName,
+            lastRestore.FailedStage is { } stage ? MaintenanceSnapshot.StageText(stage) : null,
+            lastRestore.Detail,
+            new SafetyBackupResponse(
+                BackupsEndpoints.LocationText(lastRestore.SafetyBackup.Location),
+                lastRestore.SafetyBackup.Name,
+                lastRestore.SafetyBackup.Path));
+    }
+}
+
+/// <summary>A safety backup: its folder (<c>mount</c> or <c>data</c>), name, and full path.</summary>
+internal sealed record SafetyBackupResponse(string Location, string Name, string Path);
 
 /// <summary>
 /// The schedule as the Backups page shows it: the settings, the next planned time (null when off),

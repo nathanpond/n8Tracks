@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { resolveAppUrl } from './baseUrl';
 import { apiFetch } from './client';
-import { noticeMaintenance } from './maintenance';
+import { isMaintenanceStage, noticeMaintenance, type MaintenanceStage } from './maintenance';
 import { ANTIFORGERY_HEADER } from './session';
 import { writeWithRevision, type SaveResult } from './saves';
 
@@ -122,9 +122,29 @@ export interface Backup {
   status: BackupStatus;
 }
 
+/** A safety backup as the last restore names it, with its full path for restoring by hand. */
+export interface SafetyBackup {
+  location: BackupLocation;
+  name: string;
+  path: string;
+}
+
+/**
+ * How the last restore that began replacing data ended, until the next one: it succeeded, or it
+ * failed at `failedStage` and the data from before it was put back.
+ */
+export interface LastRestore {
+  outcome: 'succeeded' | 'rolled-back';
+  finishedAt: string;
+  archive: string;
+  failedStage: MaintenanceStage | null;
+  detail: string;
+  safetyBackup: SafetyBackup;
+}
+
 /**
  * The Backups page's data: where the next backup goes, the one in progress, every archive, the
- * newest valid one of any kind, and the schedule's state.
+ * newest valid one of any kind, the schedule's state, and the last restore's outcome.
  */
 export interface BackupList {
   destination: BackupLocation;
@@ -133,6 +153,7 @@ export interface BackupList {
   items: Backup[];
   lastSuccessAt: string | null;
   schedule: BackupScheduleStatus;
+  lastRestore: LastRestore | null;
 }
 
 /** A backup job as `GET /api/v1/jobs/{id}` answers it, the fields the page reads. */
@@ -204,6 +225,27 @@ function isScheduleStatus(value: unknown): value is BackupScheduleStatus {
   );
 }
 
+function isSafetyBackup(value: unknown): value is SafetyBackup {
+  return (
+    isRecord(value) &&
+    isLocation(value.location) &&
+    typeof value.name === 'string' &&
+    typeof value.path === 'string'
+  );
+}
+
+export function isLastRestore(value: unknown): value is LastRestore {
+  return (
+    isRecord(value) &&
+    (value.outcome === 'succeeded' || value.outcome === 'rolled-back') &&
+    typeof value.finishedAt === 'string' &&
+    typeof value.archive === 'string' &&
+    (value.failedStage === null || isMaintenanceStage(value.failedStage)) &&
+    typeof value.detail === 'string' &&
+    isSafetyBackup(value.safetyBackup)
+  );
+}
+
 export function isBackupList(value: unknown): value is BackupList {
   return (
     isRecord(value) &&
@@ -213,7 +255,8 @@ export function isBackupList(value: unknown): value is BackupList {
     Array.isArray(value.items) &&
     value.items.every(isBackup) &&
     isNullableString(value.lastSuccessAt) &&
-    isScheduleStatus(value.schedule)
+    isScheduleStatus(value.schedule) &&
+    (value.lastRestore === null || isLastRestore(value.lastRestore))
   );
 }
 

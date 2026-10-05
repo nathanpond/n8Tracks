@@ -174,6 +174,15 @@ public sealed record RestoreRunResult(Maintenance.MaintenanceOutcome Outcome, st
 {
     /// <summary>The exception that stopped the run, for the log only, or null.</summary>
     public Exception? Error { get; init; }
+
+    /// <summary>The safety backup with its path, once one was taken; the log names the path.</summary>
+    public SafetyBackupRecord? Safety { get; init; }
+
+    /// <summary>
+    /// When putting the previous data back failed: the folder under the data path that still holds
+    /// it, for the log's manual steps. Null otherwise.
+    /// </summary>
+    public string? PreviousDataFolder { get; init; }
 }
 
 /// <summary>Tunables of restore; tests shrink them.</summary>
@@ -192,4 +201,66 @@ public sealed class RestoreOptions
 
     /// <summary>How long requests in flight when maintenance begins get to finish before they are aborted.</summary>
     public TimeSpan DrainGrace { get; init; } = TimeSpan.FromSeconds(10);
+}
+
+/// <summary>A safety backup, as the log and the Backups page name it.</summary>
+/// <param name="Location">Its folder.</param>
+/// <param name="Name">Its file name.</param>
+/// <param name="Path">Its full path, for the operator: what to restore by hand if it comes to that.</param>
+public sealed record SafetyBackupRecord(BackupLocation Location, string Name, string Path);
+
+/// <summary>
+/// What a restore writes down before it moves anything, under the data path: what it restores and
+/// the safety backup it took. Kept until the restore has ended, so a restore a restart interrupted
+/// can be put back and reported.
+/// </summary>
+/// <param name="RestoreId">The restore's ID.</param>
+/// <param name="ArchiveName">The archive restored from (an upload's name as the browser sent it).</param>
+/// <param name="SafetyBackup">The verified safety backup taken just before.</param>
+/// <param name="StartedUtc">When the replacement began.</param>
+public sealed record RestoreJournalEntry(Guid RestoreId, string ArchiveName, SafetyBackupRecord SafetyBackup, DateTimeOffset StartedUtc);
+
+/// <summary>A restore's journal as found under the data path.</summary>
+/// <param name="Entry">What it records.</param>
+/// <param name="SwapBegan">Whether any live file may have been moved yet.</param>
+public sealed record RestoreJournal(RestoreJournalEntry Entry, bool SwapBegan);
+
+/// <summary>The archive's database and assets, unpacked and checked under the data path, ready to be moved in.</summary>
+/// <param name="Folder">The folder they are in; only the replacement reads it.</param>
+public sealed record StagedRestore(string Folder);
+
+/// <summary>
+/// How the last restore that began replacing data ended, for the Backups page until the next one.
+/// Refused restores, and those that stopped before replacing anything, are not recorded.
+/// </summary>
+/// <param name="Outcome"><see cref="Maintenance.MaintenanceOutcome.Succeeded"/> or <see cref="Maintenance.MaintenanceOutcome.RolledBack"/>.</param>
+/// <param name="FinishedUtc">When it ended.</param>
+/// <param name="ArchiveName">The archive restored from.</param>
+/// <param name="FailedStage">For a rolled-back restore, the stage it failed at; null when it succeeded.</param>
+/// <param name="Detail">One or two sentences for the administrator; never an exception message.</param>
+/// <param name="SafetyBackup">The safety backup taken before it.</param>
+public sealed record LastRestore(
+    Maintenance.MaintenanceOutcome Outcome,
+    DateTimeOffset FinishedUtc,
+    string ArchiveName,
+    Maintenance.MaintenanceStage? FailedStage,
+    string Detail,
+    SafetyBackupRecord SafetyBackup);
+
+/// <summary>Thrown when the archive cannot be unpacked for a restore: nothing live has been changed.</summary>
+public sealed class RestoreStagingException : Exception
+{
+    public RestoreStagingException()
+    {
+    }
+
+    public RestoreStagingException(string message)
+        : base(message)
+    {
+    }
+
+    public RestoreStagingException(string message, Exception innerException)
+        : base(message, innerException)
+    {
+    }
 }

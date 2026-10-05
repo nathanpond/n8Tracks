@@ -30,6 +30,75 @@ public interface IRestoreArchives
 
     /// <summary>The bytes the live data takes now (the database and managed assets): what a safety backup copies.</summary>
     long LiveDataBytes();
+
+    /// <summary>
+    /// Unpacks the archive's database and managed assets into a work folder under the data path for
+    /// <paramref name="restoreId"/>, checking each file's size and SHA-256 against the manifest again
+    /// as it is written. No entry name can place a file outside that folder. Nothing live is touched.
+    /// </summary>
+    /// <exception cref="RestoreStagingException">The archive has gone, changed, or names an unsafe path.</exception>
+    Task<StagedRestore> StageAsync(RestoreSource source, Guid restoreId, Action<int> progress, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Swaps the live database and managed assets for a restored archive's, reversibly. Before anything
+/// moves, a journal under the data path records the live files there are; the live files are then
+/// renamed aside, into a folder under the data path, and the staged ones moved in. Putting back
+/// renames them back, from whatever point the swap reached, so it serves a failed restore, a
+/// shutdown, and a restore a restart interrupted alike. Every move stays on the data path's disk.
+/// Nothing under the media mount is read or written.
+/// </summary>
+public interface ILiveDataReplacement
+{
+    /// <summary>The folder the previous live files are renamed into, for the log's manual steps.</summary>
+    string PreviousDataFolder { get; }
+
+    /// <summary>The journal of a restore that has not ended, or null when there is none.</summary>
+    RestoreJournal? FindJournal();
+
+    /// <summary>Writes the journal, before anything moves. Replaces any left by a restore that ended.</summary>
+    void Prepare(RestoreJournalEntry entry);
+
+    /// <summary>
+    /// Closes the pooled connections to the database, renames the live files aside, and moves the
+    /// staged ones in. A failure part way leaves the journal saying so, for <see cref="PutBack"/>.
+    /// </summary>
+    void Swap(StagedRestore staged);
+
+    /// <summary>
+    /// Applies the migrations the restored database lacks, one at a time, reporting a percentage, then
+    /// records the schema as up to date. It never takes a second safety backup: the restore's own is it.
+    /// </summary>
+    Task MigrateAsync(Action<int> progress, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Ends every session in the restored database and marks the jobs it recorded as queued or running
+    /// as failed, "superseded by restore".
+    /// </summary>
+    Task FinishAsync(DateTimeOffset now, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Puts the previous live files back as the journal records them, removing what the swap moved in,
+    /// then deletes the journal. Safe to call again after a failure part way, and when the swap never
+    /// began. False when there is no journal. Never cancelled: it runs to the end or throws.
+    /// </summary>
+    bool PutBack();
+
+    /// <summary>After a restore ended (or never moved anything): deletes the journal, the previous files, and the work folder.</summary>
+    void Discard();
+}
+
+/// <summary>
+/// The outcome of the last restore that began replacing data: a small file under the data path,
+/// outside the database a restore replaces.
+/// </summary>
+public interface ILastRestoreStore
+{
+    /// <summary>The stored outcome, or null when there is none or it cannot be read.</summary>
+    LastRestore? Read();
+
+    /// <summary>Replaces the stored outcome, atomically.</summary>
+    void Write(LastRestore lastRestore);
 }
 
 /// <summary>Free space on the disk that holds the data path.</summary>

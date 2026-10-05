@@ -15,9 +15,11 @@ namespace n8Tracks.Infrastructure.Backups;
 /// named by an ID this class makes, never by anything a request sent; a listed archive is found
 /// through <see cref="IBackupStorage"/>, so a name can never point anywhere else. The database is
 /// extracted for its checks into <c>restore-work/&lt;id&gt;</c> under the data path and removed
-/// again. Only files the manifest lists are read, and only the database is ever written out, under
-/// a fixed name, so no entry name in an archive can reach outside the work folder. Nothing under the
-/// media mount is read or written, and the live database, settings, and assets are never touched.
+/// again; a confirmed restore unpacks the database and assets there too, for the replacement to move
+/// in. Only files the manifest lists are read; the database is written under a fixed name and an
+/// asset only under a plainly relative path checked to stay inside the work folder, so no entry
+/// name in an archive can reach outside it. Nothing under the media mount is read or written, and
+/// the live database, settings, and assets are never touched.
 /// </summary>
 internal sealed partial class RestoreArchives(
     N8TracksOptions options,
@@ -188,6 +190,113 @@ internal sealed partial class RestoreArchives(
                 LogCleanupFailed(logger, exception);
             }
         }
+    }
+
+    public async Task<StagedRestore> StageAsync(RestoreSource source, Guid restoreId, Action<int> progress, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(progress);
+
+        var folder = StagingFolder(restoreId);
+        if (Directory.Exists(folder))
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+
+        Directory.CreateDirectory(folder);
+        var stream = await OpenAsync(source, cancellationToken).ConfigureAwait(false)
+            ?? throw new RestoreStagingException("The backup is no longer there.");
+        await using (stream.ConfigureAwait(false))
+        {
+            try
+            {
+                using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
+                if (BackupManifest.Read(archive) is not var (manifest, _))
+                {
+                    throw new RestoreStagingException("The backup's manifest cannot be read any more.");
+                }
+
+                var wanted = new List<(BackupManifestFile File, string Target)>();
+                foreach (var file in manifest.Files)
+                {
+                    if (StagedPath(folder, file.Path) is { } target)
+                    {
+                        wanted.Add((file, target));
+                    }
+                }
+
+                if (!wanted.Any(static item => item.File.Path == BackupManifest.DatabaseEntry))
+                {
+                    throw new RestoreStagingException("The backup holds no database.");
+                }
+
+                var total = Math.Max(1, wanted.Sum(static item => item.File.Size));
+                long done = 0;
+                progress(0);
+                foreach (var (file, target) in wanted)
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                    var (size, sha256) = await HashAsync(archive.GetEntry(file.Path)!, target, cancellationToken).ConfigureAwait(false);
+                    if (size != file.Size || !string.Equals(sha256, file.Sha256, StringComparison.Ordinal))
+                    {
+                        throw new RestoreStagingException($"The backup changed after it was checked: the checksum of {Shorten(file.Path)} does not match its manifest.");
+                    }
+
+                    done += size;
+                    progress((int)Math.Min(100, 100 * done / total));
+                }
+            }
+            catch (InvalidDataException exception)
+            {
+                throw new RestoreStagingException("The backup is damaged: a file in it cannot be read back.", exception);
+            }
+        }
+
+        return new StagedRestore(folder);
+    }
+
+    /// <summary>The work folder a restore unpacks into.</summary>
+    internal string StagingFolder(Guid restoreId) => Path.Combine(WorkFolder, restoreId.ToString("N"));
+
+    /// <summary>
+    /// Where a listed file is unpacked: the database under its fixed name, and an asset under
+    /// <c>assets/</c> only when its path is plainly relative (no empty, <c>.</c>, or <c>..</c> part, no
+    /// backslash, colon, or control character) and stays inside the folder. Null for anything else
+    /// (<c>settings.json</c>, which the database already holds, included): it is not unpacked.
+    /// </summary>
+    /// <exception cref="RestoreStagingException">An asset path that is not safe.</exception>
+    internal static string? StagedPath(string folder, string entryPath)
+    {
+        ArgumentNullException.ThrowIfNull(folder);
+        ArgumentNullException.ThrowIfNull(entryPath);
+
+        if (entryPath == BackupManifest.DatabaseEntry)
+        {
+            return Path.Combine(folder, LiveDataReplacement.DatabaseFileName);
+        }
+
+        if (!entryPath.StartsWith(BackupManifest.AssetsFolder, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var relative = entryPath[BackupManifest.AssetsFolder.Length..];
+        var parts = relative.Split('/');
+        if (relative.Length == 0
+            || relative.Any(static c => c is '\\' or ':' || char.IsControl(c))
+            || parts.Any(static part => part is "" or "." or ".."))
+        {
+            throw new RestoreStagingException($"The backup names an asset with a path that is not safe ({Shorten(entryPath)}).");
+        }
+
+        var root = Path.GetFullPath(Path.Combine(folder, BackupWriter.AssetsFolderName));
+        var target = Path.GetFullPath(Path.Combine([root, .. parts]));
+        if (!target.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+        {
+            throw new RestoreStagingException($"The backup names an asset with a path that is not safe ({Shorten(entryPath)}).");
+        }
+
+        return target;
     }
 
     public long LiveDataBytes()

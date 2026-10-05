@@ -54,6 +54,7 @@ function inMaintenance(statuses: MaintenanceStatus[]) {
           activeJobId: null,
           items: [],
           lastSuccessAt: null,
+          lastRestore: null,
           schedule: { ...DEFAULT_SCHEDULE, nextAt: null, lastAttempt: null },
         }),
       );
@@ -119,6 +120,45 @@ describe('The maintenance page', () => {
     await user.click(screen.getByRole('button', { name: 'Continue' }));
 
     expect(await screen.findByRole('heading', { level: 2, name: 'Backups' })).toBeVisible();
+  });
+
+  it('after a rolled-back restore names the stage it failed at and says the data was put back', async () => {
+    inMaintenance([
+      { active: true, stage: 'migrating', percent: 30, outcome: null },
+      { active: false, stage: 'migrating', percent: 30, outcome: 'rolled-back' },
+    ]);
+    const user = userEvent.setup();
+
+    renderApp('/settings/backups');
+
+    expect(
+      await screen.findByText('The restore failed and was undone', {}, { timeout: 4000 }),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        /The restore failed while updating the database\. n8Tracks put back the data/,
+      ),
+    ).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+
+    expect(await screen.findByRole('heading', { level: 2, name: 'Backups' })).toBeVisible();
+  });
+
+  it('stays on the page, with no way on, when the data could not be put back', async () => {
+    inMaintenance([
+      { active: true, stage: 'replacing', percent: 60, outcome: null },
+      { active: true, stage: 'replacing', percent: 60, outcome: 'rollback-failed' },
+    ]);
+
+    renderApp('/settings/backups');
+
+    expect(
+      await screen.findByText('The restore failed and could not be undone', {}, { timeout: 4000 }),
+    ).toBeVisible();
+    expect(screen.getByText(/while replacing the data/)).toBeVisible();
+    expect(screen.getByText(/The server log says where the safety backup is/)).toBeVisible();
+    expect(screen.queryByRole('progressbar')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull();
   });
 
   it('goes back to the app by itself when maintenance ends without a failure', async () => {

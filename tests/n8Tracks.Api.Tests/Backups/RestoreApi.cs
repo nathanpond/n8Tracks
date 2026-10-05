@@ -14,6 +14,11 @@ using n8Tracks.Api.Tests.Setup;
 using n8Tracks.Api.Tests.Songs;
 using n8Tracks.Application.Backups;
 using n8Tracks.Infrastructure.Backups;
+using n8Tracks.Infrastructure.Logging;
+using n8Tracks.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 
 namespace n8Tracks.Api.Tests.Backups;
 
@@ -34,7 +39,8 @@ internal static class RestoreApi
         RestoreOptions? options = null,
         IDiskSpace? disk = null,
         Action<IServiceCollection>? more = null,
-        string? dataPath = null) =>
+        string? dataPath = null,
+        RestoreTestHooks? restoreHooks = null) =>
         new(dataPath is null
             ? new Dictionary<string, string>(StringComparer.Ordinal)
             : new Dictionary<string, string>(StringComparer.Ordinal) { ["N8TRACKS_DATA_PATH"] = dataPath })
@@ -46,6 +52,12 @@ internal static class RestoreApi
                 {
                     services.RemoveAll<BackupTestHooks>();
                     services.AddSingleton(hooks);
+                }
+
+                if (restoreHooks is not null)
+                {
+                    services.RemoveAll<RestoreTestHooks>();
+                    services.AddSingleton(restoreHooks);
                 }
 
                 services.RemoveAll<RestoreOptions>();
@@ -98,6 +110,130 @@ internal static class RestoreApi
         return await SetupApi.JsonAsync(response);
     }
 
+    /// <summary>Waits until the maintenance status matches and returns it.</summary>
+    public static async Task<JsonElement> WaitForStatusAsync(HttpClient client, Func<JsonElement, bool> matches)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+        while (true)
+        {
+            var status = await StatusAsync(client);
+            if (matches(status))
+            {
+                return status;
+            }
+
+            Assert.True(DateTime.UtcNow < deadline, $"The maintenance status never matched; last seen: {status}");
+            await Task.Delay(25);
+        }
+    }
+
+    /// <summary>Validates the listed backup, confirms, and waits for maintenance to end; returns the status.</summary>
+    public static async Task<JsonElement> RestoreAsync(HttpClient client, string location, string name)
+    {
+        var validationId = (await ValidAsync(await ValidateAsync(client, location, name))).GetProperty("validationId").GetString()!;
+        using (var started = await StartAsync(client, validationId))
+        {
+            Assert.True(started.StatusCode == HttpStatusCode.Accepted, await started.Content.ReadAsStringAsync());
+        }
+
+        return await WaitForEndAsync(client);
+    }
+
+    /// <summary>Uploads the archive, confirms, and waits until maintenance matches <paramref name="until"/> (by default, has ended).</summary>
+    public static async Task<JsonElement> RestoreUploadAsync(HttpClient client, byte[] archive, Func<JsonElement, bool>? until = null)
+    {
+        var validationId = (await ValidAsync(await UploadAsync(client, archive))).GetProperty("validationId").GetString()!;
+        using (var started = await StartAsync(client, validationId))
+        {
+            Assert.True(started.StatusCode == HttpStatusCode.Accepted, await started.Content.ReadAsStringAsync());
+        }
+
+        return await WaitForStatusAsync(client, until ?? (static status => !status.GetProperty("active").GetBoolean()));
+    }
+
+    /// <summary>The ID of the initial migration: an archive at it is the oldest schema there is.</summary>
+    public const string InitialMigration = "20261004042959_InitialCreate";
+
+    /// <summary>
+    /// <paramref name="archive"/> with its database replaced by a new one migrated only as far as
+    /// <paramref name="migration"/>, and its manifest saying so: what an older version would have made.
+    /// </summary>
+    public static byte[] AtMigration(byte[] archive, string migration)
+    {
+        var file = Path.Combine(Path.GetTempPath(), $"n8tracks-test-{Guid.NewGuid():N}.db");
+        try
+        {
+            var builder = new DbContextOptionsBuilder<N8TracksDbContext>();
+            builder.UseN8TracksSqlite(file);
+            var options = builder.Options;
+            using (var context = new N8TracksDbContext(options))
+            {
+                context.GetService<IMigrator>().Migrate(migration);
+            }
+
+            SqliteConnection.ClearAllPools();
+            var database = ChangeDatabase(File.ReadAllBytes(file), "SELECT 1;");
+            return Rebuild(archive, entries => entries["n8tracks.db"] = database, manifest => manifest["lastMigration"] = migration);
+        }
+        finally
+        {
+            File.Delete(file);
+        }
+    }
+
+    /// <summary>Rows of <paramref name="sql"/>'s first column, read from the live database without changing it.</summary>
+    public static List<string> Column(string dataPath, string sql)
+    {
+        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = Path.Combine(dataPath, "n8tracks.db"),
+            Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false,
+        }.ToString());
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        using var reader = command.ExecuteReader();
+        var values = new List<string>();
+        while (reader.Read())
+        {
+            values.Add(Convert.ToString(reader.GetValue(0), System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty);
+        }
+
+        return values;
+    }
+
+    /// <summary>Every application log line a host writes, kept as text: add with <c>more: log.Register</c>.</summary>
+    public sealed class LogCapture : IDisposable
+    {
+        private readonly StringWriter buffer = new();
+        private readonly TextWriter captured;
+
+        public LogCapture()
+        {
+            captured = TextWriter.Synchronized(buffer);
+        }
+
+        public string Text
+        {
+            get
+            {
+                lock (captured)
+                {
+                    return buffer.ToString();
+                }
+            }
+        }
+
+        public void Register(IServiceCollection services) => services.AddSingleton<Serilog.Core.ILogEventSink>(new JsonLinesSink(captured));
+
+        public void Dispose()
+        {
+            captured.Dispose();
+            buffer.Dispose();
+        }
+    }
+
     /// <summary>Waits until maintenance has ended and returns the status.</summary>
     public static async Task<JsonElement> WaitForEndAsync(HttpClient client)
     {
@@ -119,7 +255,7 @@ internal static class RestoreApi
     /// Every row of every table but <c>sessions</c> (which each signed-in request touches), hashed: the
     /// same before and after means nothing in the catalog, settings, credentials, or jobs changed.
     /// </summary>
-    public static string Fingerprint(string dataPath)
+    public static string Fingerprint(string dataPath, params string[] alsoLeaveOut)
     {
         using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
         {
@@ -136,7 +272,10 @@ internal static class RestoreApi
             using var reader = list.ExecuteReader();
             while (reader.Read())
             {
-                tables.Add(reader.GetString(0));
+                if (!alsoLeaveOut.Contains(reader.GetString(0), StringComparer.Ordinal))
+                {
+                    tables.Add(reader.GetString(0));
+                }
             }
         }
 
