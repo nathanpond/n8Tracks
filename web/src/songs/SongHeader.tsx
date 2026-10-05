@@ -12,6 +12,7 @@ import {
 } from '@mantine/core';
 import { useCallback, useMemo, useState, type ClipboardEvent, type KeyboardEvent } from 'react';
 import type { FieldValue } from '../api/saves';
+import { kindLabel } from '../api/versions';
 import {
   CONCEPT_MAXIMUM_LENGTH,
   updateSong,
@@ -306,7 +307,12 @@ export function SongHeader({ song, onSong }: { song: Song; onSong: (song: Song) 
   return (
     <>
       <Stack gap={4}>
-        <ShortcodeBadge shortcode={song.shortcode} />
+        <Group gap="sm" align="center" wrap="wrap">
+          <ShortcodeBadge shortcode={song.shortcode} />
+          <Text size="sm" data-testid="song-kind">
+            Kind: {kindLabel(song.currentVersion.kind)}
+          </Text>
+        </Group>
         <Group gap="md" align="flex-start" wrap="wrap">
           <div style={{ flex: '1 1 20rem', minWidth: 0 }}>
             <TitleField song={song} save={save} />

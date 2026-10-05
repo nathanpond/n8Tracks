@@ -104,7 +104,7 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
             return [];
         }
 
-        // The inputs are left in the database: the tree does not show them.
+        // The inputs are left in the database: the tree shows only the kind.
         var records = await context.Versions.AsNoTracking()
             .Where(version => version.SongId == songId)
             .OrderBy(static version => version.NumberSortKey)
@@ -119,6 +119,7 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
                 version.UpdatedUtc,
                 version.Revision,
                 version.IsFrozen,
+                version.Kind,
             })
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
@@ -135,7 +136,8 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
             UtcText.Parse(version.CreatedUtc),
             UtcText.Parse(version.UpdatedUtc),
             version.Revision,
-            version.IsFrozen))];
+            version.IsFrozen,
+            VersionInputsColumns.Kind(version.Kind)))];
     }
 
     public async Task AddAsync(SongVersion version, CancellationToken cancellationToken)

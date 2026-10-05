@@ -8,7 +8,7 @@ public sealed class RedactionPolicyTests
     public void TheSensitiveNameListIsTheAgreedOne()
     {
         Assert.Equal(
-            ["password", "passwordconfirmation", "passwordhash", "token", "secret", "cookie", "session", "sessionid", "idhash", "tokenhash", "authorization", "apikey", "lyrics", "prompt", "style", "styles", "simpleprompt", "excludestyles", "rawpayload", "providerpayload", "payload"],
+            ["password", "passwordconfirmation", "passwordhash", "token", "secret", "cookie", "session", "sessionid", "idhash", "tokenhash", "authorization", "apikey", "lyrics", "prompt", "style", "styles", "simpleprompt", "excludestyles", "speechprompt", "speechscript", "speechtone", "sounddescription", "rawpayload", "providerpayload", "payload"],
             RedactionPolicy.SensitiveNames);
     }
 

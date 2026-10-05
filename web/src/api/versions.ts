@@ -3,7 +3,17 @@ import { apiFetch } from './client';
 import type { OptionValue } from './createFields';
 import { ifMatch, patchWithRevision, type FieldValue, type SaveResult } from './saves';
 import { ANTIFORGERY_HEADER } from './session';
-import { body, isRecord, isSong, useResource, type Song } from './songs';
+import {
+  body,
+  isRecord,
+  isSong,
+  isVersionKind,
+  useResource,
+  type Song,
+  type VersionKind,
+} from './songs';
+
+export { isVersionKind, kindLabel, type VersionKind } from './songs';
 
 const SONGS_PATH = 'api/v1/songs';
 const VERSIONS_PATH = 'api/v1/versions';
@@ -21,8 +31,8 @@ export const VERSION_LYRICS_MAXIMUM_LENGTH = 5_000;
 export const VERSION_STYLES_MAXIMUM_LENGTH = 1_000;
 
 /**
- * A Version as the tree shows it: no creation inputs. Times are UTC ISO 8601. `isFrozen` is true
- * once a Generation is attached: its lyrics and styles can no longer change.
+ * A Version as the tree shows it: no creation inputs but its kind. Times are UTC ISO 8601.
+ * `isFrozen` is true once a Generation is attached: its lyrics and styles can no longer change.
  */
 export interface Version {
   id: string;
@@ -37,6 +47,7 @@ export interface Version {
   updatedAt: string;
   revision: number;
   isFrozen: boolean;
+  kind: VersionKind;
 }
 
 /** A number a new Version may take: the next `sibling` after its source, or a `child` under it. */
@@ -60,7 +71,8 @@ export function isVersion(value: unknown): value is Version {
     typeof value.createdAt === 'string' &&
     typeof value.updatedAt === 'string' &&
     typeof value.revision === 'number' &&
-    typeof value.isFrozen === 'boolean'
+    typeof value.isFrozen === 'boolean' &&
+    isVersionKind(value.kind)
   );
 }
 
@@ -75,6 +87,9 @@ export const KIND_OPTION = 'kind';
 
 /** The option that says which form a Song is described in: `simple` or `advanced`. */
 export const SONG_MODE_OPTION = 'songMode';
+
+/** The option that says which form a Speech is described in: `simple` or `advanced`. */
+export const SPEECH_MODE_OPTION = 'speechMode';
 
 /** A Version with its creation inputs, exactly as stored: empty strings when there are none. */
 export interface VersionDetail extends Version {

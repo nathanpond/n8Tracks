@@ -365,6 +365,52 @@ public sealed class LogRedactionGuardTests
     }
 
     /// <summary>
+    /// A Speech's description, script, and tone, and a Sound's description, saved and then refused
+    /// for length, at Debug: the edit reaches the log, no text does.
+    /// </summary>
+    [Fact]
+    public async Task SpeechAndSoundTextNeverReachesTheLog()
+    {
+        string[] sentinels =
+            ["sentinel-speech-prompt-6a3d", "sentinel-speech-script-e2b0", "sentinel-speech-tone-17fc", "sentinel-sound-description-c94a"];
+
+        using var factory = new LoggingApiFactory("Debug");
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var song = await Songs.SongApi.CreateAsync(client, "Logged");
+        var id = song.GetProperty("currentVersion").GetProperty("id").GetString()!;
+
+        foreach (var (revision, padding, expected) in new[]
+        {
+            ("\"1\"", string.Empty, HttpStatusCode.OK),
+            ("\"2\"", new string('x', 5_000), HttpStatusCode.UnprocessableEntity),
+        })
+        {
+            var inputs = new
+            {
+                kind = "speech",
+                speechPrompt = sentinels[0] + padding,
+                speechScript = sentinels[1] + padding,
+                speechTone = sentinels[2] + padding,
+                soundDescription = sentinels[3] + padding,
+            };
+            using var request = Antiforgery(new HttpRequestMessage(HttpMethod.Patch, new Uri($"/api/v1/versions/{id}", UriKind.Relative))
+            {
+                Content = new StringContent(JsonSerializer.Serialize(new { inputs }), Encoding.UTF8, "application/json"),
+            });
+            Assert.True(request.Headers.TryAddWithoutValidation("If-Match", revision));
+            using var response = await client.SendAsync(request);
+            Assert.Equal(expected, response.StatusCode);
+        }
+
+        var captured = factory.CapturedText;
+        Assert.Contains("Version edited", captured, StringComparison.Ordinal);
+        Assert.All(sentinels, sentinel => Assert.DoesNotContain(sentinel, captured, StringComparison.Ordinal));
+        Assert.All(
+            ["speechPrompt", "speechScript", "speechTone", "soundDescription", "speech_script", "sound_description"],
+            name => Assert.True(n8Tracks.Infrastructure.Logging.RedactionPolicy.IsSensitive(name), name));
+    }
+
+    /// <summary>
     /// A Version's history at Debug: a snapshot taken, read back, and restored, and a credential's
     /// edit snapshotting the text it replaces. The snapshot and Version IDs reach the log; no text does.
     /// </summary>

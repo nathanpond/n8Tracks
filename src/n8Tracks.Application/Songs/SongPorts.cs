@@ -31,8 +31,8 @@ public sealed record SongSummary(
 /// <summary>A Song's workflow state, as a Song shows it.</summary>
 public sealed record SongStateSummary(Guid Id, string Name, string Colour);
 
-/// <summary>A Song's current Version, as a Song shows it.</summary>
-public sealed record CurrentVersionSummary(Guid Id, string Number, string Shortcode);
+/// <summary>A Song's current Version, as a Song shows it: with what it creates, so lists can say so.</summary>
+public sealed record CurrentVersionSummary(Guid Id, string Number, string Shortcode, VersionKind Kind);
 
 /// <summary>What Songs are listed by.</summary>
 public enum SongSort
@@ -143,7 +143,7 @@ public interface IWorkflowStateStore
 /// <param name="UsedNumbers">Every number any Version of the Song has or ever had.</param>
 public sealed record VersionNumberingFacts(Guid SongId, string Number, IReadOnlyList<string> UsedNumbers);
 
-/// <summary>A Version as the tree shows it: its number and annotations, without its creation inputs.</summary>
+/// <summary>A Version as the tree shows it: its number, annotations, and kind, without its other creation inputs.</summary>
 /// <param name="Id">A UUIDv7.</param>
 /// <param name="SongId">The Song it belongs to.</param>
 /// <param name="SongShortcodeNumber">The <c>n</c> of its Song's shortcode <c>n8-&lt;n&gt;</c>.</param>
@@ -156,6 +156,7 @@ public sealed record VersionNumberingFacts(Guid SongId, string Number, IReadOnly
 /// <param name="UpdatedUtc">When it last changed.</param>
 /// <param name="Revision">The Version's own revision.</param>
 /// <param name="IsFrozen">Whether a Generation has ever been attached, so its creation inputs can no longer change.</param>
+/// <param name="Kind">What it creates, from its options (shown beside it, though an input).</param>
 public sealed record VersionSummary(
     Guid Id,
     Guid SongId,
@@ -168,7 +169,8 @@ public sealed record VersionSummary(
     DateTimeOffset CreatedUtc,
     DateTimeOffset UpdatedUtc,
     int Revision,
-    bool IsFrozen)
+    bool IsFrozen,
+    VersionKind Kind)
 {
     public string Shortcode => Shortcodes.ForVersion(SongShortcodeNumber, Number);
 }

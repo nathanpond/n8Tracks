@@ -12,6 +12,20 @@ export const CONCEPT_MAXIMUM_LENGTH = 2000;
 /** The page size the list is asked for: the API's default. */
 export const SONGS_PAGE_SIZE = 50;
 
+/** What a Version creates, as its `kind` option and the API's `kind` say it. */
+export type VersionKind = 'song' | 'speech' | 'sound';
+
+const KINDS: readonly string[] = ['song', 'speech', 'sound'];
+
+export function isVersionKind(value: unknown): value is VersionKind {
+  return typeof value === 'string' && KINDS.includes(value);
+}
+
+/** A kind as the page writes it: Song, Speech, or Sound. */
+export function kindLabel(kind: VersionKind): string {
+  return kind.charAt(0).toUpperCase() + kind.slice(1);
+}
+
 /** A Song as the API answers it. Times are UTC ISO 8601. */
 export interface Song {
   id: string;
@@ -19,7 +33,8 @@ export interface Song {
   title: string;
   concept: string | null;
   state: { id: string; name: string; colour: string };
-  currentVersion: { id: string; number: string; shortcode: string };
+  /** The Version the user is working from, and what it creates. */
+  currentVersion: { id: string; number: string; shortcode: string; kind: VersionKind };
   versionCount: number;
   createdAt: string;
   updatedAt: string;
@@ -71,6 +86,7 @@ export function isSong(value: unknown): value is Song {
     typeof value.state.colour === 'string' &&
     isRecord(value.currentVersion) &&
     typeof value.currentVersion.shortcode === 'string' &&
+    isVersionKind(value.currentVersion.kind) &&
     typeof value.versionCount === 'number' &&
     typeof value.createdAt === 'string' &&
     typeof value.updatedAt === 'string' &&

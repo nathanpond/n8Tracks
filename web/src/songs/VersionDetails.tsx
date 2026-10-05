@@ -18,6 +18,7 @@ import { restoreSnapshot, type Snapshot } from '../api/snapshots';
 import { useConfiguredTimeZone } from '../api/timeZone';
 import {
   isVersionDetail,
+  KIND_OPTION,
   OPTION_EDIT_PREFIX,
   optionFromText,
   optionText,
@@ -43,7 +44,7 @@ import { LeaveGuard } from '../editor/LeaveGuard';
 import { useAutosave, type AutosaveStatus, type Edit } from '../editor/useAutosave';
 import { useSnapshots, type EditorText } from '../editor/useSnapshots';
 import { VersionInputs } from '../editor/VersionInputs';
-import { SongOptions } from './inputs/SongOptions';
+import { OptionsPanel } from './inputs/OptionsPanel';
 import { choiceLabel } from './inputs/optionFormat';
 import { RelativeTime } from './SongParts';
 import { nameError, notesError, singleLine } from './songRules';
@@ -468,8 +469,18 @@ function LoadedVersionDetails({
         />
       );
     };
-    const labelOf = (key: string) =>
-      createFields.fields.find((field) => field.option === key)?.label ?? choiceLabel(key);
+    // Speech and Sound options share labels with a Song's (Vocal Gender, Variety), so say whose.
+    const labelOf = (key: string) => {
+      const field = createFields.fields.find((candidate) => candidate.option === key);
+      if (field === undefined) {
+        return choiceLabel(key);
+      }
+      return field.tab === 'speech'
+        ? `Speech: ${field.label}`
+        : field.tab === 'sounds'
+          ? `Sound: ${field.label}`
+          : field.label;
+    };
     return [
       { key: 'name', label: 'Name', read: (current) => current.name, show },
       { key: 'notes', label: 'Notes', read: (current) => current.notes, show },
@@ -678,6 +689,8 @@ function LoadedVersionDetails({
 
   const shown: Version = { ...record, current: version.current };
   const frozen = record.isFrozen;
+  // The editing history covers a Song's lyrics and styles; a Speech or Sound has none in V1.
+  const isSong = (drafts.inputs[KIND_OPTION] ?? 'song') === 'song';
   // On a frozen Version, branching from it carries any text it could not take.
   const paneActions: VersionActions = useMemo(
     () => ({
@@ -726,7 +739,7 @@ function LoadedVersionDetails({
             />
           )}
         </div>
-        <SongOptions
+        <OptionsPanel
           fields={createFields}
           options={drafts.inputs}
           onOption={changeOption}
@@ -747,25 +760,27 @@ function LoadedVersionDetails({
             />
           )}
         />
-        <Divider />
-        <HistoryPanel
-          versionId={record.id}
-          current={{ lyrics: drafts.lyrics, styles: drafts.styles }}
-          timeZone={timeZone}
-          refreshKey={historyKey}
-          restoreBlocked={restoreBlockedBy(autosave.status)}
-          onRestore={restore}
-          onRestoreIntoNew={
-            frozen
-              ? (snapshot) => {
-                  actions.onCreateFrom(shown, {
-                    lyrics: snapshot.lyrics,
-                    styles: snapshot.styles,
-                  });
-                }
-              : undefined
-          }
-        />
+        {isSong && <Divider />}
+        {isSong && (
+          <HistoryPanel
+            versionId={record.id}
+            current={{ lyrics: drafts.lyrics, styles: drafts.styles }}
+            timeZone={timeZone}
+            refreshKey={historyKey}
+            restoreBlocked={restoreBlockedBy(autosave.status)}
+            onRestore={restore}
+            onRestoreIntoNew={
+              frozen
+                ? (snapshot) => {
+                    actions.onCreateFrom(shown, {
+                      lyrics: snapshot.lyrics,
+                      styles: snapshot.styles,
+                    });
+                  }
+                : undefined
+            }
+          />
+        )}
       </Stack>
       {dialog}
       <LeaveGuard status={autosave.status} flush={flush} onPageHide={onPageHide} />

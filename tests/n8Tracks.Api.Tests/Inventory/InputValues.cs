@@ -34,6 +34,9 @@ internal static class InputValues
             case JsonValueKind.Number:
                 var number = current.GetInt32();
                 return (number < field.Max ? number + 1 : number - 1).ToString(CultureInfo.InvariantCulture);
+            case JsonValueKind.Null when field.Type is CreateField.NumberType or CreateField.RangeType:
+                // A number left empty (a Sound's BPM on Auto) changes to the lowest it can be.
+                return (field.Min ?? 0).ToString(CultureInfo.InvariantCulture);
         }
 
         if (field.Values is { } values)

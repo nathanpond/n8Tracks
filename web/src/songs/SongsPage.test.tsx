@@ -38,6 +38,7 @@ function song(number: number, overrides: Partial<Song> = {}): Song {
       id: `0199b1a0-0000-7000-9000-${String(number).padStart(12, '0')}`,
       number: '1',
       shortcode: `${shortcode}-v1`,
+      kind: 'song',
     },
     versionCount: 1,
     createdAt: '2026-10-01T09:00:00Z',
@@ -163,7 +164,7 @@ describe('Songs', () => {
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
   });
 
-  it('lists each Song with its shortcode, title, concept, state, Versions, and updated time', async () => {
+  it('lists each Song with its shortcode, title, concept, state, kind, Versions, and updated time', async () => {
     const updated = new Date(Date.now() - 5 * 60 * 1000).toISOString();
     backend({
       list: () =>
@@ -171,7 +172,17 @@ describe('Songs', () => {
           200,
           page([
             song(3, { concept: LONG_CONCEPT, updatedAt: updated }),
-            song(2, { state: ARCHIVED, versionCount: 4, title: 'Older one' }),
+            song(2, {
+              state: ARCHIVED,
+              versionCount: 4,
+              title: 'Older one',
+              currentVersion: {
+                id: '0199b1a0-0000-7000-9000-000000000002',
+                number: '3',
+                shortcode: 'n8-2-v3',
+                kind: 'sound',
+              },
+            }),
           ]),
         ),
     });
@@ -183,13 +194,15 @@ describe('Songs', () => {
       within(table)
         .getAllByRole('columnheader')
         .map((cell) => cell.textContent),
-    ).toEqual(['Shortcode', 'Title', 'Concept', 'State', 'Versions', 'Updated ▼']);
+    ).toEqual(['Shortcode', 'Title', 'Concept', 'State', 'Kind', 'Versions', 'Updated ▼']);
     const first = row('n8-3');
     expect(within(first).getByRole('link', { name: 'Running in a Pack' })).toHaveAttribute(
       'href',
       '/songs/n8-3',
     );
     expect(within(first).getByText('Idea')).toBeVisible();
+    // The kind of the Song's current Version, as text.
+    expect(within(first).getByText('Song')).toBeVisible();
     expect(within(first).getByText('1')).toBeVisible();
     expect(within(first).getByText('5 minutes ago')).toBeVisible();
     // Archived Songs are listed like any other.
@@ -199,6 +212,7 @@ describe('Songs', () => {
       'gray',
     );
     expect(within(second).getByText('4')).toBeVisible();
+    expect(within(second).getByText('Sound')).toBeVisible();
     expect(screen.getByText('2 Songs')).toBeVisible();
   });
 

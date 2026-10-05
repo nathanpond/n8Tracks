@@ -25,6 +25,15 @@ internal static class VersionInputsColumns
         return (kind, model, json.ToJsonString());
     }
 
+    /// <summary>The kind the <c>kind</c> column holds, as the options spell it (<c>song</c>, <c>speech</c>, <c>sound</c>).</summary>
+    public static VersionKind Kind(string kind) => kind switch
+    {
+        "song" => VersionKind.Song,
+        "speech" => VersionKind.Speech,
+        "sound" => VersionKind.Sound,
+        _ => throw new JsonException($"A Version's kind '{kind}' is not one n8Tracks knows."),
+    };
+
     /// <summary>The options the three column values hold. Throws <see cref="JsonException"/> on a document that lacks an option.</summary>
     public static VersionInputs Read(string kind, string? model, string inputs)
     {

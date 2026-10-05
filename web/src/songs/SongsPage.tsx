@@ -16,6 +16,7 @@ import { useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
 import {
   defaultDirection,
+  kindLabel,
   songListParameters,
   songQueryFrom,
   useSongs,
@@ -132,6 +133,7 @@ function SongRow({ song, timeZone, from }: { song: Song; timeZone: string; from:
       <Table.Td>
         <StateBadge name={song.state.name} colour={song.state.colour} />
       </Table.Td>
+      <Table.Td>{kindLabel(song.currentVersion.kind)}</Table.Td>
       <Table.Td ta="end">{song.versionCount}</Table.Td>
       <Table.Td style={{ whiteSpace: 'nowrap' }}>
         <RelativeTime utc={song.updatedAt} timeZone={timeZone} />
@@ -267,6 +269,7 @@ export function SongsPage() {
                   <SortHeader label="Title" sort="title" query={query} onSort={sortBy} />
                   <Table.Th scope="col">Concept</Table.Th>
                   <Table.Th scope="col">State</Table.Th>
+                  <Table.Th scope="col">Kind</Table.Th>
                   <Table.Th scope="col" ta="end">
                     Versions
                   </Table.Th>

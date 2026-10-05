@@ -10,8 +10,18 @@ function songs(field: Omit<CreateField, 'tab' | 'help'> & { help?: string }): Cr
   return { tab: 'songs', help: null, ...field };
 }
 
+/** A Speech field as the API serves it. */
+function speech(field: Omit<CreateField, 'tab' | 'help'>): CreateField {
+  return { tab: 'speech', help: null, ...field };
+}
+
+/** A Sounds field as the API serves it (Sounds has one form, `single`). */
+function sounds(field: Omit<CreateField, 'tab' | 'help' | 'modes'>): CreateField {
+  return { tab: 'sounds', help: null, modes: ['single'], ...field };
+}
+
 /**
- * The Songs fields the option controls use, as the API serves them from the field inventory
+ * The Songs, Speech, and Sounds fields the option controls use, as the API serves them from the field inventory
  * (`docs/suno-create-field-inventory.json`), with their options and Suno's tooltips.
  */
 export const CREATE_FIELDS: CreateFields = {
@@ -177,6 +187,108 @@ export const CREATE_FIELDS: CreateFields = {
       maxLength: 100,
       option: 'title',
     }),
+    speech({
+      key: 'speech_prompt',
+      label: 'Speech description',
+      modes: SIMPLE,
+      type: 'text',
+      maxLength: 1000,
+      default: '',
+      option: 'speechPrompt',
+    }),
+    speech({
+      key: 'speech_script',
+      label: 'Script',
+      modes: ADVANCED,
+      type: 'text',
+      maxLength: 5000,
+      default: '',
+      option: 'speechScript',
+    }),
+    speech({
+      key: 'speech_tone',
+      label: 'Tone',
+      modes: ADVANCED,
+      type: 'text',
+      maxLength: 1000,
+      default: '',
+      option: 'speechTone',
+    }),
+    speech({
+      key: 'speech_vocal_gender',
+      label: 'Vocal Gender',
+      modes: ADVANCED,
+      type: 'choice',
+      values: ['male', 'female'],
+      default: null,
+      option: 'speechVocalGender',
+    }),
+    speech({
+      key: 'speech_background_music',
+      label: 'Background music',
+      modes: ADVANCED,
+      type: 'toggle',
+      default: true,
+      option: 'speechBackgroundMusic',
+    }),
+    speech({
+      key: 'speech_variety',
+      label: 'Variety',
+      modes: ADVANCED,
+      type: 'choice',
+      values: ['off', 'normal', 'high', 'extra', 'max'],
+      default: 'normal',
+      option: 'speechVariety',
+    }),
+    sounds({
+      key: 'sounds_model',
+      label: 'Model version',
+      type: 'choice',
+      values: ['v6', 'v6-wild', 'v6-mini'],
+      default: null,
+      option: 'soundsModel',
+    }),
+    sounds({
+      key: 'sound_description',
+      label: 'Sound',
+      type: 'text',
+      maxLength: 500,
+      default: '',
+      option: 'soundDescription',
+    }),
+    sounds({
+      key: 'sound_type',
+      label: 'Type',
+      type: 'choice',
+      values: ['one_shot', 'loop'],
+      default: 'one_shot',
+      option: 'soundType',
+    }),
+    sounds({
+      key: 'sound_bpm',
+      label: 'BPM',
+      type: 'number',
+      min: 1,
+      max: 300,
+      default: null,
+      option: 'soundBpm',
+    }),
+    sounds({
+      key: 'sound_key',
+      label: 'Key',
+      type: 'choice',
+      values: ['any', 'C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'],
+      default: 'any',
+      option: 'soundKey',
+    }),
+    sounds({
+      key: 'sound_scale',
+      label: 'Key scale',
+      type: 'choice',
+      values: ['major', 'minor'],
+      default: null,
+      option: 'soundScale',
+    }),
   ],
 };
 
@@ -199,4 +311,16 @@ export const DEFAULT_INPUTS: VersionOptions = {
   variety: 'normal',
   personalize: false,
   title: 'Running in a Pack',
+  speechPrompt: '',
+  speechScript: '',
+  speechTone: '',
+  speechVocalGender: null,
+  speechBackgroundMusic: true,
+  speechVariety: 'normal',
+  soundsModel: null,
+  soundDescription: '',
+  soundType: 'one_shot',
+  soundBpm: null,
+  soundKey: 'any',
+  soundScale: null,
 };

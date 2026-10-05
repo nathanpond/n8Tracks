@@ -127,7 +127,8 @@ test.describe('the Songs screen, from empty', { tag: '@root-only' }, () => {
     await expect(first.getByRole('cell').nth(0)).toHaveText(TITLE);
     await expect(first.getByRole('cell').nth(1)).toHaveText(CONCEPT);
     await expect(first.getByRole('cell').nth(2)).toHaveText('Idea');
-    await expect(first.getByRole('cell').nth(3)).toHaveText('1');
+    await expect(first.getByRole('cell').nth(3)).toHaveText('Song');
+    await expect(first.getByRole('cell').nth(4)).toHaveText('1');
     // The long concept is cut to one line, and all of it shows on keyboard focus.
     const concept = first.getByRole('cell').nth(1).locator('[tabindex="0"]');
     const box = await concept.boundingBox();

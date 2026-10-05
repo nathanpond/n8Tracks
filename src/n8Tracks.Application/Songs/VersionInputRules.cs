@@ -35,6 +35,12 @@ public static class VersionInputRules
     public const string SingleMode = "single";
 
     private const string ModelKey = "model";
+    private const string SoundKeyKey = "sound_key";
+    private const string SoundScaleKey = "sound_scale";
+    private const string AnyKey = "any";
+
+    /// <summary>The fields naming a Suno model (a Song's and a Sound's, kept apart), each checked against the model list.</summary>
+    private static readonly HashSet<string> ModelKeys = new(StringComparer.Ordinal) { ModelKey, "sounds_model" };
     private const string TitleKey = "title";
     private const string DurationModeKey = "duration_mode";
     private const string DurationSecondsKey = "duration_seconds";
@@ -128,7 +134,7 @@ public static class VersionInputRules
     /// <summary>
     /// The errors of the options an edit sends, keyed by <see cref="FieldName"/>; empty when every one
     /// is valid. A key that is not an option is refused, and so is each value outside its option's
-    /// list, range, or limit, as the inventory gives them; the model must be on
+    /// list, range, or limit, as the inventory gives them; a model (a Song's or a Sound's) must be on
     /// <paramref name="models"/>. <c>null</c> is accepted only by an option whose inventory default is null.
     /// </summary>
     public static Dictionary<string, string[]> Errors(
@@ -185,7 +191,7 @@ public static class VersionInputRules
     /// the kind's mode (a Sound has none), and, in the inventory's order, each stored option on the
     /// kind's tab and in its mode whose condition is met. Lyrics and styles are included in Advanced
     /// mode, and in Simple mode only when their section is added; the custom duration only when the
-    /// duration is custom.
+    /// duration is custom; a Sound's scale only when its key is not Any.
     /// </summary>
     public static JsonObject Effective(CreateFieldInventory inventory, VersionInputs inputs, string lyrics, string styles)
     {
@@ -234,6 +240,12 @@ public static class VersionInputRules
                 continue;
             }
 
+            if (field.Key == SoundScaleKey
+                && (!BySunoKey.TryGetValue(SoundKeyKey, out var key) || (string?)all[key.Name] == AnyKey))
+            {
+                continue;
+            }
+
             effective[option.Name] = all[option.Name]?.DeepClone();
         }
 
@@ -275,16 +287,22 @@ public static class VersionInputRules
             return value.ValueKind is JsonValueKind.True or JsonValueKind.False ? [] : [$"{field.Label}: send true or false."];
         }
 
-        if (option.Type == typeof(int))
+        if (option.Type == typeof(int) || option.Type == typeof(int?))
         {
+            var nullable = option.Type == typeof(int?) && field.DefaultsToNull;
+            if (value.ValueKind == JsonValueKind.Null && nullable)
+            {
+                return [];
+            }
+
             var minimum = field.Min ?? int.MinValue;
             var maximum = field.Max ?? int.MaxValue;
             return value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number) && number >= minimum && number <= maximum
                 ? []
-                : [string.Create(CultureInfo.InvariantCulture, $"{field.Label} is a whole number from {minimum} to {maximum}.")];
+                : [string.Create(CultureInfo.InvariantCulture, $"{field.Label} is a whole number from {minimum} to {maximum}{(nullable ? ", or null for none" : string.Empty)}.")];
         }
 
-        if (field.Key == ModelKey)
+        if (ModelKeys.Contains(field.Key))
         {
             return Choice(value, models, field.DefaultsToNull, $"{field.Label} (the model list)");
         }

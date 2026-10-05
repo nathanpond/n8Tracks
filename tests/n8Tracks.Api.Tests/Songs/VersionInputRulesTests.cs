@@ -23,6 +23,7 @@ public sealed class VersionInputRulesTests
 
         Assert.Equal(committed, Inventory.Json);
         Assert.Equal(35, Inventory.Fields.Count);
+        Assert.Equal(1000, Inventory.Get("speech_prompt").MaxLength);
         Assert.Equal(100, Inventory.Get("weirdness").Max);
         Assert.True(Inventory.Get("vocal_gender").DefaultsToNull);
         Assert.False(Inventory.Get("simple_add_lyrics").HasDefault);
@@ -36,7 +37,8 @@ public sealed class VersionInputRulesTests
 
         Assert.Equal(
             new VersionInputs(
-                VersionKind.Song, CreationMode.Advanced, CreationMode.Advanced, null, "", false, false, "", null, "auto", 180, false, 50, 50, "normal", false, "Pack"),
+                VersionKind.Song, CreationMode.Advanced, CreationMode.Advanced, null, "", false, false, "", null, "auto", 180, false, 50, 50, "normal", false, "Pack",
+                "", "", "", null, true, "normal", null, "", "one_shot", null, "any", null),
             defaults);
 
         // Each default with one is the inventory's, so a re-captured default changes it.
@@ -113,9 +115,91 @@ public sealed class VersionInputRulesTests
             ["kind", "songMode", "model", "simplePrompt", "simpleLyricsAdded", "simpleStylesAdded", "styles"],
             VersionInputRules.Effective(Inventory, simple with { SimpleStylesAdded = true }, "words", "punk").Select(static option => option.Key));
 
-        // Speech and Sound: no Song option.
-        Assert.Equal("""{"kind":"speech","speechMode":"advanced"}""", VersionInputRules.Effective(Inventory, advanced with { Kind = VersionKind.Speech }, "words", "punk").ToJsonString());
-        Assert.Equal("""{"kind":"sound"}""", VersionInputRules.Effective(Inventory, advanced with { Kind = VersionKind.Sound }, "words", "punk").ToJsonString());
+        // Speech and Sound: no Song option, and no lyrics or styles.
+        Assert.Equal(
+            """{"kind":"speech","speechMode":"advanced","speechScript":"","speechTone":"","speechVocalGender":null,"speechBackgroundMusic":true,"speechVariety":"normal"}""",
+            VersionInputRules.Effective(Inventory, advanced with { Kind = VersionKind.Speech }, "words", "punk").ToJsonString());
+        Assert.Equal(
+            """{"kind":"sound","soundsModel":null,"soundDescription":"","soundType":"one_shot","soundBpm":null,"soundKey":"any"}""",
+            VersionInputRules.Effective(Inventory, advanced with { Kind = VersionKind.Sound }, "words", "punk").ToJsonString());
+    }
+
+    [Fact]
+    public void ASpeechInSimpleModeSendsOnlyItsPromptAndInAdvancedModeOnlyItsAdvancedOptions()
+    {
+        var speech = VersionInputRules.Defaults(Inventory, "Pack") with
+        {
+            Kind = VersionKind.Speech,
+            SpeechPrompt = "A narrator",
+            SpeechScript = "Once upon a time",
+            SpeechVocalGender = "female",
+            VocalGender = "male",
+            Variety = "max",
+        };
+
+        Assert.Equal(
+            """{"kind":"speech","speechMode":"simple","speechPrompt":"A narrator"}""",
+            VersionInputRules.Effective(Inventory, speech with { SpeechMode = CreationMode.Simple }, "", "").ToJsonString());
+
+        // A Speech's Vocal Gender and Variety are its own, not the Song's.
+        var advanced = VersionInputRules.Effective(Inventory, speech, "", "");
+        Assert.Equal("female", advanced["speechVocalGender"]!.GetValue<string>());
+        Assert.Equal("normal", advanced["speechVariety"]!.GetValue<string>());
+        Assert.False(advanced.ContainsKey("vocalGender"));
+        Assert.False(advanced.ContainsKey("speechPrompt"));
+    }
+
+    [Fact]
+    public void ASoundsScaleIsSentOnlyWithAKeyOtherThanAny()
+    {
+        var sound = VersionInputRules.Defaults(Inventory, "Pack") with
+        {
+            Kind = VersionKind.Sound,
+            SoundKey = "A",
+            SoundScale = "minor",
+            SoundBpm = 120,
+            SoundType = "loop",
+            SoundsModel = "v6-mini",
+            Model = "v6",
+        };
+
+        Assert.Equal(
+            """{"kind":"sound","soundsModel":"v6-mini","soundDescription":"","soundType":"loop","soundBpm":120,"soundKey":"A","soundScale":"minor"}""",
+            VersionInputRules.Effective(Inventory, sound, "", "").ToJsonString());
+
+        // Complement: with the key back to Any, the stored scale is kept but not sent.
+        var any = sound with { SoundKey = "any" };
+        Assert.False(VersionInputRules.Effective(Inventory, any, "", "").ContainsKey("soundScale"));
+        Assert.Equal("minor", any.SoundScale);
+
+        // A key with no scale sends the scale as none.
+        Assert.Null(VersionInputRules.Effective(Inventory, sound with { SoundScale = null }, "", "")["soundScale"]);
+    }
+
+    [Fact]
+    public void SpeechAndSoundValuesAreCheckedAgainstTheInventory()
+    {
+        Assert.Empty(Errors("""{"soundBpm":1,"soundKey":"C#","soundScale":"major","soundType":"loop","soundsModel":"v6","speechVariety":"off","speechVocalGender":null,"speechBackgroundMusic":false}"""));
+        Assert.Empty(Errors("""{"soundBpm":300,"soundScale":null,"soundsModel":null}"""));
+        Assert.Empty(Errors("""{"soundBpm":null}"""));
+
+        var errors = Errors("""{"soundBpm":0,"soundKey":"H","soundType":"drone","soundScale":"dorian","speechVariety":"loud","speechBackgroundMusic":null,"soundsModel":"v5"}""");
+
+        Assert.Equal(
+            ["inputs.soundBpm", "inputs.soundKey", "inputs.soundScale", "inputs.soundType", "inputs.soundsModel", "inputs.speechBackgroundMusic", "inputs.speechVariety"],
+            errors.Keys.Order(StringComparer.Ordinal));
+        Assert.Equal("BPM is a whole number from 1 to 300, or null for none.", errors["inputs.soundBpm"][0]);
+        Assert.NotEmpty(Errors("""{"soundBpm":301}"""));
+        Assert.NotEmpty(Errors("""{"soundBpm":120.5}"""));
+        Assert.NotEmpty(Errors("""{"soundBpm":"120"}"""));
+        Assert.NotEmpty(Errors($$$"""{"speechScript":"{{{new string('x', 5_001)}}}"}"""));
+        Assert.Empty(Errors($$$"""{"speechScript":"{{{new string('x', 5_000)}}}"}"""));
+        Assert.NotEmpty(Errors($$$"""{"speechTone":"{{{new string('x', 1_001)}}}"}"""));
+        Assert.NotEmpty(Errors($$$"""{"speechPrompt":"{{{new string('x', 1_001)}}}"}"""));
+        Assert.NotEmpty(Errors($$$"""{"soundDescription":"{{{new string('x', 501)}}}"}"""));
+
+        // A Sound's model, like a Song's, is checked against the model list.
+        Assert.Empty(VersionInputRules.Errors(Inventory, ["v7"], Sent("""{"soundsModel":"v7"}""")));
     }
 
     [Fact]

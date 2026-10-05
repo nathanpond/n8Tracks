@@ -707,8 +707,9 @@ internal sealed record UpdateVersionRequest(JsonElement Name, JsonElement Notes,
 internal sealed record SetCurrentVersionRequest(string? VersionId);
 
 /// <summary>
-/// A Version as the tree shows it, without its creation inputs. Times are UTC. <c>isFrozen</c> is
-/// true once a Generation has been attached: its lyrics, styles, and options can no longer change.
+/// A Version as the tree shows it, without its creation inputs other than its kind. Times are UTC.
+/// <c>isFrozen</c> is true once a Generation has been attached: its lyrics, styles, and options can no
+/// longer change. <c>kind</c> is what it creates: <c>song</c>, <c>speech</c>, or <c>sound</c>.
 /// </summary>
 internal sealed record VersionResponse(
     Guid Id,
@@ -722,7 +723,8 @@ internal sealed record VersionResponse(
     DateTime CreatedAt,
     DateTime UpdatedAt,
     int Revision,
-    bool IsFrozen)
+    bool IsFrozen,
+    string Kind)
 {
     public static VersionResponse From(VersionSummary version)
     {
@@ -740,7 +742,8 @@ internal sealed record VersionResponse(
             version.CreatedUtc.UtcDateTime,
             version.UpdatedUtc.UtcDateTime,
             version.Revision,
-            version.IsFrozen);
+            version.IsFrozen,
+            JsonNamingPolicy.CamelCase.ConvertName(version.Kind.ToString()));
     }
 }
 
@@ -764,6 +767,7 @@ internal sealed record VersionDetailResponse(
     DateTime UpdatedAt,
     int Revision,
     bool IsFrozen,
+    string Kind,
     string Lyrics,
     string Styles,
     JsonObject Inputs,
@@ -787,6 +791,7 @@ internal sealed record VersionDetailResponse(
             summary.UpdatedAt,
             summary.Revision,
             summary.IsFrozen,
+            summary.Kind,
             version.Lyrics,
             version.Styles,
             VersionInputRules.ToJson(version.Inputs),

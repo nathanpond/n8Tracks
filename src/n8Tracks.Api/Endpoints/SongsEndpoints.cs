@@ -275,7 +275,11 @@ internal sealed record SongResponse(
             song.Title,
             song.Concept,
             new SongStateResponse(song.State.Id, song.State.Name, song.State.Colour),
-            new CurrentVersionResponse(song.CurrentVersion.Id, song.CurrentVersion.Number, song.CurrentVersion.Shortcode),
+            new CurrentVersionResponse(
+                song.CurrentVersion.Id,
+                song.CurrentVersion.Number,
+                song.CurrentVersion.Shortcode,
+                JsonNamingPolicy.CamelCase.ConvertName(song.CurrentVersion.Kind.ToString())),
             song.VersionCount,
             song.CreatedUtc.UtcDateTime,
             song.UpdatedUtc.UtcDateTime,
@@ -286,8 +290,8 @@ internal sealed record SongResponse(
 /// <summary>A Song's workflow state, as a Song shows it.</summary>
 internal sealed record SongStateResponse(Guid Id, string Name, string Colour);
 
-/// <summary>A Song's current Version, as a Song shows it.</summary>
-internal sealed record CurrentVersionResponse(Guid Id, string Number, string Shortcode);
+/// <summary>A Song's current Version, as a Song shows it; <c>kind</c> is what it creates (<c>song</c>, <c>speech</c>, or <c>sound</c>).</summary>
+internal sealed record CurrentVersionResponse(Guid Id, string Number, string Shortcode, string Kind);
 
 /// <summary>A page of Songs.</summary>
 internal sealed record SongListResponse(SongResponse[] Items, int Page, int PageSize, int Total)

@@ -149,11 +149,16 @@ internal static class SongApi
         string styles = "")
     {
         var id = Guid.CreateVersion7();
+
+        // The options as a new Version's are stored (every key but the kind and model, which have columns).
+        var inputs = VersionInputRules.ToJson(Inventory.InputValues.Defaults());
+        inputs.Remove(VersionInputRules.KindKey);
+        inputs.Remove("model");
         TestDatabase.Execute(
             dataPath,
             $"""
-            INSERT INTO versions (id, song_id, number, number_sort_key, visibility, lyrics, styles, created_utc, updated_utc, revision)
-            SELECT '{id.ToString().ToUpperInvariant()}', id, '{number}', '{VersionNumbers.SortKey(number)}', '{visibility}', '{lyrics.Replace("'", "''", StringComparison.Ordinal)}', '{styles.Replace("'", "''", StringComparison.Ordinal)}', '2026-10-03T10:00:00.000Z', '2026-10-03T10:00:00.000Z', 1
+            INSERT INTO versions (id, song_id, number, number_sort_key, visibility, lyrics, styles, created_utc, updated_utc, revision, inputs)
+            SELECT '{id.ToString().ToUpperInvariant()}', id, '{number}', '{VersionNumbers.SortKey(number)}', '{visibility}', '{lyrics.Replace("'", "''", StringComparison.Ordinal)}', '{styles.Replace("'", "''", StringComparison.Ordinal)}', '2026-10-03T10:00:00.000Z', '2026-10-03T10:00:00.000Z', 1, '{inputs.ToJsonString().Replace("'", "''", StringComparison.Ordinal)}'
             FROM songs WHERE shortcode_number = {shortcodeNumber};
             """);
         return id;

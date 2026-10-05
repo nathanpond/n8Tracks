@@ -154,8 +154,8 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
             .ConfigureAwait(false);
         var currentVersions = await context.Versions.AsNoTracking()
             .Where(version => versionIds.Contains(version.Id))
-            .Select(static version => new { version.Id, version.Number })
-            .ToDictionaryAsync(static version => version.Id, static version => version.Number, cancellationToken)
+            .Select(static version => new { version.Id, version.Number, version.Kind })
+            .ToDictionaryAsync(static version => version.Id, cancellationToken)
             .ConfigureAwait(false);
         var counts = await context.Versions.AsNoTracking()
             .Where(version => songIds.Contains(version.SongId))
@@ -168,7 +168,7 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
         {
             var state = states[song.WorkflowStateId];
             var currentId = song.CurrentVersionId ?? throw new InvalidOperationException($"Song {song.Id} has no current Version.");
-            var number = currentVersions[currentId];
+            var current = currentVersions[currentId];
 
             return new SongSummary(
                 song.Id,
@@ -176,7 +176,7 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
                 song.Title,
                 song.Concept,
                 new SongStateSummary(state.Id, state.Name, state.Colour),
-                new CurrentVersionSummary(currentId, number, Shortcodes.ForVersion(song.ShortcodeNumber, number)),
+                new CurrentVersionSummary(currentId, current.Number, Shortcodes.ForVersion(song.ShortcodeNumber, current.Number), VersionInputsColumns.Kind(current.Kind)),
                 counts.GetValueOrDefault(song.Id),
                 UtcText.Parse(song.CreatedUtc),
                 UtcText.Parse(song.UpdatedUtc),

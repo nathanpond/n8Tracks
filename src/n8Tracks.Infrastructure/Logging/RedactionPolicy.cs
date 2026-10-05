@@ -51,6 +51,13 @@ public static class RedactionPolicy
         // named so a rename of either word cannot uncover them).
         "simpleprompt",
         "excludestyles",
+
+        // A Speech's description, script, and tone, and a Sound's description: prompt text too, under
+        // names no word above covers (only the first ends in "prompt").
+        "speechprompt",
+        "speechscript",
+        "speechtone",
+        "sounddescription",
         "rawpayload",
         "providerpayload",
 

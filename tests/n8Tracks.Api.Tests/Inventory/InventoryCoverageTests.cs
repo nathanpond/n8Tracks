@@ -15,8 +15,8 @@ namespace n8Tracks.Api.Tests.Inventory;
 /// (<c>docs/suno-create-field-inventory.json</c>, the copy embedded in the build), whatever its tab,
 /// and fails when a field has no option stored on a Version, is not round-tripped by the API, or has a
 /// limit, range, value list, or default that disagrees with the inventory. Fields deferred to a later
-/// milestone are left out only by name, in the lists below, which are themselves asserted; a new field
-/// of any type that is on neither list fails. The check reads the inventory and the API alone, so it
+/// milestone are left out only by name, in the list below, which is itself asserted; a new field
+/// of any type that is not on it fails. The check reads the inventory and the API alone, so it
 /// knows nothing of how n8Tracks stores an option: an option's API name is the inventory key in
 /// camelCase, apart from the two renamed below.
 /// </summary>
@@ -25,13 +25,6 @@ public sealed class InventoryCoverageTests
     /// <summary>Reference and file inputs, whose mechanics belong to M4 (spike TS-002).</summary>
     private static readonly string[] DeferredToM4 =
         ["simple_add_playlist", "simple_add_image", "simple_add_video", "audio", "voice", "inspiration", "workspace"];
-
-    /// <summary>The Speech and Sounds fields, until their story (#113) stores them and empties this list.</summary>
-    private static readonly string[] SpeechAndSoundsUntil113 =
-    [
-        "speech_prompt", "speech_script", "speech_tone", "speech_vocal_gender", "speech_background_music", "speech_variety",
-        "sounds_model", "sound_description", "sound_type", "sound_bpm", "sound_key", "sound_scale",
-    ];
 
     /// <summary>
     /// The Simple form's "add a section" fields, a two-value choice in the inventory (write new or use
@@ -56,7 +49,7 @@ public sealed class InventoryCoverageTests
     private const string SongTitle = "Coverage";
 
     [Fact]
-    public void TheExclusionListsNameOnlyFieldsTheInventoryHasAndDeferred()
+    public void TheExclusionListNamesOnlyFieldsTheInventoryHasAndDeferred()
     {
         var inventory = CreateFieldInventory.Embedded;
 
@@ -66,19 +59,15 @@ public sealed class InventoryCoverageTests
         Assert.All(DeferredToM4, key => Assert.Contains(
             inventory.Get(key).Type,
             new[] { CreateField.ReferenceType, CreateField.FileType }));
-        Assert.All(SpeechAndSoundsUntil113, key => Assert.Contains(inventory.Get(key).Tab, new[] { "speech", "sounds" }));
-        Assert.Empty(DeferredToM4.Intersect(SpeechAndSoundsUntil113, StringComparer.Ordinal));
 
-        // Every Speech and Sounds field is on the list, so #113 removes the list rather than trimming it.
-        Assert.Equal(
-            inventory.Fields.Where(static field => field.Tab != "songs").Select(static field => field.Key).Order(StringComparer.Ordinal),
-            SpeechAndSoundsUntil113.Order(StringComparer.Ordinal));
+        // Every Speech and Sounds field is stored (#113): nothing outside the M4 list is left out.
+        Assert.All(DeferredToM4, key => Assert.Equal("songs", inventory.Get(key).Tab));
     }
 
     [Fact]
     public async Task EveryInventoryFieldIsStoredRoundTrippedAndBoundedAsTheInventorySays()
     {
-        var problems = await CheckAsync(CreateFieldInventory.Embedded, [.. DeferredToM4, .. SpeechAndSoundsUntil113]);
+        var problems = await CheckAsync(CreateFieldInventory.Embedded, DeferredToM4);
 
         Assert.True(problems.Count == 0, string.Join(Environment.NewLine, problems));
     }
@@ -94,20 +83,18 @@ public sealed class InventoryCoverageTests
         copy["fields"]!.AsArray().Add(JsonNode.Parse(field));
         var key = JsonNode.Parse(field)!["key"]!.GetValue<string>();
 
-        var problems = await CheckAsync(CreateFieldInventory.Parse(copy.ToJsonString()), [.. DeferredToM4, .. SpeechAndSoundsUntil113]);
+        var problems = await CheckAsync(CreateFieldInventory.Parse(copy.ToJsonString()), DeferredToM4);
 
         Assert.Contains(problems, problem => problem.StartsWith(key + ":", StringComparison.Ordinal));
     }
 
-    /// <summary>It bites: a key taken off an exclusion list fails, since nothing stores it yet.</summary>
+    /// <summary>It bites: a key taken off the exclusion list fails, since nothing stores it yet.</summary>
     [Theory]
     [InlineData("audio")]
     [InlineData("simple_add_image")]
-    [InlineData("speech_script")]
-    [InlineData("sound_bpm")]
     public async Task AKeyTakenOffAnExclusionListFailsTheCheck(string key)
     {
-        var excluded = DeferredToM4.Concat(SpeechAndSoundsUntil113).Where(excludedKey => excludedKey != key).ToArray();
+        var excluded = DeferredToM4.Where(excludedKey => excludedKey != key).ToArray();
 
         var problems = await CheckAsync(CreateFieldInventory.Embedded, excluded);
 
@@ -123,12 +110,17 @@ public sealed class InventoryCoverageTests
     [InlineData("variety", "default", "\"high\"")]
     [InlineData("max_mode", "default", "true")]
     [InlineData("lyrics", "maxLength", "4000")]
+    [InlineData("speech_script", "maxLength", "4000")]
+    [InlineData("speech_background_music", "default", "false")]
+    [InlineData("sound_bpm", "max", "200")]
+    [InlineData("sound_key", "values", """["any","C","H"]""")]
+    [InlineData("sound_type", "default", "\"loop\"")]
     public async Task AFieldThatDisagreesWithTheInventoryFailsTheCheck(string key, string property, string value)
     {
         var copy = JsonNode.Parse(CreateFieldInventory.Embedded.Json)!;
         copy["fields"]!.AsArray().Single(field => field!["key"]!.GetValue<string>() == key)![property] = JsonNode.Parse(value);
 
-        var problems = await CheckAsync(CreateFieldInventory.Parse(copy.ToJsonString()), [.. DeferredToM4, .. SpeechAndSoundsUntil113]);
+        var problems = await CheckAsync(CreateFieldInventory.Parse(copy.ToJsonString()), DeferredToM4);
 
         Assert.Contains(problems, problem => problem.StartsWith(key + ":", StringComparison.Ordinal));
     }

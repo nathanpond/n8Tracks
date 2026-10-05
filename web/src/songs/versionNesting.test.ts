@@ -16,6 +16,7 @@ function version(number: string, archived = false): Version {
     updatedAt: '2026-10-01T09:00:00Z',
     revision: 1,
     isFrozen: false,
+    kind: 'song',
   };
 }
 

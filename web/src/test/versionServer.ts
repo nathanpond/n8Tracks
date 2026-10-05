@@ -1,12 +1,18 @@
 import type { Snapshot } from '../api/snapshots';
 import type { Song } from '../api/songs';
-import type { NumberOption, Version, VersionDetail } from '../api/versions';
+import {
+  isVersionKind,
+  type NumberOption,
+  type Version,
+  type VersionDetail,
+} from '../api/versions';
 import { CREATE_FIELDS, DEFAULT_INPUTS } from './createFieldsFixture';
 import { healthyReport, jsonResponse, requestPath, stubFetch } from './helpers';
 import { baseSong, STATES } from './songServer';
 
 /** A Version of `baseSong` numbered `number`, with an ID built from the number and no lyrics or styles. */
 export function testVersion(number: string, change: Partial<VersionDetail> = {}): VersionDetail {
+  const inputs = change.inputs ?? DEFAULT_INPUTS;
   return {
     id: `0199b1a0-0000-7000-9000-${number.replace(/\./g, '0').padStart(12, '0')}`,
     songId: baseSong.id,
@@ -22,7 +28,9 @@ export function testVersion(number: string, change: Partial<VersionDetail> = {})
     isFrozen: false,
     lyrics: '',
     styles: '',
-    inputs: DEFAULT_INPUTS,
+    inputs,
+    // A Version's kind is its options' kind, unless the test says otherwise.
+    kind: isVersionKind(inputs.kind) ? inputs.kind : 'song',
     ...change,
   };
 }
@@ -30,7 +38,7 @@ export function testVersion(number: string, change: Partial<VersionDetail> = {})
 /** A Version as the list answers it: without its lyrics, styles, and options. */
 function summary(version: VersionDetail): Version {
   const { id, songId, number, shortcode, name, notes, archived, current } = version;
-  const { createdAt, updatedAt, revision, isFrozen } = version;
+  const { createdAt, updatedAt, revision, isFrozen, kind } = version;
   return {
     id,
     songId,
@@ -44,6 +52,7 @@ function summary(version: VersionDetail): Version {
     updatedAt,
     revision,
     isFrozen,
+    kind,
   };
 }
 
@@ -91,8 +100,20 @@ export interface ReceivedWrite {
  * answer the next write some other way.
  */
 export function versionServer(versions: VersionDetail[], song: Song = baseSong) {
+  // The Song names its current Version, and says what it creates.
+  const current = versions.find((version) => version.current);
   const server = {
-    song: { ...song },
+    song: {
+      ...song,
+      currentVersion: current
+        ? {
+            id: current.id,
+            number: current.number,
+            shortcode: current.shortcode,
+            kind: current.kind,
+          }
+        : song.currentVersion,
+    },
     versions: versions.map((version) => ({ ...version })),
     writes: [] as ReceivedWrite[],
     /** Every snapshot stored, oldest first (the API's deduplication applied). */
@@ -330,6 +351,7 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
         ...('lyrics' in body ? { lyrics: input(body.lyrics) } : {}),
         ...('styles' in body ? { styles: input(body.styles) } : {}),
         inputs,
+        kind: isVersionKind(inputs.kind) ? inputs.kind : version.kind,
         revision: version.revision + 1,
       };
       server.versions = server.versions.map((other) => (other.id === version.id ? changed : other));
@@ -366,7 +388,12 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
       }));
       server.song = {
         ...server.song,
-        currentVersion: { id: version.id, number: version.number, shortcode: version.shortcode },
+        currentVersion: {
+          id: version.id,
+          number: version.number,
+          shortcode: version.shortcode,
+          kind: version.kind,
+        },
       };
     };
 

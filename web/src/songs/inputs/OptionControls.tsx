@@ -1,6 +1,7 @@
 import {
   Group,
   NativeSelect,
+  NumberInput,
   SegmentedControl,
   Slider,
   Stack,
@@ -321,6 +322,51 @@ export function ModelControl({
       onChange={(event) => {
         const chosen = event.currentTarget.value;
         onChange(chosen === '' ? null : chosen);
+      }}
+      data-option={field.option ?? undefined}
+    />
+  );
+}
+
+/**
+ * A whole number that may be left empty (a Sound's BPM, empty for Auto), typed between the field's
+ * `min` and `max`; a number outside them is not taken. Empty is null.
+ */
+export function NumberControl({
+  field,
+  value,
+  onChange,
+  readOnly,
+  emptyLabel,
+}: ControlProps<number | null> & { emptyLabel: string }) {
+  const min = field.min ?? 0;
+  const max = field.max ?? Number.MAX_SAFE_INTEGER;
+  return (
+    <NumberInput
+      label={field.label}
+      description={
+        field.help ??
+        `${formatCount(min)} to ${formatCount(max)}; leave it empty for ${emptyLabel}.`
+      }
+      placeholder={emptyLabel}
+      min={min}
+      max={max}
+      allowDecimal={false}
+      allowNegative={false}
+      clampBehavior="strict"
+      value={value ?? ''}
+      readOnly={readOnly}
+      onChange={(next) => {
+        if (next === '') {
+          onChange(null);
+        } else if (
+          typeof next === 'number' &&
+          Number.isInteger(next) &&
+          next >= min &&
+          next <= max
+        ) {
+          onChange(next);
+        }
       }}
       data-option={field.option ?? undefined}
     />

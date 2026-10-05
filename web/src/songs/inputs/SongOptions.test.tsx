@@ -36,9 +36,8 @@ describe('a Song’s options', () => {
 
     const kind = screen.getByRole('radiogroup', { name: 'Kind' });
     expect(within(kind).getByRole('radio', { name: 'Song' })).toBeChecked();
-    // Only Song can be chosen until the Speech and Sound story.
-    expect(within(kind).getByRole('radio', { name: 'Speech' })).toBeDisabled();
-    expect(within(kind).getByRole('radio', { name: 'Sound' })).toBeDisabled();
+    expect(within(kind).getByRole('radio', { name: 'Speech' })).toBeEnabled();
+    expect(within(kind).getByRole('radio', { name: 'Sound' })).toBeEnabled();
     expect(screen.getByRole('radio', { name: 'Advanced' })).toBeChecked();
     expect(screen.getByRole('combobox', { name: 'Model version' })).toHaveValue('');
     expect(screen.getByRole('textbox', { name: 'Lyrics' })).toBeInTheDocument();

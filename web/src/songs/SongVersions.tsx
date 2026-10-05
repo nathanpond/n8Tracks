@@ -92,6 +92,10 @@ export function SongVersions({
     setVersions((previous) =>
       previous.map((version) => (version.id === changed.id ? changed : version)),
     );
+    // The Song says what its current Version creates, so a change of kind there is the Song's too.
+    if (changed.id === song.currentVersion.id && changed.kind !== song.currentVersion.kind) {
+      onSong({ ...song, currentVersion: { ...song.currentVersion, kind: changed.kind } });
+    }
   };
 
   const latest = (version: Version) =>
@@ -105,7 +109,12 @@ export function SongVersions({
     ]);
     onSong({
       ...song,
-      currentVersion: { id: version.id, number: version.number, shortcode: version.shortcode },
+      currentVersion: {
+        id: version.id,
+        number: version.number,
+        shortcode: version.shortcode,
+        kind: version.kind,
+      },
       versionCount: song.versionCount + 1,
     });
     void navigate(linkTo(version), { state: location.state });

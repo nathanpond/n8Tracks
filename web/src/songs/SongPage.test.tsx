@@ -19,7 +19,12 @@ const song: Song = {
   title: 'Running in a Pack',
   concept: 'Fast and loud.\nWith a quiet bridge.',
   state: { id: WRITING_ID, name: 'Writing', colour: 'blue' },
-  currentVersion: { id: '0199b1a0-0000-7000-9000-000000000007', number: '1', shortcode: 'n8-7-v1' },
+  currentVersion: {
+    id: '0199b1a0-0000-7000-9000-000000000007',
+    number: '1',
+    shortcode: 'n8-7-v1',
+    kind: 'song',
+  },
   versionCount: 1,
   createdAt: '2026-10-01T09:00:00Z',
   updatedAt: '2026-10-01T09:00:00Z',

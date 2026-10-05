@@ -27,6 +27,18 @@ namespace n8Tracks.Domain.Songs;
 /// <param name="Variety">A step of the inventory's list.</param>
 /// <param name="Personalize">Whether Variety follows the user's taste.</param>
 /// <param name="Title">The title Suno gives what it creates; independent of the Song's title once set.</param>
+/// <param name="SpeechPrompt">The Speech Simple form's description.</param>
+/// <param name="SpeechScript">What a Speech says (Advanced).</param>
+/// <param name="SpeechTone">How a Speech is delivered: tone, pacing, mood, and setting (Advanced).</param>
+/// <param name="SpeechVocalGender">A Speech's voice, a value of the inventory's list, or null for none; separate from a Song's.</param>
+/// <param name="SpeechBackgroundMusic">Whether a Speech has background music.</param>
+/// <param name="SpeechVariety">A Speech's Variety, a step of the inventory's list; separate from a Song's.</param>
+/// <param name="SoundsModel">A Sound's model, from the model list, or null when none is chosen; separate from a Song's.</param>
+/// <param name="SoundDescription">What a Sound is.</param>
+/// <param name="SoundType">One-shot or loop.</param>
+/// <param name="SoundBpm">A Sound's tempo, or null for Auto.</param>
+/// <param name="SoundKey">Any, or one of the twelve notes (sharps written <c>C#</c>).</param>
+/// <param name="SoundScale">Major, minor, or null for none; kept while the key is Any, but then not applicable.</param>
 public sealed record VersionInputs(
     VersionKind Kind,
     CreationMode SongMode,
@@ -44,7 +56,19 @@ public sealed record VersionInputs(
     [property: SunoField("style_influence")] int StyleInfluence,
     [property: SunoField("variety")] string Variety,
     [property: SunoField("personalize")] bool Personalize,
-    [property: SunoField("title")] string Title);
+    [property: SunoField("title")] string Title,
+    [property: SunoField("speech_prompt")] string SpeechPrompt,
+    [property: SunoField("speech_script")] string SpeechScript,
+    [property: SunoField("speech_tone")] string SpeechTone,
+    [property: SunoField("speech_vocal_gender")] string? SpeechVocalGender,
+    [property: SunoField("speech_background_music")] bool SpeechBackgroundMusic,
+    [property: SunoField("speech_variety")] string SpeechVariety,
+    [property: SunoField("sounds_model")] string? SoundsModel,
+    [property: SunoField("sound_description")] string SoundDescription,
+    [property: SunoField("sound_type")] string SoundType,
+    [property: SunoField("sound_bpm")] int? SoundBpm,
+    [property: SunoField("sound_key")] string SoundKey,
+    [property: SunoField("sound_scale")] string? SoundScale);
 
 /// <summary>What a Version creates: one of the three tabs of Suno's Create screen.</summary>
 public enum VersionKind
