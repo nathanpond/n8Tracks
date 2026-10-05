@@ -123,7 +123,7 @@ internal static class SeedGenerationCommand
                 error.WriteLine($"There is no database at {database.DatabaseFile}. Nothing was changed.");
                 return 1;
             case DatabaseCondition.Upgrading:
-                error.WriteLine("The database is being upgraded (the migration lock is held). Run this command again once n8Tracks has started. Nothing was changed.");
+                error.WriteLine("The database is being upgraded, or an upgrade did not finish (the migration lock is held, or upgrade-state.json is in the data path). Run this command again once n8Tracks has started. Nothing was changed.");
                 return 1;
             case DatabaseCondition.Maintenance:
                 error.WriteLine("n8Tracks is in maintenance: a restore is running, or was interrupted. Nothing was changed.");

@@ -67,7 +67,9 @@ public static class DependencyInjection
         services.AddScoped<ILiveDataReplacement, LiveDataReplacement>();
         services.AddSingleton<ILastRestoreStore, LastRestoreFile>();
         services.AddSingleton<IDataPathLock, DataPathLockFile>();
-        services.AddSingleton<IFailedUpgradeMarker, UpgradeMarkerFile>();
+        services.AddSingleton<UpgradeMarkerFile>();
+        services.AddSingleton<IFailedUpgradeMarker>(static provider => provider.GetRequiredService<UpgradeMarkerFile>());
+        services.AddScoped<UpgradeSafetyRestore>();
         services.AddSingleton<RestoreRunner>();
         services.AddSingleton<IRestoreRunner>(static provider => provider.GetRequiredService<RestoreRunner>());
 

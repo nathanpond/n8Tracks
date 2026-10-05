@@ -45,7 +45,16 @@ public class HealthEndpointTests
             {
                 ["application"] = new JsonObject { ["status"] = "healthy", ["detail"] = "running" },
                 ["database"] = new JsonObject { ["status"] = "healthy", ["detail"] = "reachable" },
-                ["migrations"] = new JsonObject { ["status"] = "healthy", ["detail"] = "up to date", ["lastApplied"] = lastApplied },
+                ["migrations"] = new JsonObject
+                {
+                    ["status"] = "healthy",
+                    ["detail"] = "up to date",
+                    ["lastApplied"] = lastApplied,
+
+                    // This start created the database, so it applied every migration, with no safety backup to take.
+                    ["lastOutcome"] = "succeeded",
+                    ["lastSafetyBackupAt"] = null,
+                },
                 ["media"] = new JsonObject { ["status"] = "healthy", ["detail"] = "available" },
                 ["maintenance"] = new JsonObject { ["status"] = "healthy", ["detail"] = "off" },
             },
@@ -492,7 +501,7 @@ public class HealthEndpointTests
         Assert.Equal(status, component.GetProperty("status").GetString());
         Assert.Equal(detail, component.GetProperty("detail").GetString());
         Assert.Equal(
-            name == "migrations" ? ["detail", "lastApplied", "status"] : ["detail", "status"],
+            name == "migrations" ? ["detail", "lastApplied", "lastOutcome", "lastSafetyBackupAt", "status"] : ["detail", "status"],
             component.EnumerateObject().Select(member => member.Name).Order(StringComparer.Ordinal));
     }
 

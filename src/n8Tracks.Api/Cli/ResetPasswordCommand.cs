@@ -120,7 +120,7 @@ internal static class ResetPasswordCommand
                 return 1;
             case DatabaseCondition.Upgrading:
                 error.WriteLine(
-                    "The database is being upgraded (the migration lock is held). Wait until n8Tracks has started, "
+                    "The database is being upgraded, or an upgrade did not finish (the migration lock is held, or upgrade-state.json is in the data path). Wait until n8Tracks has started, "
                     + "and if it does not start, read its log; then run this command again. Nothing was changed.");
                 return 1;
             case DatabaseCondition.Maintenance:

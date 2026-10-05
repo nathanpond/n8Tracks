@@ -39,6 +39,16 @@ test.describe('the System page (the M0 shell page)', () => {
       await expect(row.getByRole('cell').first()).toHaveText('healthy');
     }
 
+    // The schema's row says how the last upgrade went and when the last safety backup was taken
+    // (the shared containers may hold safety backups from other specs, so only that both are there).
+    const schema = componentRows(page).filter({
+      has: page.getByRole('rowheader', { name: 'Database schema' }),
+    });
+    await expect(schema.getByTestId('last-migration-outcome')).toHaveText(/at this start$/);
+    await expect(schema.getByTestId('last-safety-backup')).toHaveText(
+      /^(No safety backup yet|Last safety backup .+)$/,
+    );
+
     await expectAccessibleInLightAndDark(page);
   });
 

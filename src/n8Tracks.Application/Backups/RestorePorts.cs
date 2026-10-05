@@ -116,8 +116,8 @@ public interface IDataPathLock
 
 /// <summary>
 /// The marker a failed or interrupted database upgrade leaves under the data path
-/// (<c>upgrade-state.json</c>, written by the upgrade's safety backup, #76). A restore that put a
-/// whole database back makes it obsolete.
+/// (<c>upgrade-state.json</c>, written once the upgrade's safety backup is verified and removed when
+/// the upgrade succeeds). A restore that put a whole database back makes it obsolete.
 /// </summary>
 public interface IFailedUpgradeMarker
 {

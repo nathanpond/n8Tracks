@@ -1,5 +1,6 @@
 import { Button, Group, Loader, Paper, Stack, Table, Text, Title } from '@mantine/core';
-import { useHealth, type HealthReport } from '../api/health';
+import { useHealth, type HealthComponent, type HealthReport } from '../api/health';
+import { formatDateTime } from '../api/timeZone';
 import { StatusBadge } from '../components/StatusBadge';
 
 const componentLabels: Record<string, string> = {
@@ -23,6 +24,55 @@ function componentRows(report: HealthReport) {
     const component = report.components[key];
     return component ? [{ key, label: componentLabels[key] ?? key, component }] : [];
   });
+}
+
+/** The browser's own zone when the report names none, or one this browser does not know. */
+function displayTimeZone(report: HealthReport): string {
+  if (report.timeZone) {
+    try {
+      new Intl.DateTimeFormat(undefined, { timeZone: report.timeZone });
+      return report.timeZone;
+    } catch {
+      // Falls through to the browser's zone.
+    }
+  }
+
+  return Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+
+const outcomeWords: Record<string, string> = {
+  succeeded: 'Upgraded at this start',
+  none: 'Nothing to upgrade at this start',
+};
+
+/**
+ * The schema's last upgrade and last safety backup, under its detail. Shown only when the backend
+ * reports them; an outcome this build does not know is shown as it is.
+ */
+function MigrationsDetail({
+  component,
+  timeZone,
+}: {
+  component: HealthComponent;
+  timeZone: string;
+}) {
+  const { lastOutcome, lastSafetyBackupAt } = component;
+  return (
+    <>
+      {lastOutcome !== undefined && (
+        <Text size="sm" c="var(--n8-color-secondary-text)" data-testid="last-migration-outcome">
+          {outcomeWords[lastOutcome] ?? `Last upgrade: ${lastOutcome}`}
+        </Text>
+      )}
+      {lastSafetyBackupAt !== undefined && (
+        <Text size="sm" c="var(--n8-color-secondary-text)" data-testid="last-safety-backup">
+          {lastSafetyBackupAt === null
+            ? 'No safety backup yet'
+            : `Last safety backup ${formatDateTime(lastSafetyBackupAt, timeZone)}`}
+        </Text>
+      )}
+    </>
+  );
 }
 
 function HealthReportView({ report, stale }: { report: HealthReport; stale: boolean }) {
@@ -62,7 +112,12 @@ function HealthReportView({ report, stale }: { report: HealthReport; stale: bool
               <Table.Td>
                 <StatusBadge status={component.status} />
               </Table.Td>
-              <Table.Td c="var(--n8-color-secondary-text)">{component.detail ?? ''}</Table.Td>
+              <Table.Td c="var(--n8-color-secondary-text)">
+                {component.detail ?? ''}
+                {key === 'migrations' && (
+                  <MigrationsDetail component={component} timeZone={displayTimeZone(report)} />
+                )}
+              </Table.Td>
             </Table.Tr>
           ))}
         </Table.Tbody>

@@ -175,7 +175,9 @@ internal sealed partial class LiveDataReplacement(
                 }
 
                 var last = (await context.Database.GetAppliedMigrationsAsync(cancellationToken).ConfigureAwait(false)).Last();
-                scope.ServiceProvider.GetRequiredService<MigrationStateHolder>().Set(new MigrationState(MigrationStatus.UpToDate, last));
+                var holder = scope.ServiceProvider.GetRequiredService<MigrationStateHolder>();
+                var outcome = pending.Count > 0 ? MigrationOutcome.Succeeded : holder.LastOutcome;
+                holder.Set(new MigrationState(MigrationStatus.UpToDate, last, outcome));
             }
             finally
             {

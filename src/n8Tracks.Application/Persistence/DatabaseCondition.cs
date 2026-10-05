@@ -12,7 +12,7 @@ public enum DatabaseCondition
     /// <summary>The migration history differs from this build's migrations: older, newer, or empty.</summary>
     SchemaMismatch,
 
-    /// <summary>The migration lock is held: an upgrade is running, or was interrupted.</summary>
+    /// <summary>The migration lock is held, or a failed or interrupted upgrade left its marker: an upgrade is running, or did not finish.</summary>
     Upgrading,
 
     /// <summary>The instance is in maintenance: a restore is running, or was interrupted.</summary>

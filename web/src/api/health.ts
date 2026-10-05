@@ -7,11 +7,17 @@ export const HEALTH_TIMEOUT_MS = 10_000;
 export interface HealthComponent {
   status: string;
   detail?: string;
+  /** Migrations only: `succeeded` when this start applied migrations, `none` when it found none pending. */
+  lastOutcome?: string;
+  /** Migrations only: when the newest safety backup was made (UTC ISO 8601), or null when there is none. */
+  lastSafetyBackupAt?: string | null;
 }
 
 export interface HealthReport {
   status: string;
   version: string;
+  /** The configured time zone (the `TZ` setting). */
+  timeZone?: string;
   components: Record<string, HealthComponent>;
 }
 
@@ -28,7 +34,11 @@ function isHealthComponent(value: unknown): value is HealthComponent {
   return (
     isRecord(value) &&
     typeof value.status === 'string' &&
-    (value.detail === undefined || typeof value.detail === 'string')
+    (value.detail === undefined || typeof value.detail === 'string') &&
+    (value.lastOutcome === undefined || typeof value.lastOutcome === 'string') &&
+    (value.lastSafetyBackupAt === undefined ||
+      value.lastSafetyBackupAt === null ||
+      typeof value.lastSafetyBackupAt === 'string')
   );
 }
 
@@ -41,6 +51,7 @@ export function isHealthReport(value: unknown): value is HealthReport {
     isRecord(value) &&
     typeof value.status === 'string' &&
     typeof value.version === 'string' &&
+    (value.timeZone === undefined || typeof value.timeZone === 'string') &&
     isRecord(value.components) &&
     Object.values(value.components).every(isHealthComponent)
   );

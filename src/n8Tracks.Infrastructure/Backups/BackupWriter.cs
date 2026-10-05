@@ -209,7 +209,18 @@ internal sealed partial class BackupWriter(
                 lastMigration = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) as string ?? string.Empty;
             }
 
+            // A database from before the settings table (an upgrade's safety backup) has no settings.
             var settings = new SortedDictionary<string, JsonElement>(StringComparer.Ordinal);
+            var hasSettings = connection.CreateCommand();
+            await using (hasSettings.ConfigureAwait(false))
+            {
+                hasSettings.CommandText = "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'settings';";
+                if (Convert.ToInt64(await hasSettings.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), CultureInfo.InvariantCulture) == 0)
+                {
+                    return (lastMigration, JsonSerializer.SerializeToUtf8Bytes(SettingsDocument(settings), BackupManifest.Json));
+                }
+            }
+
             var read = connection.CreateCommand();
             await using (read.ConfigureAwait(false))
             {
@@ -229,20 +240,21 @@ internal sealed partial class BackupWriter(
                 }
             }
 
-            var document = new
-            {
-                settings,
-                environment = new
-                {
-                    baseUrl = options.BaseUrl.ToString(),
-                    timeZone = options.TimeZone.Id,
-                    logLevel = options.LogLevel.ToString(),
-                },
-            };
-
-            return (lastMigration, JsonSerializer.SerializeToUtf8Bytes(document, BackupManifest.Json));
+            return (lastMigration, JsonSerializer.SerializeToUtf8Bytes(SettingsDocument(settings), BackupManifest.Json));
         }
     }
+
+    /// <summary>What <c>settings.json</c> holds: the stored settings and the environment-configured ones.</summary>
+    private object SettingsDocument(SortedDictionary<string, JsonElement> settings) => new
+    {
+        settings,
+        environment = new
+        {
+            baseUrl = options.BaseUrl.ToString(),
+            timeZone = options.TimeZone.Id,
+            logLevel = options.LogLevel.ToString(),
+        },
+    };
 
     /// <summary>Every regular file under the managed-assets folder, by its path relative to it; links are not followed.</summary>
     private List<(string Relative, FileInfo File)> Assets()

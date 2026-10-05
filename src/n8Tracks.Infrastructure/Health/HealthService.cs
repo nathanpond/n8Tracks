@@ -1,4 +1,5 @@
 using System.Globalization;
+using n8Tracks.Application.Backups;
 using n8Tracks.Application.Configuration;
 using n8Tracks.Application.Health;
 using n8Tracks.Application.Maintenance;
@@ -32,6 +33,7 @@ internal sealed class HealthService : IHealthService
     private readonly IDatabaseConnectionFactory connections;
     private readonly IMediaMountProbe mediaProbe;
     private readonly IMigrationStateProvider migrationState;
+    private readonly IBackupStorage backups;
     private readonly MaintenanceMode maintenance;
     private readonly Serilog.ILogger log;
     private readonly string mediaPath;
@@ -46,6 +48,7 @@ internal sealed class HealthService : IHealthService
         IDatabaseConnectionFactory connections,
         IMediaMountProbe mediaProbe,
         IMigrationStateProvider migrationState,
+        IBackupStorage backups,
         MaintenanceMode maintenance,
         Serilog.ILogger log)
     {
@@ -55,6 +58,7 @@ internal sealed class HealthService : IHealthService
         this.connections = connections;
         this.mediaProbe = mediaProbe;
         this.migrationState = migrationState;
+        this.backups = backups;
         this.maintenance = maintenance;
         this.log = log.ForContext<HealthService>();
         mediaPath = options.MediaPath;
@@ -79,7 +83,7 @@ internal sealed class HealthService : IHealthService
             Observe(DatabaseComponent, database.Status, databaseOutcome);
         }
 
-        var migrations = Migrations();
+        var migrations = Migrations(await LastSafetyBackupAtAsync(cancellationToken).ConfigureAwait(false));
 
         var mediaOutcome = await mediaCheck.RunAsync(cancellationToken).ConfigureAwait(false);
         var media = mediaOutcome.Result == CheckResult.Passed ? MediaAvailable : MediaUnavailable;
@@ -109,22 +113,45 @@ internal sealed class HealthService : IHealthService
         return mediaProbe.IsReadable(mediaPath);
     }
 
+    /// <summary>
+    /// When the newest valid safety backup was made, from the folder listing (so an upgrade's, a
+    /// restore's, and one whose making is not recorded anywhere else all count); null when there is
+    /// none or the folders cannot be read.
+    /// </summary>
+    private async Task<DateTimeOffset?> LastSafetyBackupAtAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            return (await backups.ListAsync(cancellationToken).ConfigureAwait(false))
+                .Where(static archive => archive.Validity == BackupValidity.Valid && BackupKinds.Parse(archive.Kind) == BackupKind.Safety)
+                .Select(static archive => (DateTimeOffset?)archive.CreatedUtc)
+                .Max();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>The state captured at startup: it stays as it was even if the database later goes away.</summary>
-    private MigrationsHealthComponent Migrations()
+    private MigrationsHealthComponent Migrations(DateTimeOffset? lastSafetyBackupAt)
     {
         MigrationsHealthComponent component;
         var outcome = new CheckOutcome(CheckResult.Passed);
         try
         {
+            var state = migrationState.Current;
             component = new MigrationsHealthComponent(
                 HealthStatus.Healthy,
                 HealthDetails.MigrationsUpToDate,
-                migrationState.Current.LastAppliedMigrationId);
+                state.LastAppliedMigrationId,
+                state.LastOutcome,
+                lastSafetyBackupAt);
         }
         catch (InvalidOperationException exception)
         {
             // Database startup has not completed. The app does not listen before it has, so this is a fault.
-            component = new MigrationsHealthComponent(HealthStatus.Unhealthy, HealthDetails.MigrationsUnknown, null);
+            component = new MigrationsHealthComponent(HealthStatus.Unhealthy, HealthDetails.MigrationsUnknown, null, MigrationOutcome.None, lastSafetyBackupAt);
             outcome = new CheckOutcome(CheckResult.Failed, exception);
         }
 

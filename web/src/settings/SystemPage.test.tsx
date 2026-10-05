@@ -2,6 +2,7 @@ import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { HEALTH_REFRESH_MS, HEALTH_TIMEOUT_MS } from '../api/health';
+import { formatDateTime } from '../api/timeZone';
 import {
   degradedReport,
   healthyReport,
@@ -66,6 +67,59 @@ describe('Settings → System', () => {
       'Database schemahealthyup to date',
       'Media libraryhealthyavailable',
     ]);
+  });
+
+  it('shows the last upgrade outcome and when the last safety backup was taken, in the configured zone', async () => {
+    stubFetch().mockResolvedValue(
+      jsonResponse(200, {
+        ...healthyReport,
+        timeZone: 'Pacific/Auckland',
+        components: {
+          ...healthyReport.components,
+          migrations: {
+            status: 'healthy',
+            detail: 'up to date',
+            lastApplied: '20261005110608_AddGenerations',
+            lastOutcome: 'succeeded',
+            lastSafetyBackupAt: '2026-10-05T09:30:00.000Z',
+          },
+        },
+      }),
+    );
+
+    renderSystem();
+
+    const row = await waitFor(() => componentRow('migrations'));
+    expect(within(row).getByTestId('last-migration-outcome')).toHaveTextContent(
+      'Upgraded at this start',
+    );
+    expect(within(row).getByTestId('last-safety-backup')).toHaveTextContent(
+      `Last safety backup ${formatDateTime('2026-10-05T09:30:00.000Z', 'Pacific/Auckland')}`,
+    );
+  });
+
+  it('says when nothing was upgraded and no safety backup has been taken', async () => {
+    stubFetch().mockResolvedValue(
+      jsonResponse(200, {
+        ...healthyReport,
+        components: {
+          ...healthyReport.components,
+          migrations: {
+            status: 'healthy',
+            detail: 'up to date',
+            lastOutcome: 'none',
+            lastSafetyBackupAt: null,
+          },
+        },
+      }),
+    );
+
+    renderSystem();
+
+    const row = await waitFor(() => componentRow('migrations'));
+    expect(row).toHaveTextContent(
+      'Database schemahealthyup to dateNothing to upgrade at this startNo safety backup yet',
+    );
   });
 
   it('shows a degraded report', async () => {

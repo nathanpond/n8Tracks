@@ -63,11 +63,25 @@ public sealed class Program
     /// running (see <see cref="HealthCheckCommand"/>). Those are the only arguments with a meaning:
     /// every other one is ignored, and none reaches the host's configuration.
     /// </summary>
+    internal static Task<int> RunAsync(
+        string[] args,
+        EnvironmentSnapshot environment,
+        TextWriter output,
+        CommandConsole console,
+        CancellationToken cancellationToken) =>
+        RunAsync(args, environment, output, console, testServices: null, cancellationToken);
+
+    /// <summary>
+    /// As the overload above, with <paramref name="testServices"/> changing the server's services after
+    /// the application's own registrations: for tests that need the exit code of a start the in-memory
+    /// test host cannot report. The app always passes null.
+    /// </summary>
     internal static async Task<int> RunAsync(
         string[] args,
         EnvironmentSnapshot environment,
         TextWriter output,
         CommandConsole console,
+        Action<IServiceCollection>? testServices,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(args);
@@ -108,7 +122,7 @@ public sealed class Program
                 return await HealthCheckCommand.RunAsync(environment, startupLog, cancellationToken).ConfigureAwait(false);
             }
 
-            return await RunAsync(environment, sink, startupLog, cancellationToken).ConfigureAwait(false);
+            return await RunAsync(environment, sink, startupLog, testServices, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -125,6 +139,7 @@ public sealed class Program
         EnvironmentSnapshot environment,
         JsonLinesSink sink,
         Serilog.ILogger startupLog,
+        Action<IServiceCollection>? testServices,
         CancellationToken cancellationToken)
     {
         // The host starts empty: it reads no command-line argument, no environment variable (with an
@@ -184,6 +199,7 @@ public sealed class Program
         builder.Services.AddSessionAuthentication();
         builder.Services.AddSingleton<RequestDrain>();
         builder.Services.AddSingleton<n8Tracks.Application.Maintenance.IRequestDrain>(static provider => provider.GetRequiredService<RequestDrain>());
+        testServices?.Invoke(builder.Services);
 
         var app = builder.Build();
         await using (app.ConfigureAwait(false))
@@ -220,11 +236,19 @@ public sealed class Program
                 return 1;
             }
 
+            // Before anything else touches the data: an upgrade that failed or was interrupted has its
+            // safety backup put back, and the version whose upgrade failed refuses to start.
+            if (!await DatabaseStartup.RecoverFailedUpgradeAsync(app.Services, startupLog, cancellationToken).ConfigureAwait(false))
+            {
+                return 1;
+            }
+
             // A restore that a restart interrupted is put back before the database is opened. An
             // instance still in maintenance after that starts closed, its database left untouched.
             var inMaintenance = RestoreStartup.Recover(app.Services);
 
-            // The schema is brought up to date before anything listens; a failure stops the process.
+            // The schema is brought up to date before anything listens, behind a safety backup when
+            // the database has data; a failure puts that backup back and stops the process.
             if (!inMaintenance && !await DatabaseStartup.RunAsync(app.Services, startupLog, cancellationToken).ConfigureAwait(false))
             {
                 return 1;

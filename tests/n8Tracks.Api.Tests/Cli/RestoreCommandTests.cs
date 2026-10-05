@@ -298,7 +298,9 @@ public sealed class RestoreCommandTests : IDisposable
         Assert.False(state.GetProperty("active").GetBoolean());
         Assert.Equal("rolled-back", state.GetProperty("outcome").GetString());
 
-        // The instance is the one from before.
+        // The instance is the one from before. (The marker here is a stand-in the server cannot read,
+        // so it would refuse to start; what the server does with a real one is in UpgradeSafetyTests.)
+        File.Delete(marker);
         using var factory = RestoreApi.Host(dataPath: data.Path);
         using var client = factory.CreateClient();
         using (var signIn = await SessionApi.SignInAsync(client, SetupApi.TestUsername, SetupApi.TestPassword))

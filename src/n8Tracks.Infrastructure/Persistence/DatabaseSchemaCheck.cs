@@ -16,6 +16,12 @@ internal sealed class DatabaseSchemaCheck(N8TracksOptions options, N8TracksDbCon
             return DatabaseCondition.Maintenance;
         }
 
+        // An upgrade failed or was interrupted: the next start of the server decides which database stays.
+        if (File.Exists(Path.Combine(options.DataPath, Backups.UpgradeMarkerFile.FileName)))
+        {
+            return DatabaseCondition.Upgrading;
+        }
+
         // Checked first: opening the context's connection would create a missing file.
         if (!File.Exists(DatabaseFile))
         {
