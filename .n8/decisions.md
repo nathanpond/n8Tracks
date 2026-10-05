@@ -1807,3 +1807,14 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** #289 is fixed with one test, `TheLastRestoreNoteOutlivesRefusedAndFailedRestoresAndTheNextRestoreReplacesIt` in `RestoreRunTests`, which covers both cases the issue names. After a successful restore, three restores are tried, and after each one the note must be byte-identical: a start refused for a wrong confirmation (422), a restore whose listed archive was gone when it began (failed at `validating`), and a restore whose safety backup failed (failed at `safety-backup`). Then a restore of a different archive (an upload) must replace the note.
   **Why:** The behaviour was already correct. All three failure paths end before any data is replaced, which is when the note is written. Comparing the raw JSON catches any rewrite of the note, not only a change of outcome. Two bite proofs were run: writing a note when a restore fails (it failed the first equality check), and a `LastRestoreFile` that never overwrites (it failed the replacement check).
   **Issue:** #289 (story #74)
+- **Decision:** #281 is fixed with a test only (`NeitherCommandEverPrintsASecret` in `RestoreCommandTests`). Before its backup, the instance gets these secrets:
+  - the administrator's password
+  - a session cookie
+  - an API token
+  - the stored password, token, and session hashes
+  - lyrics and styles sentinels on a Version
+  - a secret environment variable (`N8TRACKS_TEST_SECRET`), now in every run's environment
+
+  The test then runs `list-backups` (success and refusal) and `restore` (each broken-archive refusal, a failure after the swap that is put back, and success). It asserts that no stdout or stderr contains any of the secrets, ignoring case, and that every run printed something.
+  **Why:** The behaviour was already correct. The archive is made after the secrets exist, so `restore` handles data that contains them. Two bite proofs were run: `list-backups` dumping its environment failed the test ("list-backups printed a secret of 32 characters"), and `restore` printing the stored token hashes failed it ("restore refused (not-a-zip) printed a secret of 64 characters"). A first restore bite printed `hex()` of a text column, which never matched, and was corrected; it was a mistake in the bite, not a gap in the test.
+  **Issue:** #281 (story #75)

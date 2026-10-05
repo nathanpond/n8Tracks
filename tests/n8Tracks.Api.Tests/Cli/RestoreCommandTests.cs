@@ -13,6 +13,7 @@ using n8Tracks.Api.Tests.Backups;
 using n8Tracks.Api.Tests.Setup;
 using n8Tracks.Api.Tests.Songs;
 using n8Tracks.Application.Backups;
+using n8Tracks.Application.Credentials;
 using n8Tracks.Infrastructure.Backups;
 using n8Tracks.TestSupport;
 
@@ -383,6 +384,79 @@ public sealed class RestoreCommandTests : IDisposable
     }
 
     /// <summary>
+    /// Neither command ever prints a secret, whether it succeeds, refuses, or fails part way: not the
+    /// administrator's password, a session cookie, an API token, their stored hashes, a Version's
+    /// lyrics or styles, nor a secret in the environment the command is given. The instance holds all
+    /// of them when its backup is made, so the archive does too.
+    /// </summary>
+    [Fact]
+    public async Task NeitherCommandEverPrintsASecret()
+    {
+        const string lyrics = "sentinel-lyrics-3f9c the words of the song";
+        const string styles = "sentinel-styles-81d2 dream pop";
+        var secrets = new List<string> { SetupApi.TestPassword, lyrics, styles, SecretVariableValue };
+        string archive;
+        using (var factory = RestoreApi.Host(dataPath: data.Path))
+        {
+            using var client = await SessionApi.SignedInClientAsync(factory);
+            await SongApi.CreateAsync(client, "Northern Lights");
+            SongApi.AddVersionDirectly(data.Path, 1, "2", lyrics: lyrics, styles: styles);
+            secrets.Add(await CredentialApi.CreateTokenAsync(factory, CredentialScopes.CatalogRead));
+            using var other = factory.CreateClient();
+            using (var signIn = await SessionApi.SignInAsync(other, SetupApi.TestUsername, SetupApi.TestPassword))
+            {
+                secrets.Add(SessionApi.SessionToken(signIn) ?? throw new InvalidOperationException("No session cookie was set."));
+            }
+
+            var name = (await BackupApi.BackUpAsync(client)).GetProperty("name").GetString()!;
+            archive = Path.Combine(data.Path, "backups", name);
+            secrets.AddRange(RestoreApi.Column(
+                data.Path,
+                """
+                SELECT CASE typeof(password_hash) WHEN 'blob' THEN hex(password_hash) ELSE password_hash END FROM administrators
+                UNION ALL SELECT CASE typeof(token_hash) WHEN 'blob' THEN hex(token_hash) ELSE token_hash END FROM credentials
+                UNION ALL SELECT CASE typeof(id_hash) WHEN 'blob' THEN hex(id_hash) ELSE id_hash END FROM sessions;
+                """));
+        }
+
+        SqliteConnection.ClearAllPools();
+        Assert.All(secrets, static secret => Assert.True(secret.Length >= 8, "Each secret is long enough not to match by chance."));
+        Assert.True(secrets.Count >= 9, string.Join(", ", secrets.Select(static secret => secret.Length)));
+
+        var runs = new List<(string What, CommandRun Run)>
+        {
+            ("list-backups", await RunAsync(["list-backups"])),
+            ("list-backups refused", await RunAsync(["list-backups", "extra"])),
+        };
+        foreach (var reason in BrokenArchives().Cast<object[]>().Select(static row => (string)row[0]))
+        {
+            var broken = Path.Combine(elsewhere.Path, $"broken-{reason}.zip");
+            await File.WriteAllBytesAsync(broken, RestoreEndpointTests.Break(await File.ReadAllBytesAsync(archive), reason));
+            runs.Add(($"restore refused ({reason})", await RunAsync(["restore", broken])));
+        }
+
+        runs.Add(("restore failed and put back", await RunRestoreDirectlyAsync(archive, services => services.Replace(ServiceDescriptor.Singleton(new RestoreTestHooks
+        {
+            AfterSwapMove = FailOnceTheArchivesDatabaseIsIn(),
+        })))));
+        runs.Add(("restore", await RunAsync(["restore", archive])));
+
+        Assert.Equal(0, runs[0].Run.ExitCode);
+        Assert.Equal(0, runs[^1].Run.ExitCode);
+        Assert.All(runs[1..^1], static run => Assert.Equal(1, run.Run.ExitCode));
+        foreach (var (what, run) in runs)
+        {
+            Assert.False(string.IsNullOrWhiteSpace(run.Output + run.Error), $"{what} printed nothing, so the check below would prove nothing.");
+            foreach (var secret in secrets)
+            {
+                Assert.False(
+                    run.Output.Contains(secret, StringComparison.OrdinalIgnoreCase) || run.Error.Contains(secret, StringComparison.OrdinalIgnoreCase),
+                    $"{what} printed a secret of {secret.Length} characters.");
+            }
+        }
+    }
+
+    /// <summary>
     /// An instance on the test's data path, stopped: setup done, <paramref name="before"/> created,
     /// a manual backup made, then <paramref name="after"/> created. Returns the backup's path, in the
     /// fallback folder under the data path.
@@ -444,9 +518,15 @@ public sealed class RestoreCommandTests : IDisposable
     private static List<string?> Titles(JsonElement list) =>
         [.. list.GetProperty("items").EnumerateArray().Select(static song => song.GetProperty("title").GetString())];
 
+    /// <summary>A secret the container's environment could carry; no command may print it (<see cref="NeitherCommandEverPrintsASecret"/>).</summary>
+    private const string SecretVariable = "N8TRACKS_TEST_SECRET";
+
+    private const string SecretVariableValue = "sentinel-environment-secret-c47e";
+
     private Dictionary<string, string> Variables(string dataPath, string? backupPath, string? mediaPath = null) =>
         new(StringComparer.Ordinal)
         {
+            [SecretVariable] = SecretVariableValue,
             [EnvironmentOptionsLoader.DataPath] = dataPath,
             [EnvironmentOptionsLoader.BackupPath] = backupPath ?? Path.Combine(elsewhere.Path, "no-backup-mount"),
             [EnvironmentOptionsLoader.MediaPath] = mediaPath ?? Path.Combine(elsewhere.Path, "no-media-mount"),
