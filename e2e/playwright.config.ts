@@ -1,5 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 import {
+  OUTPUT_DIR,
   ROOT_STORAGE_STATE,
   ROOT_URL,
   SUB_PATH_STORAGE_STATE,
@@ -11,7 +12,8 @@ const CI = Boolean(process.env.CI);
 
 /**
  * Chromium only, against containers that global setup starts from the application image: once at
- * the root of a hostname and once under a sub-path. A test tagged `@root-only` or `@subpath-only`
+ * the root of a hostname and once under a sub-path. The containers' names and ports, the signed-in
+ * states, and (locally) the output folder are this run's own, so two runs can share a machine. A test tagged `@root-only` or `@subpath-only`
  * runs in that project alone. Each project starts every test signed in to its container (the
  * storage state global setup saved); a test that needs to be signed out says so.
  *
@@ -24,6 +26,7 @@ const CI = Boolean(process.env.CI);
 export default defineConfig({
   testDir: './tests',
   globalSetup: './global-setup.ts',
+  outputDir: OUTPUT_DIR,
   fullyParallel: false,
   workers: 1,
   retries: CI ? 1 : 0,
