@@ -4,6 +4,8 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using n8Tracks.Api.Tests.Persistence;
+using n8Tracks.Api.Tests.Setup;
 using n8Tracks.Api.Tests.Telemetry;
 using n8Tracks.TestSupport;
 using OpenTelemetry.Metrics;
@@ -40,6 +42,8 @@ public sealed class LogRedactionGuardTests
     private const string NestedSentinel = "sentinel-nested-api-key-64ab";
     private const string ScopeSentinel = "sentinel-scope-style-1f90";
     private const string TitleSentinel = "sentinel-title-visible-e3b4";
+    private const string SetupPasswordSentinel = "sentinel-setup-password-90d1";
+    private const string SetupConfirmationSentinel = "sentinel-setup-confirmation-2b7e";
 
     private static readonly string[] SensitiveSentinels =
     [
@@ -54,6 +58,8 @@ public sealed class LogRedactionGuardTests
         RawPayloadSentinel,
         NestedSentinel,
         ScopeSentinel,
+        SetupPasswordSentinel,
+        SetupConfirmationSentinel,
     ];
 
     [Fact]
@@ -128,6 +134,39 @@ public sealed class LogRedactionGuardTests
         Assert.Contains("token=Redacted", collector.ReceivedText(StubOtlpCollector.TracesPath), StringComparison.Ordinal);
 
         Assert.All(SensitiveSentinels, sentinel => Assert.DoesNotContain(sentinel, everything, StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The setup submission carries the administrator's password twice. At Debug, whether it is
+    /// refused (the two differ) or accepted, neither the password, the confirmation, nor the stored
+    /// hash reaches the log, while the username does not need hiding and the request is logged.
+    /// </summary>
+    [Fact]
+    public async Task TheSetupPasswordNeverReachesTheLog()
+    {
+        using var factory = new LoggingApiFactory("Debug");
+        using var client = factory.CreateClient();
+
+        using (var refused = await SetupApi.SubmitAsync(client, "owner", SetupPasswordSentinel, SetupConfirmationSentinel))
+        {
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, refused.StatusCode);
+            await factory.CompletionLine(LoggingApiFactory.RequestId(refused));
+        }
+
+        using (var accepted = await SetupApi.SubmitAsync(client, "owner", SetupPasswordSentinel, SetupPasswordSentinel))
+        {
+            Assert.Equal(HttpStatusCode.Created, accepted.StatusCode);
+            var completion = await factory.CompletionLine(LoggingApiFactory.RequestId(accepted));
+            Assert.Equal("/api/v1/setup", completion.GetProperty("properties").GetProperty("path").GetString());
+        }
+
+        var hash = TestDatabase.Scalar(factory.DataPath, "SELECT password_hash FROM administrators;");
+        var captured = factory.CapturedText;
+
+        Assert.Contains("/api/v1/setup", captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(SetupPasswordSentinel, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(SetupConfirmationSentinel, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(hash, captured, StringComparison.Ordinal);
     }
 
     /// <summary>Sends the request that carries every sentinel and returns its request ID.</summary>

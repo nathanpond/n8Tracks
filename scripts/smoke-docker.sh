@@ -391,6 +391,18 @@ remove_container_only() { docker rm --force "$1" >/dev/null; }
 # health_field URL FIELD: a field of the health document at the URL; empty when there is no answer.
 health_field() { curl --silent --max-time 10 "$1" | json_field "$2" 2>/dev/null || true; }
 
+# api_field URL FIELD: a field of the JSON document (or Problem Details) at the URL; empty when there is no answer.
+api_field() { curl --silent --max-time 10 "$1" | json_field "$2" 2>/dev/null || true; }
+
+# The setup submission: the smoke test's fixed administrator. Not a real credential.
+readonly SETUP_BODY='{"username":"smoke","password":"smoke-test-password","passwordConfirmation":"smoke-test-password"}'
+
+# submit_setup: posts the setup submission to the app and prints the HTTP status.
+submit_setup() {
+    curl --silent --output /dev/null --max-time 10 --write-out '%{http_code}' \
+        --header 'Content-Type: application/json' --data "$SETUP_BODY" "$(url /api/v1/setup)" || true
+}
+
 # ---------------------------------------------------------------------------------------------------
 # Build: without both images nothing below can run, so a failure here ends the run.
 
@@ -458,6 +470,15 @@ mounted() {
     expect "health status" healthy "$(printf '%s' "$health" | json_field status)" "$name"
     expect "health reports the version in the VERSION file" "$expected_version" "$(printf '%s' "$health" | json_field version)" "$name"
 
+    # A new instance refuses its API until the administrator is created; health and setup still answer.
+    expect "setup status before setup" false "$(api_field "$(url /api/v1/setup/status)" complete)" "$name"
+    expect "an API endpoint before setup" 503 "$(http_status "$(url /api/v1/songs)")" "$name"
+    expect "the code of an API endpoint before setup" setup_required "$(api_field "$(url /api/v1/songs)" code)" "$name"
+    expect "the setup submission" 201 "$(submit_setup)" "$name"
+    expect "setup status after setup" true "$(api_field "$(url /api/v1/setup/status)" complete)" "$name"
+    expect "a second setup submission" 409 "$(submit_setup)" "$name"
+    expect "the API endpoint after setup is no longer refused" 404 "$(http_status "$(url /api/v1/songs)")" "$name"
+
     shell="$(curl --silent --max-time 5 "$(url /)")"
     case "$shell" in
         *'<div id="root">'*'<base href="/"'* | *'<base href="/"'*'<div id="root">'*) pass "the shell page is served at / with its base href" ;;
@@ -489,12 +510,14 @@ mounted() {
     docker restart "$name" >/dev/null
     wait_for_http "$name" /health
     expect "seeded row after docker restart" "$seeded" "$(seeded_timestamp "$data")" "$name"
+    expect "setup is still complete after docker restart" true "$(api_field "$(url /api/v1/setup/status)" complete)" "$name"
 
     remove "$name"
     run_main
     wait_for_http "$name" /health
     expect "seeded row after docker rm and a fresh docker run on the same data" "$seeded" "$(seeded_timestamp "$data")" "$name"
     expect "health status after recreating the container" healthy "$(health_field "$(url /health)" status)" "$name"
+    expect "setup is still complete after recreating the container" true "$(api_field "$(url /api/v1/setup/status)" complete)" "$name"
     remove "$name"
 }
 

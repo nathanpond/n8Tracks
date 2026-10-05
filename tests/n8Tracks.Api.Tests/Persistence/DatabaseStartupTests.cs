@@ -15,7 +15,7 @@ public sealed class DatabaseStartupTests : IDisposable
     public void Dispose() => directory.Dispose();
 
     [Fact]
-    public void TheFirstStartCreatesTheDatabaseFileWithTheSeededRowAndOneAppliedMigration()
+    public void TheFirstStartCreatesTheDatabaseFileWithTheSeededRowAndEveryMigrationApplied()
     {
         Assert.False(File.Exists(TestDatabase.FilePath(directory.Path)));
         var before = DateTimeOffset.UtcNow.AddSeconds(-1);
@@ -24,8 +24,11 @@ public sealed class DatabaseStartupTests : IDisposable
 
         Assert.True(File.Exists(TestDatabase.FilePath(directory.Path)));
 
-        var migration = Assert.Single(TestDatabase.History(directory.Path));
-        Assert.Matches("^[0-9]{14}_InitialCreate\\|10\\.0\\.", migration);
+        var history = TestDatabase.History(directory.Path);
+        Assert.Collection(
+            history,
+            migration => Assert.Matches("^[0-9]{14}_InitialCreate\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddAdministratorsAndSettings\\|10\\.0\\.", migration));
 
         // ISO 8601 UTC with milliseconds and Z, taken when the migration ran.
         var initialized = TestDatabase.SchemaInitializedUtc(directory.Path);
@@ -44,13 +47,22 @@ public sealed class DatabaseStartupTests : IDisposable
         Start();
 
         Assert.Equal(
-            ["__EFMigrationsHistory", "app_metadata"],
+            ["__EFMigrationsHistory", "administrators", "app_metadata", "settings"],
             TestDatabase.Rows(
                 directory.Path,
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> '__EFMigrationsLock' ORDER BY name;"));
         Assert.Equal(
             ["key|TEXT|1|1", "value|TEXT|1|0"],
             TestDatabase.Rows(directory.Path, "SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('app_metadata') ORDER BY cid;"));
+        Assert.Equal(
+            ["id|TEXT|1|1", "slot|INTEGER|1|0", "username|TEXT|1|0", "username_key|TEXT|1|0", "password_hash|TEXT|1|0", "created_utc|TEXT|1|0"],
+            TestDatabase.Rows(directory.Path, "SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('administrators') ORDER BY cid;"));
+        Assert.Equal(
+            ["ix_administrators_slot|1", "ix_administrators_username_key|1"],
+            TestDatabase.Rows(directory.Path, "SELECT name, CAST(\"unique\" AS TEXT) FROM pragma_index_list('administrators') WHERE origin = 'c' ORDER BY name;"));
+        Assert.Equal(
+            ["key|TEXT|1|1", "value|TEXT|1|0"],
+            TestDatabase.Rows(directory.Path, "SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('settings') ORDER BY cid;"));
         Assert.Equal(
             ["MigrationId", "ProductVersion"],
             TestDatabase.Rows(directory.Path, "SELECT name FROM pragma_table_info('__EFMigrationsHistory') ORDER BY cid;"));
@@ -122,8 +134,8 @@ public sealed class DatabaseStartupTests : IDisposable
         var state = host.Services.GetRequiredService<IMigrationStateProvider>().Current;
 
         Assert.Equal(MigrationStatus.UpToDate, state.Status);
-        Assert.Equal(Assert.Single(TestDatabase.History(directory.Path)).Split('|')[0], state.LastAppliedMigrationId);
-        Assert.EndsWith("_InitialCreate", state.LastAppliedMigrationId, StringComparison.Ordinal);
+        Assert.Equal(TestDatabase.History(directory.Path)[^1].Split('|')[0], state.LastAppliedMigrationId);
+        Assert.EndsWith("_AddAdministratorsAndSettings", state.LastAppliedMigrationId, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -144,14 +156,19 @@ public sealed class DatabaseStartupTests : IDisposable
         using var client = host.CreateClient();
         using var response = await client.GetAsync(new Uri("/health", UriKind.Relative));
 
-        var applied = await host.WaitForLine(line => line.GetProperty("message").GetString()!.StartsWith("Applied database migration", StringComparison.Ordinal));
-        Assert.Equal("Information", applied.GetProperty("level").GetString());
-        Assert.EndsWith("_InitialCreate", LoggingApiFactory.Property(applied, "migrationId"), StringComparison.Ordinal);
-
         var summary = await host.WaitForLine(line => line.GetProperty("message").GetString()!.StartsWith("Database is up to date", StringComparison.Ordinal));
         Assert.Equal("Information", summary.GetProperty("level").GetString());
-        Assert.Equal(1, summary.GetProperty("properties").GetProperty("appliedCount").GetInt32());
-        Assert.EndsWith("_InitialCreate", LoggingApiFactory.Property(summary, "lastAppliedMigrationId"), StringComparison.Ordinal);
+        var history = TestDatabase.History(host.DataPath).Select(row => row.Split('|')[0]).ToList();
+        Assert.Equal(history.Count, summary.GetProperty("properties").GetProperty("appliedCount").GetInt32());
+        Assert.Equal(history[^1], LoggingApiFactory.Property(summary, "lastAppliedMigrationId"));
+
+        // One line per migration, in the order they were applied.
+        var applied = host.Lines()
+            .Where(line => line.GetProperty("message").GetString()!.StartsWith("Applied database migration", StringComparison.Ordinal))
+            .ToList();
+        Assert.All(applied, line => Assert.Equal("Information", line.GetProperty("level").GetString()));
+        Assert.Equal(history, applied.Select(line => LoggingApiFactory.Property(line, "migrationId")));
+        Assert.EndsWith("_InitialCreate", history[0], StringComparison.Ordinal);
 
         // Nothing from EF Core itself at Information or below: no SQL in the log.
         Assert.DoesNotContain("CREATE TABLE", host.CapturedText, StringComparison.Ordinal);

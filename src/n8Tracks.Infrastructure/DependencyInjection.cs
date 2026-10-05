@@ -3,8 +3,11 @@ using Microsoft.Extensions.DependencyInjection;
 using n8Tracks.Application.Configuration;
 using n8Tracks.Application.Health;
 using n8Tracks.Application.Persistence;
+using n8Tracks.Application.Setup;
 using n8Tracks.Infrastructure.Health;
 using n8Tracks.Infrastructure.Persistence;
+using n8Tracks.Infrastructure.Security;
+using n8Tracks.Infrastructure.Setup;
 
 namespace n8Tracks.Infrastructure;
 
@@ -24,6 +27,10 @@ public static class DependencyInjection
         services.AddSingleton<IDatabaseConnectionFactory, SqliteConnectionFactory>();
         services.AddSingleton<IMediaMountProbe, MediaMountProbe>();
         services.AddSingleton<IHealthService, HealthService>();
+
+        services.AddScoped<IAdministratorStore, AdministratorStore>();
+        services.AddSingleton<IPasswordHasher, Argon2idPasswordHasher>();
+        services.AddSingleton<ISetupChecks, SetupChecks>();
 
         return services;
     }

@@ -20,3 +20,10 @@ export const SUB_PATH_ORIGIN = `${HOST}:${String(SUB_PATH_PORT)}`;
 
 /** No media mounted, at the root of the hostname: reports degraded. */
 export const NO_MEDIA_URL = `${HOST}:${String(NO_MEDIA_PORT)}/`;
+
+export const FRESH_PORT = 18790;
+
+/** The container the setup test starts for itself, never set up before the test: at the root. */
+export const FRESH_NAME = 'n8tracks-e2e-fresh';
+
+export const FRESH_URL = `${HOST}:${String(FRESH_PORT)}/`;

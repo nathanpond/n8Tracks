@@ -29,6 +29,8 @@ public static class RedactionPolicy
     public static IReadOnlyList<string> SensitiveNames { get; } =
     [
         "password",
+        "passwordconfirmation",
+        "passwordhash",
         "token",
         "secret",
         "cookie",

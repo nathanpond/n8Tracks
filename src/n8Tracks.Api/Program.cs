@@ -9,6 +9,8 @@ using n8Tracks.Api.DependencyInjection;
 using n8Tracks.Api.Endpoints;
 using n8Tracks.Api.Frontend;
 using n8Tracks.Api.Logging;
+using n8Tracks.Api.Problems;
+using n8Tracks.Api.Setup;
 using n8Tracks.Application;
 using n8Tracks.Application.Configuration;
 using n8Tracks.Infrastructure;
@@ -115,6 +117,10 @@ public sealed class Program
         builder.Services.ConfigureHttpJsonOptions(static json =>
             json.SerializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase, allowIntegerValues: false)));
 
+        // A body that cannot be read throws, in every environment, so the exception middleware answers
+        // it with Problem Details instead of the framework's empty 400.
+        builder.Services.Configure<RouteHandlerOptions>(static routeHandlers => routeHandlers.ThrowOnBadRequest = true);
+
         builder.Services.AddOpenApi();
         builder.Services.AddApplication();
         builder.Services.AddInfrastructure();
@@ -159,12 +165,17 @@ public sealed class Program
 
             app.UseConfiguredPathBase(options);
 
+            // Inside the path base, so it sees the path the routes see.
+            app.UseMiddleware<SetupGateMiddleware>();
+
             if (app.Environment.IsDevelopment())
             {
                 app.MapOpenApi();
             }
 
             app.MapHealth();
+            app.MapSetup();
+            app.MapApiNotFound();
 
             // After the endpoints, and inside the path base: the frontend answers only what no endpoint does.
             app.UseFrontend(options);

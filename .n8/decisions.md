@@ -1082,3 +1082,39 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** #203 keeps scanning `m4a` only, not `mp4`.
   **Why:** Maintainer's choice; #216 flags an M4A the browser saved as `.mp4` so the user can rename it, and `.mp4` is usually video.
   **Issue:** #203
+
+## /n8-exec M2 — 2026-10-05
+
+- **Decision:** Argon2id through Geralt 4.4.0 (libsodium 1.0.22), m=19 MiB, t=2, p=1, stored as libsodium's encoded `$argon2id$v=19$m=19456,t=2,p=1$…` string; the hasher normalises the password to NFC for both hashing and verifying.
+  **Why:** The story delegated "a maintained .NET library". Geralt was released 2026-07 and wraps libsodium's `crypto_pwhash_str`, which writes the parameters into the hash. Konscious (2024) and Isopoh (2023) are older and Konscious has no encoded format. libsodium always uses one lane, which matches p=1. Normalising inside the hasher means the sign-in story cannot forget it.
+  **Issue:** #52
+- **Decision:** The single-administrator rule is a `slot` column that is always 1 (`CHECK (slot = 1)` plus a unique index), alongside a UUIDv7 `id` primary key and a unique `username_key`. `settings` (key, JSON value with `CHECK (json_valid(value))`) is created in the same migration (`AddAdministratorsAndSettings`) but is not used yet.
+  **Why:** The story asks for a database constraint and for both tables, and the conventions call for UUIDv7 IDs. A constant unique slot enforces "one row" without making the ID a magic value. The race loser's unique violation (SQLITE_CONSTRAINT_UNIQUE, 2067) maps to 409 `setup_already_complete`.
+  **Issue:** #52
+- **Decision:** The POST checks run in this order: already complete → 409; validation → 422; data path not writable → 409 `storage_not_writable`; then create. The data-path check commits an upsert of `app_metadata.storage_checked_utc` on a separate unpooled connection, then creates, fsyncs, and deletes `.n8tracks-write-check-<guid>` in the data folder, within the health checks' 2-second deadline.
+  **Why:** The story gives neither the order nor the check's mechanics. Validation is cheap and the write is not. A rolled-back write may never reach the disk under WAL, so a committed write is what proves the database is writable.
+  **Issue:** #52
+- **Decision:** Lengths count code points of the NFC form. Unpaired surrogates are refused before normalising. "Printable" for usernames excludes Control, Line and Paragraph separators, Surrogate, and unassigned code points. Format characters such as ZWJ are allowed so emoji names work. The comparison key is NFC plus `ToUpperInvariant()`, which is the ordinal-ignore-case comparison.
+  **Why:** The discretion lines say "code points" and "printable" without defining which form or which categories.
+  **Issue:** #52
+- **Decision:** Problem Details plumbing in `src/n8Tracks.Api/Problems/ApiProblem.cs`: every error carries `code` and `requestId`. 422 `validation_failed` has `errors` keyed by field name. An unknown `/api/v1` route is 404 `not_found`, through a fallback endpoint. A body that cannot be read is 400 `invalid_request`: `RouteHandlerOptions.ThrowOnBadRequest` is on in every environment, and the exception middleware answers `BadHttpRequestException`. The 503 `setup_required` gate exempts everything under `/api/v1/setup` and logs its completion line at Information, not Error.
+  **Why:** This is the first `/api/v1` story, so it owns the shared plumbing. Without the fallback and the bad-request handling, the framework answers with empty bodies, or with a 500 in Development.
+  **Issue:** #52
+- **Decision:** POST `/api/v1/setup` answers 201 `{ id, username }` with no Location header. Once setup is complete, the status endpoint returns exactly `{ "complete": true }`.
+  **Why:** The story names the 409s but not the success body. There is no administrator resource URL yet.
+  **Issue:** #52
+- **Decision:** Rule 1: `SetupChecks` yields (`await Task.Yield()`) after each shared deadline check. Rule 1: EF Core's `SaveChangesFailed` event is logged at Debug, like the existing command-error rule.
+  **Why:** The race test showed that callers sharing one run of a `DeadlineCheck` are handed the result one after another on the worker thread. A caller that continued synchronously into Argon2 hashing pushed the other past the 2 s deadline, which gave a false 409 `storage_not_writable`. With the yield, the regression test (two concurrent submissions, real checks) gives exactly one 201 and one 409 `setup_already_complete`. EF logged the expected race loss at Error even though the caller handles it.
+  **Issue:** #52
+- **Decision:** Rule 2 (accessibility): theme `primaryShade` is 8. Input descriptions and Stepper descriptions use the secondary text colour. A new palette token `errorText` (light `#c92a2a`, dark `#ffa8a8`, contrast-tested) is mapped onto `--mantine-color-error`. PasswordInput gets an explicit `aria-invalid`.
+  **Why:** axe flagged white on Mantine's default blue shade 6, the dimmed grey, and the red field errors as below 4.5:1, the first time the app showed a filled button or a form. Mantine's PasswordInput does not set `aria-invalid` itself.
+  **Issue:** #52
+- **Decision:** The wizard has four Stepper steps: Storage, Media, Backups ("Skipped for now", never opened; Next on Media goes to the administrator), and Administrator. Retry and Check again refetch the status. A 409 `storage_not_writable` returns to the storage step. A 409 `setup_already_complete` says so and offers Continue. Field rules are left to the API's 422 and not duplicated in the browser.
+  **Why:** The story leaves the presentation open; one source of the rules keeps the browser and the API from disagreeing.
+  **Issue:** #52
+- **Decision:** e2e: the container helpers moved into `e2e/support/containers.ts`. Global setup completes setup on the three shared containers with fixed test credentials (`e2e/support/setup.ts`, `completeSetup`). The Demo spec (`tests/setup.spec.ts`, `@root-only`) starts a fresh container of its own on port 18790 for each attempt and removes it afterwards. The smoke script's `mounted` section asserts the 503, completes setup, and checks that it survives a restart and a recreate.
+  **Why:** A shared un-set-up container would already be set up when CI retried the test. The sub-path project does not walk the wizard because base-URL resolution is already covered by the shell tests there.
+  **Issue:** #52
+- **Decision:** Unit tests for the rules and the hasher live in `tests/n8Tracks.Api.Tests/Setup/`; there is no new Domain or Application test project. The rules live in Application (`AdministratorRules`), not Domain.
+  **Why:** No such test project exists, and adding one is build infrastructure the story does not need. The rules are application-service validation; there is no domain entity yet.
+  **Issue:** #52

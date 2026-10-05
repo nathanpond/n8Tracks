@@ -17,6 +17,8 @@ export interface SchemePalette {
   body: ColorPair;
   /** Less prominent text (details, captions) on the page background. */
   secondaryText: string;
+  /** A field's error message, and the text and border of an invalid field, on the page background. */
+  errorText: string;
   /** The out-of-date notice. */
   notice: ColorPair & { border: string };
   /** Status badges. */
@@ -27,6 +29,7 @@ export const palette: Record<'light' | 'dark', SchemePalette> = {
   light: {
     body: { background: '#ffffff', text: '#1a1b1e' },
     secondaryText: '#495057',
+    errorText: '#c92a2a',
     notice: { background: '#fff3bf', text: '#1a1b1e', border: '#8a5a00' },
     status: {
       healthy: { background: '#1e6b30', text: '#ffffff' },
@@ -37,6 +40,7 @@ export const palette: Record<'light' | 'dark', SchemePalette> = {
   dark: {
     body: { background: '#1a1b1e', text: '#e9ecef' },
     secondaryText: '#adb5bd',
+    errorText: '#ffa8a8',
     notice: { background: '#3d2c00', text: '#fff3bf', border: '#ffd43b' },
     status: {
       healthy: { background: '#8ce99a', text: '#0b2e13' },

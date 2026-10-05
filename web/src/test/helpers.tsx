@@ -43,8 +43,40 @@ export function jsonResponse(status: number, body: unknown): Response {
 
 type FetchMock = ReturnType<typeof vi.fn<typeof fetch>>;
 
-/** Replaces `fetch` with a mock; each test says what it answers. */
+export const completeSetup = { complete: true };
+
+export const incompleteSetup = {
+  complete: false,
+  storage: { writable: true },
+  media: { available: true },
+};
+
+/** The path a request was made to, whatever form `fetch` was given it in. */
+export function requestPath(input: RequestInfo | URL): string {
+  const url = input instanceof Request ? input.url : input.toString();
+  return new URL(url, document.baseURI).pathname;
+}
+
+export function isSetupStatusRequest(input: RequestInfo | URL): boolean {
+  return requestPath(input).endsWith('/api/v1/setup/status');
+}
+
+/**
+ * Replaces `fetch` with a mock; each test says what it answers. The setup status is answered
+ * "complete" outside the mock, so tests of the app's pages see neither the wizard nor that request.
+ */
 export function stubFetch(): FetchMock {
+  const mock = vi.fn<typeof fetch>();
+  vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) =>
+    isSetupStatusRequest(input)
+      ? Promise.resolve(jsonResponse(200, completeSetup))
+      : mock(input, init),
+  );
+  return mock;
+}
+
+/** Replaces `fetch` with a mock that answers every request, the setup status included. */
+export function stubAllFetch(): FetchMock {
   const mock = vi.fn<typeof fetch>();
   vi.stubGlobal('fetch', mock);
   return mock;
@@ -64,9 +96,9 @@ export function setVisibility(state: DocumentVisibilityState): void {
   document.dispatchEvent(new Event('visibilitychange'));
 }
 
-export function renderApp() {
+export function renderApp(path = '/') {
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[path]}>
       <App />
     </MemoryRouter>,
   );

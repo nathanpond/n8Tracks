@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <PackageReference Include="Geralt" Version="4.4.0" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
     <!-- Design-time only (dotnet ef): never flows to the projects that reference this one. -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.12">

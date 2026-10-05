@@ -1,10 +1,21 @@
-import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { createServer } from 'node:net';
-import { tmpdir, userInfo } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { promisify } from 'node:util';
 import {
+  docker,
+  errorText,
+  IMAGE,
+  removeContainers as removeNamedContainers,
+  requireFreePort,
+  run,
+  startContainer,
+  waitForHealth,
+  type Target,
+} from './support/containers.ts';
+import { completeSetup } from './support/setup.ts';
+import {
+  FRESH_NAME,
+  FRESH_PORT,
   NO_MEDIA_PORT,
   NO_MEDIA_URL,
   ROOT_PORT,
@@ -13,27 +24,8 @@ import {
   SUB_PATH_URL,
 } from './support/targets.ts';
 
-const run = promisify(execFile);
-
-const IMAGE = process.env.N8TRACKS_E2E_IMAGE ?? 'n8tracks:dev';
 /** When set, each container's log is written to this directory before the container is removed. */
 const LOG_DIR = process.env.N8TRACKS_E2E_LOG_DIR;
-const HEALTH_WAIT_MS = 60_000;
-const HEALTH_POLL_MS = 500;
-const CONTAINER_PORT = 8787;
-
-interface Target {
-  name: string;
-  port: number;
-  /** The page URL, ending in a slash; health is `health` under it. */
-  url: string;
-  /** Whether the empty media directory is mounted (read-only). */
-  media: boolean;
-  /** The public base URL to configure, when the app is not at the root. */
-  baseUrl?: string;
-  /** The health status the container must reach before the tests start. */
-  expectedStatus: string;
-}
 
 const targets: Target[] = [
   {
@@ -60,21 +52,6 @@ const targets: Target[] = [
   },
 ];
 
-function errorText(error: unknown): string {
-  if (typeof error === 'object' && error !== null && 'stderr' in error) {
-    const stderr = String(error.stderr).trim();
-    if (stderr !== '') {
-      return stderr;
-    }
-  }
-  return error instanceof Error ? error.message : String(error);
-}
-
-async function docker(...args: string[]): Promise<string> {
-  const { stdout } = await run('docker', args);
-  return stdout.trim();
-}
-
 async function requireDocker(): Promise<void> {
   try {
     await docker('version', '--format', '{{.Server.Version}}');
@@ -100,7 +77,7 @@ async function requireImage(): Promise<void> {
 
 async function removeContainers(): Promise<void> {
   // "docker rm --force" succeeds for a name that does not exist, so this is safe to repeat.
-  await docker('rm', '--force', '--volumes', ...targets.map((target) => target.name));
+  await removeNamedContainers(...targets.map((target) => target.name), FRESH_NAME);
 }
 
 /** Keeps what the containers logged: once they are removed, there is nothing left to read. */
@@ -120,103 +97,19 @@ async function saveContainerLogs(directory: string): Promise<void> {
   }
 }
 
-function requireFreePort(port: number): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const server = createServer();
-    server.once('error', (error) => {
-      reject(
-        new Error(
-          `Host port ${String(port)} is already in use, and the end-to-end suite needs it. ` +
-            `Stop whatever is listening on it and run the suite again. (${error.message})`,
-          { cause: error },
-        ),
-      );
-    });
-    server.listen(port, () => {
-      server.close(() => {
-        resolve();
-      });
-    });
-  });
-}
-
-async function start(target: Target, work: string): Promise<void> {
-  const data = join(work, `data-${target.name}`);
-  await mkdir(data);
-  const { uid, gid } = userInfo();
-  const args = [
-    'run',
-    '--detach',
-    '--name',
-    target.name,
-    '--publish',
-    `${String(target.port)}:${String(CONTAINER_PORT)}`,
-    '--env',
-    `PUID=${String(uid)}`,
-    '--env',
-    `PGID=${String(gid)}`,
-    '--volume',
-    `${data}:/data`,
-  ];
-  if (target.media) {
-    args.push('--volume', `${join(work, 'media')}:/media:ro`);
-  }
-  if (target.baseUrl !== undefined) {
-    args.push('--env', `N8TRACKS_BASE_URL=${target.baseUrl}`);
-  }
-  await docker(...args, IMAGE);
-}
-
-async function healthStatus(target: Target): Promise<string | undefined> {
-  try {
-    const response = await fetch(new URL('health', target.url), {
-      signal: AbortSignal.timeout(2_000),
-    });
-    const body: unknown = await response.json();
-    if (typeof body === 'object' && body !== null && 'status' in body) {
-      return String(body.status);
-    }
-    return undefined;
-  } catch {
-    // Not listening yet.
-    return undefined;
-  }
-}
-
-async function waitForHealth(target: Target): Promise<void> {
-  const deadline = Date.now() + HEALTH_WAIT_MS;
-  let last: string | undefined;
-  while (Date.now() < deadline) {
-    last = await healthStatus(target);
-    if (last === target.expectedStatus) {
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, HEALTH_POLL_MS));
-  }
-  let log: string;
-  try {
-    const { stdout, stderr } = await run('docker', ['logs', '--tail', '20', target.name]);
-    log = `${stdout}${stderr}`.trim();
-  } catch (error) {
-    log = `(no log: ${errorText(error)})`;
-  }
-  throw new Error(
-    `Container ${target.name} did not report "${target.expectedStatus}" at ${target.url}health within ` +
-      `${String(HEALTH_WAIT_MS / 1000)} seconds (last answer: ${last ?? 'none'}). Its last log lines:\n${log}`,
-  );
-}
-
 /**
- * Starts the three containers under test from the application image and returns the teardown that
- * removes them and their temporary directories. Runs once per test run.
+ * Starts the three containers under test from the application image, completes first-run setup on
+ * each through the API with the test administrator (so every test meets a set-up instance), and
+ * returns the teardown that removes them and their temporary directories. Runs once per test run.
+ * The port for the fresh container the setup test starts must be free too.
  */
 export default async function globalSetup(): Promise<() => Promise<void>> {
   await requireDocker();
   await requireImage();
   // Leftovers from an aborted run would hold the names and the ports.
   await removeContainers();
-  for (const target of targets) {
-    await requireFreePort(target.port);
+  for (const port of [...targets.map((target) => target.port), FRESH_PORT]) {
+    await requireFreePort(port);
   }
 
   const work = await mkdtemp(join(tmpdir(), 'n8tracks-e2e-'));
@@ -231,9 +124,10 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   try {
     await mkdir(join(work, 'media'));
     for (const target of targets) {
-      await start(target, work);
+      await startContainer(target, work);
     }
     await Promise.all(targets.map(waitForHealth));
+    await Promise.all(targets.map((target) => completeSetup(target.url)));
   } catch (error) {
     await teardown();
     throw error;

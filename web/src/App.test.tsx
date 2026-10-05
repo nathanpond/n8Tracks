@@ -34,13 +34,14 @@ async function advance(milliseconds: number): Promise<void> {
 }
 
 describe('the shell', () => {
-  it('shows the product name and a loading state on first load', () => {
+  it('shows the product name and a loading state on first load', async () => {
     stubFetch().mockImplementation(neverAnswers);
 
     renderApp();
 
+    // The setup gate answers first; then the shell starts loading health.
+    expect(await screen.findByText(LOADING)).toBeVisible();
     expect(screen.getByRole('heading', { level: 1, name: 'n8Tracks' })).toBeVisible();
-    expect(screen.getByText(LOADING)).toBeVisible();
     expect(screen.queryByTestId('version')).not.toBeInTheDocument();
   });
 
@@ -128,6 +129,9 @@ describe('the shell', () => {
     stubFetch().mockImplementation(neverAnswers);
 
     renderApp();
+    // Let the setup gate answer, so the health request is the only one the clock is running for.
+    await advance(0);
+    expect(screen.getByText(LOADING)).toBeVisible();
     await advance(HEALTH_TIMEOUT_MS - 1);
     expect(screen.getByText(LOADING)).toBeVisible();
 
@@ -268,6 +272,7 @@ describe('the colour scheme', () => {
     const user = userEvent.setup();
 
     const firstVisit = renderApp();
+    await screen.findByText(LOADING);
     await user.click(option('Dark'));
 
     expect(option('Dark')).toBeChecked();
