@@ -229,7 +229,7 @@ describe('Songs', () => {
       overflow: 'hidden',
       textOverflow: 'ellipsis',
     });
-    expect(concept).toHaveTextContent(LONG_CONCEPT.replace('\n', ' '));
+    expect(concept).toHaveTextContent(LONG_CONCEPT.replaceAll('\n', ' '));
 
     await user.tab();
     while (document.activeElement !== concept) {

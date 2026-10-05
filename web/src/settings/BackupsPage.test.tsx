@@ -211,7 +211,7 @@ describe('Settings → Backups', () => {
     expect(screen.getByRole('link', { name: `Download ${valid.name}` })).toHaveAttribute(
       'href',
       expect.stringMatching(
-        new RegExp(`/api/v1/backups/mount/${valid.name.replace(/\./g, '\\.')}$`),
+        new RegExp(`/api/v1/backups/mount/${valid.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`),
       ),
     );
     expect(screen.getByRole('link', { name: `Download ${newer.name}` })).toBeVisible();

@@ -37,7 +37,7 @@ function saveStatus(page: Page) {
 async function choose(page: Page, option: string, within = page.locator('body')) {
   await within
     .locator('label')
-    .filter({ hasText: new RegExp(`^${option.replace(/[#]/g, '\\$&')}$`) })
+    .filter({ hasText: new RegExp(`^${option.replace(/[.*+?^${}()|[\]\\#]/g, '\\$&')}$`) })
     .click();
   await expect(within.getByRole('radio', { name: option, exact: true })).toBeChecked();
 }
