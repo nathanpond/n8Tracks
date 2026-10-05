@@ -81,7 +81,7 @@ public abstract record SongListOutcome
 /// mutable Version <c>1</c> as its current Version, all in one transaction. Its details are edited
 /// against the revision the caller read, so a stale edit never overwrites a newer one.
 /// </summary>
-public sealed class SongService(ISongStore songs, IWorkflowStateStore states, IExclusiveTransaction transaction, TimeProvider time)
+public sealed class SongService(ISongStore songs, IWorkflowStateStore states, ISunoModelList models, IExclusiveTransaction transaction, TimeProvider time)
 {
     /// <summary>The field names validation errors are keyed by, as the API spells them.</summary>
     public const string TitleField = "title";
@@ -107,7 +107,8 @@ public sealed class SongService(ISongStore songs, IWorkflowStateStore states, IE
     /// Creates a Song. The title is required and the concept optional, by <see cref="SongRules"/>;
     /// when either is wrong nothing is stored and no shortcode number is used. Its Version 1 starts
     /// with the default options (<see cref="VersionInputRules.Defaults"/>), Suno's title pre-filled
-    /// with the Song's.
+    /// with the Song's, and the first model the model list offers as both the Song's and the Sound's
+    /// model (none when it offers none).
     /// </summary>
     public async Task<SongOutcome> CreateAsync(SongRequest request, CancellationToken cancellationToken)
     {
@@ -125,7 +126,12 @@ public sealed class SongService(ISongStore songs, IWorkflowStateStore states, IE
                     ?? throw new InvalidOperationException("Every workflow state is hidden, so a new Song has no state to start in.");
                 var number = await songs.NextShortcodeNumberAsync(ct).ConfigureAwait(false);
                 var now = time.GetUtcNow();
-                var inputs = VersionInputRules.Defaults(CreateFieldInventory.Embedded, SongRules.NormaliseTitle(request.Title!));
+                var model = (await models.OfferedAsync(ct).ConfigureAwait(false)).FirstOrDefault();
+                var inputs = VersionInputRules.Defaults(CreateFieldInventory.Embedded, SongRules.NormaliseTitle(request.Title!)) with
+                {
+                    Model = model,
+                    SoundsModel = model,
+                };
                 var (song, version) = Song.Create(Guid.CreateVersion7(now), Guid.CreateVersion7(now), number, request.Title!, request.Concept, initial, inputs, now);
                 await songs.AddAsync(song, version, ct).ConfigureAwait(false);
 

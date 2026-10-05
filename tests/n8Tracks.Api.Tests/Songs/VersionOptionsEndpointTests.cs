@@ -35,7 +35,7 @@ public sealed class VersionOptionsEndpointTests
         var inputs = version.GetProperty("inputs");
 
         Assert.Equal(
-            """{"kind":"song","songMode":"advanced","speechMode":"advanced","model":null,"simplePrompt":"","simpleLyricsAdded":false,"simpleStylesAdded":false,"excludeStyles":"","vocalGender":null,"durationMode":"auto","durationSeconds":180,"maxMode":false,"weirdness":50,"styleInfluence":50,"variety":"normal","personalize":false,"title":"TITLE","speechPrompt":"","speechScript":"","speechTone":"","speechVocalGender":null,"speechBackgroundMusic":true,"speechVariety":"normal","soundsModel":null,"soundDescription":"","soundType":"one_shot","soundBpm":null,"soundKey":"any","soundScale":null}"""
+            """{"kind":"song","songMode":"advanced","speechMode":"advanced","model":"v6","simplePrompt":"","simpleLyricsAdded":false,"simpleStylesAdded":false,"excludeStyles":"","vocalGender":null,"durationMode":"auto","durationSeconds":180,"maxMode":false,"weirdness":50,"styleInfluence":50,"variety":"normal","personalize":false,"title":"TITLE","speechPrompt":"","speechScript":"","speechTone":"","speechVocalGender":null,"speechBackgroundMusic":true,"speechVariety":"normal","soundsModel":"v6","soundDescription":"","soundType":"one_shot","soundBpm":null,"soundKey":"any","soundScale":null}"""
                 .Replace("TITLE", title[..100], StringComparison.Ordinal),
             inputs.GetRawText());
         Assert.Equal(100, inputs.GetProperty("title").GetString()!.Length);
@@ -44,7 +44,7 @@ public sealed class VersionOptionsEndpointTests
         Assert.Equal(AdvancedSong, version.GetProperty("effectiveInputs").EnumerateObject().Select(static option => option.Name));
 
         // The kind and model have columns of their own, so lists can filter on them.
-        Assert.Equal("song|", TestDatabase.Scalar(factory.DataPath, "SELECT kind || '|' || coalesce(model, '') FROM versions;"));
+        Assert.Equal("song|v6", TestDatabase.Scalar(factory.DataPath, "SELECT kind || '|' || coalesce(model, '') FROM versions;"));
     }
 
     [Fact]
@@ -109,13 +109,13 @@ public sealed class VersionOptionsEndpointTests
         Assert.Equal("""{"kind":"speech","speechMode":"simple","speechPrompt":""}""", speech.GetProperty("effectiveInputs").GetRawText());
         var sound = await EditAsync(client, id, """{"inputs":{"kind":"sound"}}""");
         Assert.Equal(
-            """{"kind":"sound","soundsModel":null,"soundDescription":"","soundType":"one_shot","soundBpm":null,"soundKey":"any"}""",
+            """{"kind":"sound","soundsModel":"v6","soundDescription":"","soundType":"one_shot","soundBpm":null,"soundKey":"any"}""",
             sound.GetProperty("effectiveInputs").GetRawText());
 
         // Back to an Advanced Song: nothing was cleared by switching.
         var back = await EditAsync(client, id, """{"inputs":{"kind":"song","songMode":"advanced"}}""");
         Assert.Equal(
-            """{"kind":"song","songMode":"advanced","speechMode":"simple","model":"v6-mini","simplePrompt":"A fast song\nabout running","simpleLyricsAdded":true,"simpleStylesAdded":true,"excludeStyles":"","vocalGender":"female","durationMode":"custom","durationSeconds":120,"maxMode":false,"weirdness":80,"styleInfluence":50,"variety":"high","personalize":false,"title":"Switching","speechPrompt":"","speechScript":"","speechTone":"","speechVocalGender":null,"speechBackgroundMusic":true,"speechVariety":"normal","soundsModel":null,"soundDescription":"","soundType":"one_shot","soundBpm":null,"soundKey":"any","soundScale":null}""",
+            """{"kind":"song","songMode":"advanced","speechMode":"simple","model":"v6-mini","simplePrompt":"A fast song\nabout running","simpleLyricsAdded":true,"simpleStylesAdded":true,"excludeStyles":"","vocalGender":"female","durationMode":"custom","durationSeconds":120,"maxMode":false,"weirdness":80,"styleInfluence":50,"variety":"high","personalize":false,"title":"Switching","speechPrompt":"","speechScript":"","speechTone":"","speechVocalGender":null,"speechBackgroundMusic":true,"speechVariety":"normal","soundsModel":"v6","soundDescription":"","soundType":"one_shot","soundBpm":null,"soundKey":"any","soundScale":null}""",
             back.GetProperty("inputs").GetRawText());
         Assert.Equal("[Verse]\nRun", back.GetProperty("lyrics").GetString());
 
@@ -262,7 +262,7 @@ public sealed class VersionOptionsEndpointTests
         Assert.Equal("Renamed", renamed.GetProperty("name").GetString());
 
         // The database refuses a raw write of any option column too.
-        foreach (var column in new[] { "kind = 'sound'", "model = 'v6'", "inputs = '{}'" })
+        foreach (var column in new[] { "kind = 'sound'", "model = 'v6-wild'", "inputs = '{}'" })
         {
             var error = Assert.ThrowsAny<Exception>(() => TestDatabase.Execute(factory.DataPath, $"UPDATE versions SET {column} WHERE id = '{frozen.ToString().ToUpperInvariant()}';"));
             Assert.Contains("A frozen Version's inputs never change.", error.Message, StringComparison.Ordinal);

@@ -1726,3 +1726,27 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** Rule 3: `e2e/tests/songs.spec.ts` now expects the new Kind column ("Song") at cell 3 and the Version count at cell 4. The new column had moved the count one cell along. A separate follow-up commit records this entry, because the story commit was already pushed.
   **Why:** The new column broke an existing test's locator, which the full e2e run caught. The test checks the same things plus the kind.
   **Issue:** #113
+- **Decision:** The model list is a new `suno_models` table (id, name, name_key, note, position, retired, discovered), seeded with v6, v6-wild, and v6-mini (fixed IDs, the inventory's order). One `settings` row, `suno.models`, holds the revision for the whole list, the same pattern as the workflow states. The migration `AddSunoModels` was generated with `dotnet-ef` (after `dotnet tool restore`), and its ID was moved to `20261005170000` so that it sorts after #113's hand-dated `20261005163000_AddSpeechAndSoundInputs`.
+  **Why:** The story's must-haves and routes ask for a managed list with one revision. A generated ID (16:15) would have sorted before #113's migration and run out of order.
+  **Issue:** #114
+- **Decision:** `ModelCatalogService` (Application/Suno) implements `ISunoModelList` and replaces `InventoryModelList`, which was removed. The registration is scoped because the service reads the database. `ISunoModelList` gained `OfferedAsync`, which lists the models that are not retired, in order. A Version's model is still checked with `ListAsync`, which includes retired models.
+  **Why:** The key link says "a model value must be in the list, retired or not". Picking from the offered list is a UI concern.
+  **Issue:** #114
+- **Decision:** `GET /api/v1/suno/create-fields` `models` now lists only the offered models, in the list's order. Before this, it was every model a Version may name. The web `ModelControl` already showed a current value missing from the list; it now labels that value "<name> (retired)".
+  **Why:** The pickers need exactly the offered list (AC 4), and a Version keeps showing its retired model (AC 3). The field is unreleased and only this milestone uses it, so there is no other client to break. #112's notes expected #114 to change it.
+  **Issue:** #114
+- **Decision:** Refusals. Renaming or deleting a model that any Version names (as `model` or as `inputs.soundsModel`, each Version counted once) is 409 `model_in_use` with `versionCount`. Retiring or deleting the last model that is not retired is 409 `last_offered_model`. A wrong reorder is 409 `order_mismatch`. A taken name, ignoring case and NFC, is 422. Notes are optional, one line, at most 200 characters, and a blank note is none. In a PATCH, `note: null` removes the note.
+  **Why:** The AC allows renaming and deleting only a model no Version uses, and forbids retiring the last non-retired one. I extended "last offered" to deletion, because deleting it would also leave nothing to offer. The discretion line fixes names at 1 to 50 characters but gives no note limit, so I chose a short one-line note.
+  **Issue:** #114
+- **Decision:** A new Song's Version 1 gets the first offered model as both `model` and `soundsModel`. Before this, both were null, the inventory default. The tests that asserted null defaults now expect "v6", and `InventoryCoverageTests` treats the two model keys like the title: they start from the list, not the inventory.
+  **Why:** The discretion line says a new Version's model is the first non-retired model until the default story lands. Suno's Sounds tab uses the same dropdown, so a Sound's model follows the same rule.
+  **Issue:** #114
+- **Decision:** Rule 2: when an edit changes a Version's model or Sound model, `VersionService.UpdateAsync` checks the model against the list again inside its transaction. The list's changes run in the same kind of exclusive transaction.
+  **Why:** Before this, the model was checked only before the transaction. A model renamed or deleted between that check and the write could have left a Version naming a model that is no longer on the list. The extra check closes that gap.
+  **Issue:** #114
+- **Decision:** Invariant check. Invariant 1: a list change never writes `versions`. A model a Version names cannot be renamed or deleted, so a frozen Version's model never changes. The #69 guard now runs `PATCH` and `DELETE /api/v1/suno/models/{id}` against the frozen Version's own model (each answers 409 `model_in_use`, and the inputs are byte-identical afterwards). It exempts POST and PUT order with a reason. Invariant 5: every rule is in `ModelCatalogService`, and the endpoints only map outcomes. Invariant 7: managing the list is `SessionOnly()`, so no token can use it. No other invariant is touched.
+  **Why:** I am recording why no invariant needs a conversation with the user.
+  **Issue:** #114
+- **Decision:** Web: the page is Settings → Suno (`settings/SunoPage.tsx`), and its "Models" section is `SunoModelsSection.tsx`. The sidebar is now Account, Credentials, Workflow, Suno, Backups, System. Models are reordered with Move up and Move down only, with no dragging. The edit dialog disables the name of a model that Versions use, and Delete is disabled for such a model and for the last offered one.
+  **Why:** The AC asks only for an order the user controls. Buttons work by keyboard and need no extra lint exception, and the workflow page already established their focus behaviour.
+  **Issue:** #114

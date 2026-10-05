@@ -7,6 +7,7 @@ using n8Tracks.Api.Tests.Auth;
 using n8Tracks.Api.Tests.Setup;
 using n8Tracks.Api.Tests.Songs;
 using n8Tracks.Application.Suno;
+using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Api.Tests.Inventory;
 
@@ -47,6 +48,12 @@ public sealed class InventoryCoverageTests
     private const string TitleKey = "title";
 
     private const string SongTitle = "Coverage";
+
+    /// <summary>
+    /// The model fields start as the first model the model list offers (#114), not as the inventory's
+    /// null, which records only that Suno's form remembers the last choice.
+    /// </summary>
+    private static readonly string[] ModelKeys = ["model", "sounds_model"];
 
     [Fact]
     public void TheExclusionListNamesOnlyFieldsTheInventoryHasAndDeferred()
@@ -240,7 +247,18 @@ public sealed class InventoryCoverageTests
 
         private async Task CheckChoiceAsync(JsonElement stored)
         {
-            CheckDefault(stored);
+            if (ModelKeys.Contains(field.Key))
+            {
+                if (stored.GetString() != DefaultSunoModels.All[0].Name)
+                {
+                    Fail($"starts as {stored.GetRawText()}, not the first model the list offers.");
+                }
+            }
+            else
+            {
+                CheckDefault(stored);
+            }
+
             if (field.Values is not { Count: > 0 } values)
             {
                 Fail("the inventory gives no values.");

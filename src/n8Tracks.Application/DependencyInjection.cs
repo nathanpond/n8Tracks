@@ -31,7 +31,8 @@ public static class DependencyInjection
         services.AddSingleton<JobQueue>();
         services.AddSingleton<IJobQueue>(static provider => provider.GetRequiredService<JobQueue>());
         services.AddScoped<JobService>();
-        services.TryAddSingleton<ISunoModelList, InventoryModelList>();
+        services.AddScoped<ModelCatalogService>();
+        services.AddScoped<ISunoModelList>(static provider => provider.GetRequiredService<ModelCatalogService>());
         services.AddScoped<SongService>();
         services.AddScoped<VersionService>();
         services.AddScoped<EditorRevisionService>();

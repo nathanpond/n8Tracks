@@ -11,8 +11,8 @@ namespace n8Tracks.Api.Endpoints;
 /// <summary>
 /// What a client needs to offer a Version's Suno options without restating Suno's rules
 /// (<c>catalog.read</c>): the fields of Suno's Create screen as the embedded inventory records them,
-/// each with the Version option it is stored in and Suno's own explanation, and the models a Version
-/// may name.
+/// each with the Version option it is stored in and Suno's own explanation, and the models offered for
+/// a new choice. The model list itself is managed under <see cref="SunoModelsEndpoints"/>.
 /// </summary>
 internal static class SunoEndpoints
 {
@@ -30,16 +30,18 @@ internal static class SunoEndpoints
 
         endpoints.MapGet(CreateFieldsPath, GetCreateFieldsAsync)
             .WithName("GetSunoCreateFields")
-            .WithSummary("The fields of Suno's Create screen, as the field inventory records them (limits, ranges, value lists, defaults, tabs, modes), each with the Version option it is stored in (option) and Suno's explanation (help), and the models a Version may name.")
+            .WithSummary("The fields of Suno's Create screen, as the field inventory records them (limits, ranges, value lists, defaults, tabs, modes), each with the Version option it is stored in (option) and Suno's explanation (help), and the models offered for a new choice (not retired, in the list's order).")
             .RequireScope(CredentialScopes.CatalogRead)
             .Produces<CreateFieldsResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden);
 
+        endpoints.MapSunoModels();
+
         return endpoints;
     }
 
-    /// <summary>200 with the inventory's fields, in its order, and the model list.</summary>
+    /// <summary>200 with the inventory's fields, in its order, and the models offered for a new choice.</summary>
     private static async Task<Ok<CreateFieldsResponse>> GetCreateFieldsAsync(
         ISunoModelList models,
         HttpContext context,
@@ -62,7 +64,7 @@ internal static class SunoEndpoints
         return TypedResults.Ok(new CreateFieldsResponse(
             (string?)captured["capturedOn"],
             fields,
-            await models.ListAsync(cancellationToken)));
+            await models.OfferedAsync(cancellationToken)));
     }
 }
 
@@ -72,7 +74,8 @@ internal static class SunoEndpoints
 /// <c>maxLength</c>, <c>min</c>, <c>max</c>, <c>unit</c>, <c>condition</c>, <c>notes</c>) plus
 /// <c>option</c>, the key of the Version's <c>inputs</c> it is stored in (null for a field no option
 /// stores, and for lyrics and styles, which are the Version's own fields), and <c>help</c>, Suno's
-/// explanation (null when none was captured). <c>models</c> is the list a Version's model is checked
-/// against.
+/// explanation (null when none was captured). <c>models</c> are the models offered for a new choice:
+/// the list's models that are not retired, in its order. A Version's model is checked against the
+/// whole list, retired models included, so a picker shows a Version's retired model as well.
 /// </summary>
 internal sealed record CreateFieldsResponse(string? CapturedOn, JsonArray Fields, IReadOnlyList<string> Models);

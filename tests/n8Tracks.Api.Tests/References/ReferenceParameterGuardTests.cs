@@ -29,6 +29,8 @@ public sealed class ReferenceParameterGuardTests
         "POST /api/v1/credentials/{id:guid}/revoke: id",
         "PATCH /api/v1/workflow-states/{id:guid}: id",
         "DELETE /api/v1/workflow-states/{id:guid}: id",
+        "PATCH /api/v1/suno/models/{id:guid}: id",
+        "DELETE /api/v1/suno/models/{id:guid}: id",
         "GET /api/v1/versions/{reference}/snapshots/{snapshotId:guid}: snapshotId",
         "POST /api/v1/versions/{reference}/snapshots/{snapshotId:guid}/restore: snapshotId",
     };

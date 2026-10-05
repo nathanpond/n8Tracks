@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using n8Tracks.Domain.Songs;
+using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Infrastructure.Persistence;
 
@@ -40,6 +41,8 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
     public DbSet<JobRecord> Jobs => Set<JobRecord>();
 
     public DbSet<WorkflowStateRecord> WorkflowStates => Set<WorkflowStateRecord>();
+
+    public DbSet<SunoModelRecord> SunoModels => Set<SunoModelRecord>();
 
     public DbSet<ShortcodeSequenceRecord> ShortcodeSequence => Set<ShortcodeSequenceRecord>();
 
@@ -145,6 +148,28 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                 Colour = seeded.Colour,
                 Position = seeded.Order,
                 Hidden = seeded.Hidden,
+            }));
+        });
+
+        modelBuilder.Entity<SunoModelRecord>(model =>
+        {
+            model.ToTable("suno_models", static table =>
+            {
+                table.HasCheckConstraint("ck_suno_models_position", "position >= 1");
+                table.HasCheckConstraint("ck_suno_models_name", "length(name) > 0");
+            });
+            model.HasKey(record => record.Id);
+            model.HasIndex(record => record.NameKey).IsUnique();
+            model.HasIndex(record => record.Position).IsUnique();
+            model.HasData(DefaultSunoModels.All.Select(static seeded => new SunoModelRecord
+            {
+                Id = seeded.Id,
+                Name = seeded.Name,
+                NameKey = SunoModelRules.NameKey(seeded.Name),
+                Note = seeded.Note,
+                Position = seeded.Order,
+                Retired = seeded.Retired,
+                Discovered = seeded.Discovered,
             }));
         });
 

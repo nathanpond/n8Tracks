@@ -11,6 +11,7 @@ using n8Tracks.Application.Maintenance;
 using n8Tracks.Application.Persistence;
 using n8Tracks.Application.Setup;
 using n8Tracks.Application.Songs;
+using n8Tracks.Application.Suno;
 using n8Tracks.Infrastructure.Backups;
 using n8Tracks.Infrastructure.Health;
 using n8Tracks.Infrastructure.Jobs;
@@ -56,6 +57,7 @@ public static class DependencyInjection
         services.AddScoped<IVersionStore, VersionStore>();
         services.AddScoped<IEditorRevisionStore, EditorRevisionStore>();
         services.AddScoped<IWorkflowStateStore, WorkflowStateStore>();
+        services.AddScoped<ISunoModelStore, SunoModelStore>();
         services.AddSingleton<IBackupStorage, BackupFolders>();
         services.AddSingleton<IBackupWriter, BackupWriter>();
         services.AddScoped<IBackupScheduleStore, BackupScheduleStore>();

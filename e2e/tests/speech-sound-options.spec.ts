@@ -124,7 +124,7 @@ test.describe('a Speech’s and a Sound’s options', () => {
     expect(sound.kind).toBe('sound');
     expect(sound.effectiveInputs).toEqual({
       kind: 'sound',
-      soundsModel: null,
+      soundsModel: 'v6',
       soundDescription: 'Vinyl crackle and rain',
       soundType: 'loop',
       soundBpm: 120,

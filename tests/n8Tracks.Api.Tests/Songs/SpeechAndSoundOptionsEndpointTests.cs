@@ -32,7 +32,8 @@ public sealed class SpeechAndSoundOptionsEndpointTests
 
         var inputs = (await GetAsync(client, id)).GetProperty("inputs").GetRawText();
 
-        Assert.EndsWith(SpeechAndSoundDefaults + "}", inputs, StringComparison.Ordinal);
+        // Suno's defaults, but a Sound's model, which Suno leaves unset, is the first model the list offers.
+        Assert.EndsWith(SpeechAndSoundDefaults.Replace("\"soundsModel\":null", "\"soundsModel\":\"v6\"", StringComparison.Ordinal) + "}", inputs, StringComparison.Ordinal);
     }
 
     [Fact]

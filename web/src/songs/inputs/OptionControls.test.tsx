@@ -249,6 +249,26 @@ describe('the model control', () => {
     await user.selectOptions(select, 'v6-wild');
     expect(changes).toHaveBeenLastCalledWith('v6-wild');
   });
+
+  it('keeps a retired model the Version names, marked, and offers only the others', () => {
+    renderControl<string | null>('v6-mini', ({ value, onChange }) => (
+      <ModelControl
+        field={field('model')}
+        models={['v7', 'v6']}
+        value={value}
+        onChange={onChange}
+        readOnly={false}
+      />
+    ));
+
+    expect(screen.getByRole('combobox', { name: 'Model version' })).toHaveValue('v6-mini');
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'Not chosen',
+      'v6-mini (retired)',
+      'v7',
+      'v6',
+    ]);
+  });
 });
 
 describe('durations', () => {

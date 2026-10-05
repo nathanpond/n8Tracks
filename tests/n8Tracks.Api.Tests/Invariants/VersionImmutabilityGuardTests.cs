@@ -328,6 +328,19 @@ public sealed class VersionImmutabilityGuardTests
                 }
             },
             ChangesInputs: true),
+        ["PATCH /api/v1/suno/models/{id:guid}"] = new(async target =>
+        {
+            // Renaming the model a Version names would change that Version's model, so it is refused.
+            var (id, revision) = await target.ModelAsync();
+            using var response = await SendAsync(target.Client, HttpMethod.Patch, new Uri($"/api/v1/suno/models/{id}", UriKind.Relative), SongApi.Quoted(revision), """{"name":"renamed by the guard"}""");
+            await SetupApi.ProblemAsync(response, HttpStatusCode.Conflict, "model_in_use");
+        }),
+        ["DELETE /api/v1/suno/models/{id:guid}"] = new(async target =>
+        {
+            var (id, revision) = await target.ModelAsync();
+            using var response = await SendAsync(target.Client, HttpMethod.Delete, new Uri($"/api/v1/suno/models/{id}", UriKind.Relative), SongApi.Quoted(revision), json: null);
+            await SetupApi.ProblemAsync(response, HttpStatusCode.Conflict, "model_in_use");
+        }),
     };
 
     /// <summary>Unsafe endpoints that take neither a Song nor a Version, and why they cannot change one's inputs.</summary>
@@ -344,6 +357,8 @@ public sealed class VersionImmutabilityGuardTests
         ["POST /api/v1/workflow-states"] = "workflow states",
         ["PATCH /api/v1/workflow-states/{id:guid}"] = "workflow states",
         ["PUT /api/v1/workflow-states/order"] = "workflow states",
+        ["POST /api/v1/suno/models"] = "adds a model to the list; a Version's model is not touched",
+        ["PUT /api/v1/suno/models/order"] = "reorders the model list; a Version's model is not touched",
         ["DELETE /api/v1/workflow-states/{id:guid}"] = "workflow states; moves Songs to another state, never a Version",
         ["POST /api/v1/backups"] = "queues a backup: reads the database, writes only an archive file",
         ["DELETE /api/v1/backups/{location}/{name}"] = "deletes an archive file, never a database row",
@@ -610,6 +625,15 @@ public sealed class VersionImmutabilityGuardTests
             using var response = await Client.GetAsync(new Uri($"/api/v1/versions/{VersionId}", UriKind.Relative));
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             return await SetupApi.JsonAsync(response);
+        }
+
+        /// <summary>The ID of the model the Version names, and the model list's revision.</summary>
+        public async Task<(Guid Id, int Revision)> ModelAsync()
+        {
+            var name = (await ReadAsync()).GetProperty("inputs").GetProperty("model").GetString();
+            var list = await SetupApi.JsonAsync(await Client.GetAsync(new Uri("/api/v1/suno/models", UriKind.Relative)));
+            var model = list.GetProperty("items").EnumerateArray().Single(item => item.GetProperty("name").GetString() == name);
+            return (model.GetProperty("id").GetGuid(), list.GetProperty("revision").GetInt32());
         }
 
         /// <summary>The Version's current revision, so the freeze, not a stale revision, is what refuses.</summary>

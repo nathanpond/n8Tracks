@@ -419,6 +419,19 @@ public sealed class VersionService(
                     edit.Styles.IsSent ? VersionRules.NormaliseInput(edit.Styles.Value!) : current.Styles);
                 var held = new VersionText(current.Lyrics, current.Styles);
                 var inputs = VersionInputRules.Apply(current.Inputs, sentInputs);
+
+                // The model list may have changed since the edit was checked (a model renamed or
+                // deleted), so a model that changes is checked again inside the transaction, which
+                // the list's own changes also take.
+                if (inputs.Model != current.Inputs.Model || inputs.SoundsModel != current.Inputs.SoundsModel)
+                {
+                    var listed = await models.ListAsync(ct).ConfigureAwait(false);
+                    if (VersionInputRules.Errors(CreateFieldInventory.Embedded, [.. listed], sentInputs) is { Count: > 0 } modelErrors)
+                    {
+                        return new VersionUpdateOutcome.Invalid(modelErrors);
+                    }
+                }
+
                 var textChange = text != held;
                 var inputsChange = textChange || inputs != current.Inputs;
                 if (!inputsChange && annotations == new VersionAnnotations(summary.Name, summary.Notes, summary.Archived))

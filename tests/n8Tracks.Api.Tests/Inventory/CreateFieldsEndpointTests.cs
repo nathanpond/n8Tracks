@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using n8Tracks.Api.Tests.Auth;
 using n8Tracks.Api.Tests.Setup;
 using n8Tracks.Api.Tests.Songs;
@@ -72,10 +73,12 @@ public sealed class CreateFieldsEndpointTests
         Assert.Equal(JsonValueKind.Null, byKey["exclude_styles"].GetProperty("help").ValueKind);
         Assert.Equal(JsonValueKind.Null, byKey["model"].GetProperty("help").ValueKind);
 
-        // models: the model list a Version's model is checked against.
+        // models: the models offered for a new choice, which the shipped list seeds from the
+        // inventory's own model field, in its order.
         Assert.Equal(
-            await new ServiceModelList(factory).ListAsync(),
+            await new ServiceModelList(factory).OfferedAsync(),
             answer.GetProperty("models").EnumerateArray().Select(static model => model.GetString()!));
+        Assert.Equal(CreateFieldInventory.Embedded.Get("model").Values, answer.GetProperty("models").EnumerateArray().Select(static model => model.GetString()!));
     }
 
     [Fact]
@@ -118,10 +121,13 @@ public sealed class CreateFieldsEndpointTests
     /// <summary>The host's model list, read the way the endpoint reads it.</summary>
     private sealed class ServiceModelList(N8TracksApiFactory factory)
     {
-        public async Task<IReadOnlyList<string>> ListAsync()
+        public async Task<IReadOnlyList<string>> OfferedAsync()
         {
-            var models = (ISunoModelList)factory.Services.GetService(typeof(ISunoModelList))!;
-            return await models.ListAsync(CancellationToken.None);
+            var scope = factory.Services.CreateAsyncScope();
+            await using (scope.ConfigureAwait(false))
+            {
+                return await scope.ServiceProvider.GetRequiredService<ISunoModelList>().OfferedAsync(CancellationToken.None);
+            }
         }
     }
 }

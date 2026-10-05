@@ -98,6 +98,7 @@ test.describe(
         'Account',
         'Credentials',
         'Workflow',
+        'Suno',
         'Backups',
         'System',
       ]);

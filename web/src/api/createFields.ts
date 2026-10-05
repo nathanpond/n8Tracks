@@ -29,7 +29,10 @@ export interface CreateField {
   help: string | null;
 }
 
-/** Suno's Create-screen fields, in Suno's order, and the models a Version may name. */
+/**
+ * Suno's Create-screen fields, in Suno's order, and the models offered for a new choice: the model
+ * list's models that are not retired, in its order (Settings → Suno).
+ */
 export interface CreateFields {
   fields: CreateField[];
   models: string[];
@@ -67,7 +70,7 @@ const acceptCreateFields = (answer: unknown): CreateFields | undefined =>
     ? { fields: answer.fields, models: answer.models }
     : undefined;
 
-/** Suno's Create-screen fields and the model list. */
+/** Suno's Create-screen fields and the models offered for a new choice. */
 export function useCreateFields() {
   return useResource(CREATE_FIELDS_PATH, acceptCreateFields);
 }

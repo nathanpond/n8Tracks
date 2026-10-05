@@ -300,7 +300,11 @@ export function TextControl({
   );
 }
 
-/** The model picker: the model list, and "Not chosen" for a Version with none (the field's null). */
+/**
+ * The model picker: the models offered for a new choice, in the list's order, and "Not chosen" for
+ * a Version with none (the field's null). A Version whose model is no longer offered (retired in
+ * Settings → Suno) keeps it: it is shown first, marked retired.
+ */
 export function ModelControl({
   field,
   models,
@@ -308,14 +312,15 @@ export function ModelControl({
   onChange,
   readOnly,
 }: ControlProps<string | null> & { models: readonly string[] }) {
-  const listed = value === null || models.includes(value) ? models : [value, ...models];
+  const retired = value !== null && !models.includes(value);
   return (
     <NativeSelect
       label={field.label}
       description={field.help ?? undefined}
       data={[
         { value: '', label: 'Not chosen' },
-        ...listed.map((model) => ({ value: model, label: model })),
+        ...(retired ? [{ value, label: `${value} (retired)` }] : []),
+        ...models.map((model) => ({ value: model, label: model })),
       ]}
       value={value ?? ''}
       disabled={readOnly}
