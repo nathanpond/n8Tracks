@@ -27,6 +27,7 @@ public static class DependencyInjection
         services.AddSingleton<IMigrationStateProvider>(static provider => provider.GetRequiredService<MigrationStateHolder>());
 
         services.AddSingleton<IDatabaseConnectionFactory, SqliteConnectionFactory>();
+        services.AddScoped<IDatabaseSchemaCheck, DatabaseSchemaCheck>();
         services.AddSingleton<IMediaMountProbe, MediaMountProbe>();
         services.AddSingleton<IHealthService, HealthService>();
 
@@ -39,6 +40,7 @@ public static class DependencyInjection
         services.AddScoped<ISignInAccounts>(static provider => provider.GetRequiredService<SessionStore>());
         services.AddScoped<IAccountPasswords>(static provider => provider.GetRequiredService<SessionStore>());
         services.AddScoped<ISignInThrottleStore, SignInThrottleStore>();
+        services.AddScoped<IPasswordResetRecord, PasswordResetRecordStore>();
         services.AddScoped<IExclusiveTransaction, ExclusiveTransaction>();
         services.AddScoped<ICredentialStore, CredentialStore>();
 

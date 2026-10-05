@@ -124,6 +124,36 @@ public static class DatabaseStartup
         }
     }
 
+    /// <summary>
+    /// Whether the database already has exactly this build's schema. It reads the header, the
+    /// migration history, and the migration lock, and changes nothing: no journal mode, no migration.
+    /// The file must exist; the caller checks.
+    /// </summary>
+    /// <exception cref="Microsoft.Data.Sqlite.SqliteException">The file cannot be opened, or is not a SQLite database.</exception>
+    internal static async Task<DatabaseCondition> CheckWithoutChangingAsync(N8TracksDbContext context, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await context.Database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            var connection = context.Database.GetDbConnection();
+            await ScalarAsync(connection, "PRAGMA schema_version;", cancellationToken).ConfigureAwait(false);
+
+            if (await MigrationLockIsHeldAsync(connection, cancellationToken).ConfigureAwait(false))
+            {
+                return DatabaseCondition.Upgrading;
+            }
+
+            var known = context.Database.GetMigrations().ToList();
+            var applied = (await context.Database.GetAppliedMigrationsAsync(cancellationToken).ConfigureAwait(false)).ToList();
+
+            return known.SequenceEqual(applied, StringComparer.Ordinal) ? DatabaseCondition.Current : DatabaseCondition.SchemaMismatch;
+        }
+        finally
+        {
+            await context.Database.CloseConnectionAsync().ConfigureAwait(false);
+        }
+    }
+
     private static bool Fail(Serilog.ILogger startupLog, string step, string reason)
     {
         startupLog.Error("Database startup failed at step {Step}: {Reason}", step, reason);

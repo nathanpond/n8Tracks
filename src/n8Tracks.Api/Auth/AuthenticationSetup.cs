@@ -45,6 +45,7 @@ internal static class AuthenticationSetup
         });
 
         services.AddHostedService<SessionPurgeService>();
+        services.AddSingleton<PasswordResetNotice>();
 
         return services;
     }

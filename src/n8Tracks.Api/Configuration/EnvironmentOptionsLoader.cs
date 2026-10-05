@@ -101,6 +101,35 @@ internal static class EnvironmentOptionsLoader
     }
 
     /// <summary>
+    /// Loads and validates only the data path, for a command that works on the database of the app
+    /// in its own container and listens on nothing. Every other setting has its default value here,
+    /// whatever the environment says, so a setting the command has no use for cannot stop it.
+    /// </summary>
+    /// <exception cref="ConfigurationValidationException">The data path is not a writable directory.</exception>
+    public static N8TracksOptions LoadDataPathOnly(EnvironmentSnapshot environment)
+    {
+        ArgumentNullException.ThrowIfNull(environment);
+
+        var errors = new List<ConfigurationError>();
+        var dataPath = ReadDataPath(environment.Variables, environment.WorkingDirectory, errors);
+
+        if (errors.Count > 0)
+        {
+            throw new ConfigurationValidationException(errors);
+        }
+
+        return new N8TracksOptions(
+            DefaultPort,
+            new Uri($"http://localhost:{DefaultPort.ToString(CultureInfo.InvariantCulture)}"),
+            string.Empty,
+            TimeZoneInfo.Utc,
+            DefaultLogLevel,
+            dataPath,
+            ResolvePath(DefaultMediaPath, environment.WorkingDirectory),
+            ResolvePath(DefaultBackupPath, environment.WorkingDirectory));
+    }
+
+    /// <summary>
     /// Names that start with <c>N8TRACKS_</c>, have a value, and are not settings the app knows: usually a typo.
     /// </summary>
     public static IReadOnlyList<string> FindUnknownVariables(EnvironmentSnapshot environment)

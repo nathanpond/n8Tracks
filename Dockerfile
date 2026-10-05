@@ -69,6 +69,8 @@ WORKDIR /app
 COPY --from=build /app/publish ./
 COPY --from=web /src/web/dist ./wwwroot
 COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/n8tracks-entrypoint
+# The owner's commands in a running container: docker exec -it <container> n8tracks reset-password
+COPY --chmod=755 docker/n8tracks /usr/local/bin/n8tracks
 
 EXPOSE 8787
 

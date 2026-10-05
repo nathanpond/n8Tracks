@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using n8Tracks.Api.Auth;
+using n8Tracks.Api.Cli;
 using n8Tracks.Api.Configuration;
 using n8Tracks.Api.DependencyInjection;
 using n8Tracks.Api.Endpoints;
@@ -31,23 +32,45 @@ public sealed class Program
     }
 
     private static Task<int> Main(string[] args) =>
-        RunAsync(args, ProcessEnvironment.Read(), Console.Out, CancellationToken.None);
+        RunAsync(args, ProcessEnvironment.Read(), Console.Out, SystemCommandConsole.Instance, CancellationToken.None);
+
+    /// <summary>
+    /// As the overload with a console, with one that has no input and discards what is written to it:
+    /// for every mode but a command run in the container.
+    /// </summary>
+    internal static Task<int> RunAsync(
+        string[] args,
+        EnvironmentSnapshot environment,
+        TextWriter output,
+        CancellationToken cancellationToken) =>
+        RunAsync(args, environment, output, new CommandConsole(TextReader.Null, TextWriter.Null, isTerminal: false), cancellationToken);
 
     /// <summary>
     /// Builds and runs the app until shutdown or <paramref name="cancellationToken"/>. Every log line
     /// goes to <paramref name="output"/> as JSON. Returns the process exit code: 1 when the
     /// configuration is invalid, the database cannot be opened or upgraded, the port cannot be bound,
-    /// or startup fails unexpectedly, otherwise 0. With <c>--healthcheck</c> among
-    /// <paramref name="args"/> it starts nothing and reports on the app that is already running
-    /// (see <see cref="HealthCheckCommand"/>). That is the only argument with a meaning: every other
-    /// one is ignored, and none reaches the host's configuration.
+    /// or startup fails unexpectedly, otherwise 0. With <c>reset-password</c> as the first of
+    /// <paramref name="args"/> it starts nothing, runs that command on <paramref name="console"/>,
+    /// and writes nothing to <paramref name="output"/> (see <see cref="ResetPasswordCommand"/>). With
+    /// <c>--healthcheck</c> among them it starts nothing and reports on the app that is already
+    /// running (see <see cref="HealthCheckCommand"/>). Those are the only arguments with a meaning:
+    /// every other one is ignored, and none reaches the host's configuration.
     /// </summary>
     internal static async Task<int> RunAsync(
         string[] args,
         EnvironmentSnapshot environment,
         TextWriter output,
+        CommandConsole console,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(args);
+
+        // A command for the owner at a shell in the container: its own output, on standard error.
+        if (ResetPasswordCommand.IsRequested(args))
+        {
+            return await ResetPasswordCommand.RunAsync(args[1..], environment, console, cancellationToken).ConfigureAwait(false);
+        }
+
         // One sink for the startup lines and the application log, so both have the same shape.
         var sink = new JsonLinesSink(output);
         using var startupLog = LoggingRegistration.CreateStartupLogger(sink);

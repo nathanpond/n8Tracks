@@ -25,11 +25,20 @@ internal static class LoggingRegistration
     /// a failed bind, a crash while starting). Same sink, format, and redaction as the application log;
     /// always at Information, so a strict configured level cannot hide why the app did not start.
     /// </summary>
-    public static Logger CreateStartupLogger(ILogEventSink sink) =>
+    public static Logger CreateStartupLogger(ILogEventSink sink) => CreateStartupLogger(sink, StartupSourceContext);
+
+    /// <summary>
+    /// The log of a command run in the container: the startup logger's format and redaction, as JSON
+    /// lines on <paramref name="error"/> (standard error), under <paramref name="sourceContext"/>.
+    /// </summary>
+    public static Logger CreateCommandLogger(TextWriter error, string sourceContext) =>
+        CreateStartupLogger(new JsonLinesSink(error), sourceContext);
+
+    private static Logger CreateStartupLogger(ILogEventSink sink, string sourceContext) =>
         new LoggerConfiguration()
             .WithN8TracksLevels(LogEventLevel.Information)
             .WriteTo.Sink(sink)
-            .Enrich.WithProperty(Constants.SourceContextPropertyName, StartupSourceContext)
+            .Enrich.WithProperty(Constants.SourceContextPropertyName, sourceContext)
             .WithRedaction()
             .CreateLogger();
 

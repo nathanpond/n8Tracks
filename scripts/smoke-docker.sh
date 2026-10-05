@@ -529,6 +529,11 @@ mounted() {
     expect "setup is still complete after docker restart" true "$(api_field "$(url /api/v1/setup/status)" complete)" "$name"
     expect "the session after docker restart" 200 "$(session_status "$WORK/cookies-mounted")" "$name"
 
+    # A forgotten password, reset from inside the running container: the old session ends at once.
+    verify "n8tracks reset-password --password-stdin on a set-up container" "$name" \
+        sh -c "printf '%s\n' 'smoke-reset-password' | docker exec -i '$name' n8tracks reset-password --password-stdin"
+    expect "the old session after the password reset" 401 "$(session_status "$WORK/cookies-mounted")" "$name"
+
     remove "$name"
     run_main
     wait_for_http "$name" /health

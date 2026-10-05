@@ -228,6 +228,24 @@ Everything but the sign-in page, first-run setup, and `/health` needs the admini
 
 The app works the same over plain HTTP on a trusted network and behind an HTTPS reverse proxy. Have the proxy set `X-Forwarded-Proto` (and `X-Forwarded-Host` if it changes the host name): the session cookie is then marked `Secure`. The app takes these headers from any address, because the address of your proxy is not known in advance, so **publish port 8787 only to the proxy or to a trusted network**, never directly to the internet: anyone who can reach the port can claim the request came over HTTPS.
 
+### Forgot your password
+
+There is no email reset. With a shell on the Docker host, set a new password from inside the running container (the name is `n8tracks` in the Compose example):
+
+```sh
+docker exec -it n8tracks n8tracks reset-password
+```
+
+It asks for the new password twice without showing it, holds it to the same rule as setup (12 to 256 characters), and names the administrator it changed. The app can keep running: every browser session ends, so a signed-in browser goes to the sign-in page at its next request, and a sign-in lockout from wrong passwords is cleared. API, extension, and gateway credentials keep working. Nothing else changes.
+
+For a script, give the password on standard input instead; the first line is the password, without its line ending:
+
+```sh
+printf '%s\n' "$NEW_PASSWORD" | docker exec -i n8tracks n8tracks reset-password --password-stdin
+```
+
+Without a terminal and without `--password-stdin` the command refuses. It also refuses, changing nothing, when setup has never been completed, when the database schema does not match the image's version (start the app first, so it upgrades the database; the command never applies a migration), or while an upgrade holds the migration lock. It runs as the `PUID`/`PGID` user, as the app does. Prompts and messages go to standard error, the password is never printed or logged, and the exit code is 0 on success and 1 otherwise. The command writes one Information line recording the reset (without the password), and the app logs the reset at the next sign-in.
+
 ### Container health check
 
 The image's health check runs the app binary in a second mode, `dotnet /app/n8Tracks.Api.dll --healthcheck`, so the image needs no `curl`. It requests `<base path>/health` on the loopback interface at `N8TRACKS_PORT`, and passes on 200 (`healthy` or `degraded`); 503, no answer within 4 seconds, or an invalid port or base URL fails it. It runs every 30 seconds (every 5 while starting, on Docker 25 or later), and three failures in a row mark the container `unhealthy`.

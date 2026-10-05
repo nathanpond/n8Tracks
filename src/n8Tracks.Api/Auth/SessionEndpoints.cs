@@ -64,6 +64,8 @@ internal static class SessionEndpoints
     private static async Task<Results<Created<SessionResponse>, ProblemHttpResult>> SignInAsync(
         SignInRequest? request,
         SessionService sessions,
+        AccountService account,
+        PasswordResetNotice resetNotice,
         N8TracksOptions options,
         TimeProvider time,
         HttpContext context,
@@ -81,6 +83,17 @@ internal static class SessionEndpoints
             case SignInOutcome.SignedIn signedIn:
                 SessionCookie.Write(context, signedIn.Token, signedIn.ExpiresUtc);
                 logger.LogInformation("Signed in");
+
+                // The container's reset command cannot write to this process's log; it leaves the
+                // time in the database, and the first sign-in after it (which a reset makes
+                // necessary) reports it here.
+                if (await account.LastPasswordResetAsync(cancellationToken) is { } resetUtc && resetNotice.TryClaim(resetUtc))
+                {
+                    logger.LogInformation(
+                        "The administrator password was reset from the container at {PasswordResetUtc}",
+                        resetUtc.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture));
+                }
+
                 return TypedResults.Created((string?)null, new SessionResponse(signedIn.Username, signedIn.ExpiresUtc.UtcDateTime));
 
             case SignInOutcome.InvalidCredentials:

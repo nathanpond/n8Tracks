@@ -25,25 +25,60 @@ public abstract record PasswordChangeOutcome
     public sealed record Throttled(DateTimeOffset RetryAtUtc) : PasswordChangeOutcome;
 }
 
-/// <summary>The signed-in administrator's password, as the account it belongs to sees it.</summary>
+/// <summary>How a password reset from the container ended.</summary>
+public abstract record PasswordResetOutcome
+{
+    private PasswordResetOutcome()
+    {
+    }
+
+    /// <summary>The password of <paramref name="Username"/> was replaced, and <paramref name="SessionsEnded"/> sessions were ended.</summary>
+    public sealed record Reset(string Username, int SessionsEnded) : PasswordResetOutcome;
+
+    /// <summary>The new password breaks the setup rule, or its repetition differs. Nothing changed.</summary>
+    public sealed record Invalid(IReadOnlyList<string> Errors) : PasswordResetOutcome;
+
+    /// <summary>Setup was never completed: there is no administrator to reset. Nothing changed.</summary>
+    public sealed record NoAdministrator : PasswordResetOutcome;
+}
+
+/// <summary>The administrator's password, as the account it belongs to sees it.</summary>
 public interface IAccountPasswords
 {
     /// <summary>The administrator with this ID, or null.</summary>
     Task<SignInAccount?> FindByIdAsync(Guid administratorId, CancellationToken cancellationToken);
+
+    /// <summary>The instance's one administrator, or null before setup.</summary>
+    Task<SignInAccount?> FindAdministratorAsync(CancellationToken cancellationToken);
 
     /// <summary>Replaces the administrator's stored password hash.</summary>
     Task SetPasswordHashAsync(Guid administratorId, string passwordHash, CancellationToken cancellationToken);
 }
 
 /// <summary>
-/// The signed-in administrator's own account: changing the password. A wrong current password is a
-/// failed sign-in attempt as far as the throttle is concerned, so a session cannot be used to guess
-/// the password faster than the sign-in form allows.
+/// When the password was last reset from the container: a database row the reset command writes and
+/// the running server reads, holding the time and nothing else.
+/// </summary>
+public interface IPasswordResetRecord
+{
+    /// <summary>When the last reset happened, or null when there has been none.</summary>
+    Task<DateTimeOffset?> GetLastAsync(CancellationToken cancellationToken);
+
+    /// <summary>Records a reset at <paramref name="resetUtc"/>, replacing the previous time.</summary>
+    Task SetLastAsync(DateTimeOffset resetUtc, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// The administrator's own account: changing the password while signed in, and resetting a
+/// forgotten one from the container. A wrong current password is a failed sign-in attempt as far as
+/// the throttle is concerned, so a session cannot be used to guess the password faster than the
+/// sign-in form allows.
 /// </summary>
 public sealed class AccountService(
     IAccountPasswords accounts,
     ISessionStore sessions,
     ISignInThrottleStore throttle,
+    IPasswordResetRecord resets,
     IExclusiveTransaction transaction,
     IPasswordHasher passwordHasher,
     TimeProvider time)
@@ -111,6 +146,52 @@ public sealed class AccountService(
             },
             cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// Replaces a forgotten password, for someone with a shell in the container rather than a session.
+    /// A new password that breaks the setup rule, or a repetition that differs, is refused before
+    /// anything is read. Otherwise, in one transaction: the hash is replaced, every session ends, the
+    /// sign-in throttle is cleared, and the time of the reset is recorded. A new password equal to
+    /// the current one is accepted and still ends every session. Credentials are left alone.
+    /// </summary>
+    public async Task<PasswordResetOutcome> ResetPasswordAsync(
+        string? newPassword,
+        string? newPasswordConfirmation,
+        CancellationToken cancellationToken)
+    {
+        var errors = AdministratorRules.PasswordErrors(newPassword)
+            .Concat(AdministratorRules.ConfirmationErrors(newPassword, newPasswordConfirmation))
+            .ToList();
+        if (errors.Count > 0)
+        {
+            return new PasswordResetOutcome.Invalid(errors);
+        }
+
+        // Hashed before the transaction: the write lock is not held for the length of a hash.
+        var newHash = passwordHasher.Hash(newPassword!);
+
+        return await transaction.RunAsync<PasswordResetOutcome>(
+            async cancellation =>
+            {
+                var account = await accounts.FindAdministratorAsync(cancellation).ConfigureAwait(false);
+                if (account is null)
+                {
+                    return new PasswordResetOutcome.NoAdministrator();
+                }
+
+                await accounts.SetPasswordHashAsync(account.Id, newHash, cancellation).ConfigureAwait(false);
+                var ended = await sessions.DeleteAllAsync(account.Id, cancellation).ConfigureAwait(false);
+                await throttle.SaveAsync(SignInThrottleState.Empty, cancellation).ConfigureAwait(false);
+                await resets.SetLastAsync(time.GetUtcNow(), cancellation).ConfigureAwait(false);
+
+                return new PasswordResetOutcome.Reset(account.Username, ended);
+            },
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>When the password was last reset from the container, or null when it never was.</summary>
+    public Task<DateTimeOffset?> LastPasswordResetAsync(CancellationToken cancellationToken) =>
+        resets.GetLastAsync(cancellationToken);
 
     /// <summary>
     /// The errors of a change, empty when every field is there and the new password meets the setup

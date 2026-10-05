@@ -11,6 +11,11 @@ internal sealed class SessionStore(N8TracksDbContext context) : ISessionStore, I
             .Select(administrator => new SignInAccount(administrator.Id, administrator.Username, administrator.PasswordHash))
             .SingleOrDefaultAsync(cancellationToken);
 
+    public Task<SignInAccount?> FindAdministratorAsync(CancellationToken cancellationToken) =>
+        context.Administrators.AsNoTracking()
+            .Select(administrator => new SignInAccount(administrator.Id, administrator.Username, administrator.PasswordHash))
+            .SingleOrDefaultAsync(cancellationToken);
+
     public Task SetPasswordHashAsync(Guid administratorId, string passwordHash, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(passwordHash);
