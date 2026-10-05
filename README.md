@@ -175,11 +175,13 @@ Without Compose:
 
 ```sh
 docker build -t n8tracks:dev .
-docker run -d --name n8tracks -p 8787:8787 \
+docker run -d --name n8tracks -p 8787:8787 --stop-timeout 45 \
   -e PUID=1000 -e PGID=1000 -e TZ=Etc/UTC \
   -v "$PWD/data:/data" -v "$PWD/media:/media:ro" \
   n8tracks:dev
 ```
+
+`--stop-timeout 45` (`stop_grace_period: 45s` in the Compose example) gives a running background job, such as a backup, the 30 seconds it is allowed to finish when the container stops. With Docker's default of 10 seconds the job is cut off; it is then marked failed, "interrupted by restart", when the app next starts.
 
 ### The user the app runs as: `PUID` and `PGID`
 

@@ -332,6 +332,38 @@ public sealed class LogRedactionGuardTests
     }
 
     /// <summary>
+    /// A background job that reports progress and then throws, each with a sensitive assignment in
+    /// its text, and was enqueued with a sensitive value in its payload: at Debug, none of the three
+    /// reaches the log, while the job's failure (and its ID) does.
+    /// </summary>
+    [Fact]
+    public async Task AFailingJobsErrorProgressAndPayloadNeverReachTheLog()
+    {
+        const string ErrorSentinel = "sentinel-job-error-6a1d";
+        const string MessageSentinel = "sentinel-job-message-2f83";
+        const string PayloadSentinel = "sentinel-job-payload-b45e";
+
+        using var factory = new LoggingApiFactory("Debug") { TestServices = static services => Jobs.TestJobs.Register(services) };
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var id = await Jobs.TestJobs.EnqueueAsync(factory, new
+        {
+            name = "A",
+            prompt = PayloadSentinel,
+            progress = 50,
+            message = $"halfway, password={MessageSentinel}",
+            @throw = $"refused: token={ErrorSentinel}",
+        });
+        await Jobs.TestJobs.WaitForStatusAsync(client, id, "failed");
+        await Jobs.TestJobs.WaitUntilAsync(() => factory.CapturedText.Contains($"Job {id}", StringComparison.Ordinal) && factory.CapturedText.Contains("failed", StringComparison.Ordinal), "the failure line");
+
+        var captured = factory.CapturedText;
+        Assert.Contains("token=[REDACTED]", captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(ErrorSentinel, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(MessageSentinel, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(PayloadSentinel, captured, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Logs the way careless application code might: the object with sensitive properties, then the
     /// whole body, every header, and the query string, each destructured.
     /// </summary>

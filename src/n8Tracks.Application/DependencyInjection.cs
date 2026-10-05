@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using n8Tracks.Application.Auth;
 using n8Tracks.Application.Credentials;
+using n8Tracks.Application.Jobs;
 using n8Tracks.Application.Setup;
 
 namespace n8Tracks.Application;
@@ -21,6 +22,10 @@ public static class DependencyInjection
         services.AddScoped<AccountService>();
         services.AddScoped<CredentialService>();
         services.AddScoped<CredentialVerifier>();
+        services.AddSingleton<JobSignal>();
+        services.AddSingleton<JobQueue>();
+        services.AddSingleton<IJobQueue>(static provider => provider.GetRequiredService<JobQueue>());
+        services.AddScoped<JobService>();
 
         return services;
     }

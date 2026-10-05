@@ -148,6 +148,11 @@ public sealed class Program
         builder.Services.AddOpenApi();
         builder.Services.AddApplication();
         builder.Services.AddInfrastructure();
+        builder.Services.AddJobWorker();
+
+        // A graceful shutdown gives the running job its grace period to stop, with time to spare for
+        // the rest of the host; the framework's default would cut the job's grace short.
+        builder.Services.Configure<HostOptions>(static host => host.ShutdownTimeout = n8Tracks.Infrastructure.DependencyInjection.JobShutdownGrace + TimeSpan.FromSeconds(10));
         builder.Services.AddEnvironmentConfiguration(environment);
         builder.Services.AddFrontend();
         builder.Services.AddSessionAuthentication();
@@ -210,6 +215,7 @@ public sealed class Program
             app.MapSessions();
             app.MapAccount();
             app.MapCredentials();
+            app.MapJobs();
             app.MapApiNotFound();
 
             // After the endpoints, and inside the path base: the frontend answers only what no endpoint does.

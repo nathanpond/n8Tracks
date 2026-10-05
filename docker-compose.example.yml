@@ -15,6 +15,9 @@ services:
     image: n8tracks:dev
     container_name: n8tracks
     restart: unless-stopped
+    # On "docker compose stop" or "down", a running background job (a backup, an import) is asked to
+    # stop and given 30 seconds; Docker's default of 10 seconds would cut that short.
+    stop_grace_period: 45s
     ports:
       - "8787:8787"
     environment:

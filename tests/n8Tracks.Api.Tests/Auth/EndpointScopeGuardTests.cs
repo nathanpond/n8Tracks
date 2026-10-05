@@ -36,6 +36,8 @@ public sealed class EndpointScopeGuardTests
         Assert.Equal("session-only", markers["DELETE /api/v1/session"]);
         Assert.Equal("session-only", markers["DELETE /api/v1/sessions"]);
         Assert.Equal("session-only", markers["POST /api/v1/account/password"]);
+        Assert.Equal("scope", markers["GET /api/v1/jobs"]);
+        Assert.Equal("scope", markers["GET /api/v1/jobs/{id:guid}"]);
         Assert.Equal("any-caller", markers["* " + ApiNotFoundPattern]);
     }
 

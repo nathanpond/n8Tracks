@@ -8,7 +8,7 @@ public sealed class RedactionPolicyTests
     public void TheSensitiveNameListIsTheAgreedOne()
     {
         Assert.Equal(
-            ["password", "passwordconfirmation", "passwordhash", "token", "secret", "cookie", "session", "sessionid", "idhash", "tokenhash", "authorization", "apikey", "lyrics", "prompt", "style", "rawpayload", "providerpayload"],
+            ["password", "passwordconfirmation", "passwordhash", "token", "secret", "cookie", "session", "sessionid", "idhash", "tokenhash", "authorization", "apikey", "lyrics", "prompt", "style", "rawpayload", "providerpayload", "payload"],
             RedactionPolicy.SensitiveNames);
     }
 
@@ -50,6 +50,8 @@ public sealed class RedactionPolicyTests
     [InlineData("raw_payload")]
     [InlineData("ProviderPayload")]
     [InlineData("song.lyrics")]
+    [InlineData("payload")]
+    [InlineData("JobPayload")]
     public void ANameThatIsOrEndsWithASensitiveWordIsSensitive(string name)
     {
         Assert.True(RedactionPolicy.IsSensitive(name));

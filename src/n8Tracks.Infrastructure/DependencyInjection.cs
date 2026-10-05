@@ -1,12 +1,15 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using n8Tracks.Application.Auth;
 using n8Tracks.Application.Configuration;
 using n8Tracks.Application.Credentials;
 using n8Tracks.Application.Health;
+using n8Tracks.Application.Jobs;
 using n8Tracks.Application.Persistence;
 using n8Tracks.Application.Setup;
 using n8Tracks.Infrastructure.Health;
+using n8Tracks.Infrastructure.Jobs;
 using n8Tracks.Infrastructure.Persistence;
 using n8Tracks.Infrastructure.Security;
 using n8Tracks.Infrastructure.Setup;
@@ -43,7 +46,25 @@ public static class DependencyInjection
         services.AddScoped<IPasswordResetRecord, PasswordResetRecordStore>();
         services.AddScoped<IExclusiveTransaction, ExclusiveTransaction>();
         services.AddScoped<ICredentialStore, CredentialStore>();
+        services.AddScoped<IJobStore, JobStore>();
 
         return services;
     }
+
+    /// <summary>
+    /// Adds the background worker that runs queued jobs. Only the server adds it: a command run in
+    /// the container starts nothing on its own.
+    /// </summary>
+    public static IServiceCollection AddJobWorker(this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        services.TryAddSingleton(new JobWorkerOptions());
+        services.AddHostedService<JobWorker>();
+
+        return services;
+    }
+
+    /// <summary>How long a graceful shutdown gives the running job to stop.</summary>
+    public static TimeSpan JobShutdownGrace => JobWorkerOptions.DefaultShutdownGrace;
 }

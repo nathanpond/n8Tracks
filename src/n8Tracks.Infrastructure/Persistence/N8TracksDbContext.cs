@@ -18,6 +18,8 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
 
     public DbSet<CredentialRecord> Credentials => Set<CredentialRecord>();
 
+    public DbSet<JobRecord> Jobs => Set<JobRecord>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         ArgumentNullException.ThrowIfNull(configurationBuilder);
@@ -67,6 +69,24 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
             credential.HasKey(record => record.Id);
             credential.HasIndex(record => record.TokenHash).IsUnique();
             credential.HasIndex(record => record.NameKey).IsUnique().HasFilter("revoked_utc IS NULL");
+        });
+
+        modelBuilder.Entity<JobRecord>(job =>
+        {
+            job.ToTable("jobs", static table =>
+            {
+                table.HasCheckConstraint(
+                    "ck_jobs_status",
+                    $"status IN ('{JobRecord.Queued}', '{JobRecord.Running}', '{JobRecord.Succeeded}', '{JobRecord.Failed}')");
+                table.HasCheckConstraint("ck_jobs_progress", "progress BETWEEN 0 AND 100");
+                table.HasCheckConstraint("ck_jobs_payload_json", "payload IS NULL OR json_valid(payload)");
+                table.HasCheckConstraint("ck_jobs_result_json", "result IS NULL OR json_valid(result)");
+            });
+            job.HasKey(record => record.Id);
+            job.Property(record => record.Sequence).ValueGeneratedNever();
+            job.HasIndex(record => record.Sequence).IsUnique();
+            job.HasIndex(record => new { record.Status, record.Sequence });
+            job.HasIndex(record => record.FinishedUtc);
         });
     }
 }

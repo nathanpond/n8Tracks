@@ -19,8 +19,8 @@ function credentialRow(page: Page, name: string) {
 
 /**
  * What `curl -H "Authorization: Bearer <token>" <base>/api/v1/jobs` gets, from a client with no
- * cookies. Background jobs arrive with their own story (#57); until then the path is the API's
- * 404, which answers any valid token and refuses an invalid one with 401 like every endpoint.
+ * cookies: the job list, which needs `catalog.read`. A success is a JSON array, so it has no
+ * `code`; a refusal is a problem with one.
  */
 async function callWithToken(
   request: APIRequestContext,
@@ -89,10 +89,10 @@ test.describe('Settings → Credentials', () => {
     await expect(page.locator('body')).not.toContainText(token.slice(4));
     await expectAccessibleInLightAndDark(page);
 
-    // 3. The token authenticates a request from a client with no session (a 404 until #57, not 401).
+    // 3. The token authenticates a request from a client with no session.
     const curl = await playwright.request.newContext();
     try {
-      expect(await callWithToken(curl, baseURL, token)).toEqual({ status: 404, code: 'not_found' });
+      expect(await callWithToken(curl, baseURL, token)).toEqual({ status: 200, code: undefined });
 
       // The use shows as the last-used date once the page loads the list again.
       await page.reload();

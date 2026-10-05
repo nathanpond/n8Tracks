@@ -45,6 +45,9 @@ public static class RedactionPolicy
         "style",
         "rawpayload",
         "providerpayload",
+
+        // A job's payload: whatever the code that enqueued it passed, which may be any of the above.
+        "payload",
     ];
 
     /// <summary>Names that end with a sensitive word but never hold a sensitive value.</summary>
