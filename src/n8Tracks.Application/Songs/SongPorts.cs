@@ -93,11 +93,45 @@ public interface ISongStore
     Task<bool> TryUpdateAsync(Guid id, SongDetails details, int revision, DateTimeOffset updatedUtc, CancellationToken cancellationToken);
 }
 
-/// <summary>Where workflow states are kept.</summary>
+/// <summary>A workflow state and how many Songs are in it.</summary>
+public sealed record WorkflowStateUsage(WorkflowState State, int SongCount);
+
+/// <summary>Every workflow state in order, with the revision of the workflow as a whole.</summary>
+/// <param name="Revision">The revision of the one <c>workflow</c> record: 1 until the first change, then one more per change.</param>
+/// <param name="States">Every state, hidden ones included, in order, each with its Song count.</param>
+public sealed record WorkflowStateList(int Revision, IReadOnlyList<WorkflowStateUsage> States);
+
+/// <summary>
+/// Where workflow states are kept, with the revision of the workflow as a whole. Every write is made
+/// inside the caller's transaction, which has checked the revision first.
+/// </summary>
 public interface IWorkflowStateStore
 {
     /// <summary>Every state, hidden ones included, in order.</summary>
     Task<IReadOnlyList<WorkflowState>> ListAsync(CancellationToken cancellationToken);
+
+    /// <summary>Every state in order with its Song count, and the workflow revision.</summary>
+    Task<WorkflowStateList> ListWithUsageAsync(CancellationToken cancellationToken);
+
+    /// <summary>Raises the workflow revision by one, creating the record (at revision 1) first if there is none.</summary>
+    Task BumpRevisionAsync(CancellationToken cancellationToken);
+
+    /// <summary>Stores a new state. Its name and position must be unused; the database refuses a taken one.</summary>
+    Task AddAsync(WorkflowState state, CancellationToken cancellationToken);
+
+    /// <summary>Stores the name, colour, and hidden flag of the state with <paramref name="state"/>'s ID; its position stays.</summary>
+    Task UpdateAsync(WorkflowState state, CancellationToken cancellationToken);
+
+    /// <summary>Puts the states in the order of <paramref name="ids"/>, which holds every state's ID once.</summary>
+    Task SetOrderAsync(IReadOnlyList<Guid> ids, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Moves every Song in the state with <paramref name="id"/> to the state with
+    /// <paramref name="replacementId"/> (raising each Song's revision and setting its updated time),
+    /// then removes the state. Returns how many Songs were moved. With no replacement, the state
+    /// must hold no Songs.
+    /// </summary>
+    Task<int> DeleteAsync(Guid id, Guid? replacementId, DateTimeOffset updatedUtc, CancellationToken cancellationToken);
 }
 
 /// <summary>

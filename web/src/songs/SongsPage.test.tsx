@@ -65,6 +65,8 @@ interface Backend {
   song?: (reference: string) => Response;
   /** The answer to POST songs. */
   create?: (body: unknown) => Response;
+  /** The workflow states, when not Idea, Writing, and Archived. */
+  states?: unknown[];
 }
 
 /** The query string a request was made with, whatever form `fetch` was given it in. */
@@ -79,7 +81,7 @@ function sentBody(init: RequestInit | undefined): unknown {
 }
 
 /** A backend: the health report names UTC, the states are Idea, Writing, and Archived. */
-function backend({ list, song: one, create }: Backend) {
+function backend({ list, song: one, create, states = STATES }: Backend) {
   const mock = stubFetch();
   mock.mockImplementation((input, init) => {
     const path = requestPath(input);
@@ -88,7 +90,7 @@ function backend({ list, song: one, create }: Backend) {
       return Promise.resolve(jsonResponse(200, healthyReport));
     }
     if (path.endsWith('/api/v1/workflow-states')) {
-      return Promise.resolve(jsonResponse(200, { items: STATES }));
+      return Promise.resolve(jsonResponse(200, { revision: 1, items: states }));
     }
     if (path.endsWith('/api/v1/songs') && method === 'GET' && list) {
       const url = new URL(
@@ -316,6 +318,35 @@ describe('Songs', () => {
       expect(listRequests(mock).at(-1)).toBe('');
     });
     expect(await screen.findByRole('table', { name: 'Songs' })).toBeVisible();
+  });
+
+  it('offers a hidden state in the filter only while Songs are in it', async () => {
+    backend({
+      list: () => jsonResponse(200, page([song(1)])),
+      states: [
+        { ...IDEA, order: 1, hidden: false, songCount: 1 },
+        { ...WRITING, order: 2, hidden: false, songCount: 0 },
+        { ...ARCHIVED, order: 3, hidden: true, songCount: 2 },
+        {
+          id: '01a10a6e-dc87-7007-8000-000000000008',
+          name: 'Shelved',
+          colour: 'red',
+          order: 4,
+          hidden: true,
+          songCount: 0,
+        },
+      ],
+    });
+
+    renderApp('/songs');
+
+    const filter = await screen.findByRole('group', { name: 'Workflow state' });
+    expect(
+      within(filter)
+        .getAllByRole('checkbox')
+        .map((box) => box.getAttribute('value')),
+    ).toEqual([IDEA.id, WRITING.id, ARCHIVED.id]);
+    expect(within(filter).queryByRole('checkbox', { name: 'Shelved' })).not.toBeInTheDocument();
   });
 
   it('restores the view from the URL, as after a reload', async () => {

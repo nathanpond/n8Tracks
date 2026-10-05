@@ -170,6 +170,9 @@ describe('the Song header', () => {
 
     const after = await screen.findAllByRole('menuitem');
     expect(after.map((item) => item.textContent)).toEqual(['Idea', 'Writing (current)✓', 'Final']);
+    // The menu's label is drawn in the checked secondary-text colour, not Mantine's dimmed grey,
+    // which is below 4.5:1 on the dark dropdown.
+    expect(screen.getByText('Move to')).toHaveStyle({ color: 'var(--n8-color-secondary-text)' });
   });
 
   it('queues saves so a second one is based on the first one’s revision', async () => {

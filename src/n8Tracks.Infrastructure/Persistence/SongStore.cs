@@ -198,16 +198,3 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
         })];
     }
 }
-
-internal sealed class WorkflowStateStore(N8TracksDbContext context) : IWorkflowStateStore
-{
-    public async Task<IReadOnlyList<WorkflowState>> ListAsync(CancellationToken cancellationToken)
-    {
-        var records = await context.WorkflowStates.AsNoTracking()
-            .OrderBy(static state => state.Position)
-            .ToListAsync(cancellationToken)
-            .ConfigureAwait(false);
-
-        return [.. records.Select(static state => new WorkflowState(state.Id, state.Name, state.Colour, state.Position, state.Hidden))];
-    }
-}

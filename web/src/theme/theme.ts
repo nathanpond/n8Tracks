@@ -1,6 +1,7 @@
 import {
   createTheme,
   InputWrapper,
+  Menu,
   Stepper,
   localStorageColorSchemeManager,
   type CSSVariablesResolver,
@@ -26,6 +27,7 @@ export const theme = createTheme({
   primaryShade: { light: PRIMARY_SHADE, dark: PRIMARY_SHADE },
   components: {
     InputWrapper: InputWrapper.extend({ styles: { description: secondaryText } }),
+    Menu: Menu.extend({ styles: { label: secondaryText } }),
     Stepper: Stepper.extend({ styles: { stepDescription: secondaryText } }),
   },
 });

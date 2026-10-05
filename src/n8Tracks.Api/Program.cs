@@ -217,6 +217,7 @@ public sealed class Program
             app.MapCredentials();
             app.MapJobs();
             app.MapSongs();
+            app.MapWorkflowStates();
             app.MapVersions();
             app.MapApiNotFound();
 

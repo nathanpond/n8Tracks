@@ -97,6 +97,7 @@ test.describe(
         'Songs',
         'Account',
         'Credentials',
+        'Workflow',
         'System',
       ]);
       await expect(sidebar(page).getByRole('link', { name: 'Account' })).toHaveAttribute(

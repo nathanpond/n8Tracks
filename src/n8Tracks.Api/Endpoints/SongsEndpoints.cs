@@ -10,7 +10,7 @@ namespace n8Tracks.Api.Endpoints;
 
 /// <summary>
 /// Songs: create one and edit its details (<c>songs.write</c>), list them, and read one by ID or
-/// shortcode (<c>catalog.read</c>); and the workflow states a Song can be in (<c>catalog.read</c>).
+/// shortcode (<c>catalog.read</c>). The workflow states a Song can be in are <see cref="WorkflowStatesEndpoints"/>.
 /// Every answer is <c>no-store</c>, and one carrying a Song sends its revision as the <c>ETag</c>.
 /// </summary>
 internal static class SongsEndpoints
@@ -18,7 +18,6 @@ internal static class SongsEndpoints
     public const string SongsPath = ApiProblem.VersionPrefix + "/songs";
     public const string SongPath = SongsPath + "/{reference}";
     public const string SongByIdPath = SongsPath + "/{id:guid}";
-    public const string WorkflowStatesPath = ApiProblem.VersionPrefix + "/workflow-states";
 
     public static IEndpointRouteBuilder MapSongs(this IEndpointRouteBuilder endpoints)
     {
@@ -63,14 +62,6 @@ internal static class SongsEndpoints
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
-
-        endpoints.MapGet(WorkflowStatesPath, ListStatesAsync)
-            .WithName("ListWorkflowStates")
-            .WithSummary("Every workflow state, hidden ones included, in order.")
-            .RequireScope(CredentialScopes.CatalogRead)
-            .Produces<WorkflowStateListResponse>(StatusCodes.Status200OK)
-            .ProducesProblem(StatusCodes.Status401Unauthorized)
-            .ProducesProblem(StatusCodes.Status403Forbidden);
 
         return endpoints;
     }
@@ -233,18 +224,6 @@ internal static class SongsEndpoints
         }
     }
 
-    /// <summary>200 with every state.</summary>
-    private static async Task<Ok<WorkflowStateListResponse>> ListStatesAsync(
-        WorkflowStateService states,
-        HttpContext context,
-        CancellationToken cancellationToken)
-    {
-        SessionEndpoints.NoStore(context);
-
-        var list = await states.ListAsync(cancellationToken);
-        return TypedResults.Ok(new WorkflowStateListResponse([.. list.Select(WorkflowStateResponse.From)]));
-    }
-
     /// <summary>The one value of a parameter, or null when it is missing; <paramref name="repeated"/> when it was given more than once.</summary>
     private static string? Single(IQueryCollection query, string name, out bool repeated)
     {
@@ -308,19 +287,5 @@ internal sealed record SongListResponse(SongResponse[] Items, int Page, int Page
         ArgumentNullException.ThrowIfNull(page);
 
         return new([.. page.Items.Select(SongResponse.From)], page.Page, page.PageSize, page.Total);
-    }
-}
-
-/// <summary>Every workflow state, in order.</summary>
-internal sealed record WorkflowStateListResponse(WorkflowStateResponse[] Items);
-
-/// <summary>A workflow state. <c>colour</c> is the name of a palette colour.</summary>
-internal sealed record WorkflowStateResponse(Guid Id, string Name, string Colour, int Order, bool Hidden)
-{
-    public static WorkflowStateResponse From(WorkflowState state)
-    {
-        ArgumentNullException.ThrowIfNull(state);
-
-        return new(state.Id, state.Name, state.Colour, state.Order, state.Hidden);
     }
 }

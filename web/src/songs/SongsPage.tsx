@@ -26,6 +26,7 @@ import {
   type WorkflowState,
 } from '../api/songs';
 import { useConfiguredTimeZone } from '../api/timeZone';
+import { statesForFilter } from '../api/workflow';
 import { Notice } from '../components/Notice';
 import { NewSongDialog } from './NewSongDialog';
 import { RelativeTime, StateBadge, TruncatedConcept } from './SongParts';
@@ -92,7 +93,7 @@ function StateFilter({
       </Text>
       <Group gap="xs" role="group" aria-labelledby="songs-state-filter">
         <Chip.Group multiple value={selected} onChange={onChange}>
-          {states.map((state) => (
+          {statesForFilter(states, selected).map((state) => (
             <Chip key={state.id} value={state.id} size="sm">
               {state.name}
             </Chip>

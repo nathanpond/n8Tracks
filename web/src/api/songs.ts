@@ -3,7 +3,7 @@ import { apiFetch } from './client';
 import { patchWithRevision, type SaveResult } from './saves';
 
 const SONGS_PATH = 'api/v1/songs';
-const WORKFLOW_STATES_PATH = 'api/v1/workflow-states';
+export const WORKFLOW_STATES_PATH = 'api/v1/workflow-states';
 
 /** The longest title and concept the API takes, in UTF-16 code units after trimming. */
 export const TITLE_MAXIMUM_LENGTH = 300;
@@ -39,6 +39,8 @@ export interface WorkflowState {
   colour: string;
   order: number;
   hidden: boolean;
+  /** How many Songs are in it. The API always sends it; test fixtures may leave it out. */
+  songCount?: number;
 }
 
 export type SongSort = 'updated' | 'title';
@@ -87,18 +89,19 @@ function isSongPage(value: unknown): value is SongPage {
   );
 }
 
-function isWorkflowState(value: unknown): value is WorkflowState {
+export function isWorkflowState(value: unknown): value is WorkflowState {
   return (
     isRecord(value) &&
     typeof value.id === 'string' &&
     typeof value.name === 'string' &&
     typeof value.colour === 'string' &&
     typeof value.order === 'number' &&
-    typeof value.hidden === 'boolean'
+    typeof value.hidden === 'boolean' &&
+    (value.songCount === undefined || typeof value.songCount === 'number')
   );
 }
 
-function isErrorMap(value: unknown): value is Record<string, string[]> {
+export function isErrorMap(value: unknown): value is Record<string, string[]> {
   return (
     isRecord(value) &&
     Object.values(value).every(
