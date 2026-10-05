@@ -1015,3 +1015,52 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** Proof that the canary step turns CI red: throwaway draft pull request #201 (closed unmerged, branch deleted) switched `noUnusedLocals` off in `web/tsconfig.app.json`. The scanner step, the `web` job, and every other job passed; `scripts/check-canaries.sh` failed (`FAIL web typecheck … did not report: src/n8tracksCanaryTypes.ts:53 error TS6133`), so `guards` and `ci` failed (run 37239056845). On pull request #200 the step takes 76 s and its fixture test 87 s; the `guards` job takes about three and a half minutes in all.
   **Why:** The brief asks for a failure that must fail CI to be shown failing CI, on a throwaway pull request rather than on #200.
   **Issue:** #199
+
+## /n8-plan M5 — 2026-10-04
+
+- **Decision:** M5 is 20 stories (#203–#222) under epics #16 and #17, including spike TS-004 (#214), which needs the maintainer's signed-in Suno session.
+- **Decision:** From the user: scanned formats are WAV, M4A, MP3, FLAC, OGG, Opus, and AAC (settles PRD open decision 6); the player is a bar on every page; clips for bulk download are picked in the extension's panel on Suno.
+- **Decision:** From the user: the extension may click Suno's own Download menu to have a file prepared and may hand audio addresses to the browser's downloader without credentials. This amends `docs/suno-integration.md` with a second exception to observing and adds the `downloads` permission; the amendment lands with #214 and #216.
+- **Decision:** From the user: TS-004 is its own spike in M5, not an extension of #127; a Song whose Selected Generation has no local file plays that Generation from Suno, never another Generation's local file.
+- **Decision:** Invariant 2's guard is #205. Starting a scan is session-only, keeping file-system actions away from MCP scopes (invariant 7).
+- **Decision:** The four untriaged captures #167, #179, #186, and #197 were moved to M10 as bugs, as proposed in round one and not objected to.
+- **Decision:** Outcome 1 was reworded at the gate: files appear after the next scheduled scan (15 minutes by default, measured from the end of the previous scan), not "within 15 minutes".
+- **Decision:** Scanned formats are fixed in V1, although the PRD says "other configured supported formats"; shown at the gate and accepted.
+- **Deferred to M6:** filtering the Songs table by local audio count.
+
+## /n8-plan M6 — 2026-10-04
+
+- **Decision:** M6 is 16 stories (#223–#238) under epics #18 and #19.
+- **Decision:** From the user: search results are shown in the Songs table itself, with a search box in the header; the dashboard is the home page; notifications live in a bell with a panel and toasts; search covers archived and trashed records by default, marked; the diagnostic bundle replaces the sign-in name, IP addresses, host names, and Album and Playlist names with stable codes; a hidden dashboard section stays hidden while badges still count.
+- **Decision:** Full-text search is a new `search` parameter on the Songs list; `q` keeps the picker lookup #90 gave it.
+- **Decision:** Telemetry off by default (#34) and structured, redacted logs (#27) were delivered in M0 and are recorded as established, not re-planned.
+- **Decision:** A failed import commit that changed nothing returns its export to `ready` (#231 extends #140), and discarding an export gains an optional reason (#229 extends #131).
+- **Deferred to M7:** notifications and the dashboard section for MCP bulk operations; correlation IDs on MCP requests; the gateway credential's validity on Diagnostics.
+- **Deferred to M8:** notifications for portable export and import.
+
+## /n8-plan M7 — 2026-10-04
+
+- **Decision:** M7 is 16 stories (#239–#254) under epics #20 and #21.
+- **Decision:** From the user: AI clients authenticate to the gateway with a token (an `mcp-gateway` credential); OAuth sign-in for web connectors is out of V1 (settles PRD open decision 5). #250 files an unscheduled issue for it.
+- **Decision:** From the user: Undo restores what is untouched and reports the rest; AI clients may create, assign, rename, and recolour Tags, and may perform removals that delete no record; the API compatibility promise takes effect at version 1.0.0.
+- **Decision:** PRD open decision 7 is settled by #247 (bulk writes: one endpoint, up to 100 operations, one transaction) and #244 (job resources). A restore keeps its own status resource because it replaces the jobs table.
+- **Decision:** Invariant 7's guard is #254, which also extends the guards of invariants 1 and 5. An API operation is forbidden to MCP credentials unless classified allowed, and refusing by credential kind extends #56.
+- **Decision:** Names (workflow states, Tags, Genres, Artists, titles) are resolved by the API, never by the gateway (invariant 5); found by the coverage check.
+- **Decision:** Cursor paging is the public convention; the Songs table, audio files, and export records keep page numbers as well.
+
+## /n8-plan M8 — 2026-10-04
+
+- **Decision:** M8 is 16 stories (#255–#270) under epics #22 and #23. #266, #269, and #270 each need a hands-on run by the maintainer.
+- **Decision:** `docs/portable-catalog-schema.md` was written during planning as the measure for the "complete portable catalog model" claim: 23 record types, matching the roadmap's list. Instance settings (time zone, personal defaults, the Suno model list, schedules) are excluded, agreed with the user in round two.
+- **Decision:** From the user: CSV export is the Songs table as shown; import conflicts are decided per record with apply-to-all; the performance test runs in a constrained container only; raw Suno data is exported verbatim with a warning; a missed performance target blocks a release unless waived in writing.
+- **Decision:** From the user ("Ask me every release, I may choose to waive it"): hands-on checks (four browsers, screen reader, Synology) are asked for at every release and may be waived. Planner's reading, shown at the gate: this applies to stable releases; pre-release tags run the automated checks only.
+- **Decision:** Invariant 3's portable-import guard is #263. Seeded reference records match by well-known ID, not by name, so an import into an empty instance replaces nothing without a choice; found by the coverage check.
+- **Decision:** #255, #256, #259, #261, and #263 each cover the 23 record types under grouped criteria and own more items than criteria; per-type and per-field tests enforce each type. The stories were not split further.
+- **Decision:** PRD open decision 8 (detailed accessibility criteria) is settled by #269's walkthroughs.
+
+## Whole-project analysis — 2026-10-04
+
+- **Decision:** Every feature milestone (M2–M8) is now planned. Audit emphases were written to the M9 milestone description. M10 and M11 remain unplanned placeholders by the user's earlier instruction.
+- **Decision:** No story checks the PRD's V1 Release Gate as a whole; each of its twelve lines has a home in M2–M8. A full release-gate walkthrough is recorded as an audit emphasis.
+- **Decision:** Executor simulations for M5–M8 ran one fresh agent per story for both passes, on the session's model; each milestone's coverage check ran as one fresh agent.
+
