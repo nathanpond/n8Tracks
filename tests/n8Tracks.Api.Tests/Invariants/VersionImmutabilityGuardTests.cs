@@ -363,6 +363,7 @@ public sealed class VersionImmutabilityGuardTests
         ["POST /api/v1/backups"] = "queues a backup: reads the database, writes only an archive file",
         ["DELETE /api/v1/backups/{location}/{name}"] = "deletes an archive file, never a database row",
         ["PUT /api/v1/settings/backup-schedule"] = "the backup schedule: one settings row",
+        ["PUT /api/v1/settings/version-defaults"] = "the defaults for new Versions: one settings row, applied only when a Song is created",
         ["POST /api/v1/restores/validate"] = "reads a backup archive into a temporary folder; changes no row",
         ["POST /api/v1/restores/uploads"] = "writes an uploaded archive to a temporary file and reads it; changes no row",
         ["POST /api/v1/restores"] = "starts maintenance and a safety backup; it replaces the instance as a whole (#74), never edits a Version",
@@ -423,7 +424,7 @@ public sealed class VersionImmutabilityGuardTests
     /// <summary>Public catalog-service methods that take neither a Song nor a Version, and why.</summary>
     private static Dictionary<string, string> ServiceMethodsTakingNoVersion() => new(StringComparer.Ordinal)
     {
-        ["SongService.CreateAsync(SongRequest, CancellationToken)"] = "creates a new Song with an empty, mutable Version 1",
+        ["SongService.CreateAsync(SongRequest, CancellationToken)"] = "creates a new Song with a new, mutable Version 1 (its options from the defaults and the request)",
         ["SongService.ListAsync(SongListRequest, CancellationToken)"] = "reads only",
         ["SongService.Validate(SongRequest)"] = "pure validation",
         ["WorkflowStateService.ListAsync(CancellationToken)"] = "reads only",

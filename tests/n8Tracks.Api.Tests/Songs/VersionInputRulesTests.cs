@@ -218,6 +218,31 @@ public sealed class VersionInputRulesTests
         Assert.ThrowsAny<JsonException>(() => VersionInputRules.FromJson(json));
     }
 
+    [Fact]
+    public void TheOptionsThatTakeADefaultAreTheFormChoosersAndEveryChoiceToggleRangeAndNumber()
+    {
+        // Read from the inventory: each stored option whose field is not text, a reference, or one
+        // of the Simple form's sections takes a default, and nothing else does.
+        var expected = VersionInputRules.Keys
+            .Where(static key => VersionInputRules.InventoryKey(key) is not { } sunoKey
+                || (Inventory.Get(sunoKey).Type is CreateField.ChoiceType or CreateField.ToggleType or CreateField.RangeType or CreateField.NumberType
+                    && sunoKey is not ("simple_add_lyrics" or "simple_add_styles")))
+            .ToList();
+
+        Assert.Equal(expected, VersionInputRules.DefaultableKeys);
+        Assert.Contains("model", VersionInputRules.DefaultableKeys);
+        Assert.Contains("soundsModel", VersionInputRules.DefaultableKeys);
+        Assert.Contains("speechBackgroundMusic", VersionInputRules.DefaultableKeys);
+        Assert.All(
+            ["simplePrompt", "excludeStyles", "title", "speechPrompt", "speechScript", "speechTone", "soundDescription", "simpleLyricsAdded", "simpleStylesAdded"],
+            static key => Assert.DoesNotContain(key, VersionInputRules.DefaultableKeys));
+
+        Assert.True(VersionInputRules.IsModel("model"));
+        Assert.True(VersionInputRules.IsModel("soundsModel"));
+        Assert.False(VersionInputRules.IsModel("variety"));
+        Assert.False(VersionInputRules.IsModel("kind"));
+    }
+
     private static Dictionary<string, string[]> Errors(string json) => VersionInputRules.Errors(Inventory, Models, Sent(json));
 
     private static Dictionary<string, JsonElement> Sent(string json)

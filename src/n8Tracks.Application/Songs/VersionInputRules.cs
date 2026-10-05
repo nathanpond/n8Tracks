@@ -79,8 +79,35 @@ public static class VersionInputRules
     /// <summary>Every option's API name, in the order <see cref="VersionInputs"/> declares them.</summary>
     public static IReadOnlyList<string> Keys { get; } = [.. Options.Select(static option => option.Name)];
 
+    /// <summary>The inventory field types whose options may have a user default: what is chosen, switched, or set as a number.</summary>
+    private static readonly HashSet<string> DefaultableTypes = new(StringComparer.Ordinal)
+    {
+        CreateField.ChoiceType,
+        CreateField.ToggleType,
+        CreateField.RangeType,
+        CreateField.NumberType,
+    };
+
+    /// <summary>
+    /// The options a user may set a default for, in the order <see cref="VersionInputs"/> declares them,
+    /// read from the embedded inventory: the three form choosers, and each option whose field is a
+    /// choice, toggle, range, or number (both models included). Text has no default, and neither has
+    /// whether the Simple form adds its lyrics or styles section, which is about the Version's own text.
+    /// </summary>
+    public static IReadOnlyList<string> DefaultableKeys { get; } =
+    [
+        .. Options
+            .Where(static option => option.SunoKey is null
+                || (!AddedSections.ContainsValue(option.SunoKey)
+                    && DefaultableTypes.Contains(CreateFieldInventory.Embedded.Get(option.SunoKey).Type)))
+            .Select(static option => option.Name),
+    ];
+
     /// <summary>The inventory key of the option the API calls <paramref name="key"/>; null for the three form choosers or an unknown key.</summary>
     public static string? InventoryKey(string key) => ByName.GetValueOrDefault(key)?.SunoKey;
+
+    /// <summary>Whether the option the API calls <paramref name="key"/> names a Suno model (a Song's or a Sound's).</summary>
+    public static bool IsModel(string key) => InventoryKey(key) is { } sunoKey && ModelKeys.Contains(sunoKey);
 
     /// <summary>What an option's errors are keyed by, as the API spells it: <c>inputs.&lt;key&gt;</c>.</summary>
     public static string FieldName(string key) => InputsField + "." + key;

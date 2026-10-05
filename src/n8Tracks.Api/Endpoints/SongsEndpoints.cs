@@ -25,7 +25,7 @@ internal static class SongsEndpoints
 
         endpoints.MapPost(SongsPath, CreateAsync)
             .WithName("CreateSong")
-            .WithSummary("Creates a Song with its Version 1, in the first visible workflow state.")
+            .WithSummary("Creates a Song with its Version 1, in the first visible workflow state. Version 1 starts with the user's defaults over Suno's; options sent in inputs win over both.")
             .RequireScope(CredentialScopes.SongsWrite)
             .Produces<SongResponse>(StatusCodes.Status201Created)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
@@ -76,7 +76,21 @@ internal static class SongsEndpoints
     {
         SessionEndpoints.NoStore(context);
 
-        var outcome = await songs.CreateAsync(new SongRequest(request?.Title, request?.Concept), cancellationToken);
+        Dictionary<string, JsonElement>? inputs = null;
+        switch (request?.Inputs.ValueKind)
+        {
+            case null or JsonValueKind.Undefined:
+                break;
+            case JsonValueKind.Object:
+                inputs = request.Inputs.EnumerateObject().ToDictionary(static option => option.Name, static option => option.Value, StringComparer.Ordinal);
+                break;
+            default:
+                return ApiProblem.ValidationFailed(
+                    context,
+                    new Dictionary<string, string[]>(StringComparer.Ordinal) { [VersionInputRules.InputsField] = ["Send an object of options for Version 1, or leave it out."] });
+        }
+
+        var outcome = await songs.CreateAsync(new SongRequest(request?.Title, request?.Concept, inputs), cancellationToken);
         switch (outcome)
         {
             case SongOutcome.Created created:
@@ -243,8 +257,12 @@ internal static class SongsEndpoints
     }
 }
 
-/// <summary>The create form. Either field may be missing.</summary>
-internal sealed record CreateSongRequest(string? Title, string? Concept);
+/// <summary>
+/// The create form. Any field may be missing. <c>inputs</c> is an object of Suno options for Version
+/// 1, by API name, each of which wins over the user's default (read as raw JSON; a missing one is
+/// <see cref="JsonValueKind.Undefined"/>).
+/// </summary>
+internal sealed record CreateSongRequest(string? Title, string? Concept, JsonElement Inputs);
 
 /// <summary>
 /// An edit: any of the three fields, each left alone when missing. A missing field and a null one

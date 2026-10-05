@@ -355,7 +355,15 @@ function ModelRow({
 }
 
 /** The list once it has loaded: the section keeps its own copy, replaced by every answer. */
-function ModelsEditor({ initial, reload }: { initial: SunoModelList; reload: () => void }) {
+function ModelsEditor({
+  initial,
+  reload,
+  onChanged,
+}: {
+  initial: SunoModelList;
+  reload: () => void;
+  onChanged?: () => void;
+}) {
   const [list, setList] = useState(initial);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<Message | undefined>();
@@ -398,10 +406,12 @@ function ModelsEditor({ initial, reload }: { initial: SunoModelList; reload: () 
       case 'saved':
         setList(result.list);
         setMessage(done(result.list));
+        onChanged?.();
         break;
       case 'conflict':
         setList(result.current);
         setMessage({ text: CONFLICT_MESSAGE, tone: 'problem' });
+        onChanged?.();
         break;
       case 'last-offered':
         setMessage({ text: LAST_OFFERED_MESSAGE, tone: 'problem' });
@@ -553,9 +563,9 @@ function ModelsEditor({ initial, reload }: { initial: SunoModelList; reload: () 
  * The Suno model list: every model in order, each with its note and how many Versions name it. The
  * user adds, renames, annotates, reorders (Move up and Move down), retires, restores, and deletes
  * models. Each change is saved at once. When the list was changed elsewhere, it reloads and the
- * change is not applied.
+ * change is not applied. `onChanged` is told after each change, or a reload from elsewhere.
  */
-export function SunoModelsSection() {
+export function SunoModelsSection({ onChanged }: { onChanged?: () => void } = {}) {
   const { state, reload } = useSunoModels();
 
   return (
@@ -578,7 +588,9 @@ export function SunoModelsSection() {
           </div>
         </Notice>
       )}
-      {state.phase === 'ready' && <ModelsEditor initial={state.data} reload={reload} />}
+      {state.phase === 'ready' && (
+        <ModelsEditor initial={state.data} reload={reload} onChanged={onChanged} />
+      )}
     </Stack>
   );
 }

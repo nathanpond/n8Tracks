@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using n8Tracks.Application.Auth;
 using n8Tracks.Application.References;
 using n8Tracks.Application.Suno;
@@ -6,8 +7,11 @@ using n8Tracks.Domain.Songs;
 
 namespace n8Tracks.Application.Songs;
 
-/// <summary>What creating a Song asks for. Either field may be missing.</summary>
-public sealed record SongRequest(string? Title, string? Concept);
+/// <summary>
+/// What creating a Song asks for. Either field may be missing. <paramref name="Inputs"/> holds Suno
+/// options for its Version 1, by API name, as sent; each one sent wins over the user's default.
+/// </summary>
+public sealed record SongRequest(string? Title, string? Concept, IReadOnlyDictionary<string, JsonElement>? Inputs = null);
 
 /// <summary>A list request as the caller sent it: every value unread text, any of them missing.</summary>
 public sealed record SongListRequest(string? Sort, string? Direction, IReadOnlyList<string?> States, string? Page, string? PageSize);
@@ -81,7 +85,13 @@ public abstract record SongListOutcome
 /// mutable Version <c>1</c> as its current Version, all in one transaction. Its details are edited
 /// against the revision the caller read, so a stale edit never overwrites a newer one.
 /// </summary>
-public sealed class SongService(ISongStore songs, IWorkflowStateStore states, ISunoModelList models, IExclusiveTransaction transaction, TimeProvider time)
+public sealed class SongService(
+    ISongStore songs,
+    IWorkflowStateStore states,
+    ISunoModelList models,
+    VersionDefaultsService defaults,
+    IExclusiveTransaction transaction,
+    TimeProvider time)
 {
     /// <summary>The field names validation errors are keyed by, as the API spells them.</summary>
     public const string TitleField = "title";
@@ -106,9 +116,10 @@ public sealed class SongService(ISongStore songs, IWorkflowStateStore states, IS
     /// <summary>
     /// Creates a Song. The title is required and the concept optional, by <see cref="SongRules"/>;
     /// when either is wrong nothing is stored and no shortcode number is used. Its Version 1 starts
-    /// with the default options (<see cref="VersionInputRules.Defaults"/>), Suno's title pre-filled
-    /// with the Song's, and the first model the model list offers as both the Song's and the Sound's
-    /// model (none when it offers none).
+    /// with the options <see cref="VersionDefaultsService.NewVersionInputsAsync"/> builds for every
+    /// kind (Suno's defaults, Suno's title pre-filled with the Song's, the first model offered, then
+    /// the user's valid defaults), and then each option the request sends, checked as a Version edit's
+    /// are (errors keyed <c>inputs.&lt;key&gt;</c>, nothing stored).
     /// </summary>
     public async Task<SongOutcome> CreateAsync(SongRequest request, CancellationToken cancellationToken)
     {
@@ -119,29 +130,40 @@ public sealed class SongService(ISongStore songs, IWorkflowStateStore states, IS
             return new SongOutcome.Invalid(errors);
         }
 
-        var id = await transaction.RunAsync(
+        var sentInputs = request.Inputs ?? new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+        var created = await transaction.RunAsync<(Guid Id, Dictionary<string, string[]>? Errors)>(
             async ct =>
             {
+                if (sentInputs.Count > 0)
+                {
+                    var listed = await models.ListAsync(ct).ConfigureAwait(false);
+                    if (VersionInputRules.Errors(CreateFieldInventory.Embedded, [.. listed], sentInputs) is { Count: > 0 } inputErrors)
+                    {
+                        return (Guid.Empty, inputErrors);
+                    }
+                }
+
                 var initial = WorkflowState.Initial(await states.ListAsync(ct).ConfigureAwait(false))
                     ?? throw new InvalidOperationException("Every workflow state is hidden, so a new Song has no state to start in.");
                 var number = await songs.NextShortcodeNumberAsync(ct).ConfigureAwait(false);
                 var now = time.GetUtcNow();
-                var model = (await models.OfferedAsync(ct).ConfigureAwait(false)).FirstOrDefault();
-                var inputs = VersionInputRules.Defaults(CreateFieldInventory.Embedded, SongRules.NormaliseTitle(request.Title!)) with
-                {
-                    Model = model,
-                    SoundsModel = model,
-                };
+                var inputs = VersionInputRules.Apply(
+                    await defaults.NewVersionInputsAsync(SongRules.NormaliseTitle(request.Title!), ct).ConfigureAwait(false),
+                    sentInputs);
                 var (song, version) = Song.Create(Guid.CreateVersion7(now), Guid.CreateVersion7(now), number, request.Title!, request.Concept, initial, inputs, now);
                 await songs.AddAsync(song, version, ct).ConfigureAwait(false);
 
-                return song.Id;
+                return (song.Id, null);
             },
             cancellationToken).ConfigureAwait(false);
+        if (created.Errors is { } invalid)
+        {
+            return new SongOutcome.Invalid(invalid);
+        }
 
-        var created = await songs.FindAsync(id, cancellationToken).ConfigureAwait(false)
+        var stored = await songs.FindAsync(created.Id, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidOperationException("The Song just created cannot be read back.");
-        return new SongOutcome.Created(created);
+        return new SongOutcome.Created(stored);
     }
 
     /// <summary>
