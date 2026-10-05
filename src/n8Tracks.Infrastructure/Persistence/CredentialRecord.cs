@@ -12,6 +12,12 @@ public sealed class CredentialRecord
     /// <summary>Trimmed, 1 to 100 characters.</summary>
     public required string Name { get; set; }
 
+    /// <summary>
+    /// What names are compared by: trimmed, NFC-normalised, upper-cased invariantly. Unique among
+    /// credentials that are not revoked, so a revoked credential's name can be used again.
+    /// </summary>
+    public required string NameKey { get; set; }
+
     /// <summary><c>api</c>, <c>extension</c>, or <c>mcp-gateway</c>.</summary>
     public required string Kind { get; set; }
 

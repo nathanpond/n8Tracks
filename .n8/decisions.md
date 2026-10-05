@@ -1205,3 +1205,24 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** `Program.RunAsync` gained an overload that takes a `CommandConsole` (stdin, stderr, is-terminal, and an unechoed line read). `Main` passes `SystemCommandConsole`, which reads key by key with `TreatControlCAsInput`, so Ctrl-C and Ctrl-D at the prompt exit 1. The old four-argument overload passes a console with no input. The allow-list line in `EnvironmentReadGuardTests` for `Main` was updated to the new call.
   **Why:** The tests run the command in-process, through the binary's entry point, with typed or piped input. Stdout stays empty: the command writes nothing to `output`.
   **Issue:** #82
+- **Decision:** Case-insensitive name uniqueness is enforced by the database: a new migration `AddCredentialNameKey` adds `credentials.name_key` (trimmed, NFC, `ToUpperInvariant`, as `administrators.username_key`) and a partial unique index `ix_credentials_name_key WHERE revoked_utc IS NULL`, so a revoked credential's name is free again. Rows from before the migration are back-filled with SQLite's `upper(trim(name))`.
+  **Why:** The discretion line asks for names unique ignoring case among non-revoked credentials, and #55 left this index for this story. A column plus an index on an existing table (the story's own table, unreleased) is the smallest schema change that makes the rule hold under concurrent writes; not a Rule 4 change because the story requires the constraint.
+  **Issue:** #56
+- **Decision:** Rename is `PATCH /api/v1/credentials/{id}` with `If-Match: "<revision>"` per the conventions (no header 428 `revision_required`, malformed 400 `invalid_revision`, stale 409 `revision_conflict` with `current`); the check and write are one conditional `UPDATE`. A revoked credential is 409 `credential_revoked` with `current`; a taken name is 422 `validation_failed` on `name`. Revoke (`POST .../revoke`, no revision) also raises the revision and is idempotent: revoking again answers 200 with the first revocation time. Every response that carries a credential sets `ETag` to its revision. The small `If-Match` reader is `src/n8Tracks.Api/Problems/Revisions.cs`, for later editable records to reuse.
+  **Why:** First editable record with a revision; the conventions fix the codes except the revoked-rename case, for which a 409 with the current record lets the client show why.
+  **Issue:** #56
+- **Decision:** Names are validated like usernames: trimmed, 1 to 100 code points, printable only (no control, line or paragraph separators, unpaired surrogates). `AdministratorRules.TryNormalise`/`IsPrintable` became `internal` to share them.
+  **Why:** Rule 2: the name key normalises the name, and `string.Normalize` throws on an unpaired surrogate, which JSON can carry; without the check such a name was a 500.
+  **Issue:** #56
+- **Decision:** `GET /api/v1/credentials` lists credentials in force first, newest first, then revoked ones; `?kind=` filters (an unknown kind is 400 `invalid_request`). The page filters the loaded list by kind on the client with a segmented control.
+  **Why:** "The kind ... filters the list": the API filter serves non-browser callers; the page already holds every credential, so filtering locally needs no refetch.
+  **Issue:** #56
+- **Decision:** Dates on the Credentials page are shown in the configured time zone, read once from the health report's `timeZone` (`web/src/api/timeZone.ts`, `useConfiguredTimeZone`), falling back to the browser's zone, formatted with the browser's locale.
+  **Why:** The conventions say times are shown in the configured time zone; nothing in the UI read it yet, and the health report already carries it.
+  **Issue:** #56
+- **Decision:** The e2e Demo step 3 calls `GET /api/v1/jobs` with the token from a cookie-less client and expects 404 `not_found` (the API's fallback, which any valid token reaches) before revocation and 401 `invalid_token` after. #57 adds the jobs endpoint and should change the expected 404 to 200.
+  **Why:** No `catalog.read` endpoint exists yet; the fallback still proves the token authenticates (an invalid token gets 401 there).
+  **Issue:** #56
+- **Decision:** The modal accessibility helper moved from `e2e/tests/account.spec.ts` to `e2e/support/a11y.ts` as `expectModalAccessibleInBothSchemes`; every Mantine `Modal` on the Credentials page gives its close button `aria-label="Close"` (axe `button-name` failed without it).
+  **Why:** Two specs need it; the close button has no text of its own.
+  **Issue:** #56

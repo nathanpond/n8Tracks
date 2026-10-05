@@ -30,7 +30,8 @@ public sealed class DatabaseStartupTests : IDisposable
             migration => Assert.Matches("^[0-9]{14}_InitialCreate\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AddAdministratorsAndSettings\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AddSessions\\|10\\.0\\.", migration),
-            migration => Assert.Matches("^[0-9]{14}_AddCredentials\\|10\\.0\\.", migration));
+            migration => Assert.Matches("^[0-9]{14}_AddCredentials\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddCredentialNameKey\\|10\\.0\\.", migration));
 
         // ISO 8601 UTC with milliseconds and Z, taken when the migration ran.
         var initialized = TestDatabase.SchemaInitializedUtc(directory.Path);
@@ -66,11 +67,11 @@ public sealed class DatabaseStartupTests : IDisposable
             ["key|TEXT|1|1", "value|TEXT|1|0"],
             TestDatabase.Rows(directory.Path, "SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('settings') ORDER BY cid;"));
         Assert.Equal(
-            ["id|TEXT|1|1", "name|TEXT|1|0", "kind|TEXT|1|0", "scopes|TEXT|1|0", "token_hash|TEXT|1|0", "created_utc|TEXT|1|0", "last_used_utc|TEXT|0|0", "revoked_utc|TEXT|0|0", "revision|INTEGER|1|0"],
+            ["id|TEXT|1|1", "name|TEXT|1|0", "kind|TEXT|1|0", "scopes|TEXT|1|0", "token_hash|TEXT|1|0", "created_utc|TEXT|1|0", "last_used_utc|TEXT|0|0", "revoked_utc|TEXT|0|0", "revision|INTEGER|1|0", "name_key|TEXT|1|0"],
             TestDatabase.Rows(directory.Path, "SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('credentials') ORDER BY cid;"));
         Assert.Equal(
-            ["ix_credentials_token_hash|1"],
-            TestDatabase.Rows(directory.Path, "SELECT name, CAST(\"unique\" AS TEXT) FROM pragma_index_list('credentials') WHERE origin = 'c' ORDER BY name;"));
+            ["ix_credentials_name_key|1|1", "ix_credentials_token_hash|1|0"],
+            TestDatabase.Rows(directory.Path, "SELECT name, CAST(\"unique\" AS TEXT), CAST(partial AS TEXT) FROM pragma_index_list('credentials') WHERE origin = 'c' ORDER BY name;"));
         Assert.Equal(
             ["MigrationId", "ProductVersion"],
             TestDatabase.Rows(directory.Path, "SELECT name FROM pragma_table_info('__EFMigrationsHistory') ORDER BY cid;"));
@@ -143,7 +144,7 @@ public sealed class DatabaseStartupTests : IDisposable
 
         Assert.Equal(MigrationStatus.UpToDate, state.Status);
         Assert.Equal(TestDatabase.History(directory.Path)[^1].Split('|')[0], state.LastAppliedMigrationId);
-        Assert.EndsWith("_AddCredentials", state.LastAppliedMigrationId, StringComparison.Ordinal);
+        Assert.EndsWith("_AddCredentialNameKey", state.LastAppliedMigrationId, StringComparison.Ordinal);
     }
 
     [Fact]

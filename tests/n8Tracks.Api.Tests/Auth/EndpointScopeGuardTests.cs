@@ -2,6 +2,7 @@ using System.Net;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Routing.Patterns;
 using Microsoft.Extensions.DependencyInjection;
 using n8Tracks.Api.Auth;
 using n8Tracks.Api.Tests.Setup;
@@ -98,20 +99,33 @@ public sealed class EndpointScopeGuardTests
         {
             foreach (var method in endpoint.Metadata.GetMetadata<HttpMethodMetadata>()!.HttpMethods)
             {
-                using var response = await CredentialApi.SendAsync(client, new HttpMethod(method), new Uri(endpoint.RoutePattern.RawText!, UriKind.Relative), token);
+                using var response = await CredentialApi.SendAsync(client, new HttpMethod(method), Concrete(endpoint), token);
                 Assert.True(response.StatusCode == HttpStatusCode.Forbidden, $"{method} {endpoint.RoutePattern.RawText}: {response.StatusCode}");
                 await SetupApi.ProblemAsync(response, HttpStatusCode.Forbidden, SessionOnlyMiddleware.RequiredCode);
                 sessionOnly++;
             }
         }
 
-        Assert.Equal(4, sessionOnly);
+        Assert.Equal(8, sessionOnly);
 
         // An anonymous endpoint answers as it would without the header, even to a token that is not one.
         using var status = await CredentialApi.SendRawAsync(client, HttpMethod.Get, SetupApi.Status, "Bearer not-a-token");
         Assert.Equal(HttpStatusCode.OK, status.StatusCode);
         using var signIn = await CredentialApi.SendAsync(client, HttpMethod.Post, SessionApi.Session, token);
         await SetupApi.ProblemAsync(signIn, HttpStatusCode.Forbidden, AntiforgeryHeaderMiddleware.RequiredCode);
+    }
+
+    /// <summary>The endpoint's route with each parameter filled in by a new UUID, which every one of them accepts.</summary>
+    private static Uri Concrete(RouteEndpoint endpoint)
+    {
+        var segments = endpoint.RoutePattern.PathSegments.Select(static segment => string.Concat(segment.Parts.Select(static part => part switch
+        {
+            RoutePatternLiteralPart literal => literal.Content,
+            RoutePatternSeparatorPart separator => separator.Content,
+            _ => Guid.CreateVersion7().ToString(),
+        })));
+
+        return new Uri("/" + string.Join('/', segments), UriKind.Relative);
     }
 
     private static List<RouteEndpoint> ApiEndpoints(N8TracksApiFactory factory) =>

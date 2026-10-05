@@ -44,3 +44,22 @@ export async function expectAccessibleInLightAndDark(page: Page): Promise<void> 
     await expectNoA11yViolations(page);
   }
 }
+
+/**
+ * Scans an open modal dialog in light and in dark. The dialog is modal, so the colour control
+ * behind it cannot be clicked: the scheme is switched the way the control switches it, on the root
+ * element, and the scheme the page was in is put back.
+ */
+export async function expectModalAccessibleInBothSchemes(page: Page): Promise<void> {
+  const html = page.locator('html');
+  const before = await html.getAttribute('data-mantine-color-scheme');
+  for (const scheme of ['light', 'dark'] as const) {
+    await html.evaluate((element, value) => {
+      element.setAttribute('data-mantine-color-scheme', value);
+    }, scheme);
+    await expectNoA11yViolations(page);
+  }
+  await html.evaluate((element, value) => {
+    element.setAttribute('data-mantine-color-scheme', value ?? 'dark');
+  }, before);
+}

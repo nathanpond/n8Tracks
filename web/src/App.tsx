@@ -2,6 +2,7 @@ import { MantineProvider } from '@mantine/core';
 import { Navigate, Route, Routes } from 'react-router';
 import { SessionGate } from './auth/SessionGate';
 import { AccountPage } from './settings/AccountPage';
+import { CredentialsPage } from './settings/CredentialsPage';
 import { SystemPage } from './settings/SystemPage';
 import { SetupGate } from './setup/SetupGate';
 import { SignedInShell } from './shell/AppShell';
@@ -26,6 +27,7 @@ export function App() {
               <Route path="songs" element={<SongsPage />} />
               <Route path="settings" element={<Navigate to="/settings/account" replace />} />
               <Route path="settings/account" element={<AccountPage />} />
+              <Route path="settings/credentials" element={<CredentialsPage />} />
               <Route path="settings/system" element={<SystemPage />} />
               <Route path="*" element={<NotFoundPage />} />
             </Route>

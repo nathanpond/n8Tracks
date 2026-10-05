@@ -2,7 +2,11 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
-import { expectAccessibleInLightAndDark, expectNoA11yViolations } from '../support/a11y.ts';
+import {
+  expectAccessibleInLightAndDark,
+  expectModalAccessibleInBothSchemes,
+  expectNoA11yViolations,
+} from '../support/a11y.ts';
 import {
   removeContainers,
   startContainer,
@@ -33,25 +37,6 @@ const THIRD_PASSWORD = 'e2e-third-password';
 
 const CHANGED = 'Your password has been changed. Every other session has been signed out.';
 const PROMPT = 'Your session has ended';
-
-/**
- * The prompt is modal, so the colour control behind it cannot be clicked: the scheme the page is
- * drawn in is switched the way the control switches it, on the root element, and the page scanned
- * in each. The scheme the page was in is put back.
- */
-async function expectPromptAccessibleInBothSchemes(page: Page): Promise<void> {
-  const html = page.locator('html');
-  const before = await html.getAttribute('data-mantine-color-scheme');
-  for (const scheme of ['light', 'dark'] as const) {
-    await html.evaluate((element, value) => {
-      element.setAttribute('data-mantine-color-scheme', value);
-    }, scheme);
-    await expectNoA11yViolations(page);
-  }
-  await html.evaluate((element, value) => {
-    element.setAttribute('data-mantine-color-scheme', value ?? 'dark');
-  }, before);
-}
 
 function sidebar(page: Page) {
   return page.getByRole('navigation', { name: 'Main' });
@@ -108,7 +93,12 @@ test.describe(
       await signInWithTheForm(page, TEST_ADMIN.username, TEST_ADMIN.password);
       await expect(page.getByRole('heading', { level: 2, name: 'Account' })).toBeVisible();
       await expect(page).toHaveURL(`${FRESH_URL}settings/account`);
-      await expect(sidebar(page).getByRole('link')).toHaveText(['Songs', 'Account', 'System']);
+      await expect(sidebar(page).getByRole('link')).toHaveText([
+        'Songs',
+        'Account',
+        'Credentials',
+        'System',
+      ]);
       await expect(sidebar(page).getByRole('link', { name: 'Account' })).toHaveAttribute(
         'aria-current',
         'page',
@@ -165,7 +155,7 @@ test.describe(
         await expect(changePasswordForm(page).getByLabel('Confirm new password')).toHaveValue(
           THIRD_PASSWORD,
         );
-        await expectPromptAccessibleInBothSchemes(page);
+        await expectModalAccessibleInBothSchemes(page);
 
         // A wrong password in the prompt is the prompt's own error; the prompt stays.
         await signInWithTheForm(page, TEST_ADMIN.username, 'not the right password');

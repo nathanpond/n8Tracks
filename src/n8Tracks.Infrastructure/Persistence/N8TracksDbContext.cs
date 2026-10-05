@@ -66,6 +66,7 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
             });
             credential.HasKey(record => record.Id);
             credential.HasIndex(record => record.TokenHash).IsUnique();
+            credential.HasIndex(record => record.NameKey).IsUnique().HasFilter("revoked_utc IS NULL");
         });
     }
 }

@@ -105,7 +105,7 @@ public static class AdministratorRules
     }
 
     /// <summary>False for text that is not well-formed UTF-16 (an unpaired surrogate), which has no normal form.</summary>
-    private static bool TryNormalise(string text, out string normalised)
+    internal static bool TryNormalise(string text, out string normalised)
     {
         normalised = string.Empty;
         var remaining = text.AsSpan();
@@ -123,7 +123,7 @@ public static class AdministratorRules
         return true;
     }
 
-    private static bool IsPrintable(string text)
+    internal static bool IsPrintable(string text)
     {
         foreach (var rune in text.EnumerateRunes())
         {

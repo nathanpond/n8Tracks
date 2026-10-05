@@ -24,14 +24,19 @@ function sidebar(): HTMLElement {
 }
 
 describe('the signed-in shell', () => {
-  it('has a sidebar listing Songs, and Settings with Account and System', async () => {
+  it('has a sidebar listing Songs, and Settings with Account, Credentials, and System', async () => {
     stubFetch().mockResolvedValue(jsonResponse(200, healthyReport));
 
     renderAt('/songs');
 
     expect(await screen.findByRole('heading', { level: 2, name: 'Songs' })).toBeVisible();
     const links = within(sidebar()).getAllByRole('link');
-    expect(links.map((link) => link.textContent)).toEqual(['Songs', 'Account', 'System']);
+    expect(links.map((link) => link.textContent)).toEqual([
+      'Songs',
+      'Account',
+      'Credentials',
+      'System',
+    ]);
     expect(within(sidebar()).getByRole('group', { name: 'Settings' })).toBeInTheDocument();
     expect(within(sidebar()).getByRole('link', { name: 'Songs' })).toHaveAttribute(
       'aria-current',

@@ -32,8 +32,8 @@ function SidebarLink({
 
 /**
  * The signed-in shell: the header (sidebar toggle, product name, colour control, user menu), the
- * sidebar, and the current page. The sidebar lists Songs and Settings, and Settings has Account and
- * System; later stories add pages. On a narrow screen the sidebar is hidden until the toggle opens
+ * sidebar, and the current page. The sidebar lists Songs and Settings, and Settings has Account,
+ * Credentials, and System; later stories add pages. On a narrow screen the sidebar is hidden until the toggle opens
  * it, and choosing a page closes it again.
  */
 export function SignedInShell() {
@@ -70,6 +70,7 @@ export function SignedInShell() {
           </Text>
           <div role="group" aria-labelledby="navigation-settings">
             <SidebarLink to="/settings/account" label="Account" onNavigate={close} />
+            <SidebarLink to="/settings/credentials" label="Credentials" onNavigate={close} />
             <SidebarLink to="/settings/system" label="System" onNavigate={close} />
           </div>
         </Stack>

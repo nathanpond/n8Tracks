@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
@@ -251,6 +252,64 @@ public sealed class LogRedactionGuardTests
         Assert.DoesNotContain(token[4..], captured, StringComparison.Ordinal);
         Assert.DoesNotContain(n8Tracks.Application.Credentials.CredentialToken.Hash(token), captured, StringComparison.Ordinal);
         Assert.DoesNotContain(unknown[4..], captured, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The token is in one answer only, to the request that creates the credential. At Debug,
+    /// through creating, listing, renaming, revoking, and a call with the token before and after
+    /// revocation, neither the token nor its stored hash reaches the log, while the requests and the
+    /// credential's ID are logged.
+    /// </summary>
+    [Fact]
+    public async Task ACreatedTokenNeverReachesTheLogThroughTheCredentialScreens()
+    {
+        using var factory = new LoggingApiFactory("Debug") { TestServices = static services => TestEndpoints.Register(services) };
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var credentials = new Uri("/api/v1/credentials", UriKind.Relative);
+
+        using var create = Antiforgery(new HttpRequestMessage(HttpMethod.Post, credentials)
+        {
+            Content = JsonContent.Create(new { name = "sentinel script", kind = "api", scopes = new[] { "catalog.read" } }),
+        });
+        using var created = await client.SendAsync(create);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var body = await SetupApi.JsonAsync(created);
+        var id = body.GetProperty("id").GetString()!;
+        var token = body.GetProperty("token").GetString()!;
+        await factory.CompletionLine(LoggingApiFactory.RequestId(created));
+
+        using var rename = Antiforgery(new HttpRequestMessage(HttpMethod.Patch, new Uri($"/api/v1/credentials/{id}", UriKind.Relative))
+        {
+            Content = JsonContent.Create(new { name = "renamed" }),
+        });
+        Assert.True(rename.Headers.TryAddWithoutValidation("If-Match", "\"1\""));
+        var revoke = new Uri($"/api/v1/credentials/{id}/revoke", UriKind.Relative);
+
+        foreach (var request in new Func<Task<HttpResponseMessage>>[]
+        {
+            () => client.GetAsync(credentials),
+            () => CredentialApi.SendAsync(client, HttpMethod.Get, TestEndpoints.Read, token),
+            () => client.SendAsync(rename),
+            () => SessionApi.SendAsync(client, HttpMethod.Post, revoke),
+            () => CredentialApi.SendAsync(client, HttpMethod.Get, TestEndpoints.Read, token),
+        })
+        {
+            using var response = await request();
+            await factory.CompletionLine(LoggingApiFactory.RequestId(response));
+        }
+
+        var captured = factory.CapturedText;
+        Assert.Contains("Credential created", captured, StringComparison.Ordinal);
+        Assert.Contains("Credential revoked", captured, StringComparison.Ordinal);
+        Assert.Contains(id, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(token[4..], captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(n8Tracks.Application.Credentials.CredentialToken.Hash(token), captured, StringComparison.Ordinal);
+    }
+
+    private static HttpRequestMessage Antiforgery(HttpRequestMessage request)
+    {
+        request.Headers.Add(SessionApi.AntiforgeryHeader, "1");
+        return request;
     }
 
     /// <summary>Sends the request that carries every sentinel and returns its request ID.</summary>
