@@ -63,3 +63,27 @@ export function formatDateTime(utc: string, timeZone: string): string {
     timeZone,
   }).format(new Date(utc));
 }
+
+const RELATIVE_UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
+  ['year', 365 * 24 * 60 * 60],
+  ['month', 30 * 24 * 60 * 60],
+  ['week', 7 * 24 * 60 * 60],
+  ['day', 24 * 60 * 60],
+  ['hour', 60 * 60],
+  ['minute', 60],
+];
+
+/**
+ * A UTC ISO 8601 time relative to `now`, in the browser's locale: "5 minutes ago", "yesterday".
+ * Under a minute is "now". The largest whole unit is used, so 90 minutes is "1 hour ago".
+ */
+export function formatRelativeTime(utc: string, now: Date = new Date()): string {
+  const format = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+  const seconds = (new Date(utc).getTime() - now.getTime()) / 1000;
+  for (const [unit, length] of RELATIVE_UNITS) {
+    if (Math.abs(seconds) >= length) {
+      return format.format(Math.trunc(seconds / length), unit);
+    }
+  }
+  return format.format(0, 'second');
+}

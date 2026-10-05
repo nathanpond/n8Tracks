@@ -5,7 +5,7 @@ import {
   localStorageColorSchemeManager,
   type CSSVariablesResolver,
 } from '@mantine/core';
-import { knownStatuses, palette, type SchemePalette } from './palette';
+import { knownStatuses, palette, stateColours, type SchemePalette } from './palette';
 
 export const COLOR_SCHEME_STORAGE_KEY = 'n8tracks-color-scheme';
 
@@ -30,7 +30,10 @@ export const theme = createTheme({
   },
 });
 
-function schemeVariables(scheme: SchemePalette): Record<string, string> {
+function schemeVariables(
+  scheme: SchemePalette,
+  schemeName: 'light' | 'dark',
+): Record<string, string> {
   const variables: Record<string, string> = {
     '--mantine-color-body': scheme.body.background,
     '--mantine-color-text': scheme.body.text,
@@ -47,12 +50,16 @@ function schemeVariables(scheme: SchemePalette): Record<string, string> {
     variables[`--n8-status-${status}-text`] = scheme.status[status].text;
   }
 
+  for (const [name, colour] of Object.entries(stateColours)) {
+    variables[`--n8-state-${name}`] = colour[schemeName];
+  }
+
   return variables;
 }
 
 /** Puts the palette on the page as CSS variables, one set per colour scheme. */
 export const cssVariablesResolver: CSSVariablesResolver = () => ({
   variables: {},
-  light: schemeVariables(palette.light),
-  dark: schemeVariables(palette.dark),
+  light: schemeVariables(palette.light, 'light'),
+  dark: schemeVariables(palette.dark, 'dark'),
 });

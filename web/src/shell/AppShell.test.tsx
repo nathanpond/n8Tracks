@@ -25,7 +25,7 @@ function sidebar(): HTMLElement {
 
 describe('the signed-in shell', () => {
   it('has a sidebar listing Songs, and Settings with Account, Credentials, and System', async () => {
-    stubFetch().mockResolvedValue(jsonResponse(200, healthyReport));
+    stubFetch().mockImplementation(() => Promise.resolve(jsonResponse(200, healthyReport)));
 
     renderAt('/songs');
 
@@ -47,7 +47,7 @@ describe('the signed-in shell', () => {
   });
 
   it('goes to each page from the sidebar and marks it as the current one', async () => {
-    stubFetch().mockResolvedValue(jsonResponse(200, healthyReport));
+    stubFetch().mockImplementation(() => Promise.resolve(jsonResponse(200, healthyReport)));
     const user = userEvent.setup();
 
     renderAt('/songs');
@@ -78,7 +78,7 @@ describe('the signed-in shell', () => {
     ['/', '/songs', 'Songs'],
     ['/settings', '/settings/account', 'Account'],
   ])('sends %s on to %s', async (path, expected, heading) => {
-    stubFetch().mockResolvedValue(jsonResponse(200, healthyReport));
+    stubFetch().mockImplementation(() => Promise.resolve(jsonResponse(200, healthyReport)));
 
     renderAt(path);
 
@@ -87,7 +87,7 @@ describe('the signed-in shell', () => {
   });
 
   it('shows a path that is no page as not found, inside the shell', async () => {
-    stubFetch().mockResolvedValue(jsonResponse(200, healthyReport));
+    stubFetch().mockImplementation(() => Promise.resolve(jsonResponse(200, healthyReport)));
     const user = userEvent.setup();
 
     renderAt('/no/such/page');
@@ -99,7 +99,7 @@ describe('the signed-in shell', () => {
   });
 
   it('opens and closes the sidebar with the toggle, which says whether it is open', async () => {
-    stubFetch().mockResolvedValue(jsonResponse(200, healthyReport));
+    stubFetch().mockImplementation(() => Promise.resolve(jsonResponse(200, healthyReport)));
     const user = userEvent.setup();
 
     renderAt('/songs');
@@ -124,7 +124,7 @@ describe('the signed-in shell', () => {
 
 describe('the user menu', () => {
   it('shows the username and the two sign-out actions', async () => {
-    stubFetch().mockResolvedValue(jsonResponse(200, healthyReport));
+    stubFetch().mockImplementation(() => Promise.resolve(jsonResponse(200, healthyReport)));
     const user = userEvent.setup();
 
     renderAt('/songs');

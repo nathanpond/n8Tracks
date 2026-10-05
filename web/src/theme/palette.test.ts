@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { contrastRatio, knownStatuses, palette } from './palette';
+import { contrastRatio, knownStatuses, palette, stateColours } from './palette';
 import { cssVariablesResolver, PRIMARY_SHADE, theme } from './theme';
 import { DEFAULT_THEME } from '@mantine/core';
 
@@ -60,6 +60,15 @@ describe.each(['light', 'dark'] as const)('the %s scheme', (schemeName) => {
     );
   });
 
+  it.each(Object.keys(stateColours) as (keyof typeof stateColours)[])(
+    'draws a %s state as readable text on the page',
+    (name) => {
+      expect(
+        contrastRatio(stateColours[name][schemeName], scheme.body.background),
+      ).toBeGreaterThanOrEqual(TEXT);
+    },
+  );
+
   it('is what the theme puts on the page', () => {
     const variables = cssVariablesResolver(DEFAULT_THEME)[schemeName];
 
@@ -72,6 +81,9 @@ describe.each(['light', 'dark'] as const)('the %s scheme', (schemeName) => {
     for (const status of knownStatuses) {
       expect(variables[`--n8-status-${status}-background`]).toBe(scheme.status[status].background);
       expect(variables[`--n8-status-${status}-text`]).toBe(scheme.status[status].text);
+    }
+    for (const [name, colour] of Object.entries(stateColours)) {
+      expect(variables[`--n8-state-${name}`]).toBe(colour[schemeName]);
     }
   });
 });

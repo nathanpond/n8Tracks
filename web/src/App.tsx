@@ -7,6 +7,7 @@ import { SystemPage } from './settings/SystemPage';
 import { SetupGate } from './setup/SetupGate';
 import { SignedInShell } from './shell/AppShell';
 import { NotFoundPage } from './shell/NotFoundPage';
+import { SongPage } from './songs/SongPage';
 import { SongsPage } from './songs/SongsPage';
 import { colorSchemeManager, cssVariablesResolver, theme } from './theme/theme';
 
@@ -25,6 +26,7 @@ export function App() {
             <Route element={<SignedInShell />}>
               <Route index element={<Navigate to="/songs" replace />} />
               <Route path="songs" element={<SongsPage />} />
+              <Route path="songs/:reference" element={<SongPage />} />
               <Route path="settings" element={<Navigate to="/settings/account" replace />} />
               <Route path="settings/account" element={<AccountPage />} />
               <Route path="settings/credentials" element={<CredentialsPage />} />

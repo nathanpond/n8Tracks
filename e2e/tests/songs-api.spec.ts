@@ -39,8 +39,8 @@ async function json<T>(response: Awaited<ReturnType<APIRequestContext['get']>>):
 }
 
 /**
- * Walks the Demo's data through the API on the project's shared container, signed in: the Songs
- * screen itself is #59's. The container is shared with other specs and retries, so the walk reads
+ * Walks the Demo's data through the API on the project's shared container, signed in; the Songs
+ * screen walk is `songs.spec.ts`. The container is shared with other specs and retries, so the walk reads
  * the shortcodes it is given instead of expecting `n8-1`.
  */
 test.describe('Songs API', () => {

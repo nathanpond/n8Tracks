@@ -50,6 +50,33 @@ export const palette: Record<'light' | 'dark', SchemePalette> = {
   },
 };
 
+/**
+ * The twelve workflow-state colours, by the name a state stores, each with the value drawn on the
+ * light page and the one drawn on the dark page. They mirror `StateColours` in the domain
+ * (`src/n8Tracks.Domain/Songs/WorkflowState.cs`); `WebStateColoursTests` fails when the two differ. A state's name
+ * is drawn as text in its colour, so each value is checked for text contrast on its page.
+ */
+export const stateColours = {
+  gray: { light: '#495057', dark: '#ced4da' },
+  red: { light: '#c92a2a', dark: '#ff8787' },
+  pink: { light: '#a61e4d', dark: '#f783ac' },
+  grape: { light: '#862e9c', dark: '#e599f7' },
+  violet: { light: '#5f3dc4', dark: '#b197fc' },
+  indigo: { light: '#364fc7', dark: '#91a7ff' },
+  blue: { light: '#1864ab', dark: '#74c0fc' },
+  cyan: { light: '#0b7285', dark: '#66d9e8' },
+  teal: { light: '#087f5b', dark: '#63e6be' },
+  green: { light: '#2b7a37', dark: '#8ce99a' },
+  yellow: { light: '#8a5a00', dark: '#ffd43b' },
+  orange: { light: '#b43c0b', dark: '#ffa94d' },
+} as const satisfies Record<string, Record<'light' | 'dark', string>>;
+
+export type StateColourName = keyof typeof stateColours;
+
+export function isStateColour(name: string): name is StateColourName {
+  return Object.hasOwn(stateColours, name);
+}
+
 export function isKnownStatus(status: string): status is KnownStatus {
   return (knownStatuses as readonly string[]).includes(status);
 }
