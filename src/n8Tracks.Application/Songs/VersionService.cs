@@ -70,9 +70,36 @@ public abstract record SetCurrentOutcome
 }
 
 /// <summary>
+/// An edit of a Version's annotations: any of its name, notes, and archived flag, each left alone
+/// when unsent. Name and notes are text or null; <paramref name="Archived"/> is null when unsent.
+/// </summary>
+public sealed record VersionEdit(SongEditField Name, SongEditField Notes, bool? Archived);
+
+/// <summary>How an edit of a Version's annotations ended.</summary>
+public abstract record VersionUpdateOutcome
+{
+    private VersionUpdateOutcome()
+    {
+    }
+
+    /// <summary>The Version as it is now: edited, or unchanged when the edit changed nothing.</summary>
+    public sealed record Updated(VersionSummary Version) : VersionUpdateOutcome;
+
+    /// <summary>The Version is at another revision than the one the edit was based on. Nothing was changed.</summary>
+    public sealed record Conflict(VersionSummary Current) : VersionUpdateOutcome;
+
+    /// <summary>A field is wrong. Nothing was changed. The errors are keyed by field name.</summary>
+    public sealed record Invalid(IReadOnlyDictionary<string, string[]> Errors) : VersionUpdateOutcome;
+
+    /// <summary>There is no Version with that ID.</summary>
+    public sealed record NotFound : VersionUpdateOutcome;
+}
+
+/// <summary>
 /// Versions: the numbers a new Version may take when it branches from an existing one, by
 /// <see cref="VersionNumbering"/>; a Song's Versions as a flat list the tree is drawn from; creating
-/// a Version from any other, which becomes the current one; and choosing the current one. Making a
+/// a Version from any other, which becomes the current one; choosing the current one; and editing a
+/// Version's annotations (name, notes, archived), given the revision it was read at. Making a
 /// Version current is a command, not an edit of content someone may have changed, so it carries no
 /// revision and leaves the Song's alone: the last request wins.
 /// </summary>
@@ -83,6 +110,8 @@ public sealed class VersionService(IVersionStore versions, ISongStore songs, IEx
     public const string NumberField = "number";
     public const string NameField = "name";
     public const string VersionIdField = "versionId";
+    public const string NotesField = "notes";
+    public const string ArchivedField = "archived";
 
     /// <summary>
     /// The valid numbers for a new Version created from the Version with <paramref name="id"/>
@@ -218,6 +247,70 @@ public sealed class VersionService(IVersionStore versions, ISongStore songs, IEx
                 return new SetCurrentOutcome.Updated(updated);
             },
             cancellationToken);
+
+    /// <summary>
+    /// Edits the annotations of the Version with <paramref name="id"/> (only the fields sent) if it
+    /// is still at <paramref name="revision"/>. Name and notes are trimmed and blank is none; they may
+    /// change whether or not the Version's inputs are frozen, as they are not creation inputs.
+    /// Archiving and unarchiving change visibility only: never the number, lyrics, styles, the
+    /// descendants, or which Version is current. An edit that changes nothing leaves the revision
+    /// alone.
+    /// </summary>
+    public Task<VersionUpdateOutcome> UpdateAsync(Guid id, VersionEdit edit, int revision, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(edit);
+
+        var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        if (edit.Name.IsSent && VersionRules.NameErrors(edit.Name.Value) is { Length: > 0 } nameErrors)
+        {
+            errors[NameField] = nameErrors;
+        }
+
+        if (edit.Notes.IsSent && VersionRules.NotesErrors(edit.Notes.Value) is { Length: > 0 } notesErrors)
+        {
+            errors[NotesField] = notesErrors;
+        }
+
+        if (errors.Count > 0)
+        {
+            return Task.FromResult<VersionUpdateOutcome>(new VersionUpdateOutcome.Invalid(errors));
+        }
+
+        return transaction.RunAsync<VersionUpdateOutcome>(
+            async ct =>
+            {
+                if (await versions.FindSummaryAsync(id, ct).ConfigureAwait(false) is not { } current)
+                {
+                    return new VersionUpdateOutcome.NotFound();
+                }
+
+                if (current.Revision != revision)
+                {
+                    return new VersionUpdateOutcome.Conflict(current);
+                }
+
+                var annotations = new VersionAnnotations(
+                    edit.Name.IsSent ? VersionRules.NormaliseName(edit.Name.Value) : current.Name,
+                    edit.Notes.IsSent ? VersionRules.NormaliseNotes(edit.Notes.Value) : current.Notes,
+                    edit.Archived ?? current.Archived);
+                if (annotations == new VersionAnnotations(current.Name, current.Notes, current.Archived))
+                {
+                    return new VersionUpdateOutcome.Updated(current);
+                }
+
+                if (!await versions.TryUpdateAnnotationsAsync(id, annotations, revision, time.GetUtcNow(), ct).ConfigureAwait(false))
+                {
+                    return await versions.FindSummaryAsync(id, ct).ConfigureAwait(false) is { } changed
+                        ? new VersionUpdateOutcome.Conflict(changed)
+                        : new VersionUpdateOutcome.NotFound();
+                }
+
+                var updated = await versions.FindSummaryAsync(id, ct).ConfigureAwait(false)
+                    ?? throw new InvalidOperationException("The Version just edited cannot be read back.");
+                return new VersionUpdateOutcome.Updated(updated);
+            },
+            cancellationToken);
+    }
 
     /// <summary>The options for the source <paramref name="facts"/> describe. Stored numbers were valid when assigned, so each parses.</summary>
     private static IReadOnlyList<VersionNumberOption> Options(VersionNumberingFacts facts) =>

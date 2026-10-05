@@ -137,6 +137,12 @@ public sealed record VersionSummary(
     public string Shortcode => Shortcodes.ForVersion(SongShortcodeNumber, Number);
 }
 
+/// <summary>A Version's annotations, as they are to be stored: valid and normalised.</summary>
+/// <param name="Name">Trimmed; null when there is none.</param>
+/// <param name="Notes">Normalised; null when there are none.</param>
+/// <param name="Archived">Whether it is archived.</param>
+public sealed record VersionAnnotations(string? Name, string? Notes, bool Archived);
+
 /// <summary>Where Versions are kept, beyond what <see cref="ISongStore"/> reads with their Songs.</summary>
 public interface IVersionStore
 {
@@ -145,6 +151,9 @@ public interface IVersionStore
 
     /// <summary>The Version with <paramref name="id"/>, with its creation inputs; null when there is none.</summary>
     Task<SongVersion?> FindAsync(Guid id, CancellationToken cancellationToken);
+
+    /// <summary>The Version with <paramref name="id"/> as the tree shows it; null when there is none.</summary>
+    Task<VersionSummary?> FindSummaryAsync(Guid id, CancellationToken cancellationToken);
 
     /// <summary>Every Version of the Song with <paramref name="songId"/>, archived ones included, in tree order.</summary>
     Task<IReadOnlyList<VersionSummary>> ListAsync(Guid songId, CancellationToken cancellationToken);
@@ -161,4 +170,12 @@ public interface IVersionStore
     /// caller has checked that the Version is the Song's.
     /// </summary>
     Task SetCurrentAsync(Guid songId, Guid versionId, DateTimeOffset updatedUtc, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Stores <paramref name="annotations"/> on the Version if it is at <paramref name="revision"/>,
+    /// raising the revision by one and setting its updated time, in one statement. Nothing else about
+    /// the Version (its number, lyrics, styles) or its Song's current Version changes. False when the
+    /// Version is gone or at another revision, which leaves it as it is.
+    /// </summary>
+    Task<bool> TryUpdateAnnotationsAsync(Guid id, VersionAnnotations annotations, int revision, DateTimeOffset updatedUtc, CancellationToken cancellationToken);
 }

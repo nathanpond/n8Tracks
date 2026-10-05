@@ -57,3 +57,15 @@ export function nestVersions(
   }
   return roots;
 }
+
+/** A Version's accessible name: its number, name, and whether it is current or archived. */
+export function versionLabel(version: Version): string {
+  return [
+    `Version ${version.number}`,
+    version.name,
+    version.current ? 'current working Version' : null,
+    version.archived ? 'archived' : null,
+  ]
+    .filter((part) => part !== null)
+    .join(', ');
+}

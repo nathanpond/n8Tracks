@@ -3,12 +3,15 @@ using System.Globalization;
 namespace n8Tracks.Domain.Songs;
 
 /// <summary>
-/// What a Version's name may hold, and how a new Version is made from an existing one. Lengths
-/// count UTF-16 code units after trimming.
+/// What a Version's name and notes may hold, and how a new Version is made from an existing one.
+/// Lengths count UTF-16 code units after trimming. Names and notes are annotations, not creation
+/// inputs: they may change whether or not the Version's inputs are frozen.
 /// </summary>
 public static class VersionRules
 {
     public const int NameMaximumLength = 200;
+
+    public const int NotesMaximumLength = 10_000;
 
     /// <summary>
     /// The errors of a name, empty when it is valid (a missing or blank name is valid): trimmed, up
@@ -42,6 +45,40 @@ public static class VersionRules
     {
         var trimmed = name?.Trim();
         return string.IsNullOrEmpty(trimmed) ? null : trimmed;
+    }
+
+    /// <summary>
+    /// The errors of notes, empty when they are valid (missing or blank notes are valid): line
+    /// endings as <c>\n</c> and trimmed, up to <see cref="NotesMaximumLength"/> code units, with line
+    /// breaks but no other control characters, and no broken surrogate pairs.
+    /// </summary>
+    public static string[] NotesErrors(string? notes)
+    {
+        if (NormaliseNotes(notes) is not { } normalised)
+        {
+            return [];
+        }
+
+        if (normalised.Any(static character => character != '\n' && char.IsControl(character)))
+        {
+            return ["Notes can contain line breaks but no other control characters."];
+        }
+
+        if (!IsWellFormed(normalised))
+        {
+            return ["Notes cannot contain unpaired surrogate characters."];
+        }
+
+        return normalised.Length > NotesMaximumLength
+            ? [string.Create(CultureInfo.InvariantCulture, $"Use at most {NotesMaximumLength:N0} characters.")]
+            : [];
+    }
+
+    /// <summary>Notes as stored: line endings as <c>\n</c>, trimmed, and null when nothing but white space is left.</summary>
+    public static string? NormaliseNotes(string? notes)
+    {
+        var normalised = notes?.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Trim();
+        return string.IsNullOrEmpty(normalised) ? null : normalised;
     }
 
     /// <summary>

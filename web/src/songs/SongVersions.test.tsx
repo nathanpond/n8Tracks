@@ -7,27 +7,30 @@ import { testVersion, versionServer } from '../test/versionServer';
 const ONE = testVersion('1', { current: true });
 
 function tree() {
-  return screen.getByRole('navigation', { name: 'Versions' });
+  return screen.getByRole('tree', { name: 'Versions' });
 }
 
-/** The link that selects a Version in the tree. */
+/** The tree node of a Version. */
 function node(number: string) {
-  const link = tree().querySelector(`a[data-version-number="${number}"]`);
-  if (!(link instanceof HTMLElement)) {
+  const item = tree().querySelector(`[role="treeitem"][data-version-number="${number}"]`);
+  if (!(item instanceof HTMLElement)) {
     throw new Error(`Version ${number} is not drawn.`);
   }
-  return link;
+  return item;
 }
 
 /** The tree's shape: each drawn Version's number, its children in brackets. */
-function shape(list: Element | null = tree().querySelector('ul')): string {
-  if (list === null) {
+function shape(container: Element | null = tree()): string {
+  if (container === null) {
     return '';
   }
-  return [...list.children]
-    .map((item) => {
-      const number = item.querySelector('a')?.getAttribute('data-version-number') ?? '?';
-      const children = shape(item.querySelector(':scope > ul'));
+  return [...container.children]
+    .filter((child) => child.getAttribute('role') === 'none')
+    .map((wrapper) => {
+      const number =
+        wrapper.querySelector(':scope > [role="treeitem"]')?.getAttribute('data-version-number') ??
+        '?';
+      const children = shape(wrapper.querySelector(':scope > [role="group"]'));
       return children === '' ? number : `${number}[${children}]`;
     })
     .join(' ');
@@ -35,7 +38,7 @@ function shape(list: Element | null = tree().querySelector('ul')): string {
 
 async function openSong(path = '/songs/n8-7') {
   renderApp(path);
-  await screen.findByRole('navigation', { name: 'Versions' });
+  await screen.findByRole('tree', { name: 'Versions' });
 }
 
 describe('the Version tree', () => {
@@ -51,7 +54,10 @@ describe('the Version tree', () => {
     await openSong();
 
     expect(shape()).toBe('1[1.1 1.2 1.10] 2');
+    expect(node('1.1')).toHaveAttribute('aria-selected', 'true');
     expect(node('1.1')).toHaveAttribute('aria-current', 'true');
+    expect(node('1')).toHaveAttribute('aria-selected', 'false');
+    expect(node('1')).not.toHaveAttribute('aria-current');
     expect(within(node('1.1')).getByText('Current')).toBeVisible();
     expect(within(node('1')).queryByText('Current')).toBeNull();
     expect(screen.getByRole('heading', { level: 3, name: 'Version 1.1' })).toBeVisible();
@@ -59,7 +65,6 @@ describe('the Version tree', () => {
     expect(screen.getByText('n8-7-v1.1')).toBeVisible();
     // A Version that is already current offers no "Make current".
     expect(screen.queryByRole('button', { name: 'Make current' })).toBeNull();
-    expect(node('2')).toHaveAttribute('href', '/songs/n8-7/v/2');
   });
 
   it('draws a Version whose parent is missing under the nearest existing ancestor', async () => {
@@ -99,7 +104,7 @@ describe('the Version tree', () => {
 
     expect(screen.getByRole('heading', { level: 3, name: 'Version 2' })).toBeVisible();
     expect(screen.getByRole('switch', { name: 'Show archived' })).toBeChecked();
-    expect(node('2')).toHaveAttribute('aria-current', 'true');
+    expect(node('2')).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByText('Too slow', { selector: 'p' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Make current' })).toBeEnabled();
   });
@@ -123,7 +128,7 @@ describe('the Version tree', () => {
     await openSong();
     await user.click(node('2'));
     expect(await screen.findByRole('heading', { level: 3, name: 'Version 2' })).toBeVisible();
-    expect(node('2')).toHaveAttribute('aria-current', 'true');
+    expect(node('2')).toHaveAttribute('aria-selected', 'true');
 
     await user.click(screen.getByRole('button', { name: 'Make current' }));
 
@@ -180,7 +185,10 @@ describe('the Create New Version dialog', () => {
       expect(screen.queryByRole('dialog')).toBeNull();
     });
     expect(shape()).toBe('1[1.1]');
+    expect(node('1.1')).toHaveAttribute('aria-selected', 'true');
     expect(node('1.1')).toHaveAttribute('aria-current', 'true');
+    expect(node('1')).toHaveAttribute('aria-selected', 'false');
+    expect(node('1')).not.toHaveAttribute('aria-current');
     expect(within(node('1.1')).getByText('Current')).toBeVisible();
     expect(within(node('1')).queryByText('Current')).toBeNull();
     expect(server.writes).toEqual([
@@ -234,5 +242,329 @@ describe('the Create New Version dialog', () => {
     expect(within(dialog).getByText('Use at most 200 characters.')).toBeVisible();
     expect(name).toHaveAttribute('aria-invalid', 'true');
     expect(server.writes).toEqual([]);
+  });
+});
+
+describe('archiving Versions', () => {
+  it('remembers "Show archived" in this browser', async () => {
+    const user = userEvent.setup();
+    versionServer([ONE, testVersion('2', { archived: true })]);
+
+    await openSong();
+    expect(shape()).toBe('1');
+    await user.click(screen.getByRole('switch', { name: 'Show archived' }));
+    expect(shape()).toBe('1 2');
+    expect(window.localStorage.getItem('n8tracks-show-archived-versions')).toBe('true');
+  });
+
+  it('opens with "Show archived" as this browser left it', async () => {
+    window.localStorage.setItem('n8tracks-show-archived-versions', 'true');
+    versionServer([ONE, testVersion('2', { archived: true })]);
+
+    await openSong();
+
+    expect(screen.getByRole('switch', { name: 'Show archived' })).toBeChecked();
+    expect(shape()).toBe('1 2');
+  });
+
+  it('always draws the current Version, dimmed and marked, even archived with the toggle off', async () => {
+    versionServer([testVersion('1', { archived: true, current: true }), testVersion('2')]);
+
+    await openSong();
+
+    expect(screen.getByRole('switch', { name: 'Show archived' })).not.toBeChecked();
+    expect(shape()).toBe('1 2');
+    expect(node('1')).toHaveAttribute('data-archived', 'true');
+    expect(node('1')).toHaveAttribute('aria-current', 'true');
+    expect(within(node('1')).getByText('Current')).toBeVisible();
+    expect(within(node('1')).getByText('(archived)')).toBeVisible();
+  });
+
+  it('draws the visible children of a hidden archived Version under its nearest visible ancestor', async () => {
+    versionServer([
+      ONE,
+      testVersion('1.1', { archived: true }),
+      testVersion('1.1.1', { archived: true }),
+      testVersion('1.1.1.1'),
+      testVersion('2', { archived: true }),
+      testVersion('2.1'),
+    ]);
+
+    await openSong();
+
+    expect(shape()).toBe('1[1.1.1.1] 2.1');
+  });
+
+  it('archives from the tree menu at once, hides the Version, and offers Undo', async () => {
+    const user = userEvent.setup();
+    const { server } = versionServer([ONE, testVersion('2'), testVersion('2.1')]);
+
+    await openSong();
+    await user.click(screen.getByRole('button', { name: 'Actions for Version 2' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Archive' }));
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Version 2 archived.');
+    // 2 is hidden; its child stays, drawn under the nearest visible ancestor (none: the top).
+    expect(shape()).toBe('1 2.1');
+    expect(server.writes).toEqual([
+      {
+        method: 'PATCH',
+        path: `/api/v1/versions/${testVersion('2').id}`,
+        body: { archived: true },
+      },
+    ]);
+
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+
+    await waitFor(() => {
+      expect(shape()).toBe('1 2[2.1]');
+    });
+    expect(server.writes.map((write) => write.body)).toEqual([
+      { archived: true },
+      { archived: false },
+    ]);
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('moves the selection to the current Version when the selected one is archived and hidden', async () => {
+    const user = userEvent.setup();
+    versionServer([ONE, testVersion('2')]);
+
+    await openSong('/songs/n8-7/v/2');
+    expect(screen.getByRole('heading', { level: 3, name: 'Version 2' })).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Archive' }));
+
+    expect(await screen.findByRole('heading', { level: 3, name: 'Version 1' })).toBeVisible();
+    expect(shape()).toBe('1');
+    expect(node('1')).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('keeps the archived current Version selected, visible, and marked', async () => {
+    const user = userEvent.setup();
+    versionServer([ONE, testVersion('2')]);
+
+    await openSong();
+    await user.click(screen.getByRole('button', { name: 'Archive' }));
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Version 1 archived.');
+    expect(shape()).toBe('1 2');
+    expect(node('1')).toHaveAttribute('data-archived', 'true');
+    expect(node('1')).toHaveAttribute('aria-current', 'true');
+    expect(screen.getByRole('heading', { level: 3, name: 'Version 1' })).toBeVisible();
+    expect(screen.getByText('Archived')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Unarchive' })).toBeEnabled();
+  });
+
+  it('retries an archive on a newer revision without asking', async () => {
+    const user = userEvent.setup();
+    const { server } = versionServer([ONE, testVersion('2')]);
+
+    await openSong('/songs/n8-7/v/2');
+    server.changeElsewhere('2', { notes: 'Their note' });
+    await user.click(screen.getByRole('button', { name: 'Archive' }));
+
+    await waitFor(() => {
+      expect(server.versions.find((version) => version.number === '2')?.archived).toBe(true);
+    });
+    expect(server.writes).toHaveLength(2);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('says so when archiving fails, and changes nothing', async () => {
+    const user = userEvent.setup();
+    const { server } = versionServer([ONE, testVersion('2')]);
+    server.next = () => jsonResponse(500, {});
+
+    await openSong('/songs/n8-7/v/2');
+    await user.click(screen.getByRole('button', { name: 'Archive' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Not changed');
+    expect(shape()).toBe('1 2');
+  });
+});
+
+describe('the tree from the keyboard', () => {
+  it('names each node by its number, name, and whether it is current or archived', async () => {
+    window.localStorage.setItem('n8tracks-show-archived-versions', 'true');
+    versionServer([
+      ONE,
+      testVersion('1.1', { name: 'Guitar experimentation' }),
+      testVersion('2', { archived: true, name: 'Too slow' }),
+    ]);
+
+    await openSong();
+
+    expect(screen.getByRole('treeitem', { name: 'Version 1, current working Version' })).toBe(
+      node('1'),
+    );
+    expect(screen.getByRole('treeitem', { name: 'Version 1.1, Guitar experimentation' })).toBe(
+      node('1.1'),
+    );
+    expect(screen.getByRole('treeitem', { name: 'Version 2, Too slow, archived' })).toBe(node('2'));
+    expect(node('1')).toHaveAttribute('aria-expanded', 'true');
+    expect(node('1')).toHaveAttribute('aria-level', '1');
+    expect(node('1.1')).toHaveAttribute('aria-level', '2');
+    expect(node('1.1')).not.toHaveAttribute('aria-expanded');
+  });
+
+  it('moves with the arrow keys, collapses and expands, and selects with Enter', async () => {
+    const user = userEvent.setup();
+    versionServer([ONE, testVersion('1.1'), testVersion('1.2'), testVersion('2')]);
+
+    await openSong();
+    // One tab stop: the selected node.
+    expect(node('1')).toHaveAttribute('tabindex', '0');
+    expect(node('2')).toHaveAttribute('tabindex', '-1');
+    node('1').focus();
+
+    await user.keyboard('{ArrowDown}');
+    expect(node('1.1')).toHaveFocus();
+    await user.keyboard('{ArrowDown}{ArrowDown}');
+    expect(node('2')).toHaveFocus();
+    await user.keyboard('{ArrowDown}');
+    expect(node('2')).toHaveFocus();
+    await user.keyboard('{Home}');
+    expect(node('1')).toHaveFocus();
+    await user.keyboard('{End}');
+    expect(node('2')).toHaveFocus();
+    expect(node('2')).toHaveAttribute('tabindex', '0');
+
+    // Left on 1.2 goes to its parent; Left on the parent collapses it, Right expands it again.
+    await user.keyboard('{ArrowUp}{ArrowLeft}');
+    expect(node('1')).toHaveFocus();
+    await user.keyboard('{ArrowLeft}');
+    expect(node('1')).toHaveAttribute('aria-expanded', 'false');
+    expect(shape()).toBe('1 2');
+    await user.keyboard('{ArrowDown}');
+    expect(node('2')).toHaveFocus();
+    await user.keyboard('{ArrowUp}{ArrowRight}');
+    expect(node('1')).toHaveAttribute('aria-expanded', 'true');
+    await user.keyboard('{ArrowRight}');
+    expect(node('1.1')).toHaveFocus();
+
+    await user.keyboard('{ArrowDown}{Enter}');
+    expect(await screen.findByRole('heading', { level: 3, name: 'Version 1.2' })).toBeVisible();
+    expect(node('1.2')).toHaveAttribute('aria-selected', 'true');
+    expect(node('1.2')).toHaveFocus();
+  });
+
+  it('opens a node’s actions with Shift+F10, and reaches its actions button with Tab', async () => {
+    const user = userEvent.setup();
+    versionServer([ONE, testVersion('2')]);
+
+    await openSong();
+    node('1').focus();
+    await user.keyboard('{ArrowDown}{Shift>}{F10}{/Shift}');
+
+    const menu = await screen.findByRole('menu');
+    expect(
+      within(menu).getByRole('menuitem', { name: 'Create New Version From 2' }),
+    ).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: 'Make current' })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: 'Archive' })).toBeInTheDocument();
+
+    await user.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(screen.queryByRole('menu')).toBeNull();
+    });
+    expect(node('2')).toHaveFocus();
+
+    await user.tab();
+    expect(screen.getByRole('button', { name: 'Actions for Version 2' })).toHaveFocus();
+  });
+});
+
+describe('a Version’s name and notes', () => {
+  it('renames a Version and adds notes, each saved on its revision', async () => {
+    const user = userEvent.setup();
+    const { server } = versionServer([ONE, testVersion('1.1')]);
+
+    await openSong('/songs/n8-7/v/1.1');
+    await user.click(screen.getByRole('button', { name: 'Edit name' }));
+    const name = screen.getByRole('textbox', { name: 'Name' });
+    await user.type(name, '  Guitar experimentation {Enter}');
+
+    await waitFor(() => {
+      expect(within(node('1.1')).getByText('Guitar experimentation')).toBeVisible();
+    });
+    expect(node('1.1')).toHaveAccessibleName('Version 1.1, Guitar experimentation');
+
+    await user.click(screen.getByRole('button', { name: 'Edit notes' }));
+    await user.type(
+      screen.getByRole('textbox', { name: 'Notes' }),
+      'Try a capo.{Control>}{Enter}{/Control}',
+    );
+
+    expect(await screen.findByText('Try a capo.', { selector: 'p' })).toBeVisible();
+    expect(server.writes).toEqual([
+      {
+        method: 'PATCH',
+        path: `/api/v1/versions/${testVersion('1.1').id}`,
+        body: { name: 'Guitar experimentation' },
+      },
+      {
+        method: 'PATCH',
+        path: `/api/v1/versions/${testVersion('1.1').id}`,
+        body: { notes: 'Try a capo.' },
+      },
+    ]);
+    expect(server.versions.find((version) => version.number === '1.1')?.revision).toBe(3);
+  });
+
+  it('edits the name of an archived Version too, and clears it to none', async () => {
+    const user = userEvent.setup();
+    const { server } = versionServer([ONE, testVersion('2', { archived: true, name: 'Old' })]);
+
+    await openSong('/songs/n8-7/v/2');
+    await user.click(screen.getByRole('button', { name: 'Edit name' }));
+    await user.clear(screen.getByRole('textbox', { name: 'Name' }));
+    await user.keyboard('{Enter}');
+
+    expect(await screen.findByText('No name.')).toBeVisible();
+    expect(server.writes.map((write) => write.body)).toEqual([{ name: null }]);
+  });
+
+  it('flags a name over the limit in the field without sending it, and one the API refuses', async () => {
+    const user = userEvent.setup();
+    const { server } = versionServer([ONE]);
+
+    await openSong();
+    await user.click(screen.getByRole('button', { name: 'Edit name' }));
+    const name = screen.getByRole('textbox', { name: 'Name' });
+    await user.click(name);
+    await user.paste('a'.repeat(201));
+    await user.keyboard('{Enter}');
+
+    expect(screen.getByText('Use at most 200 characters.')).toBeVisible();
+    expect(name).toHaveAttribute('aria-invalid', 'true');
+    expect(server.writes).toEqual([]);
+
+    server.next = () =>
+      jsonResponse(422, {
+        code: 'validation_failed',
+        errors: { name: ['A name is one line, with no control characters.'] },
+      });
+    await user.clear(name);
+    await user.type(name, 'Fine here{Enter}');
+
+    expect(
+      await screen.findByText('A name is one line, with no control characters.'),
+    ).toBeVisible();
+    expect(name).toHaveAttribute('aria-invalid', 'true');
+  });
+
+  it('offers the conflict dialog when the notes changed elsewhere', async () => {
+    const user = userEvent.setup();
+    const { server } = versionServer([ONE]);
+
+    await openSong();
+    server.changeElsewhere('1', { notes: 'Their note' });
+    await user.click(screen.getByRole('button', { name: 'Edit notes' }));
+    await user.type(screen.getByRole('textbox', { name: 'Notes' }), 'My note');
+    await user.keyboard('{Control>}{Enter}{/Control}');
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(/This Version/)).toBeInTheDocument();
+    expect(within(dialog).getByText('Their note')).toBeInTheDocument();
   });
 });

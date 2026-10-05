@@ -46,6 +46,7 @@ public sealed class EndpointScopeGuardTests
         Assert.Equal("scope", markers["GET /api/v1/songs/{reference}/versions"]);
         Assert.Equal("scope", markers["POST /api/v1/songs/{id:guid}/versions"]);
         Assert.Equal("scope", markers["PUT /api/v1/songs/{reference}/current-version"]);
+        Assert.Equal("scope", markers["PATCH /api/v1/versions/{id:guid}"]);
         Assert.Equal("scope", markers["GET /api/v1/workflow-states"]);
         Assert.Equal("any-caller", markers["* " + ApiNotFoundPattern]);
     }

@@ -1,5 +1,5 @@
 import { CONCEPT_MAXIMUM_LENGTH, TITLE_MAXIMUM_LENGTH } from '../api/songs';
-import { VERSION_NAME_MAXIMUM_LENGTH } from '../api/versions';
+import { VERSION_NAME_MAXIMUM_LENGTH, VERSION_NOTES_MAXIMUM_LENGTH } from '../api/versions';
 
 // The Song rules the New Song dialog checks before sending, as the API checks them (`SongRules`).
 
@@ -31,5 +31,13 @@ export function conceptError(concept: string): string | undefined {
 export function nameError(name: string): string | undefined {
   return name.trim().length > VERSION_NAME_MAXIMUM_LENGTH
     ? atMost(VERSION_NAME_MAXIMUM_LENGTH)
+    : undefined;
+}
+
+/** Version notes' error before they are sent: optional, at most 10,000 once line endings are `\n` and they are trimmed. */
+export function notesError(notes: string): string | undefined {
+  const normalised = notes.replace(/\r\n|\r/g, '\n').trim();
+  return normalised.length > VERSION_NOTES_MAXIMUM_LENGTH
+    ? atMost(VERSION_NOTES_MAXIMUM_LENGTH)
     : undefined;
 }

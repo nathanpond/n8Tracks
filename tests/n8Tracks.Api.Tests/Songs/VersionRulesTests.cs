@@ -2,7 +2,7 @@ using n8Tracks.Domain.Songs;
 
 namespace n8Tracks.Api.Tests.Songs;
 
-/// <summary>The domain rules for creating a Version from another, and for its name.</summary>
+/// <summary>The domain rules for creating a Version from another, and for its name and notes.</summary>
 public sealed class VersionRulesTests
 {
     private static readonly DateTimeOffset Created = new(2026, 10, 1, 9, 0, 0, TimeSpan.Zero);
@@ -72,5 +72,29 @@ public sealed class VersionRulesTests
         Assert.Empty(VersionRules.NameErrors(new string('a', 200)));
         Assert.Empty(VersionRules.NameErrors($"  {new string('a', 200)}  "));
         Assert.Equal(["Use at most 200 characters."], VersionRules.NameErrors(new string('a', 201)));
+    }
+
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData("", null)]
+    [InlineData(" \n\t ", null)]
+    [InlineData("  Faster chorus.  ", "Faster chorus.")]
+    [InlineData("Line one\r\nLine two\rLine three\n", "Line one\nLine two\nLine three")]
+    public void NotesAreTrimmedWithLineEndingsAsNewlinesAndBlankIsNone(string? notes, string? stored)
+    {
+        Assert.Empty(VersionRules.NotesErrors(notes));
+        Assert.Equal(stored, VersionRules.NormaliseNotes(notes));
+    }
+
+    [Fact]
+    public void NotesTakeLineBreaksButNoOtherControlCharactersAndAreAtMostTenThousandCharacters()
+    {
+        Assert.Equal(["Notes can contain line breaks but no other control characters."], VersionRules.NotesErrors("tab\there"));
+        Assert.Equal(["Notes cannot contain unpaired surrogate characters."], VersionRules.NotesErrors(new string([(char)0xDC00, 'x'])));
+        Assert.Equal(["Use at most 10,000 characters."], VersionRules.NotesErrors(new string('a', VersionRules.NotesMaximumLength + 1)));
+
+        // Complement: the limit itself, once trimmed, and a pair of surrogates are taken.
+        Assert.Empty(VersionRules.NotesErrors($"\n{new string('a', VersionRules.NotesMaximumLength)}\n"));
+        Assert.Empty(VersionRules.NotesErrors("🎸\nriff"));
     }
 }

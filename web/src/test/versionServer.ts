@@ -56,8 +56,8 @@ export interface ReceivedWrite {
 
 /**
  * A fake n8Tracks holding `baseSong` and its Versions, answering as the API does: the Song, its
- * Versions, a Version's next numbers, creating a Version (which becomes current), and making one
- * current. A test changes `server.versions` to play another client, or sets `server.next` to
+ * Versions, a Version's next numbers, creating a Version (which becomes current), making one
+ * current, and editing a Version's name, notes, or archived flag on its revision. A test changes `server.versions` to play another client, or sets `server.next` to
  * answer the next write some other way.
  */
 export function versionServer(versions: Version[], song: Song = baseSong) {
@@ -70,6 +70,14 @@ export function versionServer(versions: Version[], song: Song = baseSong) {
     /** Plays another client creating a Version with `number`. */
     addElsewhere(number: string) {
       server.versions.push(testVersion(number));
+    },
+    /** Plays another client editing the Version numbered `number`: its revision goes up by one. */
+    changeElsewhere(number: string, change: Partial<Version>) {
+      server.versions = server.versions.map((version) =>
+        version.number === number
+          ? { ...version, ...change, revision: version.revision + 1 }
+          : version,
+      );
     },
   };
 
@@ -92,6 +100,39 @@ export function versionServer(versions: Version[], song: Song = baseSong) {
         ? jsonResponse(200, { options: optionsFor(source.number, used()) })
         : jsonResponse(404, { code: 'not_found' });
     }
+    const edited = /\/api\/v1\/versions\/([^/]+)$/.exec(path);
+    if (edited && method === 'PATCH') {
+      const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as Record<
+        string,
+        unknown
+      >;
+      server.writes.push({ method, path, body });
+      const next = server.next;
+      if (next) {
+        server.next = undefined;
+        return next();
+      }
+      const version = server.versions.find((candidate) => candidate.id === edited[1]);
+      if (!version) {
+        return jsonResponse(404, { code: 'not_found' });
+      }
+      const ifMatch = new Headers(init?.headers).get('If-Match');
+      if (ifMatch !== `"${String(version.revision)}"`) {
+        return jsonResponse(409, { code: 'revision_conflict', current: version });
+      }
+      const text = (value: unknown) =>
+        typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
+      const changed: Version = {
+        ...version,
+        ...('name' in body ? { name: text(body.name) } : {}),
+        ...('notes' in body ? { notes: text(body.notes) } : {}),
+        ...(typeof body.archived === 'boolean' ? { archived: body.archived } : {}),
+        revision: version.revision + 1,
+      };
+      server.versions = server.versions.map((other) => (other.id === version.id ? changed : other));
+      return jsonResponse(200, changed);
+    }
+
     const match = /\/api\/v1\/songs\/([^/]+)(\/versions|\/current-version)?$/.exec(path);
     const reference = match?.[1] === undefined ? undefined : decodeURIComponent(match[1]);
     if (reference !== server.song.id && reference !== server.song.shortcode) {

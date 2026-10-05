@@ -50,6 +50,19 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
                 record.Revision);
     }
 
+    public async Task<VersionSummary?> FindSummaryAsync(Guid id, CancellationToken cancellationToken)
+    {
+        var songId = await context.Versions.AsNoTracking()
+            .Where(version => version.Id == id)
+            .Select(static version => (Guid?)version.SongId)
+            .SingleOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        return songId is { } found
+            ? (await ListAsync(found, cancellationToken).ConfigureAwait(false)).SingleOrDefault(version => version.Id == id)
+            : null;
+    }
+
     public async Task<IReadOnlyList<VersionSummary>> ListAsync(Guid songId, CancellationToken cancellationToken)
     {
         var song = await context.Songs.AsNoTracking()
@@ -131,5 +144,36 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
                     .SetProperty(song => song.UpdatedUtc, updated),
                 cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    public async Task<bool> TryUpdateAnnotationsAsync(
+        Guid id,
+        VersionAnnotations annotations,
+        int revision,
+        DateTimeOffset updatedUtc,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(annotations);
+
+        var name = annotations.Name;
+        var notes = annotations.Notes;
+        var visibility = annotations.Archived ? VersionRecord.Archived : VersionRecord.Active;
+        var updated = UtcText.From(updatedUtc);
+
+        // One conditional statement: the revision check and the write cannot be split by another
+        // writer. Only the annotations are set; the AFTER UPDATE trigger moves the Song's updated time.
+        var count = await context.Versions
+            .Where(version => version.Id == id && version.Revision == revision)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(version => version.Name, name)
+                    .SetProperty(version => version.Notes, notes)
+                    .SetProperty(version => version.Visibility, visibility)
+                    .SetProperty(version => version.UpdatedUtc, updated)
+                    .SetProperty(version => version.Revision, version => version.Revision + 1),
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return count == 1;
     }
 }

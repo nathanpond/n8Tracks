@@ -1,4 +1,5 @@
 import { apiFetch } from './client';
+import { patchWithRevision, type SaveResult } from './saves';
 import { body, isRecord, isSong, useResource, type Song } from './songs';
 
 const SONGS_PATH = 'api/v1/songs';
@@ -6,6 +7,9 @@ const VERSIONS_PATH = 'api/v1/versions';
 
 /** The longest Version name the API takes, in UTF-16 code units after trimming. */
 export const VERSION_NAME_MAXIMUM_LENGTH = 200;
+
+/** The longest Version notes the API take, in UTF-16 code units once line endings are `\n` and trimmed. */
+export const VERSION_NOTES_MAXIMUM_LENGTH = 10_000;
 
 /** A Version as the tree shows it: no creation inputs. Times are UTC ISO 8601. */
 export interface Version {
@@ -181,4 +185,59 @@ export async function setCurrentVersion(
   } catch {
     return { kind: 'failed' };
   }
+}
+
+/** An edit of a Version's annotations: only the fields given change. */
+export interface VersionEdit {
+  name?: string | null;
+  notes?: string | null;
+  archived?: boolean;
+}
+
+const acceptVersion = (answer: unknown) => (isVersion(answer) ? answer : undefined);
+
+/** Edits a Version's name, notes, or archived flag, based on the revision it was read at. */
+export function updateVersion(
+  version: Pick<Version, 'id' | 'revision'>,
+  edit: VersionEdit,
+): Promise<SaveResult<Version>> {
+  return patchWithRevision(
+    `${VERSIONS_PATH}/${encodeURIComponent(version.id)}`,
+    version.revision,
+    { ...edit },
+    acceptVersion,
+  );
+}
+
+/** How many times archiving is retried on a newer revision before it gives up. */
+const ARCHIVE_RETRIES = 3;
+
+/** How archiving or unarchiving ended: the Version as it is now, or a failure. */
+export type ArchiveResult = { kind: 'saved'; version: Version } | { kind: 'failed' };
+
+/**
+ * Archives or unarchives a Version. Archiving is a command, not an edit of text someone else may
+ * have changed: when the Version moved to a newer revision meanwhile (a name or notes edit), it is
+ * retried on that revision without asking, and when the newer revision already has the flag wanted,
+ * that is the answer.
+ */
+export async function setVersionArchived(
+  version: Pick<Version, 'id' | 'revision'>,
+  archived: boolean,
+): Promise<ArchiveResult> {
+  let base = version;
+  for (let attempt = 0; attempt <= ARCHIVE_RETRIES; attempt++) {
+    const result = await updateVersion(base, { archived });
+    if (result.kind === 'saved') {
+      return { kind: 'saved', version: result.record };
+    }
+    if (result.kind !== 'conflict') {
+      return { kind: 'failed' };
+    }
+    if (result.current.archived === archived) {
+      return { kind: 'saved', version: result.current };
+    }
+    base = result.current;
+  }
+  return { kind: 'failed' };
 }
