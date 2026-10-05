@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
+using n8Tracks.Api.Tests.Backups;
 using n8Tracks.Infrastructure.Persistence;
 
 namespace n8Tracks.Api.Tests.Persistence;
@@ -103,6 +104,21 @@ internal sealed class UpgradeThatFailsAndBreaksTheSafetyBackup : TestMigrationsA
         [(UpgradeMigrations.ChangesDataId, typeof(ChangesDataMigration)), (UpgradeMigrations.FailsId, typeof(BreakingFailingMigration))];
 }
 
+/// <summary>
+/// As <see cref="UpgradeThatFails"/>, and the failing migration also replaces the database in every
+/// backup archive in <see cref="BackupFolder"/> with one that opens but fails
+/// <c>PRAGMA integrity_check</c> (an index's entry is gone from the schema, so its page is never
+/// used), with the manifest's checksums recomputed: the archive passes every check but the restored
+/// database's own. Only one test uses it, which sets the folder first.
+/// </summary>
+internal sealed class UpgradeThatFailsAndCorruptsTheSafetyBackup : TestMigrationsAssembly
+{
+    public static string? BackupFolder { get; set; }
+
+    protected override IEnumerable<(string Id, Type Type)> Extra =>
+        [(UpgradeMigrations.ChangesDataId, typeof(ChangesDataMigration)), (UpgradeMigrations.FailsId, typeof(CorruptingFailingMigration))];
+}
+
 [Migration(UpgradeMigrations.ChangesDataId)]
 internal sealed class ChangesDataMigration : Migration
 {
@@ -131,6 +147,30 @@ internal sealed class BreakingFailingMigration : FailingMigration
         foreach (var archive in Directory.EnumerateFiles(folder, "n8tracks-backup-*.zip"))
         {
             File.WriteAllText(archive, "not a zip any more");
+        }
+
+        base.Up(migrationBuilder);
+    }
+}
+
+[Migration(UpgradeMigrations.FailsId)]
+internal sealed class CorruptingFailingMigration : FailingMigration
+{
+    /// <summary>Drops one index from the schema but not its page: the file opens, and the integrity check reports the page.</summary>
+    public const string Corruption =
+        "PRAGMA writable_schema = ON; "
+        + "DELETE FROM sqlite_master WHERE name = (SELECT name FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL ORDER BY name LIMIT 1);";
+
+    protected override void Up(MigrationBuilder migrationBuilder)
+    {
+        var folder = UpgradeThatFailsAndCorruptsTheSafetyBackup.BackupFolder ?? throw new InvalidOperationException("Set the backup folder first.");
+        foreach (var archive in Directory.EnumerateFiles(folder, "n8tracks-backup-*.zip"))
+        {
+            File.WriteAllBytes(
+                archive,
+                RestoreApi.Rebuild(
+                    File.ReadAllBytes(archive),
+                    static entries => entries["n8tracks.db"] = RestoreApi.ChangeDatabase(entries["n8tracks.db"], Corruption)));
         }
 
         base.Up(migrationBuilder);

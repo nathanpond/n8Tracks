@@ -314,6 +314,57 @@ public sealed class UpgradeSafetyTests : IDisposable
         Assert.True(File.Exists(safety));
     }
 
+    /// <summary>
+    /// The safety backup is put back, but the database it brings fails <c>PRAGMA integrity_check</c>
+    /// (its checksums pass; the file itself is damaged): the half-migrated database goes back where
+    /// it was, the start stops with a log line that does not say the backup was restored, both files
+    /// stay, and the marker is left at <c>restoring</c> for the next start, which tries again.
+    /// </summary>
+    [Fact]
+    public async Task WhenThePutBackDatabaseFailsItsIntegrityCheckBothFilesStayAndNothingClaimsItWasRestored()
+    {
+        await SeedAsync();
+        UpgradeThatFailsAndCorruptsTheSafetyBackup.BackupFolder = BackupFolder;
+
+        var (exitCode, lines, answered) = await Run(UpgradeMigrations.Use<UpgradeThatFailsAndCorruptsTheSafetyBackup>);
+
+        Assert.Equal(1, exitCode);
+        Assert.False(answered);
+        var error = Assert.Single(lines, IsError);
+        Assert.Equal("safety-restore", Step(error));
+        var safety = Assert.Single(Archives());
+        var message = error.GetProperty("message").GetString()!;
+        Assert.Contains("integrity check", message, StringComparison.Ordinal);
+        Assert.Contains(safety, message, StringComparison.Ordinal);
+        Assert.DoesNotContain(lines, static line => line.GetProperty("message").GetString()!.Contains("was restored", StringComparison.Ordinal));
+        Assert.DoesNotContain(lines, static line => line.GetProperty("message").GetString()!.Contains("passed its integrity check", StringComparison.Ordinal));
+
+        // The precondition: the archive's database opens, and fails only its integrity check.
+        var archived = Path.Combine(directory.Path, "archived.db");
+        using (var zip = ZipFile.OpenRead(safety))
+        {
+            zip.GetEntry("n8tracks.db")!.ExtractToFile(archived);
+        }
+
+        Assert.NotEqual(["ok"], Column(archived, "PRAGMA integrity_check;"));
+        Assert.Equal("safety", Kind(safety));
+
+        // Both files are where they were: the half-migrated database live, the archive in its folder.
+        Assert.Contains(UpgradeMigrations.ChangesDataId, string.Join(',', TestDatabase.History(directory.Path)), StringComparison.Ordinal);
+        Assert.Equal(["ok"], Column(DatabasePath, "PRAGMA integrity_check;"));
+        Assert.False(File.Exists(DatabasePath + ".failed-upgrade"));
+        Assert.False(Directory.Exists(Path.Combine(directory.Path, LiveDataReplacement.PreviousFolderName)));
+        Assert.Equal("restoring", Marker()["stage"]!.GetValue<string>());
+
+        // The next start tries to put it back again, and changes nothing when it still cannot.
+        var again = await Run(UpgradeMigrations.Use<UpgradeThatFailsAndCorruptsTheSafetyBackup>);
+        Assert.Equal(1, again.ExitCode);
+        Assert.Equal("safety-restore", Step(Assert.Single(again.Lines, IsError)));
+        Assert.Contains(UpgradeMigrations.ChangesDataId, string.Join(',', TestDatabase.History(directory.Path)), StringComparison.Ordinal);
+        Assert.Equal([safety], Archives());
+        Assert.Equal("restoring", Marker()["stage"]!.GetValue<string>());
+    }
+
     [Theory]
     [InlineData("migrating")]
     [InlineData("restoring")]
