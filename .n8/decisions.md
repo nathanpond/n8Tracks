@@ -1064,3 +1064,12 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** No story checks the PRD's V1 Release Gate as a whole; each of its twelve lines has a home in M2–M8. A full release-gate walkthrough is recorded as an audit emphasis.
 - **Decision:** Executor simulations for M5–M8 ran one fresh agent per story for both passes, on the session's model; each milestone's coverage check ran as one fresh agent.
 
+
+## Ad-hoc — 2026-10-05
+
+- **Change:** Bulk download may spend the user's Suno download allowance. The extension may click Suno's "Unlock & Download" for clips not yet unlocked, after the user confirms the number of unlocks a run will use against the allowance remaining, and never buys download packs. The free playback stream (m4a-opus) is added as a fourth format, "M4A (streaming quality)".
+  **Why:** Spike TS-004 (#214) found that Suno meters downloads. WAV, MP3, and M4A exist only after a per-clip unlock that deducts one plan download (60 per period on Premier, extra packs for sale). The plan's rule that a credit-spending step makes a format "not automatable" would have limited bulk download to already-unlocked clips. The maintainer chose to allow unlocking with a confirmed count, and to offer the free stream.
+  **Affects:** M5 #215 (formats, unlock count and allowance in the summary), #216 (unlock step, 30 s preparation, one-hour signed addresses, chosen file name may be overridden by the browser, two audio hosts), #222 (`m4a-stream` format, records whether an unlock was spent), #206 (the matcher must also accept a bare Suno UUID and `.mp4` for M4A). `docs/suno-integration.md` amended in the same change.
+- **Change:** The Suno import map gains a `createRequest` path, and the fixture check is a TypeScript module with a vitest test rather than `extension/scripts/check-fixtures.mjs`.
+  **Why:** Spike TS-003 (#127) found six Create options (vocal gender, duration, Personalize, background music, and others) only in the Create request, and that the feed rewrites styles and Speech tone. A `.mjs` script would sit outside the extension's ESLint and `tsc` gate (invariant 8).
+  **Affects:** M4 import and observed-Create stories that read `docs/suno-import-field-map.json` (the observed-Create story must read the request body for those fields, never copying the request's `token`); the adapter must answer Suno's "Overwrite Lyrics & Styles?" dialog when loading a source.

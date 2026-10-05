@@ -1,0 +1,314 @@
+{
+  "id": "00000000-0000-4000-8000-000000000110",
+  "clips": [
+    {
+      "status": "submitted",
+      "title": "",
+      "play_count": 0,
+      "upvote_count": 0,
+      "allow_comments": true,
+      "is_verified": false,
+      "id": "00000000-0000-4000-8000-000000000111",
+      "entity_type": "song_schema",
+      "video_url": "",
+      "audio_url": "",
+      "major_model_version": "v6",
+      "model_name": "chirp-goose",
+      "metadata": {
+        "tags": "<redacted 18 chars>",
+        "prompt": "<redacted 40 chars>",
+        "type": "gen",
+        "stream": true,
+        "make_instrumental": false,
+        "is_speech": true,
+        "control_sliders": {
+          "aug_creativity": 2
+        },
+        "vox_render_mode": "strict",
+        "can_remix": true,
+        "is_remix": false,
+        "priority": 10,
+        "image_config": {
+          "use_image_config_template": true,
+          "id": "airbrush",
+          "default_cover_style": "brand_refresh"
+        },
+        "is_mumble": false
+      },
+      "is_liked": false,
+      "user_id": "00000000-0000-4000-8000-000000000103",
+      "display_name": "<redacted 11 chars>",
+      "handle": "<redacted 10 chars>",
+      "is_handle_updated": true,
+      "avatar_image_url": "<redacted url>",
+      "is_trashed": false,
+      "is_hidden": false,
+      "created_at": "2026-10-05T03:45:11.708Z",
+      "is_public": false,
+      "is_persona_root": false,
+      "flag_count": 0,
+      "is_contest_clip": false,
+      "has_hook": false,
+      "batch_index": 0,
+      "action_config": {
+        "actions": [
+          {
+            "action_type": "add_to_playlist",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "like_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "share_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "dislike_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "report_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "remove_from_playlist",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "play_next",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "add_to_queue",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "delete_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "edit_song_details",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "create_hook",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "download_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "open_in_studio",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "remix_extend",
+            "disabled": true,
+            "visible": true,
+            "action_override": {
+              "type": "toast",
+              "text": "<redacted 50 chars>"
+            }
+          },
+          {
+            "action_type": "remix_cover",
+            "disabled": true,
+            "visible": true,
+            "action_override": {
+              "type": "toast",
+              "text": "<redacted 50 chars>"
+            }
+          },
+          {
+            "action_type": "remix_reuse_style",
+            "disabled": false,
+            "visible": true
+          }
+        ]
+      }
+    },
+    {
+      "status": "submitted",
+      "title": "",
+      "play_count": 0,
+      "upvote_count": 0,
+      "allow_comments": true,
+      "is_verified": false,
+      "id": "00000000-0000-4000-8000-000000000112",
+      "entity_type": "song_schema",
+      "video_url": "",
+      "audio_url": "",
+      "major_model_version": "v6",
+      "model_name": "chirp-goose",
+      "metadata": {
+        "tags": "<redacted 18 chars>",
+        "prompt": "<redacted 40 chars>",
+        "type": "gen",
+        "stream": true,
+        "make_instrumental": false,
+        "is_speech": true,
+        "control_sliders": {
+          "aug_creativity": 2
+        },
+        "vox_render_mode": "strict",
+        "can_remix": true,
+        "is_remix": false,
+        "priority": 10,
+        "image_config": {
+          "use_image_config_template": true,
+          "id": "airbrush",
+          "default_cover_style": "brand_refresh"
+        },
+        "is_mumble": false
+      },
+      "is_liked": false,
+      "user_id": "00000000-0000-4000-8000-000000000103",
+      "display_name": "<redacted 11 chars>",
+      "handle": "<redacted 10 chars>",
+      "is_handle_updated": true,
+      "avatar_image_url": "<redacted url>",
+      "is_trashed": false,
+      "is_hidden": false,
+      "created_at": "2026-10-05T03:45:11.708Z",
+      "is_public": false,
+      "is_persona_root": false,
+      "flag_count": 0,
+      "is_contest_clip": false,
+      "has_hook": false,
+      "batch_index": 1,
+      "action_config": {
+        "actions": [
+          {
+            "action_type": "add_to_playlist",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "like_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "share_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "dislike_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "report_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "remove_from_playlist",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "play_next",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "add_to_queue",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "delete_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "edit_song_details",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "create_hook",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "download_song",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "open_in_studio",
+            "disabled": false,
+            "visible": true
+          },
+          {
+            "action_type": "remix_extend",
+            "disabled": true,
+            "visible": true,
+            "action_override": {
+              "type": "toast",
+              "text": "<redacted 50 chars>"
+            }
+          },
+          {
+            "action_type": "remix_cover",
+            "disabled": true,
+            "visible": true,
+            "action_override": {
+              "type": "toast",
+              "text": "<redacted 50 chars>"
+            }
+          },
+          {
+            "action_type": "remix_reuse_style",
+            "disabled": false,
+            "visible": true
+          }
+        ]
+      }
+    }
+  ],
+  "metadata": {
+    "tags": "<redacted 18 chars>",
+    "prompt": "<redacted 40 chars>",
+    "type": "gen",
+    "stream": true,
+    "make_instrumental": false,
+    "is_speech": true,
+    "control_sliders": {
+      "aug_creativity": 2
+    },
+    "vox_render_mode": "strict",
+    "can_remix": true,
+    "is_remix": false,
+    "priority": 10,
+    "image_config": {
+      "use_image_config_template": true,
+      "id": "airbrush",
+      "default_cover_style": "brand_refresh"
+    },
+    "is_mumble": false
+  },
+  "major_model_version": "v6",
+  "status": "running",
+  "created_at": "2026-10-05T03:45:11.523Z",
+  "batch_size": 2
+}

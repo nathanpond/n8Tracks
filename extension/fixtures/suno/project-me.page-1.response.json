@@ -1,0 +1,34 @@
+{
+  "num_total_results": 96,
+  "current_page": 1,
+  "projects": [
+    {
+      "id": "default",
+      "name": "<redacted 12 chars>",
+      "description": "<redacted 30 chars>",
+      "clip_count": 81,
+      "last_updated_clip": "2026-09-15T20:53:34.486Z",
+      "shared": false,
+      "can_invite": false
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000105",
+      "name": "<redacted 14 chars>",
+      "description": "",
+      "clip_count": 0,
+      "shared": false,
+      "can_invite": false,
+      "created_at": "2026-10-05T03:39:34.011Z"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000125",
+      "name": "<redacted 22 chars>",
+      "description": "",
+      "clip_count": 58,
+      "last_updated_clip": "2026-10-02T19:55:00.593Z",
+      "shared": false,
+      "can_invite": false,
+      "created_at": "2026-09-28T23:43:31.140Z"
+    }
+  ]
+}
