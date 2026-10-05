@@ -11,6 +11,7 @@ using n8Tracks.Api.DependencyInjection;
 using n8Tracks.Api.Endpoints;
 using n8Tracks.Api.Frontend;
 using n8Tracks.Api.Logging;
+using n8Tracks.Api.Maintenance;
 using n8Tracks.Api.Problems;
 using n8Tracks.Api.Setup;
 using n8Tracks.Application;
@@ -166,6 +167,8 @@ public sealed class Program
         builder.Services.AddEnvironmentConfiguration(environment);
         builder.Services.AddFrontend();
         builder.Services.AddSessionAuthentication();
+        builder.Services.AddSingleton<RequestDrain>();
+        builder.Services.AddSingleton<n8Tracks.Application.Maintenance.IRequestDrain>(static provider => provider.GetRequiredService<RequestDrain>());
 
         var app = builder.Build();
         await using (app.ConfigureAwait(false))
@@ -209,6 +212,10 @@ public sealed class Program
 
             app.UseConfiguredPathBase(options);
 
+            // Inside the path base, so it sees the path the routes see; before the setup gate and
+            // authentication, which read the database a restore may be replacing.
+            app.UseMiddleware<MaintenanceMiddleware>();
+
             // Inside the path base, so it sees the path the routes see.
             app.UseMiddleware<SetupGateMiddleware>();
 
@@ -232,6 +239,8 @@ public sealed class Program
             app.MapResolve();
             app.MapBackups();
             app.MapSettings();
+            app.MapRestores();
+            app.MapMaintenance();
             app.MapApiNotFound();
 
             // After the endpoints, and inside the path base: the frontend answers only what no endpoint does.

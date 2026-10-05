@@ -125,6 +125,9 @@ internal static class SeedGenerationCommand
             case DatabaseCondition.Upgrading:
                 error.WriteLine("The database is being upgraded (the migration lock is held). Run this command again once n8Tracks has started. Nothing was changed.");
                 return 1;
+            case DatabaseCondition.Maintenance:
+                error.WriteLine("n8Tracks is in maintenance: a restore is running, or was interrupted. Nothing was changed.");
+                return 1;
             case DatabaseCondition.SchemaMismatch:
                 error.WriteLine("The database schema does not match this version of n8Tracks. Start the application first. Nothing was changed.");
                 return 1;

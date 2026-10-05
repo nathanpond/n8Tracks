@@ -4,6 +4,7 @@ using n8Tracks.Application.Auth;
 using n8Tracks.Application.Backups;
 using n8Tracks.Application.Credentials;
 using n8Tracks.Application.Jobs;
+using n8Tracks.Application.Maintenance;
 using n8Tracks.Application.References;
 using n8Tracks.Application.Setup;
 using n8Tracks.Application.Songs;
@@ -40,6 +41,12 @@ public static class DependencyInjection
         services.AddSingleton<BackupScheduleProcess>();
         services.AddScoped<BackupScheduleService>();
         services.AddJobHandler<BackupJobHandler>(BackupService.JobType);
+        services.AddSingleton<MaintenanceMode>();
+        services.TryAddSingleton(new RestoreOptions());
+        services.AddSingleton<RestoreValidations>();
+        services.AddSingleton<RestoreReads>();
+        services.AddScoped<RestoreValidator>();
+        services.AddScoped<RestoreService>();
 
         return services;
     }

@@ -17,4 +17,11 @@ public static class HealthDetails
 
     /// <summary>One phrase for a mount that is missing, is not a directory, or cannot be read.</summary>
     public const string MediaUnavailable = "unavailable";
+
+    public const string MaintenanceOff = "off";
+
+    public const string MaintenanceRestoring = "restoring a backup";
+
+    /// <summary>The database is not checked during maintenance: a restore may be replacing it.</summary>
+    public const string DatabaseInMaintenance = "not checked";
 }

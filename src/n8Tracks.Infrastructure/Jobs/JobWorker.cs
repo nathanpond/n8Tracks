@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using n8Tracks.Application.Jobs;
+using n8Tracks.Application.Maintenance;
 
 namespace n8Tracks.Infrastructure.Jobs;
 
@@ -39,11 +40,13 @@ internal sealed class JobWorkerOptions
 /// cancellation token is cancelled and the job is given <see cref="JobWorkerOptions.ShutdownGrace"/>
 /// to end; one that stops is marked failed as interrupted at once, and one that does not stays
 /// running until the next start marks it so. Finished jobs are pruned daily once they are older
-/// than <see cref="JobWorkerOptions.Retention"/>.
+/// than <see cref="JobWorkerOptions.Retention"/>. While the instance is in maintenance nothing is
+/// claimed: queued work waits until it ends.
 /// </summary>
 internal sealed partial class JobWorker(
     IServiceScopeFactory scopes,
     JobSignal signal,
+    MaintenanceMode maintenance,
     TimeProvider time,
     JobWorkerOptions options,
     ILogger<JobWorker> logger) : BackgroundService
@@ -85,7 +88,7 @@ internal sealed partial class JobWorker(
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            if (time.GetUtcNow() >= nextPrune)
+            if (time.GetUtcNow() >= nextPrune && !maintenance.IsActive)
             {
                 await PruneAsync(stoppingToken).ConfigureAwait(false);
                 nextPrune = time.GetUtcNow() + options.PruneInterval;
@@ -126,6 +129,11 @@ internal sealed partial class JobWorker(
     /// <summary>Claims the next queued job and runs it to the end; false when nothing was queued.</summary>
     private async Task<bool> RunNextAsync(CancellationToken stoppingToken)
     {
+        if (maintenance.IsActive)
+        {
+            return false;
+        }
+
         ClaimedJob? job;
         var scope = scopes.CreateAsyncScope();
         await using (scope.ConfigureAwait(false))

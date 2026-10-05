@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { isScheduleSettings, type BackupLocation, type ScheduleSettings } from './backups';
 import { resolveAppUrl } from './baseUrl';
+import { noticeMaintenance } from './maintenance';
 
 export const SETUP_TIMEOUT_MS = 10_000;
 
@@ -107,6 +108,8 @@ export function fetchSetupStatus(signal: AbortSignal): Promise<SetupStatus> {
       signal: bounded,
     });
     if (!response.ok) {
+      // The first request the app makes: during a restore it shows the maintenance page.
+      await noticeMaintenance(response);
       throw new Error(`Setup status request failed with status ${String(response.status)}.`);
     }
 

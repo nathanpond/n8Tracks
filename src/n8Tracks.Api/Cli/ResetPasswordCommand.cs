@@ -123,6 +123,11 @@ internal static class ResetPasswordCommand
                     "The database is being upgraded (the migration lock is held). Wait until n8Tracks has started, "
                     + "and if it does not start, read its log; then run this command again. Nothing was changed.");
                 return 1;
+            case DatabaseCondition.Maintenance:
+                error.WriteLine(
+                    "n8Tracks is in maintenance: a restore is running, or was interrupted. Wait until it has finished, "
+                    + "and if it does not finish, read its log; then run this command again. Nothing was changed.");
+                return 1;
             case DatabaseCondition.SchemaMismatch:
                 error.WriteLine(
                     "The database schema does not match this version of n8Tracks. Start the application first, "

@@ -1,6 +1,7 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, vi } from 'vitest';
+import { clearMaintenance } from '../api/maintenance';
 import { resetSnapshots } from '../editor/useSnapshots';
 
 // jsdom has neither of these, and Mantine needs both.
@@ -36,6 +37,8 @@ afterEach(() => {
   cleanup();
   // Snapshots not yet sent are held for the whole page, so one test's would reach the next.
   resetSnapshots();
+  // Maintenance, once reported, is held for the whole page until the maintenance page clears it.
+  clearMaintenance();
   vi.useRealTimers();
   vi.unstubAllGlobals();
   window.localStorage.clear();

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { resolveAppUrl } from './baseUrl';
 import { apiFetch } from './client';
+import { noticeMaintenance } from './maintenance';
+import { ANTIFORGERY_HEADER } from './session';
 import { writeWithRevision, type SaveResult } from './saves';
 
 const BACKUPS_PATH = 'api/v1/backups';
@@ -98,6 +100,13 @@ export function formatSize(bytes: number): string {
 }
 
 export type BackupLocation = 'mount' | 'data';
+
+/** Each kind a manifest names, as the page shows it. A kind this build does not know is shown as written. */
+export const BACKUP_KIND_LABELS: Record<string, string> = {
+  manual: 'Manual',
+  scheduled: 'Scheduled',
+  safety: 'Safety',
+};
 
 /** `valid`; `newer` (made by a newer version: downloadable, not restorable); `invalid` (only deletable). */
 export type BackupStatus = 'valid' | 'newer' | 'invalid';
@@ -433,4 +442,160 @@ export function saveBackupSchedule(
   return writeWithRevision('PUT', SCHEDULE_PATH, revision, { ...settings }, (answer) =>
     isScheduleRecord(answer) ? answer : undefined,
   );
+}
+
+const VALIDATE_PATH = 'api/v1/restores/validate';
+const UPLOADS_PATH = 'api/v1/restores/uploads';
+const RESTORES_PATH = 'api/v1/restores';
+
+/** The largest archive an upload may be: 20 GB, as the API counts it. */
+export const MAX_UPLOAD_BYTES = 20_000_000_000;
+
+/** What the administrator types to confirm a restore. */
+export const RESTORE_CONFIRMATION = 'RESTORE';
+
+/** A valid archive as the confirmation shows it. `location` is null for an upload. */
+export interface RestoreArchive {
+  name: string;
+  location: BackupLocation | null;
+  size: number;
+  createdAt: string;
+  applicationVersion: string;
+  kind: string;
+}
+
+/** A validated archive, waiting for the typed confirmation until `expiresAt`. */
+export interface RestoreValidation {
+  validationId: string;
+  expiresAt: string;
+  archive: RestoreArchive;
+}
+
+/**
+ * How validating an archive ended: valid, refused with the API's reason in words (`message`), the
+ * listed backup gone, or no usable answer.
+ */
+export type ValidationResult =
+  | { kind: 'valid'; validation: RestoreValidation }
+  | { kind: 'refused'; code: string; message: string }
+  | { kind: 'gone' }
+  | { kind: 'failed' };
+
+/** How confirming a restore ended. */
+export type StartRestoreResult =
+  | { kind: 'started' }
+  | { kind: 'refused'; code: string; message: string }
+  | { kind: 'expired' }
+  | { kind: 'failed' };
+
+function isRestoreValidation(value: unknown): value is RestoreValidation {
+  if (!isRecord(value) || !isRecord(value.archive)) {
+    return false;
+  }
+  const archive = value.archive;
+  return (
+    typeof value.validationId === 'string' &&
+    typeof value.expiresAt === 'string' &&
+    typeof archive.name === 'string' &&
+    (archive.location === null || isLocation(archive.location)) &&
+    typeof archive.size === 'number' &&
+    typeof archive.createdAt === 'string' &&
+    typeof archive.applicationVersion === 'string' &&
+    typeof archive.kind === 'string'
+  );
+}
+
+/** The refusal in a problem body: its code and title. */
+function refusal(answer: unknown): { code: string; message: string } | null {
+  return isRecord(answer) && typeof answer.code === 'string' && typeof answer.title === 'string'
+    ? { code: answer.code, message: answer.title }
+    : null;
+}
+
+async function validationResult(response: Response): Promise<ValidationResult> {
+  const answer = await body(response);
+  if (response.ok && isRestoreValidation(answer)) {
+    return { kind: 'valid', validation: answer };
+  }
+  if (response.status === 404) {
+    return { kind: 'gone' };
+  }
+  const refused = refusal(answer);
+  if ([413, 422, 507].includes(response.status) && refused !== null) {
+    return { kind: 'refused', ...refused };
+  }
+  return { kind: 'failed' };
+}
+
+/** Validates a listed backup fully. Never a rejection. */
+export async function validateBackup(
+  backup: Pick<Backup, 'location' | 'name'>,
+): Promise<ValidationResult> {
+  try {
+    const response = await apiFetch(VALIDATE_PATH, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ location: backup.location, name: backup.name }),
+    });
+    return await validationResult(response);
+  } catch {
+    return { kind: 'failed' };
+  }
+}
+
+/**
+ * Uploads an archive and validates it. A file over the limit is refused here, without sending it.
+ * The upload has no time limit (an archive can be large); `signal` stops it. Never a rejection.
+ */
+export async function uploadBackup(file: File, signal?: AbortSignal): Promise<ValidationResult> {
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return {
+      kind: 'refused',
+      code: 'upload_too_large',
+      message: 'The file is larger than the 20 GB an upload may be.',
+    };
+  }
+  const form = new FormData();
+  form.append('file', file, file.name);
+  try {
+    const response = await fetch(resolveAppUrl(UPLOADS_PATH), {
+      method: 'POST',
+      headers: { Accept: 'application/json', [ANTIFORGERY_HEADER]: '1' },
+      body: form,
+      signal,
+    });
+    await noticeMaintenance(response);
+    const result = await validationResult(response);
+    // An upload is never "gone": a 404 here is no usable answer.
+    return result.kind === 'gone' ? { kind: 'failed' } : result;
+  } catch {
+    return { kind: 'failed' };
+  }
+}
+
+/** Confirms a validated restore with the typed word. Never a rejection. */
+export async function startRestore(
+  validationId: string,
+  confirmation: string,
+): Promise<StartRestoreResult> {
+  try {
+    const response = await apiFetch(RESTORES_PATH, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ validationId, confirmation }),
+    });
+    if (response.status === 202) {
+      return { kind: 'started' };
+    }
+    if (response.status === 404) {
+      return { kind: 'expired' };
+    }
+    const refused = refusal(await body(response));
+    if ((response.status === 409 || response.status === 422) && refused !== null) {
+      return { kind: 'refused', ...refused };
+    }
+    return { kind: 'failed' };
+  } catch {
+    return { kind: 'failed' };
+  }
 }

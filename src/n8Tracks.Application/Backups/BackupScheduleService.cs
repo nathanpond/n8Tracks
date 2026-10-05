@@ -1,6 +1,7 @@
 using n8Tracks.Application.Auth;
 using n8Tracks.Application.Configuration;
 using n8Tracks.Application.Jobs;
+using n8Tracks.Application.Maintenance;
 using n8Tracks.Application.Setup;
 
 namespace n8Tracks.Application.Backups;
@@ -39,6 +40,7 @@ public sealed class BackupScheduleService(
     IExclusiveTransaction transaction,
     N8TracksOptions options,
     BackupScheduleProcess process,
+    MaintenanceMode maintenance,
     TimeProvider time)
 {
     /// <summary>The stored schedule, or the defaults at revision 1 for an instance that has none.</summary>
@@ -93,7 +95,8 @@ public sealed class BackupScheduleService(
     /// </summary>
     public async Task<BackupScheduleAction> TickAsync(CancellationToken cancellationToken)
     {
-        if (!await setup.IsCompleteAsync(cancellationToken).ConfigureAwait(false))
+        // During maintenance the database is not touched; a backup that comes due waits until it ends.
+        if (maintenance.IsActive || !await setup.IsCompleteAsync(cancellationToken).ConfigureAwait(false))
         {
             return BackupScheduleAction.None;
         }
@@ -124,7 +127,7 @@ public sealed class BackupScheduleService(
         }
 
         var start = await backups.StartAsync(BackupKind.Scheduled, action == BackupScheduleAction.Retry, cancellationToken).ConfigureAwait(false);
-        return start.AlreadyInProgress ? BackupScheduleAction.None : action;
+        return start.AlreadyInProgress || start.Deferred ? BackupScheduleAction.None : action;
     }
 
     /// <summary>Records that the scheduled backup job <paramref name="jobId"/> has started: the latest attempt.</summary>

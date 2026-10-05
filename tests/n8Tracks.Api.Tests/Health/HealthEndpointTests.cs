@@ -47,6 +47,7 @@ public class HealthEndpointTests
                 ["database"] = new JsonObject { ["status"] = "healthy", ["detail"] = "reachable" },
                 ["migrations"] = new JsonObject { ["status"] = "healthy", ["detail"] = "up to date", ["lastApplied"] = lastApplied },
                 ["media"] = new JsonObject { ["status"] = "healthy", ["detail"] = "available" },
+                ["maintenance"] = new JsonObject { ["status"] = "healthy", ["detail"] = "off" },
             },
         };
 

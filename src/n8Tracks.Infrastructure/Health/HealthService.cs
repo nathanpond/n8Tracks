@@ -1,6 +1,7 @@
 using System.Globalization;
 using n8Tracks.Application.Configuration;
 using n8Tracks.Application.Health;
+using n8Tracks.Application.Maintenance;
 using n8Tracks.Application.Persistence;
 using n8Tracks.Infrastructure.Persistence;
 
@@ -24,10 +25,14 @@ internal sealed class HealthService : IHealthService
     private static readonly HealthComponent DatabaseUnreachable = new(HealthStatus.Unhealthy, HealthDetails.DatabaseUnreachable);
     private static readonly HealthComponent MediaAvailable = new(HealthStatus.Healthy, HealthDetails.MediaAvailable);
     private static readonly HealthComponent MediaUnavailable = new(HealthStatus.Degraded, HealthDetails.MediaUnavailable);
+    private static readonly HealthComponent MaintenanceOff = new(HealthStatus.Healthy, HealthDetails.MaintenanceOff);
+    private static readonly HealthComponent MaintenanceRestoring = new(HealthStatus.Degraded, HealthDetails.MaintenanceRestoring);
+    private static readonly HealthComponent DatabaseInMaintenance = new(HealthStatus.Degraded, HealthDetails.DatabaseInMaintenance);
 
     private readonly IDatabaseConnectionFactory connections;
     private readonly IMediaMountProbe mediaProbe;
     private readonly IMigrationStateProvider migrationState;
+    private readonly MaintenanceMode maintenance;
     private readonly Serilog.ILogger log;
     private readonly string mediaPath;
     private readonly DeadlineCheck databaseCheck;
@@ -41,6 +46,7 @@ internal sealed class HealthService : IHealthService
         IDatabaseConnectionFactory connections,
         IMediaMountProbe mediaProbe,
         IMigrationStateProvider migrationState,
+        MaintenanceMode maintenance,
         Serilog.ILogger log)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -49,6 +55,7 @@ internal sealed class HealthService : IHealthService
         this.connections = connections;
         this.mediaProbe = mediaProbe;
         this.migrationState = migrationState;
+        this.maintenance = maintenance;
         this.log = log.ForContext<HealthService>();
         mediaPath = options.MediaPath;
         databaseCheck = new DeadlineCheck(QueryDatabase, CheckTimeout);
@@ -57,9 +64,20 @@ internal sealed class HealthService : IHealthService
 
     public async Task<HealthReport> GetReportAsync(CancellationToken cancellationToken)
     {
-        var databaseOutcome = await databaseCheck.RunAsync(cancellationToken).ConfigureAwait(false);
-        var database = databaseOutcome.Result == CheckResult.Passed ? DatabaseReachable : DatabaseUnreachable;
-        Observe(DatabaseComponent, database.Status, databaseOutcome);
+        // During maintenance a restore may be replacing the database file, so it is not opened: the
+        // instance is degraded, not unhealthy, and the container is not restarted under the restore.
+        var inMaintenance = maintenance.IsActive;
+        HealthComponent database;
+        if (inMaintenance)
+        {
+            database = DatabaseInMaintenance;
+        }
+        else
+        {
+            var databaseOutcome = await databaseCheck.RunAsync(cancellationToken).ConfigureAwait(false);
+            database = databaseOutcome.Result == CheckResult.Passed ? DatabaseReachable : DatabaseUnreachable;
+            Observe(DatabaseComponent, database.Status, databaseOutcome);
+        }
 
         var migrations = Migrations();
 
@@ -67,7 +85,7 @@ internal sealed class HealthService : IHealthService
         var media = mediaOutcome.Result == CheckResult.Passed ? MediaAvailable : MediaUnavailable;
         Observe(MediaComponent, media.Status, mediaOutcome);
 
-        return new HealthReport(ApplicationRunning, database, migrations, media);
+        return new HealthReport(ApplicationRunning, database, migrations, media, inMaintenance ? MaintenanceRestoring : MaintenanceOff);
     }
 
     private bool QueryDatabase(CancellationToken deadline)

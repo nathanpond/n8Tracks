@@ -25,6 +25,7 @@ public sealed class AnonymousEndpointGuardTests
         "GET /api/v1/setup/status",
         "POST /api/v1/setup",
         "POST /api/v1/session",
+        "GET /api/v1/maintenance",
     };
 
     [Fact]

@@ -18,6 +18,7 @@ internal static class BackupsEndpoints
 
     public const string InProgressCode = "backup_in_progress";
     public const string InvalidCode = "backup_invalid";
+    public const string InUseCode = "backup_in_use";
 
     public const string MountLocation = "mount";
     public const string DataLocation = "data";
@@ -55,12 +56,13 @@ internal static class BackupsEndpoints
 
         endpoints.MapDelete(BackupPath, DeleteAsync)
             .WithName("DeleteBackup")
-            .WithSummary("Deletes the archive, valid or not.")
+            .WithSummary("Deletes the archive, valid or not; 409 backup_in_use while a restore is reading it.")
             .SessionOnly()
             .Produces(StatusCodes.Status204NoContent)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
-            .ProducesProblem(StatusCodes.Status404NotFound);
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict);
 
         return endpoints;
     }
@@ -91,6 +93,12 @@ internal static class BackupsEndpoints
         SessionEndpoints.NoStore(context);
 
         var start = await backups.StartAsync(BackupKind.Manual, cancellationToken);
+        if (start.Deferred)
+        {
+            // Only between the maintenance check and the lock: the maintenance gate answers the rest.
+            return Maintenance.MaintenanceMiddleware.Refusal(context);
+        }
+
         if (start.AlreadyInProgress)
         {
             return ApiProblem.For(
@@ -133,7 +141,7 @@ internal static class BackupsEndpoints
         return TypedResults.File(stream, "application/zip", archive.Name);
     }
 
-    /// <summary>204; 404 when there is no such archive.</summary>
+    /// <summary>204; 404 when there is no such archive; 409 <c>backup_in_use</c> while a restore is reading it.</summary>
     private static async Task<Results<NoContent, ProblemHttpResult>> DeleteAsync(
         string location,
         string name,
@@ -143,9 +151,21 @@ internal static class BackupsEndpoints
     {
         SessionEndpoints.NoStore(context);
 
-        return ParseLocation(location) is { } parsed && await backups.DeleteAsync(parsed, name, cancellationToken)
-            ? TypedResults.NoContent()
-            : NotFound(context);
+        if (ParseLocation(location) is not { } parsed)
+        {
+            return NotFound(context);
+        }
+
+        return await backups.DeleteAsync(parsed, name, cancellationToken) switch
+        {
+            BackupDeleteOutcome.Deleted => TypedResults.NoContent(),
+            BackupDeleteOutcome.InUse => ApiProblem.For(
+                context,
+                StatusCodes.Status409Conflict,
+                InUseCode,
+                "A restore is reading this backup; it can be deleted once the restore has finished."),
+            _ => NotFound(context),
+        };
     }
 
     private static ProblemHttpResult NotFound(HttpContext context) =>

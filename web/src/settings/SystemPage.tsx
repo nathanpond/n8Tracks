@@ -7,6 +7,7 @@ const componentLabels: Record<string, string> = {
   database: 'Database',
   migrations: 'Database schema',
   media: 'Media library',
+  maintenance: 'Maintenance',
 };
 
 const knownComponentOrder = Object.keys(componentLabels);

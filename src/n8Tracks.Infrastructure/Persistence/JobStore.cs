@@ -49,6 +49,10 @@ internal sealed class JobStore(N8TracksDbContext context) : IJobStore
             .FirstOrDefaultAsync(cancellationToken)
             .ConfigureAwait(false);
 
+    public Task<bool> AnyActiveAsync(CancellationToken cancellationToken) =>
+        context.Jobs.AsNoTracking()
+            .AnyAsync(static job => job.Status == JobRecord.Queued || job.Status == JobRecord.Running, cancellationToken);
+
     public async Task<IReadOnlyList<JobSummary>> ListRecentAsync(int count, CancellationToken cancellationToken)
     {
         var records = await context.Jobs.AsNoTracking()

@@ -14,4 +14,7 @@ public enum DatabaseCondition
 
     /// <summary>The migration lock is held: an upgrade is running, or was interrupted.</summary>
     Upgrading,
+
+    /// <summary>The instance is in maintenance: a restore is running, or was interrupted.</summary>
+    Maintenance,
 }

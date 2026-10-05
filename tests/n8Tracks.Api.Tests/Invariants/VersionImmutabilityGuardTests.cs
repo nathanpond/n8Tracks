@@ -307,6 +307,9 @@ public sealed class VersionImmutabilityGuardTests
         ["POST /api/v1/backups"] = "queues a backup: reads the database, writes only an archive file",
         ["DELETE /api/v1/backups/{location}/{name}"] = "deletes an archive file, never a database row",
         ["PUT /api/v1/settings/backup-schedule"] = "the backup schedule: one settings row",
+        ["POST /api/v1/restores/validate"] = "reads a backup archive into a temporary folder; changes no row",
+        ["POST /api/v1/restores/uploads"] = "writes an uploaded archive to a temporary file and reads it; changes no row",
+        ["POST /api/v1/restores"] = "starts maintenance and a safety backup; it replaces the instance as a whole (#74), never edits a Version",
     };
 
     /// <summary>How each public method of a catalog service is called, each creation input touched in turn.</summary>

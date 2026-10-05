@@ -32,6 +32,9 @@ public interface IJobStore
     /// <summary>The first-enqueued job of <paramref name="type"/> that is queued or running, or null.</summary>
     Task<Guid?> FindActiveAsync(string type, CancellationToken cancellationToken);
 
+    /// <summary>Whether any job, of any type, is queued or running.</summary>
+    Task<bool> AnyActiveAsync(CancellationToken cancellationToken);
+
     /// <summary>The <paramref name="count"/> most recently enqueued jobs, newest first.</summary>
     Task<IReadOnlyList<JobSummary>> ListRecentAsync(int count, CancellationToken cancellationToken);
 

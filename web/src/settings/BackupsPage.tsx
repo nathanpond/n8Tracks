@@ -1,5 +1,6 @@
 import {
   Button,
+  FileButton,
   Group,
   Loader,
   Modal,
@@ -12,6 +13,7 @@ import {
 } from '@mantine/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  BACKUP_KIND_LABELS,
   deleteBackup,
   downloadUrl,
   formatSize,
@@ -26,6 +28,7 @@ import {
 import { formatDateTime, useConfiguredTimeZone } from '../api/timeZone';
 import { Notice } from '../components/Notice';
 import { BackupSchedulePanel } from './BackupSchedulePanel';
+import { RestoreDialog, type RestoreRequest } from './RestoreDialog';
 
 const FAILED_MESSAGE = 'Check your connection and try again.';
 
@@ -34,12 +37,6 @@ export const SHARED_DISK_TITLE = 'Backups share a disk with your data';
 const LOCATION_LABELS: Record<BackupLocation, string> = {
   mount: 'Backup folder',
   data: 'Data folder',
-};
-
-const KIND_LABELS: Record<string, string> = {
-  manual: 'Manual',
-  scheduled: 'Scheduled',
-  safety: 'Safety',
 };
 
 const STATUS_LABELS: Record<BackupStatus, string> = {
@@ -174,10 +171,12 @@ function BackupTable({
   backups,
   timeZone,
   onDelete,
+  onRestore,
 }: {
   backups: Backup[];
   timeZone: string;
   onDelete: (backup: Backup) => void;
+  onRestore: (backup: Backup) => void;
 }) {
   return (
     <Table.ScrollContainer minWidth={720}>
@@ -205,7 +204,7 @@ function BackupTable({
                   <Text size="xs" c="var(--n8-color-secondary-text)" data-testid="backup-kind">
                     {backup.kind === null
                       ? 'Unknown kind'
-                      : (KIND_LABELS[backup.kind] ?? backup.kind)}
+                      : (BACKUP_KIND_LABELS[backup.kind] ?? backup.kind)}
                   </Text>
                   <Text size="xs" c="var(--n8-color-secondary-text)">
                     {backup.name}
@@ -218,6 +217,18 @@ function BackupTable({
               <Table.Td>{STATUS_LABELS[backup.status]}</Table.Td>
               <Table.Td>
                 <Group gap="xs" wrap="nowrap">
+                  {backup.status === 'valid' && (
+                    <Button
+                      size="xs"
+                      variant="default"
+                      onClick={() => {
+                        onRestore(backup);
+                      }}
+                      aria-label={`Restore ${backup.name}`}
+                    >
+                      Restore
+                    </Button>
+                  )}
                   {backup.status !== 'invalid' && (
                     <Button
                       component="a"
@@ -253,8 +264,8 @@ function BackupTable({
 
 /**
  * Settings → Backups: back up the whole instance now, follow the job, see and change the schedule,
- * and download or delete the archives in the backup folder and the data folder. A backup still
- * being written is not listed.
+ * download or delete the archives in the backup folder and the data folder, and restore from one of
+ * them or from a file. A backup still being written is not listed.
  */
 export function BackupsPage() {
   const { state, reload } = useBackups();
@@ -263,6 +274,12 @@ export function BackupsPage() {
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const [starting, setStarting] = useState(false);
   const [deleting, setDeleting] = useState<Backup | undefined>();
+  const [restoring, setRestoring] = useState<RestoreRequest | null>(null);
+  const [restoreKey, setRestoreKey] = useState(0);
+  const restore = useCallback((request: RestoreRequest) => {
+    setRestoreKey((previous) => previous + 1);
+    setRestoring(request);
+  }, []);
   const followed = useRef(new Set<string>());
 
   const follow = useCallback((id: string) => {
@@ -335,6 +352,20 @@ export function BackupsPage() {
         >
           Back up now
         </Button>
+        <FileButton
+          accept=".zip,application/zip"
+          onChange={(file) => {
+            if (file) {
+              restore({ kind: 'upload', file });
+            }
+          }}
+        >
+          {(props) => (
+            <Button variant="default" {...props}>
+              Restore from a file…
+            </Button>
+          )}
+        </FileButton>
       </Group>
       <BackupProgress job={job} outcome={outcome} />
 
@@ -362,7 +393,14 @@ export function BackupsPage() {
             <Text>There are no backups yet.</Text>
           </Paper>
         ) : (
-          <BackupTable backups={state.list.items} timeZone={timeZone} onDelete={setDeleting} />
+          <BackupTable
+            backups={state.list.items}
+            timeZone={timeZone}
+            onDelete={setDeleting}
+            onRestore={(backup) => {
+              restore({ kind: 'listed', backup });
+            }}
+          />
         ))}
 
       <DeleteDialog
@@ -372,6 +410,15 @@ export function BackupsPage() {
           setDeleting(undefined);
         }}
         onChanged={reload}
+      />
+
+      <RestoreDialog
+        key={`restore-${String(restoreKey)}`}
+        request={restoring}
+        timeZone={timeZone}
+        onClose={() => {
+          setRestoring(null);
+        }}
       />
     </Stack>
   );

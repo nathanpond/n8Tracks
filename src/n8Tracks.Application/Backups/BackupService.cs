@@ -1,19 +1,39 @@
 using System.Text.Json;
 using n8Tracks.Application.Jobs;
+using n8Tracks.Application.Maintenance;
 
 namespace n8Tracks.Application.Backups;
 
 /// <summary>How "Back up now" ended.</summary>
 /// <param name="JobId">The new job's ID, or the one already queued or running.</param>
 /// <param name="AlreadyInProgress">True when nothing was queued because a backup was queued or running already.</param>
-public sealed record BackupStart(Guid JobId, bool AlreadyInProgress);
+/// <param name="Deferred">True when nothing was queued because the instance is in maintenance; <paramref name="JobId"/> is then empty.</param>
+public sealed record BackupStart(Guid JobId, bool AlreadyInProgress, bool Deferred = false);
+
+/// <summary>How deleting an archive ended.</summary>
+public enum BackupDeleteOutcome
+{
+    Deleted,
+
+    /// <summary>There is no archive by that location and name.</summary>
+    NotFound,
+
+    /// <summary>A restore is reading it (validating, or restoring from it); nothing was deleted.</summary>
+    InUse,
+}
 
 /// <summary>
 /// Backups of the whole instance: starting one (as a <c>backup</c> job), listing, opening for
 /// download, and deleting. Every backup action is the signed-in administrator's alone; the
 /// endpoints enforce that, not this service.
 /// </summary>
-public sealed class BackupService(IBackupStorage storage, IJobStore jobs, IJobQueue queue, BackupStartLock startLock)
+public sealed class BackupService(
+    IBackupStorage storage,
+    IJobStore jobs,
+    IJobQueue queue,
+    BackupStartLock startLock,
+    MaintenanceMode maintenance,
+    RestoreReads restoreReads)
 {
     /// <summary>The job type every backup runs as, whatever its kind.</summary>
     public const string JobType = "backup";
@@ -25,7 +45,8 @@ public sealed class BackupService(IBackupStorage storage, IJobStore jobs, IJobQu
     /// Queues a backup of <paramref name="kind"/>, unless one is queued or running already, in which
     /// case that job is returned and nothing is queued. The check and the enqueue happen under one
     /// lock, so two requests at once queue one job. <paramref name="retry"/> marks a scheduled
-    /// backup as the one retry after a failure.
+    /// backup as the one retry after a failure. During maintenance nothing is queued (the restore
+    /// takes the same lock as it begins), and the start is reported as deferred.
     /// </summary>
     public Task<BackupStart> StartAsync(BackupKind kind, CancellationToken cancellationToken) => StartAsync(kind, retry: false, cancellationToken);
 
@@ -35,6 +56,11 @@ public sealed class BackupService(IBackupStorage storage, IJobStore jobs, IJobQu
         await startLock.Gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            if (maintenance.IsActive)
+            {
+                return new BackupStart(Guid.Empty, AlreadyInProgress: false, Deferred: true);
+            }
+
             if (await jobs.FindActiveAsync(JobType, cancellationToken).ConfigureAwait(false) is { } active)
             {
                 return new BackupStart(active, AlreadyInProgress: true);
@@ -67,9 +93,21 @@ public sealed class BackupService(IBackupStorage storage, IJobStore jobs, IJobQu
     /// <summary>Opens a found archive for streaming; null when it went in the meantime.</summary>
     public Stream? OpenRead(BackupArchive archive) => storage.OpenRead(archive);
 
-    /// <summary>Deletes the archive; false when there is none by that location and name.</summary>
-    public async Task<bool> DeleteAsync(BackupLocation location, string name, CancellationToken cancellationToken) =>
-        await storage.FindAsync(location, name, cancellationToken).ConfigureAwait(false) is { } archive && storage.Delete(archive);
+    /// <summary>Deletes the archive, unless a restore is reading it.</summary>
+    public async Task<BackupDeleteOutcome> DeleteAsync(BackupLocation location, string name, CancellationToken cancellationToken)
+    {
+        if (await storage.FindAsync(location, name, cancellationToken).ConfigureAwait(false) is not { } archive)
+        {
+            return BackupDeleteOutcome.NotFound;
+        }
+
+        if (restoreReads.IsHeld(archive.Location, archive.Name))
+        {
+            return BackupDeleteOutcome.InUse;
+        }
+
+        return storage.Delete(archive) ? BackupDeleteOutcome.Deleted : BackupDeleteOutcome.NotFound;
+    }
 }
 
 /// <summary>

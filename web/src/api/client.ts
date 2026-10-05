@@ -1,4 +1,5 @@
 import { resolveAppUrl } from './baseUrl';
+import { noticeMaintenance } from './maintenance';
 import { ANTIFORGERY_HEADER } from './session';
 
 /** How long one attempt of a request may take. Waiting for the user to sign in again is not counted. */
@@ -112,6 +113,8 @@ function waitForReauth(handler: SessionExpiredHandler, signal: AbortSignal | und
  * signed in again the request is sent again and its answer returned, so the page that made it
  * carries on as it was. Requests that meet a 401 while the prompt is open wait for the same
  * sign-in. Any other 401 (sign-in's own `invalid_credentials`) is returned as it is.
+ *
+ * A 503 `maintenance` is returned as it is, and also reported, so the app shows the maintenance page.
  */
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const { signal, headers, ...rest } = init;
@@ -125,6 +128,7 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
   const request: RequestInit = { ...rest, headers: merged };
 
   const response = await attempt(path, request, signal ?? undefined);
+  await noticeMaintenance(response);
   const handler = sessionExpiredHandler;
   if (!handler || !(await isSessionEnded(response))) {
     return response;

@@ -7,12 +7,14 @@ using n8Tracks.Application.Configuration;
 using n8Tracks.Application.Credentials;
 using n8Tracks.Application.Health;
 using n8Tracks.Application.Jobs;
+using n8Tracks.Application.Maintenance;
 using n8Tracks.Application.Persistence;
 using n8Tracks.Application.Setup;
 using n8Tracks.Application.Songs;
 using n8Tracks.Infrastructure.Backups;
 using n8Tracks.Infrastructure.Health;
 using n8Tracks.Infrastructure.Jobs;
+using n8Tracks.Infrastructure.Maintenance;
 using n8Tracks.Infrastructure.Persistence;
 using n8Tracks.Infrastructure.Security;
 using n8Tracks.Infrastructure.Setup;
@@ -58,6 +60,11 @@ public static class DependencyInjection
         services.AddSingleton<IBackupWriter, BackupWriter>();
         services.AddScoped<IBackupScheduleStore, BackupScheduleStore>();
         services.TryAddSingleton(new BackupTestHooks());
+        services.AddSingleton<IMaintenanceStateStore, MaintenanceStateFile>();
+        services.AddScoped<IRestoreArchives, RestoreArchives>();
+        services.TryAddSingleton<IDiskSpace, DataDiskSpace>();
+        services.AddSingleton<RestoreRunner>();
+        services.AddSingleton<IRestoreRunner>(static provider => provider.GetRequiredService<RestoreRunner>());
 
         return services;
     }
@@ -73,6 +80,7 @@ public static class DependencyInjection
         services.TryAddSingleton(new JobWorkerOptions());
         services.TryAddSingleton(new BackupSchedulerOptions());
         services.AddHostedService<BackupStartupCleanup>();
+        services.AddHostedService<RestoreHousekeeping>();
         services.AddHostedService<JobWorker>();
         services.AddHostedService<BackupScheduler>();
 
