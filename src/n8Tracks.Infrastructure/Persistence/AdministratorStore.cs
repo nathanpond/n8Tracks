@@ -29,8 +29,9 @@ internal sealed class AdministratorStore(N8TracksDbContext context) : IAdministr
         context.Administrators.Add(record);
         try
         {
-            // One insert in one transaction. A second writer waits for the first to commit (the busy
-            // timeout) and then fails on the unique slot.
+            // One insert, in the caller's transaction if there is one (setup's, with the backup
+            // schedule). A second writer waits for the first to commit (the busy timeout) and then
+            // fails on the unique slot.
             await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             return true;
         }
