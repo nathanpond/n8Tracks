@@ -48,13 +48,15 @@ test.describe('Settings → Backups', () => {
     await expect(row.getByRole('cell').nth(3)).toHaveText('Valid');
     await expectAccessibleInLightAndDark(page);
 
-    // 2. Download it and open the archive: the database, a manifest, and settings.
+    // 2. Download it and open the archive: the database, a manifest, and settings, and the
+    // managed-assets folder with whatever artwork other specs stored on the shared container.
     const downloading = page.waitForEvent('download');
     await row.getByRole('link', { name: `Download ${name ?? ''}` }).click();
     const download = await downloading;
     expect(download.suggestedFilename()).toBe(name);
     const entries = readZip(await readFile(await download.path()));
-    expect([...entries.keys()].sort()).toEqual([
+    const isAsset = (path: string) => /^assets\/./.test(path);
+    expect([...entries.keys()].filter((path) => !isAsset(path)).sort()).toEqual([
       'assets/',
       'manifest.json',
       'n8tracks.db',
@@ -70,7 +72,13 @@ test.describe('Settings → Backups', () => {
     };
     expect(manifest.formatVersion).toBe(1);
     expect(manifest.kind).toBe('manual');
-    expect(manifest.files.map((file) => file.path)).toEqual(['n8tracks.db', 'settings.json']);
+    expect(manifest.files.map((file) => file.path).filter((path) => !isAsset(path))).toEqual([
+      'n8tracks.db',
+      'settings.json',
+    ]);
+    expect(manifest.files.filter((file) => isAsset(file.path))).toHaveLength(
+      [...entries.keys()].filter(isAsset).length,
+    );
     for (const file of manifest.files) {
       const content = entries.get(file.path);
       expect(content?.length).toBe(file.size);

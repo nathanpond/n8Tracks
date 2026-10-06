@@ -77,6 +77,9 @@ public sealed class EndpointScopeGuardTests
         Assert.Equal("session-only", markers["DELETE /api/v1/relationship-types/{id:guid}"]);
         Assert.Equal("scope", markers["POST /api/v1/songs/{reference}/relationships"]);
         Assert.Equal("scope", markers["DELETE /api/v1/songs/{reference}/relationships/{id:guid}"]);
+        Assert.Equal("scope", markers["POST /api/v1/artwork"]);
+        Assert.Equal("scope", markers["GET /api/v1/artwork/{assetId:guid}"]);
+        Assert.Equal("scope", markers["GET /api/v1/artwork/{assetId:guid}/{size}"]);
         Assert.Equal("scope", markers["GET /api/v1/versions/{reference}/next-numbers"]);
         Assert.Equal("scope", markers["GET /api/v1/songs/{reference}/versions"]);
         Assert.Equal("scope", markers["POST /api/v1/songs/{reference}/versions"]);

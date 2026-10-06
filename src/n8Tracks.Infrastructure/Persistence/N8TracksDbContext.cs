@@ -96,6 +96,8 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
 
     public DbSet<PendingFileDeletionRecord> PendingFileDeletions => Set<PendingFileDeletionRecord>();
 
+    public DbSet<AssetRecord> Assets => Set<AssetRecord>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         ArgumentNullException.ThrowIfNull(configurationBuilder);
@@ -167,6 +169,28 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
 
         OnCatalogCreating(modelBuilder);
         OnRetentionCreating(modelBuilder);
+        OnAssetsCreating(modelBuilder);
+    }
+
+    /// <summary>
+    /// Managed artwork: one row per distinct image. Nothing refers to an asset by foreign key yet; the
+    /// stories that attach artwork add the attachments.
+    /// </summary>
+    private static void OnAssetsCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<AssetRecord>(asset =>
+        {
+            asset.ToTable("assets", static table =>
+            {
+                table.HasCheckConstraint("ck_assets_media_type", "media_type IN ('image/jpeg', 'image/png', 'image/webp')");
+                table.HasCheckConstraint("ck_assets_bytes", "bytes > 0");
+                table.HasCheckConstraint("ck_assets_dimensions", "width > 0 AND height > 0");
+                table.HasCheckConstraint("ck_assets_thumbnail_sizes_json", "json_valid(thumbnail_sizes) AND json_type(thumbnail_sizes) = 'array'");
+            });
+            asset.HasKey(record => record.Id);
+            asset.HasIndex(record => record.ContentHash).IsUnique();
+            asset.HasIndex(record => record.UploadedUtc);
+        });
     }
 
     /// <summary>

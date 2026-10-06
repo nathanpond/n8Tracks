@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using n8Tracks.Application.Assets;
 using n8Tracks.Application.Auth;
 using n8Tracks.Application.Backups;
 using n8Tracks.Application.Catalog;
@@ -59,6 +60,10 @@ public static class DependencyInjection
         services.AddDailyTask<BackupScheduleTask>();
         services.AddScoped<RetentionService>();
         services.AddDailyTask<RetentionPruneTask>();
+        services.AddScoped<ArtworkService>();
+        services.AddScoped<ILiveFileReferences, ArtworkFileReferences>();
+        services.AddSingleton<ArtworkSweepSchedule>();
+        services.AddDailyTask<ArtworkSweepTask>();
         services.AddSingleton<MaintenanceMode>();
         services.TryAddSingleton(new RestoreOptions());
         services.AddSingleton<RestoreValidations>();

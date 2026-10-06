@@ -56,6 +56,8 @@ public sealed class ReferenceParameterGuardTests
         "GET /api/v1/versions/{reference}/snapshots/{snapshotId:guid}: snapshotId",
         "POST /api/v1/versions/{reference}/snapshots/{snapshotId:guid}/restore: snapshotId",
         "DELETE /api/v1/versions/{reference}/snapshots/{snapshotId:guid}: snapshotId",
+        "GET /api/v1/artwork/{assetId:guid}: assetId",
+        "GET /api/v1/artwork/{assetId:guid}/{size}: assetId",
     };
 
     /// <summary>

@@ -516,6 +516,7 @@ public sealed class VersionImmutabilityGuardTests
         ["PUT /api/v1/settings/catalog"] = "the default Artist: one settings row, applied only as a new Song's credit",
         ["POST /api/v1/restores/validate"] = "reads a backup archive into a temporary folder; changes no row",
         ["POST /api/v1/restores/uploads"] = "writes an uploaded archive to a temporary file and reads it; changes no row",
+        ["POST /api/v1/artwork"] = "stores an uploaded image as an asset (assets and its files); attaching it is the owner's own edit, and no Version is touched",
         ["POST /api/v1/restores"] = "starts maintenance and a safety backup; it replaces the instance as a whole (#74), never edits a Version",
     };
 

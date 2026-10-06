@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using n8Tracks.Application.Assets;
 using n8Tracks.Application.Auth;
 using n8Tracks.Application.Backups;
 using n8Tracks.Application.Catalog;
@@ -14,6 +15,7 @@ using n8Tracks.Application.Retention;
 using n8Tracks.Application.Setup;
 using n8Tracks.Application.Songs;
 using n8Tracks.Application.Suno;
+using n8Tracks.Infrastructure.Assets;
 using n8Tracks.Infrastructure.Backups;
 using n8Tracks.Infrastructure.Health;
 using n8Tracks.Infrastructure.Jobs;
@@ -97,7 +99,11 @@ public static class DependencyInjection
         services.AddSingleton<RetainedTypeRegistry>();
         services.AddScoped<IRetentionStore, RetentionStore>();
         services.AddScoped<IRetentionPruneStateStore, RetentionPruneStateStore>();
-        services.AddSingleton<IManagedFiles, ManagedFiles>();
+        services.AddSingleton<ManagedFiles>();
+        services.AddSingleton<IManagedFiles>(static provider => provider.GetRequiredService<ManagedFiles>());
+        services.AddScoped<IAssetStore, AssetStore>();
+        services.AddSingleton<IManagedAssetStore, ManagedAssetStore>();
+        services.AddSingleton<IArtworkImaging, SkiaArtworkImaging>();
         services.AddJobHandler<RetentionPruneJobHandler>(RetentionPruneTask.JobType);
 
         return services;
