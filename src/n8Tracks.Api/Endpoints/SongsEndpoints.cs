@@ -37,7 +37,7 @@ internal static class SongsEndpoints
 
         endpoints.MapGet(SongsPath, ListAsync)
             .WithName("ListSongs")
-            .WithSummary("A page of Songs, sorted by last update or title, optionally only those in given workflow states (state), with any of given Genres (genre: Genre IDs, or none for Songs with no Genre), with any of given Tags (tag: Tag IDs, or none for Songs with no Tag), and crediting any of given Artists as primary or featured (artist: Artist IDs, or none for Songs credited to no one).")
+            .WithSummary("A page of Songs, sorted by last update or title, optionally only those in given workflow states (state), with any of given Genres (genre: Genre IDs, or none for Songs with no Genre), with any of given Tags (tag: Tag IDs, or none for Songs with no Tag), crediting any of given Artists as primary or featured (artist: Artist IDs, or none for Songs credited to no one), and matching a search (q: a title substring or shortcode prefix, ignoring case; ten a page by default; nothing for a blank q).")
             .RequireScope(CredentialScopes.CatalogRead)
             .Produces<SongListResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
@@ -149,8 +149,9 @@ internal static class SongsEndpoints
             Single(query, SongService.PageSizeParameter, out var pageSizeRepeated),
             [.. query[SongService.GenreParameter]],
             [.. query[SongService.TagParameter]],
-            [.. query[SongService.ArtistParameter]]);
-        if (sortRepeated || directionRepeated || pageRepeated || pageSizeRepeated)
+            [.. query[SongService.ArtistParameter]],
+            Single(query, SongService.QueryParameter, out var searchRepeated));
+        if (sortRepeated || directionRepeated || pageRepeated || pageSizeRepeated || searchRepeated)
         {
             return ApiProblem.For(
                 context,
@@ -400,7 +401,8 @@ internal sealed record UpdateSongRequest(JsonElement Title, JsonElement Concept,
 
 /// <summary>
 /// A Song as the API shows it. Times are UTC. <c>genres</c> and <c>tags</c> are alphabetical;
-/// <c>credits</c> holds the primary Artist (or null) and the featured Artists in the user's order.
+/// <c>credits</c> holds the primary Artist (or null) and the featured Artists in the user's order;
+/// <c>playlists</c> are the Playlists it is on, by title.
 /// </summary>
 internal sealed record SongResponse(
     Guid Id,
@@ -416,7 +418,8 @@ internal sealed record SongResponse(
     string? Notes,
     SongGenreResponse[] Genres,
     SongTagResponse[] Tags,
-    SongCreditsResponse Credits)
+    SongCreditsResponse Credits,
+    SongPlaylistResponse[] Playlists)
 {
     public static SongResponse From(SongSummary song)
     {
@@ -440,9 +443,13 @@ internal sealed record SongResponse(
             song.Notes,
             [.. song.Genres.Select(SongGenreResponse.From)],
             [.. song.Tags.Select(SongTagResponse.From)],
-            SongCreditsResponse.From(song.Credits));
+            SongCreditsResponse.From(song.Credits),
+            [.. song.Playlists.Select(static playlist => new SongPlaylistResponse(playlist.Id, playlist.Title))]);
     }
 }
+
+/// <summary>A Playlist as a Song shows it: its ID and title.</summary>
+internal sealed record SongPlaylistResponse(Guid Id, string Title);
 
 /// <summary>A Song's credits: the primary Artist, or null, and the featured Artists in order.</summary>
 internal sealed record SongCreditsResponse(SongArtistResponse? Primary, SongArtistResponse[] Featured)

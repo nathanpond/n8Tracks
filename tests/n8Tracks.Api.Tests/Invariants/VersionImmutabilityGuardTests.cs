@@ -342,6 +342,40 @@ public sealed class VersionImmutabilityGuardTests
                 }
             },
             ChangesInputs: true),
+        ["POST /api/v1/playlists/{id:guid}/songs"] = new(async target =>
+        {
+            // A Playlist holds the Song, never a Version: the inputs sent alongside are not read.
+            var (id, revision) = await PlaylistAsync(target, withSong: false);
+            using var response = await SendAsync(
+                target.Client,
+                HttpMethod.Post,
+                new Uri($"/api/v1/playlists/{id}/songs", UriKind.Relative),
+                SongApi.Quoted(revision),
+                await target.InputsJsonAsync($$"""{"songId":"{{target.SongShortcode}}",""", "}"));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }),
+        ["PUT /api/v1/playlists/{id:guid}/songs"] = new(async target =>
+        {
+            var (id, revision) = await PlaylistAsync(target, withSong: true);
+            using var response = await SendAsync(
+                target.Client,
+                HttpMethod.Put,
+                new Uri($"/api/v1/playlists/{id}/songs", UriKind.Relative),
+                SongApi.Quoted(revision),
+                await target.InputsJsonAsync($$"""{"songIds":["{{target.SongId}}"],""", "}"));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }),
+        ["DELETE /api/v1/playlists/{id:guid}/songs/{reference}"] = new(async target =>
+        {
+            var (id, revision) = await PlaylistAsync(target, withSong: true);
+            using var response = await SendAsync(
+                target.Client,
+                HttpMethod.Delete,
+                new Uri($"/api/v1/playlists/{id}/songs/{target.SongShortcode}", UriKind.Relative),
+                SongApi.Quoted(revision),
+                await target.InputsJsonAsync("{", "}"));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }),
         ["PATCH /api/v1/suno/models/{id:guid}"] = new(async target =>
         {
             // Renaming the model a Version names would change that Version's model, so it is refused.
@@ -384,6 +418,8 @@ public sealed class VersionImmutabilityGuardTests
         ["PATCH /api/v1/artists/{id:guid}"] = "edits an Artist record's name, aliases, notes, and links; no Song or Version is touched",
         ["POST /api/v1/albums"] = "adds an Album record (albums) from a title; no Song or Version is touched",
         ["PATCH /api/v1/albums/{id:guid}"] = "edits an Album record's title, Album Artist, release details, and links; no Song or Version is touched",
+        ["POST /api/v1/playlists"] = "adds an empty Playlist record (playlists) from a title; no Song or Version is touched",
+        ["PATCH /api/v1/playlists/{id:guid}"] = "edits a Playlist record's title and description; no Song or Version is touched",
         ["PUT /api/v1/suno/models/order"] = "reorders the model list; a Version's model is not touched",
         ["DELETE /api/v1/workflow-states/{id:guid}"] = "workflow states; moves Songs to another state, never a Version",
         ["POST /api/v1/backups"] = "queues a backup: reads the database, writes only an archive file",
@@ -620,6 +656,22 @@ public sealed class VersionImmutabilityGuardTests
 
     private static string Snake(string name) =>
         string.Concat(name.Select(static (letter, index) => char.IsUpper(letter) ? (index > 0 ? "_" : string.Empty) + char.ToLowerInvariant(letter) : letter.ToString()));
+
+    /// <summary>A new Playlist, holding the target's Song when <paramref name="withSong"/>; its ID and revision.</summary>
+    private static async Task<(string Id, int Revision)> PlaylistAsync(Target target, bool withSong)
+    {
+        using var created = await SongApi.SendJsonAsync(target.Client, HttpMethod.Post, new Uri("/api/v1/playlists", UriKind.Relative), """{"title":"Guard Playlist"}""");
+        var playlist = await SetupApi.JsonAsync(created);
+        var id = playlist.GetProperty("id").GetString()!;
+        if (!withSong)
+        {
+            return (id, 1);
+        }
+
+        using var added = await SendAsync(target.Client, HttpMethod.Post, new Uri($"/api/v1/playlists/{id}/songs", UriKind.Relative), SongApi.Quoted(1), $$"""{"songId":"{{target.SongId}}"}""");
+        Assert.Equal(HttpStatusCode.OK, added.StatusCode);
+        return (id, 2);
+    }
 
     private static async Task<HttpResponseMessage> SendAsync(HttpClient client, HttpMethod method, Uri uri, string ifMatch, string? json)
     {

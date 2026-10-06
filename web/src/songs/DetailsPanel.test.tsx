@@ -242,4 +242,37 @@ describe('the Details panel', () => {
     expect(await screen.findByText('Use at most 10,000 characters.')).toBeVisible();
     expect(server.edits).toHaveLength(1);
   });
+
+  it('lists the Playlists the Song is on, by title, each linking to the Playlist', async () => {
+    const user = userEvent.setup();
+    songServer({
+      ...baseSong,
+      playlists: [
+        { id: '01a1c000-0000-7000-8000-000000000101', title: 'Anthems' },
+        { id: '01a1c000-0000-7000-8000-000000000102', title: 'Road trip' },
+      ],
+    });
+    await openDetails(user);
+
+    const section = screen.getByRole('group', { name: 'Playlists' });
+    expect(
+      within(section)
+        .getAllByRole('link')
+        .map((link) => link.textContent),
+    ).toEqual(['Anthems', 'Road trip']);
+    expect(within(section).getByRole('link', { name: 'Road trip' })).toHaveAttribute(
+      'href',
+      '/playlists/01a1c000-0000-7000-8000-000000000102',
+    );
+  });
+
+  it('says when the Song is on no Playlist', async () => {
+    const user = userEvent.setup();
+    songServer();
+    await openDetails(user);
+
+    expect(
+      within(screen.getByRole('group', { name: 'Playlists' })).getByText('Not on any Playlist.'),
+    ).toBeVisible();
+  });
 });

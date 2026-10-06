@@ -2019,3 +2019,30 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
   - A list of links is edited as a whole, the way the Artist page edits them, so it is not saved row by row.
   - The discretion line gives example formats without a locale, and the app has no locale setting.
   **Issue:** #89
+- **Decision:** Playlists are the tables `playlists` (`title_key` for the order, `revision`) and `playlist_songs` (PK `(playlist_id, song_id)`, which enforces one entry per Song, and a unique `(playlist_id, position)` with positions from 0 and no gaps). One migration, `AddPlaylists`. Both foreign keys cascade: a Playlist's entries go with it, and a Song's entries go with the Song. Every membership change rewrites the Playlist's entries as a whole, under a conditional revision bump, and never writes a `songs` row.
+  **Why:** The discretion lines name both tables and an integer position. An entry is membership only, so it should not block deleting a Song; the Song deletion story can still change this when it adds retention. Rewriting the whole list avoids unique-position clashes while renumbering, and a Playlist holds at most 1,000 Songs. Song revision and updated time stay unchanged (AC 6), and a test checks this.
+  **Issue:** #90
+- **Decision:** API:
+  - `GET /playlists` returns summaries, by title and paged (50, max 100), without `songs`.
+  - `GET /playlists/{id}` and every write return the whole Playlist with `songs[{id, shortcode, title, primaryArtist, state, hasSelectedGeneration}]` in order.
+  - `POST .../songs` takes `songId` as an ID or a shortcode. Removal is `DELETE .../songs/{reference}`, where the route parameter is a `CatalogReference`. `PUT .../songs` takes `songIds` by ID or shortcode.
+  - Refusals: a duplicate is 409 `song_already_on_playlist`. A 1,001st Song is 409 `playlist_full`. A reorder that does not name exactly the members, each once, is 409 `order_mismatch` (the workflow-states code), and a reference that names no Song counts as a mismatch. Each of these carries `current`.
+  - An unknown Song on add is 422 `songId`. On remove, an unknown Song is 404, and a Song that exists but is not on the Playlist is 200 with no change and no revision bump.
+  **Why:** These follow the discretion lines. A Song is named by its ID or shortcode everywhere, which `ReferenceParameterGuardTests` enforces. A removal that is a no-op is idempotent, which lets the guard's by-ID and by-shortcode call answer the same way.
+  **Issue:** #90
+- **Decision:** "Selected Generation" does not exist yet: it arrives in M4. `hasSelectedGeneration` is always false for now (set in `PlaylistStore.FindAsync`), so every Song on a Playlist shows the "No Selected Generation" indicator, and the UI hides it when the flag is true. The flag is not a stored column.
+  **Why:** AC 4 needs the indicator now. Selection is M4 work, which will only need to compute the flag in that one place.
+  **Issue:** #90
+- **Decision:** `GET /api/v1/songs?q=` matches when the title contains the text (case-insensitive, compared on `title_sort_key`: NFC, lower invariant) or when the shortcode `n8-<n>` starts with it (case-insensitive; "n", "n8", and "n8-" match every Song). It combines with the other parameters by AND. With `q`, the default page size is 10, and an explicit `pageSize` up to 100 is still allowed. A blank `q` answers an empty page with total 0. `q` given twice is 400. `SongListRequest`/`SongListQuery` gained trailing optional `Query`/`Search`.
+  **Why:** These are the discretion lines. Keeping `pageSize` lets the Album-tracks and relationship stories ask for more if they need to. The shortcode rule is a literal prefix match on the full shortcode.
+  **Issue:** #90
+- **Decision:** Song responses embed `playlists[{id,title}]`, by title, on every Song answer, list included. `SongSummary` has a trailing `Playlists`, and the web `Song` requires `playlists` (fixtures: `playlists: []`). The Details panel's new last section, "Playlists", lists them as links, or says "Not on any Playlist."
+  **Why:** AC 5 and the discretion line ("embedded in the Song response"). The list loads them in one extra batched query per page.
+  **Issue:** #90
+- **Decision:** Web:
+  - There is a sidebar entry Playlists, after Albums, asserted in `AppShell.test.tsx` and e2e `account.spec.ts`. Routes are `/playlists` (`?page=`) and `/playlists/:id`.
+  - The shared Song search is `common/SongSearch.tsx`: a combobox over `?q=`, showing shortcode, title, and primary Artist. `unavailable` IDs are shown disabled with a note.
+  - `SavedTextField` moved from `AlbumPage.tsx` to `common/SavedTextField.tsx`, so the Album and Playlist pages share it.
+  - Song rows reorder by HTML drag-and-drop, or by "Move <title> up/down" with focus kept. Each add, remove, and reorder saves at once. On `revision_conflict`/`order_mismatch`, the Playlist is replaced with `current` and a "Not changed" notice is shown. A duplicate shows "<title> is on this Playlist already."
+  **Why:** These are the discretion lines. Drag-and-drop follows the Workflow page's pattern, with no new dependency.
+  **Issue:** #90

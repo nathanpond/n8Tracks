@@ -6,6 +6,8 @@ import { AlbumsPage } from './albums/AlbumsPage';
 import { ArtistPage } from './artists/ArtistPage';
 import { ArtistsPage } from './artists/ArtistsPage';
 import { MaintenanceGate } from './maintenance/MaintenanceGate';
+import { PlaylistPage } from './playlists/PlaylistPage';
+import { PlaylistsPage } from './playlists/PlaylistsPage';
 import { AccountPage } from './settings/AccountPage';
 import { BackupsPage } from './settings/BackupsPage';
 import { CatalogPage } from './settings/CatalogPage';
@@ -48,6 +50,8 @@ export function App() {
                 <Route path="artists/:id" element={<ArtistPage />} />
                 <Route path="albums" element={<AlbumsPage />} />
                 <Route path="albums/:id" element={<AlbumPage />} />
+                <Route path="playlists" element={<PlaylistsPage />} />
+                <Route path="playlists/:id" element={<PlaylistPage />} />
                 <Route path="go/:reference" element={<GoPage />} />
                 <Route path="settings" element={<Navigate to="/settings/account" replace />} />
                 <Route path="settings/account" element={<AccountPage />} />

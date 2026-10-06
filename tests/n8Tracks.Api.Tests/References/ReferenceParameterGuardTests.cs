@@ -41,6 +41,11 @@ public sealed class ReferenceParameterGuardTests
         "PATCH /api/v1/artists/{id:guid}: id",
         "GET /api/v1/albums/{id:guid}: id",
         "PATCH /api/v1/albums/{id:guid}: id",
+        "GET /api/v1/playlists/{id:guid}: id",
+        "PATCH /api/v1/playlists/{id:guid}: id",
+        "POST /api/v1/playlists/{id:guid}/songs: id",
+        "DELETE /api/v1/playlists/{id:guid}/songs/{reference}: id",
+        "PUT /api/v1/playlists/{id:guid}/songs: id",
         "GET /api/v1/versions/{reference}/snapshots/{snapshotId:guid}: snapshotId",
         "POST /api/v1/versions/{reference}/snapshots/{snapshotId:guid}/restore: snapshotId",
     };
@@ -79,6 +84,10 @@ public sealed class ReferenceParameterGuardTests
         ["POST /api/v1/versions/{reference}/snapshots/{snapshotId:guid}/restore"] = static async (c, _, version) =>
             await c.SendAsync(HttpMethod.Post, $"versions/{version}/snapshots/{c.SnapshotId}/restore", "{}", await c.VersionRevisionAsync()),
         ["GET /api/v1/resolve/{reference}"] = static (c, _, version) => c.SendAsync(HttpMethod.Get, $"resolve/{version}"),
+
+        // 200: the Song is not on the Playlist, so nothing changes.
+        ["DELETE /api/v1/playlists/{id:guid}/songs/{reference}"] = static async (c, song, _) =>
+            await c.SendAsync(HttpMethod.Delete, $"playlists/{c.PlaylistId}/songs/{song}", revision: await c.PlaylistRevisionAsync()),
     };
 
     [Fact]
@@ -124,6 +133,12 @@ public sealed class ReferenceParameterGuardTests
         {
             Assert.Equal(HttpStatusCode.Created, first.StatusCode);
             context.SnapshotId = (await SetupApi.JsonAsync(first)).GetProperty("id").GetString()!;
+        }
+
+        using (var playlist = await context.SendAsync(HttpMethod.Post, "playlists", """{"title":"Referenced"}"""))
+        {
+            Assert.Equal(HttpStatusCode.Created, playlist.StatusCode);
+            context.PlaylistId = (await SetupApi.JsonAsync(playlist)).GetProperty("id").GetString()!;
         }
 
         // Every endpoint that binds a reference has a call here, and every call is to such an endpoint.
@@ -238,6 +253,8 @@ public sealed class ReferenceParameterGuardTests
     {
         public string SnapshotId { get; set; } = string.Empty;
 
+        public string PlaylistId { get; set; } = string.Empty;
+
         public async Task<HttpResponseMessage> SendAsync(HttpMethod method, string path, string? json = null, int? revision = null)
         {
             using var request = new HttpRequestMessage(method, new Uri("/api/v1/" + path, UriKind.Relative));
@@ -258,6 +275,8 @@ public sealed class ReferenceParameterGuardTests
         public Task<int> SongRevisionAsync() => RevisionAsync($"songs/{songId}");
 
         public Task<int> VersionRevisionAsync() => RevisionAsync($"versions/{versionId}");
+
+        public Task<int> PlaylistRevisionAsync() => RevisionAsync($"playlists/{PlaylistId}");
 
         private async Task<int> RevisionAsync(string path)
         {

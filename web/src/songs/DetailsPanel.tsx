@@ -1,8 +1,10 @@
 import {
+  Anchor,
   Button,
   CloseButton,
   Drawer,
   Group,
+  List,
   Paper,
   Stack,
   Text,
@@ -10,6 +12,7 @@ import {
   Title,
 } from '@mantine/core';
 import { useState, type KeyboardEvent, type ReactNode } from 'react';
+import { Link } from 'react-router';
 import { createGenre, genreNameError, useGenres, type Genre } from '../api/genres';
 import type { FieldValue } from '../api/saves';
 import {
@@ -316,7 +319,33 @@ function NotesSection({
   );
 }
 
-/** What the Details panel holds for a Song: its credits, Genres, Tags, and notes. Later stories add sections. */
+/** The Playlists the Song is on, by title, each linking to the Playlist. Songs are added on the Playlist's page. */
+function PlaylistsSection({ song }: { song: Song }) {
+  return (
+    <Stack gap={4} role="group" aria-labelledby="song-playlists">
+      <Text fw={500} size="sm" id="song-playlists">
+        Playlists
+      </Text>
+      {song.playlists.length === 0 ? (
+        <Text size="sm" c="var(--n8-color-secondary-text)">
+          Not on any Playlist.
+        </Text>
+      ) : (
+        <List size="sm" data-testid="song-playlists">
+          {song.playlists.map((playlist) => (
+            <List.Item key={playlist.id}>
+              <Anchor component={Link} to={`/playlists/${playlist.id}`} underline="always">
+                {playlist.title}
+              </Anchor>
+            </List.Item>
+          ))}
+        </List>
+      )}
+    </Stack>
+  );
+}
+
+/** What the Details panel holds for a Song: its credits, Genres, Tags, notes, and Playlists. Later stories add sections. */
 export function SongDetails({
   song,
   saveFields,
@@ -332,6 +361,7 @@ export function SongDetails({
       <GenresSection song={song} saveFields={saveFields} onSong={onSong} />
       <TagsSection song={song} saveFields={saveFields} onSong={onSong} />
       <NotesSection song={song} save={(key, value) => saveFields({ [key]: value })} />
+      <PlaylistsSection song={song} />
     </Stack>
   );
 }

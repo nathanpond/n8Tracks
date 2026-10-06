@@ -123,6 +123,11 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
                 || (noArtist && !credits.Any(credit => credit.SongId == song.Id)));
         }
 
+        if (query.Search is { } search)
+        {
+            songs = Matching(songs, search);
+        }
+
         var total = await songs.CountAsync(cancellationToken).ConfigureAwait(false);
 
         // Times are fixed-width UTC text, so text order is time order; the shortcode number breaks ties.
@@ -171,10 +176,33 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
         return count == 1;
     }
 
+    /// <summary>
+    /// The Songs whose title contains <paramref name="search"/>, ignoring case (compared as the title
+    /// sort key is), or whose shortcode <c>n8-&lt;n&gt;</c> starts with it, ignoring case.
+    /// </summary>
+    private static IQueryable<SongRecord> Matching(IQueryable<SongRecord> songs, string search)
+    {
+        var key = TitleSortKey(search);
+        var lowered = search.ToLowerInvariant();
+        const string prefix = Shortcodes.SongPrefix;
+        if (prefix.StartsWith(lowered, StringComparison.Ordinal))
+        {
+            // "n", "n8", and "n8-" begin every shortcode.
+            return songs;
+        }
+
+        if (lowered.StartsWith(prefix, StringComparison.Ordinal) && lowered[prefix.Length..] is { Length: > 0 } digits && digits.All(char.IsAsciiDigit))
+        {
+            return songs.Where(song => song.TitleSortKey.Contains(key) || song.ShortcodeNumber.ToString().StartsWith(digits));
+        }
+
+        return songs.Where(song => song.TitleSortKey.Contains(key));
+    }
+
     /// <summary>What titles are ordered by: NFC-normalised and lower-cased invariantly, so case is ignored.</summary>
     internal static string TitleSortKey(string title) => title.Normalize(System.Text.NormalizationForm.FormC).ToLowerInvariant();
 
-    /// <summary>The summaries of <paramref name="records"/>, in their order, with their states, current Versions, Version counts, Genres, Tags, and credits.</summary>
+    /// <summary>The summaries of <paramref name="records"/>, in their order, with their states, current Versions, Version counts, Genres, Tags, credits, and Playlists.</summary>
     private async Task<List<SongSummary>> SummariesAsync(List<SongRecord> records, CancellationToken cancellationToken)
     {
         if (records.Count == 0)
@@ -222,6 +250,7 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
                 static group => (IReadOnlyList<Tag>)[.. TagStore.Alphabetical(group, static tag => tag.Name)
                     .Select(static tag => new Tag(tag.Id, tag.Name, tag.Colour))]);
         var credits = await SongCreditStore.ForSongsAsync(context, songIds, cancellationToken).ConfigureAwait(false);
+        var playlists = await PlaylistStore.ForSongsAsync(context, songIds, cancellationToken).ConfigureAwait(false);
 
         return [.. records.Select(song =>
         {
@@ -243,7 +272,8 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
                 song.Notes,
                 genres.GetValueOrDefault(song.Id) ?? [],
                 tags.GetValueOrDefault(song.Id) ?? [],
-                credits.GetValueOrDefault(song.Id) ?? SongCredits.None);
+                credits.GetValueOrDefault(song.Id) ?? SongCredits.None,
+                playlists.GetValueOrDefault(song.Id) ?? []);
         })];
     }
 }

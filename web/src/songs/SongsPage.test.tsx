@@ -49,6 +49,7 @@ function song(number: number, overrides: Partial<Song> = {}): Song {
     genres: [],
     tags: [],
     credits: { primary: null, featured: [] },
+    playlists: [],
     ...overrides,
   };
 }

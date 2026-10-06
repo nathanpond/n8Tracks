@@ -97,6 +97,7 @@ test.describe(
         'Songs',
         'Artists',
         'Albums',
+        'Playlists',
         'Account',
         'Credentials',
         'Workflow',

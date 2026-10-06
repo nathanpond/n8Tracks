@@ -7,11 +7,10 @@ import {
   Loader,
   Stack,
   Text,
-  Textarea,
   TextInput,
   Title,
 } from '@mantine/core';
-import { useCallback, useState, type ReactNode } from 'react';
+import { useCallback, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router';
 import {
   ALBUM_DESCRIPTION_MAXIMUM_LENGTH,
@@ -29,8 +28,9 @@ import { linkErrors, normaliseArtistName } from '../artists/artistRules';
 import { ArtistPicker } from '../common/ArtistPicker';
 import { move } from '../common/listMove';
 import { RowControls } from '../common/RowControls';
+import { SavedTextField, type Save } from '../common/SavedTextField';
 import { saveError } from '../common/useInPlaceEdit';
-import { useRevisionedSave, type SaveOutcome, type SavedField } from '../common/useRevisionedSave';
+import { useRevisionedSave, type SavedField } from '../common/useRevisionedSave';
 import { Notice } from '../components/Notice';
 import {
   albumDateError,
@@ -139,99 +139,6 @@ function albumEditOf(edit: Readonly<Record<string, FieldValue>>): AlbumEdit {
     }
   }
   return result;
-}
-
-type Save = (key: string, value: FieldValue) => Promise<SaveOutcome>;
-
-/**
- * One text field of the Album, saved on its own when it loses focus: checked first by the client
- * rule, sent only when its normalised value differs from the Album's. Mounted afresh (by key) each
- * time the Album's value changes, so it always starts from what is stored.
- */
-function SavedTextField({
-  field,
-  label,
-  description,
-  value,
-  check,
-  normalise,
-  save,
-  multiline = false,
-  required = false,
-  children,
-}: {
-  field: string;
-  label: string;
-  description: string;
-  value: string | null;
-  check: (draft: string) => string | undefined;
-  normalise: (draft: string) => FieldValue;
-  save: Save;
-  multiline?: boolean;
-  required?: boolean;
-  children?: ReactNode;
-}) {
-  const [draft, setDraft] = useState(value ?? '');
-  const [error, setError] = useState<string>();
-  const [saving, setSaving] = useState(false);
-
-  const commit = async () => {
-    const problem = check(draft);
-    if (problem !== undefined) {
-      setError(problem);
-      return;
-    }
-    const next = normalise(draft);
-    if (next === value) {
-      setError(undefined);
-      return;
-    }
-    setSaving(true);
-    const outcome = await save(field, next);
-    setSaving(false);
-    setError(saveError(outcome, field));
-  };
-
-  const common = {
-    label,
-    description,
-    required,
-    value: draft,
-    error,
-    'aria-invalid': error !== undefined,
-    readOnly: saving,
-    onBlur: () => {
-      void commit();
-    },
-  };
-  return (
-    <Stack gap={4}>
-      {multiline ? (
-        <Textarea
-          {...common}
-          rows={4}
-          resize="vertical"
-          onChange={(event) => {
-            setDraft(event.currentTarget.value);
-          }}
-        />
-      ) : (
-        <TextInput
-          {...common}
-          onChange={(event) => {
-            setDraft(event.currentTarget.value);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') {
-              event.preventDefault();
-              void commit();
-            }
-          }}
-        />
-      )}
-      {children}
-    </Stack>
-  );
 }
 
 /** A partial date field, with the date as it is shown once saved. */

@@ -77,6 +77,10 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
 
     public DbSet<AlbumLinkRecord> AlbumLinks => Set<AlbumLinkRecord>();
 
+    public DbSet<PlaylistRecord> Playlists => Set<PlaylistRecord>();
+
+    public DbSet<PlaylistSongRecord> PlaylistSongs => Set<PlaylistSongRecord>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         ArgumentNullException.ThrowIfNull(configurationBuilder);
@@ -453,6 +457,38 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
             link.HasOne<AlbumRecord>()
                 .WithMany()
                 .HasForeignKey(record => record.AlbumId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<PlaylistRecord>(playlist =>
+        {
+            playlist.ToTable("playlists", static table => table.HasCheckConstraint("ck_playlists_title", "length(title) > 0"));
+            playlist.HasKey(record => record.Id);
+
+            // The list's order: by title ignoring case, then the earlier created. Not unique.
+            playlist.HasIndex(record => new { record.TitleKey, record.CreatedUtc });
+        });
+
+        modelBuilder.Entity<PlaylistSongRecord>(entry =>
+        {
+            entry.ToTable("playlist_songs", static table => table.HasCheckConstraint("ck_playlist_songs_position", "position >= 0"));
+
+            // A Song is on a Playlist at most once, and each place holds one Song.
+            entry.HasKey(record => new { record.PlaylistId, record.SongId });
+            entry.HasIndex(record => new { record.PlaylistId, record.Position }).IsUnique();
+
+            // A Song's Playlists are listed on its Details panel.
+            entry.HasIndex(record => record.SongId);
+
+            // A Playlist's entries go with it, and so do a Song's: an entry is only membership,
+            // never part of the Song (the Song deletion story decides about retention).
+            entry.HasOne<PlaylistRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.PlaylistId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entry.HasOne<SongRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.SongId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
     }

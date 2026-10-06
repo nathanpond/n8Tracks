@@ -25,6 +25,7 @@ public sealed record SongRequest(
 /// <paramref name="Genres"/> is a Genre's ID or <see cref="SongService.NoGenre"/>, and each of
 /// <paramref name="Tags"/> a Tag's ID or <see cref="SongService.NoTag"/>, and each of
 /// <paramref name="Artists"/> an Artist's ID or <see cref="SongService.NoArtist"/>.
+/// <paramref name="Query"/> is the search text (<see cref="SongService.QueryParameter"/>).
 /// </summary>
 public sealed record SongListRequest(
     string? Sort,
@@ -34,7 +35,8 @@ public sealed record SongListRequest(
     string? PageSize,
     IReadOnlyList<string?>? Genres = null,
     IReadOnlyList<string?>? Tags = null,
-    IReadOnlyList<string?>? Artists = null);
+    IReadOnlyList<string?>? Artists = null,
+    string? Query = null);
 
 /// <summary>How creating a Song ended.</summary>
 public abstract record SongOutcome
@@ -152,6 +154,15 @@ public sealed class SongService(
 
     /// <summary>The <see cref="ArtistParameter"/> value that matches Songs credited to no one.</summary>
     public const string NoArtist = "none";
+
+    /// <summary>
+    /// The search text: Songs whose title contains it, ignoring case, or whose shortcode starts
+    /// with it. A page of <see cref="SearchPageSize"/> by default; nothing for blank text.
+    /// </summary>
+    public const string QueryParameter = "q";
+
+    /// <summary>How many Songs a search answers unless <see cref="PageSizeParameter"/> says otherwise.</summary>
+    public const int SearchPageSize = 10;
 
     public const string SortUpdated = "updated";
     public const string SortTitle = "title";
@@ -372,9 +383,11 @@ public sealed class SongService(
     /// the ID of a workflow state; each <c>genre</c> is the ID of a Genre or <see cref="NoGenre"/>,
     /// and several match Songs with any of them; each <c>tag</c> likewise is the ID of a Tag or
     /// <see cref="NoTag"/>; each <c>artist</c> is the ID of an Artist, credited as primary or featured,
-    /// or <see cref="NoArtist"/> for Songs credited to no one (states, Genres, Tags, and Artists
-    /// combine by AND); <c>page</c> counts from 1; <c>pageSize</c> is 1 to
-    /// <see cref="MaximumPageSize"/>, <see cref="DefaultPageSize"/> by default.
+    /// or <see cref="NoArtist"/> for Songs credited to no one; <c>q</c> keeps the Songs whose title
+    /// contains it (ignoring case) or whose shortcode starts with it, and a blank <c>q</c> matches
+    /// nothing (states, Genres, Tags, Artists, and <c>q</c> combine by AND); <c>page</c> counts from
+    /// 1; <c>pageSize</c> is 1 to <see cref="MaximumPageSize"/>, <see cref="DefaultPageSize"/> by
+    /// default and <see cref="SearchPageSize"/> with <c>q</c>.
     /// </summary>
     public async Task<SongListOutcome> ListAsync(SongListRequest request, CancellationToken cancellationToken)
     {
@@ -411,7 +424,7 @@ public sealed class SongService(
             return Invalid($"{PageParameter} must be a whole number from 1.");
         }
 
-        if (!TryReadWhole(request.PageSize, 1, MaximumPageSize, DefaultPageSize, out var pageSize))
+        if (!TryReadWhole(request.PageSize, 1, MaximumPageSize, request.Query is null ? DefaultPageSize : SearchPageSize, out var pageSize))
         {
             return Invalid(string.Create(CultureInfo.InvariantCulture, $"{PageSizeParameter} must be a whole number from 1 to {MaximumPageSize}."));
         }
@@ -504,7 +517,17 @@ public sealed class SongService(
             return Invalid($"Each {ArtistParameter} must be the ID of an Artist, or {NoArtist}.");
         }
 
-        var query = new SongListQuery(sort, descending, stateIds, page, pageSize, genreIds, noGenre, tagIds, noTag, artistIds, noArtist);
+        string? search = null;
+        if (request.Query is not null)
+        {
+            search = request.Query.Trim();
+            if (search.Length == 0)
+            {
+                return new SongListOutcome.Listed(new SongPage([], page, pageSize, 0));
+            }
+        }
+
+        var query = new SongListQuery(sort, descending, stateIds, page, pageSize, genreIds, noGenre, tagIds, noTag, artistIds, noArtist, search);
         return new SongListOutcome.Listed(await songs.ListAsync(query, cancellationToken).ConfigureAwait(false));
     }
 

@@ -66,6 +66,12 @@ export interface SongCredits {
   featured: SongArtist[];
 }
 
+/** A Playlist as a Song names it. */
+export interface SongPlaylist {
+  id: string;
+  title: string;
+}
+
 /** A Song as the API answers it. Times are UTC ISO 8601. */
 export interface Song {
   id: string;
@@ -87,6 +93,8 @@ export interface Song {
   tags: SongTag[];
   /** Its primary and featured Artists. */
   credits: SongCredits;
+  /** The Playlists it is on, by title. */
+  playlists: SongPlaylist[];
 }
 
 export interface SongPage {
@@ -171,7 +179,12 @@ export function isSong(value: unknown): value is Song {
     value.genres.every(isSongGenre) &&
     Array.isArray(value.tags) &&
     value.tags.every(isSongTag) &&
-    isSongCredits(value.credits)
+    isSongCredits(value.credits) &&
+    Array.isArray(value.playlists) &&
+    value.playlists.every(
+      (playlist) =>
+        isRecord(playlist) && typeof playlist.id === 'string' && typeof playlist.title === 'string',
+    )
   );
 }
 
@@ -339,6 +352,33 @@ export function useSong(reference: string) {
 /** Every workflow state, hidden ones included, in order. */
 export function useWorkflowStates() {
   return useResource(WORKFLOW_STATES_PATH, acceptStates);
+}
+
+/** How many Songs a search answers at once: the API's default for `q`. */
+export const SONG_SEARCH_RESULTS = 10;
+
+/**
+ * The first Songs whose title contains `search` (ignoring case) or whose shortcode starts with it,
+ * by title, and how many match in all. Nothing for blank text; undefined when the list cannot be
+ * read.
+ */
+export async function searchSongs(
+  search: string,
+  signal?: AbortSignal,
+): Promise<{ songs: Song[]; total: number } | undefined> {
+  if (search.trim() === '') {
+    return { songs: [], total: 0 };
+  }
+  const parameters = new URLSearchParams({ q: search.trim(), sort: 'title' });
+  try {
+    const response = await apiFetch(`${SONGS_PATH}?${parameters.toString()}`, { signal });
+    const answer = await body(response);
+    return response.ok && isSongPage(answer)
+      ? { songs: answer.items, total: answer.total }
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** One Song as it is now, by its ID or shortcode; undefined when it cannot be read. */

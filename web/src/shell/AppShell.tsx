@@ -61,6 +61,7 @@ export function SignedInShell() {
           <SidebarLink to="/songs" label="Songs" onNavigate={close} />
           <SidebarLink to="/artists" label="Artists" onNavigate={close} />
           <SidebarLink to="/albums" label="Albums" onNavigate={close} />
+          <SidebarLink to="/playlists" label="Playlists" onNavigate={close} />
           <Text
             id="navigation-settings"
             size="xs"

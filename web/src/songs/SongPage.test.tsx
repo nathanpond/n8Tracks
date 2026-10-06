@@ -33,6 +33,7 @@ const song: Song = {
   genres: [],
   tags: [],
   credits: { primary: null, featured: [] },
+  playlists: [],
 };
 
 /** The query string a request was made with, whatever form `fetch` was given it in. */
