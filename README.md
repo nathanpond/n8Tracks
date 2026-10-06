@@ -299,6 +299,40 @@ printf '%s\n' "$NEW_PASSWORD" | docker exec -i n8tracks n8tracks reset-password 
 
 Without a terminal and without `--password-stdin` the command refuses. It also refuses, changing nothing, when setup has never been completed, when the database schema does not match the image's version (start the app first, so it upgrades the database; the command never applies a migration), or while an upgrade holds the migration lock or a failed one has left `upgrade-state.json`. It runs as the `PUID`/`PGID` user, as the app does. Prompts and messages go to standard error, the password is never printed or logged, and the exit code is 0 on success and 1 otherwise. The command writes one Information line recording the reset (without the password), and the app logs the reset at the next sign-in.
 
+### Recovering something you deleted
+
+Deleting a Song, a Version, a history entry, an Album, a Playlist, or an Artist, or replacing or removing artwork, keeps what was deleted for 30 days. The deletion is kept as one group with everything that went with it: a Song's Versions, history, credits, and memberships, for example. After 30 days, the daily prune at 04:00 removes it for good. Within that time, two commands run beside the running app and put a group back. With the Compose example (the container is named `n8tracks`):
+
+```sh
+# What was deleted in the last 30 days, newest first.
+docker exec n8tracks n8tracks list-deleted
+
+# Put one back by its shortcode, or by its group ID as the listing shows it.
+docker exec n8tracks n8tracks restore-deleted n8-3
+docker exec n8tracks n8tracks restore-deleted 0192f3a1
+```
+
+`n8tracks list-deleted` prints one row per group:
+
+- the **GROUP ID**: the start of the group's ID, long enough to name it;
+- the **KIND**: Song, Version, History entry, Album, Playlist, Artist, or Artwork;
+- the **LABEL**: what it was, by title or number;
+- the **SHORTCODE**: shown for a deleted Song or Version;
+- the **DELETED** time, and the **PRUNES** time after which the prune may remove it.
+
+Times are in the configured time zone (`TZ`). With nothing deleted, it prints `Nothing deleted in the last 30 days.` `--all` also lists older groups that the prune has not removed yet. `--json` prints the same fields in camelCase, with the whole group ID and the group's contents as counts by kind.
+
+`n8tracks restore-deleted <shortcode or group ID>` puts the whole group back, then reports the kinds and counts it put back and anything it left out or changed. A restored record is exactly as it was when deleted. A Song or Version keeps its ID, shortcode, and number, and the app shows it at once, without a restart: open pages refetch it, because its revision goes up. Details:
+
+- **References.** A shortcode names the newest group deleted under it within the 30 days. A group ID can be given whole or as any unique start of at least 8 characters. A group older than 30 days that has not been pruned yet can be restored by its ID only.
+- **What is left out.** If something a group refers to has been deleted since, such as a Playlist, an Album, a Genre, a Tag, an Artist, or a related Song, the restore leaves that part out, reports it, and still succeeds. A Song whose workflow state has been deleted comes back in the first visible state, and the report says so. A Song's Album and Playlist memberships come back at the end of the Album or Playlist.
+- **Refusals.** The restore is refused, and changes nothing, when the item's own parent is gone. Examples are a Version whose Song has been deleted since, a history entry whose Version is gone, or artwork whose owner is gone. The message names what is missing, and the group to restore first when that is in retention too.
+- **Part of a larger group.** A Version, Generation, or history entry deleted as part of a larger group (a Version deleted with its Song) comes back only with that group. Asking for it alone is refused, and the message names the group to restore.
+- **Artwork.** Restoring artwork puts it back on its owner. The artwork the owner has until then is deleted in its place, so it can be restored the same way.
+- **Restoring twice.** A restored group leaves retention, so restoring it again reports that nothing with that reference is there.
+
+Both commands run as the `PUID`/`PGID` user. They open the app's database directly (waiting briefly if the app is writing) and take no lock that would stop the app. Like `reset-password`, they refuse, changing nothing, when setup has never been completed, while the app is in maintenance, during or after a failed upgrade, and when the database schema does not match the image's version (start the app first; the commands never apply a migration). They print only kinds, labels, shortcodes, times, and counts, never lyrics, prompts, or other content. The listing and the report go to standard output, and messages to standard error. The exit code is 0 on success and 1 when the command is refused or the reference is not found.
+
 ### Container health check
 
 The image's health check runs the app binary in a second mode, `dotnet /app/n8Tracks.Api.dll --healthcheck`, so the image needs no `curl`. It requests `<base path>/health` on the loopback interface at `N8TRACKS_PORT`, and passes on 200 (`healthy` or `degraded`); 503, no answer within 4 seconds, or an invalid port or base URL fails it. It runs every 30 seconds (every 5 while starting, on Docker 25 or later), and three failures in a row mark the container `unhealthy`.

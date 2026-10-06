@@ -10,6 +10,11 @@
 #   docker run --rm -v <data>:/data -v <backup>:/backup <image> n8tracks list-backups
 #   docker run --rm -v <data>:/data -v <backup>:/backup <image> n8tracks restore /backup/<file>
 #
+# To recover something deleted within the last 30 days, beside the running app:
+#
+#   docker exec <container> n8tracks list-deleted [--all] [--json]
+#   docker exec <container> n8tracks restore-deleted <shortcode or group ID> [--json]
+#
 # It also passes on seed-generation, a test-only command the app refuses unless test seeding is
 # switched on (N8TRACKS_ENABLE_TEST_SEEDING=1, which only the end-to-end containers set).
 #
@@ -25,7 +30,7 @@ set -eu
 export HOME=/tmp
 
 usage() {
-    printf '%s\n' 'Usage: n8tracks reset-password [--password-stdin] | n8tracks list-backups | n8tracks restore <backup archive>' >&2
+    printf '%s\n' 'Usage: n8tracks reset-password [--password-stdin] | n8tracks list-backups | n8tracks restore <backup archive> | n8tracks list-deleted [--all] [--json] | n8tracks restore-deleted <shortcode or group ID> [--json]' >&2
 }
 
 if [ "$#" -eq 0 ]; then
@@ -34,7 +39,7 @@ if [ "$#" -eq 0 ]; then
 fi
 
 case "$1" in
-    reset-password | seed-generation | list-backups | restore) ;;
+    reset-password | seed-generation | list-backups | restore | list-deleted | restore-deleted) ;;
     *)
         printf 'Unknown command.\n' >&2
         usage

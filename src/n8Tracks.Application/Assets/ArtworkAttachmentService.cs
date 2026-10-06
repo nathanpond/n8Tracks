@@ -196,21 +196,7 @@ public sealed class ArtworkAttachmentService(
 
         if (current is not null)
         {
-            var old = await assets.FindAsync(current.AssetId, cancellationToken).ConfigureAwait(false);
-            await retention.RetainWithinAsync(
-                    new RetentionRequest(
-                        RetainedRecordTypes.ArtworkAttachment,
-                        $"Artwork of {ownerLabel}",
-                        Shortcode: null,
-                        [new RetainedRoot(RetainedRecordTypes.ArtworkAttachment, current.Id)],
-                        old is null ? [] : ArtworkPaths.Files(old)),
-                    cancellationToken)
-                .ConfigureAwait(false);
-
-            if (old is not null && current.Crop is { } oldCrop)
-            {
-                await ForgetUnusedCropAsync(old, oldCrop, cancellationToken).ConfigureAwait(false);
-            }
+            await RetireAsync(current, $"Artwork of {ownerLabel}", cancellationToken).ConfigureAwait(false);
         }
 
         if (assetId is { } id)
@@ -223,6 +209,30 @@ public sealed class ArtworkAttachmentService(
             }
         }
     }
+
+    /// <summary>
+    /// Inside the caller's transaction, before a retained artwork of the owner is restored (#105):
+    /// the artwork the owner has now goes into retention, labelled <paramref name="label"/>, as a
+    /// replacement would send it. Returns whether it had any.
+    /// </summary>
+    internal async Task<bool> RetireCurrentAsync(string ownerType, Guid ownerId, string label, CancellationToken cancellationToken)
+    {
+        if (await attachments.FindAsync(ownerType, ownerId, cancellationToken).ConfigureAwait(false) is not { } current)
+        {
+            return false;
+        }
+
+        await RetireAsync(current, label, cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
+    /// <summary>Inside the caller's transaction: whether the owner is live (an artwork's restore needs it).</summary>
+    internal Task<bool> OwnerExistsAsync(string ownerType, Guid ownerId, CancellationToken cancellationToken) =>
+        attachments.OwnerExistsAsync(ownerType, ownerId, cancellationToken);
+
+    /// <summary>Inside the caller's transaction: raises the owner's revision, as any change of its artwork does.</summary>
+    internal Task TouchOwnerAsync(string ownerType, Guid ownerId, CancellationToken cancellationToken) =>
+        attachments.TouchOwnerAsync(ownerType, ownerId, time.GetUtcNow(), cancellationToken);
 
     /// <summary>
     /// Inside the caller's transaction, once its revision check has passed: sets the crop of the
@@ -275,6 +285,26 @@ public sealed class ArtworkAttachmentService(
         return crops.FirstOrDefault(crop => ArtworkCropRules.Key(crop) == cropKey) is { } found
             ? await artwork.OpenCropAsync(asset, found, size, cancellationToken).ConfigureAwait(false)
             : null;
+    }
+
+    /// <summary>Retains <paramref name="current"/> with its asset's files, and lets go of a crop's thumbnails no live attachment uses.</summary>
+    private async Task RetireAsync(ArtworkAttachment current, string label, CancellationToken cancellationToken)
+    {
+        var old = await assets.FindAsync(current.AssetId, cancellationToken).ConfigureAwait(false);
+        await retention.RetainWithinAsync(
+                new RetentionRequest(
+                    RetainedRecordTypes.ArtworkAttachment,
+                    label,
+                    Shortcode: null,
+                    [new RetainedRoot(RetainedRecordTypes.ArtworkAttachment, current.Id)],
+                    old is null ? [] : ArtworkPaths.Files(old)),
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        if (old is not null && current.Crop is { } oldCrop)
+        {
+            await ForgetUnusedCropAsync(old, oldCrop, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private async Task ForgetUnusedCropAsync(Asset asset, ArtworkCrop crop, CancellationToken cancellationToken)

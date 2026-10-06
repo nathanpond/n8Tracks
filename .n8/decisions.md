@@ -2374,3 +2374,27 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** e2e: `artist-delete.spec.ts` walks Demo steps 1 and 3 on the shared containers. Step 1 starts from the Album page's Album Artist link, which covers #103's Demo step 2, and checks that both Songs and the Album credit the other Artist. Demo step 2, the default Artist, runs `@root-only` on its own fresh container, because the default is instance-wide (as in `credits.spec.ts`).
   **Why:** The conventions require an e2e Demo walk with axe. Setting a default on a shared container would credit the Songs that other tests create.
   **Issue:** #104
+- **Decision:** The commands go through a new application service, `DeletedItemsService` in `Application/Retention`, with `ListAsync(includeExpired)` and `RestoreAsync(reference)`. `src/n8Tracks.Api/Cli/DeletedCommands.cs` holds both commands, and Program dispatches `list-deleted` and `restore-deleted` before the server starts. The commands pass the test-services hook to `CommandServices.Build`, as `restore` does.
+  **Why:** This is invariant 5 (one business-rule layer). The key link asks for "the same restore routine the tests use, against the same database file". The invariant 1 guard sees the new public methods: `RestoreAsync` has an exerciser that deletes the frozen Version and restores it by shortcode, and `ListAsync` is listed as read-only.
+  **Issue:** #105
+- **Decision:** `IRetentionStore.RestoreAsync` now returns `RetentionRestoreResult(Notes, PutBack)`, and `RetentionRestoreOutcome.Restored` gained a third member, `PutBack`. `IRetentionStore` gained `NounOf(recordType)`.
+  **Why:** AC 2 and the discretion line ask the report to itemise kinds and counts put back. Counting the group's records would also count what was left out. The nouns come from the type registry, so the listing's KIND and the counts use the same names the restore notes do.
+  **Issue:** #105
+- **Decision:** The listing's GROUP ID is the shortest start of the group's ID, at least 8 characters, that no other unpruned group shares. It is computed over all unpruned groups and never ends on a hyphen. `--json` adds `groupId` (whole), `shortId`, `kindName`, and `contents[{recordType, noun, count}]`. Its `kind` is the stored record type (`song`, `editor-snapshot`), not the display name. Times in JSON are ISO 8601 with the `TZ` offset. The table shows them to the minute in `TZ`.
+  **Why:** IDs are UUIDv7, so groups deleted within about a minute share their first 8 characters, and a fixed 8 would not always be restorable. The stored kind is stable for scripts. The planner's six columns stay as they are, and the counts appear only in JSON.
+  **Issue:** #105
+- **Decision:** A shortcode names only a group within the 30 days. An expired group by shortcode is refused, and the message points to `list-deleted --all` and the group ID. A Version or Generation shortcode with no group of its own is refused with "<sc> was deleted as part of <label> … restore-deleted <ref>", but only when a Version group or Song group for it holds that Version number. A refused restore whose parent is missing names the group that holds the parent, when there is one. This covers a Version whose Song was deleted, a history entry whose Version was deleted, and artwork whose owner was deleted.
+  **Why:** These are AC 3 and AC 8 and the discretion lines on newest-by-shortcode and old-by-ID. A history entry has no shortcode, so "asking for it alone" can only mean its own group, refused for its missing Version.
+  **Issue:** #105
+- **Decision:** Rule 2: restoring artwork first checks that its owner exists, and refuses if it is gone. It then retires the owner's current artwork into a new retention group under the restored group's label, through the new internal `ArtworkAttachmentService.RetireCurrentAsync`, which `ReplaceAsync` also uses now. Last, it raises the owner's revision and updated time. `IArtworkAttachmentStore` gained `OwnerExistsAsync` and `TouchOwnerAsync`.
+  **Why:** This is AC 9. `artwork_attachments` has no FK to its owner, so the store's generic parent check let a restore insert a dangling attachment for a deleted owner. The one-per-owner key would otherwise refuse with a Clash. The tests "RestoredArtworkGoesBackOnItsOwner…" and "ArtworkWhoseOwnerWasDeleted…" cover it.
+  **Issue:** #105
+- **Decision:** The command options come from a new `EnvironmentOptionsLoader.LoadDataPathAndTimeZone`, which reads the data path and `TZ` and nothing else. The checks for schema, upgrade, maintenance, and setup are `reset-password`'s (#82). The commands take no data-path lock and rely on SQLite's IMMEDIATE transaction and 5 s busy timeout beside the server.
+  **Why:** These are the discretion lines. A bad `N8TRACKS_PORT`, or another setting the commands do not use, cannot stop them.
+  **Issue:** #105
+- **Decision:** Tests:
+  - In-process command tests in `tests/n8Tracks.Api.Tests/Cli/DeletedCommandsTests.cs` (27 cases).
+  - A `smoke-docker.sh` section, "Recovering a deleted Song with the container commands", which deletes a Song through the API, lists it, restores it with `docker exec`, reads it back, and checks that a second restore is refused.
+  - An e2e `deleted-recovery.spec.ts` that walks the Demo with `docker exec` on the project's container.
+  **Why:** These cover the test plan, plus the conventions' e2e Demo rule with axe on every state visited.
+  **Issue:** #105

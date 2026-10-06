@@ -633,6 +633,14 @@ public sealed class VersionImmutabilityGuardTests
         ["RetentionService.FindByRecordAsync(String, Guid, CancellationToken)"] = Service<RetentionService>(static (service, target) =>
             service.FindByRecordAsync(RetainedRecordTypes.Version, target.VersionId, default)),
         ["RetentionService.ListAsync(CancellationToken)"] = Service<RetentionService>(static (service, _) => service.ListAsync(default)),
+
+        // Recovery (#105): the Version deleted, then restored by its shortcode, as restore-deleted does it.
+        ["DeletedItemsService.RestoreAsync(String, CancellationToken)"] = new(static async target =>
+        {
+            await ServiceDeleteAsync(target);
+            Assert.IsType<DeletedItemRestoreOutcome.Restored>(
+                await InScopeAsync<DeletedItemsService, DeletedItemRestoreOutcome>(target, service => service.RestoreAsync(target.VersionShortcode, default)));
+        }),
         ["RetentionService.PruneAsync(CancellationToken)"] = new(static async target =>
         {
             await RetainAndRestoreAsync(target, static (service, request, _) => service.RetainAsync(request, default), restore: null);
@@ -653,6 +661,7 @@ public sealed class VersionImmutabilityGuardTests
         ["WorkflowStateService.ReorderAsync(IReadOnlyList`1, Int32, CancellationToken)"] = "workflow states",
         ["WorkflowStateService.DeleteAsync(Guid, String, Int32, CancellationToken)"] = "workflow states; moves Songs to another state, never a Version",
         ["RetentionService.IsManagedFilePath(String)"] = "pure path check",
+        ["DeletedItemsService.ListAsync(Boolean, CancellationToken)"] = "reads only: the recovery listing",
         ["RetentionPruneTask.TickAsync(CancellationToken)"] = "queues the prune job; the prune itself is RetentionService.PruneAsync, exercised above",
     };
 

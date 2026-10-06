@@ -59,6 +59,8 @@ public sealed class Program
     /// the new Generation's shortcode to <paramref name="output"/> (see <see cref="SeedGenerationCommand"/>). With
     /// <c>restore</c> or <c>list-backups</c> first, it starts nothing and runs that disaster-recovery
     /// command (see <see cref="RestoreCommand"/> and <see cref="ListBackupsCommand"/>). With
+    /// <c>list-deleted</c> or <c>restore-deleted</c> first, it starts nothing and runs that recovery
+    /// command, which writes its listing or report to <paramref name="output"/> (see <see cref="DeletedCommands"/>). With
     /// <c>--healthcheck</c> among them it starts nothing and reports on the app that is already
     /// running (see <see cref="HealthCheckCommand"/>). Those are the only arguments with a meaning:
     /// every other one is ignored, and none reaches the host's configuration.
@@ -102,6 +104,17 @@ public sealed class Program
         if (ListBackupsCommand.IsRequested(args))
         {
             return await ListBackupsCommand.RunAsync(args[1..], environment, output, console, cancellationToken).ConfigureAwait(false);
+        }
+
+        // The recovery commands, run beside the running server: their own output, and no server.
+        if (DeletedCommands.IsListRequested(args))
+        {
+            return await DeletedCommands.RunListAsync(args[1..], environment, output, console, testServices, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (DeletedCommands.IsRestoreRequested(args))
+        {
+            return await DeletedCommands.RunRestoreAsync(args[1..], environment, output, console, testServices, cancellationToken).ConfigureAwait(false);
         }
 
         // A test-only command, refused unless test seeding is switched on: it never starts the server.

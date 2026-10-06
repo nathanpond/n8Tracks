@@ -138,9 +138,10 @@ public abstract record RetentionRestoreOutcome
     /// <summary>
     /// Every record is back as it was, its revision (where it has one) incremented; the group is gone.
     /// <paramref name="Notes"/> says what restored differently: records left out because something
-    /// they belong to is gone, or a storage-order number that had to change.
+    /// they belong to is gone, or a storage-order number that had to change. <paramref name="PutBack"/>
+    /// is every record that went back, in the order it did (the left-out ones are not in it).
     /// </summary>
-    public sealed record Restored(RetentionGroup Group, IReadOnlyList<string> Notes) : RetentionRestoreOutcome;
+    public sealed record Restored(RetentionGroup Group, IReadOnlyList<string> Notes, IReadOnlyList<RetainedRecord> PutBack) : RetentionRestoreOutcome;
 
     /// <summary>There is no such group (never was, restored, or pruned).</summary>
     public sealed record NotFound : RetentionRestoreOutcome;
@@ -151,6 +152,11 @@ public abstract record RetentionRestoreOutcome
     /// <summary>A record's ID or unique key is held by a live row; <paramref name="Message"/> names it. Nothing changed.</summary>
     public sealed record Clash(string Message) : RetentionRestoreOutcome;
 }
+
+/// <summary>What the store did in a restore that went through.</summary>
+/// <param name="Notes">See <see cref="RetentionRestoreOutcome.Restored.Notes"/>.</param>
+/// <param name="PutBack">See <see cref="RetentionRestoreOutcome.Restored.PutBack"/>.</param>
+public sealed record RetentionRestoreResult(IReadOnlyList<string> Notes, IReadOnlyList<RetainedRecord> PutBack);
 
 /// <summary>Why the store refused a restore, part way or up front. The transaction it ran in must be rolled back.</summary>
 public sealed class RetentionRestoreRefusedException : Exception

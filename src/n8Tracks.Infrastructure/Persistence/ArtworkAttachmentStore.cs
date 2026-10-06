@@ -58,6 +58,36 @@ internal sealed class ArtworkAttachmentStore(N8TracksDbContext context) : IArtwo
         return [.. found.Select(static crop => new ArtworkCrop(crop.CropX!.Value, crop.CropY!.Value, crop.CropSize!.Value)).Distinct()];
     }
 
+    public Task<bool> OwnerExistsAsync(string ownerType, Guid ownerId, CancellationToken cancellationToken) => ownerType switch
+    {
+        ArtworkOwnerTypes.Song => context.Songs.AsNoTracking().AnyAsync(song => song.Id == ownerId, cancellationToken),
+        ArtworkOwnerTypes.Album => context.Albums.AsNoTracking().AnyAsync(album => album.Id == ownerId, cancellationToken),
+        ArtworkOwnerTypes.Playlist => context.Playlists.AsNoTracking().AnyAsync(playlist => playlist.Id == ownerId, cancellationToken),
+        ArtworkOwnerTypes.Artist => context.Artists.AsNoTracking().AnyAsync(artist => artist.Id == ownerId, cancellationToken),
+        _ => throw new ArgumentOutOfRangeException(nameof(ownerType), ownerType, "Not an artwork owner type."),
+    };
+
+    public async Task TouchOwnerAsync(string ownerType, Guid ownerId, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var updated = UtcText.From(now);
+        _ = ownerType switch
+        {
+            ArtworkOwnerTypes.Song => await context.Songs.Where(song => song.Id == ownerId)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(song => song.Revision, song => song.Revision + 1).SetProperty(song => song.UpdatedUtc, updated), cancellationToken)
+                .ConfigureAwait(false),
+            ArtworkOwnerTypes.Album => await context.Albums.Where(album => album.Id == ownerId)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(album => album.Revision, album => album.Revision + 1).SetProperty(album => album.UpdatedUtc, updated), cancellationToken)
+                .ConfigureAwait(false),
+            ArtworkOwnerTypes.Playlist => await context.Playlists.Where(playlist => playlist.Id == ownerId)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(playlist => playlist.Revision, playlist => playlist.Revision + 1).SetProperty(playlist => playlist.UpdatedUtc, updated), cancellationToken)
+                .ConfigureAwait(false),
+            ArtworkOwnerTypes.Artist => await context.Artists.Where(artist => artist.Id == ownerId)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(artist => artist.Revision, artist => artist.Revision + 1).SetProperty(artist => artist.UpdatedUtc, updated), cancellationToken)
+                .ConfigureAwait(false),
+            _ => throw new ArgumentOutOfRangeException(nameof(ownerType), ownerType, "Not an artwork owner type."),
+        };
+    }
+
     /// <summary>The artwork of each of <paramref name="ownerIds"/> that has some, by owner ID.</summary>
     internal static async Task<Dictionary<Guid, AttachedArtwork>> ForOwnersAsync(
         N8TracksDbContext context,

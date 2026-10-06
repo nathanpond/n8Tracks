@@ -126,7 +126,9 @@ internal static class RetainedTypes
     /// <summary>
     /// An owner's artwork that was replaced or removed: the owner, the asset, and the crop. Its group
     /// lists the asset's files, so they stay at least until the group is pruned. Restoring it while
-    /// the owner has other artwork clashes on the one-per-owner key.
+    /// the owner has other artwork clashes on the one-per-owner key, so the recovery command (#105)
+    /// first sends the owner's artwork into retention, and refuses when the owner is gone (there is no
+    /// foreign key to the owner for the parent check to read).
     /// </summary>
     public static readonly RetainedType ArtworkAttachment = new(RetainedRecordTypes.ArtworkAttachment, "artwork_attachments", "artwork", ShapeVersion: 1);
 

@@ -276,7 +276,9 @@ internal sealed class RetentionStore(N8TracksDbContext context, RetainedTypeRegi
         })];
     }
 
-    public async Task<IReadOnlyList<string>> RestoreAsync(Guid id, DateTimeOffset restoredUtc, CancellationToken cancellationToken)
+    public string NounOf(string recordType) => types.ByRecordType(recordType)?.Noun ?? recordType;
+
+    public async Task<RetentionRestoreResult> RestoreAsync(Guid id, DateTimeOffset restoredUtc, CancellationToken cancellationToken)
     {
         RequireTransaction();
 
@@ -453,7 +455,7 @@ internal sealed class RetentionStore(N8TracksDbContext context, RetainedTypeRegi
         }
 
         await context.RetentionGroups.Where(group => group.Id == id).ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
-        return notes;
+        return new RetentionRestoreResult(notes, [.. restored.Select(static row => new RetainedRecord(row.Type.RecordType, row.OriginalId, row.Type.ShapeVersion))]);
     }
 
     public async Task<int> RemoveDueAsync(DateTimeOffset now, CancellationToken cancellationToken)

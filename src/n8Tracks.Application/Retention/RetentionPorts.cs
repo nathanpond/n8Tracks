@@ -34,14 +34,17 @@ public interface IRetentionStore
     /// <summary>Every group, newest first.</summary>
     Task<IReadOnlyList<RetentionGroup>> ListAsync(CancellationToken cancellationToken);
 
+    /// <summary>How messages and the recovery listing name one record of <paramref name="recordType"/> ("history entry"); the type itself when it is unknown.</summary>
+    string NounOf(string recordType);
+
     /// <summary>
     /// Inside the caller's transaction: puts the group's records back, each revision incremented, and
-    /// removes the group. Returns notes on what restored differently. Throws
+    /// removes the group. Returns notes on what restored differently, and the records put back. Throws
     /// <see cref="RetentionRestoreRefusedException"/> when a parent is missing or a key clashes; the
     /// caller's transaction must then be rolled back. <paramref name="restoredUtc"/> is the time a
     /// type's restore rule writes where it touches a live record (an Album a membership returns to).
     /// </summary>
-    Task<IReadOnlyList<string>> RestoreAsync(Guid id, DateTimeOffset restoredUtc, CancellationToken cancellationToken);
+    Task<RetentionRestoreResult> RestoreAsync(Guid id, DateTimeOffset restoredUtc, CancellationToken cancellationToken);
 
     /// <summary>
     /// For each record of <paramref name="recordType"/> in the group with <paramref name="groupId"/>,

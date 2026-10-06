@@ -61,6 +61,7 @@ public static class DependencyInjection
         services.AddJobHandler<BackupJobHandler>(BackupService.JobType);
         services.AddDailyTask<BackupScheduleTask>();
         services.AddScoped<RetentionService>();
+        services.AddScoped<DeletedItemsService>();
         services.AddDailyTask<RetentionPruneTask>();
         services.AddScoped<ArtworkService>();
         services.AddScoped<ArtworkAttachmentService>();

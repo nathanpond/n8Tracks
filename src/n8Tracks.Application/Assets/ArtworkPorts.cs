@@ -133,6 +133,15 @@ public interface IArtworkAttachmentStore : IArtworkAttachments
 
     /// <summary>The distinct crops the live attachments of <paramref name="assetId"/> set (the centred default left out).</summary>
     Task<IReadOnlyList<ArtworkCrop>> CropsOfAsync(Guid assetId, CancellationToken cancellationToken);
+
+    /// <summary>Whether the owner of <paramref name="ownerType"/> (one of <see cref="ArtworkOwnerTypes"/>) with <paramref name="ownerId"/> is live.</summary>
+    Task<bool> OwnerExistsAsync(string ownerType, Guid ownerId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Raises the owner's revision and sets its updated time to <paramref name="now"/>, as an edit of
+    /// its artwork does, so open clients refetch it. Nothing when the owner is not live.
+    /// </summary>
+    Task TouchOwnerAsync(string ownerType, Guid ownerId, DateTimeOffset now, CancellationToken cancellationToken);
 }
 
 /// <summary>

@@ -76,6 +76,9 @@ public sealed class RetentionService(
     internal Task<IReadOnlyList<IReadOnlyDictionary<string, string?>>> RecordFieldsAsync(Guid groupId, string recordType, IReadOnlyList<string> columns, CancellationToken cancellationToken) =>
         store.RecordFieldsAsync(groupId, recordType, columns, cancellationToken);
 
+    /// <summary>How the recovery listing names one record of <paramref name="recordType"/> ("history entry").</summary>
+    internal string NounOf(string recordType) => store.NounOf(recordType);
+
     /// <summary>Every unpruned group, newest first (the recovery listing).</summary>
     public Task<IReadOnlyList<RetentionGroup>> ListAsync(CancellationToken cancellationToken) => store.ListAsync(cancellationToken);
 
@@ -110,8 +113,8 @@ public sealed class RetentionService(
             return new RetentionRestoreOutcome.NotFound();
         }
 
-        var notes = await store.RestoreAsync(id, time.GetUtcNow(), cancellationToken).ConfigureAwait(false);
-        return new RetentionRestoreOutcome.Restored(group, notes);
+        var result = await store.RestoreAsync(id, time.GetUtcNow(), cancellationToken).ConfigureAwait(false);
+        return new RetentionRestoreOutcome.Restored(group, result.Notes, result.PutBack);
     }
 
     /// <summary>

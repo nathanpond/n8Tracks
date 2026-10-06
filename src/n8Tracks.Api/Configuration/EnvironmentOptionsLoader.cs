@@ -136,6 +136,36 @@ internal static class EnvironmentOptionsLoader
     }
 
     /// <summary>
+    /// Loads and validates the data path and the time zone, for a command that works on the database
+    /// of the app in its own container and shows times as the app does. Every other setting has its
+    /// default value here, as for <see cref="LoadDataPathOnly"/>.
+    /// </summary>
+    /// <exception cref="ConfigurationValidationException">The data path is not a writable directory, or the time zone is unknown.</exception>
+    public static N8TracksOptions LoadDataPathAndTimeZone(EnvironmentSnapshot environment)
+    {
+        ArgumentNullException.ThrowIfNull(environment);
+
+        var errors = new List<ConfigurationError>();
+        var timeZone = ReadTimeZone(environment.Variables, errors);
+        N8TracksOptions? options = null;
+        try
+        {
+            options = LoadDataPathOnly(environment);
+        }
+        catch (ConfigurationValidationException exception)
+        {
+            errors.InsertRange(0, exception.Errors);
+        }
+
+        if (errors.Count > 0)
+        {
+            throw new ConfigurationValidationException(errors);
+        }
+
+        return options! with { TimeZone = timeZone! };
+    }
+
+    /// <summary>
     /// Loads and validates only the three paths, for a command that works on the files of a stopped
     /// instance: the data path (which must be a writable directory), and the media and backup mounts
     /// as configured. Every other setting has its default value here, whatever the environment says.
