@@ -251,8 +251,9 @@ public class HealthEndpointTests
     [Fact]
     public async Task ADatabaseFileDeletedAfterStartupIsUnhealthyAndIsNotCreatedAgain()
     {
-        using var factory = new N8TracksApiFactory();
+        using var factory = new N8TracksApiFactory { TestServices = ClaimCountingJobStore.Register };
         using var client = factory.CreateClient();
+        var worker = factory.Services.GetRequiredService<ClaimCountingJobStore.Counter>();
 
         AssertComponent(await Report(client, HttpStatusCode.OK), "database", "healthy", "reachable");
 
@@ -262,6 +263,12 @@ public class HealthEndpointTests
         {
             File.Delete(file);
         }
+
+        // The job worker goes on polling the database through the context (#300: its connection
+        // created the missing file, empty, and the check then found a database). Two finished polls
+        // after the delete mean at least one opened a connection after it.
+        await worker.UntilAsync(worker.Claims, 2);
+        Assert.Empty(Directory.EnumerateFiles(factory.DataPath, "n8tracks.db*"));
 
         for (var attempt = 0; attempt < 2; attempt++)
         {

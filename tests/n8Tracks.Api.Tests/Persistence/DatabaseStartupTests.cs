@@ -1,4 +1,5 @@
 using System.Globalization;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using n8Tracks.Api.Tests.Logging;
@@ -155,6 +156,32 @@ public sealed class DatabaseStartupTests : IDisposable
             .AppMetadata.AsNoTracking().SingleAsync(entry => entry.Key == "restart_probe");
 
         Assert.Equal("still here", reloaded.Value);
+    }
+
+    [Fact]
+    public async Task AfterStartupTheContextNeverCreatesADatabaseFileThatWasDeleted()
+    {
+        using var host = TestDatabase.Host(directory.Path);
+        using (var scope = host.Services.CreateScope())
+        {
+            Assert.True(await scope.ServiceProvider.GetRequiredService<N8TracksDbContext>().Database.CanConnectAsync());
+        }
+
+        SqliteConnection.ClearAllPools();
+        foreach (var file in Directory.EnumerateFiles(directory.Path, "n8tracks.db*"))
+        {
+            File.Delete(file);
+        }
+
+        // What a background task or a request does next (#300): before, this opened a new, empty file.
+        using (var scope = host.Services.CreateScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<N8TracksDbContext>();
+            var refused = await Assert.ThrowsAsync<SqliteException>(() => context.AppMetadata.AsNoTracking().ToListAsync());
+            Assert.Equal(14, refused.SqliteErrorCode); // SQLITE_CANTOPEN
+        }
+
+        Assert.Empty(Directory.EnumerateFiles(directory.Path, "n8tracks.db*"));
     }
 
     [Fact]

@@ -163,6 +163,7 @@ internal static class RestoreApi
         var file = Path.Combine(Path.GetTempPath(), $"n8tracks-test-{Guid.NewGuid():N}.db");
         try
         {
+            SqliteDatabase.CreateIfMissing(file);
             var builder = new DbContextOptionsBuilder<N8TracksDbContext>();
             builder.UseN8TracksSqlite(file);
             var options = builder.Options;

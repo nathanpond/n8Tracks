@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
 using n8Tracks.Application.Backups;
+using n8Tracks.Application.Configuration;
 using n8Tracks.Application.Persistence;
 using n8Tracks.Infrastructure.Backups;
 
@@ -164,6 +165,8 @@ public static class DatabaseStartup
 
             try
             {
+                // The one place a database is created: the context's own connections never create the file.
+                SqliteDatabase.CreateIfMissing(SqliteDatabase.FilePath(scope.ServiceProvider.GetRequiredService<N8TracksOptions>().DataPath));
                 await context.Database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
                 var connection = context.Database.GetDbConnection();
 

@@ -103,6 +103,7 @@ public sealed class DuplicateTitleEndpointTests
     public async Task UpgradingKeysEveryExistingSongByTheApplicationsRule()
     {
         using var directory = new TemporaryDirectory();
+        SqliteDatabase.CreateIfMissing(TestDatabase.FilePath(directory.Path));
         var builder = new DbContextOptionsBuilder<N8TracksDbContext>();
         builder.UseN8TracksSqlite(TestDatabase.FilePath(directory.Path));
         var options = builder.Options;
