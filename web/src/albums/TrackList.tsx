@@ -43,6 +43,12 @@ const CONFLICT_MESSAGE =
 
 const NUMBER_ERROR = `Use a whole number from 1 to ${String(ALBUM_TRACK_MAXIMUM_NUMBER)}.`;
 
+/** Why a track cannot be moved to the end of `disc`: it already has the last track number. */
+function discFullMessage(disc: number, title: string): string {
+  const number = String(disc);
+  return `Disc ${number} already has track ${String(ALBUM_TRACK_MAXIMUM_NUMBER)}, so ${title} cannot go at its end. Choose another disc or a new one, or renumber disc ${number} if it has gaps.`;
+}
+
 /** What the Tracks section says after a change: news, or a problem shown as a notice. */
 interface Message {
   text: string;
@@ -494,6 +500,16 @@ export function TrackList({ album, onAlbum }: { album: Album; onAlbum: (album: A
                         moveWithin(track, to, action);
                       },
                       moveToDisc: (target) => {
+                        // A track lands after the target disc's last one, so a disc that ends at
+                        // 999 has no room: say so instead of sending a number the API refuses.
+                        const last = discs.find((group) => group.disc === target)?.tracks.at(-1);
+                        if (last !== undefined && last.track >= ALBUM_TRACK_MAXIMUM_NUMBER) {
+                          setMessage({
+                            text: discFullMessage(target, track.title),
+                            tone: 'problem',
+                          });
+                          return;
+                        }
                         void run(send(moveToDisc(tracks, track.songId, target)), (saved) => {
                           const place = placeOf(saved, track.songId);
                           return `Moved ${track.title} to disc ${String(place?.disc ?? target)}, track ${String(place?.track ?? '')}.`;

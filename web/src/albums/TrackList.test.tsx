@@ -202,6 +202,27 @@ describe("an Album's tracks", () => {
     expect(disc(1)).toBeVisible();
   });
 
+  it('says a disc is full when a track is moved onto a disc that ends at track 999', async () => {
+    const full = testAlbum('Long Box', {
+      tracks: [trackOf(HIGHWAY, 1, 1), trackOf(SUNRISE, 1, 2), trackOf(TOLL, 2, 999)],
+      songCount: 3,
+    });
+    const server = albumServer([full], [], SONGS);
+    const user = userEvent.setup();
+    await openAlbum(full.id);
+
+    await user.click(screen.getByRole('button', { name: 'Move Highway Lights to disc' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Disc 2' }));
+
+    expect(
+      await screen.findByText(
+        'Disc 2 already has track 999, so Highway Lights cannot go at its end. Choose another disc or a new one, or renumber disc 2 if it has gaps.',
+      ),
+    ).toBeVisible();
+    expect(server.writes).toEqual([]);
+    expect(discs()).toEqual([['Highway Lights 1', 'Sunrise Exit 2'], ['Toll Booth Blues 999']]);
+  });
+
   it('moves a row when a number is typed, and Renumber closes the gap', async () => {
     const server = albumServer([PACK], [], SONGS);
     const user = userEvent.setup();
