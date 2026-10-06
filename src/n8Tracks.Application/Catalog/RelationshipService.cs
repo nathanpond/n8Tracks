@@ -30,9 +30,28 @@ public abstract record RelationshipTypeOutcome
     /// <summary>Relationships use the type, and the delete did not say to remove them.</summary>
     public sealed record InUse(int RelationshipCount) : RelationshipTypeOutcome;
 
+    /// <summary>
+    /// The Suno action would change while sources of <paramref name="VersionCount"/> live Versions
+    /// (frozen or not) are of the type, so it does not.
+    /// </summary>
+    public sealed record MappingInUse(int VersionCount) : RelationshipTypeOutcome;
+
+    /// <summary>
+    /// Sources of <paramref name="VersionCount"/> Versions are of the type (counting deleted Versions
+    /// that can still be restored), so it cannot be deleted.
+    /// </summary>
+    public sealed record UsedBySources(int VersionCount) : RelationshipTypeOutcome;
+
     /// <summary>A name is wrong or taken. The errors are keyed by field name.</summary>
     public sealed record Invalid(IReadOnlyDictionary<string, string[]> Errors) : RelationshipTypeOutcome;
 }
+
+/// <summary>
+/// A change of the Suno action a user-defined type stands for: <paramref name="Action"/> is one of
+/// <see cref="RelationshipService.MappableActions"/>, or null to clear it. Not sending one (a null
+/// change) leaves the action as it is.
+/// </summary>
+public sealed record SunoActionChange(string? Action);
 
 /// <summary>How relating two Songs, or removing a relationship, ended. Every refusal leaves both Songs as they were.</summary>
 public abstract record RelationshipOutcome
@@ -64,6 +83,13 @@ public abstract record RelationshipOutcome
 /// type carries a revision; renaming one moves no Song. Deleting one in use removes its
 /// relationships with it, only when the delete says so.
 /// <para>
+/// A user-defined type can stand for one of Suno's audio actions (<see cref="MappableActions"/>,
+/// #126), which makes it usable as the type of a Version's audio source; several may stand for the
+/// same one. A source keeps the action it was written with, and the mapping cannot change, nor the
+/// type be deleted, while any Version's source is of the type: a frozen Version's lineage never
+/// changes under it. System types keep their fixed actions.
+/// </para>
+/// <para>
 /// A relationship joins two different Songs under one type, at most once per pair and type whichever
 /// way round, and reads from each Song in its own direction. Adding or removing one moves both Songs'
 /// last-updated times but neither Song's revision, and writes no history. Relationships are
@@ -89,6 +115,15 @@ public sealed class RelationshipService(
     public const string OtherSongField = "otherSong";
 
     public const string RemoveRelationshipsField = "removeRelationships";
+
+    public const string SunoActionField = "sunoAction";
+
+    /// <summary>
+    /// The Suno actions a user-defined type can stand for: the audio actions. Inspiration and Voice
+    /// are separate parts of a Version, not audio actions, so no user type stands for them.
+    /// </summary>
+    public static IReadOnlyList<string> MappableActions { get; } =
+        [SunoActions.Cover, SunoActions.Extend, SunoActions.Mashup, SunoActions.Sample, SunoActions.ReusePrompt];
 
     /// <summary>The direction values the API takes, as it spells them.</summary>
     public const string ForwardValue = "forward";
@@ -128,16 +163,19 @@ public sealed class RelationshipService(
     }
 
     /// <summary>
-    /// Renames the user-defined type <paramref name="id"/>, when its revision is still
-    /// <paramref name="revision"/>. A name not sent (null) keeps its value, except that a symmetric
-    /// type renamed without a reverse name stays symmetric. Sending the names it has is no change and
-    /// keeps the revision. No Song moves: relationships name their type by ID.
+    /// Renames the user-defined type <paramref name="id"/>, or changes the Suno action it stands for,
+    /// when its revision is still <paramref name="revision"/>. A name not sent (null) keeps its value,
+    /// except that a symmetric type renamed without a reverse name stays symmetric; an action not sent
+    /// (a null <paramref name="sunoAction"/>) keeps its value. Sending what it has is no change and
+    /// keeps the revision. No Song moves: relationships name their type by ID. A different action is
+    /// <see cref="RelationshipTypeOutcome.MappingInUse"/> while any live Version has a source of the
+    /// type; a stale revision is reported first.
     /// </summary>
-    public async Task<RelationshipTypeOutcome> UpdateTypeAsync(Guid id, string? name, string? reverseName, int revision, CancellationToken cancellationToken)
+    public async Task<RelationshipTypeOutcome> UpdateTypeAsync(Guid id, string? name, string? reverseName, SunoActionChange? sunoAction, int revision, CancellationToken cancellationToken)
     {
-        if (name is null && reverseName is null)
+        if (name is null && reverseName is null && sunoAction is null)
         {
-            return Invalid(NameField, "Send a new name, a new reverse name, or both.");
+            return Invalid(NameField, "Send a new name, a new reverse name, a Suno action, or more than one.");
         }
 
         var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
@@ -149,6 +187,11 @@ public sealed class RelationshipService(
         if (reverseName is not null && RelationshipRules.NameErrors(reverseName) is { Length: > 0 } reverseErrors)
         {
             errors[ReverseNameField] = reverseErrors;
+        }
+
+        if (sunoAction?.Action is { } action && !MappableActions.Contains(action, StringComparer.Ordinal))
+        {
+            errors[SunoActionField] = ["Choose Cover, Extend, Mashup, Sample This Song, or Reuse Prompt, or null for none."];
         }
 
         if (errors.Count > 0)
@@ -177,19 +220,26 @@ public sealed class RelationshipService(
                 var newName = name ?? current.Type.Name;
                 var newReverse = reverseName ?? (current.Type.IsSymmetric ? newName : current.Type.ReverseName);
                 var (forward, reverse) = RelationshipRules.Normalise(newName, newReverse);
-                var renamed = current.Type with { Name = forward, ReverseName = reverse };
-                if (renamed == current.Type)
+                var changed = current.Type with { Name = forward, ReverseName = reverse, SunoAction = sunoAction is null ? current.Type.SunoAction : sunoAction.Action };
+                if (changed == current.Type)
                 {
                     return new RelationshipTypeOutcome.Saved(current, Created: false);
                 }
 
+                // A source keeps the action it was written with; the type's must then not drift from it.
+                if (!string.Equals(changed.SunoAction, current.Type.SunoAction, StringComparison.Ordinal)
+                    && await relationships.SourceVersionCountAsync(id, includeDeleted: false, ct).ConfigureAwait(false) is > 0 and var versionCount)
+                {
+                    return new RelationshipTypeOutcome.MappingInUse(versionCount);
+                }
+
                 var all = await relationships.ListTypesAsync(ct).ConfigureAwait(false);
-                if (TakenErrors(renamed, all.Select(static usage => usage.Type).Where(type => type.Id != id)) is { Count: > 0 } taken)
+                if (TakenErrors(changed, all.Select(static usage => usage.Type).Where(type => type.Id != id)) is { Count: > 0 } taken)
                 {
                     return new RelationshipTypeOutcome.Invalid(taken);
                 }
 
-                return await relationships.TryRenameTypeAsync(id, forward, reverse, revision, ct).ConfigureAwait(false)
+                return await relationships.TryUpdateTypeAsync(id, forward, reverse, changed.SunoAction, revision, ct).ConfigureAwait(false)
                     ? new RelationshipTypeOutcome.Saved((await relationships.FindTypeAsync(id, ct).ConfigureAwait(false))!, Created: false)
                     : new RelationshipTypeOutcome.Conflict((await relationships.FindTypeAsync(id, ct).ConfigureAwait(false))!);
             },
@@ -201,7 +251,9 @@ public sealed class RelationshipService(
     /// <paramref name="revision"/>. A type no relationship uses is deleted directly; one in use only
     /// with <paramref name="removeRelationships"/>, which removes its relationships with it (moving
     /// each affected Song's last-updated time). Without it the delete is
-    /// <see cref="RelationshipTypeOutcome.InUse"/> with the count the user is asked to confirm.
+    /// <see cref="RelationshipTypeOutcome.InUse"/> with the count the user is asked to confirm. A type
+    /// that a source of any Version is of, including a deleted Version that can still be restored, is
+    /// not deleted (<see cref="RelationshipTypeOutcome.UsedBySources"/>): the source names it.
     /// </summary>
     public async Task<RelationshipTypeOutcome> DeleteTypeAsync(Guid id, int revision, bool removeRelationships, CancellationToken cancellationToken) =>
         await transaction.RunAsync<RelationshipTypeOutcome>(
@@ -220,6 +272,11 @@ public sealed class RelationshipService(
                 if (current.Revision != revision)
                 {
                     return new RelationshipTypeOutcome.Conflict(current);
+                }
+
+                if (await relationships.SourceVersionCountAsync(id, includeDeleted: true, ct).ConfigureAwait(false) is > 0 and var versionCount)
+                {
+                    return new RelationshipTypeOutcome.UsedBySources(versionCount);
                 }
 
                 if (current.RelationshipCount > 0 && !removeRelationships)

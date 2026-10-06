@@ -25,10 +25,17 @@ public interface IRelationshipStore
     Task AddTypeAsync(RelationshipType type, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Renames the type <paramref name="id"/> and raises its revision, when its revision is still
-    /// <paramref name="revision"/> and it is not a system type. False otherwise.
+    /// Sets the type <paramref name="id"/>'s names and Suno action (null for none) and raises its
+    /// revision, when its revision is still <paramref name="revision"/> and it is not a system type.
+    /// False otherwise.
     /// </summary>
-    Task<bool> TryRenameTypeAsync(Guid id, string name, string reverseName, int revision, CancellationToken cancellationToken);
+    Task<bool> TryUpdateTypeAsync(Guid id, string name, string reverseName, string? sunoAction, int revision, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// How many Versions have a source of the type <paramref name="typeId"/>: live Versions, frozen or
+    /// not, and with <paramref name="includeDeleted"/> also deleted Versions that can still be restored.
+    /// </summary>
+    Task<int> SourceVersionCountAsync(Guid typeId, bool includeDeleted, CancellationToken cancellationToken);
 
     /// <summary>
     /// Removes every relationship of the type <paramref name="id"/>, moving each affected Song's

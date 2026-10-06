@@ -929,7 +929,8 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
             type.ToTable("song_relationship_types", static table =>
             {
                 table.HasCheckConstraint("ck_song_relationship_types_names", "length(name) > 0 AND length(reverse_name) > 0");
-                table.HasCheckConstraint("ck_song_relationship_types_suno_action", "suno_action IS NULL OR is_system = 1");
+                // A system type's action is fixed by its seed; a user's own may stand for an audio action (#126).
+                table.HasCheckConstraint("ck_song_relationship_types_suno_action", "suno_action IS NULL OR is_system = 1 OR suno_action IN ('cover', 'extend', 'mashup', 'sample', 'reuse_prompt')");
             });
             type.HasKey(record => record.Id);
 

@@ -2850,3 +2850,24 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** In component tests, dialogs are found by role and name and are not waited on to become visible.
   **Why:** Mantine's opening transition advances on animation frames, which the fake clock (`fakeTimeouts`) does not move, so a `toBeVisible` wait timed out at random. user-event acts on the dialog either way.
   **Issue:** #125
+- **Decision:** Rule 3: #92 left the CHECK `ck_song_relationship_types_suno_action` as `suno_action IS NULL OR is_system = 1`, which forbids the user mapping this story stores in that column (a 500 before this fix). Migration `AllowUserTypeSunoAction` (`20261006233000`) widens it to also allow a user type with one of the five audio actions. The migration edits the stored table definition in place inside the migration transaction (`PRAGMA writable_schema`, then `RESET`). This is the procedure SQLite documents for a change that every row already satisfies. Down clears user mappings first, then narrows the CHECK again.
+  **Why:** The story names this column as the storage, so no table or key changes. EF Core's rebuild switches foreign keys off outside the transaction. It then logs a startup warning, which made the no-warning startup and logging tests fail. Renaming the table away with foreign keys on would repoint the FKs of `song_relationships` and `version_sources` at the old table, which was checked in sqlite3.
+  **Issue:** #126
+- **Decision:** The mapping is set on the type's PATCH as `sunoAction`, read as raw JSON: omitted means unchanged, null clears, and text must be one of `cover`, `extend`, `mashup`, `sample`, `reuse_prompt`; anything else is 422 on `sunoAction`. The service checks in this order:
+  1. 404 or 409 `system_type`.
+  2. 409 `revision_conflict`.
+  3. A no-op when nothing differs.
+  4. 409 `mapping_in_use` with `versionCount` (distinct live Versions with a source of the type, frozen or not).
+  5. Taken names.
+  These checks and the write share one transaction. POST does not take `sunoAction`: a type is mapped after it is added. A rename is allowed while the type is in use.
+  **Why:** This follows the story's discretion. A rename changes no source, because sources name their type by ID and keep their own `suno_action`.
+  **Issue:** #126
+- **Decision:** Deleting a type is refused with 409 `type_in_use` and `versionCount` when any Version source is of it, even with `removeRelationships=true`. The count also includes deleted Versions that can still be restored: the store reads `type_id` and `version_id` out of the retained `version-source` documents. `mapping_in_use` counts only live Versions.
+  **Why:** A retained source names its type by FK RESTRICT. If the type were deleted, restoring that Version would be refused. A mapping change is harmless for a retained source, which keeps the action it was written with.
+  **Issue:** #126
+- **Decision:** Web: Settings → Relationships has a "Suno action" column. A system type shows its fixed action as text (Cover, …, Inspiration, Voice, None). A user type has a native select, "Suno action for <name>" (Not mapped plus the five actions), which saves when it changes. The in-use refusals appear in the page's status area as a "Not changed" notice that gives the Version count. In the Sources "Action" picker, a user type is labelled with its action, for example "Reimagining of (Cover)". System types keep their bare names.
+  **Why:** One control per row matches the page's existing row actions. Labelling the action tells apart several types that map to the same action.
+  **Issue:** #126
+- **Decision:** Invariant 1: the guard's exemption reasons for PATCH and DELETE `relationship-types` now name #126. A dedicated API test freezes a Version that has a source of a mapped type, tries to change and clear the mapping and to delete the type, and compares `VersionImmutabilityGuardTests.Stored` and the `version_sources` rows. No new Application namespace was added. `Application.Catalog` and `Application.Suno` are not in `CatalogServiceNamespaces`, and the complement test confirms that neither takes a catalog type.
+  **Why:** The orchestrator asked for confirmation. `RelationshipService` takes only IDs and text.
+  **Issue:** #126

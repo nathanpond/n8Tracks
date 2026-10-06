@@ -1,5 +1,7 @@
+using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using n8Tracks.Application.Catalog;
+using n8Tracks.Application.Retention;
 using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
 
@@ -58,7 +60,7 @@ internal sealed class RelationshipStore(N8TracksDbContext context) : IRelationsh
         context.Entry(record).State = EntityState.Detached;
     }
 
-    public async Task<bool> TryRenameTypeAsync(Guid id, string name, string reverseName, int revision, CancellationToken cancellationToken)
+    public async Task<bool> TryUpdateTypeAsync(Guid id, string name, string reverseName, string? sunoAction, int revision, CancellationToken cancellationToken)
     {
         var nameKey = RelationshipRules.NameKey(name);
         var reverseNameKey = RelationshipRules.NameKey(reverseName);
@@ -72,10 +74,46 @@ internal sealed class RelationshipStore(N8TracksDbContext context) : IRelationsh
                     .SetProperty(type => type.NameKey, nameKey)
                     .SetProperty(type => type.ReverseName, reverseName)
                     .SetProperty(type => type.ReverseNameKey, reverseNameKey)
+                    .SetProperty(type => type.SunoAction, sunoAction)
                     .SetProperty(type => type.Revision, type => type.Revision + 1),
                 cancellationToken)
             .ConfigureAwait(false);
         return count == 1;
+    }
+
+    public async Task<int> SourceVersionCountAsync(Guid typeId, bool includeDeleted, CancellationToken cancellationToken)
+    {
+        var versions = (await context.VersionSources.AsNoTracking()
+                .Where(source => source.TypeId == typeId)
+                .Select(static source => source.VersionId)
+                .Distinct()
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false))
+            .ToHashSet();
+        if (!includeDeleted)
+        {
+            return versions.Count;
+        }
+
+        // A deleted Version's sources are retained as documents keyed by column name. Only the two
+        // IDs are read out of each; the rest of the document is never looked at.
+        var documents = await context.RetentionRecords.AsNoTracking()
+            .Where(static record => record.RecordType == RetainedRecordTypes.VersionSource)
+            .Select(static record => record.Document)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        foreach (var text in documents)
+        {
+            var document = JsonNode.Parse(text)?.AsObject();
+            if (Guid.TryParse(GuidText(document?["type_id"]), out var type)
+                && type == typeId
+                && Guid.TryParse(GuidText(document?["version_id"]), out var version))
+            {
+                versions.Add(version);
+            }
+        }
+
+        return versions.Count;
     }
 
     public async Task<int?> TryDeleteTypeAsync(Guid id, int revision, DateTimeOffset now, CancellationToken cancellationToken)
@@ -201,6 +239,9 @@ internal sealed class RelationshipStore(N8TracksDbContext context) : IRelationsh
                         side.Direction,
                         new RelatedSong(side.Other, Shortcodes.ForSong(others[side.Other].ShortcodeNumber), others[side.Other].Title)))]);
     }
+
+    private static string? GuidText(JsonNode? node) =>
+        node is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
 
     private static RelationshipType Type(RelationshipTypeRecord record) =>
         new(record.Id, record.Name, record.ReverseName, record.IsSystem, record.SunoAction);

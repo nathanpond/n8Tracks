@@ -372,7 +372,12 @@ export function SourcesSection({
   const type: AudioType | undefined =
     types.find((candidate) => candidate.id === typeId) ??
     (heldTypeId !== undefined && heldAction !== undefined
-      ? { id: heldTypeId, name: actionName(heldAction), action: heldAction }
+      ? {
+          id: heldTypeId,
+          name: actionName(heldAction),
+          action: heldAction,
+          label: actionName(heldAction),
+        }
       : undefined);
   const action = type?.action;
 
@@ -438,7 +443,7 @@ export function SourcesSection({
         )}
         {readOnly ? (
           <Text size="sm" data-testid="audio-action">
-            {type === undefined ? 'None' : type.name}
+            {type === undefined ? 'None' : type.label}
           </Text>
         ) : (
           <NativeSelect
@@ -448,7 +453,7 @@ export function SourcesSection({
             disabled={typesState.phase !== 'ready'}
             data={[
               { value: '', label: 'None' },
-              ...types.map((candidate) => ({ value: candidate.id, label: candidate.name })),
+              ...types.map((candidate) => ({ value: candidate.id, label: candidate.label })),
             ]}
             onChange={(event) => {
               chooseType(event.currentTarget.value);

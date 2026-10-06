@@ -1,5 +1,6 @@
 import { apiFetch } from './client';
 import { genreNameError, genreNameKey, normaliseGenreName } from './genres';
+import type { AudioAction } from './lineage';
 import { ifMatch } from './saves';
 import {
   body,
@@ -27,7 +28,10 @@ export interface RelationshipType {
   reverseName: string;
   system: boolean;
   symmetric: boolean;
-  /** The Suno lineage action a system type stands for, or null. */
+  /**
+   * The Suno lineage action the type stands for, or null: fixed for a system type; for one of the
+   * user's, the audio action they mapped it to (#126), which makes it usable as a source's type.
+   */
   sunoAction: string | null;
   relationshipCount: number;
   revision: number;
@@ -95,8 +99,10 @@ export function typeWithName(
 }
 
 /**
- * How adding, renaming, or deleting a type ended. Never a rejection. `conflict` means the type
- * changed elsewhere; `in-use` gives the count of relationships a delete would remove.
+ * How adding, renaming, mapping, or deleting a type ended. Never a rejection. `conflict` means the
+ * type changed elsewhere; `in-use` gives the count of relationships a delete would remove;
+ * `mapping-in-use` and `sources-in-use` give the count of Versions whose sources are of the type,
+ * which keeps its Suno action, and the type itself, as they are.
  */
 export type RelationshipTypeResult =
   | { kind: 'saved'; type: RelationshipType }
@@ -104,6 +110,8 @@ export type RelationshipTypeResult =
   | { kind: 'conflict' }
   | { kind: 'system' }
   | { kind: 'in-use'; relationshipCount: number }
+  | { kind: 'mapping-in-use'; versionCount: number }
+  | { kind: 'sources-in-use'; versionCount: number }
   | { kind: 'invalid'; errors: Record<string, string[]> }
   | { kind: 'not-found' }
   | { kind: 'failed' };
@@ -150,6 +158,12 @@ async function sendType(
       ) {
         return { kind: 'in-use', relationshipCount: answer.relationshipCount };
       }
+      if (answer.code === 'mapping_in_use' && typeof answer.versionCount === 'number') {
+        return { kind: 'mapping-in-use', versionCount: answer.versionCount };
+      }
+      if (answer.code === 'type_in_use' && typeof answer.versionCount === 'number') {
+        return { kind: 'sources-in-use', versionCount: answer.versionCount };
+      }
     }
     if (
       response.status === 422 &&
@@ -181,6 +195,17 @@ export function renameRelationshipType(
   reverseName: string,
 ): Promise<RelationshipTypeResult> {
   return sendType('PATCH', typePath(type.id), type.revision, { name, reverseName });
+}
+
+/**
+ * Maps one of the user's types to a Suno audio action, or clears the mapping (null). Refused while
+ * any Version's source is of the type (`mapping-in-use`).
+ */
+export function mapRelationshipType(
+  type: RelationshipType,
+  sunoAction: AudioAction | null,
+): Promise<RelationshipTypeResult> {
+  return sendType('PATCH', typePath(type.id), type.revision, { sunoAction });
 }
 
 /** Deletes one of the user's types: directly when unused; one in use only with `removeRelationships`. */

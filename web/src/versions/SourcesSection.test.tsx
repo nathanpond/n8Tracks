@@ -6,7 +6,7 @@ import type { LineageSource } from '../api/lineage';
 import type { VersionDetail } from '../api/versions';
 import { DEFAULT_INPUTS } from '../test/createFieldsFixture';
 import { advanceTimers, fakeTimeouts, renderApp } from '../test/helpers';
-import { SONG_B, SONG_C, SYSTEM_TYPES } from '../test/songServer';
+import { relationshipType, SONG_B, SONG_C, SYSTEM_TYPES } from '../test/songServer';
 import { testGeneration, testVersion, versionServer } from '../test/versionServer';
 
 const typeId = (name: string) => SYSTEM_TYPES.find((type) => type.name === name)?.id ?? '';
@@ -176,6 +176,58 @@ describe('the Sources section of a Version (#125)', () => {
       });
     },
   );
+
+  it('a user type mapped to an action is offered with it and follows its rules; an unmapped one is not offered (#126)', async () => {
+    const reimagining = relationshipType(120, 'Reimagining of', 'Reimagined as', {
+      sunoAction: 'cover',
+    });
+    const blend = relationshipType(121, 'Blend of', 'Blended into', { sunoAction: 'mashup' });
+    const answer = relationshipType(122, 'Answer to', 'Answered by');
+    const { server } = serve();
+    server.relationshipTypes = [...SYSTEM_TYPES, answer, blend, reimagining];
+    const user = await openVersion();
+
+    const action = screen.getByRole('combobox', { name: 'Action' });
+    const options = within(action)
+      .getAllByRole('option')
+      .map((option) => option.textContent);
+    expect(options).toEqual([
+      'None',
+      'Cover',
+      'Extend',
+      'Reuse Prompt',
+      'Mashup',
+      'Sample This Song',
+      'Blend of (Mashup)',
+      'Reimagining of (Cover)',
+    ]);
+
+    // Mapped to Mashup, it asks for a second source.
+    await user.selectOptions(action, 'Blend of (Mashup)');
+    await user.click(screen.getByRole('button', { name: 'Choose the Blend of source' }));
+    await pick(user, 'Song B', 'n8-8-v1-g1');
+    expect(screen.getByTestId('mashup-needs-second')).toHaveTextContent(
+      'A Mashup needs a second source.',
+    );
+    await lastWrite(server.writes, 1);
+
+    // Mapped to Cover, it holds one source and hides Inspiration, as Cover does.
+    await user.selectOptions(action, 'Reimagining of (Cover)');
+    expect(await lastWrite(server.writes, 2)).toEqual({
+      inputs: {
+        sources: [
+          {
+            typeId: reimagining.id,
+            generation: server.otherGenerations[0]?.id,
+            continueAtSeconds: null,
+            secondaryIds: null,
+          },
+        ],
+      },
+    });
+    expect(screen.queryByRole('heading', { name: 'Inspiration' })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('mashup-needs-second')).not.toBeInTheDocument();
+  });
 
   it('a source is replaced and removed; the picker leaves out the Version’s own Generations and labels every state', async () => {
     const { server } = serve();

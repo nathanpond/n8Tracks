@@ -4,6 +4,7 @@ import {
   Group,
   Loader,
   Modal,
+  NativeSelect,
   Stack,
   Table,
   Text,
@@ -12,9 +13,11 @@ import {
   VisuallyHidden,
 } from '@mantine/core';
 import { useRef, useState, type SyntheticEvent } from 'react';
+import { AUDIO_ACTIONS, isAudioAction, type AudioAction } from '../api/lineage';
 import {
   createRelationshipType,
   deleteRelationshipType,
+  mapRelationshipType,
   normaliseRelationshipName,
   readRelationshipTypes,
   RELATIONSHIP_NAME_MAXIMUM_LENGTH,
@@ -27,6 +30,7 @@ import {
   type RelationshipTypeResult,
 } from '../api/relationships';
 import { Notice } from '../components/Notice';
+import { actionName } from '../versions/sourcesRules';
 
 const FAILED_MESSAGE =
   'n8Tracks did not answer as expected. Check that it is running and try again.';
@@ -37,6 +41,37 @@ const CONFLICT_MESSAGE =
 /** A type's two names as one label: "Sequel to / Has sequel", or the one name of a symmetric type. */
 function typeLabel(type: Pick<RelationshipType, 'name' | 'reverseName' | 'symmetric'>): string {
   return type.symmetric ? type.name : `${type.name} / ${type.reverseName}`;
+}
+
+/** A type's Suno action in words, as the table shows it; "None" for a type that stands for none. */
+function sunoActionText(action: string | null): string {
+  if (isAudioAction(action)) {
+    return actionName(action);
+  }
+  if (action === 'inspiration') {
+    return 'Inspiration';
+  }
+  return action === 'voice' ? 'Voice' : 'None';
+}
+
+/** "1 Version has" or "N Versions have". */
+function versionsHave(count: number): string {
+  return count === 1 ? '1 Version has' : `${String(count)} Versions have`;
+}
+
+/** What the page says when a change is refused because Version sources are of the type; undefined otherwise. */
+function sourcesRefusal(
+  type: RelationshipType,
+  result: RelationshipTypeResult,
+): string | undefined {
+  switch (result.kind) {
+    case 'mapping-in-use':
+      return `${versionsHave(result.versionCount)} a source of the type ${type.name}, so the Suno action it stands for cannot change. Change those sources first.`;
+    case 'sources-in-use':
+      return `${typeLabel(type)} is not deleted: ${versionsHave(result.versionCount)} a source of this type, counting deleted Versions that can still be restored.`;
+    default:
+      return undefined;
+  }
 }
 
 /** The message for a name another type already uses. */
@@ -397,6 +432,15 @@ function RelationshipsEditor({ initial }: { initial: RelationshipType[] }) {
     return result;
   };
 
+  /** Shows a refusal because Version sources are of the type, when it is one; answers the result. */
+  const showRefusal = (type: RelationshipType, result: RelationshipTypeResult) => {
+    const refusal = sourcesRefusal(type, result);
+    if (refusal !== undefined) {
+      setMessage({ text: refusal, tone: 'problem' });
+    }
+    return result;
+  };
+
   const remove = async (type: RelationshipType) => {
     if (type.relationshipCount > 0) {
       setDeleting({ type, count: type.relationshipCount });
@@ -406,10 +450,22 @@ function RelationshipsEditor({ initial }: { initial: RelationshipType[] }) {
       () => deleteRelationshipType(type),
       () => `${typeLabel(type)} is deleted.`,
     );
+    showRefusal(type, result);
     if (result.kind === 'in-use') {
       // Songs were related by it since the list was loaded.
       setDeleting({ type, count: result.relationshipCount });
     }
+  };
+
+  const map = async (type: RelationshipType, action: AudioAction | null) => {
+    const result = await run(
+      () => mapRelationshipType(type, action),
+      () =>
+        action === null
+          ? `${type.name} is no longer mapped to a Suno action.`
+          : `${type.name} now stands for ${actionName(action)}.`,
+    );
+    showRefusal(type, result);
   };
 
   return (
@@ -425,12 +481,13 @@ function RelationshipsEditor({ initial }: { initial: RelationshipType[] }) {
           ))}
       </Group>
 
-      <Table.ScrollContainer minWidth={520}>
+      <Table.ScrollContainer minWidth={680}>
         <Table aria-label="Relationship types" highlightOnHover>
           <Table.Thead>
             <Table.Tr>
               <Table.Th scope="col">Name</Table.Th>
               <Table.Th scope="col">Reverse name</Table.Th>
+              <Table.Th scope="col">Suno action</Table.Th>
               <Table.Th scope="col" ta="end">
                 Relationships
               </Table.Th>
@@ -451,6 +508,28 @@ function RelationshipsEditor({ initial }: { initial: RelationshipType[] }) {
                 </Table.Th>
                 <Table.Td>
                   {type.symmetric ? <Text size="sm">Same both ways</Text> : type.reverseName}
+                </Table.Td>
+                <Table.Td data-testid="suno-action">
+                  {type.system ? (
+                    sunoActionText(type.sunoAction)
+                  ) : (
+                    <NativeSelect
+                      size="xs"
+                      aria-label={`Suno action for ${type.name}`}
+                      value={isAudioAction(type.sunoAction) ? type.sunoAction : ''}
+                      data={[
+                        { value: '', label: 'Not mapped' },
+                        ...AUDIO_ACTIONS.map((action) => ({
+                          value: action,
+                          label: actionName(action),
+                        })),
+                      ]}
+                      onChange={(event) => {
+                        const value = event.currentTarget.value;
+                        void map(type, isAudioAction(value) ? value : null);
+                      }}
+                    />
+                  )}
                 </Table.Td>
                 <Table.Td ta="end">{type.relationshipCount}</Table.Td>
                 <Table.Td>
@@ -496,6 +575,11 @@ function RelationshipsEditor({ initial }: { initial: RelationshipType[] }) {
         action is not recognised and Derived From. They cannot be renamed or deleted, but you can
         use them on Songs.
       </Text>
+      <Text size="sm" c="var(--n8-color-secondary-text)">
+        Map one of your own types to a Suno action to use it as the type of a Version&apos;s audio
+        source, where it follows that action&apos;s rules. A mapped type still relates Songs. The
+        action cannot change while a Version has a source of the type.
+      </Text>
 
       <AddTypeForm
         types={types}
@@ -533,10 +617,13 @@ function RelationshipsEditor({ initial }: { initial: RelationshipType[] }) {
         onClose={() => {
           setDeleting(undefined);
         }}
-        onDelete={(type) =>
-          run(
-            () => deleteRelationshipType(type, true),
-            () => `${typeLabel(type)} is deleted, with its relationships.`,
+        onDelete={async (type) =>
+          showRefusal(
+            type,
+            await run(
+              () => deleteRelationshipType(type, true),
+              () => `${typeLabel(type)} is deleted, with its relationships.`,
+            ),
           )
         }
       />
@@ -547,8 +634,9 @@ function RelationshipsEditor({ initial }: { initial: RelationshipType[] }) {
 /**
  * Settings → Relationships: the relationship types Songs are related by. The system types (Suno's
  * lineage actions, Remix, and Derived From) come first and cannot be changed; the user adds their
- * own, each with a name for both directions, renames them, and deletes them. A type in use is
- * deleted with its relationships after a confirmation that says how many.
+ * own, each with a name for both directions, renames them, maps them to a Suno audio action (#126),
+ * and deletes them. A type in use is deleted with its relationships after a confirmation that says
+ * how many; neither its mapping nor the type changes while a Version source is of it.
  */
 export function RelationshipsPage() {
   const { state, reload } = useRelationshipTypes();

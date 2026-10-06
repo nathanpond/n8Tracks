@@ -30,13 +30,25 @@ export interface AudioType {
   id: string;
   name: string;
   action: AudioAction;
+  /** How the action picker names it: a user's own type with the action it stands for (#126). */
+  label: string;
 }
 
-/** The relationship types a source's audio action can be chosen from, in the types' order. */
+/**
+ * The relationship types a source's audio action can be chosen from, in the types' order: the
+ * system types for the audio actions, then the user's own types mapped to one (#126).
+ */
 export function audioTypes(types: readonly RelationshipType[]): AudioType[] {
   return types.flatMap((type) =>
     isAudioAction(type.sunoAction)
-      ? [{ id: type.id, name: type.name, action: type.sunoAction }]
+      ? [
+          {
+            id: type.id,
+            name: type.name,
+            action: type.sunoAction,
+            label: type.system ? type.name : `${type.name} (${actionName(type.sunoAction)})`,
+          },
+        ]
       : [],
   );
 }
