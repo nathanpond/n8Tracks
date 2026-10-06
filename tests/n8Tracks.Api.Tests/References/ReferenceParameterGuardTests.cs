@@ -55,6 +55,7 @@ public sealed class ReferenceParameterGuardTests
         "DELETE /api/v1/songs/{reference}/relationships/{id:guid}: id",
         "GET /api/v1/versions/{reference}/snapshots/{snapshotId:guid}: snapshotId",
         "POST /api/v1/versions/{reference}/snapshots/{snapshotId:guid}/restore: snapshotId",
+        "DELETE /api/v1/versions/{reference}/snapshots/{snapshotId:guid}: snapshotId",
     };
 
     /// <summary>
@@ -98,6 +99,10 @@ public sealed class ReferenceParameterGuardTests
             c.SendAsync(HttpMethod.Get, $"versions/{version}/snapshots/{c.SnapshotId}"),
         ["POST /api/v1/versions/{reference}/snapshots/{snapshotId:guid}/restore"] = static async (c, _, version) =>
             await c.SendAsync(HttpMethod.Post, $"versions/{version}/snapshots/{c.SnapshotId}/restore", "{}", await c.VersionRevisionAsync()),
+
+        // 204: a history entry taken for the call (by ID, so it is there whatever the reference) is deleted.
+        ["DELETE /api/v1/versions/{reference}/snapshots/{snapshotId:guid}"] = static async (c, _, version) =>
+            await c.SendAsync(HttpMethod.Delete, $"versions/{version}/snapshots/{await c.HistoryEntryAsync()}"),
         ["GET /api/v1/resolve/{reference}"] = static (c, _, version) => c.SendAsync(HttpMethod.Get, $"resolve/{version}"),
 
         // 200: the Song is not on the Playlist, so nothing changes.
@@ -307,6 +312,14 @@ public sealed class ReferenceParameterGuardTests
             using var response = await SendAsync(HttpMethod.Post, $"songs/{songId}/relationships", $$"""{"typeId":"{{SystemRelationshipTypes.Cover.Id}}","direction":"forward","otherSong":"n8-2"}""");
             Assert.Equal(HttpStatusCode.Created, response.StatusCode);
             return (await SetupApi.JsonAsync(response)).GetProperty("relationships")[0].GetProperty("id").GetString()!;
+        }
+
+        /// <summary>Takes a snapshot of the Version, by ID, and answers its ID (the existing one when the text is the newest's).</summary>
+        public async Task<string> HistoryEntryAsync()
+        {
+            using var response = await SendAsync(HttpMethod.Post, $"versions/{versionId}/snapshots", """{"lyrics":"Deleted by the guard","styles":""}""");
+            Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+            return (await SetupApi.JsonAsync(response)).GetProperty("id").GetString()!;
         }
 
         public Task<int> VersionRevisionAsync() => RevisionAsync($"versions/{versionId}");

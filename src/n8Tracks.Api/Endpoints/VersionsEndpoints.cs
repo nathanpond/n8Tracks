@@ -16,7 +16,7 @@ namespace n8Tracks.Api.Endpoints;
 /// flat list, one Version with its lyrics, styles, and Suno options, and its editing history
 /// (<c>catalog.read</c>); creating a Version from another, choosing a Song's current Version, editing
 /// a Version's name, notes, archived flag, lyrics, styles, and options, and taking and restoring snapshots of its lyrics and
-/// styles (<c>versions.write</c>). A Song or a Version is named by its ID or its shortcode
+/// styles (<c>versions.write</c>); deleting a snapshot (session only). A Song or a Version is named by its ID or its shortcode
 /// (<see cref="CatalogReference"/>), in the route and in body fields alike; a reference of the other
 /// kind, or a Version of another Song, is not found. Every answer is <c>no-store</c>, and a single
 /// Version sends its revision as the <c>ETag</c>.
@@ -158,7 +158,58 @@ internal static class VersionsEndpoints
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
+        endpoints.MapDelete(SnapshotByIdPath, DeleteSnapshotAsync)
+            .WithName("DeleteVersionSnapshot")
+            .WithSummary("Deletes one entry of a Version's history. Needs no revision; frozen Versions included. Web UI only (session).")
+            .SessionOnly()
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
         return endpoints;
+    }
+
+    /// <summary>
+    /// 204 once the entry is deleted (it goes into retention, never shown again); 404 <c>not_found</c>
+    /// when there is no such Version or the Version has no such snapshot. Nothing is changed unless the
+    /// answer is 204.
+    /// </summary>
+    private static async Task<Results<NoContent, ProblemHttpResult>> DeleteSnapshotAsync(
+        CatalogReference reference,
+        ReferenceResolver references,
+        Guid snapshotId,
+        EditorRevisionService history,
+        HttpContext context,
+        ILoggerFactory loggers,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        if (await references.VersionIdAsync(reference, cancellationToken) is not { } id)
+        {
+            return NoSuchVersion(context);
+        }
+
+        switch (await history.DeleteAsync(id, snapshotId, cancellationToken))
+        {
+            case SnapshotDeleteOutcome.Deleted deleted:
+                loggers.CreateLogger(typeof(VersionsEndpoints)).LogInformation(
+                    "Version snapshot deleted: {SnapshotId} of {VersionId} into retention group {RetentionGroupId}",
+                    snapshotId,
+                    id,
+                    deleted.Group.Id);
+                return TypedResults.NoContent();
+
+            case SnapshotDeleteOutcome.VersionNotFound:
+                return NoSuchVersion(context);
+
+            case SnapshotDeleteOutcome.SnapshotNotFound:
+                return ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "There is no such snapshot of this Version.");
+
+            default:
+                throw new InvalidOperationException("Unknown snapshot deletion outcome.");
+        }
     }
 
     /// <summary>

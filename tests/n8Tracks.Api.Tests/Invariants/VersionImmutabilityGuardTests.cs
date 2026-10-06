@@ -380,6 +380,18 @@ public sealed class VersionImmutabilityGuardTests
                 }
             },
             ChangesInputs: true),
+        ["DELETE /api/v1/versions/{reference}/snapshots/{snapshotId:guid}"] = new(async target =>
+        {
+            // Deleting a history entry retains the snapshot row only; the inputs sent alongside are not read.
+            var entry = await NewHistoryEntryAsync(target);
+            using var response = await SendAsync(
+                target.Client,
+                HttpMethod.Delete,
+                new Uri($"/api/v1/versions/{target.VersionShortcode}/snapshots/{entry}", UriKind.Relative),
+                SongApi.Quoted(1),
+                await target.InputsJsonAsync("{", "}"));
+            Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        }),
         ["POST /api/v1/playlists/{id:guid}/songs"] = new(async target =>
         {
             // A Playlist holds the Song, never a Version: the inputs sent alongside are not read.
@@ -547,6 +559,12 @@ public sealed class VersionImmutabilityGuardTests
                 }
             },
             ChangesInputs: true),
+        ["EditorRevisionService.DeleteAsync(Guid, Guid, CancellationToken)"] = new(static async target =>
+        {
+            var entry = await NewHistoryEntryAsync(target);
+            Assert.IsType<SnapshotDeleteOutcome.Deleted>(
+                await InScopeAsync<EditorRevisionService, SnapshotDeleteOutcome>(target, service => service.DeleteAsync(target.VersionId, entry, default)));
+        }),
         ["GenerationService.AttachAsync(String, CancellationToken)"] = Service<GenerationService>(static (service, target) => service.AttachAsync(target.VersionShortcode, default)),
         ["SongService.FindAsync(String, CancellationToken)"] = Service<SongService>(static (service, target) => service.FindAsync(target.SongShortcode, default)),
         ["SongService.UpdateAsync(Guid, SongEdit, Int32, CancellationToken)"] = Service<SongService>(static async (service, target) =>
@@ -642,9 +660,7 @@ public sealed class VersionImmutabilityGuardTests
         Func<RetentionService, RetentionRequest, IExclusiveTransaction, Task<RetentionGroup>> retain,
         Func<RetentionService, Guid, IExclusiveTransaction, Task<RetentionRestoreOutcome>>? restore)
     {
-        var snapshot = await InScopeAsync<EditorRevisionService, SnapshotOutcome>(target, service =>
-            service.SnapshotAsync(target.VersionId, new EditorRevisionRequest(Changed + " " + Guid.NewGuid(), Changed, null), default));
-        var id = Assert.IsType<SnapshotOutcome.Created>(snapshot).Revision.Id;
+        var id = await NewHistoryEntryAsync(target);
         var request = new RetentionRequest(
             RetainedRecordTypes.EditorSnapshot,
             $"History entry of {target.VersionShortcode}",
@@ -663,6 +679,14 @@ public sealed class VersionImmutabilityGuardTests
                 Assert.IsType<RetentionRestoreOutcome.Restored>(await restore(service, group.Id, transaction));
             }
         }
+    }
+
+    /// <summary>Takes a new history entry of the target (text no other entry holds); its ID.</summary>
+    private static async Task<Guid> NewHistoryEntryAsync(Target target)
+    {
+        var snapshot = await InScopeAsync<EditorRevisionService, SnapshotOutcome>(target, service =>
+            service.SnapshotAsync(target.VersionId, new EditorRevisionRequest(Changed + " " + Guid.NewGuid(), Changed, null), default));
+        return Assert.IsType<SnapshotOutcome.Created>(snapshot).Revision.Id;
     }
 
     /// <summary>The Version's edit through the service: each input alone (every option in turn), all of them, and all with metadata.</summary>

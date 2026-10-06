@@ -140,6 +140,31 @@ export async function fetchSnapshot(
   }
 }
 
+/**
+ * How deleting a history entry ended. `gone` means the Version has no such entry (any more), so
+ * it is not in the history either way. Never a rejection.
+ */
+export type SnapshotDeleteResult = 'deleted' | 'gone' | 'failed';
+
+/** Deletes one entry of a Version's history. It needs no revision. */
+export async function deleteSnapshot(
+  versionId: string,
+  snapshotId: string,
+): Promise<SnapshotDeleteResult> {
+  try {
+    const response = await apiFetch(
+      `${snapshotsPath(versionId)}/${encodeURIComponent(snapshotId)}`,
+      { method: 'DELETE' },
+    );
+    if (response.ok) {
+      return 'deleted';
+    }
+    return response.status === 404 ? 'gone' : 'failed';
+  } catch {
+    return 'failed';
+  }
+}
+
 const acceptVersionDetail = (answer: unknown) => (isVersionDetail(answer) ? answer : undefined);
 
 /**

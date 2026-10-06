@@ -122,6 +122,10 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     snapshotRequests: [] as Record<string, unknown>[],
     /** When set, answers the next snapshot request (once) instead of the fake API. */
     nextSnapshot: undefined as (() => Response | Promise<Response>) | undefined,
+    /** The IDs of the snapshots deleted, in order (a refused or unknown one included). */
+    deletedSnapshots: [] as string[],
+    /** When set, answers the next snapshot deletion (once) instead of the fake API. */
+    nextDelete: undefined as (() => Response | Promise<Response>) | undefined,
     /** When set, answers the next write (once) instead of the fake API. */
     next: undefined as (() => Response | Promise<Response>) | undefined,
     /** Plays another client creating a Version with `number`. */
@@ -159,7 +163,7 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     return { snapshot, created: true };
   };
 
-  /** The snapshots API: take one, list them newest first, read one, restore one on a revision. */
+  /** The snapshots API: take one, list them newest first, read one, restore one on a revision, delete one. */
   const answerHistory = async (
     versionId: string,
     snapshotId: string | undefined,
@@ -197,6 +201,19 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
       });
     }
     await Promise.resolve();
+    if (method === 'DELETE' && !restore) {
+      server.deletedSnapshots.push(snapshotId);
+      const next = server.nextDelete;
+      if (next) {
+        server.nextDelete = undefined;
+        return next();
+      }
+      if (!own.some((candidate) => candidate.id === snapshotId)) {
+        return jsonResponse(404, { code: 'not_found' });
+      }
+      server.snapshots = server.snapshots.filter((candidate) => candidate.id !== snapshotId);
+      return new Response(null, { status: 204 });
+    }
     const snapshot = own.find((candidate) => candidate.id === snapshotId);
     if (!snapshot) {
       return jsonResponse(404, { code: 'not_found' });

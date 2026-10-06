@@ -1,5 +1,6 @@
 using System.Globalization;
 using n8Tracks.Application.Auth;
+using n8Tracks.Application.Retention;
 using n8Tracks.Domain.Songs;
 
 namespace n8Tracks.Application.Songs;
@@ -89,18 +90,37 @@ public abstract record RestoreOutcome
     public sealed record Frozen(VersionDetail Version) : RestoreOutcome;
 }
 
+/// <summary>How deleting a history entry ended.</summary>
+public abstract record SnapshotDeleteOutcome
+{
+    private SnapshotDeleteOutcome()
+    {
+    }
+
+    /// <summary>The entry is gone from the Version's history, into retention as <paramref name="Group"/>.</summary>
+    public sealed record Deleted(RetentionGroup Group) : SnapshotDeleteOutcome;
+
+    /// <summary>There is no Version with that ID.</summary>
+    public sealed record VersionNotFound : SnapshotDeleteOutcome;
+
+    /// <summary>The Version has no snapshot with that ID (another Version's included).</summary>
+    public sealed record SnapshotNotFound : SnapshotDeleteOutcome;
+}
+
 /// <summary>
 /// A Version's editing history: snapshots of its lyrics and styles (never its name or notes), taken
 /// by the editor when the user pauses or leaves, and by <see cref="VersionService"/> before a
 /// credential's edit replaces the text. A snapshot identical to the Version's newest is not stored,
 /// and each Version keeps its <see cref="MaximumKept"/> newest. Restoring one snapshots the current
 /// text first, so a restore can be undone, and writes the inputs through
-/// <see cref="VersionService"/>'s one inputs write.
+/// <see cref="VersionService"/>'s one inputs write. Deleting one moves it into retention
+/// (<see cref="RetentionService"/>); snapshots removed by the cap are not retained.
 /// </summary>
 public sealed class EditorRevisionService(
     IEditorRevisionStore revisions,
     IVersionStore versions,
     VersionService versionService,
+    RetentionService retention,
     IExclusiveTransaction transaction,
     TimeProvider time)
 {
@@ -231,6 +251,42 @@ public sealed class EditorRevisionService(
                 return new RestoreOutcome.Restored(updated);
             },
             cancellationToken);
+
+    /// <summary>
+    /// Deletes one entry of the Version's history: the snapshot becomes a one-record retention group
+    /// labelled with the Version's shortcode and the entry's time (UTC), so the recovery listing can
+    /// name it. The Version itself is not touched, frozen or not, and the group carries no shortcode,
+    /// because the Version is still live.
+    /// </summary>
+    public Task<SnapshotDeleteOutcome> DeleteAsync(Guid versionId, Guid snapshotId, CancellationToken cancellationToken) =>
+        transaction.RunAsync<SnapshotDeleteOutcome>(
+            async ct =>
+            {
+                if (await versions.FindSummaryAsync(versionId, ct).ConfigureAwait(false) is not { } version)
+                {
+                    return new SnapshotDeleteOutcome.VersionNotFound();
+                }
+
+                if (await revisions.FindAsync(versionId, snapshotId, ct).ConfigureAwait(false) is not { } snapshot)
+                {
+                    return new SnapshotDeleteOutcome.SnapshotNotFound();
+                }
+
+                var group = await retention.RetainWithinAsync(
+                    new RetentionRequest(
+                        RetainedRecordTypes.EditorSnapshot,
+                        HistoryEntryLabel(version.Shortcode, snapshot.CreatedUtc),
+                        Shortcode: null,
+                        [new RetainedRoot(RetainedRecordTypes.EditorSnapshot, snapshot.Id)],
+                        Files: []),
+                    ct).ConfigureAwait(false);
+                return new SnapshotDeleteOutcome.Deleted(group);
+            },
+            cancellationToken);
+
+    /// <summary>How the recovery listing names a deleted history entry: "History entry of n8-4-v1.2 at 2026-10-05T09:30:00Z".</summary>
+    internal static string HistoryEntryLabel(string versionShortcode, DateTimeOffset createdUtc) =>
+        string.Create(CultureInfo.InvariantCulture, $"History entry of {versionShortcode} at {createdUtc.UtcDateTime:yyyy-MM-dd'T'HH:mm:ss'Z'}");
 
     /// <summary>
     /// Inside the caller's transaction: stores <paramref name="inputs"/> as a snapshot of the Version
