@@ -2517,3 +2517,9 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** `useSongGenerations` reads the Song's Generations again 10 s after each answer while any Generation is `submitted` or `streaming`. It uses `setTimeout`, not `setInterval`, so the test's fake timeouts can drive it. A read again that fails keeps the list already shown. A refresh after a Version deletion reads the Generations again too.
   **Why:** This follows the discretion line on Generating and the 10-second refresh. Keeping the old list avoids flashing an error while polling.
   **Issue:** #118
+- **Decision:** Rule 3: `HandshakeEndpoint` reads its claims with `FindFirst(type)!.Value` instead of `ClaimsPrincipal.FindFirstValue`.
+  **Why:** An `AssemblyLoad` probe over a full Api run showed what loaded `Microsoft.Extensions.Identity.Core`: the server's own handshake handler (#117), not a test. `FindFirstValue` is defined in that Identity assembly, so the server depended on ASP.NET Core Identity, which the setup guard forbids. The flake was a real breach. It surfaced only when a handshake test ran before the guard. `SessionAuthenticationHandler` already uses `FindFirst`.
+  **Issue:** #313
+- **Decision:** Rule 3: `SetupEndpointTests.ThereIsNoRegistrationPasswordResetOrOAuth` checks the server's transitive referenced-assembly closure from `typeof(Program).Assembly`, the same walk as `GatewayIsolationGuardTests`, instead of `AppDomain.GetAssemblies()`. The route check and the forbidden-name filter are unchanged, and complement asserts show that the walk reached the server projects and the framework.
+  **Why:** The loaded-assemblies check depended on which tests had already run in the process, and it passed when run alone even with the breach present. The reference walk fails deterministically on the old handshake code, which was verified when the test ran alone, and other tests cannot affect it.
+  **Issue:** #313

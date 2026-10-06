@@ -60,10 +60,12 @@ internal static class HandshakeEndpoint
                 "The handshake is for a credential's token, not a browser session.");
         }
 
+        // FindFirst, not FindFirstValue: that extension lives in Microsoft.Extensions.Identity.Core,
+        // and the server takes no dependency on ASP.NET Core Identity (SetupEndpointTests guards it).
         var credential = new VerifiedCredential(
-            Guid.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!, CultureInfo.InvariantCulture),
-            user.FindFirstValue(ClaimTypes.Name)!,
-            user.FindFirstValue(BearerAuthenticationHandler.KindClaim)!,
+            Guid.Parse(user.FindFirst(ClaimTypes.NameIdentifier)!.Value, CultureInfo.InvariantCulture),
+            user.FindFirst(ClaimTypes.Name)!.Value,
+            user.FindFirst(BearerAuthenticationHandler.KindClaim)!.Value,
             [.. CredentialScopes.All.Where(CredentialPrincipal.Scopes(user).Contains)]);
 
         var handshake = await handshakes.HandshakeAsync(

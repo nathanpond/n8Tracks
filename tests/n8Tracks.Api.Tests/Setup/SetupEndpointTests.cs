@@ -1,4 +1,5 @@
 using System.Net;
+using System.Reflection;
 using System.Runtime.Versioning;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -335,7 +336,10 @@ public sealed class SetupEndpointTests
 
     /// <summary>
     /// The administrator is created by setup and nowhere else: no endpoint registers an account,
-    /// resets a password, or signs in through an external provider, and no such package is loaded.
+    /// resets a password, or signs in through an external provider, and the server references no
+    /// such assembly. The assemblies are those the built server references, directly or
+    /// transitively, not those loaded in the test process: what the process has loaded depends on
+    /// which other tests ran first (#313).
     /// </summary>
     [Fact]
     public void ThereIsNoRegistrationPasswordResetOrOAuth()
@@ -352,11 +356,46 @@ public sealed class SetupEndpointTests
         Assert.Contains("/api/v1/setup", routes);
         Assert.All(routes, route => Assert.DoesNotMatch("(?i)regist|sign-?up|reset|forgot|oauth|openid|external", route));
 
-        var assemblies = AppDomain.CurrentDomain.GetAssemblies().Select(assembly => assembly.GetName().Name ?? string.Empty).ToList();
+        var assemblies = ReferencedAssemblyNames(typeof(Program).Assembly);
+
+        // Complement: the walk really followed the graph through the server's own projects into the framework.
+        Assert.Contains("n8Tracks.Infrastructure", assemblies);
+        Assert.Contains("Microsoft.AspNetCore.Authentication", assemblies);
+        Assert.Contains("System.Private.CoreLib", assemblies);
+
         Assert.DoesNotContain(assemblies, name => name.Contains("OAuth", StringComparison.OrdinalIgnoreCase)
             || name.Contains("OpenIdConnect", StringComparison.OrdinalIgnoreCase)
             || name.StartsWith("Microsoft.AspNetCore.Identity", StringComparison.Ordinal)
             || name.StartsWith("Microsoft.Extensions.Identity", StringComparison.Ordinal));
+    }
+
+    /// <summary>The names of the assemblies <paramref name="root"/> references, directly or transitively.</summary>
+    private static HashSet<string> ReferencedAssemblyNames(Assembly root)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { root.GetName().Name! };
+        var pending = new Queue<Assembly>([root]);
+
+        while (pending.TryDequeue(out var assembly))
+        {
+            foreach (var reference in assembly.GetReferencedAssemblies())
+            {
+                if (reference.Name is not { } name || !seen.Add(name))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    pending.Enqueue(Assembly.Load(reference));
+                }
+                catch (Exception exception) when (exception is FileNotFoundException or FileLoadException or BadImageFormatException)
+                {
+                    // Its name is checked; its own references cannot be followed.
+                }
+            }
+        }
+
+        return seen;
     }
 
     [Fact]
