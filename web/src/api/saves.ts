@@ -39,7 +39,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function isErrorMap(value: unknown): value is Record<string, string[]> {
+/** Whether `value` is a map of field names to error messages, as a 422 `validation_failed` carries. */
+export function isErrorMap(value: unknown): value is Record<string, string[]> {
   return (
     isRecord(value) &&
     Object.values(value).every(

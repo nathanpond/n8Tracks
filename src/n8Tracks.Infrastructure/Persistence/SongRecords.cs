@@ -178,8 +178,11 @@ public sealed class GenerationRecord
     /// <summary><see cref="Present"/>, <see cref="Trashed"/>, or <see cref="Missing"/>: whether Suno still lists the clip.</summary>
     public string RemoteState { get; set; } = Present;
 
-    /// <summary>Starts at 1; raised by rating, state, and comment changes.</summary>
+    /// <summary>Starts at 1; raised by rating and state changes (comments have their own).</summary>
     public int Revision { get; set; } = 1;
+
+    /// <summary>The user's rating, 1 to 5; null when not rated. Written only by a rating change, never by import.</summary>
+    public int? Rating { get; set; }
 
     /// <summary>The clip's Suno ID; null for a Generation with no Suno data. Unique where set.</summary>
     public string? SunoId { get; set; }
@@ -250,6 +253,30 @@ public sealed class ProviderRecordRecord
 
     /// <summary>The Suno export it arrived in, when it came through one (exports arrive with a later story).</summary>
     public Guid? ExportId { get; set; }
+}
+
+/// <summary>
+/// One row of <c>generation_comments</c>: a comment the user keeps on a Generation, plain text of 1 to
+/// 2,000 characters. Goes with its Generation, into retention too; deleting one alone is final. Its
+/// text is the user's own words and is never logged.
+/// </summary>
+public sealed class GenerationCommentRecord
+{
+    public required Guid Id { get; set; }
+
+    public required Guid GenerationId { get; set; }
+
+    /// <summary>Trimmed; newlines kept.</summary>
+    public required string Text { get; set; }
+
+    /// <summary>UTC, ISO 8601, millisecond precision: when it was written.</summary>
+    public required string CreatedUtc { get; set; }
+
+    /// <summary>UTC, ISO 8601, millisecond precision: when its text last changed; null when it never has.</summary>
+    public string? EditedUtc { get; set; }
+
+    /// <summary>Starts at 1; raised by each edit that changes the text.</summary>
+    public int Revision { get; set; } = 1;
 }
 
 /// <summary>

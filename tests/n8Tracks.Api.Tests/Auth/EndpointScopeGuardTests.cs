@@ -103,6 +103,10 @@ public sealed class EndpointScopeGuardTests
         Assert.Equal("scope", markers["GET /api/v1/songs/{reference}/generations"]);
         Assert.Equal("scope", markers["GET /api/v1/generations/{reference}"]);
         Assert.Equal("session-only", markers["GET /api/v1/generations/{reference}/provider-record"]);
+        Assert.Equal("scope", markers["PATCH /api/v1/generations/{reference}"]);
+        Assert.Equal("scope", markers["POST /api/v1/generations/{reference}/comments"]);
+        Assert.Equal("scope", markers["PATCH /api/v1/generations/{reference}/comments/{commentId:guid}"]);
+        Assert.Equal("scope", markers["DELETE /api/v1/generations/{reference}/comments/{commentId:guid}"]);
         Assert.Equal("session-only", markers["GET /api/v1/songs/{reference}/deletion-impact"]);
         Assert.Equal("session-only", markers["DELETE /api/v1/songs/{reference}"]);
         Assert.Equal("session-only", markers["DELETE /api/v1/albums/{id:guid}"]);

@@ -253,6 +253,9 @@ public sealed record VersionText(string Lyrics, string Styles);
 /// <param name="VersionNumber">Its Version's number.</param>
 public sealed record GenerationSummary(Generation Generation, long SongShortcodeNumber, string VersionNumber)
 {
+    /// <summary>The user's comments on it, oldest first (created time, then ID); none when it has none.</summary>
+    public IReadOnlyList<GenerationComment> Comments { get; init; } = [];
+
     public string Shortcode => Shortcodes.ForGeneration(SongShortcodeNumber, VersionNumber, Generation.Ordinal);
 
     public string VersionShortcode => Shortcodes.ForVersion(SongShortcodeNumber, VersionNumber);

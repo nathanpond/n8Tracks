@@ -149,12 +149,16 @@ internal static class RetainedTypes
     /// A Generation, deleted with its Version or Song (its own deletion is a later story's). Shape 2
     /// (#117) added its states, revision, Suno ID, and the clip's normalized fields; a shape-1 record
     /// (the minimal record of #69, which had no Suno data) restores as an active, present Generation
-    /// with none. Its provider record and event link go with it, as their own types.
+    /// with none. Shape 3 (#119) added its rating; an earlier record restores unrated. Its provider
+    /// record, event link, and comments go with it, as their own types.
     /// </summary>
-    public static readonly RetainedType Generation = new(RetainedRecordTypes.Generation, "generations", "Generation", ShapeVersion: 2)
+    public static readonly RetainedType Generation = new(RetainedRecordTypes.Generation, "generations", "Generation", ShapeVersion: 3)
     {
-        Upgraders = new Dictionary<int, Func<JsonObject, JsonObject>> { [1] = GenerationShape1To2 }.ToFrozenDictionary(),
+        Upgraders = new Dictionary<int, Func<JsonObject, JsonObject>> { [1] = GenerationShape1To2, [2] = GenerationShape2To3 }.ToFrozenDictionary(),
     };
+
+    /// <summary>A comment on a Generation, deleted (and restored) with its Generation, which it cascades from.</summary>
+    public static readonly RetainedType GenerationComment = new(RetainedRecordTypes.GenerationComment, "generation_comments", "Generation comment", ShapeVersion: 1);
 
     /// <summary>A Generation's raw clip, deleted (and restored) with its Generation, which it cascades from.</summary>
     public static readonly RetainedType ProviderRecord = new(RetainedRecordTypes.ProviderRecord, "provider_records", "provider record", ShapeVersion: 1);
@@ -314,7 +318,7 @@ internal static class RetainedTypes
     /// <summary>Every built-in type.</summary>
     public static IReadOnlyList<RetainedType> BuiltIn { get; } =
     [
-        EditorSnapshot, ArtworkAttachment, Version, Generation, ProviderRecord, GenerationEventLink,
+        EditorSnapshot, ArtworkAttachment, Version, Generation, ProviderRecord, GenerationEventLink, GenerationComment,
         Song, UsedVersionNumber, SongLink, SongGenre, SongTag, SongCredit, AlbumTrack, PlaylistEntry, SongRelationship,
         Album, AlbumLink, Playlist,
         Artist, ArtistAlias, ArtistLink, AlbumArtist,
@@ -338,6 +342,15 @@ internal static class RetainedTypes
             document[column] = null;
         }
 
+        return document;
+    }
+
+    /// <summary>A Generation retained before #119 (shape 2) as shape 3: unrated.</summary>
+    internal static JsonObject GenerationShape2To3(JsonObject document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+
+        document["rating"] = null;
         return document;
     }
 }

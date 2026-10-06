@@ -22,6 +22,9 @@ public static class RetainedRecordTypes
     /// <summary>A Generation's raw clip (<c>provider_records</c>), deleted with its Generation.</summary>
     public const string ProviderRecord = "provider-record";
 
+    /// <summary>A comment on a Generation (<c>generation_comments</c>), deleted with its Generation (one deleted alone is not retained).</summary>
+    public const string GenerationComment = "generation-comment";
+
     /// <summary>A Generation's link to its Generation Event (<c>generation_event_links</c>), deleted with its Generation; the event stays.</summary>
     public const string GenerationEventLink = "generation-event-link";
 

@@ -54,4 +54,30 @@ public interface IGenerationStore
 
     /// <summary>Links each of <paramref name="generationIds"/> (none linked yet) to the event with <paramref name="eventId"/>. Only inside a transaction.</summary>
     Task LinkAsync(Guid eventId, IReadOnlyCollection<Guid> generationIds, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Sets the rating of the Generation with <paramref name="id"/> to <paramref name="rating"/> and
+    /// raises its revision by one if it is still at <paramref name="revision"/>, in one statement,
+    /// touching no other column; false when it is not (or is gone). Only inside a transaction.
+    /// </summary>
+    Task<bool> TryRateAsync(Guid id, int? rating, int revision, CancellationToken cancellationToken);
+
+    /// <summary>Sets the updated time of the Song with <paramref name="songId"/>, leaving its revision alone.</summary>
+    Task TouchSongAsync(Guid songId, DateTimeOffset updatedUtc, CancellationToken cancellationToken);
+
+    /// <summary>The comment with <paramref name="commentId"/> on the Generation with <paramref name="generationId"/>; null when it has none such.</summary>
+    Task<GenerationComment?> FindCommentAsync(Guid generationId, Guid commentId, CancellationToken cancellationToken);
+
+    /// <summary>Stores a new comment. Only inside a transaction.</summary>
+    Task AddCommentAsync(GenerationComment comment, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Replaces the text of the comment with <paramref name="commentId"/>, sets its edited time, and
+    /// raises its revision by one if it is still at <paramref name="revision"/>; false when it is not
+    /// (or is gone). Only inside a transaction.
+    /// </summary>
+    Task<bool> TryEditCommentAsync(Guid commentId, string text, DateTimeOffset editedUtc, int revision, CancellationToken cancellationToken);
+
+    /// <summary>Removes the comment with <paramref name="commentId"/> if it is still at <paramref name="revision"/>; false when it is not (or is gone).</summary>
+    Task<bool> TryDeleteCommentAsync(Guid commentId, int revision, CancellationToken cancellationToken);
 }

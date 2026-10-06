@@ -1,8 +1,23 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from './client';
+import {
+  failureOf,
+  ifMatch,
+  isErrorMap,
+  patchWithRevision,
+  type FailureReason,
+  type SaveResult,
+} from './saves';
 import { body, isRecord, type LoadState } from './songs';
 
 const SONGS_PATH = 'api/v1/songs';
+const GENERATIONS_PATH = 'api/v1/generations';
+
+/** The longest comment kept, counted as the API counts it (UTF-16 code units, `String.length`). */
+export const COMMENT_MAXIMUM_LENGTH = 2000;
+
+/** The highest rating: five stars. */
+export const RATING_MAXIMUM = 5;
 
 /** How often a Song's Generations are read again while one of them is still being made in Suno. */
 export const GENERATING_REFRESH_MS = 10_000;
@@ -19,10 +34,21 @@ export type GenerationState = 'active' | 'archived';
 export type RemoteState = 'present' | 'trashed' | 'missing';
 
 /**
+ * A comment the user keeps on a Generation: plain text, when it was written, and when its text last
+ * changed (`editedAt`, null when it never has). It has its own revision. Times are UTC ISO 8601.
+ */
+export interface GenerationComment {
+  id: string;
+  text: string;
+  createdAt: string;
+  editedAt: string | null;
+  revision: number;
+}
+
+/**
  * A Generation as the Song's Generation list answers it. Every field Suno reported is null for a
- * Generation with no Suno data. `rating` (1 to 5, or null) and `commentCount` are the user's own
- * judgement: until the rating story adds them to the answer they read as null and 0. Times are UTC
- * ISO 8601.
+ * Generation with no Suno data. `rating` (1 to 5, or null) and `comments` (oldest first) are the
+ * user's own judgement. Times are UTC ISO 8601.
  */
 export interface Generation {
   id: string;
@@ -44,7 +70,7 @@ export interface Generation {
   createdAt: string;
   revision: number;
   rating: number | null;
-  commentCount: number;
+  comments: GenerationComment[];
 }
 
 function isOwner(value: unknown): value is { id: string; shortcode: string } {
@@ -59,15 +85,29 @@ function numberOrNull(value: unknown): value is number | null {
   return value === null || typeof value === 'number';
 }
 
-/** The comments the answer embeds, counted; 0 while the answer has none (before the comment story). */
-function commentCountOf(value: Record<string, unknown>): number | undefined {
-  if (typeof value.commentCount === 'number') {
-    return value.commentCount;
+/** A comment from the API's answer, or undefined when the answer is not one. */
+export function commentOf(value: unknown): GenerationComment | undefined {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== 'string' ||
+    typeof value.text !== 'string' ||
+    typeof value.createdAt !== 'string' ||
+    !textOrNull(value.editedAt) ||
+    typeof value.revision !== 'number'
+  ) {
+    return undefined;
   }
-  if (value.comments === undefined) {
-    return 0;
+  const { id, text, createdAt, editedAt, revision } = value;
+  return { id, text, createdAt, editedAt, revision };
+}
+
+/** The comments the answer embeds, or undefined when one of them is not a comment. */
+function commentsOf(value: unknown): GenerationComment[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
   }
-  return Array.isArray(value.comments) ? value.comments.length : undefined;
+  const comments = value.map(commentOf);
+  return comments.every((comment) => comment !== undefined) ? comments : undefined;
 }
 
 /** A Generation from the API's answer, or undefined when the answer is not one. */
@@ -97,9 +137,9 @@ export function generationOf(value: unknown): Generation | undefined {
   ) {
     return undefined;
   }
-  const rating = value.rating ?? null;
-  const commentCount = commentCountOf(value);
-  if (!numberOrNull(rating) || commentCount === undefined) {
+  const rating = value.rating;
+  const comments = commentsOf(value.comments);
+  if (!numberOrNull(rating) || comments === undefined) {
     return undefined;
   }
   return {
@@ -122,7 +162,7 @@ export function generationOf(value: unknown): Generation | undefined {
     createdAt: value.createdAt,
     revision: value.revision,
     rating,
-    commentCount,
+    comments,
   };
 }
 
@@ -187,6 +227,108 @@ export function isNamedBy(generation: Generation, reference: string): boolean {
   return generation.shortcode.toLowerCase() === key || generation.id.toLowerCase() === key;
 }
 
+function generationPath(reference: string): string {
+  return `${GENERATIONS_PATH}/${encodeURIComponent(reference)}`;
+}
+
+function commentPath(generation: string, comment: string): string {
+  return `${generationPath(generation)}/comments/${encodeURIComponent(comment)}`;
+}
+
+/**
+ * Sets (1 to 5) or clears (null) a Generation's rating, based on the Generation's `revision`. A
+ * stale revision is a conflict with the Generation as it is now, its comments included.
+ */
+export function rateGeneration(
+  reference: string,
+  rating: number | null,
+  revision: number,
+): Promise<SaveResult<Generation>> {
+  return patchWithRevision(generationPath(reference), revision, { rating }, generationOf);
+}
+
+/** Adds a comment to a Generation: the new comment, or why it was not added. */
+export async function addComment(
+  generation: string,
+  text: string,
+): Promise<
+  | { kind: 'saved'; record: GenerationComment }
+  | { kind: 'invalid'; errors: Record<string, string[]> }
+  | { kind: 'failed'; reason: FailureReason }
+> {
+  try {
+    const response = await apiFetch(`${generationPath(generation)}/comments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    const answer = await body(response);
+    if (response.ok) {
+      const record = commentOf(answer);
+      return record === undefined
+        ? { kind: 'failed', reason: 'server' }
+        : { kind: 'saved', record };
+    }
+    if (response.status === 422 && isRecord(answer) && isErrorMap(answer.errors)) {
+      return { kind: 'invalid', errors: answer.errors };
+    }
+    return { kind: 'failed', reason: failureOf(response.status, answer) };
+  } catch {
+    return { kind: 'failed', reason: 'unreachable' };
+  }
+}
+
+/** Replaces a comment's text, based on the comment's own revision. */
+export function editComment(
+  generation: string,
+  comment: GenerationComment,
+  text: string,
+): Promise<SaveResult<GenerationComment>> {
+  return patchWithRevision(
+    commentPath(generation, comment.id),
+    comment.revision,
+    { text },
+    commentOf,
+  );
+}
+
+/**
+ * Deletes a comment, based on its own revision: `deleted` (also when it was already deleted
+ * elsewhere, which is `gone`), a conflict with the comment as it is now, or why it failed.
+ */
+export async function deleteComment(
+  generation: string,
+  comment: GenerationComment,
+): Promise<
+  | { kind: 'deleted' }
+  | { kind: 'gone' }
+  | { kind: 'conflict'; current: GenerationComment }
+  | { kind: 'failed'; reason: FailureReason }
+> {
+  try {
+    const response = await apiFetch(commentPath(generation, comment.id), {
+      method: 'DELETE',
+      headers: { 'If-Match': ifMatch(comment.revision) },
+    });
+    if (response.status === 204) {
+      return { kind: 'deleted' };
+    }
+    const answer = await body(response);
+    if (response.status === 404 && isRecord(answer) && answer.code === 'not_found') {
+      return { kind: 'gone' };
+    }
+    if (response.status === 409 && isRecord(answer) && answer.code === 'revision_conflict') {
+      const current = commentOf(answer.current);
+      if (current !== undefined) {
+        return { kind: 'conflict', current };
+      }
+    }
+    return { kind: 'failed', reason: failureOf(response.status, answer) };
+  } catch {
+    return { kind: 'failed', reason: 'unreachable' };
+  }
+}
+
 function songGenerationsPath(reference: string): string {
   return `${SONGS_PATH}/${encodeURIComponent(reference)}/generations`;
 }
@@ -195,11 +337,13 @@ function songGenerationsPath(reference: string): string {
  * A Song's Generations (by its ID or shortcode), every state included, by Version number in tree
  * order and then ordinal, as one request. While any of them is still being made in Suno the list is
  * read again every {@link GENERATING_REFRESH_MS}; a read again that fails keeps the list already
- * shown. `reload` reads it again now.
+ * shown. `reload` reads it again now; `update` changes one Generation in the list in place (after a
+ * rating or comment write), so every view of it agrees.
  */
 export function useSongGenerations(reference: string): {
   state: LoadState<Generation[]>;
   reload: () => void;
+  update: (id: string, change: (generation: Generation) => Generation) => void;
 } {
   const [loaded, setLoaded] = useState<{ reference: string; state: LoadState<Generation[]> }>({
     reference,
@@ -269,5 +413,22 @@ export function useSongGenerations(reference: string): {
     setAttempt((previous) => previous + 1);
   }, [reference]);
 
-  return { state, reload };
+  // The one cached copy the table's rows and the panel both show: a write here changes it in place.
+  const update = useCallback((id: string, change: (generation: Generation) => Generation) => {
+    setLoaded((previous) =>
+      previous.state.phase === 'ready'
+        ? {
+            ...previous,
+            state: {
+              phase: 'ready',
+              data: previous.state.data.map((generation) =>
+                generation.id === id ? change(generation) : generation,
+              ),
+            },
+          }
+        : previous,
+    );
+  }, []);
+
+  return { state, reload, update };
 }

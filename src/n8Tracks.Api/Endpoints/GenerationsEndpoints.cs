@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Http.HttpResults;
 using n8Tracks.Api.Auth;
 using n8Tracks.Api.Problems;
@@ -17,6 +18,9 @@ namespace n8Tracks.Api.Endpoints;
 /// provider-record endpoint's, and none says anything about Generation Events. Every answer is
 /// <c>no-store</c>. Generations are created by the import and observed-Create stories through
 /// <see cref="GenerationService.AttachAsync"/>; their refusals map to problems with <see cref="AttachRefusal"/>.
+/// The user's judgement (<c>generations.evaluate</c>, #119): the rating, set under the Generation's
+/// revision in <c>If-Match</c>, and comments, each written under its own revision
+/// (<see cref="GenerationEvaluationService"/>). Every Generation answer carries both.
 /// </summary>
 internal static class GenerationsEndpoints
 {
@@ -25,6 +29,8 @@ internal static class GenerationsEndpoints
     public const string ProviderRecordPath = GenerationPath + "/provider-record";
     public const string VersionGenerationsPath = VersionsEndpoints.VersionPath + "/generations";
     public const string SongGenerationsPath = SongsEndpoints.SongPath + "/generations";
+    public const string CommentsPath = GenerationPath + "/comments";
+    public const string CommentPath = CommentsPath + "/{commentId:guid}";
 
     /// <summary>The Generation has no provider record: it was attached without Suno data.</summary>
     public const string NoProviderRecordCode = "no_provider_record";
@@ -68,6 +74,54 @@ internal static class GenerationsEndpoints
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
+
+        endpoints.MapPatch(GenerationPath, RateAsync)
+            .WithName("RateGeneration")
+            .WithSummary("Sets (1 to 5), changes, or clears (null) a Generation's rating, given its revision in If-Match; a missing rating leaves it as it is. Raises the Generation's revision when it changes.")
+            .RequireScope(CredentialScopes.GenerationsEvaluate)
+            .Produces<GenerationResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        endpoints.MapPost(CommentsPath, AddCommentAsync)
+            .WithName("AddGenerationComment")
+            .WithSummary("Adds a comment (plain text, 1 to 2,000 characters once trimmed) to a Generation. Leaves the Generation's revision alone.")
+            .RequireScope(CredentialScopes.GenerationsEvaluate)
+            .Produces<GenerationCommentResponse>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        endpoints.MapPatch(CommentPath, EditCommentAsync)
+            .WithName("EditGenerationComment")
+            .WithSummary("Replaces a comment's text, given the comment's revision in If-Match. The same text, once trimmed, changes nothing and does not mark it edited.")
+            .RequireScope(CredentialScopes.GenerationsEvaluate)
+            .Produces<GenerationCommentResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        endpoints.MapDelete(CommentPath, DeleteCommentAsync)
+            .WithName("DeleteGenerationComment")
+            .WithSummary("Deletes a comment for good (it is not retained), given the comment's revision in If-Match.")
+            .RequireScope(CredentialScopes.GenerationsEvaluate)
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
         return endpoints;
     }
@@ -164,9 +218,215 @@ internal static class GenerationsEndpoints
         };
     }
 
+    /// <summary>
+    /// 200 with the Generation as it is now, its revision as the ETag; 404 when there is no such
+    /// Generation; 409 <c>revision_conflict</c> with <c>current</c> (the Generation with its comments);
+    /// 422 when the rating is not a whole number from 1 to 5 or null.
+    /// </summary>
+    private static async Task<Results<Ok<GenerationResponse>, ProblemHttpResult>> RateAsync(
+        CatalogReference reference,
+        RateGenerationRequest? request,
+        GenerationEvaluationService evaluations,
+        HttpContext context,
+        ILoggerFactory loggers,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        var (revision, problem) = Revisions.Read(context);
+        if (problem is not null)
+        {
+            return problem;
+        }
+
+        GenerationRatingEdit edit;
+        switch (request?.Rating)
+        {
+            case null or { ValueKind: JsonValueKind.Undefined }:
+                edit = GenerationRatingEdit.Unsent;
+                break;
+            case { ValueKind: JsonValueKind.Null }:
+                edit = GenerationRatingEdit.Of(null);
+                break;
+            case { ValueKind: JsonValueKind.Number } number when number.TryGetInt32(out var stars):
+                edit = GenerationRatingEdit.Of(stars);
+                break;
+            default:
+                return ApiProblem.ValidationFailed(
+                    context,
+                    new Dictionary<string, string[]>(StringComparer.Ordinal) { [GenerationEvaluationService.RatingField] = ["Send a whole number of stars from 1 to 5, or null for none."] });
+        }
+
+        switch (await evaluations.RateAsync(reference, edit, revision!.Value, cancellationToken))
+        {
+            case GenerationRateOutcome.Rated rated:
+                if (rated.Generation.Generation.Revision != revision)
+                {
+                    Log(loggers).LogInformation("Generation rated: {GenerationId} ({Rating})", rated.Generation.Generation.Id, rated.Generation.Generation.Rating);
+                }
+
+                Revisions.SetETag(context, rated.Generation.Generation.Revision);
+                return TypedResults.Ok(GenerationResponse.From(rated.Generation));
+            case GenerationRateOutcome.Conflict conflict:
+                return Revisions.Conflict(context, GenerationResponse.From(conflict.Current));
+            case GenerationRateOutcome.Invalid invalid:
+                return ApiProblem.ValidationFailed(context, invalid.Errors);
+            case GenerationRateOutcome.NotFound:
+                return NoSuchGeneration(context);
+            default:
+                throw new InvalidOperationException("Unknown rating outcome.");
+        }
+    }
+
+    /// <summary>201 with the new comment, its revision as the ETag; 404 when there is no such Generation; 422 on empty or too long text.</summary>
+    private static async Task<Results<Created<GenerationCommentResponse>, ProblemHttpResult>> AddCommentAsync(
+        CatalogReference reference,
+        GenerationCommentRequest? request,
+        GenerationEvaluationService evaluations,
+        HttpContext context,
+        ILoggerFactory loggers,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        if (CommentTypeProblem(context, request) is { } problem)
+        {
+            return problem;
+        }
+
+        var outcome = await evaluations.AddCommentAsync(reference, request?.Text is { ValueKind: JsonValueKind.String } text ? text.GetString() : null, cancellationToken);
+        if (outcome is GenerationCommentOutcome.Saved saved)
+        {
+            Log(loggers).LogInformation("Generation comment added: {CommentId} on {GenerationId}", saved.Comment.Id, saved.Comment.GenerationId);
+            Revisions.SetETag(context, saved.Comment.Revision);
+            return TypedResults.Created(
+                $"{context.Request.PathBase}{GenerationsPath}/{saved.Comment.GenerationId}/comments/{saved.Comment.Id}",
+                GenerationCommentResponse.From(saved.Comment));
+        }
+
+        return CommentRefusal(context, outcome);
+    }
+
+    /// <summary>
+    /// 200 with the comment as it is now, its revision as the ETag; 404 when there is no such
+    /// Generation or comment; 409 <c>revision_conflict</c> with <c>current</c> (the comment); 422 on
+    /// empty or too long text.
+    /// </summary>
+    private static async Task<Results<Ok<GenerationCommentResponse>, ProblemHttpResult>> EditCommentAsync(
+        CatalogReference reference,
+        Guid commentId,
+        GenerationCommentRequest? request,
+        GenerationEvaluationService evaluations,
+        HttpContext context,
+        ILoggerFactory loggers,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        var (revision, problem) = Revisions.Read(context);
+        if (problem is not null)
+        {
+            return problem;
+        }
+
+        if (CommentTypeProblem(context, request) is { } typeProblem)
+        {
+            return typeProblem;
+        }
+
+        var outcome = await evaluations.EditCommentAsync(
+            reference,
+            commentId,
+            request?.Text is { ValueKind: JsonValueKind.String } text ? text.GetString() : null,
+            revision!.Value,
+            cancellationToken);
+        if (outcome is GenerationCommentOutcome.Saved saved)
+        {
+            if (saved.Comment.Revision != revision)
+            {
+                Log(loggers).LogInformation("Generation comment edited: {CommentId} on {GenerationId}", saved.Comment.Id, saved.Comment.GenerationId);
+            }
+
+            Revisions.SetETag(context, saved.Comment.Revision);
+            return TypedResults.Ok(GenerationCommentResponse.From(saved.Comment));
+        }
+
+        return CommentRefusal(context, outcome);
+    }
+
+    /// <summary>204 when the comment is deleted; 404 when there is no such Generation or comment; 409 <c>revision_conflict</c> with <c>current</c>.</summary>
+    private static async Task<Results<NoContent, ProblemHttpResult>> DeleteCommentAsync(
+        CatalogReference reference,
+        Guid commentId,
+        GenerationEvaluationService evaluations,
+        HttpContext context,
+        ILoggerFactory loggers,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        var (revision, problem) = Revisions.Read(context);
+        if (problem is not null)
+        {
+            return problem;
+        }
+
+        var outcome = await evaluations.DeleteCommentAsync(reference, commentId, revision!.Value, cancellationToken);
+        if (outcome is GenerationCommentOutcome.Deleted)
+        {
+            Log(loggers).LogInformation("Generation comment deleted: {CommentId}", commentId);
+            return TypedResults.NoContent();
+        }
+
+        return CommentRefusal(context, outcome);
+    }
+
+    /// <summary>
+    /// The problem for a comment's text sent as anything but text; null when it is text, missing, or
+    /// null (the last two refused by the service as empty).
+    /// </summary>
+    private static ProblemHttpResult? CommentTypeProblem(HttpContext context, GenerationCommentRequest? request) =>
+        request?.Text is null or { ValueKind: JsonValueKind.Undefined or JsonValueKind.Null or JsonValueKind.String }
+            ? null
+            : ApiProblem.ValidationFailed(
+                context,
+                new Dictionary<string, string[]>(StringComparer.Ordinal) { [GenerationEvaluationService.TextField] = ["Send the comment as text."] });
+
+    /// <summary>The problem for every comment outcome but a save or a deletion.</summary>
+    private static ProblemHttpResult CommentRefusal(HttpContext context, GenerationCommentOutcome outcome) => outcome switch
+    {
+        GenerationCommentOutcome.GenerationNotFound => NoSuchGeneration(context),
+        GenerationCommentOutcome.CommentNotFound => ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "There is no such comment on this Generation."),
+        GenerationCommentOutcome.Invalid invalid => ApiProblem.ValidationFailed(context, invalid.Errors),
+        GenerationCommentOutcome.Conflict conflict => Revisions.Conflict(context, GenerationCommentResponse.From(conflict.Current)),
+        _ => throw new InvalidOperationException("Unknown comment outcome."),
+    };
+
+    private static ILogger Log(ILoggerFactory loggers) => loggers.CreateLogger(typeof(GenerationsEndpoints));
+
     /// <summary>404 <c>not_found</c>: the reference names no live Generation (an unknown one, one of another kind, or a deleted one).</summary>
     private static ProblemHttpResult NoSuchGeneration(HttpContext context) =>
         ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "There is no such Generation.");
+}
+
+/// <summary>A rating edit: <c>rating</c>, 1 to 5 or null, read as raw JSON so a missing field and a null differ.</summary>
+internal sealed record RateGenerationRequest(JsonElement Rating);
+
+/// <summary>A comment's text, read as raw JSON so a wrong type is a field error.</summary>
+internal sealed record GenerationCommentRequest(JsonElement Text);
+
+/// <summary>
+/// A comment on a Generation: plain text, when it was written, and when its text last changed
+/// (<c>editedAt</c>, null when it never has). Times are UTC.
+/// </summary>
+internal sealed record GenerationCommentResponse(Guid Id, string Text, DateTime CreatedAt, DateTime? EditedAt, int Revision)
+{
+    public static GenerationCommentResponse From(GenerationComment comment)
+    {
+        ArgumentNullException.ThrowIfNull(comment);
+
+        return new(comment.Id, comment.Text, comment.CreatedUtc.UtcDateTime, comment.EditedUtc?.UtcDateTime, comment.Revision);
+    }
 }
 
 /// <summary>A Song or a Version a Generation belongs to: <c>{ id, shortcode }</c>.</summary>
@@ -178,7 +438,8 @@ internal sealed record GenerationOwnerResponse(Guid Id, string Shortcode);
 /// reported (<c>submitted</c>, <c>streaming</c>, <c>complete</c>, <c>error</c>, or another value Suno
 /// sent); <c>state</c> is <c>active</c> or <c>archived</c>; <c>remoteState</c> is <c>present</c>,
 /// <c>trashed</c>, or <c>missing</c>. <c>styleTags</c> is Suno's own style description of the clip
-/// (<c>metadata.tags</c>), not the Version's styles. Times are UTC. Never the raw clip.
+/// (<c>metadata.tags</c>), not the Version's styles. <c>rating</c> (1 to 5, or null) and
+/// <c>comments</c> (oldest first) are the user's own. Times are UTC. Never the raw clip.
 /// </summary>
 internal sealed record GenerationResponse(
     Guid Id,
@@ -207,6 +468,8 @@ internal sealed record GenerationResponse(
     string? WorkspaceId,
     int? BatchIndex,
     bool IsSelected,
+    int? Rating,
+    IReadOnlyList<GenerationCommentResponse> Comments,
     DateTime CreatedAt,
     int Revision)
 {
@@ -245,6 +508,8 @@ internal sealed record GenerationResponse(
 
             // The Selected Generation arrives with the selection story; until then none is selected.
             false,
+            generation.Rating,
+            [.. summary.Comments.Select(GenerationCommentResponse.From)],
             generation.CreatedUtc.UtcDateTime,
             generation.Revision);
     }

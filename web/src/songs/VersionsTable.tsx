@@ -28,6 +28,7 @@ import { kindLabel, type Version } from '../api/versions';
 import { ShortcodeBadge } from '../common/ShortcodeBadge';
 import { Notice } from '../components/Notice';
 import { GenerationStateBadges, OpenInSuno, SunoCreated } from '../generations/GenerationParts';
+import { StarRating } from '../generations/StarRating';
 import { compareNumbers } from './versionNesting';
 import { generationsByVersion, isGenerationListed, isListed } from './versionsTableRules';
 
@@ -42,6 +43,7 @@ function GenerationRows({
   openId,
   linkTo,
   timeZone,
+  onRate,
 }: {
   version: Version;
   generations: readonly Generation[];
@@ -49,6 +51,7 @@ function GenerationRows({
   openId: string | undefined;
   linkTo: (generation: Generation) => string;
   timeZone: string;
+  onRate: (generation: Generation, rating: number | null) => void;
 }) {
   if (generations.length === 0) {
     return (
@@ -115,10 +118,19 @@ function GenerationRows({
                   {generationDuration(generation)}
                 </Table.Td>
                 <Table.Td>{reportedModel(generation) ?? 'Unknown'}</Table.Td>
-                <Table.Td style={{ whiteSpace: 'nowrap' }}>
-                  {ratingText(generation.rating)}
+                <Table.Td style={{ whiteSpace: 'nowrap' }} data-testid="generation-rating">
+                  <StarRating
+                    size="sm"
+                    value={generation.rating}
+                    label={`Rating of ${generation.shortcode}`}
+                    onChange={(rating) => {
+                      onRate(generation, rating);
+                    }}
+                  />
                 </Table.Td>
-                <Table.Td ta="end">{generation.commentCount}</Table.Td>
+                <Table.Td ta="end" data-testid="generation-comment-count">
+                  {generation.comments.length}
+                </Table.Td>
                 <Table.Td>
                   <GenerationStateBadges generation={generation} />
                 </Table.Td>
@@ -146,7 +158,8 @@ function GenerationRows({
  * row's number opens that Version in the editor without making it current; its chevron button
  * shows its Generations beneath it in ordinal order, where an archived Generation is listed only
  * while `showArchivedGenerations` is on (the Selected one always is). Each Generation row has its
- * shortcode with a one-click copy, and its title opens the Generation panel. `revealVersionId`
+ * shortcode with a one-click copy, its star rating (set here too, `onRate`; the Version's highest
+ * rating follows at once), and its comment count; its title opens the Generation panel. `revealVersionId`
  * expands that Version's row (a link to one of its Generations); expansion is otherwise this page's.
  */
 export function VersionsTable({
@@ -162,6 +175,7 @@ export function VersionsTable({
   onShowArchivedGenerations,
   versionLink,
   generationLink,
+  onRate,
 }: {
   versions: readonly Version[];
   generations: LoadState<Generation[]>;
@@ -175,6 +189,7 @@ export function VersionsTable({
   onShowArchivedGenerations: (show: boolean) => void;
   versionLink: (version: Version) => string;
   generationLink: (generation: Generation) => string;
+  onRate: (generation: Generation, rating: number | null) => void;
 }) {
   const timeZone = useConfiguredTimeZone();
   const [open, setOpen] = useState(true);
@@ -358,6 +373,7 @@ export function VersionsTable({
                                 openId={openGenerationId}
                                 linkTo={generationLink}
                                 timeZone={timeZone}
+                                onRate={onRate}
                               />
                             </Table.Td>
                           </Table.Tr>

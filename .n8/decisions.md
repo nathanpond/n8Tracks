@@ -2523,3 +2523,41 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** Rule 3: `SetupEndpointTests.ThereIsNoRegistrationPasswordResetOrOAuth` checks the server's transitive referenced-assembly closure from `typeof(Program).Assembly`, the same walk as `GatewayIsolationGuardTests`, instead of `AppDomain.GetAssemblies()`. The route check and the forbidden-name filter are unchanged, and complement asserts show that the walk reached the server projects and the framework.
   **Why:** The loaded-assemblies check depended on which tests had already run in the process, and it passed when run alone even with the breach present. The reference walk fails deterministically on the old handshake code, which was verified when the test ran alone, and other tests cannot affect it.
   **Issue:** #313
+- **Decision:** The rating is a nullable `generations.rating` column (CHECK 1–5). It is added in place by hand-written `ALTER TABLE` in migration `AddGenerationEvaluations`, as #117 did for its checked columns, so the identity trigger survives. Comments are the new table `generation_comments`, as the discretion line names. The story implies both schema changes, so neither is treated as Rule 4. The retained `generation` type moves to shape 3, with the upgrader `GenerationShape2To3` (unrated). The new retained type `generation-comment` (cascade from its Generation) means a Version or Song deletion keeps comments and restores them. Deleting one comment alone is final.
+  **Why:** The discretion lines fix the table and say a comment deleted alone is not retained. The retention store refuses to cascade into a table that is not registered, so registering the type is required, and it also keeps comments with their Generation.
+  **Issue:** #119
+- **Decision:** `GenerationEvaluationService` lives in `Application.Generations`, a namespace already in the invariant-1 guard's list. It is the only writer of the rating and the comments. Each of its four public methods, and each of the four new unsafe endpoints, has an exerciser in `VersionImmutabilityGuardTests`, which sends the Version's inputs alongside, unread. It looks Generations up through `GenerationService.FindAsync`. `IGenerationStore.TryRateAsync` writes only `rating` and `revision`.
+  **Why:** D1: new write paths are enumerated by the guard, not left to escape it. Keeping one store method that writes the rating means no clip-update path can touch it.
+  **Issue:** #119
+- **Decision:** Every Generation answer (list, read, and the 409 `current`) carries `rating` and `comments`, oldest first, each `{id, text, createdAt, editedAt, revision}`. There is no `commentCount`; the web counts the array. `GenerationSummary.Comments` is filled by `GenerationRows.SummariesAsync` in one extra query per read.
+  **Why:** The discretion line embeds comments in the Generation response, and the stale-rating `current` must include them. One shape for the list and the read keeps the row and the panel on one cached value.
+  **Issue:** #119
+- **Decision:** Comment writes (add, edit, delete) also set the Song's updated time, as a rating change does. None of them raises the Song's revision or the Generation's revision. A missing `rating`, or the value it already has, stores nothing, but a stale revision is still a 409. A comment edit whose trimmed text is unchanged stores nothing and is not marked edited. A comment's length is counted in UTF-16 units, the same as the web counter, and the database CHECK (`length(text) BETWEEN 1 AND 2000`) counts characters, which is never more.
+  **Why:** The discretion lines name only the rating for the updated time. A comment is the user's own edit to the Song's data, so its last-updated time should move too. The no-op rules follow the Tag edit pattern and "Edited shows only when the text actually changed".
+  **Issue:** #119
+- **Decision:** Comment text is added to the redaction names as `comment`, `comments`, and `commenttext`. The bare word `text` is not added, because it is too common to mask everywhere. The endpoints log only comment and Generation IDs. A new `LogRedactionGuardTests` case checks that sentinel comment text never reaches a Debug log.
+  **Why:** This follows the discretion line ("added to the log redaction name list") and the conventions.
+  **Issue:** #119
+- **Decision:** Web rating control:
+  - `generations/StarRating.tsx` is a custom radio group named "Rating of <shortcode>". Each star is a `role="radio"` button ("4 stars"), with one tab stop.
+  - The arrow keys change the rating at once, and focus follows. Down from one star clears it, Home and End go to 1 and 5, and Delete clears it.
+  - Clicking the checked star, or pressing Space or Enter on it, clears the rating.
+  - The control is used in the table row and in the panel. Both read the Song's one Generation list (`useSongGenerations().update`), so the highest rating is recomputed from that list.
+  - `useRateGeneration` sends one write at a time per Generation, and the latest value wins. A 409 is retried once with the current revision. A second 409 shows n8Tracks's value with a message, and a failure reloads the list.
+
+  **Why:** These follow the discretion lines. Mantine's `Rating` cannot clear by clicking the current star. Custom buttons make the keyboard behaviour exact and testable in jsdom.
+  **Issue:** #119
+- **Decision:** Web comments:
+  - `generations/GenerationComments.tsx` is in the panel. It has an ordered list, and each comment shows "Written <time>" and an "Edited <time>" badge when edited.
+  - Editing happens in place, and the edit box takes focus.
+  - Deleting needs an inline confirmation: "Delete comment N" or "Keep it", and "Keep it" takes focus.
+  - The text box has a counter of trimmed characters. Text that is too long gets an error message and a disabled button, and is never truncated.
+  - A 404 on a comment write removes the comment silently. A 409 shows the current comment and a message.
+  - The textarea uses fixed rows instead of `autosize`, because Mantine's autosize needs `document.fonts`, which jsdom lacks.
+  - The table's Comments column now counts `comments.length` (testid `generation-comment-count`).
+
+  **Why:** These follow the discretion lines on the counter and on comments deleted elsewhere, and AC 2's confirmation. An inline confirmation avoids stacking a modal on the drawer.
+  **Issue:** #119
+- **Decision:** In the web tests, `VersionsTable.test.tsx` waits for the Generation panel's opening transition, with `openedPanel()`, before it checks visibility.
+  **Why:** With more content in the panel, `findByRole('dialog')` could return while the drawer was still at opacity 0. The test was timing-dependent, and no behaviour changed.
+  **Issue:** #119

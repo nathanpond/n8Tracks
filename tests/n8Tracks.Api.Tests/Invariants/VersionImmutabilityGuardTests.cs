@@ -41,7 +41,8 @@ namespace n8Tracks.Api.Tests.Invariants;
 /// service's methods are exercised like any catalog service's, and a retained type over the
 /// <c>versions</c> table must come with an exerciser that retains and restores a frozen Version through
 /// every shape upgrader. Generations (#117) are a catalog namespace of their own: attaching one from a
-/// raw clip, the one way a Generation is made, is exercised here. The rest of import (M4) and the MCP
+/// raw clip, the one way a Generation is made, is exercised here, and so are rating it and commenting
+/// on it (#119). The rest of import (M4) and the MCP
 /// gateway (M7) are not covered yet: those stories extend this test.
 /// </summary>
 public sealed class VersionImmutabilityGuardTests
@@ -517,6 +518,38 @@ public sealed class VersionImmutabilityGuardTests
             using var response = await SendAsync(target.Client, HttpMethod.Delete, new Uri($"/api/v1/suno/models/{id}", UriKind.Relative), SongApi.Quoted(revision), json: null);
             await SetupApi.ProblemAsync(response, HttpStatusCode.Conflict, "model_in_use");
         }),
+
+        // Rating and comments (#119) are the user's judgement of a Generation, never a creation input:
+        // the inputs sent alongside are not read.
+        ["PATCH /api/v1/generations/{reference}"] = new(async target =>
+        {
+            var (shortcode, revision, rating) = await target.GenerationAsync();
+            using var response = await SendAsync(
+                target.Client,
+                HttpMethod.Patch,
+                new Uri($"/api/v1/generations/{shortcode}", UriKind.Relative),
+                SongApi.Quoted(revision),
+                await target.InputsJsonAsync($$"""{"rating":{{(rating == 4 ? 5 : 4)}},""", "}"));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }),
+        ["POST /api/v1/generations/{reference}/comments"] = new(static async target => await target.CommentAsync()),
+        ["PATCH /api/v1/generations/{reference}/comments/{commentId:guid}"] = new(async target =>
+        {
+            var (shortcode, id) = await target.CommentAsync();
+            using var response = await SendAsync(
+                target.Client,
+                HttpMethod.Patch,
+                new Uri($"/api/v1/generations/{shortcode}/comments/{id}", UriKind.Relative),
+                SongApi.Quoted(1),
+                await target.InputsJsonAsync("""{"text":"Edited by the guard",""", "}"));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }),
+        ["DELETE /api/v1/generations/{reference}/comments/{commentId:guid}"] = new(async target =>
+        {
+            var (shortcode, id) = await target.CommentAsync();
+            using var response = await SendAsync(target.Client, HttpMethod.Delete, new Uri($"/api/v1/generations/{shortcode}/comments/{id}", UriKind.Relative), SongApi.Quoted(1), json: null);
+            Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        }),
     };
 
     /// <summary>Unsafe endpoints that take neither a Song nor a Version, and why they cannot change one's inputs.</summary>
@@ -651,6 +684,27 @@ public sealed class VersionImmutabilityGuardTests
             Assert.IsType<GenerationEventOutcome.Recorded>(await InScopeAsync<GenerationService, GenerationEventOutcome>(target, service => service.RecordEventAsync(
                 new GenerationEventRequest(null, GenerationEventSource.User, GenerationEventConfidence.High, 1, DateTimeOffset.UnixEpoch, [attached.Generation.Generation.Id]),
                 default)));
+        }),
+        // The user's judgement of a Generation (#119): rating and comments, never a creation input.
+        ["GenerationEvaluationService.RateAsync(CatalogReference, GenerationRatingEdit, Int32, CancellationToken)"] = new(static async target =>
+        {
+            var (shortcode, revision, rating) = await target.GenerationAsync();
+            Assert.IsType<GenerationRateOutcome.Rated>(await InScopeAsync<GenerationEvaluationService, GenerationRateOutcome>(target, service =>
+                service.RateAsync(CatalogReference.Parse(shortcode), GenerationRatingEdit.Of(rating == 2 ? 3 : 2), revision, default)));
+        }),
+        ["GenerationEvaluationService.AddCommentAsync(CatalogReference, String, CancellationToken)"] = Service<GenerationEvaluationService>(static async (service, target) =>
+            Assert.IsType<GenerationCommentOutcome.Saved>(await service.AddCommentAsync(CatalogReference.Parse(target.VersionShortcode + "-g1"), "Added by the guard", default))),
+        ["GenerationEvaluationService.EditCommentAsync(CatalogReference, Guid, String, Int32, CancellationToken)"] = new(static async target =>
+        {
+            var (shortcode, id) = await target.CommentAsync();
+            Assert.IsType<GenerationCommentOutcome.Saved>(await InScopeAsync<GenerationEvaluationService, GenerationCommentOutcome>(target, service =>
+                service.EditCommentAsync(CatalogReference.Parse(shortcode), id, "Edited by the guard", 1, default)));
+        }),
+        ["GenerationEvaluationService.DeleteCommentAsync(CatalogReference, Guid, Int32, CancellationToken)"] = new(static async target =>
+        {
+            var (shortcode, id) = await target.CommentAsync();
+            Assert.IsType<GenerationCommentOutcome.Deleted>(await InScopeAsync<GenerationEvaluationService, GenerationCommentOutcome>(target, service =>
+                service.DeleteCommentAsync(CatalogReference.Parse(shortcode), id, 1, default)));
         }),
         ["SongService.FindAsync(String, CancellationToken)"] = Service<SongService>(static (service, target) => service.FindAsync(target.SongShortcode, default)),
         ["SongService.UpdateAsync(Guid, SongEdit, Int32, CancellationToken)"] = Service<SongService>(static async (service, target) =>
@@ -1069,6 +1123,32 @@ public sealed class VersionImmutabilityGuardTests
         }
 
         /// <summary>The Version's current revision, so the freeze, not a stale revision, is what refuses.</summary>
+        /// <summary>The Version's first Generation (attached when the target was frozen): its shortcode, revision, and rating.</summary>
+        public async Task<(string Shortcode, int Revision, int? Rating)> GenerationAsync()
+        {
+            using var response = await Client.GetAsync(new Uri($"/api/v1/generations/{VersionShortcode}-g1", UriKind.Relative));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var generation = await SetupApi.JsonAsync(response);
+            var rating = generation.GetProperty("rating");
+            return (
+                generation.GetProperty("shortcode").GetString()!,
+                generation.GetProperty("revision").GetInt32(),
+                rating.ValueKind == JsonValueKind.Number ? rating.GetInt32() : null);
+        }
+
+        /// <summary>A new comment on the Version's first Generation, its inputs sent alongside (not read): the Generation's shortcode and the comment's ID.</summary>
+        public async Task<(string Shortcode, Guid Id)> CommentAsync()
+        {
+            var shortcode = VersionShortcode + "-g1";
+            using var response = await SongApi.SendJsonAsync(
+                Client,
+                HttpMethod.Post,
+                new Uri($"/api/v1/generations/{shortcode}/comments", UriKind.Relative),
+                await InputsJsonAsync("""{"text":"Written by the guard",""", "}"));
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            return (shortcode, (await SetupApi.JsonAsync(response)).GetProperty("id").GetGuid());
+        }
+
         public async Task<string> IfMatchAsync() => SongApi.Quoted((await ReadAsync()).GetProperty("revision").GetInt32());
 
         /// <summary>Body fields changing every creation input of the Version as it is now (<see cref="InputsJson"/>).</summary>

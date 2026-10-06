@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { GENERATING_REFRESH_MS } from '../api/generations';
 import { advanceTimers, fakeTimeouts, jsonResponse, renderApp } from '../test/helpers';
-import { testGeneration, testVersion, versionServer } from '../test/versionServer';
+import { testComment, testGeneration, testVersion, versionServer } from '../test/versionServer';
 
 const ONE = testVersion('1', { current: true, isFrozen: true });
 
@@ -52,6 +52,15 @@ function generationRow(shortcode: string): HTMLElement {
     throw new Error(`Generation ${shortcode} is not listed.`);
   }
   return row;
+}
+
+/** The Generation panel named `name`, once its opening transition has finished. */
+async function openedPanel(name: string): Promise<HTMLElement> {
+  const panel = await screen.findByRole('dialog', { name });
+  await waitFor(() => {
+    expect(panel).toBeVisible();
+  });
+  return panel;
 }
 
 /** The Version tree's node for the Version numbered `number`. */
@@ -190,7 +199,7 @@ describe('the Versions table', () => {
         modelLabel: null,
         modelName: 'v4.5+',
         rating: 5,
-        commentCount: 2,
+        comments: [testComment(1), testComment(2)],
       }),
       testGeneration('1', 1, { sunoCreatedAt: '2026-09-30T08:05:00Z' }),
       testGeneration('2', 1),
@@ -215,7 +224,9 @@ describe('the Versions table', () => {
     expect(within(first).getByRole('link', { name: 'Take 1, n8-7-v1-g1' })).toBeVisible();
     expect(within(first).getByTestId('generation-duration')).toHaveTextContent('2:05');
     expect(within(first).getByText('v5')).toBeVisible();
-    expect(within(first).getByText('Not rated')).toBeVisible();
+    const unrated = within(first).getByRole('radiogroup', { name: 'Rating of n8-7-v1-g1' });
+    expect(within(unrated).queryByRole('radio', { checked: true })).toBeNull();
+    expect(within(first).getByTestId('generation-comment-count')).toHaveTextContent('0');
     expect(within(first).getByText('Active')).toBeVisible();
     expect(within(first).getByRole('time')).toHaveAttribute('dateTime', '2026-09-30T08:05:00Z');
     expect(
@@ -225,8 +236,11 @@ describe('the Versions table', () => {
     const second = generationRow('n8-7-v1-g2');
     expect(within(second).getByTestId('generation-duration')).toHaveTextContent('3:07');
     expect(within(second).getByText('v4.5+')).toBeVisible();
-    expect(within(second).getByText('5 of 5 stars')).toBeVisible();
-    expect(within(second).getByText('2')).toBeVisible();
+    expect(within(second).getByRole('radio', { name: '5 stars' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    expect(within(second).getByTestId('generation-comment-count')).toHaveTextContent('2');
 
     await user.click(expander('1'));
     expect(generationsUnder('1')).toEqual([]);
@@ -427,7 +441,7 @@ describe('the Generation panel', () => {
     const { server } = versionServer([ONE, testVersion('2', { current: false })]);
     server.generations = [
       testGeneration('1', 1),
-      testGeneration('1', 2, { title: 'Second take', rating: 4, commentCount: 1 }),
+      testGeneration('1', 2, { title: 'Second take', rating: 4, comments: [testComment(1)] }),
     ];
 
     const { router } = await openSong('/songs/n8-7/v/2');
@@ -436,7 +450,7 @@ describe('the Generation panel', () => {
       within(generationRow('n8-7-v1-g2')).getByRole('link', { name: 'Second take, n8-7-v1-g2' }),
     );
 
-    const panel = await screen.findByRole('dialog', { name: 'Generation n8-7-v1-g2' });
+    const panel = await openedPanel('Generation n8-7-v1-g2');
     expect(router.state.location.pathname).toBe('/songs/n8-7/generations/n8-7-v1-g2');
     expect(within(panel).getByTestId('generation-panel-shortcode')).toHaveTextContent('n8-7-v1-g2');
     expect(within(panel).getByRole('button', { name: 'Copy shortcode n8-7-v1-g2' })).toBeVisible();
@@ -468,7 +482,7 @@ describe('the Generation panel', () => {
 
     const { router } = renderApp('/songs/n8-7/generations/N8-7-V2-G1');
 
-    expect(await screen.findByRole('dialog', { name: 'Generation n8-7-v2-g1' })).toBeVisible();
+    expect(await openedPanel('Generation n8-7-v2-g1')).toBeVisible();
     await waitFor(() => {
       expect(new URLSearchParams(router.state.location.search).get('archived')).toBe('1');
     });
@@ -487,7 +501,7 @@ describe('the Generation panel', () => {
     const { router } = await openSong();
     await user.type(screen.getByRole('textbox', { name: 'Go to' }), 'N8-7-V1-G2{Enter}');
 
-    expect(await screen.findByRole('dialog', { name: 'Generation n8-7-v1-g2' })).toBeVisible();
+    expect(await openedPanel('Generation n8-7-v1-g2')).toBeVisible();
     expect(router.state.location.pathname).toBe('/songs/n8-7/generations/n8-7-v1-g2');
   });
 

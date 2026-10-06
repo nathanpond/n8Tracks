@@ -56,7 +56,8 @@ public sealed class DatabaseStartupTests : IDisposable
             migration => Assert.Matches("^[0-9]{14}_AddAssets\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AddArtworkAttachments\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AddGenerationProviderData\\|10\\.0\\.", migration),
-            migration => Assert.Matches("^[0-9]{14}_AddCredentialExtensionSightings\\|10\\.0\\.", migration));
+            migration => Assert.Matches("^[0-9]{14}_AddCredentialExtensionSightings\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddGenerationEvaluations\\|10\\.0\\.", migration));
 
         // ISO 8601 UTC with milliseconds and Z, taken when the migration ran.
         var initialized = TestDatabase.SchemaInitializedUtc(directory.Path);
@@ -75,7 +76,7 @@ public sealed class DatabaseStartupTests : IDisposable
         Start();
 
         Assert.Equal(
-            ["__EFMigrationsHistory", "administrators", "album_links", "album_songs", "albums", "app_metadata", "artist_aliases", "artist_links", "artists", "artwork_attachments", "assets", "credentials", "editor_revisions", "generation_event_links", "generation_events", "generations", "genres", "jobs", "pending_file_deletions", "playlist_songs", "playlists", "provider_records", "retention_groups", "retention_records", "sessions", "settings", "shortcode_sequence", "song_artist_credits", "song_genres", "song_links", "song_relationship_types", "song_relationships", "song_tags", "songs", "suno_models", "tags", "used_version_numbers", "versions", "workflow_states"],
+            ["__EFMigrationsHistory", "administrators", "album_links", "album_songs", "albums", "app_metadata", "artist_aliases", "artist_links", "artists", "artwork_attachments", "assets", "credentials", "editor_revisions", "generation_comments", "generation_event_links", "generation_events", "generations", "genres", "jobs", "pending_file_deletions", "playlist_songs", "playlists", "provider_records", "retention_groups", "retention_records", "sessions", "settings", "shortcode_sequence", "song_artist_credits", "song_genres", "song_links", "song_relationship_types", "song_relationships", "song_tags", "songs", "suno_models", "tags", "used_version_numbers", "versions", "workflow_states"],
             TestDatabase.Rows(
                 directory.Path,
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> '__EFMigrationsLock' ORDER BY name;"));
@@ -119,6 +120,7 @@ public sealed class DatabaseStartupTests : IDisposable
                 "maximum_bpm|REAL|0|0", "minimum_bpm|REAL|0|0", "model_label|TEXT|0|0", "model_name|TEXT|0|0", "model_version|TEXT|0|0",
                 "musical_key|TEXT|0|0", "provider_status|TEXT|0|0", "style_tags|TEXT|0|0", "suno_created_utc|TEXT|0|0", "suno_title|TEXT|0|0",
                 "workspace_id|TEXT|0|0", "state|TEXT|1|0", "remote_state|TEXT|1|0", "revision|INTEGER|1|0", "suno_id|TEXT|0|0",
+                "rating|INTEGER|0|0",
             ],
             TestDatabase.Rows(directory.Path, "SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('generations') ORDER BY cid;"));
         Assert.Equal(
@@ -136,6 +138,12 @@ public sealed class DatabaseStartupTests : IDisposable
         Assert.Equal(
             ["generation_id|TEXT|1|1", "event_id|TEXT|1|0"],
             TestDatabase.Rows(directory.Path, "SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('generation_event_links') ORDER BY cid;"));
+        Assert.Equal(
+            ["id|TEXT|1|1", "generation_id|TEXT|1|0", "text|TEXT|1|0", "created_utc|TEXT|1|0", "edited_utc|TEXT|0|0", "revision|INTEGER|1|0"],
+            TestDatabase.Rows(directory.Path, "SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('generation_comments') ORDER BY cid;"));
+        Assert.Equal(
+            ["generations|generation_id|CASCADE"],
+            TestDatabase.Rows(directory.Path, "SELECT \"table\", \"from\", on_delete FROM pragma_foreign_key_list('generation_comments');"));
         Assert.Equal(
             ["generation_events|event_id|RESTRICT", "generations|generation_id|CASCADE"],
             TestDatabase.Rows(directory.Path, "SELECT \"table\", \"from\", on_delete FROM pragma_foreign_key_list('generation_event_links') ORDER BY \"table\";"));
@@ -237,7 +245,7 @@ public sealed class DatabaseStartupTests : IDisposable
 
         Assert.Equal(MigrationStatus.UpToDate, state.Status);
         Assert.Equal(TestDatabase.History(directory.Path)[^1].Split('|')[0], state.LastAppliedMigrationId);
-        Assert.EndsWith("_AddCredentialExtensionSightings", state.LastAppliedMigrationId, StringComparison.Ordinal);
+        Assert.EndsWith("_AddGenerationEvaluations", state.LastAppliedMigrationId, StringComparison.Ordinal);
     }
 
     [Fact]

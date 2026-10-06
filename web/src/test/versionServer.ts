@@ -1,4 +1,4 @@
-import type { Generation } from '../api/generations';
+import type { Generation, GenerationComment } from '../api/generations';
 import type { Snapshot } from '../api/snapshots';
 import type { Song } from '../api/songs';
 import {
@@ -67,9 +67,29 @@ export function testGeneration(
     createdAt: '2026-10-01T09:31:00Z',
     revision: 1,
     rating: null,
-    commentCount: 0,
+    comments: [],
     ...change,
   };
+}
+
+/** Comment `n` (from 1) on a Generation, written at 10:0n and never edited. */
+export function testComment(n: number, change: Partial<GenerationComment> = {}): GenerationComment {
+  return {
+    id: `0199b1a0-7000-7000-9000-${String(n).padStart(12, '0')}`,
+    text: `Comment ${String(n)}`,
+    createdAt: `2026-10-01T10:0${String(n % 10)}:00Z`,
+    editedAt: null,
+    revision: 1,
+    ...change,
+  };
+}
+
+/** A write to a Generation (its rating) or to one of its comments, as the fake API received it. */
+export interface GenerationWrite {
+  method: string;
+  path: string;
+  ifMatch: string | null;
+  body: Record<string, unknown>;
 }
 
 /** A Version as the list answers it: without its lyrics, styles, and options. */
@@ -186,6 +206,18 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     generationReads: 0,
     /** When set, answers the next read of the Generation list (once) instead of the fake API. */
     nextGenerations: undefined as (() => Response | Promise<Response>) | undefined,
+    /** Every rating and comment write received, in order (a refused one included). */
+    generationWrites: [] as GenerationWrite[],
+    /** When set, answers the next rating or comment write (once) instead of the fake API. */
+    nextGenerationWrite: undefined as (() => Response | Promise<Response>) | undefined,
+    /** Plays another client rating the Generation `id`: its rating changes and its revision goes up. */
+    rateElsewhere(id: string, rating: number | null) {
+      server.generations = server.generations.map((generation) =>
+        generation.id === id
+          ? { ...generation, rating, revision: generation.revision + 1 }
+          : generation,
+      );
+    },
     /** Every number the Song has used, deleted Versions' included. */
     usedNumbers: new Set(versions.map((version) => version.number)),
     /** Plays another client deleting the Version numbered `number` (no current Version moves). */
@@ -580,6 +612,116 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
       };
       server.versions = server.versions.map((other) => (other.id === version.id ? changed : other));
       return jsonResponse(200, changed);
+    }
+
+    const generationWrite = /\/api\/v1\/generations\/([^/]+)(?:\/comments(?:\/([^/]+))?)?$/.exec(
+      path,
+    );
+    if (generationWrite && method !== 'GET') {
+      const reference = decodeURIComponent(generationWrite[1] ?? '').toLowerCase();
+      const commentId =
+        generationWrite[2] === undefined ? undefined : decodeURIComponent(generationWrite[2]);
+      const isComments = path.includes('/comments');
+      const ifMatch = new Headers(init?.headers).get('If-Match');
+      const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as Record<
+        string,
+        unknown
+      >;
+      server.generationWrites.push({ method, path, ifMatch, body });
+      const nextGenerationWrite = server.nextGenerationWrite;
+      if (nextGenerationWrite) {
+        server.nextGenerationWrite = undefined;
+        return nextGenerationWrite();
+      }
+      const generation = server.generations.find(
+        (candidate) =>
+          candidate.id.toLowerCase() === reference ||
+          candidate.shortcode.toLowerCase() === reference,
+      );
+      if (generation === undefined) {
+        return jsonResponse(404, { code: 'not_found' });
+      }
+      const store = (changed: Generation) => {
+        server.generations = server.generations.map((other) =>
+          other.id === changed.id ? changed : other,
+        );
+      };
+      const textOf = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
+      const invalidText = (text: string) =>
+        text === '' || text.length > 2000
+          ? jsonResponse(422, {
+              code: 'validation_failed',
+              errors: { text: ['Write a comment of up to 2000 characters.'] },
+            })
+          : undefined;
+      if (!isComments && method === 'PATCH') {
+        if (ifMatch !== `"${String(generation.revision)}"`) {
+          return jsonResponse(409, { code: 'revision_conflict', current: generation });
+        }
+        const rating = body.rating;
+        if (rating === undefined || rating === generation.rating) {
+          return jsonResponse(200, generation);
+        }
+        if (
+          rating !== null &&
+          (typeof rating !== 'number' || !Number.isInteger(rating) || rating < 1 || rating > 5)
+        ) {
+          return jsonResponse(422, {
+            code: 'validation_failed',
+            errors: { rating: ['1 to 5 stars, or null.'] },
+          });
+        }
+        const rated = { ...generation, rating, revision: generation.revision + 1 };
+        store(rated);
+        return jsonResponse(200, rated);
+      }
+      if (isComments && commentId === undefined && method === 'POST') {
+        const text = textOf(body.text);
+        const refused = invalidText(text);
+        if (refused) {
+          return refused;
+        }
+        const comment = testComment(generation.comments.length + 1, {
+          id: `0199b1a0-7000-7000-9000-${String(server.generationWrites.length).padStart(12, '0')}`,
+          text,
+          createdAt: '2026-10-02T09:00:00Z',
+        });
+        store({ ...generation, comments: [...generation.comments, comment] });
+        return jsonResponse(201, comment);
+      }
+      const comment = generation.comments.find((candidate) => candidate.id === commentId);
+      if (comment === undefined) {
+        return jsonResponse(404, { code: 'not_found' });
+      }
+      if (ifMatch !== `"${String(comment.revision)}"`) {
+        return jsonResponse(409, { code: 'revision_conflict', current: comment });
+      }
+      if (method === 'DELETE') {
+        store({
+          ...generation,
+          comments: generation.comments.filter((other) => other !== comment),
+        });
+        return new Response(null, { status: 204 });
+      }
+      const text = textOf(body.text);
+      const refused = invalidText(text);
+      if (refused) {
+        return refused;
+      }
+      if (text === comment.text) {
+        return jsonResponse(200, comment);
+      }
+      const edited = {
+        ...comment,
+        text,
+        editedAt: '2026-10-02T09:30:00Z',
+        revision: comment.revision + 1,
+      };
+      store({
+        ...generation,
+        comments: generation.comments.map((other) => (other === comment ? edited : other)),
+      });
+      return jsonResponse(200, edited);
     }
 
     const songGenerations = /\/api\/v1\/songs\/([^/]+)\/generations$/.exec(path);

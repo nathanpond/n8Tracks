@@ -62,6 +62,8 @@ public sealed class ReferenceParameterGuardTests
         "GET /api/v1/artwork/{assetId:guid}: assetId",
         "GET /api/v1/artwork/{assetId:guid}/{size}: assetId",
         "GET /api/v1/artwork/{assetId:guid}/crops/{cropKey}/{size}: assetId",
+        "PATCH /api/v1/generations/{reference}/comments/{commentId:guid}: commentId",
+        "DELETE /api/v1/generations/{reference}/comments/{commentId:guid}: commentId",
     };
 
     /// <summary>
@@ -124,6 +126,16 @@ public sealed class ReferenceParameterGuardTests
         // A Generation by its ID, or by its shortcode (the Version shortcode's Generation 1).
         ["GET /api/v1/generations/{reference}"] = static (c, _, version) => c.SendAsync(HttpMethod.Get, $"generations/{c.GenerationOf(version)}"),
         ["GET /api/v1/generations/{reference}/provider-record"] = static (c, _, version) => c.SendAsync(HttpMethod.Get, $"generations/{c.GenerationOf(version)}/provider-record"),
+
+        // 409 revision_conflict: the Generation (or its comment) was found, and a revision it is not at changes nothing.
+        ["PATCH /api/v1/generations/{reference}"] = static (c, _, version) => c.SendAsync(HttpMethod.Patch, $"generations/{c.GenerationOf(version)}", """{"rating":4}""", revision: 999),
+        ["PATCH /api/v1/generations/{reference}/comments/{commentId:guid}"] = static (c, _, version) =>
+            c.SendAsync(HttpMethod.Patch, $"generations/{c.GenerationOf(version)}/comments/{c.CommentId}", """{"text":"Changed"}""", revision: 999),
+        ["DELETE /api/v1/generations/{reference}/comments/{commentId:guid}"] = static (c, _, version) =>
+            c.SendAsync(HttpMethod.Delete, $"generations/{c.GenerationOf(version)}/comments/{c.CommentId}", revision: 999),
+
+        // 201: each call adds a comment.
+        ["POST /api/v1/generations/{reference}/comments"] = static (c, _, version) => c.SendAsync(HttpMethod.Post, $"generations/{c.GenerationOf(version)}/comments", """{"text":"Referenced"}"""),
 
         // 200: the Song is not on the Playlist, so nothing changes.
         ["DELETE /api/v1/playlists/{id:guid}/songs/{reference}"] = static async (c, song, _) =>
@@ -193,6 +205,11 @@ public sealed class ReferenceParameterGuardTests
 
         // Version 1's Generation 1, with a clip: the Generation endpoints read it (its Version is frozen).
         context.GenerationId = (await SongApi.AttachGenerationAsync(factory, versionId, Generations.Clips.Minimal("referenced-clip"))).Generation.Id.ToString();
+        using (var comment = await context.SendAsync(HttpMethod.Post, $"generations/{context.GenerationId}/comments", """{"text":"Kept"}"""))
+        {
+            Assert.Equal(HttpStatusCode.Created, comment.StatusCode);
+            context.CommentId = (await SetupApi.JsonAsync(comment)).GetProperty("id").GetString()!;
+        }
 
         // Every endpoint that binds a reference has a call here, and every call is to such an endpoint.
         var bound = ApiEndpoints(factory).Where(static endpoint => Handler(endpoint)?.GetParameters()
@@ -311,6 +328,8 @@ public sealed class ReferenceParameterGuardTests
         public string AlbumId { get; set; } = string.Empty;
 
         public string GenerationId { get; set; } = string.Empty;
+
+        public string CommentId { get; set; } = string.Empty;
 
         /// <summary>The Generation a call names: by ID when given the Version's ID, else Generation 1 of the Version shortcode given.</summary>
         public string GenerationOf(string version) => version == versionId ? GenerationId : version + "-G1";

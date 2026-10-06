@@ -14,6 +14,7 @@ import {
 } from '../api/versions';
 import type { EditorText } from '../editor/useSnapshots';
 import { GenerationPanel, type GenerationPanelContent } from '../generations/GenerationPanel';
+import { useRateGeneration, type RatingProblem } from '../generations/useRateGeneration';
 import { CreateVersionDialog } from './CreateVersionDialog';
 import { DeleteVersionDialog } from './DeleteVersionDialog';
 import { VersionDetails } from './VersionDetails';
@@ -23,6 +24,17 @@ import { VersionTree, type VersionActions } from './VersionTree';
 
 const FAILED_MESSAGE =
   'Not changed: n8Tracks did not answer as expected. Check that it is running and try again.';
+
+/** What the page says when a rating did not go through. */
+function ratingProblemText(problem: RatingProblem): string {
+  return problem.kind === 'conflict'
+    ? `The rating of ${problem.generation.shortcode} was changed somewhere else at the same time, so yours was not saved. It now shows ${ratingWords(problem.generation.rating)}.`
+    : `The rating of ${problem.generation.shortcode} was not saved: n8Tracks did not answer as expected. Check that it is running and try again.`;
+}
+
+function ratingWords(rating: number | null): string {
+  return rating === null ? 'no rating' : `${String(rating)} of 5 stars`;
+}
 
 /** The URL parameter that lists archived Versions in the Versions table. */
 export const SHOW_ARCHIVED_PARAMETER = 'archived';
@@ -132,6 +144,15 @@ export function SongVersions({
   const navigate = useNavigate();
   const generations = useSongGenerations(song.id);
   const reloadGenerations = generations.reload;
+  const [ratingProblem, setRatingProblem] = useState<string>();
+  const onRatingProblem = useCallback((problem: RatingProblem) => {
+    setRatingProblem(ratingProblemText(problem));
+  }, []);
+  const rateGeneration = useRateGeneration(generations.update, onRatingProblem, reloadGenerations);
+  const rate = (generation: Generation, rating: number | null) => {
+    setRatingProblem(undefined);
+    rateGeneration(generation, rating);
+  };
   const parameters = new URLSearchParams(location.search);
   const showArchivedVersions = parameters.get(SHOW_ARCHIVED_PARAMETER) === '1';
   const showArchivedGenerations = parameters.get(SHOW_ARCHIVED_GENERATIONS_PARAMETER) === '1';
@@ -519,6 +540,11 @@ export function SongVersions({
           onDeleted={deleted}
         />
       </Grid>
+      {ratingProblem !== undefined && (
+        <Text size="sm" c="var(--mantine-color-error)" role="alert" data-testid="rating-problem">
+          {ratingProblem}
+        </Text>
+      )}
       <VersionsTable
         versions={versions}
         generations={generations.state}
@@ -536,11 +562,15 @@ export function SongVersions({
         }}
         versionLink={linkTo}
         generationLink={generationLink}
+        onRate={rate}
       />
       <GenerationPanel
         opened={generationReference !== undefined}
         content={panelContent}
         onClose={closePanel}
+        onRate={rate}
+        update={generations.update}
+        problem={ratingProblem}
       />
     </Stack>
   );

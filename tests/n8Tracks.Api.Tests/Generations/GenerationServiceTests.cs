@@ -176,8 +176,15 @@ public sealed class GenerationServiceTests
         Assert.Equal(1, (int?)shape2["revision"]);
         Assert.Null(shape2["suno_id"]);
         Assert.Equal(25, shape2.Count);
-        Assert.Equal(2, RetainedTypes.Generation.ShapeVersion);
         Assert.True(RetainedTypes.Generation.Upgraders.ContainsKey(1));
+
+        // Shape 3 (#119) adds the rating: an earlier Generation restores unrated.
+        var shape3 = RetainedTypes.GenerationShape2To3(shape2);
+        Assert.True(shape3.ContainsKey("rating"));
+        Assert.Null(shape3["rating"]);
+        Assert.Equal(26, shape3.Count);
+        Assert.Equal(3, RetainedTypes.Generation.ShapeVersion);
+        Assert.True(RetainedTypes.Generation.Upgraders.ContainsKey(2));
     }
 
     [Fact]

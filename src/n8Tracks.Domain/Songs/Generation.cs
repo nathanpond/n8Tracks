@@ -36,8 +36,17 @@ public sealed record Generation(Guid Id, Guid VersionId, Guid SongId, int Ordina
     /// </summary>
     public GenerationRemoteState RemoteState { get; init; } = GenerationRemoteState.Present;
 
-    /// <summary>Starts at 1; covers the rating, the state, and the comments (later stories raise it).</summary>
+    /// <summary>
+    /// Starts at 1; raised by a rating change and by state changes (later stories). Comments have
+    /// revisions of their own and leave it alone.
+    /// </summary>
     public int Revision { get; init; } = 1;
+
+    /// <summary>
+    /// The user's rating, 1 to 5 stars (<see cref="GenerationRating"/>), or null when not rated. The
+    /// user's own judgement: only the user changes it, never anything Suno reports.
+    /// </summary>
+    public int? Rating { get; init; }
 
     /// <summary>The Generation Event it came from, if one was recorded: internal, never shown or answered.</summary>
     public Guid? EventId { get; init; }

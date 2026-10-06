@@ -7,9 +7,10 @@ using n8Tracks.Domain.Suno;
 namespace n8Tracks.Infrastructure.Persistence;
 
 /// <summary>
-/// <c>generations</c> (read), <c>provider_records</c>, <c>generation_events</c>, and
-/// <c>generation_event_links</c>. The Generation row itself is written only by
-/// <see cref="VersionStore.TryAttachGenerationAsync"/>, with the freeze.
+/// <c>generations</c> (read, and the rating), <c>provider_records</c>, <c>generation_events</c>,
+/// <c>generation_event_links</c>, and <c>generation_comments</c>. The Generation row itself is
+/// written only by <see cref="VersionStore.TryAttachGenerationAsync"/>, with the freeze; afterwards
+/// only its rating and revision are, by <see cref="TryRateAsync"/>.
 /// </summary>
 internal sealed class GenerationStore(N8TracksDbContext context) : IGenerationStore
 {
@@ -119,6 +120,70 @@ internal sealed class GenerationStore(N8TracksDbContext context) : IGenerationSt
             context.Entry(row).State = EntityState.Detached;
         }
     }
+
+    public async Task<bool> TryRateAsync(Guid id, int? rating, int revision, CancellationToken cancellationToken) =>
+        await context.Generations
+            .Where(generation => generation.Id == id && generation.Revision == revision)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(static generation => generation.Rating, rating)
+                    .SetProperty(static generation => generation.Revision, static generation => generation.Revision + 1),
+                cancellationToken)
+            .ConfigureAwait(false) == 1;
+
+    public Task TouchSongAsync(Guid songId, DateTimeOffset updatedUtc, CancellationToken cancellationToken)
+    {
+        var updated = UtcText.From(updatedUtc);
+        return context.Songs
+            .Where(song => song.Id == songId)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(static song => song.UpdatedUtc, updated), cancellationToken);
+    }
+
+    public async Task<GenerationComment?> FindCommentAsync(Guid generationId, Guid commentId, CancellationToken cancellationToken)
+    {
+        var row = await context.GenerationComments.AsNoTracking()
+            .SingleOrDefaultAsync(comment => comment.Id == commentId && comment.GenerationId == generationId, cancellationToken)
+            .ConfigureAwait(false);
+        return row is null ? null : GenerationRows.ToDomain(row);
+    }
+
+    public async Task AddCommentAsync(GenerationComment comment, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(comment);
+
+        var row = new GenerationCommentRecord
+        {
+            Id = comment.Id,
+            GenerationId = comment.GenerationId,
+            Text = comment.Text,
+            CreatedUtc = UtcText.From(comment.CreatedUtc),
+            EditedUtc = comment.EditedUtc is { } edited ? UtcText.From(edited) : null,
+            Revision = comment.Revision,
+        };
+        context.GenerationComments.Add(row);
+        await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        context.Entry(row).State = EntityState.Detached;
+    }
+
+    public async Task<bool> TryEditCommentAsync(Guid commentId, string text, DateTimeOffset editedUtc, int revision, CancellationToken cancellationToken)
+    {
+        var edited = UtcText.From(editedUtc);
+        return await context.GenerationComments
+            .Where(comment => comment.Id == commentId && comment.Revision == revision)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(static comment => comment.Text, text)
+                    .SetProperty(static comment => comment.EditedUtc, edited)
+                    .SetProperty(static comment => comment.Revision, static comment => comment.Revision + 1),
+                cancellationToken)
+            .ConfigureAwait(false) == 1;
+    }
+
+    public async Task<bool> TryDeleteCommentAsync(Guid commentId, int revision, CancellationToken cancellationToken) =>
+        await context.GenerationComments
+            .Where(comment => comment.Id == commentId && comment.Revision == revision)
+            .ExecuteDeleteAsync(cancellationToken)
+            .ConfigureAwait(false) == 1;
 }
 
 /// <summary>Reading Generation rows into <see cref="GenerationSummary"/>, shared by the Generation and Version stores.</summary>
@@ -152,7 +217,34 @@ internal static class GenerationRows
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
 
-        return [.. rows.Select(static row => new GenerationSummary(ToDomain(row.generation) with { EventId = row.EventId }, row.ShortcodeNumber, row.Number))];
+        var ids = rows.Select(static row => row.generation.Id).ToList();
+        var comments = (await context.GenerationComments.AsNoTracking()
+                .Where(comment => ids.Contains(comment.GenerationId))
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false))
+            .Select(ToDomain)
+            .OrderBy(static comment => comment.CreatedUtc)
+            .ThenBy(static comment => comment.Id)
+            .ToLookup(static comment => comment.GenerationId);
+
+        return [.. rows.Select(row => new GenerationSummary(ToDomain(row.generation) with { EventId = row.EventId }, row.ShortcodeNumber, row.Number)
+        {
+            Comments = [.. comments[row.generation.Id]],
+        })];
+    }
+
+    /// <summary>A stored comment as the entity.</summary>
+    public static GenerationComment ToDomain(GenerationCommentRecord record)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+
+        return new(
+            record.Id,
+            record.GenerationId,
+            record.Text,
+            UtcText.Parse(record.CreatedUtc),
+            record.EditedUtc is { } edited ? UtcText.Parse(edited) : null,
+            record.Revision);
     }
 
     /// <summary>The stored row of a Generation, every column from the entity: what attaching writes.</summary>
@@ -171,6 +263,7 @@ internal static class GenerationRows
             State = GenerationStates.NameOf(generation.State),
             RemoteState = GenerationStates.NameOf(generation.RemoteState),
             Revision = generation.Revision,
+            Rating = generation.Rating,
             SunoId = clip?.SunoId,
             ProviderStatus = clip?.Status,
             SunoTitle = clip?.Title,
@@ -197,6 +290,7 @@ internal static class GenerationRows
             State = GenerationStates.StateOf(record.State),
             RemoteState = GenerationStates.RemoteStateOf(record.RemoteState),
             Revision = record.Revision,
+            Rating = record.Rating,
             Clip = record.SunoId is { } sunoId
                 ? new ClipFields(
                     sunoId,

@@ -64,6 +64,8 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
 
     public DbSet<GenerationEventRecord> GenerationEvents => Set<GenerationEventRecord>();
 
+    public DbSet<GenerationCommentRecord> GenerationComments => Set<GenerationCommentRecord>();
+
     public DbSet<GenerationEventLinkRecord> GenerationEventLinks => Set<GenerationEventLinkRecord>();
 
     public DbSet<GenreRecord> Genres => Set<GenreRecord>();
@@ -418,6 +420,7 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                     $"remote_state IN ('{GenerationRecord.Present}', '{GenerationRecord.Trashed}', '{GenerationRecord.Missing}')");
                 table.HasCheckConstraint("ck_generations_revision", "revision >= 1");
                 table.HasCheckConstraint("ck_generations_suno_id", "suno_id IS NULL OR length(suno_id) > 0");
+                table.HasCheckConstraint("ck_generations_rating", "rating IS NULL OR rating BETWEEN 1 AND 5");
                 table.HasTrigger(GenerationFixedTrigger);
             });
             generation.HasKey(record => record.Id);
@@ -455,6 +458,26 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
             record.HasOne<GenerationRecord>()
                 .WithOne()
                 .HasForeignKey<ProviderRecordRecord>(provider => provider.GenerationId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<GenerationCommentRecord>(comment =>
+        {
+            comment.ToTable("generation_comments", static table =>
+            {
+                table.HasCheckConstraint("ck_generation_comments_text", "length(text) BETWEEN 1 AND 2000");
+                table.HasCheckConstraint("ck_generation_comments_revision", "revision >= 1");
+            });
+            comment.HasKey(record => record.Id);
+
+            // A Generation's comments, oldest first.
+            comment.HasIndex(record => new { record.GenerationId, record.CreatedUtc, record.Id });
+            comment.Property(record => record.Revision).HasDefaultValue(1);
+
+            // The comments go with their Generation (into retention with it, as a registered type).
+            comment.HasOne<GenerationRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.GenerationId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 

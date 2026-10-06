@@ -543,6 +543,61 @@ public sealed class LogRedactionGuardTests
             name => Assert.True(n8Tracks.Infrastructure.Logging.RedactionPolicy.IsSensitive(name), name));
     }
 
+    /// <summary>
+    /// A Generation comment at Debug (#119): added, edited, refused as too long, read back with its
+    /// Generation, and deleted, each with sentinel text. The requests and the comment IDs reach the
+    /// log; no comment text does.
+    /// </summary>
+    [Fact]
+    public async Task CommentTextNeverReachesTheLog()
+    {
+        const string CommentSentinel = "sentinel-comment-text-41c8";
+        const string EditedSentinel = "sentinel-comment-edited-9a27";
+
+        using var factory = new LoggingApiFactory("Debug");
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        await Songs.SongApi.CreateAsync(client, "Commented");
+        await Songs.SongApi.AttachGenerationAsync(factory, "n8-1-v1", null);
+        var comments = new Uri("/api/v1/generations/n8-1-v1-g1/comments", UriKind.Relative);
+
+        using var created = await Songs.SongApi.SendJsonAsync(client, HttpMethod.Post, comments, JsonSerializer.Serialize(new { text = CommentSentinel }));
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var id = (await SetupApi.JsonAsync(created)).GetProperty("id").GetString();
+        var comment = new Uri($"/api/v1/generations/n8-1-v1-g1/comments/{id}", UriKind.Relative);
+
+        using (var edit = Antiforgery(new HttpRequestMessage(HttpMethod.Patch, comment) { Content = new StringContent(JsonSerializer.Serialize(new { text = EditedSentinel }), Encoding.UTF8, "application/json") }))
+        {
+            Assert.True(edit.Headers.TryAddWithoutValidation("If-Match", "\"1\""));
+            using var edited = await client.SendAsync(edit);
+            Assert.Equal(HttpStatusCode.OK, edited.StatusCode);
+        }
+
+        using (var refused = await Songs.SongApi.SendJsonAsync(client, HttpMethod.Post, comments, JsonSerializer.Serialize(new { text = CommentSentinel + new string('x', 2000) })))
+        {
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, refused.StatusCode);
+        }
+
+        using (var read = await client.GetAsync(new Uri("/api/v1/generations/n8-1-v1-g1", UriKind.Relative)))
+        {
+            Assert.Equal(HttpStatusCode.OK, read.StatusCode);
+        }
+
+        using (var delete = Antiforgery(new HttpRequestMessage(HttpMethod.Delete, comment)))
+        {
+            Assert.True(delete.Headers.TryAddWithoutValidation("If-Match", "\"2\""));
+            using var deleted = await client.SendAsync(delete);
+            Assert.Equal(HttpStatusCode.NoContent, deleted.StatusCode);
+        }
+
+        var captured = factory.CapturedText;
+        Assert.Contains(id!, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(CommentSentinel, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(EditedSentinel, captured, StringComparison.Ordinal);
+        Assert.All(
+            ["comment", "Comments", "commentText", "comment_text", "GenerationComment"],
+            name => Assert.True(n8Tracks.Infrastructure.Logging.RedactionPolicy.IsSensitive(name), name));
+    }
+
     private static HttpRequestMessage Antiforgery(HttpRequestMessage request)
     {
         request.Headers.Add(SessionApi.AntiforgeryHeader, "1");

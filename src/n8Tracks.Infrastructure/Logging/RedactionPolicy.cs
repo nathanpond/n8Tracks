@@ -70,6 +70,12 @@ public static class RedactionPolicy
         // Suno's style description of a clip (a Generation's metadata.tags): style text.
         "styletags",
 
+        // A comment the user keeps on a Generation (generation_comments.text): their own words, under
+        // the names it travels by ("text" alone is too common a word to mask everywhere).
+        "comment",
+        "comments",
+        "commenttext",
+
         // A job's payload: whatever the code that enqueued it passed, which may be any of the above.
         "payload",
 
