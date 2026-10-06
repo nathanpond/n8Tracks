@@ -10,7 +10,10 @@ import type {
   SongTag,
   WorkflowState,
 } from '../api/songs';
+import type { Language } from '../api/languages';
+import { NO_RELEASE, type SongRelease, type SongWarning } from '../api/songs';
 import type { Tag } from '../api/tags';
+import { isrcError, normaliseIsrc } from '../songs/details/releaseField';
 import { testArtist } from './artistServer';
 import { healthyReport, jsonResponse, requestPath, stubFetch } from './helpers';
 
@@ -68,6 +71,8 @@ export const baseSong: Song = {
   playlists: [],
   albums: [],
   relationships: [],
+  release: NO_RELEASE,
+  warnings: [],
 };
 
 export const FOLK: Genre = {
@@ -198,6 +203,92 @@ export const SONG_C: Song = {
   title: 'Song C',
 };
 
+/** The languages the fake lists: a few, by name, as the API answers them. */
+export const LANGUAGES: Language[] = [
+  { code: 'en', name: 'English' },
+  { code: 'fr', name: 'French' },
+  { code: 'zxx', name: 'No linguistic content' },
+];
+
+/** The warnings a Song carries: a `duplicate_isrc` naming each of `others` with its ISRC. */
+function warningsOf(song: Song, others: readonly Song[]): SongWarning[] {
+  const same = others.filter(
+    (other) =>
+      other.id !== song.id &&
+      song.release.isrc !== null &&
+      other.release.isrc === song.release.isrc,
+  );
+  return same.length === 0
+    ? []
+    : [
+        {
+          code: 'duplicate_isrc',
+          field: 'release.isrc',
+          message:
+            same.length === 1 ? 'Another Song has this ISRC.' : 'Other Songs have this ISRC.',
+          songs: same.map((other) => ({
+            id: other.id,
+            shortcode: other.shortcode,
+            title: other.title,
+          })),
+        },
+      ];
+}
+
+/**
+ * Applies a PATCH's `release` to `current` as the API does: each member sent changes (null
+ * clears it), checked first; the errors are keyed `release.<member>`.
+ */
+function released(
+  current: SongRelease,
+  sent: Record<string, unknown>,
+  languages: readonly Language[],
+): { release: SongRelease } | { errors: Record<string, string[]> } {
+  const next: SongRelease = { ...current };
+  const errors: Record<string, string[]> = {};
+  const text = (value: unknown) =>
+    typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
+  for (const [member, value] of Object.entries(sent)) {
+    switch (member) {
+      case 'releaseDate':
+      case 'originalReleaseDate':
+      case 'copyright':
+      case 'publishing':
+        next[member] = text(value);
+        break;
+      case 'explicit':
+        if (value !== null && value !== 'explicit' && value !== 'clean') {
+          errors['release.explicit'] = ['Choose explicit, clean, or null for not set.'];
+        } else {
+          next.explicit = value;
+        }
+        break;
+      case 'isrc': {
+        const error = typeof value === 'string' ? isrcError(value) : undefined;
+        if (error !== undefined) {
+          errors['release.isrc'] = [error];
+        } else {
+          next.isrc = typeof value === 'string' ? normaliseIsrc(value) : null;
+        }
+        break;
+      }
+      case 'language': {
+        const code = text(value)?.toLowerCase() ?? null;
+        if (code !== null && !languages.some((language) => language.code === code)) {
+          errors['release.language'] = ['Choose a language from the list.'];
+        } else {
+          next.language = code;
+        }
+        break;
+      }
+      case 'links':
+        next.links = Array.isArray(value) ? (value as SongRelease['links']) : [];
+        break;
+    }
+  }
+  return Object.keys(errors).length > 0 ? { errors } : { release: next };
+}
+
 /** One relationship write the fake server received. */
 export interface ReceivedRelationship {
   method: string;
@@ -240,6 +331,8 @@ export function songServer(
     catalog: { revision: 1, defaultArtist: null } as CatalogSettings,
     genres: genres.map((genre) => ({ ...genre })),
     tags: tags.map((tag) => ({ ...tag })),
+    /** The language list it serves; set it to undefined to answer the list with a 500. */
+    languages: LANGUAGES as Language[] | undefined,
     /** Every name POSTed to the Tag list, in order. */
     createdTags: [] as string[],
     /** Every name POSTed to the Genre list, in order. */
@@ -310,6 +403,11 @@ export function songServer(
       });
       server.artists.push(artist);
       return jsonResponse(201, artist);
+    }
+    if (path.endsWith('/api/v1/languages')) {
+      return server.languages === undefined
+        ? jsonResponse(500, { code: 'unexpected' })
+        : jsonResponse(200, { items: server.languages });
     }
     if (path.endsWith('/api/v1/relationship-types')) {
       return jsonResponse(200, { items: server.relationshipTypes });
@@ -562,7 +660,20 @@ export function songServer(
         a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }),
       );
     }
+    if (typeof body.release === 'object' && body.release !== null) {
+      const next = released(
+        server.song.release,
+        body.release as Record<string, unknown>,
+        server.languages ?? LANGUAGES,
+      );
+      if ('errors' in next) {
+        return jsonResponse(422, { code: 'validation_failed', errors: next.errors });
+      }
+      updated.release = next.release;
+    }
+    updated.warnings = warningsOf(updated, server.others);
     const changed =
+      JSON.stringify(updated.release) !== JSON.stringify(server.song.release) ||
       updated.title !== server.song.title ||
       updated.concept !== server.song.concept ||
       updated.state.id !== server.song.state.id ||

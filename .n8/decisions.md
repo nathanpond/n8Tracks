@@ -2109,3 +2109,30 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
   - Web `Song` requires `relationships` (fixtures `relationships: []`). `SongSearch` gained `exclude` and `disabled`. The `songServer` fake serves types, search, and relationship writes.
   **Why:** These are the discretion lines: the shared search, excluding this Song, disabled only under the chosen type, direction picked by name, grouping and order. The AC asks for confirmation before removal. "Not related to any Song." matches the other Details sections.
   **Issue:** #92
+- **Decision:** Release details API:
+  - `PATCH /api/v1/songs/{reference}` takes a `release` object. Each member (`releaseDate`, `originalReleaseDate`, `explicit`, `copyright`, `publishing`, `isrc`, `language`, `links`) is optional; null or blank clears it; `links` replaces the whole list.
+  - Errors are keyed `release.<member>`. A `release` that is not an object is 422 keyed `release`.
+  - Every Song answer (GET, PATCH, list rows, and a conflict's `current`) has `release`, with nulls for unset members, and `warnings`.
+  - `warnings` is `[{code:'duplicate_isrc', field:'release.isrc', message, songs[{id,shortcode,title}]}]`, with the other Songs by title.
+  **Why:** The story's key link is "a `release` object in the Song payload". Keying errors by member path follows the `inputs.<key>` precedent, so the web save helper can use the same key. `SongResponse` is one shape everywhere, so the warning rides on every answer, not only GET and PATCH. The extra query is a single one per page.
+  **Issue:** #93
+- **Decision:** Storage: nullable columns on `songs` (`release_date`, `original_release_date`, `explicit_content` as `explicit`/`clean`, `copyright`, `publishing`, `isrc`, `language`), a non-unique index on `isrc`, and a `song_links` table (`song_id`, `position`; cascade; URL CHECK like `album_links`). Migration `AddSongRelease`. The new `songs` columns carry no CHECK constraints.
+  **Why:** The discretion line gives columns plus a `song_links` table. In SQLite, EF can add a CHECK constraint only by rebuilding `songs`, which many tables reference, so the rules stay in `SongReleaseRules` and the plain `ADD COLUMN` migration avoids a rebuild.
+  **Issue:** #93
+- **Decision:** ISRC input: case, whitespace, and hyphens are ignored, and a leading "ISRC" is dropped only when more than 12 characters remain with it. A wrong length gets its own message, which names the count.
+  **Why:** A valid ISRC can itself begin with "ISRC" (country IS, registrant "RC…"), and stripping it unconditionally would break that code. The Demo's eleven-character case is clearer with the count named.
+  **Issue:** #93
+- **Decision:** Language: the bundled list is `Domain/Catalog/Languages` (183 ISO 639-1 codes with English names, plus `zxx` "No linguistic content", sorted by name). It is served by `GET /api/v1/languages` (`catalog.read`; `EndpointScopeGuardTests` updated) straight from that list. Input is accepted in any case and stored lower case.
+  **Why:** The discretion line requires one server-side list for both validation and the picker. It is static reference data with no rules of its own, so the endpoint reads the same Domain list `SongReleaseRules` validates against, and no extra application service is needed. Case-insensitive input costs nothing, and the stored code stays standard.
+  **Issue:** #93
+- **Decision:** Web:
+  - `songs/details/ReleaseSection.tsx` is a "Release" group in the Details panel, after Notes.
+  - Dates and rights text reuse the Album helpers in `albums/albumRules.ts`. Dates show "Shown as …" as Albums do.
+  - Explicit is a three-way Radio group (Not set, Explicit, Clean).
+  - Language is a `NativeSelect` with "Not set" first.
+  - Explicit and Language show the choice as made while it saves, and fall back to the Song's own value if the save fails.
+  - ISRC shows the duplicate warning, which links to each other Song.
+  - Album's links editor moved to `common/LinksEditor.tsx`, and both pages now use it.
+  - The save helper's keys are `release.<member>` (`songs/details/releaseField.ts`), and `SongPage`'s `songEditOf` folds them into the `release` object. The conflict dialog names each member.
+  **Why:** One save path per Song is the existing contract. A native select is keyboard type-ahead accessible, works the same in jsdom and the browser, and needs no Combobox workarounds for 184 fixed options. The pending display came from the e2e walk: a controlled radio that only changed after the save made `check()` fail and felt unresponsive.
+  **Issue:** #93

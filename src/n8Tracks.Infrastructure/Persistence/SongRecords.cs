@@ -42,6 +42,42 @@ public sealed class SongRecord
 
     /// <summary>Starts at 1 and goes up by one on each edit of the Song itself; Version changes leave it alone.</summary>
     public int Revision { get; set; } = 1;
+
+    /// <summary>A partial date as entered (<c>YYYY</c>, <c>YYYY-MM</c>, or <c>YYYY-MM-DD</c>), or null.</summary>
+    public string? ReleaseDate { get; set; }
+
+    /// <summary>A partial date as entered, or null.</summary>
+    public string? OriginalReleaseDate { get; set; }
+
+    /// <summary><c>explicit</c> or <c>clean</c>, or null when not set.</summary>
+    public string? ExplicitContent { get; set; }
+
+    /// <summary>Plain text, or null.</summary>
+    public string? Copyright { get; set; }
+
+    /// <summary>Plain text, or null.</summary>
+    public string? Publishing { get; set; }
+
+    /// <summary>Twelve characters, upper case, no hyphens, or null. Not unique: a shared ISRC is allowed and warned about.</summary>
+    public string? Isrc { get; set; }
+
+    /// <summary>A language code from the bundled list, or null.</summary>
+    public string? Language { get; set; }
+}
+
+/// <summary>One row of <c>song_links</c>: an external link of a Song, at its place in the Song's list.</summary>
+public sealed class SongLinkRecord
+{
+    public required Guid SongId { get; set; }
+
+    /// <summary>The link's place in the Song's list, from 0.</summary>
+    public required int Position { get; set; }
+
+    /// <summary>Up to 100 characters, or null.</summary>
+    public string? Label { get; set; }
+
+    /// <summary>An absolute http or https URL, up to 2,000 characters.</summary>
+    public required string Url { get; set; }
 }
 
 /// <summary>One row of <c>versions</c>: a Version of a Song, its creation inputs, and its annotations.</summary>

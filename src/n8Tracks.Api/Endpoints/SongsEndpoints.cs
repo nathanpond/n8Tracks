@@ -22,6 +22,8 @@ internal static class SongsEndpoints
     public const string SongPath = SongsPath + "/{reference}";
     public const string CreditsPath = SongPath + "/credits";
 
+    public const string DuplicateIsrcWarning = "duplicate_isrc";
+
     public static IEndpointRouteBuilder MapSongs(this IEndpointRouteBuilder endpoints)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
@@ -55,7 +57,7 @@ internal static class SongsEndpoints
 
         endpoints.MapPatch(SongPath, UpdateAsync)
             .WithName("UpdateSong")
-            .WithSummary("Edits a Song's title, concept, workflow state, notes, Genres, or Tags (only the fields sent; genreIds and tagIds replace the Song's Genres and Tags), given the revision read in If-Match.")
+            .WithSummary("Edits a Song's title, concept, workflow state, notes, Genres, Tags, or release details (only the fields sent; genreIds and tagIds replace the Song's Genres and Tags; in release, only the members sent change, null clears one, and links replace the Song's), given the revision read in If-Match. An ISRC another Song has is allowed and answered with a duplicate_isrc warning.")
             .RequireScope(CredentialScopes.SongsWrite)
             .Produces<SongResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
@@ -215,7 +217,8 @@ internal static class SongsEndpoints
             Field(request?.StateId, SongService.StateIdField, typeErrors),
             Field(request?.Notes, SongService.NotesField, typeErrors),
             IdList(request?.GenreIds, SongService.GenreIdsField, "Genre", typeErrors),
-            IdList(request?.TagIds, SongService.TagIdsField, "Tag", typeErrors));
+            IdList(request?.TagIds, SongService.TagIdsField, "Tag", typeErrors),
+            Release(request?.Release, typeErrors));
         if (typeErrors.Count > 0)
         {
             return ApiProblem.ValidationFailed(context, typeErrors);
@@ -354,6 +357,78 @@ internal static class SongsEndpoints
     }
 
     /// <summary>
+    /// The release details of an edit as sent: missing is left alone; otherwise an object whose
+    /// members, each missing (left alone), null (cleared), or text, are the release fields, and whose
+    /// <c>links</c>, when sent, is null (none) or a list of objects with a text <c>url</c> and a text,
+    /// null, or missing <c>label</c>. Anything else is an error keyed by the field or member.
+    /// </summary>
+    private static SongReleaseEdit? Release(JsonElement? sent, Dictionary<string, string[]> errors)
+    {
+        switch (sent?.ValueKind)
+        {
+            case null or JsonValueKind.Undefined:
+                return null;
+            case JsonValueKind.Object:
+                break;
+            default:
+                errors[SongService.ReleaseField] = ["Send an object of release details, or leave it out."];
+                return null;
+        }
+
+        var release = sent.Value;
+        SongEditField Member(string field)
+        {
+            var name = field[(SongService.ReleaseField.Length + 1)..];
+            return Field(release.TryGetProperty(name, out var value) ? value : null, field, errors);
+        }
+
+        return new SongReleaseEdit
+        {
+            ReleaseDate = Member(SongService.ReleaseDateField),
+            OriginalReleaseDate = Member(SongService.OriginalReleaseDateField),
+            Explicit = Member(SongService.ExplicitField),
+            Copyright = Member(SongService.CopyrightField),
+            Publishing = Member(SongService.PublishingField),
+            Isrc = Member(SongService.IsrcField),
+            Language = Member(SongService.LanguageField),
+            Links = Links(release.TryGetProperty("links", out var links) ? links : null, errors),
+        };
+    }
+
+    /// <summary>The links of a release edit: null when not sent; an empty list for null; a type error unless a list of links.</summary>
+    private static List<SongLinkInput>? Links(JsonElement? value, Dictionary<string, string[]> errors)
+    {
+        const string Message = "Send a list of links, each with a url and an optional label.";
+        switch (value?.ValueKind)
+        {
+            case null or JsonValueKind.Undefined:
+                return null;
+            case JsonValueKind.Null:
+                return [];
+            case JsonValueKind.Array:
+                var links = new List<SongLinkInput>();
+                foreach (var item in value.Value.EnumerateArray())
+                {
+                    if (item.ValueKind != JsonValueKind.Object
+                        || !item.TryGetProperty("url", out var url)
+                        || url.ValueKind != JsonValueKind.String
+                        || (item.TryGetProperty("label", out var label) && label.ValueKind is not (JsonValueKind.String or JsonValueKind.Null)))
+                    {
+                        errors[SongService.LinksField] = [Message];
+                        return null;
+                    }
+
+                    links.Add(new SongLinkInput(label.ValueKind == JsonValueKind.String ? label.GetString() : null, url.GetString()));
+                }
+
+                return links;
+            default:
+                errors[SongService.LinksField] = [Message];
+                return null;
+        }
+    }
+
+    /// <summary>
     /// The Genres or Tags of an edit as sent: missing is left alone; a list of text replaces the
     /// Song's. Anything else (null included) is an error for the field.
     /// </summary>
@@ -395,16 +470,19 @@ internal sealed record SongCreditsRequest(JsonElement PrimaryArtistId, JsonEleme
 /// <summary>
 /// An edit: any of the fields, each left alone when missing. A missing field and a null one differ,
 /// so each is read as raw JSON (a missing one is <see cref="JsonValueKind.Undefined"/>).
-/// <c>genreIds</c> and <c>tagIds</c> are the Song's whole new lists of Genre and Tag IDs.
+/// <c>genreIds</c> and <c>tagIds</c> are the Song's whole new lists of Genre and Tag IDs;
+/// <c>release</c> is an object of the release details to change.
 /// </summary>
-internal sealed record UpdateSongRequest(JsonElement Title, JsonElement Concept, JsonElement StateId, JsonElement Notes, JsonElement GenreIds, JsonElement TagIds);
+internal sealed record UpdateSongRequest(JsonElement Title, JsonElement Concept, JsonElement StateId, JsonElement Notes, JsonElement GenreIds, JsonElement TagIds, JsonElement Release);
 
 /// <summary>
 /// A Song as the API shows it. Times are UTC. <c>genres</c> and <c>tags</c> are alphabetical;
 /// <c>credits</c> holds the primary Artist (or null) and the featured Artists in the user's order;
 /// <c>playlists</c> are the Playlists it is on, by title; <c>albums</c> are the Albums it is on, by
 /// title, each with the Song's disc and track; <c>relationships</c> are its relationships to other
-/// Songs, each read from this Song, by the type's name as seen from here, then the other Song's title.
+/// Songs, each read from this Song, by the type's name as seen from here, then the other Song's title;
+/// <c>release</c> is always there, with null for each member not set; <c>warnings</c> holds what is
+/// allowed but worth telling the user (<c>duplicate_isrc</c>, naming the other Songs).
 /// </summary>
 internal sealed record SongResponse(
     Guid Id,
@@ -423,7 +501,9 @@ internal sealed record SongResponse(
     SongCreditsResponse Credits,
     SongPlaylistResponse[] Playlists,
     SongAlbumResponse[] Albums,
-    SongRelationshipResponse[] Relationships)
+    SongRelationshipResponse[] Relationships,
+    SongReleaseResponse Release,
+    SongWarningResponse[] Warnings)
 {
     public static SongResponse From(SongSummary song)
     {
@@ -450,9 +530,60 @@ internal sealed record SongResponse(
             SongCreditsResponse.From(song.Credits),
             [.. song.Playlists.Select(static playlist => new SongPlaylistResponse(playlist.Id, playlist.Title))],
             [.. song.Albums.Select(static album => new SongAlbumResponse(album.AlbumId, album.Title, album.Disc, album.Track))],
-            [.. song.Relationships.Select(SongRelationshipResponse.From)]);
+            [.. song.Relationships.Select(SongRelationshipResponse.From)],
+            SongReleaseResponse.From(song.Release),
+            song.SameIsrc.Count == 0
+                ? []
+                :
+                [
+                    new(
+                        SongsEndpoints.DuplicateIsrcWarning,
+                        SongService.IsrcField,
+                        song.SameIsrc.Count == 1 ? "Another Song has this ISRC." : "Other Songs have this ISRC.",
+                        [.. song.SameIsrc.Select(static other => new SongNamedResponse(other.Id, other.Shortcode, other.Title))]),
+                ]);
     }
 }
+
+/// <summary>
+/// A Song's release details: partial dates as entered, <c>explicit</c> (<c>explicit</c>,
+/// <c>clean</c>, or null for not set), rights text, the ISRC (12 characters, upper case), the
+/// language code, and links in order. Each member is null when not set; links are empty.
+/// </summary>
+internal sealed record SongReleaseResponse(
+    string? ReleaseDate,
+    string? OriginalReleaseDate,
+    string? Explicit,
+    string? Copyright,
+    string? Publishing,
+    string? Isrc,
+    string? Language,
+    SongLinkResponse[] Links)
+{
+    public static SongReleaseResponse From(SongRelease release)
+    {
+        ArgumentNullException.ThrowIfNull(release);
+
+        return new(
+            release.ReleaseDate,
+            release.OriginalReleaseDate,
+            SongReleaseRules.ExplicitText(release.Explicit),
+            release.Copyright,
+            release.Publishing,
+            release.Isrc,
+            release.Language,
+            [.. release.Links.Select(static link => new SongLinkResponse(link.Label, link.Url))]);
+    }
+}
+
+/// <summary>An external link of a Song: its label (null for none) and URL.</summary>
+internal sealed record SongLinkResponse(string? Label, string Url);
+
+/// <summary>Something allowed but worth telling the user: a stable <c>code</c>, the field it is about, a message, and the Songs involved.</summary>
+internal sealed record SongWarningResponse(string Code, string Field, string Message, SongNamedResponse[] Songs);
+
+/// <summary>Another Song named in an answer: its ID, shortcode, and title.</summary>
+internal sealed record SongNamedResponse(Guid Id, string Shortcode, string Title);
 
 /// <summary>A Playlist as a Song shows it: its ID and title.</summary>
 internal sealed record SongPlaylistResponse(Guid Id, string Title);

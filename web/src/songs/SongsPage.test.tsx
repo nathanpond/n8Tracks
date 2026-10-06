@@ -1,7 +1,7 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import type { Song, SongPage } from '../api/songs';
+import { NO_RELEASE, type Song, type SongPage } from '../api/songs';
 import { testArtist } from '../test/artistServer';
 import { formatDateTime } from '../api/timeZone';
 import {
@@ -52,6 +52,8 @@ function song(number: number, overrides: Partial<Song> = {}): Song {
     playlists: [],
     albums: [],
     relationships: [],
+    release: NO_RELEASE,
+    warnings: [],
     ...overrides,
   };
 }

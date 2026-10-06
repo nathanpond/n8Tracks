@@ -49,6 +49,8 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
 
     public DbSet<SongRecord> Songs => Set<SongRecord>();
 
+    public DbSet<SongLinkRecord> SongLinks => Set<SongLinkRecord>();
+
     public DbSet<VersionRecord> Versions => Set<VersionRecord>();
 
     public DbSet<UsedVersionNumberRecord> UsedVersionNumbers => Set<UsedVersionNumberRecord>();
@@ -229,6 +231,11 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
             song.HasIndex(record => record.ShortcodeNumber).IsUnique();
             song.HasIndex(record => new { record.TitleSortKey, record.ShortcodeNumber });
             song.HasIndex(record => new { record.UpdatedUtc, record.ShortcodeNumber });
+
+            // The duplicate ISRC warning looks codes up. Not unique: a shared ISRC is allowed. The
+            // release columns carry no CHECK constraints, which SQLite could add only by rebuilding
+            // the table; the rules are the application's (SongReleaseRules).
+            song.HasIndex(record => record.Isrc);
             song.HasOne<WorkflowStateRecord>()
                 .WithMany()
                 .HasForeignKey(record => record.WorkflowStateId)
@@ -237,6 +244,16 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                 .WithMany()
                 .HasForeignKey(record => record.CurrentVersionId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<SongLinkRecord>(link =>
+        {
+            link.ToTable("song_links", static table => table.HasCheckConstraint("ck_song_links_url", "url LIKE 'http://%' OR url LIKE 'https://%'"));
+            link.HasKey(record => new { record.SongId, record.Position });
+            link.HasOne<SongRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.SongId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<VersionRecord>(version =>

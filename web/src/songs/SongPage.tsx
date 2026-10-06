@@ -17,6 +17,17 @@ import { Notice } from '../components/Notice';
 import { DetailsPanel, SongDetails } from './DetailsPanel';
 import { CREDITS_KEY, creditsOf, creditsText, creditsValue } from './creditsField';
 import { DETAILS_PANEL_ID, useDetailsPanel } from './detailsPanelState';
+import {
+  explicitLabel,
+  isReleaseKey,
+  LINKS_KEY,
+  linksText,
+  linksValue,
+  RELEASE_LABELS,
+  RELEASE_TEXT_MEMBERS,
+  releaseEditOf,
+  releaseKey,
+} from './details/releaseField';
 import { alphabetical, GENRES_KEY, genresOf, genresValue, mergeGenres } from './genreField';
 import { alphabeticalTags, mergeTags, TAGS_KEY, tagsOf, tagsValue } from './tagField';
 import { SongHeader } from './SongHeader';
@@ -50,13 +61,33 @@ function BackToSongs() {
 /** A Song edit as the shared save helper holds it, as the API's PATCH takes it (credits aside). */
 function songEditOf(edit: Readonly<Record<string, FieldValue>>): SongEdit {
   const { [GENRES_KEY]: genres, [TAGS_KEY]: tags, ...rest } = edit;
-  const fields = Object.fromEntries(Object.entries(rest).filter(([key]) => key !== CREDITS_KEY));
+  const fields = Object.fromEntries(
+    Object.entries(rest).filter(([key]) => key !== CREDITS_KEY && !isReleaseKey(key)),
+  );
+  const release = releaseEditOf(edit);
   return {
     ...fields,
     ...(genres === undefined ? {} : { genreIds: genresOf(genres).map((genre) => genre.id) }),
     ...(tags === undefined ? {} : { tagIds: tagsOf(tags).map((tag) => tag.id) }),
+    ...(release === undefined ? {} : { release }),
   };
 }
+
+/** The release members as the shared save helper holds them, each named for the conflict dialog. */
+const RELEASE_FIELDS: SavedField<Song>[] = [
+  ...RELEASE_TEXT_MEMBERS.map((member): SavedField<Song> => ({
+    key: releaseKey(member),
+    label: RELEASE_LABELS[member],
+    read: (record) => record.release[member],
+    show: (value) => <ConflictValue value={member === 'explicit' ? explicitLabel(value) : value} />,
+  })),
+  {
+    key: LINKS_KEY,
+    label: RELEASE_LABELS.links,
+    read: (record) => linksValue(record.release.links),
+    show: (value) => <ConflictValue value={linksText(value)} />,
+  },
+];
 
 /**
  * A loaded Song, kept as the page's own copy from then on: each save, and each refused save's
@@ -114,6 +145,7 @@ function LoadedSong({ loaded }: { loaded: Song }) {
         merge: mergeTags,
       },
       { key: 'notes', label: 'Notes', read: (record) => record.notes, show: showText },
+      ...RELEASE_FIELDS,
     ];
   }, [states]);
 

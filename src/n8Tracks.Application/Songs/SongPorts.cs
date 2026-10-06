@@ -24,6 +24,8 @@ namespace n8Tracks.Application.Songs;
 /// Its relationships to other Songs, each read from this Song: by the type's name as seen from here
 /// (ignoring case), then by the other Song's title (ignoring case).
 /// </param>
+/// <param name="Release">Its release details; <see cref="SongRelease.None"/> when it has none.</param>
+/// <param name="SameIsrc">The other Songs with its ISRC, by title (ignoring case); empty when it has none or no other Song shares it.</param>
 public sealed record SongSummary(
     Guid Id,
     long ShortcodeNumber,
@@ -41,7 +43,9 @@ public sealed record SongSummary(
     SongCredits Credits,
     IReadOnlyList<PlaylistNamed> Playlists,
     IReadOnlyList<AlbumMembership> Albums,
-    IReadOnlyList<SongRelation> Relationships)
+    IReadOnlyList<SongRelation> Relationships,
+    SongRelease Release,
+    IReadOnlyList<RelatedSong> SameIsrc)
 {
     public string Shortcode => Shortcodes.ForSong(ShortcodeNumber);
 }
@@ -100,7 +104,8 @@ public sealed record SongPage(IReadOnlyList<SongSummary> Items, int Page, int Pa
 /// <param name="Concept">Normalised; null when there is none.</param>
 /// <param name="StateId">The ID of a workflow state, hidden or not.</param>
 /// <param name="Notes">Normalised; null when there are none.</param>
-public sealed record SongDetails(string Title, string? Concept, Guid StateId, string? Notes);
+/// <param name="Release">Valid and normalised; links written as a whole.</param>
+public sealed record SongDetails(string Title, string? Concept, Guid StateId, string? Notes, SongRelease Release);
 
 /// <summary>Where Songs and their Versions are kept.</summary>
 public interface ISongStore
@@ -125,8 +130,9 @@ public interface ISongStore
 
     /// <summary>
     /// Stores <paramref name="details"/> on the Song if it is at <paramref name="revision"/>, raising
-    /// the revision by one and setting its updated time, in one statement. False when the Song is
-    /// gone or at another revision, which leaves it as it is.
+    /// the revision by one and setting its updated time, in one statement, then replaces its links.
+    /// False when the Song is gone or at another revision, which leaves it as it is. Only inside a
+    /// transaction, so the links go with the rest.
     /// </summary>
     Task<bool> TryUpdateAsync(Guid id, SongDetails details, int revision, DateTimeOffset updatedUtc, CancellationToken cancellationToken);
 }

@@ -4,6 +4,7 @@ using n8Tracks.Application.Auth;
 using n8Tracks.Application.Catalog;
 using n8Tracks.Application.References;
 using n8Tracks.Application.Suno;
+using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
 
 namespace n8Tracks.Application.Songs;
@@ -66,7 +67,7 @@ public readonly record struct SongEditField(bool IsSent, string? Value)
 /// An edit of a Song's details: a partial merge, so only the fields sent change. <c>StateId</c> is
 /// the unread text of a workflow state's ID. <paramref name="GenreIds"/>, when sent (not null), is
 /// the Song's whole new list of Genres, each the unread text of a Genre's ID; <paramref name="TagIds"/>
-/// likewise for its Tags.
+/// likewise for its Tags. <paramref name="Release"/>, when sent, changes the release details it sends.
 /// </summary>
 public sealed record SongEdit(
     SongEditField Title,
@@ -74,7 +75,35 @@ public sealed record SongEdit(
     SongEditField StateId,
     SongEditField Notes = default,
     IReadOnlyList<string?>? GenreIds = null,
-    IReadOnlyList<string?>? TagIds = null);
+    IReadOnlyList<string?>? TagIds = null,
+    SongReleaseEdit? Release = null);
+
+/// <summary>A link as sent: its label (missing or null for none) and its URL.</summary>
+public sealed record SongLinkInput(string? Label, string? Url);
+
+/// <summary>
+/// An edit of a Song's release details: only the members sent change, and a null one clears it.
+/// <see cref="Explicit"/> is <c>explicit</c>, <c>clean</c>, or null; <see cref="Links"/>, when sent
+/// (not null), is the Song's whole new list of links.
+/// </summary>
+public sealed record SongReleaseEdit
+{
+    public SongEditField ReleaseDate { get; init; }
+
+    public SongEditField OriginalReleaseDate { get; init; }
+
+    public SongEditField Explicit { get; init; }
+
+    public SongEditField Copyright { get; init; }
+
+    public SongEditField Publishing { get; init; }
+
+    public SongEditField Isrc { get; init; }
+
+    public SongEditField Language { get; init; }
+
+    public IReadOnlyList<SongLinkInput>? Links { get; init; }
+}
 
 /// <summary>How editing a Song ended.</summary>
 public abstract record SongUpdateOutcome
@@ -133,6 +162,17 @@ public sealed class SongService(
     public const string NotesField = "notes";
     public const string GenreIdsField = "genreIds";
     public const string TagIdsField = "tagIds";
+
+    /// <summary>The release details object, and the names its members' errors are keyed by (<c>release.isrc</c>).</summary>
+    public const string ReleaseField = "release";
+    public const string ReleaseDateField = ReleaseField + ".releaseDate";
+    public const string OriginalReleaseDateField = ReleaseField + ".originalReleaseDate";
+    public const string ExplicitField = ReleaseField + ".explicit";
+    public const string CopyrightField = ReleaseField + ".copyright";
+    public const string PublishingField = ReleaseField + ".publishing";
+    public const string IsrcField = ReleaseField + ".isrc";
+    public const string LanguageField = ReleaseField + ".language";
+    public const string LinksField = ReleaseField + ".links";
 
     /// <summary>The list parameters, as the API spells them.</summary>
     public const string SortParameter = "sort";
@@ -257,13 +297,17 @@ public sealed class SongService(
     }
 
     /// <summary>
-    /// Edits a Song's title, concept, workflow state, notes, Genres, or Tags, given the revision the
-    /// caller read. Only the fields sent change: the title follows the creation rule, a null or blank
-    /// concept or notes clears them, the state may be any state, hidden ones included, so a Song can
-    /// move from any state to any other, and the Genres or Tags sent replace the Song's (each must be
-    /// a Genre or Tag; one taken off stays in the list). A stale revision (lower or higher) changes nothing and
-    /// answers the Song as it is now. An edit that changes nothing once normalised is not written and
-    /// answers the Song unchanged; any other moves its revision and last-updated time.
+    /// Edits a Song's title, concept, workflow state, notes, Genres, Tags, or release details, given
+    /// the revision the caller read. Only the fields sent change: the title follows the creation rule,
+    /// a null or blank concept or notes clears them, the state may be any state, hidden ones included,
+    /// so a Song can move from any state to any other, and the Genres or Tags sent replace the Song's
+    /// (each must be a Genre or Tag; one taken off stays in the list). Release members follow
+    /// <see cref="SongReleaseRules"/> (errors keyed <c>release.&lt;member&gt;</c>), a null one is
+    /// cleared, and links sent replace the Song's; an ISRC another Song has is allowed (the answer
+    /// names the others in <see cref="SongSummary.SameIsrc"/>). A stale revision (lower or higher)
+    /// changes nothing and answers the Song as it is now. An edit that changes nothing once
+    /// normalised is not written and answers the Song unchanged; any other moves its revision and
+    /// last-updated time.
     /// </summary>
     public Task<SongUpdateOutcome> UpdateAsync(Guid id, SongEdit edit, int revision, CancellationToken cancellationToken)
     {
@@ -288,6 +332,11 @@ public sealed class SongService(
                 if (edit.Notes.IsSent && SongRules.NotesErrors(edit.Notes.Value) is { Length: > 0 } notesErrors)
                 {
                     errors[NotesField] = notesErrors;
+                }
+
+                if (edit.Release is { } release)
+                {
+                    AddReleaseErrors(errors, release);
                 }
 
                 IReadOnlyList<Guid>? genreIds = null;
@@ -341,14 +390,15 @@ public sealed class SongService(
                     edit.Title.IsSent ? SongRules.NormaliseTitle(edit.Title.Value!) : current.Title,
                     edit.Concept.IsSent ? SongRules.NormaliseConcept(edit.Concept.Value) : current.Concept,
                     edit.StateId.IsSent ? stateId : current.State.Id,
-                    edit.Notes.IsSent ? SongRules.NormaliseNotes(edit.Notes.Value) : current.Notes);
+                    edit.Notes.IsSent ? SongRules.NormaliseNotes(edit.Notes.Value) : current.Notes,
+                    edit.Release is { } sentRelease ? Released(current.Release, sentRelease) : current.Release);
                 var genresChange = genreIds is not null && !genreIds.ToHashSet().SetEquals(current.Genres.Select(static genre => genre.Id))
                     ? genreIds
                     : null;
                 var tagsChange = tagIds is not null && !tagIds.ToHashSet().SetEquals(current.Tags.Select(static tag => tag.Id))
                     ? tagIds
                     : null;
-                if (details == new SongDetails(current.Title, current.Concept, current.State.Id, current.Notes) && genresChange is null && tagsChange is null)
+                if (details == new SongDetails(current.Title, current.Concept, current.State.Id, current.Notes, current.Release) && genresChange is null && tagsChange is null)
                 {
                     return new SongUpdateOutcome.Updated(current);
                 }
@@ -551,6 +601,43 @@ public sealed class SongService(
     }
 
     private static SongListOutcome.Invalid Invalid(string message) => new(message);
+
+    /// <summary>Adds the errors of each release member sent, keyed <c>release.&lt;member&gt;</c>.</summary>
+    private static void AddReleaseErrors(Dictionary<string, string[]> errors, SongReleaseEdit release)
+    {
+        void Check(string field, SongEditField value, Func<string?, string[]> rule)
+        {
+            if (value.IsSent && rule(value.Value) is { Length: > 0 } found)
+            {
+                errors[field] = found;
+            }
+        }
+
+        Check(ReleaseDateField, release.ReleaseDate, SongReleaseRules.DateErrors);
+        Check(OriginalReleaseDateField, release.OriginalReleaseDate, SongReleaseRules.DateErrors);
+        Check(ExplicitField, release.Explicit, SongReleaseRules.ExplicitErrors);
+        Check(CopyrightField, release.Copyright, SongReleaseRules.RightsErrors);
+        Check(PublishingField, release.Publishing, SongReleaseRules.RightsErrors);
+        Check(IsrcField, release.Isrc, SongReleaseRules.IsrcErrors);
+        Check(LanguageField, release.Language, SongReleaseRules.LanguageErrors);
+        if (release.Links is { } links && SongReleaseRules.LinkErrors([.. links.Select(static link => (link.Label, link.Url))]) is { Length: > 0 } linkErrors)
+        {
+            errors[LinksField] = linkErrors;
+        }
+    }
+
+    /// <summary><paramref name="current"/> with each member <paramref name="edit"/> sends, valid, normalised.</summary>
+    private static SongRelease Released(SongRelease current, SongReleaseEdit edit) => new(
+        edit.ReleaseDate.IsSent ? SongReleaseRules.NormaliseDate(edit.ReleaseDate.Value) : current.ReleaseDate,
+        edit.OriginalReleaseDate.IsSent ? SongReleaseRules.NormaliseDate(edit.OriginalReleaseDate.Value) : current.OriginalReleaseDate,
+        edit.Explicit.IsSent ? SongReleaseRules.ParseExplicit(edit.Explicit.Value) : current.Explicit,
+        edit.Copyright.IsSent ? SongReleaseRules.NormaliseText(edit.Copyright.Value) : current.Copyright,
+        edit.Publishing.IsSent ? SongReleaseRules.NormaliseText(edit.Publishing.Value) : current.Publishing,
+        edit.Isrc.IsSent ? SongReleaseRules.NormaliseIsrc(edit.Isrc.Value) : current.Isrc,
+        edit.Language.IsSent ? SongReleaseRules.NormaliseLanguage(edit.Language.Value) : current.Language,
+        edit.Links is null
+            ? current.Links
+            : [.. edit.Links.Select(static link => new SongLink(SongReleaseRules.NormaliseLabel(link.Label), SongReleaseRules.NormaliseUrl(link.Url!)))]);
 
     /// <summary>A whole number from <paramref name="minimum"/> to <paramref name="maximum"/>, written plainly; <paramref name="fallback"/> when missing.</summary>
     private static bool TryReadWhole(string? text, int minimum, int maximum, int fallback, out int value)

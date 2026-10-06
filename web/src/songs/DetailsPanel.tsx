@@ -34,6 +34,7 @@ import type { SaveOutcome } from '../common/useRevisionedSave';
 import { paletteColour } from '../theme/palette';
 import { CreditsSection } from './CreditsSection';
 import { RelatedSection } from './RelatedSection';
+import { ReleaseSection } from './details/ReleaseSection';
 import { DETAILS_PANEL_ID, DETAILS_PANEL_WIDTH } from './detailsPanelState';
 import { alphabetical, GENRES_KEY, genresValue } from './genreField';
 import { normaliseNotes, songNotesError } from './songRules';
@@ -373,7 +374,7 @@ function AlbumsSection({ song }: { song: Song }) {
   );
 }
 
-/** What the Details panel holds for a Song: its credits, Genres, Tags, notes, related Songs, Albums, and Playlists. Later stories add sections. */
+/** What the Details panel holds for a Song: its credits, Genres, Tags, notes, release details, related Songs, Albums, and Playlists. Later stories add sections. */
 export function SongDetails({
   song,
   saveFields,
@@ -389,6 +390,7 @@ export function SongDetails({
       <GenresSection song={song} saveFields={saveFields} onSong={onSong} />
       <TagsSection song={song} saveFields={saveFields} onSong={onSong} />
       <NotesSection song={song} save={(key, value) => saveFields({ [key]: value })} />
+      <ReleaseSection song={song} save={(key, value) => saveFields({ [key]: value })} />
       <RelatedSection song={song} onSong={onSong} />
       <AlbumsSection song={song} />
       <PlaylistsSection song={song} />

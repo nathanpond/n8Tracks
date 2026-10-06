@@ -1,7 +1,7 @@
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import type { Song } from '../api/songs';
+import { NO_RELEASE, type Song } from '../api/songs';
 import {
   healthyReport,
   jsonResponse,
@@ -36,6 +36,8 @@ const song: Song = {
   playlists: [],
   albums: [],
   relationships: [],
+  release: NO_RELEASE,
+  warnings: [],
 };
 
 /** The query string a request was made with, whatever form `fetch` was given it in. */

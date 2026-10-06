@@ -156,6 +156,8 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
         var concept = details.Concept;
         var notes = details.Notes;
         var stateId = details.StateId;
+        var release = details.Release;
+        var explicitContent = SongReleaseRules.ExplicitText(release.Explicit);
         var updated = UtcText.From(updatedUtc);
 
         // One conditional statement: the revision check and the write cannot be split by another writer.
@@ -168,12 +170,42 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
                     .SetProperty(song => song.Concept, concept)
                     .SetProperty(song => song.Notes, notes)
                     .SetProperty(song => song.WorkflowStateId, stateId)
+                    .SetProperty(song => song.ReleaseDate, release.ReleaseDate)
+                    .SetProperty(song => song.OriginalReleaseDate, release.OriginalReleaseDate)
+                    .SetProperty(song => song.ExplicitContent, explicitContent)
+                    .SetProperty(song => song.Copyright, release.Copyright)
+                    .SetProperty(song => song.Publishing, release.Publishing)
+                    .SetProperty(song => song.Isrc, release.Isrc)
+                    .SetProperty(song => song.Language, release.Language)
                     .SetProperty(song => song.UpdatedUtc, updated)
                     .SetProperty(song => song.Revision, song => song.Revision + 1),
                 cancellationToken)
             .ConfigureAwait(false);
+        if (count != 1)
+        {
+            return false;
+        }
 
-        return count == 1;
+        // The links are written as a whole, under the revision just raised.
+        await context.SongLinks.Where(link => link.SongId == id).ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
+        var rows = new List<SongLinkRecord>();
+        for (var position = 0; position < release.Links.Count; position++)
+        {
+            var row = new SongLinkRecord { SongId = id, Position = position, Label = release.Links[position].Label, Url = release.Links[position].Url };
+            context.SongLinks.Add(row);
+            rows.Add(row);
+        }
+
+        if (rows.Count > 0)
+        {
+            await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            foreach (var row in rows)
+            {
+                context.Entry(row).State = EntityState.Detached;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -202,7 +234,11 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
     /// <summary>What titles are ordered by: NFC-normalised and lower-cased invariantly, so case is ignored.</summary>
     internal static string TitleSortKey(string title) => title.Normalize(System.Text.NormalizationForm.FormC).ToLowerInvariant();
 
-    /// <summary>The summaries of <paramref name="records"/>, in their order, with their states, current Versions, Version counts, Genres, Tags, credits, Playlists, Albums, and relationships.</summary>
+    /// <summary>
+    /// The summaries of <paramref name="records"/>, in their order, with their states, current
+    /// Versions, Version counts, Genres, Tags, credits, Playlists, Albums, relationships, release
+    /// links, and the other Songs sharing their ISRC.
+    /// </summary>
     private async Task<List<SongSummary>> SummariesAsync(List<SongRecord> records, CancellationToken cancellationToken)
     {
         if (records.Count == 0)
@@ -253,6 +289,24 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
         var playlists = await PlaylistStore.ForSongsAsync(context, songIds, cancellationToken).ConfigureAwait(false);
         var albums = await AlbumTrackStore.ForSongsAsync(context, songIds, cancellationToken).ConfigureAwait(false);
         var relationships = await RelationshipStore.ForSongsAsync(context, songIds, cancellationToken).ConfigureAwait(false);
+        var links = (await context.SongLinks.AsNoTracking()
+                .Where(link => songIds.Contains(link.SongId))
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false))
+            .ToLookup(static link => link.SongId);
+
+        // Retention does not exist yet: the Song deletion story must leave Songs in retention out here.
+        var isrcs = records.Where(static song => song.Isrc is not null).Select(static song => song.Isrc!).Distinct(StringComparer.Ordinal).ToList();
+        var sameIsrc = (isrcs.Count == 0
+                ? []
+                : await context.Songs.AsNoTracking()
+                    .Where(song => song.Isrc != null && isrcs.Contains(song.Isrc))
+                    .OrderBy(static song => song.TitleSortKey)
+                    .ThenBy(static song => song.ShortcodeNumber)
+                    .Select(static song => new { song.Id, song.ShortcodeNumber, song.Title, song.Isrc })
+                    .ToListAsync(cancellationToken)
+                    .ConfigureAwait(false))
+            .ToLookup(static song => song.Isrc!, StringComparer.Ordinal);
 
         return [.. records.Select(song =>
         {
@@ -277,7 +331,19 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
                 credits.GetValueOrDefault(song.Id) ?? SongCredits.None,
                 playlists.GetValueOrDefault(song.Id) ?? [],
                 albums.GetValueOrDefault(song.Id) ?? [],
-                relationships.GetValueOrDefault(song.Id) ?? []);
+                relationships.GetValueOrDefault(song.Id) ?? [],
+                new SongRelease(
+                    song.ReleaseDate,
+                    song.OriginalReleaseDate,
+                    song.ExplicitContent is { } explicitContent ? SongReleaseRules.ParseExplicit(explicitContent) : null,
+                    song.Copyright,
+                    song.Publishing,
+                    song.Isrc,
+                    song.Language,
+                    [.. links[song.Id].OrderBy(static link => link.Position).Select(static link => new SongLink(link.Label, link.Url))]),
+                song.Isrc is { } isrc
+                    ? [.. sameIsrc[isrc].Where(other => other.Id != song.Id).Select(static other => new RelatedSong(other.Id, Shortcodes.ForSong(other.ShortcodeNumber), other.Title))]
+                    : []);
         })];
     }
 }

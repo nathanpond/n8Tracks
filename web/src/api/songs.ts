@@ -95,6 +95,57 @@ export interface SongRelationship {
   song: { id: string; shortcode: string; title: string };
 }
 
+/** The longest copyright or publishing text the API takes, once normalised. */
+export const SONG_RIGHTS_MAXIMUM_LENGTH = 500;
+
+/** The most links a Song's release details may have. */
+export const SONG_LINK_MAXIMUM_COUNT = 20;
+
+/** Whether a Song is marked explicit or clean; null when not set. */
+export type ExplicitContent = 'explicit' | 'clean';
+
+/** An external link: its label (null for none) and an http or https URL. */
+export interface SongLink {
+  label: string | null;
+  url: string;
+}
+
+/**
+ * How a Song is released, as the API answers it: every member null when not set. Dates are
+ * partial dates as entered (`YYYY`, `YYYY-MM`, `YYYY-MM-DD`); the ISRC is 12 characters, upper
+ * case; the language is a code from the API's list.
+ */
+export interface SongRelease {
+  releaseDate: string | null;
+  originalReleaseDate: string | null;
+  explicit: ExplicitContent | null;
+  copyright: string | null;
+  publishing: string | null;
+  isrc: string | null;
+  language: string | null;
+  links: SongLink[];
+}
+
+/** A Song with no release details. */
+export const NO_RELEASE: SongRelease = {
+  releaseDate: null,
+  originalReleaseDate: null,
+  explicit: null,
+  copyright: null,
+  publishing: null,
+  isrc: null,
+  language: null,
+  links: [],
+};
+
+/** Something allowed but worth telling the user: `duplicate_isrc` names the other Songs with the ISRC. */
+export interface SongWarning {
+  code: string;
+  field: string;
+  message: string;
+  songs: { id: string; shortcode: string; title: string }[];
+}
+
 /** A Song as the API answers it. Times are UTC ISO 8601. */
 export interface Song {
   id: string;
@@ -122,6 +173,10 @@ export interface Song {
   albums: SongAlbum[];
   /** Its relationships to other Songs, each read from this Song: by name as seen from here, then the other Song's title. */
   relationships: SongRelationship[];
+  /** Its release details; every member null (and no links) when not set. */
+  release: SongRelease;
+  /** What is allowed but worth telling the user, such as an ISRC another Song has. */
+  warnings: SongWarning[];
 }
 
 export interface SongPage {
@@ -183,6 +238,44 @@ export function isSongCredits(value: unknown): value is SongCredits {
   );
 }
 
+const isText = (value: unknown) => value === null || typeof value === 'string';
+
+export function isSongLink(value: unknown): value is SongLink {
+  return isRecord(value) && isText(value.label) && typeof value.url === 'string';
+}
+
+export function isSongRelease(value: unknown): value is SongRelease {
+  return (
+    isRecord(value) &&
+    isText(value.releaseDate) &&
+    isText(value.originalReleaseDate) &&
+    (value.explicit === null || value.explicit === 'explicit' || value.explicit === 'clean') &&
+    isText(value.copyright) &&
+    isText(value.publishing) &&
+    isText(value.isrc) &&
+    isText(value.language) &&
+    Array.isArray(value.links) &&
+    value.links.every(isSongLink)
+  );
+}
+
+function isSongWarning(value: unknown): value is SongWarning {
+  return (
+    isRecord(value) &&
+    typeof value.code === 'string' &&
+    typeof value.field === 'string' &&
+    typeof value.message === 'string' &&
+    Array.isArray(value.songs) &&
+    value.songs.every(
+      (song) =>
+        isRecord(song) &&
+        typeof song.id === 'string' &&
+        typeof song.shortcode === 'string' &&
+        typeof song.title === 'string',
+    )
+  );
+}
+
 export function isSong(value: unknown): value is Song {
   return (
     isRecord(value) &&
@@ -222,7 +315,10 @@ export function isSong(value: unknown): value is Song {
         typeof album.track === 'number',
     ) &&
     Array.isArray(value.relationships) &&
-    value.relationships.every(isSongRelationship)
+    value.relationships.every(isSongRelationship) &&
+    isSongRelease(value.release) &&
+    Array.isArray(value.warnings) &&
+    value.warnings.every(isSongWarning)
   );
 }
 
@@ -485,7 +581,8 @@ export async function createSong(request: NewSong): Promise<CreateSongResult> {
 
 /**
  * An edit of a Song's details: only the fields given change. A null or blank concept or notes
- * clears them; `genreIds` and `tagIds` replace the Song's Genres and Tags.
+ * clears them; `genreIds` and `tagIds` replace the Song's Genres and Tags; `release` changes the
+ * release members it gives (null clears one; `links` replaces the list).
  */
 export interface SongEdit {
   title?: string;
@@ -494,6 +591,7 @@ export interface SongEdit {
   notes?: string | null;
   genreIds?: string[];
   tagIds?: string[];
+  release?: Partial<SongRelease>;
 }
 
 /** Edits a Song, based on `song`'s revision; a stale revision comes back as a conflict. */

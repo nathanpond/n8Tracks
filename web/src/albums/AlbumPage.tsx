@@ -1,15 +1,4 @@
-import {
-  Anchor,
-  Button,
-  Fieldset,
-  Group,
-  List,
-  Loader,
-  Stack,
-  Text,
-  TextInput,
-  Title,
-} from '@mantine/core';
+import { Anchor, Button, Fieldset, Group, List, Loader, Stack, Text, Title } from '@mantine/core';
 import { useCallback, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router';
 import {
@@ -24,10 +13,8 @@ import {
   type AlbumLink,
 } from '../api/albums';
 import type { FieldValue, SaveResult } from '../api/saves';
-import { linkErrors, normaliseArtistName } from '../artists/artistRules';
 import { ArtistPicker } from '../common/ArtistPicker';
-import { move } from '../common/listMove';
-import { RowControls } from '../common/RowControls';
+import { LinksEditor } from '../common/LinksEditor';
 import { SavedTextField, type Save } from '../common/SavedTextField';
 import { saveError } from '../common/useInPlaceEdit';
 import { useRevisionedSave, type SavedField } from '../common/useRevisionedSave';
@@ -231,162 +218,6 @@ function AlbumArtistField({ album, save }: { album: Album; save: Save }) {
   );
 }
 
-/** What the links editor holds: the text as typed. */
-type LinkDrafts = { label: string; url: string }[];
-
-const linkDraftsOf = (links: readonly AlbumLink[]): LinkDrafts =>
-  links.map((link) => ({ label: link.label ?? '', url: link.url }));
-
-function normaliseLinks(links: LinkDrafts): AlbumLink[] {
-  return links.map((link) => {
-    const label = normaliseArtistName(link.label);
-    return { label: label === '' ? null : label, url: link.url.trim() };
-  });
-}
-
-/** The Album's links: edited as a list (add, reorder, remove) and saved together with "Save links". */
-function LinksField({ album, save }: { album: Album; save: Save }) {
-  const [drafts, setDrafts] = useState(() => linkDraftsOf(album.links));
-  const [errors, setErrors] = useState<{ label?: string; url?: string }[]>([]);
-  const [listError, setListError] = useState<string>();
-  const [saving, setSaving] = useState(false);
-  const value = jsonValue(normaliseLinks(drafts));
-  const dirty = value !== jsonValue(album.links);
-
-  const change = (next: LinkDrafts) => {
-    setDrafts(next);
-    setListError(undefined);
-  };
-
-  const submit = async () => {
-    const local = drafts.map((link) => linkErrors({ label: link.label, url: link.url }));
-    if (local.some((link) => link.label !== undefined || link.url !== undefined)) {
-      setErrors(local);
-      return;
-    }
-    setErrors([]);
-    setSaving(true);
-    const outcome = await save('links', value);
-    setSaving(false);
-    setListError(saveError(outcome, 'links'));
-  };
-
-  return (
-    <Fieldset legend="Links">
-      <Stack gap="xs">
-        {drafts.length === 0 && (
-          <Text size="sm" c="var(--n8-color-secondary-text)">
-            No links. Add the Album&apos;s pages elsewhere, each with an optional label.
-          </Text>
-        )}
-        {drafts.map((link, index) => {
-          const position = String(index + 1);
-          const update = (next: Partial<LinkDrafts[number]>) => {
-            change(drafts.map((item, i) => (i === index ? { ...item, ...next } : item)));
-          };
-          return (
-            <Group key={index} align="flex-start" wrap="wrap" gap="xs">
-              <TextInput
-                label={`Link ${position} label`}
-                value={link.label}
-                onChange={(event) => {
-                  update({ label: event.currentTarget.value });
-                }}
-                error={errors[index]?.label}
-                aria-invalid={errors[index]?.label !== undefined}
-                w={180}
-              />
-              <TextInput
-                label={`Link ${position} URL`}
-                type="url"
-                placeholder="https://"
-                value={link.url}
-                onChange={(event) => {
-                  update({ url: event.currentTarget.value });
-                }}
-                error={errors[index]?.url}
-                aria-invalid={errors[index]?.url !== undefined}
-                style={{ flex: 1, minWidth: 220 }}
-              />
-              <Stack gap={0} pt={22}>
-                <RowControls
-                  noun="link"
-                  index={index}
-                  count={drafts.length}
-                  onMove={(from, to) => {
-                    change(move(drafts, from, to));
-                  }}
-                  onRemove={(i) => {
-                    change(drafts.filter((_, j) => j !== i));
-                  }}
-                />
-              </Stack>
-            </Group>
-          );
-        })}
-        {listError !== undefined && (
-          <Text size="sm" c="var(--mantine-color-error)">
-            {listError}
-          </Text>
-        )}
-        {album.links.length > 0 && (
-          <Stack gap={2}>
-            <Text size="sm" fw={500}>
-              Saved links
-            </Text>
-            {album.links.map((link, index) => (
-              <Anchor
-                key={index}
-                href={link.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                size="sm"
-                underline="always"
-              >
-                {link.label ?? link.url}
-              </Anchor>
-            ))}
-          </Stack>
-        )}
-        <Group>
-          <Button
-            variant="default"
-            size="xs"
-            disabled={drafts.length >= ALBUM_LINK_MAXIMUM_COUNT}
-            onClick={() => {
-              change([...drafts, { label: '', url: '' }]);
-            }}
-          >
-            Add link
-          </Button>
-          <Button
-            size="xs"
-            disabled={!dirty}
-            loading={saving}
-            onClick={() => {
-              void submit();
-            }}
-          >
-            Save links
-          </Button>
-          <Button
-            variant="default"
-            size="xs"
-            disabled={!dirty}
-            onClick={() => {
-              setDrafts(linkDraftsOf(album.links));
-              setErrors([]);
-              setListError(undefined);
-            }}
-          >
-            Discard link changes
-          </Button>
-        </Group>
-      </Stack>
-    </Fieldset>
-  );
-}
-
 /** The duplicate UPC/EAN warning, while another Album has the same code. */
 function UpcWarning({ album }: { album: Album }) {
   const warnings = album.warnings.filter((warning) => warning.field === 'upc');
@@ -531,7 +362,14 @@ function LoadedAlbum({ initial }: { initial: Album }) {
           </Stack>
         </Fieldset>
 
-        <LinksField key={jsonValue(album.links)} album={album} save={saveField} />
+        <LinksEditor
+          key={jsonValue(album.links)}
+          links={album.links}
+          field="links"
+          maximum={ALBUM_LINK_MAXIMUM_COUNT}
+          empty="No links. Add the Album's pages elsewhere, each with an optional label."
+          save={saveField}
+        />
       </Stack>
 
       <TrackList album={album} onAlbum={setAlbum} />
