@@ -12,6 +12,7 @@ using n8Tracks.Api.Tests.Setup;
 using n8Tracks.Api.Tests.Songs;
 using n8Tracks.Application.References;
 using n8Tracks.Application.Songs;
+using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
 using n8Tracks.Infrastructure.Persistence;
 
@@ -294,6 +295,37 @@ public sealed class VersionImmutabilityGuardTests
                 await target.InputsJsonAsync($$"""{"primaryArtistId":"{{artist.GetProperty("id").GetString()}}","featuredArtistIds":[],""", "}"));
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         }),
+        ["POST /api/v1/songs/{reference}/relationships"] = new(async target =>
+        {
+            // A relationship joins two Songs, never their Versions: the inputs sent alongside are not read.
+            var other = await SongApi.CreateAsync(target.Client, "Guard Related");
+            using var response = await SongApi.SendJsonAsync(
+                target.Client,
+                HttpMethod.Post,
+                new Uri($"/api/v1/songs/{target.SongShortcode}/relationships", UriKind.Relative),
+                await target.InputsJsonAsync($$"""{"typeId":"{{SystemRelationshipTypes.Cover.Id}}","direction":"forward","otherSong":"{{other.GetProperty("shortcode").GetString()}}",""", "}"));
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        }),
+        ["DELETE /api/v1/songs/{reference}/relationships/{id:guid}"] = new(async target =>
+        {
+            var other = await SongApi.CreateAsync(target.Client, "Guard Unrelated");
+            using var related = await SongApi.SendJsonAsync(
+                target.Client,
+                HttpMethod.Post,
+                new Uri($"/api/v1/songs/{target.SongId}/relationships", UriKind.Relative),
+                $$"""{"typeId":"{{SystemRelationshipTypes.Remix.Id}}","direction":"reverse","otherSong":"{{other.GetProperty("id").GetString()}}"}""");
+            Assert.Equal(HttpStatusCode.Created, related.StatusCode);
+            var relationship = (await SetupApi.JsonAsync(related)).GetProperty("relationships").EnumerateArray()
+                .Single(item => item.GetProperty("song").GetProperty("id").GetString() == other.GetProperty("id").GetString())
+                .GetProperty("id").GetString();
+            using var response = await SendAsync(
+                target.Client,
+                HttpMethod.Delete,
+                new Uri($"/api/v1/songs/{target.SongShortcode}/relationships/{relationship}", UriKind.Relative),
+                SongApi.Quoted(1),
+                await target.InputsJsonAsync("{", "}"));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }),
         ["PUT /api/v1/songs/{reference}/current-version"] = new(async target =>
         {
             using var response = await SongApi.SendJsonAsync(
@@ -452,6 +484,9 @@ public sealed class VersionImmutabilityGuardTests
         ["PATCH /api/v1/artists/{id:guid}"] = "edits an Artist record's name, aliases, notes, and links; no Song or Version is touched",
         ["POST /api/v1/albums"] = "adds an Album record (albums) from a title; no Song or Version is touched",
         ["PATCH /api/v1/albums/{id:guid}"] = "edits an Album record's title, Album Artist, release details, and links; no Song or Version is touched",
+        ["POST /api/v1/relationship-types"] = "adds a relationship type (song_relationship_types); no Song or Version is touched",
+        ["PATCH /api/v1/relationship-types/{id:guid}"] = "renames a user-defined relationship type; no relationship, Song, or Version changes",
+        ["DELETE /api/v1/relationship-types/{id:guid}"] = "removes a type and its relationships (song_relationships and the Songs' last-updated times), never a Version",
         ["POST /api/v1/playlists"] = "adds an empty Playlist record (playlists) from a title; no Song or Version is touched",
         ["PATCH /api/v1/playlists/{id:guid}"] = "edits a Playlist record's title and description; no Song or Version is touched",
         ["PUT /api/v1/suno/models/order"] = "reorders the model list; a Version's model is not touched",

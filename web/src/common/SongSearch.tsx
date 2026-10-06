@@ -6,7 +6,7 @@ import { searchSongs, type Song } from '../api/songs';
  * Finds one Song: a text field that suggests the Songs whose title contains what is typed (ignoring
  * case) or whose shortcode starts with it, asked of the API as the user types, up to ten, by title.
  * Each suggestion shows the shortcode, title, and primary Artist. Songs in `unavailable` are shown
- * but cannot be chosen, with `unavailableNote` saying why. Choosing one calls `onChoose` and empties
+ * but cannot be chosen, with `unavailableNote` saying why; Songs in `exclude` are not shown at all. Choosing one calls `onChoose` and empties
  * the field, so the search adds rather than holding a value. Shared by every screen that adds Songs
  * to something (Playlists, Album tracks, relationships).
  */
@@ -16,8 +16,10 @@ export function SongSearch({
   placeholder = 'Type a title or a shortcode',
   unavailable = [],
   unavailableNote = 'already added',
+  exclude = [],
   onChoose,
   busy = false,
+  disabled = false,
   error,
 }: {
   label: string;
@@ -26,8 +28,12 @@ export function SongSearch({
   /** IDs of Songs to show disabled. */
   unavailable?: readonly string[];
   unavailableNote?: string;
+  /** IDs of Songs never to suggest (the Song being related, say). */
+  exclude?: readonly string[];
   onChoose: (song: Song) => void;
   busy?: boolean;
+  /** Whether the field cannot be used yet (something else must be chosen first). */
+  disabled?: boolean;
   error?: string;
 }) {
   const [search, setSearch] = useState('');
@@ -60,7 +66,10 @@ export function SongSearch({
 
   const typed = search.trim() !== '';
   const loading = open && typed && found?.search !== search;
-  const songs = found?.search === search ? (found.result?.songs ?? []) : [];
+  const songs =
+    found?.search === search
+      ? (found.result?.songs ?? []).filter((song) => !exclude.includes(song.id))
+      : [];
   const total = found?.search === search ? (found.result?.total ?? 0) : 0;
   const failed = open && typed && !loading && found?.result === undefined;
 
@@ -106,6 +115,7 @@ export function SongSearch({
           value={search}
           error={error}
           readOnly={busy}
+          disabled={disabled}
           rightSection={busy || loading ? <Loader size="xs" /> : undefined}
           onFocus={openDropdown}
           onClick={openDropdown}

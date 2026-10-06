@@ -1,7 +1,15 @@
 import type { Artist } from '../api/artists';
 import type { CatalogSettings } from '../api/catalogSettings';
 import type { Genre } from '../api/genres';
-import type { Song, SongArtist, SongGenre, SongTag, WorkflowState } from '../api/songs';
+import type { RelationshipType } from '../api/relationships';
+import type {
+  Song,
+  SongArtist,
+  SongGenre,
+  SongRelationship,
+  SongTag,
+  WorkflowState,
+} from '../api/songs';
 import type { Tag } from '../api/tags';
 import { testArtist } from './artistServer';
 import { healthyReport, jsonResponse, requestPath, stubFetch } from './helpers';
@@ -59,6 +67,7 @@ export const baseSong: Song = {
   credits: { primary: null, featured: [] },
   playlists: [],
   albums: [],
+  relationships: [],
 };
 
 export const FOLK: Genre = {
@@ -137,6 +146,65 @@ const PALETTE = [
   'orange',
 ];
 
+/** A relationship type as the API answers it, at revision 1 and unused unless `change` says otherwise. */
+export function relationshipType(
+  number: number,
+  name: string,
+  reverseName: string,
+  change: Partial<RelationshipType> = {},
+): RelationshipType {
+  return {
+    id: `01a10a6e-de00-7000-8000-${String(number).padStart(12, '0')}`,
+    name,
+    reverseName,
+    system: false,
+    symmetric: name === reverseName,
+    sunoAction: null,
+    relationshipCount: 0,
+    revision: 1,
+    ...change,
+  };
+}
+
+/** The nine system types, in the API's order. */
+export const SYSTEM_TYPES: RelationshipType[] = [
+  ['Cover', 'Covered by', 'cover'],
+  ['Extend', 'Extended by', 'extend'],
+  ['Reuse Prompt', 'Prompt reused by', 'reuse_prompt'],
+  ['Mashup', 'Used in mashup', 'mashup'],
+  ['Sample This Song', 'Sampled by', 'sample'],
+  ['Use as Inspiration', 'Inspired', 'inspiration'],
+  ['Voice', 'Voice used by', 'voice'],
+  ['Remix', 'Remixed by', null],
+  ['Derived From', 'Source of', null],
+].map(([name, reverseName, sunoAction], index) =>
+  relationshipType(index + 1, name ?? '', reverseName ?? '', { system: true, sunoAction }),
+);
+
+export const SEQUEL = relationshipType(100, 'Sequel to', 'Has sequel');
+export const SIBLING = relationshipType(101, 'Sibling of', 'Sibling of');
+
+/** Other Songs the fake's search finds besides the Song itself. */
+export const SONG_B: Song = {
+  ...baseSong,
+  id: '0199b1a0-0000-7000-8000-000000000008',
+  shortcode: 'n8-8',
+  title: 'Song B',
+};
+export const SONG_C: Song = {
+  ...baseSong,
+  id: '0199b1a0-0000-7000-8000-000000000009',
+  shortcode: 'n8-9',
+  title: 'Song C',
+};
+
+/** One relationship write the fake server received. */
+export interface ReceivedRelationship {
+  method: string;
+  path: string;
+  body: Record<string, unknown> | undefined;
+}
+
 /** One PATCH the fake server received: the revision it named and the edit it sent. */
 export interface ReceivedEdit {
   ifMatch: string | null;
@@ -159,6 +227,11 @@ export function songServer(
 ) {
   const server = {
     song: { ...song },
+    /** The Songs the search finds, the Song itself included. */
+    others: [SONG_B, SONG_C],
+    relationshipTypes: [...SYSTEM_TYPES, SEQUEL, SIBLING],
+    /** Every relationship POST and DELETE, in order. */
+    relationships: [] as ReceivedRelationship[],
     artists: artists.map((artist) => ({ ...artist })),
     /** Every credits write (`PUT …/credits`), in order. */
     credits: [] as ReceivedCredits[],
@@ -237,6 +310,77 @@ export function songServer(
       });
       server.artists.push(artist);
       return jsonResponse(201, artist);
+    }
+    if (path.endsWith('/api/v1/relationship-types')) {
+      return jsonResponse(200, { items: server.relationshipTypes });
+    }
+    if (path.endsWith('/api/v1/songs')) {
+      const url = new URL(
+        input instanceof Request ? input.url : input.toString(),
+        document.baseURI,
+      );
+      const q = (url.searchParams.get('q') ?? '').trim().toLowerCase();
+      const found = [server.song, ...server.others].filter(
+        (candidate) =>
+          q !== '' &&
+          (candidate.title.toLowerCase().includes(q) || candidate.shortcode.startsWith(q)),
+      );
+      return jsonResponse(200, { items: found, page: 1, pageSize: 10, total: found.length });
+    }
+    const relationship = /\/api\/v1\/songs\/([^/]+)\/relationships(?:\/([^/]+))?$/.exec(path);
+    if (relationship !== null) {
+      const method = (init?.method ?? 'GET').toUpperCase();
+      const sent =
+        typeof init?.body === 'string'
+          ? (JSON.parse(init.body) as Record<string, unknown>)
+          : undefined;
+      server.relationships.push({ method, path, body: sent });
+      const next = server.next;
+      if (next) {
+        server.next = undefined;
+        return next();
+      }
+      if (method === 'DELETE') {
+        const id = decodeURIComponent(relationship[2] ?? '');
+        if (!server.song.relationships.some((existing) => existing.id === id)) {
+          return jsonResponse(404, { code: 'not_found' });
+        }
+        server.song = {
+          ...server.song,
+          relationships: server.song.relationships.filter((existing) => existing.id !== id),
+        };
+        return jsonResponse(200, server.song);
+      }
+      const type = server.relationshipTypes.find((candidate) => candidate.id === sent?.typeId);
+      const other = server.others.find((candidate) => candidate.id === sent?.otherSong);
+      if (type === undefined || other === undefined) {
+        return jsonResponse(422, {
+          code: 'validation_failed',
+          errors: { typeId: ['The relationship type chosen no longer exists. Choose again.'] },
+        });
+      }
+      if (
+        server.song.relationships.some(
+          (existing) => existing.typeId === type.id && existing.song.id === other.id,
+        )
+      ) {
+        return jsonResponse(409, { code: 'relationship_exists', current: server.song });
+      }
+      const direction = sent?.direction === 'reverse' && !type.symmetric ? 'reverse' : 'forward';
+      const added: SongRelationship = {
+        id: `01a10a6f-0000-7000-8000-${String(server.relationships.length).padStart(12, '0')}`,
+        typeId: type.id,
+        name: direction === 'forward' ? type.name : type.reverseName,
+        direction,
+        song: { id: other.id, shortcode: other.shortcode, title: other.title },
+      };
+      server.song = {
+        ...server.song,
+        relationships: [...server.song.relationships, added].sort(
+          (a, b) => a.name.localeCompare(b.name) || a.song.title.localeCompare(b.song.title),
+        ),
+      };
+      return jsonResponse(201, server.song);
     }
     const credits = /\/api\/v1\/songs\/([^/]+)\/credits$/.exec(path);
     if (credits?.[1] !== undefined) {

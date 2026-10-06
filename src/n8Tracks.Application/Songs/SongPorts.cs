@@ -20,6 +20,10 @@ namespace n8Tracks.Application.Songs;
 /// <param name="Credits">Its primary Artist and featured Artists, in the user's order.</param>
 /// <param name="Playlists">The Playlists it is on, by title (ignoring case).</param>
 /// <param name="Albums">The Albums it is on, with its disc and track on each, by title (ignoring case).</param>
+/// <param name="Relationships">
+/// Its relationships to other Songs, each read from this Song: by the type's name as seen from here
+/// (ignoring case), then by the other Song's title (ignoring case).
+/// </param>
 public sealed record SongSummary(
     Guid Id,
     long ShortcodeNumber,
@@ -36,7 +40,8 @@ public sealed record SongSummary(
     IReadOnlyList<Tag> Tags,
     SongCredits Credits,
     IReadOnlyList<PlaylistNamed> Playlists,
-    IReadOnlyList<AlbumMembership> Albums)
+    IReadOnlyList<AlbumMembership> Albums,
+    IReadOnlyList<SongRelation> Relationships)
 {
     public string Shortcode => Shortcodes.ForSong(ShortcodeNumber);
 }

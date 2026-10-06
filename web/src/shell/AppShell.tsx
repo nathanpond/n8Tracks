@@ -34,7 +34,7 @@ function SidebarLink({
 /**
  * The signed-in shell: the header (sidebar toggle, product name, colour control, Go to box, user menu), the
  * sidebar, and the current page. The sidebar lists Songs, Artists, Albums, and Settings, and Settings has Account,
- * Credentials, Workflow, Genres, Tags, Suno, Backups, and System; later stories add pages. On a narrow screen the sidebar is hidden until the toggle opens
+ * Credentials, Workflow, Catalog, Genres, Tags, Relationships, Suno, Backups, and System; later stories add pages. On a narrow screen the sidebar is hidden until the toggle opens
  * it, and choosing a page closes it again.
  */
 export function SignedInShell() {
@@ -80,6 +80,7 @@ export function SignedInShell() {
             <SidebarLink to="/settings/catalog" label="Catalog" onNavigate={close} />
             <SidebarLink to="/settings/genres" label="Genres" onNavigate={close} />
             <SidebarLink to="/settings/tags" label="Tags" onNavigate={close} />
+            <SidebarLink to="/settings/relationships" label="Relationships" onNavigate={close} />
             <SidebarLink to="/settings/suno" label="Suno" onNavigate={close} />
             <SidebarLink to="/settings/backups" label="Backups" onNavigate={close} />
             <SidebarLink to="/settings/system" label="System" onNavigate={close} />

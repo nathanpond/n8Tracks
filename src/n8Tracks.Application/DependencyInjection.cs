@@ -41,6 +41,7 @@ public static class DependencyInjection
         services.AddScoped<AlbumService>();
         services.AddScoped<AlbumTrackService>();
         services.AddScoped<PlaylistService>();
+        services.AddScoped<RelationshipService>();
         services.AddScoped<SongCreditService>();
         services.AddScoped<SongService>();
         services.AddScoped<VersionService>();

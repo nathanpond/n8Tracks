@@ -403,7 +403,8 @@ internal sealed record UpdateSongRequest(JsonElement Title, JsonElement Concept,
 /// A Song as the API shows it. Times are UTC. <c>genres</c> and <c>tags</c> are alphabetical;
 /// <c>credits</c> holds the primary Artist (or null) and the featured Artists in the user's order;
 /// <c>playlists</c> are the Playlists it is on, by title; <c>albums</c> are the Albums it is on, by
-/// title, each with the Song's disc and track.
+/// title, each with the Song's disc and track; <c>relationships</c> are its relationships to other
+/// Songs, each read from this Song, by the type's name as seen from here, then the other Song's title.
 /// </summary>
 internal sealed record SongResponse(
     Guid Id,
@@ -421,7 +422,8 @@ internal sealed record SongResponse(
     SongTagResponse[] Tags,
     SongCreditsResponse Credits,
     SongPlaylistResponse[] Playlists,
-    SongAlbumResponse[] Albums)
+    SongAlbumResponse[] Albums,
+    SongRelationshipResponse[] Relationships)
 {
     public static SongResponse From(SongSummary song)
     {
@@ -447,7 +449,8 @@ internal sealed record SongResponse(
             [.. song.Tags.Select(SongTagResponse.From)],
             SongCreditsResponse.From(song.Credits),
             [.. song.Playlists.Select(static playlist => new SongPlaylistResponse(playlist.Id, playlist.Title))],
-            [.. song.Albums.Select(static album => new SongAlbumResponse(album.AlbumId, album.Title, album.Disc, album.Track))]);
+            [.. song.Albums.Select(static album => new SongAlbumResponse(album.AlbumId, album.Title, album.Disc, album.Track))],
+            [.. song.Relationships.Select(SongRelationshipResponse.From)]);
     }
 }
 

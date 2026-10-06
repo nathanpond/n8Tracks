@@ -70,6 +70,12 @@ public sealed class EndpointScopeGuardTests
         Assert.Equal("scope", markers["POST /api/v1/playlists/{id:guid}/songs"]);
         Assert.Equal("scope", markers["DELETE /api/v1/playlists/{id:guid}/songs/{reference}"]);
         Assert.Equal("scope", markers["PUT /api/v1/playlists/{id:guid}/songs"]);
+        Assert.Equal("scope", markers["GET /api/v1/relationship-types"]);
+        Assert.Equal("session-only", markers["POST /api/v1/relationship-types"]);
+        Assert.Equal("session-only", markers["PATCH /api/v1/relationship-types/{id:guid}"]);
+        Assert.Equal("session-only", markers["DELETE /api/v1/relationship-types/{id:guid}"]);
+        Assert.Equal("scope", markers["POST /api/v1/songs/{reference}/relationships"]);
+        Assert.Equal("scope", markers["DELETE /api/v1/songs/{reference}/relationships/{id:guid}"]);
         Assert.Equal("scope", markers["GET /api/v1/versions/{reference}/next-numbers"]);
         Assert.Equal("scope", markers["GET /api/v1/songs/{reference}/versions"]);
         Assert.Equal("scope", markers["POST /api/v1/songs/{reference}/versions"]);
@@ -171,7 +177,7 @@ public sealed class EndpointScopeGuardTests
             }
         }
 
-        Assert.Equal(34, sessionOnly);
+        Assert.Equal(37, sessionOnly);
 
         // An anonymous endpoint answers as it would without the header, even to a token that is not one.
         using var status = await CredentialApi.SendRawAsync(client, HttpMethod.Get, SetupApi.Status, "Bearer not-a-token");

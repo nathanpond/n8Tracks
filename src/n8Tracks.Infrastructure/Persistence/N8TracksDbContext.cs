@@ -83,6 +83,10 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
 
     public DbSet<PlaylistSongRecord> PlaylistSongs => Set<PlaylistSongRecord>();
 
+    public DbSet<RelationshipTypeRecord> RelationshipTypes => Set<RelationshipTypeRecord>();
+
+    public DbSet<SongRelationshipRecord> SongRelationships => Set<SongRelationshipRecord>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         ArgumentNullException.ThrowIfNull(configurationBuilder);
@@ -520,6 +524,66 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                 .WithMany()
                 .HasForeignKey(record => record.SongId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        OnRelationshipsCreating(modelBuilder);
+    }
+
+    private static void OnRelationshipsCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<RelationshipTypeRecord>(type =>
+        {
+            type.ToTable("song_relationship_types", static table =>
+            {
+                table.HasCheckConstraint("ck_song_relationship_types_names", "length(name) > 0 AND length(reverse_name) > 0");
+                table.HasCheckConstraint("ck_song_relationship_types_suno_action", "suno_action IS NULL OR is_system = 1");
+            });
+            type.HasKey(record => record.Id);
+
+            // No two types share a forward name, or a reverse name, ignoring case; that no name is
+            // another type's in the other direction is the service's to check.
+            type.HasIndex(record => record.NameKey).IsUnique();
+            type.HasIndex(record => record.ReverseNameKey).IsUnique();
+            type.HasData(SystemRelationshipTypes.All.Select(static seeded => new RelationshipTypeRecord
+            {
+                Id = seeded.Id,
+                Name = seeded.Name,
+                NameKey = RelationshipRules.NameKey(seeded.Name),
+                ReverseName = seeded.ReverseName,
+                ReverseNameKey = RelationshipRules.NameKey(seeded.ReverseName),
+                IsSystem = true,
+                SunoAction = seeded.SunoAction,
+                Revision = 1,
+            }));
+        });
+
+        modelBuilder.Entity<SongRelationshipRecord>(relationship =>
+        {
+            relationship.ToTable("song_relationships", static table => table.HasCheckConstraint("ck_song_relationships_two_songs", "from_song_id <> to_song_id"));
+            relationship.HasKey(record => record.Id);
+
+            // A Song's relationships are read from either side. That a pair is related at most once
+            // per type, either way round, is a unique index on the ordered pair, which the
+            // migration creates in SQL (EF Core cannot express it).
+            relationship.HasIndex(record => new { record.FromSongId, record.TypeId });
+            relationship.HasIndex(record => new { record.ToSongId, record.TypeId });
+            relationship.HasIndex(record => record.TypeId);
+
+            // A Song's relationships go with it: a relationship is only organisation, never part of
+            // either Song (the Song deletion story decides about retention). A type in use is never
+            // removed by accident: deleting one removes its relationships first, moving their Songs.
+            relationship.HasOne<SongRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.FromSongId)
+                .OnDelete(DeleteBehavior.Cascade);
+            relationship.HasOne<SongRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.ToSongId)
+                .OnDelete(DeleteBehavior.Cascade);
+            relationship.HasOne<RelationshipTypeRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.TypeId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
     }
 }

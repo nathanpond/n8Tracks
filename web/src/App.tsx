@@ -14,6 +14,7 @@ import { CatalogPage } from './settings/CatalogPage';
 import { CredentialsPage } from './settings/CredentialsPage';
 import { GenresPage } from './settings/GenresPage';
 import { SunoPage } from './settings/SunoPage';
+import { RelationshipsPage } from './settings/RelationshipsPage';
 import { TagsPage } from './settings/TagsPage';
 import { SystemPage } from './settings/SystemPage';
 import { WorkflowPage } from './settings/WorkflowPage';
@@ -60,6 +61,7 @@ export function App() {
                 <Route path="settings/catalog" element={<CatalogPage />} />
                 <Route path="settings/genres" element={<GenresPage />} />
                 <Route path="settings/tags" element={<TagsPage />} />
+                <Route path="settings/relationships" element={<RelationshipsPage />} />
                 <Route path="settings/suno" element={<SunoPage />} />
                 <Route path="settings/backups" element={<BackupsPage />} />
                 <Route path="settings/system" element={<SystemPage />} />

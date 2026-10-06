@@ -9,6 +9,7 @@ using n8Tracks.Api.Tests.Auth;
 using n8Tracks.Api.Tests.Setup;
 using n8Tracks.Api.Tests.Songs;
 using n8Tracks.Application.References;
+using n8Tracks.Domain.Catalog;
 
 namespace n8Tracks.Api.Tests.References;
 
@@ -49,6 +50,9 @@ public sealed class ReferenceParameterGuardTests
         "POST /api/v1/albums/{id:guid}/tracks: id",
         "DELETE /api/v1/albums/{id:guid}/tracks/{reference}: id",
         "PUT /api/v1/albums/{id:guid}/tracks: id",
+        "PATCH /api/v1/relationship-types/{id:guid}: id",
+        "DELETE /api/v1/relationship-types/{id:guid}: id",
+        "DELETE /api/v1/songs/{reference}/relationships/{id:guid}: id",
         "GET /api/v1/versions/{reference}/snapshots/{snapshotId:guid}: snapshotId",
         "POST /api/v1/versions/{reference}/snapshots/{snapshotId:guid}/restore: snapshotId",
     };
@@ -67,6 +71,14 @@ public sealed class ReferenceParameterGuardTests
         // 200: the Song is credited to no one already, so nothing changes.
         ["PUT /api/v1/songs/{reference}/credits"] = static async (c, song, _) =>
             await c.SendAsync(HttpMethod.Put, $"songs/{song}/credits", """{"primaryArtistId":null,"featuredArtistIds":[]}""", await c.SongRevisionAsync()),
+
+        // 422 validation_failed: the Song was found, and is named as its own other Song.
+        ["POST /api/v1/songs/{reference}/relationships"] = static (c, song, _) =>
+            c.SendAsync(HttpMethod.Post, $"songs/{song}/relationships", $$"""{"typeId":"{{SystemRelationshipTypes.Cover.Id}}","direction":"forward","otherSong":"{{song}}"}"""),
+
+        // 200: a relationship made for the call (by ID, so it is there whatever the reference) is removed.
+        ["DELETE /api/v1/songs/{reference}/relationships/{id:guid}"] = static async (c, song, _) =>
+            await c.SendAsync(HttpMethod.Delete, $"songs/{song}/relationships/{await c.RelationshipAsync()}"),
 
         // 422 version_number_not_offered: the Song and the source were both found, and nothing is stored.
         ["POST /api/v1/songs/{reference}/versions"] = static (c, song, version) =>
@@ -288,6 +300,14 @@ public sealed class ReferenceParameterGuardTests
         }
 
         public Task<int> SongRevisionAsync() => RevisionAsync($"songs/{songId}");
+
+        /// <summary>Relates the Song to the second one under Cover, by ID, and answers the relationship's ID.</summary>
+        public async Task<string> RelationshipAsync()
+        {
+            using var response = await SendAsync(HttpMethod.Post, $"songs/{songId}/relationships", $$"""{"typeId":"{{SystemRelationshipTypes.Cover.Id}}","direction":"forward","otherSong":"n8-2"}""");
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            return (await SetupApi.JsonAsync(response)).GetProperty("relationships")[0].GetProperty("id").GetString()!;
+        }
 
         public Task<int> VersionRevisionAsync() => RevisionAsync($"versions/{versionId}");
 

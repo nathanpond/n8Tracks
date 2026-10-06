@@ -202,7 +202,7 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
     /// <summary>What titles are ordered by: NFC-normalised and lower-cased invariantly, so case is ignored.</summary>
     internal static string TitleSortKey(string title) => title.Normalize(System.Text.NormalizationForm.FormC).ToLowerInvariant();
 
-    /// <summary>The summaries of <paramref name="records"/>, in their order, with their states, current Versions, Version counts, Genres, Tags, credits, Playlists, and Albums.</summary>
+    /// <summary>The summaries of <paramref name="records"/>, in their order, with their states, current Versions, Version counts, Genres, Tags, credits, Playlists, Albums, and relationships.</summary>
     private async Task<List<SongSummary>> SummariesAsync(List<SongRecord> records, CancellationToken cancellationToken)
     {
         if (records.Count == 0)
@@ -252,6 +252,7 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
         var credits = await SongCreditStore.ForSongsAsync(context, songIds, cancellationToken).ConfigureAwait(false);
         var playlists = await PlaylistStore.ForSongsAsync(context, songIds, cancellationToken).ConfigureAwait(false);
         var albums = await AlbumTrackStore.ForSongsAsync(context, songIds, cancellationToken).ConfigureAwait(false);
+        var relationships = await RelationshipStore.ForSongsAsync(context, songIds, cancellationToken).ConfigureAwait(false);
 
         return [.. records.Select(song =>
         {
@@ -275,7 +276,8 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
                 tags.GetValueOrDefault(song.Id) ?? [],
                 credits.GetValueOrDefault(song.Id) ?? SongCredits.None,
                 playlists.GetValueOrDefault(song.Id) ?? [],
-                albums.GetValueOrDefault(song.Id) ?? []);
+                albums.GetValueOrDefault(song.Id) ?? [],
+                relationships.GetValueOrDefault(song.Id) ?? []);
         })];
     }
 }

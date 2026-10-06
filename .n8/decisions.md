@@ -2071,3 +2071,41 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
   - The Song Details panel gains an "Albums" section before "Playlists": "<Album link>, disc D, track T".
   **Why:** These are the discretion lines: Move up/Move down for the keyboard, drag within a disc, and the shared Song search with the disabled state computed in the client. Showing a disc heading even for a single disc makes "disc 1" visible as the Demo needs.
   **Issue:** #91
+- **Decision:** The nine system relationship types follow #92's AC as amended by spike TS-002: Cover, Extend, Reuse Prompt, Mashup, Sample This Song, Use as Inspiration, Voice (Suno action keys `cover`, `extend`, `reuse_prompt`, `mashup`, `sample`, `inspiration`, `voice`), then Remix (the general type for imported clips whose action is not recognised; no key) and Derived From (no key). They are seeded by the migration with fixed IDs (`Domain/Catalog/SystemRelationshipTypes`, `01a10a6e-de0N-…`), and are listed in that order before the user's types (alphabetical).
+  **Why:** The AC, the owner-approved TS-002 planning comment, and the discretion's reverse names and action keys all agree. With fixed IDs, M4's import and the tests can name a system type without looking it up.
+  **Issue:** #92
+- **Decision:** Two tables, from the discretion line, in migration `AddSongRelationships`:
+  - `song_relationship_types`: `name`, `name_key`, `reverse_name`, `reverse_name_key` (each unique), `is_system`, `suno_action` (allowed only on system types), and `revision`.
+  - `song_relationships`: `id`, `type_id` (RESTRICT), `from_song_id`, `to_song_id` (both CASCADE with the Song), and `created_utc`. A CHECK makes the two Songs differ.
+  - A relationship is stored in the direction its forward name reads. The unordered pair is unique per type through a SQL expression index, `ux_song_relationships_pair` on `(type_id, min(from,to), max(from,to))`. EF cannot express that index, so the migration writes it, and a migration that later rebuilds the table must create it again.
+  **Why:** The AC says "unordered for uniqueness", and the database should refuse a reversed duplicate even if a later path writes rows without going through the service. Cascading on the Song matches Playlist and Album memberships, and the Song deletion story decides about retention. RESTRICT on the type means a type is deleted only by the service, which also moves the affected Songs.
+  **Issue:** #92
+- **Decision:** Type names:
+  - A reverse name equal to the forward name, ignoring case, makes the type symmetric. It is stored with one name, shown once in pickers, and shown as "Same both ways" in Settings.
+  - A name taken by any type in either direction, system types included, is 422 `validation_failed` on `name` or `reverseName`. The message names the holder. It is not a 409.
+  - PATCH takes `name` and/or `reverseName`. A field not sent keeps its value, except that a symmetric type renamed without `reverseName` stays symmetric.
+  **Why:** The discretion line makes names unique across forward and reverse names, and lets the reverse name equal the forward name. Treating a case-only difference as symmetric avoids a pair of names that differ only in case. The story defines refusal codes only for relationships and for system types, and a taken name is a field error in a form, so 422 lets the UI show it beside the field.
+  **Issue:** #92
+- **Decision:** Type endpoints are `GET /api/v1/relationship-types` (`catalog.read`), plus `POST`, `PATCH /{id:guid}`, and `DELETE /{id:guid}`. The three writes are SessionOnly, so the session-only count is now 37. PATCH and DELETE take If-Match on the type's revision.
+  - A system type gets 409 `system_type` (with `current`) on PATCH or DELETE, whatever the revision.
+  - Deleting a type in use without `?removeRelationships=true` is 409 `relationship_type_in_use` with `relationshipCount`. That is the count the UI's confirmation states.
+  - `removeRelationships=true` on an unused type just deletes it. Tags give 422 there, but a race should not turn a confirmed delete into an error.
+  - Deleting a type removes exactly its relationships and moves each affected Song's `updated_utc`, not its revision.
+  **Why:** These are the discretion's routes and the `system_type` code. The confirmation mirrors Tags' `removeFromSongs`, which turns the AC "asks for confirmation, stating how many relationships" into an API contract. Moving the Songs' updated times on removal follows the discretion line "removing a relationship moves both Songs'".
+  **Issue:** #92
+- **Decision:** Relating Songs:
+  - `POST /api/v1/songs/{reference}/relationships` takes `{typeId, direction, otherSong}`. `otherSong` is an ID or a shortcode.
+  - It answers 201 with this Song as `SongResponse`, now carrying `relationships[{id,typeId,name,direction,song{id,shortcode,title}}]`, and a Location ending in `/relationships/{id}`.
+  - `DELETE .../relationships/{id:guid}` answers 200 with this Song, and works from either of the relationship's two Songs.
+  - Both need `songs.write`, and neither takes or raises a revision. Both move both Songs' `updated_utc`.
+  - Refusals: self is 422 on `otherSong`; a duplicate either way round is 409 `relationship_exists` with `current`; an unknown type or other Song is 422; an unknown Song or relationship is 404.
+  - `SongSummary` has a trailing `Relationships`, sorted by the name seen from that Song (ignoring case), then by the other Song's title.
+  **Why:** These are the discretion's routes, codes, and the "moves last-updated times but no revision" rule. Answering with the Song lets the Details panel replace its copy without a second request. No revision is taken because the Song's revision does not change.
+  **Issue:** #92
+- **Decision:** Web:
+  - `settings/RelationshipsPage.tsx` (Settings → Relationships, between Tags and Suno in the sidebar) has a table of types. System rows show a "System type" badge and no actions. User types have Rename and Delete, and the page has an "Add a type" form. Name clashes are checked in the client against every type's names in both directions.
+  - Deleting a type in use opens a dialog stating "N relationships use …".
+  - `songs/RelatedSection.tsx` is the Details panel's "Related" group, placed after Notes. It groups relationships by name and links each other Song. A Relationship picker lists every type in each direction, a symmetric type once, grouped as "System types" and "Your types". The shared `SongSearch` then finds the other Song: it is disabled until a type is chosen, leaves out this Song (new `exclude` prop), and disables Songs already related under the chosen type. Removing a relationship needs a confirmation dialog.
+  - Web `Song` requires `relationships` (fixtures `relationships: []`). `SongSearch` gained `exclude` and `disabled`. The `songServer` fake serves types, search, and relationship writes.
+  **Why:** These are the discretion lines: the shared search, excluding this Song, disabled only under the chosen type, direction picked by name, grouping and order. The AC asks for confirmation before removal. "Not related to any Song." matches the other Details sections.
+  **Issue:** #92

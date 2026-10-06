@@ -104,6 +104,7 @@ test.describe(
         'Catalog',
         'Genres',
         'Tags',
+        'Relationships',
         'Suno',
         'Backups',
         'System',

@@ -80,6 +80,21 @@ export interface SongAlbum {
   track: number;
 }
 
+/** Which way a relationship reads from a Song: by its type's forward name or its reverse name. */
+export type RelationshipDirection = 'forward' | 'reverse';
+
+/**
+ * A relationship as a Song shows it: its type, the type's name as read from this Song, which way
+ * that is, and the other Song.
+ */
+export interface SongRelationship {
+  id: string;
+  typeId: string;
+  name: string;
+  direction: RelationshipDirection;
+  song: { id: string; shortcode: string; title: string };
+}
+
 /** A Song as the API answers it. Times are UTC ISO 8601. */
 export interface Song {
   id: string;
@@ -105,6 +120,8 @@ export interface Song {
   playlists: SongPlaylist[];
   /** The Albums it is on, by title, with its disc and track on each. */
   albums: SongAlbum[];
+  /** Its relationships to other Songs, each read from this Song: by name as seen from here, then the other Song's title. */
+  relationships: SongRelationship[];
 }
 
 export interface SongPage {
@@ -203,7 +220,23 @@ export function isSong(value: unknown): value is Song {
         typeof album.title === 'string' &&
         typeof album.disc === 'number' &&
         typeof album.track === 'number',
-    )
+    ) &&
+    Array.isArray(value.relationships) &&
+    value.relationships.every(isSongRelationship)
+  );
+}
+
+export function isSongRelationship(value: unknown): value is SongRelationship {
+  return (
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    typeof value.typeId === 'string' &&
+    typeof value.name === 'string' &&
+    (value.direction === 'forward' || value.direction === 'reverse') &&
+    isRecord(value.song) &&
+    typeof value.song.id === 'string' &&
+    typeof value.song.shortcode === 'string' &&
+    typeof value.song.title === 'string'
   );
 }
 
