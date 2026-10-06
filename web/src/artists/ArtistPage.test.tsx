@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
+import { testAlbum } from '../test/albumServer';
 import { artistServer, testArtist } from '../test/artistServer';
 import { renderApp } from '../test/helpers';
 import { baseSong } from '../test/songServer';
@@ -43,9 +44,36 @@ describe('an Artist page', () => {
     expect(
       await within(songs).findByText('No Songs are credited to this Artist yet.'),
     ).toBeVisible();
-    expect(screen.getByRole('region', { name: 'Albums' })).toHaveTextContent(
-      'No Albums are credited to this Artist yet.',
+    expect(
+      await within(screen.getByRole('region', { name: 'Albums' })).findByText(
+        'This Artist is not the Album Artist of any Album yet.',
+      ),
+    ).toBeVisible();
+  });
+
+  it("lists the Albums the Artist is Album Artist of, with each one's release date", async () => {
+    const n8 = { id: N8.id, name: N8.name };
+    artistServer(
+      [N8],
+      [],
+      [
+        testAlbum('Pack EP', { albumArtist: n8, releaseDate: '2026' }),
+        testAlbum('Another', { albumArtist: n8, originalReleaseDate: '1999' }),
+        testAlbum('Not theirs', { albumArtist: { id: 'someone-else', name: 'Other' } }),
+      ],
     );
+
+    await openArtist();
+
+    const albums = screen.getByRole('region', { name: 'Albums' });
+    const table = await within(albums).findByRole('table', { name: 'Albums by n8' });
+    const rows = within(table).getAllByRole('row').slice(1);
+    expect(rows.map((row) => row.getAttribute('data-album-title'))).toEqual(['Another', 'Pack EP']);
+    expect(within(table).getByRole('link', { name: 'Pack EP' }).getAttribute('href')).toMatch(
+      /^\/albums\/01a1b000-/,
+    );
+    expect(rows[0]).toHaveTextContent('1999');
+    expect(rows[1]).toHaveTextContent('2026');
   });
 
   it('lists each Song crediting the Artist with its role, primary or featured', async () => {

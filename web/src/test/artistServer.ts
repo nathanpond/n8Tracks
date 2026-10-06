@@ -1,3 +1,4 @@
+import type { Album } from '../api/albums';
 import type { Artist, ArtistMatch } from '../api/artists';
 import type { Song } from '../api/songs';
 import { healthyReport, jsonResponse, requestPath, stubFetch } from './helpers';
@@ -46,12 +47,14 @@ function problem(status: number, code: string, extra: Record<string, unknown> = 
  * `duplicate_artist_name` unless `confirmDuplicate`, only for names an Artist did not already have)
  * and, for PATCH, the revision check first. `server.next` answers the next write some other way;
  * `server.changeElsewhere` plays another client. `server.songs` are the Songs the list answers for
- * `GET /api/v1/songs?artist=<id>` (those crediting that Artist, by title).
+ * `GET /api/v1/songs?artist=<id>` (those crediting that Artist, by title), and `server.albums` those
+ * it answers for `GET /api/v1/albums?artist=<id>` (those whose Album Artist it is, by title).
  */
-export function artistServer(artists: Artist[] = [], songs: Song[] = []) {
+export function artistServer(artists: Artist[] = [], songs: Song[] = [], albums: Album[] = []) {
   const server = {
     artists: artists.map((artist) => ({ ...artist })),
     songs: [...songs],
+    albums: [...albums],
     writes: [] as ArtistWrite[],
     queries: [] as string[],
     pageSize: 50,
@@ -113,6 +116,15 @@ export function artistServer(artists: Artist[] = [], songs: Song[] = []) {
           pageSize: 50,
           total: items.length,
         }),
+      );
+    }
+    if (path.endsWith('/api/v1/albums') && method === 'GET') {
+      const artist = url.searchParams.get('artist');
+      const items = server.albums
+        .filter((album) => album.albumArtist?.id === artist)
+        .sort((a, b) => a.title.localeCompare(b.title));
+      return Promise.resolve(
+        jsonResponse(200, { items, page: 1, pageSize: 50, total: items.length }),
       );
     }
     if (!path.includes('/api/v1/artists')) {

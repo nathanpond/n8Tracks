@@ -73,6 +73,10 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
 
     public DbSet<SongCreditRecord> SongCredits => Set<SongCreditRecord>();
 
+    public DbSet<AlbumRecord> Albums => Set<AlbumRecord>();
+
+    public DbSet<AlbumLinkRecord> AlbumLinks => Set<AlbumLinkRecord>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         ArgumentNullException.ThrowIfNull(configurationBuilder);
@@ -415,6 +419,41 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                 .WithMany()
                 .HasForeignKey(record => record.ArtistId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<AlbumRecord>(album =>
+        {
+            album.ToTable("albums", static table =>
+            {
+                table.HasCheckConstraint("ck_albums_title", "length(title) > 0");
+                table.HasCheckConstraint("ck_albums_upc", "upc IS NULL OR ((length(upc) = 12 OR length(upc) = 13) AND upc NOT GLOB '*[^0-9]*')");
+            });
+            album.HasKey(record => record.Id);
+
+            // The list's default order: by title ignoring case, then the earlier created.
+            album.HasIndex(record => new { record.TitleKey, record.CreatedUtc });
+
+            // The duplicate UPC/EAN warning looks codes up by their 13-digit form. Not unique: a
+            // shared code is allowed.
+            album.HasIndex(record => record.UpcKey);
+
+            // An Album Artist is never removed by accident (the Artist deletion story decides what
+            // happens to the Albums it is Album Artist of).
+            album.HasIndex(record => record.AlbumArtistId);
+            album.HasOne<ArtistRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.AlbumArtistId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<AlbumLinkRecord>(link =>
+        {
+            link.ToTable("album_links", static table => table.HasCheckConstraint("ck_album_links_url", "url LIKE 'http://%' OR url LIKE 'https://%'"));
+            link.HasKey(record => new { record.AlbumId, record.Position });
+            link.HasOne<AlbumRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.AlbumId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

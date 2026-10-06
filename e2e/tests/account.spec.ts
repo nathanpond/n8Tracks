@@ -96,6 +96,7 @@ test.describe(
       await expect(sidebar(page).getByRole('link')).toHaveText([
         'Songs',
         'Artists',
+        'Albums',
         'Account',
         'Credentials',
         'Workflow',

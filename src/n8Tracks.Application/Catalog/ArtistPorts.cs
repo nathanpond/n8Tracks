@@ -5,7 +5,7 @@ namespace n8Tracks.Application.Catalog;
 /// <summary>
 /// An Artist as it is read: the record, how many Songs and Albums are credited to it, when it was
 /// created and last changed, and its revision. A Song counts once whether its credit is primary or
-/// featured, in every workflow state; the Album count is 0 until the Album story adds Albums.
+/// featured, in every workflow state; an Album counts when the Artist is its Album Artist.
 /// </summary>
 public sealed record ArtistDetails(Artist Artist, int SongCount, int AlbumCount, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, int Revision);
 

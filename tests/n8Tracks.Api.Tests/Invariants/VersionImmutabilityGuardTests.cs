@@ -382,6 +382,8 @@ public sealed class VersionImmutabilityGuardTests
         ["DELETE /api/v1/tags/{id:guid}"] = "removes Songs' Tag assignments (song_tags and the Songs' revisions), never a Version",
         ["POST /api/v1/artists"] = "adds an Artist record (artists, artist_aliases, artist_links); no Song or Version is touched",
         ["PATCH /api/v1/artists/{id:guid}"] = "edits an Artist record's name, aliases, notes, and links; no Song or Version is touched",
+        ["POST /api/v1/albums"] = "adds an Album record (albums) from a title; no Song or Version is touched",
+        ["PATCH /api/v1/albums/{id:guid}"] = "edits an Album record's title, Album Artist, release details, and links; no Song or Version is touched",
         ["PUT /api/v1/suno/models/order"] = "reorders the model list; a Version's model is not touched",
         ["DELETE /api/v1/workflow-states/{id:guid}"] = "workflow states; moves Songs to another state, never a Version",
         ["POST /api/v1/backups"] = "queues a backup: reads the database, writes only an archive file",

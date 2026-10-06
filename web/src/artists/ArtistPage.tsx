@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Anchor,
   Button,
   Fieldset,
@@ -27,7 +26,9 @@ import {
   type ArtistLink,
   type ArtistMatch,
 } from '../api/artists';
+import { DEFAULT_ALBUM_QUERY, useAlbums } from '../api/albums';
 import type { FieldValue, SaveResult } from '../api/saves';
+import { formatAlbumDate, shownDate } from '../albums/albumRules';
 import { songListParameters, useSongs, type SongQuery } from '../api/songs';
 import { useRevisionedSave, type SavedField } from '../common/useRevisionedSave';
 import { Notice } from '../components/Notice';
@@ -39,6 +40,8 @@ import {
   normaliseArtistName,
 } from './artistRules';
 import { DuplicateArtistDialog } from './DuplicateMatches';
+import { move } from '../common/listMove';
+import { RowControls } from '../common/RowControls';
 
 const FAILED_MESSAGE =
   'n8Tracks did not answer as expected. Check that it is running and try again.';
@@ -185,85 +188,67 @@ function localErrors(drafts: Drafts): FormErrors | undefined {
   return any ? errors : undefined;
 }
 
-/** A row's move and remove controls, named by the row's noun and position. */
-function RowControls({
-  noun,
-  index,
-  count,
-  onMove,
-  onRemove,
-}: {
-  noun: string;
-  index: number;
-  count: number;
-  onMove?: (from: number, to: number) => void;
-  onRemove: (index: number) => void;
-}) {
-  const position = String(index + 1);
+/**
+ * The Albums the Artist is Album Artist of, by title, with each one's release date (else its
+ * original release date); the first fifty here.
+ */
+function ArtistAlbums({ artist }: { artist: Artist }) {
+  const { state, reload } = useAlbums(DEFAULT_ALBUM_QUERY, artist.id);
+  const page = state.phase === 'ready' ? state.data : undefined;
   return (
-    <Group gap={4} wrap="nowrap" mt={4}>
-      {onMove !== undefined && (
-        <>
-          <ActionIcon
-            variant="default"
-            aria-label={`Move ${noun} ${position} up`}
-            disabled={index === 0}
-            onClick={() => {
-              onMove(index, index - 1);
-            }}
-          >
-            <span aria-hidden="true">↑</span>
-          </ActionIcon>
-          <ActionIcon
-            variant="default"
-            aria-label={`Move ${noun} ${position} down`}
-            disabled={index === count - 1}
-            onClick={() => {
-              onMove(index, index + 1);
-            }}
-          >
-            <span aria-hidden="true">↓</span>
-          </ActionIcon>
-        </>
-      )}
-      <ActionIcon
-        variant="default"
-        aria-label={`Remove ${noun} ${position}`}
-        onClick={() => {
-          onRemove(index);
-        }}
-      >
-        <span aria-hidden="true">×</span>
-      </ActionIcon>
-    </Group>
-  );
-}
-
-function move<T>(list: readonly T[], from: number, to: number): T[] {
-  const next = [...list];
-  const [item] = next.splice(from, 1);
-  if (item !== undefined) {
-    next.splice(to, 0, item);
-  }
-  return next;
-}
-
-/** A section the credit or Album stories fill; until then it says nothing is credited. */
-function CreditedSection({ title, count, noun }: { title: string; count: number; noun: string }) {
-  const id = `artist-${title.toLowerCase()}`;
-  return (
-    <section aria-labelledby={id}>
+    <section aria-labelledby="artist-albums">
       <Stack gap="xs">
-        <Title order={3} id={id}>
-          {title}
+        <Title order={3} id="artist-albums">
+          Albums
         </Title>
-        <Paper p="sm" withBorder>
-          <Text size="sm">
-            {count === 0
-              ? `No ${noun} are credited to this Artist yet.`
-              : `${String(count)} ${count === 1 ? noun.replace(/s$/, '') : noun} credited to this Artist.`}
-          </Text>
-        </Paper>
+        {state.phase === 'loading' && <Loader size="sm" aria-label="Loading the Albums" />}
+        {(state.phase === 'error' || state.phase === 'not-found') && (
+          <Group gap="xs">
+            <Text size="sm" c="var(--mantine-color-error)">
+              The Albums could not be loaded.
+            </Text>
+            <Button variant="default" size="compact-xs" onClick={reload}>
+              Try again
+            </Button>
+          </Group>
+        )}
+        {page?.total === 0 && (
+          <Paper p="sm" withBorder>
+            <Text size="sm">This Artist is not the Album Artist of any Album yet.</Text>
+          </Paper>
+        )}
+        {page !== undefined && page.total > 0 && (
+          <>
+            <Table withTableBorder aria-label={`Albums by ${artist.name}`}>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th scope="col">Album</Table.Th>
+                  <Table.Th scope="col">Release date</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {page.items.map((album) => {
+                  const date = shownDate(album);
+                  return (
+                    <Table.Tr key={album.id} data-album-title={album.title}>
+                      <Table.Td>
+                        <Anchor component={Link} to={`/albums/${album.id}`}>
+                          {album.title}
+                        </Anchor>
+                      </Table.Td>
+                      <Table.Td>{date === null ? '—' : formatAlbumDate(date)}</Table.Td>
+                    </Table.Tr>
+                  );
+                })}
+              </Table.Tbody>
+            </Table>
+            {page.total > page.items.length && (
+              <Text size="sm">
+                The first {page.items.length} of {page.total} Albums are shown.
+              </Text>
+            )}
+          </>
+        )}
       </Stack>
     </section>
   );
@@ -654,7 +639,7 @@ function LoadedArtist({ initial }: { initial: Artist }) {
       </form>
 
       <CreditedSongs artist={artist} />
-      <CreditedSection title="Albums" count={artist.albumCount} noun="Albums" />
+      <ArtistAlbums artist={artist} />
 
       <DuplicateArtistDialog
         matches={duplicate?.matches ?? null}
@@ -675,7 +660,7 @@ function LoadedArtist({ initial }: { initial: Artist }) {
 /**
  * An Artist's page (`/artists/<id>`): its name, aliases, notes, and links, edited in one form and
  * saved under the Artist's revision; a new name or alias another Artist has asks for confirmation.
- * Below are the Songs credited to it, with the role, and the Albums, which the Album story fills.
+ * Below are the Songs credited to it, with the role, and the Albums it is Album Artist of.
  */
 export function ArtistPage() {
   const { id = '' } = useParams();

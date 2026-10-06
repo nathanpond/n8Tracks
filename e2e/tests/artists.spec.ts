@@ -65,7 +65,7 @@ test.describe('Artists', () => {
       'No Songs are credited to this Artist yet.',
     );
     await expect(page.getByRole('region', { name: 'Albums' })).toContainText(
-      'No Albums are credited to this Artist yet.',
+      'This Artist is not the Album Artist of any Album yet.',
     );
     await expectAccessibleInLightAndDark(page);
 

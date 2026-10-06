@@ -87,13 +87,16 @@ public static class ArtistRules
     /// The errors of an Artist's links (each a label, which may be missing, and a URL), named by
     /// position from 1, and at most <see cref="LinkMaximumCount"/>. Empty when they are valid.
     /// </summary>
-    public static string[] LinkErrors(IReadOnlyList<(string? Label, string? Url)> links)
+    public static string[] LinkErrors(IReadOnlyList<(string? Label, string? Url)> links) => LinkErrors(links, "An Artist");
+
+    /// <summary>The errors of links by the Artist rule, for a record named by <paramref name="owner"/> (an Album's are the same).</summary>
+    internal static string[] LinkErrors(IReadOnlyList<(string? Label, string? Url)> links, string owner)
     {
         ArgumentNullException.ThrowIfNull(links);
 
         if (links.Count > LinkMaximumCount)
         {
-            return [string.Create(CultureInfo.InvariantCulture, $"An Artist has at most {LinkMaximumCount} links.")];
+            return [string.Create(CultureInfo.InvariantCulture, $"{owner} has at most {LinkMaximumCount} links.")];
         }
 
         var errors = new List<string>();

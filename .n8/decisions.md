@@ -1988,3 +1988,34 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
   - Reusing the list endpoint avoids a new read contract, because rows already carry credits and the role follows from them.
   - Placing the Artist column after Title shifted the e2e `songs.spec.ts` cell indices, which were updated.
   **Issue:** #88
+- **Decision:** One migration `AddAlbums` adds `albums` and `album_links`. `albums` holds the title (plus `title_key`, NFC and upper-cased, for sorting), the description, `album_artist_id` (optional; FK to `artists` with RESTRICT), the release date and original release date as text, `upc` (digits) and `upc_key` (the 13-digit form, indexed but not unique), copyright, publishing, the created and updated times, and `revision`. CHECKs require a non-empty title and a UPC of 12 or 13 digits. `album_links` is keyed `(album_id, position)` and cascades with the Album. The rules are in `Domain/Catalog/AlbumRules`; `Application/Catalog/AlbumService` sits over `IAlbumStore`.
+  **Why:** The story's must-haves name `AlbumService`, and the Album is a new record, so the story implies its table. RESTRICT on the Album Artist follows the credit table: the Artist deletion story decides what happens. Links reuse the Artist link rules through an internal `ArtistRules.LinkErrors(links, owner)` overload, so the count message names the Album.
+  **Issue:** #89
+- **Decision:** API:
+  - `GET /api/v1/albums?sort=title|releaseDate|artist&direction=asc|desc&page=&pageSize=&artist=<id>` and `GET /api/v1/albums/{id:guid}` need `catalog.read`.
+  - `POST /api/v1/albums` takes `{title}` only, and `PATCH /api/v1/albums/{id:guid}` (If-Match) takes `title`, `description`, `albumArtistId`, `releaseDate`, `originalReleaseDate`, `upc`, `copyright`, `publishing`, and `links`. Both need `collections.write`, and neither is session-only.
+  - A response is `{id,title,description,albumArtist{id,name}|null,releaseDate,originalReleaseDate,upc,copyright,publishing,links[],songCount,createdAt,updatedAt,revision,warnings[]}`. A shared UPC/EAN gives `warnings: [{code:"duplicate_upc", field:"upc", message, albums:[{id,title}]}]` on GET, PATCH, and the list rows.
+  - An unknown `albumArtistId` is 422 on that field. An `artist` filter naming no Artist lists nothing, rather than 400.
+  **Why:** These are the AC and discretion lines: a title-only create dialog, per-field saves, `warnings` on GET and PATCH, and `catalog.read` for reads. Putting `warnings` on every Album answer, list rows included, keeps one response shape. The Artist page's Albums section reads the list's `artist` filter instead of using a new endpoint.
+  **Issue:** #89
+- **Decision:** List order. Titles sort by `title_key`, then created time. Release date sorts by the release date, else the original release date, compared as text. Text order matches the earliest possible day ("2026" < "2026-01" < "2026-01-02"), so the sort runs in SQL. Artist sorts by the Album Artist's `name_key`. Missing values go last in both directions, with title and then created time as tie-breakers.
+  **Why:** These are the discretion lines. Comparing as text is exact for the three stored forms, and needs no extra column.
+  **Issue:** #89
+- **Decision:** A UPC/EAN is checked with the GS1 mod-10 check digit after removing spaces and hyphens. The 12- and 13-digit forms share a key: a 12-digit code is prefixed with "0". Deletion retention does not exist yet, so every Album counts toward the duplicate warning. The Album deletion story must leave retained Albums out of `AlbumStore.DetailsAsync`'s same-UPC query. Partial dates are validated as `YYYY`, `YYYY-MM`, or `YYYY-MM-DD`, years 1000 to 9999, and a real day. They are stored trimmed, as entered.
+  **Why:** These are the AC and discretion lines. The retention hook is a single query.
+  **Issue:** #89
+- **Decision:** Artists' `albumCount` now counts the Albums the Artist is Album Artist of. The Artist page's Albums section, previously a placeholder, is now a table of those Albums (title link and shown date), read from `GET /albums?artist=<id>`. Its empty text is now "This Artist is not the Album Artist of any Album yet.", and e2e `artists.spec.ts` was updated to match.
+  **Why:** AC 8. The track story may later widen the count to Albums holding the Artist's Songs; for now the count matches the section it summarises.
+  **Issue:** #89
+- **Decision:** Web:
+  - The sidebar order is Songs, Artists, **Albums**, then Settings, asserted in `AppShell.test.tsx` and e2e `account.spec.ts`. The routes are `/albums` (sort, direction, and page in the URL) and `/albums/:id`.
+  - The Album page saves each text field on its own when it loses focus, or on Enter in a one-line field, through one `useRevisionedSave`.
+  - The Album Artist is a field holding `{id,name}` as JSON. It is chosen with `ArtistPicker allowCreate` and has a "Clear the Album Artist" button.
+  - Links are one JSON list field, saved with a "Save links" button.
+  - Dates are shown localised with the browser's locale through `Intl.DateTimeFormat`: "March 1, 2026" in US English, "1 March 2026" in British English.
+  - `RowControls` and `move` moved from `ArtistPage.tsx` to `common/RowControls.tsx` and `common/listMove.ts`, to be shared.
+  **Why:**
+  - The discretion line asks for individual saves through the shared save helper.
+  - A list of links is edited as a whole, the way the Artist page edits them, so it is not saved row by row.
+  - The discretion line gives example formats without a locale, and the app has no locale setting.
+  **Issue:** #89

@@ -1,6 +1,8 @@
 import { MantineProvider } from '@mantine/core';
 import { Navigate, Route, Routes } from 'react-router';
 import { SessionGate } from './auth/SessionGate';
+import { AlbumPage } from './albums/AlbumPage';
+import { AlbumsPage } from './albums/AlbumsPage';
 import { ArtistPage } from './artists/ArtistPage';
 import { ArtistsPage } from './artists/ArtistsPage';
 import { MaintenanceGate } from './maintenance/MaintenanceGate';
@@ -44,6 +46,8 @@ export function App() {
                 <Route path="songs/:reference/v/:number" element={<SongPage />} />
                 <Route path="artists" element={<ArtistsPage />} />
                 <Route path="artists/:id" element={<ArtistPage />} />
+                <Route path="albums" element={<AlbumsPage />} />
+                <Route path="albums/:id" element={<AlbumPage />} />
                 <Route path="go/:reference" element={<GoPage />} />
                 <Route path="settings" element={<Navigate to="/settings/account" replace />} />
                 <Route path="settings/account" element={<AccountPage />} />
