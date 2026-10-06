@@ -392,6 +392,17 @@ public sealed class VersionImmutabilityGuardTests
                 await target.InputsJsonAsync("{", "}"));
             Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
         }),
+        ["DELETE /api/v1/versions/{reference}"] = new(static target => DeleteAndRestoreAsync(target, static async target =>
+        {
+            // Deleting retains the Version's row as stored (its inputs untouched); the inputs sent alongside are not read.
+            using var response = await SendAsync(
+                target.Client,
+                HttpMethod.Delete,
+                new Uri($"/api/v1/versions/{target.VersionShortcode}", UriKind.Relative),
+                await target.IfMatchAsync(),
+                await target.InputsJsonAsync("{", "}"));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        })),
         ["POST /api/v1/playlists/{id:guid}/songs"] = new(async target =>
         {
             // A Playlist holds the Song, never a Version: the inputs sent alongside are not read.
@@ -566,6 +577,11 @@ public sealed class VersionImmutabilityGuardTests
             Assert.IsType<SnapshotDeleteOutcome.Deleted>(
                 await InScopeAsync<EditorRevisionService, SnapshotDeleteOutcome>(target, service => service.DeleteAsync(target.VersionId, entry, default)));
         }),
+        ["VersionDeletionService.ImpactAsync(Guid, CancellationToken)"] = Service<VersionDeletionService>(static (service, target) => service.ImpactAsync(target.VersionId, default)),
+        ["VersionDeletionService.PlaceholdersAsync(Guid, CancellationToken)"] = Service<VersionDeletionService>(static (service, target) => service.PlaceholdersAsync(target.SongId, default)),
+        ["VersionDeletionService.FindDeletedAsync(CatalogReference, CancellationToken)"] = Service<VersionDeletionService>(static (service, target) =>
+            service.FindDeletedAsync(CatalogReference.Parse(target.VersionShortcode), default)),
+        ["VersionDeletionService.DeleteAsync(Guid, Int32, CancellationToken)"] = new(static target => DeleteAndRestoreAsync(target, ServiceDeleteAsync)),
         ["GenerationService.AttachAsync(String, CancellationToken)"] = Service<GenerationService>(static (service, target) => service.AttachAsync(target.VersionShortcode, default)),
         ["SongService.FindAsync(String, CancellationToken)"] = Service<SongService>(static (service, target) => service.FindAsync(target.SongShortcode, default)),
         ["SongService.UpdateAsync(Guid, SongEdit, Int32, CancellationToken)"] = Service<SongService>(static async (service, target) =>
@@ -589,6 +605,8 @@ public sealed class VersionImmutabilityGuardTests
             static (service, group, transaction) => transaction.RunAsync(token => service.RestoreWithinAsync(group, token), default))),
         ["RetentionService.FindAsync(Guid, CancellationToken)"] = Service<RetentionService>(static (service, target) => service.FindAsync(target.VersionId, default)),
         ["RetentionService.FindByShortcodeAsync(String, CancellationToken)"] = Service<RetentionService>(static (service, target) => service.FindByShortcodeAsync(target.VersionShortcode, default)),
+        ["RetentionService.FindByRecordAsync(String, Guid, CancellationToken)"] = Service<RetentionService>(static (service, target) =>
+            service.FindByRecordAsync(RetainedRecordTypes.Version, target.VersionId, default)),
         ["RetentionService.ListAsync(CancellationToken)"] = Service<RetentionService>(static (service, _) => service.ListAsync(default)),
         ["RetentionService.PruneAsync(CancellationToken)"] = new(static async target =>
         {
@@ -615,10 +633,35 @@ public sealed class VersionImmutabilityGuardTests
 
     /// <summary>
     /// Retained types over the <c>versions</c> table, each with how it retains and restores a frozen
-    /// Version (its shape upgraders run on fixtures of every earlier shape). None is registered until
-    /// Version deletion (#101), which adds its type here; the test below fails until it does.
+    /// Version (its shape upgraders run on fixtures of every earlier shape: shape 1 has none yet).
     /// </summary>
-    private static Dictionary<string, Exerciser> RetainedVersionTypes() => new(StringComparer.Ordinal);
+    private static Dictionary<string, Exerciser> RetainedVersionTypes() => new(StringComparer.Ordinal)
+    {
+        // Version deletion (#101): the Version, its Generations, and its history in one group, then
+        // the group restored; the blank Version the deletion created (it was the last) goes again.
+        [RetainedRecordTypes.Version] = new(static target => DeleteAndRestoreAsync(target, ServiceDeleteAsync)),
+    };
+
+    /// <summary>Deletes the target's Version through <see cref="VersionDeletionService.DeleteAsync"/>, at its current revision.</summary>
+    private static async Task ServiceDeleteAsync(Target target)
+    {
+        var revision = (await target.ReadAsync()).GetProperty("revision").GetInt32();
+        Assert.IsType<VersionDeleteOutcome.Deleted>(
+            await InScopeAsync<VersionDeletionService, VersionDeleteOutcome>(target, service => service.DeleteAsync(target.VersionId, revision, default)));
+    }
+
+    /// <summary>
+    /// Deletes the target's Version with <paramref name="delete"/> and restores the group it went
+    /// into with <see cref="RetentionService.RestoreAsync"/>, asserting both went through: the
+    /// Version is back as it was, its revision incremented.
+    /// </summary>
+    private static async Task DeleteAndRestoreAsync(Target target, Func<Target, Task> delete)
+    {
+        await delete(target);
+        var group = await InScopeAsync<RetentionService, RetentionGroup?>(target, service => service.FindByShortcodeAsync(target.VersionShortcode, default));
+        Assert.NotNull(group);
+        Assert.IsType<RetentionRestoreOutcome.Restored>(await InScopeAsync<RetentionService, RetentionRestoreOutcome>(target, service => service.RestoreAsync(group.Id, default)));
+    }
 
     [Fact]
     public async Task EveryRetainedTypeOverTheVersionsTableRestoresAFrozenVersionWithItsInputsUnchanged()

@@ -194,6 +194,19 @@ internal sealed class RetentionStore(N8TracksDbContext context, RetainedTypeRegi
         return group is null ? null : await WithRecordsAsync(group, cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<RetentionGroup?> FindByRecordAsync(string recordType, Guid id, CancellationToken cancellationToken)
+    {
+        var originalId = StoredGuid(id);
+        var group = await context.RetentionGroups.AsNoTracking()
+            .Where(group => context.RetentionRecords.Any(record =>
+                record.GroupId == group.Id && record.RecordType == recordType && record.OriginalId == originalId))
+            .OrderByDescending(static record => record.DeletedUtc)
+            .ThenByDescending(static record => record.Id)
+            .FirstOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return group is null ? null : await WithRecordsAsync(group, cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task<IReadOnlyList<RetentionGroup>> ListAsync(CancellationToken cancellationToken)
     {
         var groups = await context.RetentionGroups.AsNoTracking()
@@ -221,6 +234,12 @@ internal sealed class RetentionStore(N8TracksDbContext context, RetainedTypeRegi
         // this method, once every row is back, rather than row by row. Reset when the transaction ends.
         await ExecuteAsync("PRAGMA defer_foreign_keys = ON;", [], cancellationToken).ConfigureAwait(false);
 
+        var deletedUtc = await context.RetentionGroups.AsNoTracking()
+            .Where(group => group.Id == id)
+            .Select(static group => group.DeletedUtc)
+            .SingleOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false)
+            ?? throw new InvalidOperationException("There is no such retention group.");
         var records = await context.RetentionRecords.AsNoTracking()
             .Where(record => record.GroupId == id)
             .OrderBy(static record => record.Position)
@@ -288,6 +307,11 @@ internal sealed class RetentionStore(N8TracksDbContext context, RetainedTypeRegi
                 notes.Add($"A {row.Type.Noun} was given a new {order}, as its own was taken.");
             }
 
+            if (row.Type.BeforeRestoreAsync is { } before)
+            {
+                await before(new RestoredRow(context, values, UtcText.Parse(deletedUtc)), cancellationToken).ConfigureAwait(false);
+            }
+
             var names = values.Keys.ToList();
             try
             {
@@ -312,7 +336,7 @@ internal sealed class RetentionStore(N8TracksDbContext context, RetainedTypeRegi
         {
             if (row.Type.AfterRestoreAsync is { } after)
             {
-                await after(new RestoredRow(context, row.Values), cancellationToken).ConfigureAwait(false);
+                await after(new RestoredRow(context, row.Values, UtcText.Parse(deletedUtc)), cancellationToken).ConfigureAwait(false);
             }
         }
 

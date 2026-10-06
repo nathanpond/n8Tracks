@@ -1,3 +1,4 @@
+using n8Tracks.Application.Retention;
 using n8Tracks.Application.Songs;
 using n8Tracks.Domain.Songs;
 
@@ -98,7 +99,10 @@ public readonly record struct CatalogReference
 /// <param name="EntityType"><see cref="ReferenceResolver.SongType"/>, <see cref="ReferenceResolver.VersionType"/>, or <see cref="ReferenceResolver.GenerationType"/>.</param>
 /// <param name="Id">Its stable ID.</param>
 /// <param name="Shortcode">Its canonical (lower-case) shortcode.</param>
-/// <param name="Status"><see cref="ReferenceResolver.ActiveStatus"/> or, for a Version, <see cref="ReferenceResolver.ArchivedStatus"/>.</param>
+/// <param name="Status">
+/// <see cref="ReferenceResolver.ActiveStatus"/> or, for a Version, <see cref="ReferenceResolver.ArchivedStatus"/>
+/// or <see cref="ReferenceResolver.DeletedStatus"/>.
+/// </param>
 /// <param name="Song">For a Version or a Generation, its Song; null for a Song.</param>
 /// <param name="Version">For a Generation, its Version; null otherwise.</param>
 public sealed record ResolvedReference(string EntityType, Guid Id, string Shortcode, string Status, ResolvedSong? Song, ResolvedVersion? Version = null);
@@ -116,7 +120,7 @@ public sealed record ResolvedVersion(Guid Id, string Shortcode);
 /// they are resolved by parsing and looking those up; nothing extra is stored. A reference of the
 /// wrong kind for what is asked (a Version shortcode where a Song is wanted) names nothing.
 /// </summary>
-public sealed class ReferenceResolver(ISongStore songs, IVersionStore versions)
+public sealed class ReferenceResolver(ISongStore songs, IVersionStore versions, RetentionService retention, TimeProvider time)
 {
     public const string SongType = "song";
     public const string VersionType = "version";
@@ -124,11 +128,31 @@ public sealed class ReferenceResolver(ISongStore songs, IVersionStore versions)
     public const string ActiveStatus = "active";
     public const string ArchivedStatus = "archived";
 
+    /// <summary>A Version deleted on its own, within its retention period (#101).</summary>
+    public const string DeletedStatus = "deleted";
+
     /// <summary>
     /// The Song, Version, or Generation a reference names, whichever it is; null when it names none.
-    /// Deleted and moved statuses come with later milestones. A Generation is always active for now.
+    /// A Version deleted on its own resolves as <see cref="DeletedStatus"/> for its retention period,
+    /// by its ID or its shortcode, while its Song is live. A moved status comes with a later
+    /// milestone. A Generation is always active for now.
     /// </summary>
-    public async Task<ResolvedReference?> ResolveAsync(CatalogReference reference, CancellationToken cancellationToken)
+    public async Task<ResolvedReference?> ResolveAsync(CatalogReference reference, CancellationToken cancellationToken) =>
+        await ResolveLiveAsync(reference, cancellationToken).ConfigureAwait(false)
+            ?? await ResolveDeletedAsync(reference, cancellationToken).ConfigureAwait(false);
+
+    private async Task<ResolvedReference?> ResolveDeletedAsync(CatalogReference reference, CancellationToken cancellationToken)
+    {
+        if (await VersionDeletionService.FindDeletedAsync(retention, time, reference, cancellationToken).ConfigureAwait(false) is not { } deleted
+            || await songs.FindByShortcodeNumberAsync(deleted.SongShortcodeNumber, cancellationToken).ConfigureAwait(false) is not { } song)
+        {
+            return null;
+        }
+
+        return new(VersionType, deleted.Id, deleted.Shortcode, DeletedStatus, new ResolvedSong(song.Id, song.Shortcode));
+    }
+
+    private async Task<ResolvedReference?> ResolveLiveAsync(CatalogReference reference, CancellationToken cancellationToken)
     {
         switch (reference.Kind)
         {

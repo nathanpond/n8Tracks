@@ -25,8 +25,8 @@ function shape(nodes: VersionNode[]): string {
   return nodes
     .map((node) =>
       node.children.length === 0
-        ? node.version.number
-        : `${node.version.number}[${shape(node.children)}]`,
+        ? (node.version?.number ?? `(${node.number})`)
+        : `${node.version?.number ?? `(${node.number})`}[${shape(node.children)}]`,
     )
     .join(' ');
 }
@@ -46,6 +46,22 @@ describe('nesting Versions by number', () => {
     const versions = [version('1'), version('1.1', true), version('1.1.1'), version('2', true)];
     expect(shape(nestVersions(versions, (v) => !v.archived))).toBe('1[1.1.1]');
     expect(shape(nestVersions(versions))).toBe('1[1.1[1.1.1]] 2');
+  });
+
+  it('draws a deleted Version as a placeholder above its descendants, in its place', () => {
+    const versions = ['1', '1.1.1', '2'].map((n) => version(n));
+    expect(shape(nestVersions(versions, undefined, ['1.1']))).toBe('1[(1.1)[1.1.1]] 2');
+  });
+
+  it('nests placeholders under placeholders, and drops one with nothing drawn under it', () => {
+    const versions = [version('1.1.1'), version('2'), version('3.1', true)];
+    expect(shape(nestVersions(versions, undefined, ['1', '1.1', '3']))).toBe(
+      '(1)[(1.1)[1.1.1]] 2 (3)[3.1]',
+    );
+    // 3.1 is hidden, so the placeholder for 3 has nothing under it and is not drawn.
+    expect(shape(nestVersions(versions, (v) => !v.archived, ['1', '1.1', '3']))).toBe(
+      '(1)[(1.1)[1.1.1]] 2',
+    );
   });
 
   it('orders numbers part by part', () => {

@@ -1,5 +1,7 @@
 {
   "$comment": "The shape of each retained type's table, as RetainedShapeGuardTests hashes it. Change an entry only together with the type's ShapeVersion and an upgrader from the shape before (see that test).",
   "editor-snapshot": { "shapeVersion": 1, "hash": "1478e55e8e635532af8498033927cc6e8a11be32068dfd197a2a4a6fd7b9787f" },
-  "artwork-attachment": { "shapeVersion": 1, "hash": "b8ca786d5139b838675f0487b1e9d7c6e808b1f4b435cdab0add51aed8ee254f" }
+  "artwork-attachment": { "shapeVersion": 1, "hash": "b8ca786d5139b838675f0487b1e9d7c6e808b1f4b435cdab0add51aed8ee254f" },
+  "version": { "shapeVersion": 1, "hash": "1661a485fb008102fed2d4d03567b6a46301e95b0c73fa44c29a478600b1e37c" },
+  "generation": { "shapeVersion": 1, "hash": "e73f3e53b090ef37cbfa8128431f558abe6a193a8fb2c68021042d19d81d795c" }
 }

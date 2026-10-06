@@ -56,6 +56,18 @@ public sealed class RetentionService(
         return store.FindByShortcodeAsync(shortcode, cancellationToken);
     }
 
+    /// <summary>
+    /// The newest unpruned group holding the record of <paramref name="recordType"/> with
+    /// <paramref name="id"/> (one of <see cref="RetainedRecordTypes"/>), whether it was the deletion's
+    /// root or went with it; null when none does. How a read by ID learns that a record was deleted.
+    /// </summary>
+    public Task<RetentionGroup?> FindByRecordAsync(string recordType, Guid id, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(recordType);
+
+        return store.FindByRecordAsync(recordType, id, cancellationToken);
+    }
+
     /// <summary>Every unpruned group, newest first (the recovery listing).</summary>
     public Task<IReadOnlyList<RetentionGroup>> ListAsync(CancellationToken cancellationToken) => store.ListAsync(cancellationToken);
 

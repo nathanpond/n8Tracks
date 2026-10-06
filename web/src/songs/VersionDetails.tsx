@@ -290,10 +290,19 @@ interface DetailsProps {
   actions: VersionActions;
   /** An action on a Version is in flight: the action buttons wait for it. */
   busy: boolean;
+  /**
+   * The Version turned out to be deleted (elsewhere) on a save or a load: `text` is the unsaved
+   * lyrics and styles, if any, to offer as a new Version's content.
+   */
+  onDeletedElsewhere: (version: Version, text: EditorText | undefined) => void;
 }
 
 /** The heading, marks, and action buttons of the selected Version. */
-function VersionHeader({ version, actions, busy }: Omit<DetailsProps, 'onVersion'>) {
+function VersionHeader({
+  version,
+  actions,
+  busy,
+}: Omit<DetailsProps, 'onVersion' | 'onDeletedElsewhere'>) {
   return (
     <>
       <Group gap="sm" align="center" wrap="wrap">
@@ -339,6 +348,16 @@ function VersionHeader({ version, actions, busy }: Omit<DetailsProps, 'onVersion
         >
           {version.archived ? 'Unarchive' : 'Archive'}
         </Button>
+        <Button
+          variant="default"
+          color="red"
+          disabled={busy}
+          onClick={() => {
+            actions.onDelete(version);
+          }}
+        >
+          Delete
+        </Button>
       </Group>
       <ShortcodeBadge shortcode={version.shortcode} testId="version-shortcode" />
     </>
@@ -357,6 +376,16 @@ function VersionHeader({ version, actions, busy }: Omit<DetailsProps, 'onVersion
 export function VersionDetails(props: DetailsProps) {
   const { state, reload } = useVersionDetail(props.version.id);
   const { state: fieldsState, reload: reloadFields } = useCreateFields();
+
+  // A Version no longer there when it is loaded may have been deleted elsewhere: the page reads
+  // its Versions again, and says so if it was.
+  const { version, onDeletedElsewhere } = props;
+  const missing = state.phase === 'not-found';
+  useEffect(() => {
+    if (missing) {
+      onDeletedElsewhere(version, undefined);
+    }
+  }, [missing, onDeletedElsewhere, version]);
 
   if (state.phase === 'ready' && fieldsState.phase === 'ready') {
     return <LoadedVersionDetails {...props} loaded={state.data} createFields={fieldsState.data} />;
@@ -403,6 +432,7 @@ export function VersionDetails(props: DetailsProps) {
 function LoadedVersionDetails({
   version,
   onVersion,
+  onDeletedElsewhere,
   actions,
   busy,
   loaded,
@@ -577,6 +607,17 @@ function LoadedVersionDetails({
         sending.current = edit;
         try {
           const outcome = await saveFields(edit);
+          if (outcome.kind === 'failed' && outcome.reason === 'deleted') {
+            // Deleted elsewhere: the unsaved lyrics and styles go to the page, to start a new Version.
+            const now = latestDrafts.current;
+            onDeletedElsewhere(
+              latest.current,
+              textDiffers(now, latest.current)
+                ? { lyrics: now.lyrics, styles: now.styles }
+                : undefined,
+            );
+            return outcome;
+          }
           if (outcome.kind !== 'failed' || outcome.reason !== 'frozen') {
             return outcome;
           }
@@ -594,7 +635,7 @@ function LoadedVersionDetails({
           sending.current = null;
         }
       },
-      [markFrozen, saveFields, takeFrozen],
+      [markFrozen, onDeletedElsewhere, saveFields, takeFrozen],
     ),
     onReloaded: useCallback(() => {
       // The text being discarded goes into history first; the text taken in may be new to it.

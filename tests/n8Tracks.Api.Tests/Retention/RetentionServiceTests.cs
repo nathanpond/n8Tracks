@@ -145,12 +145,12 @@ public sealed class RetentionServiceTests
         var (version, _, snapshots) = await VersionWithSnapshotsAsync(client, "Orphaned", "Words");
         var group = await RetainAsync(factory, Snapshot(snapshots[0]));
 
-        // The Version goes (straight in the database: deleting Versions is a later story).
+        // The Version goes (straight in the database, so it is not in retention either).
         TestDatabase.Execute(factory.DataPath, $"UPDATE songs SET current_version_id = NULL; DELETE FROM versions WHERE id = '{Upper(version)}';");
         var retainedBefore = Dump(factory, "retention_records");
 
         var refused = Assert.IsType<RetentionRestoreOutcome.MissingParent>(await RestoreAsync(factory, group.Id));
-        Assert.Equal("The version this history entry belongs to no longer exists.", refused.Message);
+        Assert.Equal("The Version this history entry belongs to no longer exists.", refused.Message);
         Assert.Equal("0", TestDatabase.Scalar(factory.DataPath, "SELECT count(*) FROM editor_revisions;"));
         Assert.Equal(retainedBefore, Dump(factory, "retention_records"));
         Assert.NotNull(await WithServiceAsync(factory, service => service.FindAsync(group.Id, CancellationToken.None)));

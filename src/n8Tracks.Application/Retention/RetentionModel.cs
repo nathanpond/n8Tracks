@@ -12,6 +12,12 @@ public static class RetainedRecordTypes
 
     /// <summary>An owner's artwork, replaced or removed (<c>artwork_attachments</c>).</summary>
     public const string ArtworkAttachment = "artwork-attachment";
+
+    /// <summary>A Version (<c>versions</c>), deleted on its own or with its Song.</summary>
+    public const string Version = "version";
+
+    /// <summary>A Generation (<c>generations</c>), deleted with its Version.</summary>
+    public const string Generation = "generation";
 }
 
 /// <summary>A record a deletion names: the root of what goes into retention with it.</summary>

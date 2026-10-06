@@ -330,6 +330,22 @@ public interface IVersionStore
     /// <summary>The Generation with <paramref name="id"/>; null when there is none.</summary>
     Task<GenerationSummary?> FindGenerationAsync(Guid id, CancellationToken cancellationToken);
 
+    /// <summary>The IDs of the Generations attached to the Version with <paramref name="versionId"/>, in ordinal order.</summary>
+    Task<IReadOnlyList<Guid>> GenerationIdsAsync(Guid versionId, CancellationToken cancellationToken);
+
+    /// <summary>Every number the Song with <paramref name="songId"/> has ever used, deleted Versions' included, as stored.</summary>
+    Task<IReadOnlyList<string>> UsedNumbersAsync(Guid songId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Leaves the Song with <paramref name="songId"/> without a current Version for a moment, inside
+    /// the caller's transaction, so the Version that was current can be deleted before its
+    /// replacement exists. The caller sets a current Version again before the transaction ends.
+    /// </summary>
+    Task ClearCurrentAsync(Guid songId, CancellationToken cancellationToken);
+
+    /// <summary>Raises the revision of the Song with <paramref name="songId"/> by one and sets its updated time to <paramref name="updatedUtc"/>.</summary>
+    Task RaiseSongRevisionAsync(Guid songId, DateTimeOffset updatedUtc, CancellationToken cancellationToken);
+
     /// <summary>
     /// The ID of Generation <paramref name="ordinal"/> of the Version numbered <paramref name="number"/>
     /// of the Song whose shortcode is <c>n8-<paramref name="songShortcodeNumber"/></c>; null when there is none.

@@ -17,10 +17,11 @@ export interface Revisioned {
  * Why a write failed. `unreachable` (no answer: offline, stopped, timed out) and `server` (a server
  * error, or an answer the client could not read) may go through if the same write is sent again;
  * the rest will not: `signed-out` (the session ended and was not renewed), `frozen` (the record's
- * inputs can no longer change), `gone` (the record is no longer there), `refused` (any other
- * refusal).
+ * inputs can no longer change), `deleted` (the Version was deleted), `gone` (the record is no longer
+ * there, for another reason), `refused` (any other refusal).
  */
-export type FailureReason = 'unreachable' | 'server' | 'signed-out' | 'frozen' | 'gone' | 'refused';
+export type FailureReason =
+  'unreachable' | 'server' | 'signed-out' | 'frozen' | 'deleted' | 'gone' | 'refused';
 
 /** Whether a write that failed for `reason` may go through if it is sent again unchanged. */
 export function isRetryable(reason: FailureReason | undefined): boolean {
@@ -58,7 +59,7 @@ export function failureOf(status: number, answer: unknown): FailureReason {
     return 'signed-out';
   }
   if (status === 404) {
-    return 'gone';
+    return isRecord(answer) && answer.code === 'version_deleted' ? 'deleted' : 'gone';
   }
   if (status === 409 && isRecord(answer) && answer.code === 'version_frozen') {
     return 'frozen';

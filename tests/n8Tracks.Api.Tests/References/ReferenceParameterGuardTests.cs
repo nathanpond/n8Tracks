@@ -106,6 +106,10 @@ public sealed class ReferenceParameterGuardTests
         // 204: a history entry taken for the call (by ID, so it is there whatever the reference) is deleted.
         ["DELETE /api/v1/versions/{reference}/snapshots/{snapshotId:guid}"] = static async (c, _, version) =>
             await c.SendAsync(HttpMethod.Delete, $"versions/{version}/snapshots/{await c.HistoryEntryAsync()}"),
+        ["GET /api/v1/versions/{reference}/deletion-impact"] = static (c, _, version) => c.SendAsync(HttpMethod.Get, $"versions/{version}/deletion-impact"),
+
+        // 409 revision_conflict: the Version was found, and a revision it is not at deletes nothing.
+        ["DELETE /api/v1/versions/{reference}"] = static (c, _, version) => c.SendAsync(HttpMethod.Delete, $"versions/{version}", revision: 999),
         ["GET /api/v1/resolve/{reference}"] = static (c, _, version) => c.SendAsync(HttpMethod.Get, $"resolve/{version}"),
 
         // 200: the Song is not on the Playlist, so nothing changes.

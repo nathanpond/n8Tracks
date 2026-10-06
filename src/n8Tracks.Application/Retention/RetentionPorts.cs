@@ -25,6 +25,12 @@ public interface IRetentionStore
     /// <summary>The newest group deleted under <paramref name="shortcode"/> (ordinal, as stored), or null.</summary>
     Task<RetentionGroup?> FindByShortcodeAsync(string shortcode, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// The newest group holding a record of <paramref name="recordType"/> whose single-column key is
+    /// <paramref name="id"/>, as a root or with one; null when there is none.
+    /// </summary>
+    Task<RetentionGroup?> FindByRecordAsync(string recordType, Guid id, CancellationToken cancellationToken);
+
     /// <summary>Every group, newest first.</summary>
     Task<IReadOnlyList<RetentionGroup>> ListAsync(CancellationToken cancellationToken);
 

@@ -43,17 +43,29 @@ internal sealed record RetainedType(string RecordType, string Table, string Noun
     public bool Optional { get; init; }
 
     /// <summary>
+    /// Run inside the restore's transaction just before the row is inserted again, with the values it
+    /// is inserted with: lets a live-side record that the insert itself writes (a trigger's) make way.
+    /// </summary>
+    public Func<RestoredRow, CancellationToken, Task>? BeforeRestoreAsync { get; init; }
+
+    /// <summary>
     /// Run inside the restore's transaction after every row of the group is back, once per restored
     /// row of this type: lets a live-side rule apply its own trimming (the 50-entry history cap).
     /// </summary>
     public Func<RestoredRow, CancellationToken, Task>? AfterRestoreAsync { get; init; }
 }
 
-/// <summary>A row a restore has just put back, as stored, and the context it was written through.</summary>
-internal sealed record RestoredRow(N8TracksDbContext Context, IReadOnlyDictionary<string, object?> Values)
+/// <summary>
+/// A row a restore is putting back or has just put back, as stored, the context it is written
+/// through, and when its group was deleted.
+/// </summary>
+internal sealed record RestoredRow(N8TracksDbContext Context, IReadOnlyDictionary<string, object?> Values, DateTimeOffset GroupDeletedUtc)
 {
     /// <summary>A GUID column's value.</summary>
     public Guid GuidOf(string column) => Guid.Parse((string)Values[column]!, CultureInfo.InvariantCulture);
+
+    /// <summary>A text column's value.</summary>
+    public string TextOf(string column) => (string)Values[column]!;
 }
 
 /// <summary>The retained types n8Tracks itself registers.</summary>
@@ -78,8 +90,24 @@ internal static class RetainedTypes
     /// </summary>
     public static readonly RetainedType ArtworkAttachment = new(RetainedRecordTypes.ArtworkAttachment, "artwork_attachments", "artwork", ShapeVersion: 1);
 
+    /// <summary>
+    /// A Version, deleted on its own (#101) or with its Song. Its number stays in
+    /// <c>used_version_numbers</c> while it is deleted, so it is never offered again; restoring it lets
+    /// that row go just before the insert, whose trigger records the number again (a new Version
+    /// still cannot take a used number). Once it is back, a blank Version created because it was the
+    /// last one is removed if it was never edited (<see cref="VersionRestore"/>).
+    /// </summary>
+    public static readonly RetainedType Version = new(RetainedRecordTypes.Version, "versions", "Version", ShapeVersion: 1)
+    {
+        BeforeRestoreAsync = static (row, cancellationToken) => VersionRestore.FreeNumberAsync(row, cancellationToken),
+        AfterRestoreAsync = static (row, cancellationToken) => VersionRestore.RemoveAutoCreatedBlankAsync(row, cancellationToken),
+    };
+
+    /// <summary>A Generation, deleted with its Version. In V1 it is the minimal record (#69); its own deletion rules are M4's.</summary>
+    public static readonly RetainedType Generation = new(RetainedRecordTypes.Generation, "generations", "Generation", ShapeVersion: 1);
+
     /// <summary>Every built-in type.</summary>
-    public static IReadOnlyList<RetainedType> BuiltIn { get; } = [EditorSnapshot, ArtworkAttachment];
+    public static IReadOnlyList<RetainedType> BuiltIn { get; } = [EditorSnapshot, ArtworkAttachment, Version, Generation];
 }
 
 /// <summary>The registered retained types, checked once when the first is needed.</summary>
