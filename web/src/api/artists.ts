@@ -254,3 +254,37 @@ export async function updateArtist(
     return { kind: 'failed', reason: 'unreachable' };
   }
 }
+
+/** How many Artists a picker suggests at once. */
+export const ARTIST_SUGGESTIONS = 10;
+
+/**
+ * The first Artists whose name or an alias contains `search` (ignoring case), by name; every
+ * Artist's first ones when it is blank. Undefined when the list cannot be read.
+ */
+export async function searchArtists(
+  search: string,
+  signal?: AbortSignal,
+  pageSize = ARTIST_SUGGESTIONS,
+): Promise<Artist[] | undefined> {
+  const parameters = artistListParameters({ search: search.trim(), page: 1 });
+  parameters.set('pageSize', String(pageSize));
+  try {
+    const response = await apiFetch(`${ARTISTS_PATH}?${parameters.toString()}`, { signal });
+    const answer = await body(response);
+    return response.ok && isArtistPage(answer) ? answer.items : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** One Artist as it is now, by its ID; undefined when it cannot be read. */
+export async function readArtist(id: string): Promise<Artist | undefined> {
+  try {
+    const response = await apiFetch(`${ARTISTS_PATH}/${encodeURIComponent(id)}`);
+    const answer = await body(response);
+    return response.ok && isArtist(answer) ? answer : undefined;
+  } catch {
+    return undefined;
+  }
+}

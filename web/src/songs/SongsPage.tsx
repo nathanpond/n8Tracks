@@ -34,6 +34,7 @@ import { useTags, type Tag } from '../api/tags';
 import { useConfiguredTimeZone } from '../api/timeZone';
 import { statesForFilter } from '../api/workflow';
 import { Notice } from '../components/Notice';
+import { ArtistFilter } from './ArtistFilter';
 import { NewSongDialog } from './NewSongDialog';
 import { paletteColour } from '../theme/palette';
 import { RelativeTime, StateBadge, TagLabels, TruncatedConcept } from './SongParts';
@@ -224,6 +225,7 @@ function SongRow({ song, timeZone, from }: { song: Song; timeZone: string; from:
           {song.title}
         </Anchor>
       </Table.Td>
+      <Table.Td style={{ maxWidth: 200 }}>{song.credits.primary?.name}</Table.Td>
       <Table.Td style={{ maxWidth: 260 }}>
         {song.concept !== null && <TruncatedConcept concept={song.concept} />}
       </Table.Td>
@@ -244,9 +246,10 @@ function SongRow({ song, timeZone, from }: { song: Song; timeZone: string; from:
 
 /**
  * Songs: every Song in a table, newest first, sortable by title and by last update, filtered by
- * workflow state, by Genre, and by Tag, fifty to a page. Each row shows its first three Tags and
- * "+N" for the rest. The view (sort, direction, states, Genres, Tags, page) is the page URL's query
- * string, the list API's own parameters, so going back to it or reloading shows the same rows.
+ * workflow state, by Genre, by Tag, and by Artist (primary or featured), fifty to a page. Each row
+ * shows its primary Artist, its first three Tags, and "+N" for the rest. The view (sort, direction,
+ * states, Genres, Tags, Artists, page) is the page URL's query string, the list API's own
+ * parameters, so going back to it or reloading shows the same rows.
  */
 export function SongsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -278,9 +281,16 @@ export function SongsPage() {
   const filterTags = (tags: string[]) => {
     show({ ...query, tags, page: 1 });
   };
+  const filterArtists = (artists: string[]) => {
+    show({ ...query, artists, page: 1 });
+  };
 
   const page = state.phase === 'ready' ? state.data : undefined;
-  const filtered = query.states.length > 0 || query.genres.length > 0 || query.tags.length > 0;
+  const filtered =
+    query.states.length > 0 ||
+    query.genres.length > 0 ||
+    query.tags.length > 0 ||
+    query.artists.length > 0;
   const empty = page?.total === 0 && !filtered;
   const pages = page === undefined ? 0 : Math.ceil(page.total / page.pageSize);
 
@@ -308,6 +318,7 @@ export function SongsPage() {
       {tagsState.phase === 'ready' && !empty && (
         <TagFilter tags={tagsState.data} selected={query.tags} onChange={filterTags} />
       )}
+      {!empty && <ArtistFilter selected={query.artists} onChange={filterArtists} />}
 
       {state.phase === 'loading' && <Loader aria-label="Loading Songs" />}
       {(state.phase === 'error' || state.phase === 'not-found') && (
@@ -344,14 +355,15 @@ export function SongsPage() {
       {page !== undefined && !empty && page.items.length === 0 && (
         <Paper p="sm" withBorder>
           <Stack gap="xs" align="flex-start">
-            {page.total === 0 && (query.genres.length > 0 || query.tags.length > 0) ? (
+            {page.total === 0 &&
+            (query.genres.length > 0 || query.tags.length > 0 || query.artists.length > 0) ? (
               <>
                 <Text>No Songs match the chosen filters.</Text>
                 <Button
                   variant="default"
                   size="xs"
                   onClick={() => {
-                    show({ ...query, states: [], genres: [], tags: [], page: 1 });
+                    show({ ...query, states: [], genres: [], tags: [], artists: [], page: 1 });
                   }}
                 >
                   Show every Song
@@ -395,6 +407,7 @@ export function SongsPage() {
                 <Table.Tr>
                   <Table.Th scope="col">Shortcode</Table.Th>
                   <SortHeader label="Title" sort="title" query={query} onSort={sortBy} />
+                  <Table.Th scope="col">Artist</Table.Th>
                   <Table.Th scope="col">Concept</Table.Th>
                   <Table.Th scope="col">State</Table.Th>
                   <Table.Th scope="col">Kind</Table.Th>

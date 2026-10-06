@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { artistServer, testArtist } from '../test/artistServer';
 import { renderApp } from '../test/helpers';
+import { baseSong } from '../test/songServer';
 
 const N8 = testArtist('n8', {
   aliases: ['Nate'],
@@ -39,9 +40,62 @@ describe('an Artist page', () => {
     expect(within(form).getByRole('button', { name: 'Save' })).toBeDisabled();
 
     const songs = screen.getByRole('region', { name: 'Songs' });
-    expect(songs).toHaveTextContent('No Songs are credited to this Artist yet.');
+    expect(
+      await within(songs).findByText('No Songs are credited to this Artist yet.'),
+    ).toBeVisible();
     expect(screen.getByRole('region', { name: 'Albums' })).toHaveTextContent(
       'No Albums are credited to this Artist yet.',
+    );
+  });
+
+  it('lists each Song crediting the Artist with its role, primary or featured', async () => {
+    const other = { id: '01a10e00-0000-7000-9000-000000000099', name: 'Other' };
+    const n8 = { id: N8.id, name: N8.name };
+    artistServer(
+      [N8],
+      [
+        {
+          ...baseSong,
+          id: '0199b1a0-0000-7000-8000-000000000001',
+          shortcode: 'n8-1',
+          title: 'Zebra Crossing',
+          credits: { primary: n8, featured: [] },
+        },
+        {
+          ...baseSong,
+          id: '0199b1a0-0000-7000-8000-000000000002',
+          shortcode: 'n8-2',
+          title: 'All Together',
+          credits: { primary: other, featured: [n8] },
+        },
+        {
+          ...baseSong,
+          id: '0199b1a0-0000-7000-8000-000000000003',
+          shortcode: 'n8-3',
+          title: 'Not Theirs',
+          credits: { primary: other, featured: [] },
+        },
+      ],
+    );
+
+    await openArtist();
+
+    const table = await screen.findByRole('table', { name: 'Songs credited to n8' });
+    const rows = within(table)
+      .getAllByRole('row')
+      .slice(1)
+      .map((row) =>
+        within(row)
+          .getAllByRole('cell')
+          .map((cell) => cell.textContent),
+      );
+    expect(rows).toEqual([
+      ['All Together', 'n8-2', 'Featured'],
+      ['Zebra Crossing', 'n8-1', 'Primary'],
+    ]);
+    expect(within(table).getByRole('link', { name: 'Zebra Crossing' })).toHaveAttribute(
+      'href',
+      '/songs/n8-1',
     );
   });
 

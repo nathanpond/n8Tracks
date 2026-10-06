@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from './client';
-import { patchWithRevision, type SaveResult } from './saves';
+import { patchWithRevision, writeWithRevision, type SaveResult } from './saves';
 
 const SONGS_PATH = 'api/v1/songs';
 export const WORKFLOW_STATES_PATH = 'api/v1/workflow-states';
@@ -17,6 +17,12 @@ export const NO_GENRE = 'none';
 
 /** The `tag` filter value that matches Songs with no Tag. */
 export const NO_TAG = 'none';
+
+/** The `artist` filter value that matches Songs credited to no one. */
+export const NO_ARTIST = 'none';
+
+/** The most featured Artists a Song may have. */
+export const FEATURED_ARTISTS_MAXIMUM = 50;
 
 /** The page size the list is asked for: the API's default. */
 export const SONGS_PAGE_SIZE = 50;
@@ -48,6 +54,18 @@ export interface SongTag {
   colour: string;
 }
 
+/** An Artist as a Song's credits show it. */
+export interface SongArtist {
+  id: string;
+  name: string;
+}
+
+/** Who a Song is credited to: one primary Artist or none, and featured Artists in the user's order. */
+export interface SongCredits {
+  primary: SongArtist | null;
+  featured: SongArtist[];
+}
+
 /** A Song as the API answers it. Times are UTC ISO 8601. */
 export interface Song {
   id: string;
@@ -67,6 +85,8 @@ export interface Song {
   genres: SongGenre[];
   /** Its Tags, alphabetically ignoring case. */
   tags: SongTag[];
+  /** Its primary and featured Artists. */
+  credits: SongCredits;
 }
 
 export interface SongPage {
@@ -98,6 +118,8 @@ export interface SongQuery {
   genres: string[];
   /** Tag IDs, and {@link NO_TAG} for Songs with none: Songs with any of them. */
   tags: string[];
+  /** Artist IDs, and {@link NO_ARTIST} for Songs credited to no one: Songs crediting any of them. */
+  artists: string[];
   page: number;
 }
 
@@ -111,6 +133,19 @@ export function isSongGenre(value: unknown): value is SongGenre {
 
 export function isSongTag(value: unknown): value is SongTag {
   return isSongGenre(value) && isRecord(value) && typeof value.colour === 'string';
+}
+
+export function isSongArtist(value: unknown): value is SongArtist {
+  return isSongGenre(value);
+}
+
+export function isSongCredits(value: unknown): value is SongCredits {
+  return (
+    isRecord(value) &&
+    (value.primary === null || isSongArtist(value.primary)) &&
+    Array.isArray(value.featured) &&
+    value.featured.every(isSongArtist)
+  );
 }
 
 export function isSong(value: unknown): value is Song {
@@ -135,7 +170,8 @@ export function isSong(value: unknown): value is Song {
     Array.isArray(value.genres) &&
     value.genres.every(isSongGenre) &&
     Array.isArray(value.tags) &&
-    value.tags.every(isSongTag)
+    value.tags.every(isSongTag) &&
+    isSongCredits(value.credits)
   );
 }
 
@@ -197,6 +233,9 @@ export function songListParameters(query: SongQuery): URLSearchParams {
   for (const tag of query.tags) {
     parameters.append('tag', tag);
   }
+  for (const artist of query.artists) {
+    parameters.append('artist', artist);
+  }
   if (query.page !== 1) {
     parameters.set('page', String(query.page));
   }
@@ -222,6 +261,7 @@ export function songQueryFrom(parameters: URLSearchParams): SongQuery {
     states: [...new Set(parameters.getAll('state'))],
     genres: [...new Set(parameters.getAll('genre'))],
     tags: [...new Set(parameters.getAll('tag'))],
+    artists: [...new Set(parameters.getAll('artist'))],
     page: Number.isSafeInteger(page) && page >= 1 ? page : 1,
   };
 }
@@ -315,6 +355,8 @@ export async function readSong(reference: string): Promise<Song | undefined> {
 export interface NewSong {
   title: string;
   concept: string;
+  /** The primary Artist's ID, or null for none; left out, the default Artist is used. */
+  primaryArtistId?: string | null;
 }
 
 /** How a create ended, by the API's answer. Never a rejection. */
@@ -371,6 +413,26 @@ export function updateSong(
     `${SONGS_PATH}/${encodeURIComponent(song.id)}`,
     song.revision,
     { ...edit },
+    acceptSong,
+  );
+}
+
+/**
+ * Replaces a Song's credits as a whole, based on `song`'s revision; a stale revision comes back as
+ * a conflict, and a refused set (an Artist gone, one featured twice) as invalid.
+ */
+export function setSongCredits(
+  song: Pick<Song, 'id' | 'revision'>,
+  credits: SongCredits,
+): Promise<SaveResult<Song>> {
+  return writeWithRevision(
+    'PUT',
+    `${SONGS_PATH}/${encodeURIComponent(song.id)}/credits`,
+    song.revision,
+    {
+      primaryArtistId: credits.primary?.id ?? null,
+      featuredArtistIds: credits.featured.map((artist) => artist.id),
+    },
     acceptSong,
   );
 }

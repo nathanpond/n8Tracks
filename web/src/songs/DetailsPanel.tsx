@@ -29,6 +29,7 @@ import {
 } from '../common/useInPlaceEdit';
 import type { SaveOutcome } from '../common/useRevisionedSave';
 import { paletteColour } from '../theme/palette';
+import { CreditsSection } from './CreditsSection';
 import { DETAILS_PANEL_ID, DETAILS_PANEL_WIDTH } from './detailsPanelState';
 import { alphabetical, GENRES_KEY, genresValue } from './genreField';
 import { normaliseNotes, songNotesError } from './songRules';
@@ -315,7 +316,7 @@ function NotesSection({
   );
 }
 
-/** What the Details panel holds for a Song: its Genres, Tags, and notes. Later stories add sections. */
+/** What the Details panel holds for a Song: its credits, Genres, Tags, and notes. Later stories add sections. */
 export function SongDetails({
   song,
   saveFields,
@@ -327,6 +328,7 @@ export function SongDetails({
 }) {
   return (
     <Stack gap="lg">
+      <CreditsSection song={song} saveFields={saveFields} onSong={onSong} />
       <GenresSection song={song} saveFields={saveFields} onSong={onSong} />
       <TagsSection song={song} saveFields={saveFields} onSong={onSong} />
       <NotesSection song={song} save={(key, value) => saveFields({ [key]: value })} />

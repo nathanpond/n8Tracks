@@ -6,6 +6,7 @@ import { ArtistsPage } from './artists/ArtistsPage';
 import { MaintenanceGate } from './maintenance/MaintenanceGate';
 import { AccountPage } from './settings/AccountPage';
 import { BackupsPage } from './settings/BackupsPage';
+import { CatalogPage } from './settings/CatalogPage';
 import { CredentialsPage } from './settings/CredentialsPage';
 import { GenresPage } from './settings/GenresPage';
 import { SunoPage } from './settings/SunoPage';
@@ -48,6 +49,7 @@ export function App() {
                 <Route path="settings/account" element={<AccountPage />} />
                 <Route path="settings/credentials" element={<CredentialsPage />} />
                 <Route path="settings/workflow" element={<WorkflowPage />} />
+                <Route path="settings/catalog" element={<CatalogPage />} />
                 <Route path="settings/genres" element={<GenresPage />} />
                 <Route path="settings/tags" element={<TagsPage />} />
                 <Route path="settings/suno" element={<SunoPage />} />

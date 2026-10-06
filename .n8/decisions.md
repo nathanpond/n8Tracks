@@ -1944,3 +1944,47 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** Web: an "Artists" sidebar entry under Songs; `/artists` (search box and page in the URL as `search`/`page`, the list API's own parameters; typing replaces the history entry) and `/artists/:id`. The page edits name, aliases (rows with Remove), notes, and links (label + URL rows with Move up/down and Remove) in one form with an explicit Save, through `useRevisionedSave` (aliases and links compared as JSON text). A duplicate on save opens a confirmation dialog listing the matches ("Save anyway" resends with `confirmDuplicate`). On create, the New Artist dialog asks for the name only and shows the matches inline, with "Create anyway". `failureOf` in `api/saves.ts` is now exported for `updateArtist`.
   **Why:** AC 1 and 7, and "Create is a dialog that opens the new Artist's page". An explicit Save keeps one duplicate prompt per change rather than one per keystroke or blur. Reusing the shared save helper keeps the conflict dialog the same as on every other editing screen.
   **Issue:** #87
+- **Decision:** One migration `AddSongArtistCredits` adds `song_artist_credits(song_id, artist_id, role, position)`:
+  - The primary key is `(song_id, artist_id)`, so an Artist is credited once per Song, which also rules out being both primary and featured.
+  - It is unique on `(song_id, role, position)`. A CHECK allows only `primary` at position 0, or `featured` at position 0 or more.
+  - It cascades with the Song and RESTRICTs on the Artist. The Artist deletion story decides what happens to an Artist's credits.
+  The rules are in `Domain/Catalog/SongCreditRules` (at most 50 featured). `Application/Catalog/SongCreditService` sits over `ISongCreditStore` and `ICatalogSettingsStore`.
+  **Why:** The discretion line names the table and its columns, and #88 is the story that creates it. Putting the uniqueness in the key enforces the AC rule in the database as well as in the service.
+  **Issue:** #88
+- **Decision:** API:
+  - `PUT /api/v1/songs/{reference}/credits` (`songs.write`, If-Match on the Song's revision) takes `primaryArtistId` and `featuredArtistIds`. Both are required, the first may be null, and a missing or wrongly typed one is 422.
+  - An unchanged set is 200 without a new revision; any other write raises the Song's revision and `updatedAt`.
+  - Song responses (list rows included) carry `credits{primary,featured[]}`, each Artist as `{id,name}`.
+  - The list takes a repeatable `artist` (an ID or `none`, OR-combined). An unknown Artist ID is 400, as for `genre` and `tag`.
+  - `POST /api/v1/songs` takes `primaryArtistId`, bound as raw JSON so missing and null differ.
+  - Artists' `songCount` is now real.
+  **Why:** These are the discretion lines. Requiring both fields keeps the whole-set write unambiguous.
+  **Issue:** #88
+- **Decision:** The default Artist is stored in the settings row `catalog.defaultArtistId` as `{"revision":n,"artistId":"<id>"|null}`. `GET`/`PUT /api/v1/settings/catalog` are SessionOnly and answer `{revision, defaultArtist{id,name}|null}`. A stored Artist that no longer exists shows as null and is not applied. `SongService.CreateAsync` reads the default inside its creation transaction, before the shortcode is taken.
+  **Why:** These are the discretion lines (settings key, session-only, record revision, ignored when gone) and the key_link ("in the same transaction"). An import from Suno must send an explicit null: it does not exist yet (M4), so `SongRequest.PrimaryArtistId` documents this.
+  **Issue:** #88
+- **Decision:** Deletion retention does not exist yet. A default whose Artist row is gone is already ignored and shown as none. The Artist deletion story must also treat an Artist in retention as gone in `SongCreditService.ViewAsync`/`PrimaryForNewSongAsync`.
+  **Why:** The discretion line about retention and restore cannot be implemented before retention exists. The hook is a single place.
+  **Issue:** #88
+- **Decision:** Web:
+  - A Credits section (Primary Artist, Featured Artists) heads the Details panel.
+  - The new `common/ArtistPicker` searches `GET /artists?search=` as the user types (10 suggestions), leaving out the Artists already credited.
+  - With `allowCreate` it always offers "Create Artist “X”", even when a suggestion has that name: Artist names are not unique. A 409 duplicate shows an inline group with "Use <match>", "Create another “X”", and "Cancel".
+  - Featured Artists are reordered with Move up and Move down buttons only, not by dragging. Make primary and Remove are on each row.
+  - Credits are one field of the Song page's single `useRevisionedSave`, sent with `PUT …/credits`. There is no merge function, so a credits conflict shows in the conflict dialog.
+  **Why:**
+  - Artist lists can be large, so suggestions are fetched rather than loaded whole.
+  - The discretion line allows "drag or Move up and Move down", and buttons are the accessible form.
+  - The order of featured Artists is the user's, so reapplying a change silently could reorder someone else's edit.
+  - The e2e Demo showed that hiding create for an exact name match made the duplicate confirmation unreachable for the most common duplicate, the same name.
+  **Issue:** #88
+- **Decision:** Web, continued:
+  - Settings → Catalog is a new page with sidebar order Account, Credentials, Workflow, Catalog, Genres, Tags, Suno, Backups, System. It has a picker that saves at once, and "Clear the default".
+  - The New Song dialog reads the default each time it opens and always sends what it shows (the default, another Artist, or null). When the settings cannot be read it sends nothing, so the API applies the default.
+  - The Songs table gets an Artist column (the primary Artist) after Title, and an Artist MultiSelect filter whose suggestions come from the API.
+  - The Artist page's Songs section is a table of Song, shortcode, and role (Primary or Featured), read from `GET /songs?artist=<id>&sort=title`. When there are more than 50 Songs it links to the filtered Songs table.
+  **Why:**
+  - AC 3, 4, 6, and 9.
+  - Reusing the list endpoint avoids a new read contract, because rows already carry credits and the role follows from them.
+  - Placing the Artist column after Title shifted the e2e `songs.spec.ts` cell indices, which were updated.
+  **Issue:** #88

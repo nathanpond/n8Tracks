@@ -7,6 +7,7 @@ import {
   Loader,
   Paper,
   Stack,
+  Table,
   Text,
   Textarea,
   TextInput,
@@ -27,6 +28,7 @@ import {
   type ArtistMatch,
 } from '../api/artists';
 import type { FieldValue, SaveResult } from '../api/saves';
+import { songListParameters, useSongs, type SongQuery } from '../api/songs';
 import { useRevisionedSave, type SavedField } from '../common/useRevisionedSave';
 import { Notice } from '../components/Notice';
 import {
@@ -262,6 +264,86 @@ function CreditedSection({ title, count, noun }: { title: string; count: number;
               : `${String(count)} ${count === 1 ? noun.replace(/s$/, '') : noun} credited to this Artist.`}
           </Text>
         </Paper>
+      </Stack>
+    </section>
+  );
+}
+
+/**
+ * The Songs crediting the Artist, by title, each with its role (primary or featured), the first
+ * fifty here and every one in the Songs table filtered by the Artist.
+ */
+function CreditedSongs({ artist }: { artist: Artist }) {
+  const query: SongQuery = {
+    sort: 'title',
+    direction: 'asc',
+    states: [],
+    genres: [],
+    tags: [],
+    artists: [artist.id],
+    page: 1,
+  };
+  const { state, reload } = useSongs(query);
+  const page = state.phase === 'ready' ? state.data : undefined;
+  return (
+    <section aria-labelledby="artist-songs">
+      <Stack gap="xs">
+        <Title order={3} id="artist-songs">
+          Songs
+        </Title>
+        {state.phase === 'loading' && <Loader size="sm" aria-label="Loading the Songs" />}
+        {(state.phase === 'error' || state.phase === 'not-found') && (
+          <Group gap="xs">
+            <Text size="sm" c="var(--mantine-color-error)">
+              The Songs could not be loaded.
+            </Text>
+            <Button variant="default" size="compact-xs" onClick={reload}>
+              Try again
+            </Button>
+          </Group>
+        )}
+        {page?.total === 0 && (
+          <Paper p="sm" withBorder>
+            <Text size="sm">No Songs are credited to this Artist yet.</Text>
+          </Paper>
+        )}
+        {page !== undefined && page.total > 0 && (
+          <>
+            <Table withTableBorder aria-label={`Songs credited to ${artist.name}`}>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th scope="col">Song</Table.Th>
+                  <Table.Th scope="col">Shortcode</Table.Th>
+                  <Table.Th scope="col">Role</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {page.items.map((song) => (
+                  <Table.Tr key={song.id} data-song={song.shortcode}>
+                    <Table.Td>
+                      <Anchor component={Link} to={`/songs/${song.shortcode}`}>
+                        {song.title}
+                      </Anchor>
+                    </Table.Td>
+                    <Table.Td>{song.shortcode}</Table.Td>
+                    <Table.Td>
+                      {song.credits.primary?.id === artist.id ? 'Primary' : 'Featured'}
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+            {page.total > page.items.length && (
+              <Anchor
+                component={Link}
+                to={`/songs?${songListParameters(query).toString()}`}
+                size="sm"
+              >
+                Show all {page.total} Songs in the Songs table
+              </Anchor>
+            )}
+          </>
+        )}
       </Stack>
     </section>
   );
@@ -571,7 +653,7 @@ function LoadedArtist({ initial }: { initial: Artist }) {
         </Stack>
       </form>
 
-      <CreditedSection title="Songs" count={artist.songCount} noun="Songs" />
+      <CreditedSongs artist={artist} />
       <CreditedSection title="Albums" count={artist.albumCount} noun="Albums" />
 
       <DuplicateArtistDialog
@@ -593,7 +675,7 @@ function LoadedArtist({ initial }: { initial: Artist }) {
 /**
  * An Artist's page (`/artists/<id>`): its name, aliases, notes, and links, edited in one form and
  * saved under the Artist's revision; a new name or alias another Artist has asks for confirmation.
- * Below are the Songs and Albums credited to it, which the credit and Album stories fill.
+ * Below are the Songs credited to it, with the role, and the Albums, which the Album story fills.
  */
 export function ArtistPage() {
   const { id = '' } = useParams();

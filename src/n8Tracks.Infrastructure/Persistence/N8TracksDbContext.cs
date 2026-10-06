@@ -71,6 +71,8 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
 
     public DbSet<ArtistLinkRecord> ArtistLinks => Set<ArtistLinkRecord>();
 
+    public DbSet<SongCreditRecord> SongCredits => Set<SongCreditRecord>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         ArgumentNullException.ThrowIfNull(configurationBuilder);
@@ -388,6 +390,31 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                 .WithMany()
                 .HasForeignKey(record => record.ArtistId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<SongCreditRecord>(credit =>
+        {
+            credit.ToTable("song_artist_credits", static table => table.HasCheckConstraint(
+                "ck_song_artist_credits_role",
+                "(role = 'primary' AND position = 0) OR (role = 'featured' AND position >= 0)"));
+
+            // A Song credits an Artist at most once, so never as both primary and featured.
+            credit.HasKey(record => new { record.SongId, record.ArtistId });
+
+            // One primary Artist (always at position 0), and one featured Artist per place.
+            credit.HasIndex(record => new { record.SongId, record.Role, record.Position }).IsUnique();
+            credit.HasIndex(record => record.ArtistId);
+
+            // A Song's credits go with it; an Artist credited on any Song is never removed by
+            // accident (the Artist deletion story decides what happens to its credits).
+            credit.HasOne<SongRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.SongId)
+                .OnDelete(DeleteBehavior.Cascade);
+            credit.HasOne<ArtistRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.ArtistId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
     }
 }

@@ -54,6 +54,10 @@ public sealed class ReferenceParameterGuardTests
             await c.SendAsync(HttpMethod.Patch, $"songs/{song}", "{}", await c.SongRevisionAsync()),
         ["GET /api/v1/songs/{reference}/versions"] = static (c, song, _) => c.SendAsync(HttpMethod.Get, $"songs/{song}/versions"),
 
+        // 200: the Song is credited to no one already, so nothing changes.
+        ["PUT /api/v1/songs/{reference}/credits"] = static async (c, song, _) =>
+            await c.SendAsync(HttpMethod.Put, $"songs/{song}/credits", """{"primaryArtistId":null,"featuredArtistIds":[]}""", await c.SongRevisionAsync()),
+
         // 422 version_number_not_offered: the Song and the source were both found, and nothing is stored.
         ["POST /api/v1/songs/{reference}/versions"] = static (c, song, version) =>
             c.SendAsync(HttpMethod.Post, $"songs/{song}/versions", $$"""{"sourceVersionId":"{{version}}","number":"99"}"""),

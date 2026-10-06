@@ -1,16 +1,33 @@
-import { Button, Group, Modal, Stack, Text, TextInput, Textarea } from '@mantine/core';
-import { useState, type ClipboardEvent, type SyntheticEvent } from 'react';
-import { CONCEPT_MAXIMUM_LENGTH, createSong, TITLE_MAXIMUM_LENGTH, type Song } from '../api/songs';
+import { Button, Group, Loader, Modal, Stack, Text, TextInput, Textarea } from '@mantine/core';
+import { useEffect, useState, type ClipboardEvent, type SyntheticEvent } from 'react';
+import { readCatalogSettings } from '../api/catalogSettings';
+import {
+  CONCEPT_MAXIMUM_LENGTH,
+  createSong,
+  TITLE_MAXIMUM_LENGTH,
+  type Song,
+  type SongArtist,
+} from '../api/songs';
+import { ArtistPicker } from '../common/ArtistPicker';
 import { Notice } from '../components/Notice';
 import { conceptError, singleLine, titleError } from './songRules';
 
 const FAILED_MESSAGE =
   'n8Tracks did not answer as expected. Check that it is running and try again.';
 
+/** The primary Artist being chosen: loading the default, the default unknown (left to the API), or a choice. */
+type PrimaryChoice =
+  | { phase: 'loading' }
+  | { phase: 'unknown' }
+  | { phase: 'chosen'; artist: SongArtist | null; isDefault: boolean };
+
 /**
- * Asks for a new Song's title and concept and creates it. The fields are checked as the API checks
- * them before anything is sent, and the API's own field errors are shown the same way. Anything
- * else that goes wrong keeps the dialog open with what was typed. `onCreated` gets the new Song.
+ * Asks for a new Song's title, concept, and primary Artist, and creates it. The primary Artist
+ * starts as the default Artist (Settings → Catalog); the user may choose another or none, and what
+ * is shown is sent, so it overrides the default. If the default cannot be read, none is sent and
+ * the API applies the default itself. The fields are checked as the API checks them before
+ * anything is sent, and the API's own field errors are shown the same way. Anything else that goes
+ * wrong keeps the dialog open with what was typed. `onCreated` gets the new Song.
  */
 export function NewSongDialog({
   opened,
@@ -23,9 +40,39 @@ export function NewSongDialog({
 }) {
   const [title, setTitle] = useState('');
   const [concept, setConcept] = useState('');
-  const [errors, setErrors] = useState<{ title?: string; concept?: string }>({});
+  const [errors, setErrors] = useState<{
+    title?: string;
+    concept?: string;
+    primaryArtist?: string;
+  }>({});
   const [failed, setFailed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [primary, setPrimary] = useState<PrimaryChoice>({ phase: 'loading' });
+
+  // Each time the dialog opens, the primary Artist starts as the default as it is then.
+  useEffect(() => {
+    if (!opened) {
+      return;
+    }
+    const controller = new AbortController();
+    void readCatalogSettings(controller.signal).then((settings) => {
+      if (!controller.signal.aborted) {
+        setPrimary(
+          settings === undefined
+            ? { phase: 'unknown' }
+            : {
+                phase: 'chosen',
+                artist: settings.defaultArtist,
+                isDefault: settings.defaultArtist !== null,
+              },
+        );
+      }
+    });
+    return () => {
+      controller.abort();
+      setPrimary({ phase: 'loading' });
+    };
+  }, [opened]);
 
   const close = () => {
     setTitle('');
@@ -59,7 +106,11 @@ export function NewSongDialog({
     }
 
     setSubmitting(true);
-    const result = await createSong({ title: singleLine(title), concept });
+    const result = await createSong({
+      title: singleLine(title),
+      concept,
+      ...(primary.phase === 'chosen' ? { primaryArtistId: primary.artist?.id ?? null } : {}),
+    });
     setSubmitting(false);
 
     switch (result.kind) {
@@ -73,8 +124,13 @@ export function NewSongDialog({
         setErrors({
           title: result.errors.title?.join(' '),
           concept: result.errors.concept?.join(' '),
+          primaryArtist: result.errors.primaryArtistId?.join(' '),
         });
-        if (result.errors.title === undefined && result.errors.concept === undefined) {
+        if (
+          result.errors.title === undefined &&
+          result.errors.concept === undefined &&
+          result.errors.primaryArtistId === undefined
+        ) {
           setFailed(true);
         }
         return;
@@ -126,6 +182,50 @@ export function NewSongDialog({
             error={errors.concept}
             aria-invalid={errors.concept !== undefined}
           />
+          <Stack gap={4} role="group" aria-labelledby="new-song-primary-artist">
+            <Text fw={500} size="sm" id="new-song-primary-artist">
+              Primary Artist
+            </Text>
+            {primary.phase === 'loading' && (
+              <Loader size="xs" aria-label="Loading the default Artist" />
+            )}
+            {primary.phase === 'unknown' && (
+              <Text size="sm" data-testid="new-song-primary">
+                The default Artist, if one is set.
+              </Text>
+            )}
+            {primary.phase === 'chosen' && (
+              <Group gap="xs" data-testid="new-song-primary">
+                <Text size="sm">
+                  {primary.artist === null
+                    ? 'None'
+                    : `${primary.artist.name}${primary.isDefault ? ' (the default Artist)' : ''}`}
+                </Text>
+                {primary.artist !== null && (
+                  <Button
+                    variant="subtle"
+                    size="compact-xs"
+                    aria-label={`Remove primary Artist ${primary.artist.name}`}
+                    onClick={() => {
+                      setPrimary({ phase: 'chosen', artist: null, isDefault: false });
+                    }}
+                  >
+                    Remove
+                  </Button>
+                )}
+              </Group>
+            )}
+            <ArtistPicker
+              label="Choose another primary Artist"
+              exclude={
+                primary.phase === 'chosen' && primary.artist !== null ? [primary.artist.id] : []
+              }
+              error={errors.primaryArtist}
+              onChoose={(artist) => {
+                setPrimary({ phase: 'chosen', artist, isDefault: false });
+              }}
+            />
+          </Stack>
           <div role="status">
             {failed && (
               <Notice title="Song not created">

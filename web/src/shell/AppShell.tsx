@@ -75,6 +75,7 @@ export function SignedInShell() {
             <SidebarLink to="/settings/account" label="Account" onNavigate={close} />
             <SidebarLink to="/settings/credentials" label="Credentials" onNavigate={close} />
             <SidebarLink to="/settings/workflow" label="Workflow" onNavigate={close} />
+            <SidebarLink to="/settings/catalog" label="Catalog" onNavigate={close} />
             <SidebarLink to="/settings/genres" label="Genres" onNavigate={close} />
             <SidebarLink to="/settings/tags" label="Tags" onNavigate={close} />
             <SidebarLink to="/settings/suno" label="Suno" onNavigate={close} />

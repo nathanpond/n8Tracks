@@ -2,12 +2,20 @@ import { Anchor, Button, Group, Loader, Stack, Text, Title } from '@mantine/core
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router';
 import type { FieldValue } from '../api/saves';
-import { updateSong, useSong, useWorkflowStates, type Song, type SongEdit } from '../api/songs';
+import {
+  setSongCredits,
+  updateSong,
+  useSong,
+  useWorkflowStates,
+  type Song,
+  type SongEdit,
+} from '../api/songs';
 import { useSongVersions } from '../api/versions';
 import { ConflictValue } from '../common/ConflictDialog';
 import { useRevisionedSave, type SavedField } from '../common/useRevisionedSave';
 import { Notice } from '../components/Notice';
 import { DetailsPanel, SongDetails } from './DetailsPanel';
+import { CREDITS_KEY, creditsOf, creditsText, creditsValue } from './creditsField';
 import { DETAILS_PANEL_ID, useDetailsPanel } from './detailsPanelState';
 import { alphabetical, GENRES_KEY, genresOf, genresValue, mergeGenres } from './genreField';
 import { alphabeticalTags, mergeTags, TAGS_KEY, tagsOf, tagsValue } from './tagField';
@@ -39,9 +47,10 @@ function BackToSongs() {
   );
 }
 
-/** A Song edit as the shared save helper holds it, as the API's PATCH takes it. */
+/** A Song edit as the shared save helper holds it, as the API's PATCH takes it (credits aside). */
 function songEditOf(edit: Readonly<Record<string, FieldValue>>): SongEdit {
-  const { [GENRES_KEY]: genres, [TAGS_KEY]: tags, ...fields } = edit;
+  const { [GENRES_KEY]: genres, [TAGS_KEY]: tags, ...rest } = edit;
+  const fields = Object.fromEntries(Object.entries(rest).filter(([key]) => key !== CREDITS_KEY));
   return {
     ...fields,
     ...(genres === undefined ? {} : { genreIds: genresOf(genres).map((genre) => genre.id) }),
@@ -73,6 +82,9 @@ function LoadedSong({ loaded }: { loaded: Song }) {
       const names = alphabetical(genresOf(value)).map((genre) => genre.name);
       return <ConflictValue value={names.length === 0 ? null : names.join(', ')} />;
     };
+    const showCredits = (value: FieldValue) => (
+      <ConflictValue value={creditsText(creditsOf(value))} />
+    );
     const showTags = (value: FieldValue) => {
       const names = alphabeticalTags(tagsOf(value)).map((tag) => tag.name);
       return <ConflictValue value={names.length === 0 ? null : names.join(', ')} />;
@@ -81,6 +93,12 @@ function LoadedSong({ loaded }: { loaded: Song }) {
       { key: 'title', label: 'Title', read: (record) => record.title, show: showText },
       { key: 'concept', label: 'Concept', read: (record) => record.concept, show: showText },
       { key: 'stateId', label: 'State', read: (record) => record.state.id, show: showState },
+      {
+        key: CREDITS_KEY,
+        label: 'Artists',
+        read: (record) => creditsValue(record.credits),
+        show: showCredits,
+      },
       {
         key: GENRES_KEY,
         label: 'Genres',
@@ -99,10 +117,19 @@ function LoadedSong({ loaded }: { loaded: Song }) {
     ];
   }, [states]);
 
-  const send = useCallback(
-    (base: Song, edit: Readonly<Record<string, FieldValue>>) => updateSong(base, songEditOf(edit)),
-    [],
-  );
+  // Credits are their own write (`PUT …/credits`) under the same revision; the Details panel
+  // saves them on their own, and anything else in the same edit goes in the PATCH first.
+  const send = useCallback(async (base: Song, edit: Readonly<Record<string, FieldValue>>) => {
+    if (!Object.hasOwn(edit, CREDITS_KEY)) {
+      return updateSong(base, songEditOf(edit));
+    }
+    const credits = creditsOf(edit[CREDITS_KEY] ?? null);
+    if (Object.keys(edit).length === 1) {
+      return setSongCredits(base, credits);
+    }
+    const patched = await updateSong(base, songEditOf(edit));
+    return patched.kind === 'saved' ? setSongCredits(patched.record, credits) : patched;
+  }, []);
 
   const { save, saveFields, dialog } = useRevisionedSave({
     record: song,

@@ -1,6 +1,9 @@
+import type { Artist } from '../api/artists';
+import type { CatalogSettings } from '../api/catalogSettings';
 import type { Genre } from '../api/genres';
-import type { Song, SongGenre, SongTag, WorkflowState } from '../api/songs';
+import type { Song, SongArtist, SongGenre, SongTag, WorkflowState } from '../api/songs';
 import type { Tag } from '../api/tags';
+import { testArtist } from './artistServer';
 import { healthyReport, jsonResponse, requestPath, stubFetch } from './helpers';
 
 export const IDEA: WorkflowState = {
@@ -53,6 +56,7 @@ export const baseSong: Song = {
   notes: null,
   genres: [],
   tags: [],
+  credits: { primary: null, featured: [] },
 };
 
 export const FOLK: Genre = {
@@ -92,6 +96,29 @@ export const NIGHT: Tag = {
 };
 export const TAGS = [RUNNING, SUMMER, NIGHT];
 
+export const N8: Artist = testArtist('n8', {
+  id: '01a10e00-0000-7000-9000-000000000001',
+  aliases: ['Nate'],
+});
+export const GUEST: Artist = testArtist('Guest Singer', {
+  id: '01a10e00-0000-7000-9000-000000000002',
+});
+export const CHOIR: Artist = testArtist('Choir', { id: '01a10e00-0000-7000-9000-000000000003' });
+export const ARTISTS = [N8, GUEST, CHOIR];
+
+/** An Artist as a Song's credits name it. */
+export function credited(artist: Artist): SongArtist {
+  return { id: artist.id, name: artist.name };
+}
+
+/** One write of a Song's credits the fake server received. */
+export interface ReceivedCredits {
+  ifMatch: string | null;
+  body: { primaryArtistId: string | null; featuredArtistIds: string[] };
+}
+
+const artistKey = (name: string) => name.trim().replace(/\s+/g, ' ').normalize('NFC').toUpperCase();
+
 /** The palette order a new Tag's colour is taken from, as the API takes it. */
 const PALETTE = [
   'gray',
@@ -122,9 +149,20 @@ export interface ReceivedEdit {
  * `server.createdTags`), a new Tag taking the first palette colour no Tag has. A test changes `server.song` to play
  * another tab, or sets `server.next` to answer the next PATCH some other way.
  */
-export function songServer(song: Song = baseSong, genres: Genre[] = GENRES, tags: Tag[] = TAGS) {
+export function songServer(
+  song: Song = baseSong,
+  genres: Genre[] = GENRES,
+  tags: Tag[] = TAGS,
+  artists: Artist[] = ARTISTS,
+) {
   const server = {
     song: { ...song },
+    artists: artists.map((artist) => ({ ...artist })),
+    /** Every credits write (`PUT …/credits`), in order. */
+    credits: [] as ReceivedCredits[],
+    /** Every Artist POSTed, by name, in order, and whether it confirmed a shared name. */
+    createdArtists: [] as { name: string; confirmDuplicate: boolean }[],
+    catalog: { revision: 1, defaultArtist: null } as CatalogSettings,
     genres: genres.map((genre) => ({ ...genre })),
     tags: tags.map((tag) => ({ ...tag })),
     /** Every name POSTed to the Tag list, in order. */
@@ -148,6 +186,102 @@ export function songServer(song: Song = baseSong, genres: Genre[] = GENRES, tags
     }
     if (path.endsWith('/api/v1/workflow-states')) {
       return jsonResponse(200, { items: STATES });
+    }
+    if (path.endsWith('/api/v1/settings/catalog')) {
+      return jsonResponse(200, server.catalog);
+    }
+    if (path.endsWith('/api/v1/artists')) {
+      const method = (init?.method ?? 'GET').toUpperCase();
+      if (method === 'GET') {
+        const url = new URL(
+          input instanceof Request ? input.url : input.toString(),
+          document.baseURI,
+        );
+        const search = artistKey(url.searchParams.get('search') ?? '');
+        const found = server.artists
+          .filter(
+            (artist) =>
+              artistKey(artist.name).includes(search) ||
+              artist.aliases.some((alias) => artistKey(alias).includes(search)),
+          )
+          .sort((a, b) => artistKey(a.name).localeCompare(artistKey(b.name)));
+        return jsonResponse(200, { items: found, page: 1, pageSize: 10, total: found.length });
+      }
+      const sent = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as {
+        name: string;
+        confirmDuplicate?: boolean;
+      };
+      const confirmDuplicate = sent.confirmDuplicate === true;
+      server.createdArtists.push({ name: sent.name, confirmDuplicate });
+      const wanted = artistKey(sent.name);
+      const matches = server.artists.flatMap((artist) => [
+        ...(artistKey(artist.name) === wanted
+          ? [{ id: artist.id, name: artist.name, matchedText: artist.name, matchedOn: 'name' }]
+          : []),
+        ...artist.aliases
+          .filter((alias) => artistKey(alias) === wanted)
+          .map((alias) => ({
+            id: artist.id,
+            name: artist.name,
+            matchedText: alias,
+            matchedOn: 'alias',
+          })),
+      ]);
+      if (matches.length > 0 && !confirmDuplicate) {
+        return jsonResponse(409, { code: 'duplicate_artist_name', matches });
+      }
+      const artist = testArtist(sent.name.trim(), {
+        id: `01a10e00-0000-7000-9000-${String(900 + server.artists.length).padStart(12, '0')}`,
+      });
+      server.artists.push(artist);
+      return jsonResponse(201, artist);
+    }
+    const credits = /\/api\/v1\/songs\/([^/]+)\/credits$/.exec(path);
+    if (credits?.[1] !== undefined) {
+      const ifMatch = new Headers(init?.headers).get('If-Match');
+      const body = JSON.parse(
+        typeof init?.body === 'string' ? init.body : '{}',
+      ) as ReceivedCredits['body'];
+      server.credits.push({ ifMatch, body });
+      const next = server.next;
+      if (next) {
+        server.next = undefined;
+        return next();
+      }
+      if (ifMatch !== `"${String(server.song.revision)}"`) {
+        return jsonResponse(409, { code: 'revision_conflict', current: server.song });
+      }
+      const find = (id: string) => server.artists.find((artist) => artist.id === id);
+      const primary = body.primaryArtistId === null ? null : find(body.primaryArtistId);
+      const featured = body.featuredArtistIds.map(find);
+      if (primary === undefined) {
+        return jsonResponse(422, {
+          code: 'validation_failed',
+          errors: {
+            primaryArtistId: ['The primary Artist chosen no longer exists. Choose again.'],
+          },
+        });
+      }
+      if (featured.some((artist) => artist === undefined)) {
+        return jsonResponse(422, {
+          code: 'validation_failed',
+          errors: {
+            featuredArtistIds: ['A featured Artist chosen no longer exists. Choose again.'],
+          },
+        });
+      }
+      const nextCredits = {
+        primary: primary === null ? null : credited(primary),
+        featured: featured.flatMap((artist) => (artist === undefined ? [] : [credited(artist)])),
+      };
+      if (JSON.stringify(nextCredits) !== JSON.stringify(server.song.credits)) {
+        server.song = {
+          ...server.song,
+          credits: nextCredits,
+          revision: server.song.revision + 1,
+        };
+      }
+      return jsonResponse(200, server.song);
     }
     if (path.endsWith('/api/v1/genres')) {
       if ((init?.method ?? 'GET') === 'GET') {

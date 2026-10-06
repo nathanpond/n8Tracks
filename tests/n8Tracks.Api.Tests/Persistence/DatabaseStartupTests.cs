@@ -43,7 +43,8 @@ public sealed class DatabaseStartupTests : IDisposable
             migration => Assert.Matches("^[0-9]{14}_AddGenresAndSongNotes\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AddGenreRevisions\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AddTags\\|10\\.0\\.", migration),
-            migration => Assert.Matches("^[0-9]{14}_AddArtists\\|10\\.0\\.", migration));
+            migration => Assert.Matches("^[0-9]{14}_AddArtists\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddSongArtistCredits\\|10\\.0\\.", migration));
 
         // ISO 8601 UTC with milliseconds and Z, taken when the migration ran.
         var initialized = TestDatabase.SchemaInitializedUtc(directory.Path);
@@ -62,7 +63,7 @@ public sealed class DatabaseStartupTests : IDisposable
         Start();
 
         Assert.Equal(
-            ["__EFMigrationsHistory", "administrators", "app_metadata", "artist_aliases", "artist_links", "artists", "credentials", "editor_revisions", "generations", "genres", "jobs", "sessions", "settings", "shortcode_sequence", "song_genres", "song_tags", "songs", "suno_models", "tags", "used_version_numbers", "versions", "workflow_states"],
+            ["__EFMigrationsHistory", "administrators", "app_metadata", "artist_aliases", "artist_links", "artists", "credentials", "editor_revisions", "generations", "genres", "jobs", "sessions", "settings", "shortcode_sequence", "song_artist_credits", "song_genres", "song_tags", "songs", "suno_models", "tags", "used_version_numbers", "versions", "workflow_states"],
             TestDatabase.Rows(
                 directory.Path,
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> '__EFMigrationsLock' ORDER BY name;"));
@@ -177,7 +178,7 @@ public sealed class DatabaseStartupTests : IDisposable
 
         Assert.Equal(MigrationStatus.UpToDate, state.Status);
         Assert.Equal(TestDatabase.History(directory.Path)[^1].Split('|')[0], state.LastAppliedMigrationId);
-        Assert.EndsWith("_AddArtists", state.LastAppliedMigrationId, StringComparison.Ordinal);
+        Assert.EndsWith("_AddSongArtistCredits", state.LastAppliedMigrationId, StringComparison.Ordinal);
     }
 
     [Fact]

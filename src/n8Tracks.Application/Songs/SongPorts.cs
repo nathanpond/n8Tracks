@@ -17,6 +17,7 @@ namespace n8Tracks.Application.Songs;
 /// <param name="Notes">The Song's free-form notes; null when there are none.</param>
 /// <param name="Genres">Its Genres, alphabetically.</param>
 /// <param name="Tags">Its Tags, alphabetically (ignoring case, invariant culture).</param>
+/// <param name="Credits">Its primary Artist and featured Artists, in the user's order.</param>
 public sealed record SongSummary(
     Guid Id,
     long ShortcodeNumber,
@@ -30,7 +31,8 @@ public sealed record SongSummary(
     int Revision,
     string? Notes,
     IReadOnlyList<Genre> Genres,
-    IReadOnlyList<Tag> Tags)
+    IReadOnlyList<Tag> Tags,
+    SongCredits Credits)
 {
     public string Shortcode => Shortcodes.ForSong(ShortcodeNumber);
 }
@@ -64,6 +66,8 @@ public enum SongSort
 /// <param name="NoGenre">Also Songs with no Genre at all.</param>
 /// <param name="TagIds">Only Songs with any of these Tags (or, with <paramref name="NoTag"/>, with none); every Song when both are empty.</param>
 /// <param name="NoTag">Also Songs with no Tag at all.</param>
+/// <param name="ArtistIds">Only Songs crediting any of these Artists, as primary or featured (or, with <paramref name="NoArtist"/>, crediting no one); every Song when both are empty.</param>
+/// <param name="NoArtist">Also Songs with no credits at all.</param>
 public sealed record SongListQuery(
     SongSort Sort,
     bool Descending,
@@ -73,7 +77,9 @@ public sealed record SongListQuery(
     IReadOnlyList<Guid> GenreIds,
     bool NoGenre,
     IReadOnlyList<Guid> TagIds,
-    bool NoTag);
+    bool NoTag,
+    IReadOnlyList<Guid> ArtistIds,
+    bool NoArtist);
 
 /// <summary>A page of Songs and how many match in all.</summary>
 public sealed record SongPage(IReadOnlyList<SongSummary> Items, int Page, int PageSize, int Total);

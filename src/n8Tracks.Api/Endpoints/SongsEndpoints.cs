@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http.HttpResults;
 using n8Tracks.Api.Auth;
 using n8Tracks.Api.Problems;
+using n8Tracks.Application.Catalog;
 using n8Tracks.Application.Credentials;
 using n8Tracks.Application.References;
 using n8Tracks.Application.Songs;
@@ -11,7 +12,7 @@ using n8Tracks.Domain.Songs;
 namespace n8Tracks.Api.Endpoints;
 
 /// <summary>
-/// Songs: create one and edit its details (<c>songs.write</c>), list them, and read one
+/// Songs: create one, edit its details, and set its credits (<c>songs.write</c>), list them, and read one
 /// (<c>catalog.read</c>). A Song is named by its ID or its shortcode (<see cref="CatalogReference"/>). The workflow states a Song can be in are <see cref="WorkflowStatesEndpoints"/>.
 /// Every answer is <c>no-store</c>, and one carrying a Song sends its revision as the <c>ETag</c>.
 /// </summary>
@@ -19,6 +20,7 @@ internal static class SongsEndpoints
 {
     public const string SongsPath = ApiProblem.VersionPrefix + "/songs";
     public const string SongPath = SongsPath + "/{reference}";
+    public const string CreditsPath = SongPath + "/credits";
 
     public static IEndpointRouteBuilder MapSongs(this IEndpointRouteBuilder endpoints)
     {
@@ -26,7 +28,7 @@ internal static class SongsEndpoints
 
         endpoints.MapPost(SongsPath, CreateAsync)
             .WithName("CreateSong")
-            .WithSummary("Creates a Song with its Version 1, in the first visible workflow state. Version 1 starts with the user's defaults over Suno's; options sent in inputs win over both.")
+            .WithSummary("Creates a Song with its Version 1, in the first visible workflow state. Version 1 starts with the user's defaults over Suno's; options sent in inputs win over both. The Song is credited to primaryArtistId when sent (null for none), otherwise to the default Artist.")
             .RequireScope(CredentialScopes.SongsWrite)
             .Produces<SongResponse>(StatusCodes.Status201Created)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
@@ -35,7 +37,7 @@ internal static class SongsEndpoints
 
         endpoints.MapGet(SongsPath, ListAsync)
             .WithName("ListSongs")
-            .WithSummary("A page of Songs, sorted by last update or title, optionally only those in given workflow states (state), with any of given Genres (genre: Genre IDs, or none for Songs with no Genre), and with any of given Tags (tag: Tag IDs, or none for Songs with no Tag).")
+            .WithSummary("A page of Songs, sorted by last update or title, optionally only those in given workflow states (state), with any of given Genres (genre: Genre IDs, or none for Songs with no Genre), with any of given Tags (tag: Tag IDs, or none for Songs with no Tag), and crediting any of given Artists as primary or featured (artist: Artist IDs, or none for Songs credited to no one).")
             .RequireScope(CredentialScopes.CatalogRead)
             .Produces<SongListResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
@@ -54,6 +56,19 @@ internal static class SongsEndpoints
         endpoints.MapPatch(SongPath, UpdateAsync)
             .WithName("UpdateSong")
             .WithSummary("Edits a Song's title, concept, workflow state, notes, Genres, or Tags (only the fields sent; genreIds and tagIds replace the Song's Genres and Tags), given the revision read in If-Match.")
+            .RequireScope(CredentialScopes.SongsWrite)
+            .Produces<SongResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        endpoints.MapPut(CreditsPath, SetCreditsAsync)
+            .WithName("SetSongCredits")
+            .WithSummary("Replaces a Song's credits: primaryArtistId (an Artist's ID, or null for none) and featuredArtistIds in order (at most 50, none twice, never the primary), given the Song's revision in If-Match.")
             .RequireScope(CredentialScopes.SongsWrite)
             .Produces<SongResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
@@ -91,7 +106,14 @@ internal static class SongsEndpoints
                     new Dictionary<string, string[]>(StringComparer.Ordinal) { [VersionInputRules.InputsField] = ["Send an object of options for Version 1, or leave it out."] });
         }
 
-        var outcome = await songs.CreateAsync(new SongRequest(request?.Title, request?.Concept, inputs), cancellationToken);
+        var primaryErrors = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        var primary = Field(request?.PrimaryArtistId, SongCreditService.PrimaryArtistIdField, primaryErrors);
+        if (primaryErrors.Count > 0)
+        {
+            return ApiProblem.ValidationFailed(context, primaryErrors);
+        }
+
+        var outcome = await songs.CreateAsync(new SongRequest(request?.Title, request?.Concept, inputs, primary), cancellationToken);
         switch (outcome)
         {
             case SongOutcome.Created created:
@@ -126,14 +148,15 @@ internal static class SongsEndpoints
             Single(query, SongService.PageParameter, out var pageRepeated),
             Single(query, SongService.PageSizeParameter, out var pageSizeRepeated),
             [.. query[SongService.GenreParameter]],
-            [.. query[SongService.TagParameter]]);
+            [.. query[SongService.TagParameter]],
+            [.. query[SongService.ArtistParameter]]);
         if (sortRepeated || directionRepeated || pageRepeated || pageSizeRepeated)
         {
             return ApiProblem.For(
                 context,
                 StatusCodes.Status400BadRequest,
                 ApiProblem.InvalidRequestCode,
-                "Only state, genre, and tag may be given more than once.");
+                "Only state, genre, tag, and artist may be given more than once.");
         }
 
         return await songs.ListAsync(request, cancellationToken) switch
@@ -230,6 +253,81 @@ internal static class SongsEndpoints
         }
     }
 
+    /// <summary>
+    /// 200 with the Song as it is now (unchanged when the credits were already these); 409
+    /// <c>revision_conflict</c> with <c>current</c> on a stale revision; 422 <c>validation_failed</c>
+    /// on a wrong or missing field; 404 when there is no such Song. Nothing is changed unless the
+    /// answer is 200.
+    /// </summary>
+    private static async Task<Results<Ok<SongResponse>, ProblemHttpResult>> SetCreditsAsync(
+        CatalogReference reference,
+        SongCreditsRequest? request,
+        SongCreditService credits,
+        ReferenceResolver references,
+        HttpContext context,
+        ILoggerFactory loggers,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        var (revision, problem) = Revisions.Read(context);
+        if (problem is not null)
+        {
+            return problem;
+        }
+
+        var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        var primary = Field(request?.PrimaryArtistId, SongCreditService.PrimaryArtistIdField, errors);
+        if (!primary.IsSent && !errors.ContainsKey(SongCreditService.PrimaryArtistIdField))
+        {
+            errors[SongCreditService.PrimaryArtistIdField] = ["Send the primary Artist's ID, or null for none."];
+        }
+
+        var featured = IdList(request?.FeaturedArtistIds, SongCreditService.FeaturedArtistIdsField, "featured Artist", errors);
+        if (featured is null && !errors.ContainsKey(SongCreditService.FeaturedArtistIdsField))
+        {
+            errors[SongCreditService.FeaturedArtistIdsField] = ["Send a list of featured Artist IDs (an empty list for none)."];
+        }
+
+        if (errors.Count > 0)
+        {
+            return ApiProblem.ValidationFailed(context, errors);
+        }
+
+        if (await references.SongIdAsync(reference, cancellationToken) is not { } id)
+        {
+            return NoSuchSong(context);
+        }
+
+        switch (await credits.SetAsync(id, new SongCreditsInput(primary.Value, featured!), revision!.Value, cancellationToken))
+        {
+            case SongCreditOutcome.Updated updated:
+                if (updated.Song.Revision != revision)
+                {
+                    loggers.CreateLogger(typeof(SongsEndpoints)).LogInformation(
+                        "Song credits set: {SongId} to revision {SongRevision}, {FeaturedArtistCount} featured",
+                        updated.Song.Id,
+                        updated.Song.Revision,
+                        updated.Song.Credits.Featured.Count);
+                }
+
+                Revisions.SetETag(context, updated.Song.Revision);
+                return TypedResults.Ok(SongResponse.From(updated.Song));
+
+            case SongCreditOutcome.Conflict conflict:
+                return Revisions.Conflict(context, SongResponse.From(conflict.Current));
+
+            case SongCreditOutcome.Invalid invalid:
+                return ApiProblem.ValidationFailed(context, invalid.Errors);
+
+            case SongCreditOutcome.NotFound:
+                return NoSuchSong(context);
+
+            default:
+                throw new InvalidOperationException("Unknown credits outcome.");
+        }
+    }
+
     /// <summary>404 <c>not_found</c>: the reference names no Song (an unknown one, or one of another kind).</summary>
     internal static ProblemHttpResult NoSuchSong(HttpContext context) =>
         ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "There is no such Song.");
@@ -284,9 +382,14 @@ internal static class SongsEndpoints
 /// <summary>
 /// The create form. Any field may be missing. <c>inputs</c> is an object of Suno options for Version
 /// 1, by API name, each of which wins over the user's default (read as raw JSON; a missing one is
-/// <see cref="JsonValueKind.Undefined"/>).
+/// <see cref="JsonValueKind.Undefined"/>). <c>primaryArtistId</c>, when sent, is the primary Artist
+/// (null for none) instead of the default Artist; it is read as raw JSON, so a missing field and a
+/// null differ.
 /// </summary>
-internal sealed record CreateSongRequest(string? Title, string? Concept, JsonElement Inputs);
+internal sealed record CreateSongRequest(string? Title, string? Concept, JsonElement Inputs, JsonElement PrimaryArtistId);
+
+/// <summary>A Song's credits as a whole, both fields required: <c>primaryArtistId</c> (null for none) and <c>featuredArtistIds</c> in order.</summary>
+internal sealed record SongCreditsRequest(JsonElement PrimaryArtistId, JsonElement FeaturedArtistIds);
 
 /// <summary>
 /// An edit: any of the fields, each left alone when missing. A missing field and a null one differ,
@@ -295,7 +398,10 @@ internal sealed record CreateSongRequest(string? Title, string? Concept, JsonEle
 /// </summary>
 internal sealed record UpdateSongRequest(JsonElement Title, JsonElement Concept, JsonElement StateId, JsonElement Notes, JsonElement GenreIds, JsonElement TagIds);
 
-/// <summary>A Song as the API shows it. Times are UTC. <c>genres</c> and <c>tags</c> are alphabetical.</summary>
+/// <summary>
+/// A Song as the API shows it. Times are UTC. <c>genres</c> and <c>tags</c> are alphabetical;
+/// <c>credits</c> holds the primary Artist (or null) and the featured Artists in the user's order.
+/// </summary>
 internal sealed record SongResponse(
     Guid Id,
     string Shortcode,
@@ -309,7 +415,8 @@ internal sealed record SongResponse(
     int Revision,
     string? Notes,
     SongGenreResponse[] Genres,
-    SongTagResponse[] Tags)
+    SongTagResponse[] Tags,
+    SongCreditsResponse Credits)
 {
     public static SongResponse From(SongSummary song)
     {
@@ -332,7 +439,32 @@ internal sealed record SongResponse(
             song.Revision,
             song.Notes,
             [.. song.Genres.Select(SongGenreResponse.From)],
-            [.. song.Tags.Select(SongTagResponse.From)]);
+            [.. song.Tags.Select(SongTagResponse.From)],
+            SongCreditsResponse.From(song.Credits));
+    }
+}
+
+/// <summary>A Song's credits: the primary Artist, or null, and the featured Artists in order.</summary>
+internal sealed record SongCreditsResponse(SongArtistResponse? Primary, SongArtistResponse[] Featured)
+{
+    public static SongCreditsResponse From(SongCredits credits)
+    {
+        ArgumentNullException.ThrowIfNull(credits);
+
+        return new(
+            credits.Primary is { } primary ? SongArtistResponse.From(primary) : null,
+            [.. credits.Featured.Select(SongArtistResponse.From)]);
+    }
+}
+
+/// <summary>An Artist as a Song's credits show it: its ID and display name.</summary>
+internal sealed record SongArtistResponse(Guid Id, string Name)
+{
+    public static SongArtistResponse From(CreditedArtist artist)
+    {
+        ArgumentNullException.ThrowIfNull(artist);
+
+        return new(artist.Id, artist.Name);
     }
 }
 

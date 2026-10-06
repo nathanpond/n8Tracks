@@ -179,7 +179,15 @@ internal sealed class ArtistStore(N8TracksDbContext context) : IArtistStore
                 .ConfigureAwait(false))
             .ToLookup(static link => link.ArtistId);
 
-        // Song and Album counts are 0 until the credit and Album stories add what they count.
+        // A Song counts once whether its credit is primary or featured (an Artist is credited at most
+        // once per Song). Album counts are 0 until the Album story adds what it counts.
+        var songCounts = await context.SongCredits.AsNoTracking()
+            .Where(credit => ids.Contains(credit.ArtistId))
+            .GroupBy(static credit => credit.ArtistId)
+            .Select(static group => new { ArtistId = group.Key, Count = group.Count() })
+            .ToDictionaryAsync(static group => group.ArtistId, static group => group.Count, cancellationToken)
+            .ConfigureAwait(false);
+
         return [.. records.Select(record => new ArtistDetails(
             new Artist(
                 record.Id,
@@ -187,7 +195,7 @@ internal sealed class ArtistStore(N8TracksDbContext context) : IArtistStore
                 [.. aliases[record.Id].OrderBy(static alias => alias.Position).Select(static alias => alias.Name)],
                 record.Notes,
                 [.. links[record.Id].OrderBy(static link => link.Position).Select(static link => new ArtistLink(link.Label, link.Url))]),
-            SongCount: 0,
+            SongCount: songCounts.GetValueOrDefault(record.Id),
             AlbumCount: 0,
             UtcText.Parse(record.CreatedUtc),
             UtcText.Parse(record.UpdatedUtc),

@@ -1,4 +1,5 @@
 import type { Artist, ArtistMatch } from '../api/artists';
+import type { Song } from '../api/songs';
 import { healthyReport, jsonResponse, requestPath, stubFetch } from './helpers';
 
 /** One write the fake server received. */
@@ -44,11 +45,13 @@ function problem(status: number, code: string, extra: Record<string, unknown> = 
  * (`server.pageSize`, 50 by default); POST and PATCH with the duplicate check (409
  * `duplicate_artist_name` unless `confirmDuplicate`, only for names an Artist did not already have)
  * and, for PATCH, the revision check first. `server.next` answers the next write some other way;
- * `server.changeElsewhere` plays another client.
+ * `server.changeElsewhere` plays another client. `server.songs` are the Songs the list answers for
+ * `GET /api/v1/songs?artist=<id>` (those crediting that Artist, by title).
  */
-export function artistServer(artists: Artist[] = []) {
+export function artistServer(artists: Artist[] = [], songs: Song[] = []) {
   const server = {
     artists: artists.map((artist) => ({ ...artist })),
+    songs: [...songs],
     writes: [] as ArtistWrite[],
     queries: [] as string[],
     pageSize: 50,
@@ -93,6 +96,24 @@ export function artistServer(artists: Artist[] = []) {
     const url = new URL(input instanceof Request ? input.url : input.toString(), document.baseURI);
     if (path.endsWith('/health')) {
       return Promise.resolve(jsonResponse(200, healthyReport));
+    }
+    if (path.endsWith('/api/v1/songs') && method === 'GET') {
+      const artist = url.searchParams.get('artist');
+      const items = server.songs
+        .filter(
+          (song) =>
+            song.credits.primary?.id === artist ||
+            song.credits.featured.some((featured) => featured.id === artist),
+        )
+        .sort((a, b) => a.title.localeCompare(b.title));
+      return Promise.resolve(
+        jsonResponse(200, {
+          items: items.slice(0, 50),
+          page: 1,
+          pageSize: 50,
+          total: items.length,
+        }),
+      );
     }
     if (!path.includes('/api/v1/artists')) {
       return Promise.resolve(problem(404, 'not_found'));

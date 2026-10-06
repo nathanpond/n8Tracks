@@ -112,6 +112,17 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
                 || (noTag && !songTags.Any(songTag => songTag.SongId == song.Id)));
         }
 
+        if (query.ArtistIds.Count > 0 || query.NoArtist)
+        {
+            // Credited to any of the Artists (primary or featured), or (when asked) to no one.
+            var artistIds = query.ArtistIds.ToList();
+            var noArtist = query.NoArtist;
+            var credits = context.SongCredits;
+            songs = songs.Where(song =>
+                credits.Any(credit => credit.SongId == song.Id && artistIds.Contains(credit.ArtistId))
+                || (noArtist && !credits.Any(credit => credit.SongId == song.Id)));
+        }
+
         var total = await songs.CountAsync(cancellationToken).ConfigureAwait(false);
 
         // Times are fixed-width UTC text, so text order is time order; the shortcode number breaks ties.
@@ -163,7 +174,7 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
     /// <summary>What titles are ordered by: NFC-normalised and lower-cased invariantly, so case is ignored.</summary>
     internal static string TitleSortKey(string title) => title.Normalize(System.Text.NormalizationForm.FormC).ToLowerInvariant();
 
-    /// <summary>The summaries of <paramref name="records"/>, in their order, with their states, current Versions, Version counts, Genres, and Tags.</summary>
+    /// <summary>The summaries of <paramref name="records"/>, in their order, with their states, current Versions, Version counts, Genres, Tags, and credits.</summary>
     private async Task<List<SongSummary>> SummariesAsync(List<SongRecord> records, CancellationToken cancellationToken)
     {
         if (records.Count == 0)
@@ -210,6 +221,7 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
                 static group => group.Key,
                 static group => (IReadOnlyList<Tag>)[.. TagStore.Alphabetical(group, static tag => tag.Name)
                     .Select(static tag => new Tag(tag.Id, tag.Name, tag.Colour))]);
+        var credits = await SongCreditStore.ForSongsAsync(context, songIds, cancellationToken).ConfigureAwait(false);
 
         return [.. records.Select(song =>
         {
@@ -230,7 +242,8 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
                 song.Revision,
                 song.Notes,
                 genres.GetValueOrDefault(song.Id) ?? [],
-                tags.GetValueOrDefault(song.Id) ?? []);
+                tags.GetValueOrDefault(song.Id) ?? [],
+                credits.GetValueOrDefault(song.Id) ?? SongCredits.None);
         })];
     }
 }

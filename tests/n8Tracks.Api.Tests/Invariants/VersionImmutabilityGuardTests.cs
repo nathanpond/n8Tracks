@@ -280,6 +280,20 @@ public sealed class VersionImmutabilityGuardTests
                 await target.InputsJsonAsync($$"""{"sourceVersionId":"{{target.VersionShortcode}}","number":"{{number}}",""", "}"));
             Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         }),
+        ["PUT /api/v1/songs/{reference}/credits"] = new(async target =>
+        {
+            // Credits are the Song's own, never a Version's: the inputs sent alongside are not read.
+            using var created = await SongApi.SendJsonAsync(target.Client, HttpMethod.Post, new Uri("/api/v1/artists", UriKind.Relative), """{"name":"Guard Artist","confirmDuplicate":true}""");
+            var artist = await SetupApi.JsonAsync(created);
+            var song = await SetupApi.JsonAsync(await target.Client.GetAsync(SongApi.Song(target.SongShortcode)));
+            using var response = await SendAsync(
+                target.Client,
+                HttpMethod.Put,
+                new Uri($"/api/v1/songs/{target.SongShortcode}/credits", UriKind.Relative),
+                SongApi.Quoted(song.GetProperty("revision").GetInt32()),
+                await target.InputsJsonAsync($$"""{"primaryArtistId":"{{artist.GetProperty("id").GetString()}}","featuredArtistIds":[],""", "}"));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }),
         ["PUT /api/v1/songs/{reference}/current-version"] = new(async target =>
         {
             using var response = await SongApi.SendJsonAsync(
@@ -374,6 +388,7 @@ public sealed class VersionImmutabilityGuardTests
         ["DELETE /api/v1/backups/{location}/{name}"] = "deletes an archive file, never a database row",
         ["PUT /api/v1/settings/backup-schedule"] = "the backup schedule: one settings row",
         ["PUT /api/v1/settings/version-defaults"] = "the defaults for new Versions: one settings row, applied only when a Song is created",
+        ["PUT /api/v1/settings/catalog"] = "the default Artist: one settings row, applied only as a new Song's credit",
         ["POST /api/v1/restores/validate"] = "reads a backup archive into a temporary folder; changes no row",
         ["POST /api/v1/restores/uploads"] = "writes an uploaded archive to a temporary file and reads it; changes no row",
         ["POST /api/v1/restores"] = "starts maintenance and a safety backup; it replaces the instance as a whole (#74), never edits a Version",

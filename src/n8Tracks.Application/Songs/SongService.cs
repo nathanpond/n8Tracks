@@ -11,13 +11,20 @@ namespace n8Tracks.Application.Songs;
 /// <summary>
 /// What creating a Song asks for. Either field may be missing. <paramref name="Inputs"/> holds Suno
 /// options for its Version 1, by API name, as sent; each one sent wins over the user's default.
+/// <paramref name="PrimaryArtistId"/>, when sent, is the Song's primary Artist (an Artist's ID, or
+/// null for none) instead of the default Artist; an import from Suno always sends it.
 /// </summary>
-public sealed record SongRequest(string? Title, string? Concept, IReadOnlyDictionary<string, JsonElement>? Inputs = null);
+public sealed record SongRequest(
+    string? Title,
+    string? Concept,
+    IReadOnlyDictionary<string, JsonElement>? Inputs = null,
+    SongEditField PrimaryArtistId = default);
 
 /// <summary>
 /// A list request as the caller sent it: every value unread text, any of them missing. Each of
 /// <paramref name="Genres"/> is a Genre's ID or <see cref="SongService.NoGenre"/>, and each of
-/// <paramref name="Tags"/> a Tag's ID or <see cref="SongService.NoTag"/>.
+/// <paramref name="Tags"/> a Tag's ID or <see cref="SongService.NoTag"/>, and each of
+/// <paramref name="Artists"/> an Artist's ID or <see cref="SongService.NoArtist"/>.
 /// </summary>
 public sealed record SongListRequest(
     string? Sort,
@@ -26,7 +33,8 @@ public sealed record SongListRequest(
     string? Page,
     string? PageSize,
     IReadOnlyList<string?>? Genres = null,
-    IReadOnlyList<string?>? Tags = null);
+    IReadOnlyList<string?>? Tags = null,
+    IReadOnlyList<string?>? Artists = null);
 
 /// <summary>How creating a Song ended.</summary>
 public abstract record SongOutcome
@@ -112,6 +120,7 @@ public sealed class SongService(
     VersionDefaultsService defaults,
     GenreService genres,
     TagService tags,
+    SongCreditService credits,
     IExclusiveTransaction transaction,
     TimeProvider time)
 {
@@ -139,6 +148,11 @@ public sealed class SongService(
     /// <summary>The <see cref="TagParameter"/> value that matches Songs with no Tag.</summary>
     public const string NoTag = "none";
 
+    public const string ArtistParameter = "artist";
+
+    /// <summary>The <see cref="ArtistParameter"/> value that matches Songs credited to no one.</summary>
+    public const string NoArtist = "none";
+
     public const string SortUpdated = "updated";
     public const string SortTitle = "title";
     public const string Ascending = "asc";
@@ -153,7 +167,10 @@ public sealed class SongService(
     /// with the options <see cref="VersionDefaultsService.NewVersionInputsAsync"/> builds for every
     /// kind (Suno's defaults, Suno's title pre-filled with the Song's, the first model offered, then
     /// the user's valid defaults), and then each option the request sends, checked as a Version edit's
-    /// are (errors keyed <c>inputs.&lt;key&gt;</c>, nothing stored).
+    /// are (errors keyed <c>inputs.&lt;key&gt;</c>, nothing stored). It is credited to the primary
+    /// Artist the request names, to none when it sends null, and otherwise to the default Artist as
+    /// it is in this transaction (<see cref="SongCreditService"/>); an Artist that does not exist is an
+    /// error keyed <c>primaryArtistId</c>.
     /// </summary>
     public async Task<SongOutcome> CreateAsync(SongRequest request, CancellationToken cancellationToken)
     {
@@ -177,6 +194,12 @@ public sealed class SongService(
                     }
                 }
 
+                var (primary, primaryError) = await credits.PrimaryForNewSongAsync(request.PrimaryArtistId.IsSent, request.PrimaryArtistId.Value, ct).ConfigureAwait(false);
+                if (primaryError is not null)
+                {
+                    return (Guid.Empty, new Dictionary<string, string[]>(StringComparer.Ordinal) { [SongCreditService.PrimaryArtistIdField] = [primaryError] });
+                }
+
                 var initial = WorkflowState.Initial(await states.ListAsync(ct).ConfigureAwait(false))
                     ?? throw new InvalidOperationException("Every workflow state is hidden, so a new Song has no state to start in.");
                 var number = await songs.NextShortcodeNumberAsync(ct).ConfigureAwait(false);
@@ -186,6 +209,10 @@ public sealed class SongService(
                     sentInputs);
                 var (song, version) = Song.Create(Guid.CreateVersion7(now), Guid.CreateVersion7(now), number, request.Title!, request.Concept, initial, inputs, now);
                 await songs.AddAsync(song, version, ct).ConfigureAwait(false);
+                if (primary is { } artistId)
+                {
+                    await credits.AddPrimaryAsync(song.Id, artistId, ct).ConfigureAwait(false);
+                }
 
                 return (song.Id, null);
             },
@@ -344,7 +371,9 @@ public sealed class SongService(
     /// is <c>asc</c> or <c>desc</c> (by default newest first, and titles A to Z); each <c>state</c> is
     /// the ID of a workflow state; each <c>genre</c> is the ID of a Genre or <see cref="NoGenre"/>,
     /// and several match Songs with any of them; each <c>tag</c> likewise is the ID of a Tag or
-    /// <see cref="NoTag"/> (states, Genres, and Tags combine by AND); <c>page</c> counts from 1; <c>pageSize</c> is 1 to
+    /// <see cref="NoTag"/>; each <c>artist</c> is the ID of an Artist, credited as primary or featured,
+    /// or <see cref="NoArtist"/> for Songs credited to no one (states, Genres, Tags, and Artists
+    /// combine by AND); <c>page</c> counts from 1; <c>pageSize</c> is 1 to
     /// <see cref="MaximumPageSize"/>, <see cref="DefaultPageSize"/> by default.
     /// </summary>
     public async Task<SongListOutcome> ListAsync(SongListRequest request, CancellationToken cancellationToken)
@@ -452,7 +481,30 @@ public sealed class SongService(
             return Invalid($"Each {TagParameter} must be the ID of a Tag, or {NoTag}.");
         }
 
-        var query = new SongListQuery(sort, descending, stateIds, page, pageSize, genreIds, noGenre, tagIds, noTag);
+        var artistIds = new List<Guid>();
+        var noArtist = false;
+        foreach (var artist in request.Artists ?? [])
+        {
+            if (artist == NoArtist)
+            {
+                noArtist = true;
+            }
+            else if (!Guid.TryParseExact(artist, "D", out var artistId))
+            {
+                return Invalid($"Each {ArtistParameter} must be the ID of an Artist, or {NoArtist}.");
+            }
+            else if (!artistIds.Contains(artistId))
+            {
+                artistIds.Add(artistId);
+            }
+        }
+
+        if (artistIds.Count > 0 && (await credits.ExistingArtistsAsync(artistIds, cancellationToken).ConfigureAwait(false)).Count != artistIds.Count)
+        {
+            return Invalid($"Each {ArtistParameter} must be the ID of an Artist, or {NoArtist}.");
+        }
+
+        var query = new SongListQuery(sort, descending, stateIds, page, pageSize, genreIds, noGenre, tagIds, noTag, artistIds, noArtist);
         return new SongListOutcome.Listed(await songs.ListAsync(query, cancellationToken).ConfigureAwait(false));
     }
 
