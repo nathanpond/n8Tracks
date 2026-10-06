@@ -375,7 +375,9 @@ jobs:
     name: e2e
     needs: container
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # One worker by design (the tests share their containers), so the run grows with the suite: M3
+    # took it past 20 minutes on a hosted runner (112 tests). 45 matches the container job.
+    timeout-minutes: 45
     permissions:
       contents: read
     defaults:

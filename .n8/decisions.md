@@ -2398,3 +2398,6 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
   - An e2e `deleted-recovery.spec.ts` that walks the Demo with `docker exec` on the project's container.
   **Why:** These cover the test plan, plus the conventions' e2e Demo rule with axe on every state visited.
   **Issue:** #105
+- **Decision:** Raised the CI e2e job's `timeout-minutes` from 20 to 45 (with a comment in the workflow).
+  **Why:** Rule 3 (blocker): on PR #297 the e2e job was cancelled after 20 minutes during `npm test`, because the one-worker suite (112 tests) now takes longer than that on a hosted runner. 45 matches the container job. Splitting the suite into parallel jobs is filed as a follow-up rather than redesigned mid-run.
+  **Issue:** #297
