@@ -501,6 +501,34 @@ describe('Songs', () => {
     ).toEqual(['Summer', 'winter']);
   });
 
+  it('shows the rest of a row’s Tags on hover of “+N”', async () => {
+    backend({
+      list: () =>
+        jsonResponse(200, page([song(2, { tags: [NIGHT, ROAD, RUNNING, SUMMER, WINTER] })])),
+    });
+    const user = userEvent.setup();
+
+    renderApp('/songs');
+
+    await screen.findByRole('table', { name: 'Songs' });
+    const more = within(row('n8-2')).getByTestId('more-tags');
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+
+    await user.hover(more);
+    const tooltip = await screen.findByRole('tooltip');
+    expect(
+      [...tooltip.querySelectorAll('[data-tag-colour]')].map(
+        (label) => `${label.textContent} ${label.getAttribute('data-tag-colour') ?? ''}`,
+      ),
+    ).toEqual(['Summer red', 'winter cyan']);
+    expect(more).not.toHaveFocus();
+
+    await user.unhover(more);
+    await waitFor(() => {
+      expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+    });
+  });
+
   it('filters by any of several Tags or by none, alongside the Genres', async () => {
     const mock = backend({
       list: (search) =>
