@@ -6,7 +6,7 @@ function count(n: number, noun: string): string {
 }
 
 /**
- * What the confirmation says deleting `number` does: permanent; its Generations go with it; its
+ * What the confirmation says deleting `number` does: permanent; its Generations, or none, go with it; its
  * descendants remain, each keeping its number, under a placeholder; and, for a Song's only
  * Version, that a new blank Version is created and made current.
  */
@@ -16,6 +16,8 @@ export function deletionSummary(number: string, impact: DeletionImpact): string[
     lines.push(
       `Its ${count(impact.generationCount, 'Generation')} ${impact.generationCount === 1 ? 'is' : 'are'} deleted with it.`,
     );
+  } else {
+    lines.push('No Generations are deleted with it.');
   }
   if (impact.remainingDescendantCount > 0) {
     lines.push(

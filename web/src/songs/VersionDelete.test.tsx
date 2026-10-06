@@ -64,7 +64,7 @@ describe('deleting a Version', () => {
       'Version 1.1 and its editing history are deleted permanently.',
     );
     expect(summary).toHaveTextContent('1 descendant Version will remain, keeping its number');
-    expect(summary).not.toHaveTextContent('Generation');
+    expect(summary).toHaveTextContent('No Generations are deleted with it.');
     expect(summary).not.toHaveTextContent('blank');
 
     await user.click(within(dialog).getByRole('button', { name: 'Delete Version 1.1' }));
@@ -245,6 +245,7 @@ describe('what the confirmation says', () => {
       }),
     ).toEqual([
       'Version 1 and its editing history are deleted permanently.',
+      'No Generations are deleted with it.',
       'No descendant Versions will remain.',
       'This is the Song’s only Version, so a new blank Version is created and becomes the current one.',
       'Its number is never used again.',
