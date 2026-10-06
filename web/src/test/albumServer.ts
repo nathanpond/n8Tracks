@@ -75,7 +75,8 @@ const upcKey = (upc: string) => (upc.length === 12 ? `0${upc}` : upc);
  * `order_mismatch` or `track_number_taken`), each under the revision with `current`; `GET
  * /api/v1/songs?q=` searches `songs`. `server.next` answers the next write some other way;
  * `server.changeElsewhere` plays another client. Artwork uploads and the PATCH's artwork fields
- * follow {@link artworkFake} (`server.artwork`).
+ * follow {@link artworkFake} (`server.artwork`). DELETE of an Album under its revision answers 204
+ * and records it in `server.deleted`.
  */
 export function albumServer(albums: Album[] = [], artists: Artist[] = [], songs: Song[] = []) {
   const server = {
@@ -85,6 +86,8 @@ export function albumServer(albums: Album[] = [], artists: Artist[] = [], songs:
     searches: [] as string[],
     artwork: artworkFake(),
     writes: [] as AlbumWrite[],
+    /** The IDs of the Albums deleted, in order. */
+    deleted: [] as string[],
     queries: [] as string[],
     next: undefined as (() => Response) | undefined,
     changeElsewhere(id: string, change: Partial<Album>) {
@@ -339,6 +342,11 @@ export function albumServer(albums: Album[] = [], artists: Artist[] = [], songs:
     const write = server.writes[server.writes.length - 1];
     if (write?.ifMatch !== `"${String(current.revision)}"`) {
       return Promise.resolve(problem(409, 'revision_conflict', { current: withWarnings(current) }));
+    }
+    if (method === 'DELETE') {
+      server.albums = server.albums.filter((album) => album.id !== id);
+      server.deleted.push(current.id);
+      return Promise.resolve(new Response(null, { status: 204 }));
     }
     const edit = write.body;
     const errors: Record<string, string[]> = {};

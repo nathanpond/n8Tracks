@@ -1,6 +1,7 @@
 using System.Globalization;
 using n8Tracks.Application.Assets;
 using n8Tracks.Application.Auth;
+using n8Tracks.Application.Retention;
 using n8Tracks.Domain.Assets;
 using n8Tracks.Domain.Catalog;
 
@@ -84,15 +85,35 @@ public abstract record AlbumOutcome
     public sealed record NotFound : AlbumOutcome;
 }
 
+/// <summary>How deleting an Album ended.</summary>
+public abstract record AlbumDeleteOutcome
+{
+    private AlbumDeleteOutcome()
+    {
+    }
+
+    /// <summary>
+    /// The Album, its links, tracks, and artwork are in <paramref name="Group"/>; its
+    /// <paramref name="SongCount"/> Songs are not deleted.
+    /// </summary>
+    public sealed record Deleted(RetentionGroup Group, int SongCount) : AlbumDeleteOutcome;
+
+    /// <summary>There is no such Album. Nothing was changed.</summary>
+    public sealed record NotFound : AlbumDeleteOutcome;
+
+    /// <summary>The Album is at another revision than the one sent. Nothing was changed. <paramref name="Current"/> is the Album now.</summary>
+    public sealed record Conflict(AlbumDetails Current) : AlbumDeleteOutcome;
+}
+
 /// <summary>
 /// Albums: titled collections with an optional Album Artist (independent of the Songs' credits) and
 /// optional release details. Titles need not be unique. A UPC/EAN another Album already has is
 /// allowed; the answer carries the other Albums (<see cref="AlbumDetails.SameUpc"/>) so the caller
 /// can warn. An edit is made under the Album's revision, its artwork included: the Album's own,
 /// never borrowed from its Songs, and replaced or removed artwork goes into retention
-/// (<see cref="ArtworkAttachmentService"/>).
+/// (<see cref="ArtworkAttachmentService"/>). Deleting an Album (#103) never deletes a Song.
 /// </summary>
-public sealed class AlbumService(IAlbumStore albums, ArtworkAttachmentService artwork, IExclusiveTransaction transaction, TimeProvider time)
+public sealed class AlbumService(IAlbumStore albums, ArtworkAttachmentService artwork, RetentionService retention, IExclusiveTransaction transaction, TimeProvider time)
 {
     /// <summary>The field names validation errors are keyed by, as the API spells them.</summary>
     public const string TitleField = "title";
@@ -294,6 +315,48 @@ public sealed class AlbumService(IAlbumStore albums, ArtworkAttachmentService ar
             },
             cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// Deletes the Album <paramref name="id"/> if it is still at <paramref name="revision"/>: the
+    /// Album, its links, its tracks (which Songs were on it, where), and its own artwork go into
+    /// retention as one group, labelled "Album &lt;title&gt;", with the artwork's files. Its Songs are
+    /// not deleted and keep their revisions; their updated times move to the deletion's, as each now
+    /// shows one Album fewer. The deletion is of the Album as it is now, whatever it held when the
+    /// caller read it, so long as the revision matches. Restoring the group
+    /// (<see cref="RetentionService.RestoreAsync"/>) puts back the Album and the tracks whose Songs
+    /// still exist, and notes the rest.
+    /// </summary>
+    public Task<AlbumDeleteOutcome> DeleteAsync(Guid id, int revision, CancellationToken cancellationToken) =>
+        transaction.RunAsync<AlbumDeleteOutcome>(
+            async ct =>
+            {
+                if (await albums.FindAsync(id, ct).ConfigureAwait(false) is not { } current)
+                {
+                    return new AlbumDeleteOutcome.NotFound();
+                }
+
+                if (current.Revision != revision)
+                {
+                    return new AlbumDeleteOutcome.Conflict(current);
+                }
+
+                var (artworkRoot, files) = await artwork.RetentionOfAsync(ArtworkOwnerTypes.Album, id, ct).ConfigureAwait(false);
+                List<RetainedRoot> roots = [new(RetainedRecordTypes.Album, id)];
+                if (artworkRoot is not null)
+                {
+                    roots.Add(artworkRoot);
+                }
+
+                var group = await retention.RetainWithinAsync(
+                    new RetentionRequest(RetainedRecordTypes.Album, Label(current.Album.Title), Shortcode: null, roots, files),
+                    ct).ConfigureAwait(false);
+                await albums.TouchSongsAsync([.. current.Tracks.Select(static track => track.SongId).Distinct()], group.DeletedUtc, ct).ConfigureAwait(false);
+                return new AlbumDeleteOutcome.Deleted(group, current.SongCount);
+            },
+            cancellationToken);
+
+    /// <summary>How the recovery listing names a deleted Album: "Album Title".</summary>
+    internal static string Label(string title) => $"Album {title}";
 
     private static bool Same(Album left, Album right) =>
         string.Equals(left.Title, right.Title, StringComparison.Ordinal)

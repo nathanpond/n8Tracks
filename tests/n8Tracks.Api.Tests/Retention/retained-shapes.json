@@ -12,5 +12,8 @@
   "song-credit": { "shapeVersion": 1, "hash": "59bcbb3dca1194e53c41a642889f978a3edacd0ea9985e11e2c61744cdaf06fd" },
   "album-track": { "shapeVersion": 1, "hash": "5b0b23b1e906e52345a5c3393d1d6ca4e6f5f9cb88233afc6d90e5e9861c7312" },
   "playlist-entry": { "shapeVersion": 1, "hash": "a1148c4e37d2881fe11ce1639a350f47da6e70c8ff72ed890dad22680de93947" },
-  "song-relationship": { "shapeVersion": 1, "hash": "d4922af63b7dfa62507749ecf4e279ca8861be70f78a2e84811f8a6dcbd53bf5" }
+  "song-relationship": { "shapeVersion": 1, "hash": "d4922af63b7dfa62507749ecf4e279ca8861be70f78a2e84811f8a6dcbd53bf5" },
+  "album": { "shapeVersion": 1, "hash": "174ca1515c26d8bba5a162092b293b120f24a2067e3f0cd84a19047933975a45" },
+  "album-link": { "shapeVersion": 1, "hash": "2d75467bd2fe53b5cbaa48015add387e8a702068470ca1489ace54ffee6b163f" },
+  "playlist": { "shapeVersion": 1, "hash": "ec5502887865cb99940d1ac05ad8b8091c79417c8c41be99e2fa6212d9dfe1cc" }
 }

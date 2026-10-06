@@ -1,8 +1,9 @@
 import { Anchor, Badge, Button, Group, Loader, Paper, Stack, Text, Title } from '@mantine/core';
 import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react';
-import { Link, useLocation, useParams } from 'react-router';
+import { Link, useLocation, useNavigate, useParams } from 'react-router';
 import {
   addPlaylistSong,
+  deletePlaylist,
   normalisePlaylistTitle,
   PLAYLIST_DESCRIPTION_MAXIMUM_LENGTH,
   PLAYLIST_MAXIMUM_SONGS,
@@ -21,6 +22,8 @@ import type { FieldValue, SaveResult } from '../api/saves';
 import { descriptionError, normaliseAlbumText } from '../albums/albumRules';
 import { ArtworkPicker } from '../common/ArtworkPicker';
 import { artworkFields, artworkPatchOf, artworkValues } from '../common/artworkField';
+import type { DeletedCollectionState } from '../common/collectionDeletion';
+import { DeleteCollectionDialog } from '../common/DeleteCollection';
 import { move as moved } from '../common/listMove';
 import { SavedTextField, type Save } from '../common/SavedTextField';
 import { SongSearch } from '../common/SongSearch';
@@ -43,10 +46,15 @@ function isFromPlaylists(value: unknown): value is { playlistsSearch: string } {
   );
 }
 
+/** The Playlists list's page this one was opened from, when it was opened from one. */
+function usePlaylistsSearch(): string {
+  const location: { state: unknown } = useLocation();
+  return isFromPlaylists(location.state) ? location.state.playlistsSearch : '';
+}
+
 /** Back to the Playlists list, on the page this one was opened from when it was opened from one. */
 function BackToPlaylists() {
-  const location: { state: unknown } = useLocation();
-  const search = isFromPlaylists(location.state) ? location.state.playlistsSearch : '';
+  const search = usePlaylistsSearch();
   return (
     <Anchor component={Link} to={`/playlists${search}`} size="sm">
       ← Playlists
@@ -416,6 +424,9 @@ function PlaylistSongs({
 function LoadedPlaylist({ initial }: { initial: Playlist }) {
   const [playlist, setPlaylist] = useState(initial);
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
+  const [deleting, setDeleting] = useState(false);
+  const playlistsSearch = usePlaylistsSearch();
+  const navigate = useNavigate();
 
   const send = useCallback(
     (base: Playlist, edit: Readonly<Record<string, FieldValue>>): Promise<SaveResult<Playlist>> =>
@@ -443,7 +454,20 @@ function LoadedPlaylist({ initial }: { initial: Playlist }) {
   return (
     <Stack gap="lg">
       <BackToPlaylists />
-      <Title order={2}>{playlist.title}</Title>
+      <Group justify="space-between" align="flex-start" wrap="nowrap" gap="sm">
+        <Title order={2} style={{ overflowWrap: 'anywhere' }}>
+          {playlist.title}
+        </Title>
+        <Button
+          variant="default"
+          size="compact-sm"
+          onClick={() => {
+            setDeleting(true);
+          }}
+        >
+          Delete Playlist
+        </Button>
+      </Group>
       <div role="status" data-testid="playlist-save-status">
         {status === 'saving' && <Text size="sm">Saving…</Text>}
         {status === 'saved' && <Text size="sm">Saved.</Text>}
@@ -488,6 +512,22 @@ function LoadedPlaylist({ initial }: { initial: Playlist }) {
       <PlaylistSongs playlist={playlist} onPlaylist={setPlaylist} />
 
       {dialog}
+      <DeleteCollectionDialog
+        noun="Playlist"
+        record={playlist}
+        opened={deleting}
+        onClose={() => {
+          setDeleting(false);
+        }}
+        remove={() => deletePlaylist(playlist)}
+        onCurrent={setPlaylist}
+        onDeleted={() => {
+          const state: DeletedCollectionState = {
+            deletedCollection: { noun: 'Playlist', title: playlist.title },
+          };
+          void navigate(`/playlists${playlistsSearch}`, { state });
+        }}
+      />
     </Stack>
   );
 }
@@ -495,7 +535,8 @@ function LoadedPlaylist({ initial }: { initial: Playlist }) {
 /**
  * A Playlist's page (`/playlists/<id>`): its own artwork (never borrowed from its Songs), title,
  * and description, each saved on its own under the Playlist's revision, and its Songs in order, added, reordered, and removed. A Song without a
- * Selected Generation stays on it, marked "No Selected Generation".
+ * Selected Generation stays on it, marked "No Selected Generation". "Delete Playlist" deletes it
+ * after a confirmation that its Songs are not deleted; the Playlists list then opens with a notice.
  */
 export function PlaylistPage() {
   const { id = '' } = useParams();

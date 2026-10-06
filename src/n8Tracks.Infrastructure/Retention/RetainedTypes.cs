@@ -168,26 +168,37 @@ internal static class RetainedTypes
     public static readonly RetainedType SongCredit = new(RetainedRecordTypes.SongCredit, "song_artist_credits", "Artist credit", ShapeVersion: 1) { Optional = true };
 
     /// <summary>
-    /// A deleted Song's place on an Album. Restored at the end of the Album's last disc (the Album may
-    /// have changed meanwhile), raising the Album's revision; left out when the Album is gone or its
-    /// last disc is full.
+    /// A Song's place on an Album, deleted with the Song or with the Album. With the Song: restored at
+    /// the end of the Album's last disc (the Album may have changed meanwhile), raising the Album's
+    /// revision; left out when the Album is gone or its last disc is full. With the Album (#103):
+    /// restored where it was, moving the Song's updated time; left out when the Song is gone.
     /// </summary>
     public static readonly RetainedType AlbumTrack = new(RetainedRecordTypes.AlbumTrack, "album_songs", "membership of an Album", ShapeVersion: 1)
     {
         Optional = true,
-        PrepareRestoreAsync = static (row, cancellationToken) => SongRestore.AtAlbumEndAsync(row, cancellationToken),
-        AfterRestoreAsync = static (row, cancellationToken) => SongRestore.TouchAsync(row, "albums", "album_id", cancellationToken),
+        PrepareRestoreAsync = static (row, cancellationToken) => row.InGroup("albums", row.TextOf("album_id"))
+            ? Task.FromResult(RestorePreparation.With(row.Values))
+            : SongRestore.AtAlbumEndAsync(row, cancellationToken),
+        AfterRestoreAsync = static (row, cancellationToken) => row.InGroup("albums", row.TextOf("album_id"))
+            ? CollectionRestore.TouchSongAsync(row, cancellationToken)
+            : SongRestore.TouchAsync(row, "albums", "album_id", cancellationToken),
     };
 
     /// <summary>
-    /// A deleted Song's entry on a Playlist. Restored at the end of the Playlist, raising its
-    /// revision; left out when the Playlist is gone or full.
+    /// A Song's entry on a Playlist, deleted with the Song or with the Playlist. With the Song:
+    /// restored at the end of the Playlist, raising its revision; left out when the Playlist is gone
+    /// or full. With the Playlist (#103): restored where it was, moving the Song's updated time; left
+    /// out when the Song is gone (the others keep their places, as a deleted Song's entry leaves them).
     /// </summary>
     public static readonly RetainedType PlaylistEntry = new(RetainedRecordTypes.PlaylistEntry, "playlist_songs", "membership of a Playlist", ShapeVersion: 1)
     {
         Optional = true,
-        PrepareRestoreAsync = static (row, cancellationToken) => SongRestore.AtPlaylistEndAsync(row, cancellationToken),
-        AfterRestoreAsync = static (row, cancellationToken) => SongRestore.TouchAsync(row, "playlists", "playlist_id", cancellationToken),
+        PrepareRestoreAsync = static (row, cancellationToken) => row.InGroup("playlists", row.TextOf("playlist_id"))
+            ? Task.FromResult(RestorePreparation.With(row.Values))
+            : SongRestore.AtPlaylistEndAsync(row, cancellationToken),
+        AfterRestoreAsync = static (row, cancellationToken) => row.InGroup("playlists", row.TextOf("playlist_id"))
+            ? CollectionRestore.TouchSongAsync(row, cancellationToken)
+            : SongRestore.TouchAsync(row, "playlists", "playlist_id", cancellationToken),
     };
 
     /// <summary>
@@ -210,11 +221,32 @@ internal static class RetainedTypes
         },
     };
 
+    /// <summary>
+    /// An Album, deleted with its links, tracks, and own artwork (#103); its Songs stay. Restored
+    /// without its Album Artist when that Artist was deleted meanwhile; a disc left empty by Songs
+    /// deleted meanwhile closes up. A live Album with the same title is no clash: titles are not unique.
+    /// </summary>
+    public static readonly RetainedType Album = new(RetainedRecordTypes.Album, "albums", "Album", ShapeVersion: 1)
+    {
+        PrepareRestoreAsync = static (row, cancellationToken) => CollectionRestore.KeepAlbumArtistAsync(row, cancellationToken),
+        AfterRestoreAsync = static (row, cancellationToken) => CollectionRestore.CloseDiscGapsAsync(row, cancellationToken),
+    };
+
+    /// <summary>A link of a deleted Album.</summary>
+    public static readonly RetainedType AlbumLink = new(RetainedRecordTypes.AlbumLink, "album_links", "Album link", ShapeVersion: 1);
+
+    /// <summary>
+    /// A Playlist, deleted with its entries and own artwork (#103); its Songs stay. A live Playlist
+    /// with the same title is no clash: titles are not unique.
+    /// </summary>
+    public static readonly RetainedType Playlist = new(RetainedRecordTypes.Playlist, "playlists", "Playlist", ShapeVersion: 1);
+
     /// <summary>Every built-in type.</summary>
     public static IReadOnlyList<RetainedType> BuiltIn { get; } =
     [
         EditorSnapshot, ArtworkAttachment, Version, Generation,
         Song, UsedVersionNumber, SongLink, SongGenre, SongTag, SongCredit, AlbumTrack, PlaylistEntry, SongRelationship,
+        Album, AlbumLink, Playlist,
     ];
 }
 

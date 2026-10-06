@@ -1,6 +1,5 @@
 using Microsoft.EntityFrameworkCore;
 using n8Tracks.Application.Songs;
-using n8Tracks.Domain.Catalog;
 
 namespace n8Tracks.Infrastructure.Persistence;
 
@@ -45,35 +44,7 @@ internal sealed class SongDeletionStore(N8TracksDbContext context) : ISongDeleti
 
         foreach (var album in albums)
         {
-            await CloseDiscGapsAsync(album, cancellationToken).ConfigureAwait(false);
-        }
-    }
-
-    /// <summary>
-    /// Discs are numbered without gaps (<see cref="AlbumTrackRules.CloseDiscGaps"/>): when the Song
-    /// was alone on its disc, the later discs move down. The tracks are rewritten as a whole, so the
-    /// unique disc and track index is never met halfway. Nothing is written when there is no gap.
-    /// </summary>
-    private async Task CloseDiscGapsAsync(Guid albumId, CancellationToken cancellationToken)
-    {
-        var tracks = await context.AlbumSongs.AsNoTracking()
-            .Where(track => track.AlbumId == albumId)
-            .Select(static track => new AlbumTrackPlace(track.SongId, track.Disc, track.Track))
-            .ToListAsync(cancellationToken)
-            .ConfigureAwait(false);
-        var closed = AlbumTrackRules.CloseDiscGaps(tracks);
-        if (AlbumTrackRules.Ordered(tracks).SequenceEqual(closed))
-        {
-            return;
-        }
-
-        await context.AlbumSongs.Where(track => track.AlbumId == albumId).ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
-        var rows = closed.Select(track => new AlbumSongRecord { AlbumId = albumId, SongId = track.SongId, Disc = track.Disc, Track = track.Track }).ToList();
-        context.AlbumSongs.AddRange(rows);
-        await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        foreach (var row in rows)
-        {
-            context.Entry(row).State = EntityState.Detached;
+            await AlbumTrackStore.CloseDiscGapsAsync(context, album, cancellationToken).ConfigureAwait(false);
         }
     }
 }

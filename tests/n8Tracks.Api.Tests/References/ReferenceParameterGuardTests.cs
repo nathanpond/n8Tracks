@@ -44,6 +44,8 @@ public sealed class ReferenceParameterGuardTests
         "PATCH /api/v1/albums/{id:guid}: id",
         "GET /api/v1/playlists/{id:guid}: id",
         "PATCH /api/v1/playlists/{id:guid}: id",
+        "DELETE /api/v1/albums/{id:guid}: id",
+        "DELETE /api/v1/playlists/{id:guid}: id",
         "POST /api/v1/playlists/{id:guid}/songs: id",
         "DELETE /api/v1/playlists/{id:guid}/songs/{reference}: id",
         "PUT /api/v1/playlists/{id:guid}/songs: id",

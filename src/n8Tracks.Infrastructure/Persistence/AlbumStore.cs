@@ -146,6 +146,9 @@ internal sealed class AlbumStore(N8TracksDbContext context) : IAlbumStore
         return true;
     }
 
+    public Task TouchSongsAsync(IReadOnlyCollection<Guid> songIds, DateTimeOffset updatedUtc, CancellationToken cancellationToken) =>
+        SongTouch.UpdatedTimeOnlyAsync(context, songIds, updatedUtc, cancellationToken);
+
     /// <summary>Adds the rows of an Album's links to the context, unsaved.</summary>
     private List<AlbumLinkRecord> AddLinks(Album album)
     {

@@ -15,7 +15,8 @@ namespace n8Tracks.Api.Endpoints;
 /// creating one from a title, editing its title, description, and artwork (which also needs
 /// <c>artwork.write</c>), and adding, removing, and reordering its Songs (<c>collections.write</c>). Every change but creating one is made under the
 /// Playlist's revision in <c>If-Match</c> and raises it; a Song is named by its ID or shortcode.
-/// Changing a Playlist never changes its Songs. Every answer is <c>no-store</c>.
+/// Changing a Playlist never changes its Songs. Deleting one (#103) is from the web UI only
+/// (session), under its revision, and never deletes a Song. Every answer is <c>no-store</c>.
 /// </summary>
 internal static class PlaylistsEndpoints
 {
@@ -70,6 +71,18 @@ internal static class PlaylistsEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        endpoints.MapDelete(PlaylistPath, DeleteAsync)
+            .WithName("DeletePlaylist")
+            .WithSummary("Deletes a Playlist with its entries and own artwork, given its revision in If-Match. Its Songs are not deleted: they keep their revisions, and their updated times move. Retained for 30 days. Web UI only (session).")
+            .SessionOnly()
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
         endpoints.MapPost(SongsPath, AddSongAsync)
@@ -363,6 +376,48 @@ internal static class PlaylistsEndpoints
             default:
                 errors[field] = ["Send text."];
                 return AlbumEditText.Unsent;
+        }
+    }
+
+    /// <summary>
+    /// 204 once the Playlist is in retention; 404 when there is no such Playlist; 409
+    /// <c>revision_conflict</c> with <c>current</c> (the Playlist now, its Songs included) on a stale
+    /// revision; 428/400 on a missing or malformed <c>If-Match</c>. Nothing is changed unless the answer is 204.
+    /// </summary>
+    private static async Task<Results<NoContent, ProblemHttpResult>> DeleteAsync(
+        Guid id,
+        PlaylistService playlists,
+        HttpContext context,
+        ILoggerFactory loggers,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        var (revision, problem) = Revisions.Read(context);
+        if (problem is not null)
+        {
+            return problem;
+        }
+
+        switch (await playlists.DeleteAsync(id, revision!.Value, cancellationToken))
+        {
+            case PlaylistDeleteOutcome.Deleted deleted:
+                Log(loggers).LogInformation(
+                    "Playlist deleted: {PlaylistId} into retention group {RetentionGroupId} with {RetainedRecordCount} records; its {SongCount} Songs kept",
+                    id,
+                    deleted.Group.Id,
+                    deleted.Group.Records.Count,
+                    deleted.SongCount);
+                return TypedResults.NoContent();
+
+            case PlaylistDeleteOutcome.Conflict conflict:
+                return Revisions.Conflict(context, PlaylistResponse.From(conflict.Current, context.Request.PathBase));
+
+            case PlaylistDeleteOutcome.NotFound:
+                return NoSuchPlaylist(context);
+
+            default:
+                throw new InvalidOperationException("Unknown Playlist deletion outcome.");
         }
     }
 

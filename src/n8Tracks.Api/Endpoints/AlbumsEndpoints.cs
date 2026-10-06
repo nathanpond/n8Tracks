@@ -13,7 +13,8 @@ namespace n8Tracks.Api.Endpoints;
 /// one under its revision in <c>If-Match</c> (<c>collections.write</c>, and <c>artwork.write</c> too
 /// when the edit changes its artwork). Its tracks are managed by
 /// <see cref="AlbumTracksEndpoints"/>. A UPC/EAN another Album has is allowed and
-/// answered with a <c>duplicate_upc</c> entry in <c>warnings</c>. Every answer is <c>no-store</c>.
+/// answered with a <c>duplicate_upc</c> entry in <c>warnings</c>. Deleting one (#103) is from the
+/// web UI only (session), under its revision, and never deletes a Song. Every answer is <c>no-store</c>.
 /// </summary>
 internal static class AlbumsEndpoints
 {
@@ -64,6 +65,18 @@ internal static class AlbumsEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        endpoints.MapDelete(AlbumPath, DeleteAsync)
+            .WithName("DeleteAlbum")
+            .WithSummary("Deletes an Album with its links, tracks, and own artwork, given its revision in If-Match. Its Songs are not deleted: they keep their revisions, and their updated times move. Retained for 30 days. Web UI only (session).")
+            .SessionOnly()
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
         return endpoints;
@@ -218,6 +231,48 @@ internal static class AlbumsEndpoints
         }
 
         return Refusal(context, outcome);
+    }
+
+    /// <summary>
+    /// 204 once the Album is in retention; 404 when there is no such Album; 409
+    /// <c>revision_conflict</c> with <c>current</c> (the Album now, its Song count included) on a stale
+    /// revision; 428/400 on a missing or malformed <c>If-Match</c>. Nothing is changed unless the answer is 204.
+    /// </summary>
+    private static async Task<Results<NoContent, ProblemHttpResult>> DeleteAsync(
+        Guid id,
+        AlbumService albums,
+        HttpContext context,
+        ILoggerFactory loggers,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        var (revision, problem) = Revisions.Read(context);
+        if (problem is not null)
+        {
+            return problem;
+        }
+
+        switch (await albums.DeleteAsync(id, revision!.Value, cancellationToken))
+        {
+            case AlbumDeleteOutcome.Deleted deleted:
+                loggers.CreateLogger(typeof(AlbumsEndpoints)).LogInformation(
+                    "Album deleted: {AlbumId} into retention group {RetentionGroupId} with {RetainedRecordCount} records; its {SongCount} Songs kept",
+                    id,
+                    deleted.Group.Id,
+                    deleted.Group.Records.Count,
+                    deleted.SongCount);
+                return TypedResults.NoContent();
+
+            case AlbumDeleteOutcome.Conflict conflict:
+                return Revisions.Conflict(context, AlbumResponse.From(conflict.Current, context.Request.PathBase));
+
+            case AlbumDeleteOutcome.NotFound:
+                return NoSuchAlbum(context);
+
+            default:
+                throw new InvalidOperationException("Unknown Album deletion outcome.");
+        }
     }
 
     /// <summary>A text field: unsent when missing; null when null; a type error recorded otherwise.</summary>

@@ -81,7 +81,8 @@ function problem(status: number, code: string, extra: Record<string, unknown> = 
  * duplicate 409 `song_already_on_playlist`, a wrong order 409 `order_mismatch`, each with
  * `current`). `GET /api/v1/songs?q=` searches the Songs by title or shortcode. `server.next`
  * answers the next write some other way; `server.changeElsewhere` plays another client. Artwork
- * uploads and the PATCH's artwork fields follow {@link artworkFake} (`server.artwork`).
+ * uploads and the PATCH's artwork fields follow {@link artworkFake} (`server.artwork`). DELETE of a
+ * Playlist under its revision answers 204 and records it in `server.deleted`.
  */
 export function playlistServer(playlists: Playlist[] = [], songs: Song[] = SONGS) {
   const server = {
@@ -89,6 +90,8 @@ export function playlistServer(playlists: Playlist[] = [], songs: Song[] = SONGS
     songs,
     artwork: artworkFake(),
     writes: [] as PlaylistWrite[],
+    /** The IDs of the Playlists deleted, in order. */
+    deleted: [] as string[],
     searches: [] as string[],
     next: undefined as (() => Response) | undefined,
     changeElsewhere(id: string, change: Partial<Playlist>) {
@@ -218,6 +221,11 @@ export function playlistServer(playlists: Playlist[] = [], songs: Song[] = SONGS
     };
     const sent = write.body;
 
+    if (match?.[2] === undefined && method === 'DELETE') {
+      server.playlists = server.playlists.filter((playlist) => playlist.id !== id);
+      server.deleted.push(current.id);
+      return Promise.resolve(new Response(null, { status: 204 }));
+    }
     if (match?.[2] === undefined) {
       const change: Partial<Playlist> = {};
       if (typeof sent.title === 'string') {

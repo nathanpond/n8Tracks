@@ -97,4 +97,32 @@ internal sealed class AlbumTrackStore(N8TracksDbContext context) : IAlbumTrackSt
                 static group => group.Key,
                 static group => (IReadOnlyList<AlbumMembership>)[.. group.Select(static row => new AlbumMembership(row.Id, row.Title, row.Disc, row.Track))]);
     }
+
+    /// <summary>
+    /// Discs are numbered without gaps (<see cref="AlbumTrackRules.CloseDiscGaps"/>): when a Song
+    /// that was alone on its disc is gone, the later discs move down. The tracks are rewritten as a whole, so the
+    /// unique disc and track index is never met halfway. Nothing is written when there is no gap.
+    /// </summary>
+    internal static async Task CloseDiscGapsAsync(N8TracksDbContext context, Guid albumId, CancellationToken cancellationToken)
+    {
+        var tracks = await context.AlbumSongs.AsNoTracking()
+            .Where(track => track.AlbumId == albumId)
+            .Select(static track => new AlbumTrackPlace(track.SongId, track.Disc, track.Track))
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var closed = AlbumTrackRules.CloseDiscGaps(tracks);
+        if (AlbumTrackRules.Ordered(tracks).SequenceEqual(closed))
+        {
+            return;
+        }
+
+        await context.AlbumSongs.Where(track => track.AlbumId == albumId).ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
+        var rows = closed.Select(track => new AlbumSongRecord { AlbumId = albumId, SongId = track.SongId, Disc = track.Disc, Track = track.Track }).ToList();
+        context.AlbumSongs.AddRange(rows);
+        await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var row in rows)
+        {
+            context.Entry(row).State = EntityState.Detached;
+        }
+    }
 }

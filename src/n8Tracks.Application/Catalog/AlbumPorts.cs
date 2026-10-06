@@ -87,4 +87,11 @@ public interface IAlbumStore
     /// <paramref name="revision"/>. False when it is not (or there is no such Album).
     /// </summary>
     Task<bool> TryUpdateAsync(Album album, int revision, DateTimeOffset now, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Inside the caller's transaction, once the Album is gone: sets the updated time of each of
+    /// <paramref name="songIds"/> to <paramref name="updatedUtc"/>, without raising its revision (no
+    /// field of the Song changed; it shows one Album fewer). Missing IDs are skipped.
+    /// </summary>
+    Task TouchSongsAsync(IReadOnlyCollection<Guid> songIds, DateTimeOffset updatedUtc, CancellationToken cancellationToken);
 }

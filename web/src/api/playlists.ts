@@ -1,5 +1,6 @@
 import { isArtwork, type Artwork, type ArtworkCrop } from './artwork';
 import { apiFetch } from './client';
+import { deleteCollection, type DeleteCollectionResult } from './collectionDeletion';
 import { ifMatch, patchWithRevision, type SaveResult } from './saves';
 import { body, isErrorMap, isRecord, useResource } from './songs';
 
@@ -170,6 +171,20 @@ export function updatePlaylist(
     `${PLAYLISTS_PATH}/${encodeURIComponent(playlist.id)}`,
     playlist.revision,
     { ...edit },
+    acceptPlaylist,
+  );
+}
+
+/**
+ * Deletes a Playlist with its entries and artwork, based on `playlist`'s revision. Its Songs are
+ * not deleted.
+ */
+export function deletePlaylist(
+  playlist: Pick<Playlist, 'id' | 'revision'>,
+): Promise<DeleteCollectionResult<Playlist>> {
+  return deleteCollection(
+    `${PLAYLISTS_PATH}/${encodeURIComponent(playlist.id)}`,
+    playlist.revision,
     acceptPlaylist,
   );
 }

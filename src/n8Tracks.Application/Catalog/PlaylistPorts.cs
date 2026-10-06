@@ -69,4 +69,11 @@ public interface IPlaylistStore
     /// <paramref name="revision"/>. False when it is not. The Songs themselves are not touched.
     /// </summary>
     Task<bool> TrySetSongsAsync(Guid id, IReadOnlyList<Guid> songIds, int revision, DateTimeOffset now, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Inside the caller's transaction, once the Playlist is gone: sets the updated time of each of
+    /// <paramref name="songIds"/> to <paramref name="updatedUtc"/>, without raising its revision (no
+    /// field of the Song changed; it shows one Playlist fewer). Missing IDs are skipped.
+    /// </summary>
+    Task TouchSongsAsync(IReadOnlyCollection<Guid> songIds, DateTimeOffset updatedUtc, CancellationToken cancellationToken);
 }

@@ -1,11 +1,12 @@
 import { Anchor, Button, Fieldset, Group, List, Loader, Stack, Text, Title } from '@mantine/core';
 import { useCallback, useState } from 'react';
-import { Link, useLocation, useParams } from 'react-router';
+import { Link, useLocation, useNavigate, useParams } from 'react-router';
 import {
   ALBUM_DESCRIPTION_MAXIMUM_LENGTH,
   ALBUM_LINK_MAXIMUM_COUNT,
   ALBUM_RIGHTS_MAXIMUM_LENGTH,
   ALBUM_TITLE_MAXIMUM_LENGTH,
+  deleteAlbum,
   updateAlbum,
   useAlbum,
   type Album,
@@ -16,6 +17,8 @@ import type { FieldValue, SaveResult } from '../api/saves';
 import { ArtistPicker } from '../common/ArtistPicker';
 import { ArtworkPicker } from '../common/ArtworkPicker';
 import { artworkFields, artworkPatchOf, artworkValues } from '../common/artworkField';
+import type { DeletedCollectionState } from '../common/collectionDeletion';
+import { DeleteCollectionDialog } from '../common/DeleteCollection';
 import { LinksEditor } from '../common/LinksEditor';
 import { SavedTextField, type Save } from '../common/SavedTextField';
 import { saveError } from '../common/useInPlaceEdit';
@@ -49,10 +52,15 @@ function isFromAlbums(value: unknown): value is { albumsSearch: string } {
   );
 }
 
+/** The Albums list's view this page was opened from, when it was opened from one. */
+function useAlbumsSearch(): string {
+  const location: { state: unknown } = useLocation();
+  return isFromAlbums(location.state) ? location.state.albumsSearch : '';
+}
+
 /** Back to the Albums list, in the view this page was opened from when it was opened from one. */
 function BackToAlbums() {
-  const location: { state: unknown } = useLocation();
-  const search = isFromAlbums(location.state) ? location.state.albumsSearch : '';
+  const search = useAlbumsSearch();
   return (
     <Anchor component={Link} to={`/albums${search}`} size="sm">
       ← Albums
@@ -251,6 +259,9 @@ function UpcWarning({ album }: { album: Album }) {
 function LoadedAlbum({ initial }: { initial: Album }) {
   const [album, setAlbum] = useState(initial);
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
+  const [deleting, setDeleting] = useState(false);
+  const albumsSearch = useAlbumsSearch();
+  const navigate = useNavigate();
 
   const send = useCallback(
     (base: Album, edit: Readonly<Record<string, FieldValue>>): Promise<SaveResult<Album>> =>
@@ -278,7 +289,20 @@ function LoadedAlbum({ initial }: { initial: Album }) {
   return (
     <Stack gap="lg">
       <BackToAlbums />
-      <Title order={2}>{album.title}</Title>
+      <Group justify="space-between" align="flex-start" wrap="nowrap" gap="sm">
+        <Title order={2} style={{ overflowWrap: 'anywhere' }}>
+          {album.title}
+        </Title>
+        <Button
+          variant="default"
+          size="compact-sm"
+          onClick={() => {
+            setDeleting(true);
+          }}
+        >
+          Delete Album
+        </Button>
+      </Group>
       <div role="status" data-testid="album-save-status">
         {status === 'saving' && <Text size="sm">Saving…</Text>}
         {status === 'saved' && <Text size="sm">Saved.</Text>}
@@ -384,6 +408,22 @@ function LoadedAlbum({ initial }: { initial: Album }) {
       <TrackList album={album} onAlbum={setAlbum} />
 
       {dialog}
+      <DeleteCollectionDialog
+        noun="Album"
+        record={album}
+        opened={deleting}
+        onClose={() => {
+          setDeleting(false);
+        }}
+        remove={() => deleteAlbum(album)}
+        onCurrent={setAlbum}
+        onDeleted={() => {
+          const state: DeletedCollectionState = {
+            deletedCollection: { noun: 'Album', title: album.title },
+          };
+          void navigate(`/albums${albumsSearch}`, { state });
+        }}
+      />
     </Stack>
   );
 }
@@ -393,7 +433,8 @@ function LoadedAlbum({ initial }: { initial: Album }) {
  * from its Songs), title, Album Artist, description, release details, and links, each saved on its
  * own under the Album's revision. A UPC/EAN another Album has is kept and
  * warned about while it applies. Its tracks are arranged by disc and track number (TrackList), each
- * change also under the Album's revision.
+ * change also under the Album's revision. "Delete Album" deletes it after a confirmation that its
+ * Songs are not deleted; the Albums list then opens with a notice naming it.
  */
 export function AlbumPage() {
   const { id = '' } = useParams();

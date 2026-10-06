@@ -116,6 +116,9 @@ internal sealed class PlaylistStore(N8TracksDbContext context) : IPlaylistStore
         return count == 1;
     }
 
+    public Task TouchSongsAsync(IReadOnlyCollection<Guid> songIds, DateTimeOffset updatedUtc, CancellationToken cancellationToken) =>
+        SongTouch.UpdatedTimeOnlyAsync(context, songIds, updatedUtc, cancellationToken);
+
     public async Task<bool> TrySetSongsAsync(Guid id, IReadOnlyList<Guid> songIds, int revision, DateTimeOffset now, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(songIds);

@@ -45,6 +45,15 @@ public static class RetainedRecordTypes
 
     /// <summary>A relationship between two Songs (<c>song_relationships</c>), deleted with either Song.</summary>
     public const string SongRelationship = "song-relationship";
+
+    /// <summary>An Album (<c>albums</c>), deleted with its links, tracks, and artwork; never its Songs.</summary>
+    public const string Album = "album";
+
+    /// <summary>A link of an Album (<c>album_links</c>), deleted with its Album.</summary>
+    public const string AlbumLink = "album-link";
+
+    /// <summary>A Playlist (<c>playlists</c>), deleted with its entries and artwork; never its Songs.</summary>
+    public const string Playlist = "playlist";
 }
 
 /// <summary>A record a deletion names: the root of what goes into retention with it.</summary>

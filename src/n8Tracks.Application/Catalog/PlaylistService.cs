@@ -1,6 +1,7 @@
 using System.Globalization;
 using n8Tracks.Application.Assets;
 using n8Tracks.Application.Auth;
+using n8Tracks.Application.Retention;
 using n8Tracks.Domain.Assets;
 using n8Tracks.Domain.Catalog;
 
@@ -65,13 +66,34 @@ public abstract record PlaylistOutcome
     public sealed record OrderMismatch(PlaylistDetails Current) : PlaylistOutcome;
 }
 
+/// <summary>How deleting a Playlist ended.</summary>
+public abstract record PlaylistDeleteOutcome
+{
+    private PlaylistDeleteOutcome()
+    {
+    }
+
+    /// <summary>
+    /// The Playlist, its entries, and its artwork are in <paramref name="Group"/>; its
+    /// <paramref name="SongCount"/> Songs are not deleted.
+    /// </summary>
+    public sealed record Deleted(RetentionGroup Group, int SongCount) : PlaylistDeleteOutcome;
+
+    /// <summary>There is no such Playlist. Nothing was changed.</summary>
+    public sealed record NotFound : PlaylistDeleteOutcome;
+
+    /// <summary>The Playlist is at another revision than the one sent. Nothing was changed. <paramref name="Current"/> is the Playlist now.</summary>
+    public sealed record Conflict(PlaylistDetails Current) : PlaylistDeleteOutcome;
+}
+
 /// <summary>
 /// Playlists: titled, ordered lists of Songs. A Song is on a Playlist at most once, but on any
 /// number of Playlists. Adding, removing, and reordering each work under the Playlist's revision and
 /// raise it; a newly added Song goes to the end. Changing a Playlist never changes its Songs. Its
-/// artwork is its own, never borrowed from its Songs, and is edited under its revision.
+/// artwork is its own, never borrowed from its Songs, and is edited under its revision. Deleting a
+/// Playlist (#103) never deletes a Song.
 /// </summary>
-public sealed class PlaylistService(IPlaylistStore playlists, ArtworkAttachmentService artwork, IExclusiveTransaction transaction, TimeProvider time)
+public sealed class PlaylistService(IPlaylistStore playlists, ArtworkAttachmentService artwork, RetentionService retention, IExclusiveTransaction transaction, TimeProvider time)
 {
     /// <summary>The field names validation errors are keyed by, as the API spells them.</summary>
     public const string TitleField = "title";
@@ -268,6 +290,46 @@ public sealed class PlaylistService(IPlaylistStore playlists, ArtworkAttachmentS
             },
             cancellationToken);
     }
+
+    /// <summary>
+    /// Deletes the Playlist <paramref name="id"/> if it is still at <paramref name="revision"/>: the
+    /// Playlist, its entries (which Songs were on it, in what order), and its own artwork go into
+    /// retention as one group, labelled "Playlist &lt;title&gt;", with the artwork's files. Its Songs
+    /// are not deleted and keep their revisions; their updated times move to the deletion's, as each
+    /// now shows one Playlist fewer. Restoring the group (<see cref="RetentionService.RestoreAsync"/>)
+    /// puts back the Playlist and the entries whose Songs still exist, and notes the rest.
+    /// </summary>
+    public Task<PlaylistDeleteOutcome> DeleteAsync(Guid id, int revision, CancellationToken cancellationToken) =>
+        transaction.RunAsync<PlaylistDeleteOutcome>(
+            async ct =>
+            {
+                if (await playlists.FindAsync(id, ct).ConfigureAwait(false) is not { } current)
+                {
+                    return new PlaylistDeleteOutcome.NotFound();
+                }
+
+                if (current.Revision != revision)
+                {
+                    return new PlaylistDeleteOutcome.Conflict(current);
+                }
+
+                var (artworkRoot, files) = await artwork.RetentionOfAsync(ArtworkOwnerTypes.Playlist, id, ct).ConfigureAwait(false);
+                List<RetainedRoot> roots = [new(RetainedRecordTypes.Playlist, id)];
+                if (artworkRoot is not null)
+                {
+                    roots.Add(artworkRoot);
+                }
+
+                var group = await retention.RetainWithinAsync(
+                    new RetentionRequest(RetainedRecordTypes.Playlist, Label(current.Playlist.Title), Shortcode: null, roots, files),
+                    ct).ConfigureAwait(false);
+                await playlists.TouchSongsAsync(SongIds(current), group.DeletedUtc, ct).ConfigureAwait(false);
+                return new PlaylistDeleteOutcome.Deleted(group, current.Summary.SongCount);
+            },
+            cancellationToken);
+
+    /// <summary>How the recovery listing names a deleted Playlist: "Playlist Title".</summary>
+    internal static string Label(string title) => $"Playlist {title}";
 
     private static List<Guid> SongIds(PlaylistDetails playlist) => [.. playlist.Songs.Select(static song => song.Id)];
 

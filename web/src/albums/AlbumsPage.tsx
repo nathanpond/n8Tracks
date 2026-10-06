@@ -23,6 +23,8 @@ import {
   type AlbumSort,
 } from '../api/albums';
 import { ArtworkImage } from '../common/ArtworkImage';
+import { useDeletedCollection } from '../common/collectionDeletion';
+import { DeletedCollectionNotice } from '../common/DeleteCollection';
 import { Notice } from '../components/Notice';
 import { formatAlbumDate, shownDate } from './albumRules';
 import { NewAlbumDialog } from './NewAlbumDialog';
@@ -113,6 +115,7 @@ export function AlbumsPage() {
   const query = albumQueryFrom(searchParams);
   const { state, reload } = useAlbums(query);
   const [creating, setCreating] = useState(false);
+  const [deleted, dismissDeleted] = useDeletedCollection();
   const from: FromAlbums = { albumsSearch: location.search };
 
   const show = (next: AlbumQuery) => {
@@ -139,6 +142,10 @@ export function AlbumsPage() {
         <Title order={2}>Albums</Title>
         {!empty && <Button onClick={openNew}>New Album</Button>}
       </Group>
+
+      {deleted !== undefined && (
+        <DeletedCollectionNotice deleted={deleted} onDismiss={dismissDeleted} />
+      )}
 
       {state.phase === 'loading' && <Loader aria-label="Loading Albums" />}
       {(state.phase === 'error' || state.phase === 'not-found') && (

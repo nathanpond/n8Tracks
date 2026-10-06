@@ -15,6 +15,8 @@ import { useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
 import { usePlaylists, type PlaylistSummary } from '../api/playlists';
 import { ArtworkImage } from '../common/ArtworkImage';
+import { useDeletedCollection } from '../common/collectionDeletion';
+import { DeletedCollectionNotice } from '../common/DeleteCollection';
 import { Notice } from '../components/Notice';
 import { NewPlaylistDialog } from './NewPlaylistDialog';
 
@@ -62,6 +64,7 @@ export function PlaylistsPage() {
   const pageNumber = Number.isSafeInteger(requested) && requested >= 1 ? requested : 1;
   const { state, reload } = usePlaylists(pageNumber);
   const [creating, setCreating] = useState(false);
+  const [deleted, dismissDeleted] = useDeletedCollection();
   const from: FromPlaylists = { playlistsSearch: location.search };
 
   const show = (next: number) => {
@@ -81,6 +84,10 @@ export function PlaylistsPage() {
         <Title order={2}>Playlists</Title>
         {!empty && <Button onClick={openNew}>New Playlist</Button>}
       </Group>
+
+      {deleted !== undefined && (
+        <DeletedCollectionNotice deleted={deleted} onDismiss={dismissDeleted} />
+      )}
 
       {state.phase === 'loading' && <Loader aria-label="Loading Playlists" />}
       {(state.phase === 'error' || state.phase === 'not-found') && (

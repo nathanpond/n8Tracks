@@ -1,5 +1,6 @@
 import { isArtwork, type Artwork, type ArtworkCrop } from './artwork';
 import { apiFetch } from './client';
+import { deleteCollection, type DeleteCollectionResult } from './collectionDeletion';
 import { ifMatch, patchWithRevision, type SaveResult } from './saves';
 import { body, isErrorMap, isRecord, useResource } from './songs';
 
@@ -265,6 +266,20 @@ export function updateAlbum(
     `${ALBUMS_PATH}/${encodeURIComponent(album.id)}`,
     album.revision,
     { ...edit },
+    acceptAlbum,
+  );
+}
+
+/**
+ * Deletes an Album with its tracks, links, and artwork, based on `album`'s revision. Its Songs are
+ * not deleted.
+ */
+export function deleteAlbum(
+  album: Pick<Album, 'id' | 'revision'>,
+): Promise<DeleteCollectionResult<Album>> {
+  return deleteCollection(
+    `${ALBUMS_PATH}/${encodeURIComponent(album.id)}`,
+    album.revision,
     acceptAlbum,
   );
 }

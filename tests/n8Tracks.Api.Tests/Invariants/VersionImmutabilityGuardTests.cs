@@ -531,6 +531,8 @@ public sealed class VersionImmutabilityGuardTests
         ["DELETE /api/v1/relationship-types/{id:guid}"] = "removes a type and its relationships (song_relationships and the Songs' last-updated times), never a Version",
         ["POST /api/v1/playlists"] = "adds an empty Playlist record (playlists) from a title; no Song or Version is touched",
         ["PATCH /api/v1/playlists/{id:guid}"] = "edits a Playlist record's title and description; no Song or Version is touched",
+        ["DELETE /api/v1/albums/{id:guid}"] = "retains an Album with its links, tracks (album_songs), and artwork; its Songs' last-updated times move, never a Song's field or a Version",
+        ["DELETE /api/v1/playlists/{id:guid}"] = "retains a Playlist with its entries (playlist_songs) and artwork; its Songs' last-updated times move, never a Song's field or a Version",
         ["PUT /api/v1/suno/models/order"] = "reorders the model list; a Version's model is not touched",
         ["DELETE /api/v1/workflow-states/{id:guid}"] = "workflow states; moves Songs to another state, never a Version",
         ["POST /api/v1/backups"] = "queues a backup: reads the database, writes only an archive file",
