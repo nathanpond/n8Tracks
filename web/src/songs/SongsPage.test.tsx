@@ -275,6 +275,27 @@ describe('Songs', () => {
     expect(screen.getByText('2 Songs')).toBeVisible();
   });
 
+  it('offers no Delete, row selection, or bulk action: Songs are deleted from their own page', async () => {
+    backend({ list: () => jsonResponse(200, page([song(2), song(1, { title: 'Other' })])) });
+
+    renderApp('/songs');
+
+    const table = await screen.findByRole('table', { name: 'Songs' });
+    // No selection column or row checkboxes to gather Songs for a bulk action.
+    expect(within(table).queryAllByRole('checkbox')).toEqual([]);
+    for (const shortcode of ['n8-1', 'n8-2']) {
+      expect(within(row(shortcode)).queryAllByRole('button')).toEqual([]);
+      expect(within(row(shortcode)).queryAllByRole('menuitem')).toEqual([]);
+    }
+    // Nowhere on the page is there a Delete, Remove, or bulk action.
+    const actions = [
+      ...screen.queryAllByRole('button'),
+      ...screen.queryAllByRole('menuitem'),
+      ...screen.queryAllByRole('link'),
+    ].map((element) => element.textContent + ' ' + (element.getAttribute('aria-label') ?? ''));
+    expect(actions.filter((name) => /delete|remove|bulk|selected/i.test(name))).toEqual([]);
+  });
+
   it('cuts a long concept to one line and shows all of it on focus', async () => {
     backend({ list: () => jsonResponse(200, page([song(1, { concept: LONG_CONCEPT })])) });
     const user = userEvent.setup();
