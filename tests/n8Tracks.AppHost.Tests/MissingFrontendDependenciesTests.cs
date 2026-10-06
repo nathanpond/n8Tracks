@@ -85,18 +85,20 @@ public class MissingFrontendDependenciesTests
         var app = await builder.BuildAsync(timeout.Token);
         await using var appDisposal = app.ConfigureAwait(false);
 
-        // Listening before the start, so the line cannot be missed.
-        var frontendLog = ReadUntilAsync(
-            app.Services.GetRequiredService<ResourceLoggerService>(),
-            frontend,
-            static line => line.Contains("npm install", StringComparison.Ordinal),
-            timeout.Token);
-
         await app.StartAsync(timeout.Token);
 
         await app.ResourceNotifications.WaitForResourceAsync(AppModel.Frontend, KnownResourceStates.FailedToStart, timeout.Token);
 
-        var line = await frontendLog;
+        // Read only now. A resource's log is kept under its DCP instance name ("frontend-<suffix>"),
+        // assigned on BeforeStartEvent, which the AppHost's own RunAsync can raise before or after
+        // this test reaches StartAsync. A watch opened earlier could resolve the bare "frontend" and
+        // listen to a log nothing writes to (#299). What the AppHost wrote to the resource's logger
+        // is kept and replayed to a later watch, and it was written before the resource failed.
+        var line = await ReadUntilAsync(
+            app.Services.GetRequiredService<ResourceLoggerService>(),
+            frontend,
+            static line => line.Contains("npm install", StringComparison.Ordinal),
+            timeout.Token);
         Assert.Contains("dependencies are not installed", line, StringComparison.Ordinal);
         Assert.Contains("`npm install`", line, StringComparison.Ordinal);
 
@@ -134,17 +136,27 @@ public class MissingFrontendDependenciesTests
         Func<string, bool> wanted,
         CancellationToken cancellationToken)
     {
-        await foreach (var batch in logs.WatchAsync(resource).WithCancellation(cancellationToken).ConfigureAwait(false))
+        var seen = 0;
+        try
         {
-            foreach (var line in batch)
+            await foreach (var batch in logs.WatchAsync(resource).WithCancellation(cancellationToken).ConfigureAwait(false))
             {
-                if (wanted(line.Content))
+                foreach (var line in batch)
                 {
-                    return line.Content;
+                    seen++;
+                    if (wanted(line.Content))
+                    {
+                        return line.Content;
+                    }
                 }
             }
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException(
+                $"The {resource.Name} resource's log showed no line saying to run `npm install` before the test's {StartTimeout.TotalMinutes.ToString(CultureInfo.InvariantCulture)} minute deadline ({seen.ToString(CultureInfo.InvariantCulture)} lines read).");
+        }
 
-        throw new InvalidOperationException("The resource's log ended without the expected line.");
+        throw new InvalidOperationException($"The {resource.Name} resource's log ended without a line saying to run `npm install`.");
     }
 }
