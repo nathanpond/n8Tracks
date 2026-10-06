@@ -13,11 +13,15 @@ namespace n8Tracks.Api.Tests.Auth;
 /// <summary>
 /// Every <c>/api/v1</c> endpoint declares what a token needs to call it: exactly one of
 /// <c>RequireScope(...)</c>, <c>SessionOnly()</c>, or <c>AllowAnonymous()</c>. The one exception is
-/// the API's own 404 fallback, marked <c>AnyCaller()</c>, and no other endpoint may carry that.
+/// the API's own 404 fallback and the extension handshake, marked <c>AnyCaller()</c>, and no other
+/// endpoint may carry that.
 /// </summary>
 public sealed class EndpointScopeGuardTests
 {
     private const string ApiNotFoundPattern = "/api/v1/{**path}";
+
+    /// <summary>Every route that may be <c>AnyCaller()</c>, by name: a new one is a deliberate change here.</summary>
+    private static readonly string[] AnyCallerPatterns = [ApiNotFoundPattern, "/api/v1/extension/handshake"];
 
     [Fact]
     public void EveryApiEndpointDeclaresExactlyOneScopeMarker()
@@ -125,6 +129,8 @@ public sealed class EndpointScopeGuardTests
         Assert.Equal("session-only", markers["POST /api/v1/restores/uploads"]);
         Assert.Equal("session-only", markers["POST /api/v1/restores"]);
         Assert.Equal("any-caller", markers["* " + ApiNotFoundPattern]);
+        Assert.Equal("any-caller", markers["GET /api/v1/extension/handshake"]);
+        Assert.Equal(2, markers.Values.Count(static marker => marker == "any-caller"));
     }
 
     /// <summary>Proves the check bites: an endpoint added to the test host without a marker fails it.</summary>
@@ -153,7 +159,7 @@ public sealed class EndpointScopeGuardTests
         });
 
         Assert.Equal(
-            ["GET /api/v1/test/both: 2 scope markers", "GET /api/v1/test/open: AnyCaller() is for the API's 404 only"],
+            ["GET /api/v1/test/both: 2 scope markers", "GET /api/v1/test/open: AnyCaller() is for the API's 404 and the extension handshake only"],
             Violations(ApiEndpoints(factory)));
     }
 
@@ -235,9 +241,9 @@ public sealed class EndpointScopeGuardTests
             {
                 violations.Add($"{Describe(endpoint)}: {count} scope markers");
             }
-            else if (Marker(endpoint) == "any-caller" && endpoint.RoutePattern.RawText != ApiNotFoundPattern)
+            else if (Marker(endpoint) == "any-caller" && !AnyCallerPatterns.Contains(endpoint.RoutePattern.RawText, StringComparer.Ordinal))
             {
-                violations.Add($"{Describe(endpoint)}: AnyCaller() is for the API's 404 only");
+                violations.Add($"{Describe(endpoint)}: AnyCaller() is for the API's 404 and the extension handshake only");
             }
         }
 

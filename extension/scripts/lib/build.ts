@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { build } from 'vite';
 import {
   referencedFiles,
+  relayOutput,
   serviceWorkerOutput,
   transformManifest,
   validateManifest,
@@ -70,6 +71,7 @@ export async function buildExtension(): Promise<ProductVersion> {
       rolldownOptions: {
         input: {
           popup: join(extensionRoot, 'src/popup/popup.html'),
+          options: join(extensionRoot, 'src/options/options.html'),
           'service-worker': join(extensionRoot, 'src/background/service-worker.ts'),
         },
         output: {
@@ -80,6 +82,26 @@ export async function buildExtension(): Promise<ProductVersion> {
       },
     },
   });
+
+  // The relay is a content script, which runs as a classic script: one file, no imports, so it
+  // is built on its own. The service worker registers it by this name for the paired origin.
+  await build({
+    configFile: false,
+    root: join(extensionRoot, 'src'),
+    publicDir: false,
+    logLevel: 'warn',
+    build: {
+      outDir: distDirectory,
+      emptyOutDir: false,
+      rolldownOptions: {
+        input: { relay: join(extensionRoot, 'src/content/relay-main.ts') },
+        output: { format: 'iife', entryFileNames: relayOutput },
+      },
+    },
+  });
+  if (!existsSync(join(distDirectory, relayOutput))) {
+    throw new Error(`The build did not make ${relayOutput}.`);
+  }
 
   const source = readJson(join(extensionRoot, 'manifest.json')) as Manifest;
   const manifest = transformManifest(source, version);

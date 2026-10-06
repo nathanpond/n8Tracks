@@ -12,7 +12,17 @@
         <h1 id="name"></h1>
         <p id="version"></p>
       </header>
-      <p id="connection" role="status"></p>
+      <section id="state" aria-labelledby="connection">
+        <p id="connection" role="status"></p>
+        <p id="detail"></p>
+        <p id="warning" class="warning" hidden></p>
+        <ul id="features" aria-label="Features" hidden></ul>
+        <div class="actions">
+          <button id="reconnect" type="button" hidden>Reconnect</button>
+          <button id="disconnect" type="button" hidden>Disconnect</button>
+          <button id="open-options" type="button">Settings</button>
+        </div>
+      </section>
     </main>
     <script type="module" src="./main.ts"></script>
   </body>

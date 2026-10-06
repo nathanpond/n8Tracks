@@ -1,3 +1,11 @@
-import { renderPopup } from './render.ts';
+import { sendRequest } from '../messages.ts';
+import { startPopup } from './popup.ts';
 
-renderPopup(document, chrome.runtime.getManifest());
+void startPopup(document, {
+  manifest: chrome.runtime.getManifest(),
+  send: (request) => sendRequest(request),
+  requestPermissions: (origins) => chrome.permissions.request({ origins }),
+  openOptions: () => {
+    void chrome.runtime.openOptionsPage();
+  },
+});

@@ -19,8 +19,9 @@ function validManifest(): Manifest {
     icons: { ...icons },
     action: { default_title: 'n8Tracks', default_popup: 'popup/popup.html', default_icon: icons },
     background: { service_worker: 'service-worker.js', type: 'module' },
-    permissions: ['storage'],
-    optional_host_permissions: ['https://suno.com/*'],
+    permissions: ['storage', 'scripting', 'tabs'],
+    optional_host_permissions: ['https://suno.com/*', 'https://*/*', 'http://*/*'],
+    options_ui: { page: 'options/options.html', open_in_tab: true },
   };
 }
 
@@ -41,6 +42,7 @@ function sourceManifest(): Manifest {
       default_icon: sourceIcons,
     },
     background: { service_worker: 'src/background/service-worker.ts', type: 'module' },
+    options_ui: { page: 'src/options/options.html', open_in_tab: true },
   };
 }
 
@@ -56,19 +58,47 @@ describe('validateManifest', () => {
   });
 
   const bad: [string, Manifest, string][] = [
-    ['an additional permission', { permissions: ['storage', 'tabs'] }, 'permissions'],
+    [
+      'an additional permission',
+      { permissions: ['storage', 'scripting', 'tabs', 'downloads'] },
+      'permissions',
+    ],
+    [
+      'a cookies permission',
+      { permissions: ['storage', 'scripting', 'tabs', 'cookies'] },
+      'permissions',
+    ],
+    ['a missing permission', { permissions: ['storage', 'tabs'] }, 'permissions'],
+    ['only the M1 permission', { permissions: ['storage'] }, 'permissions'],
     ['a different permission', { permissions: ['cookies'] }, 'permissions'],
     ['no permissions', { permissions: undefined }, 'permissions'],
     ['a host permission', { host_permissions: ['https://suno.com/*'] }, 'host_permissions'],
     ['an empty host permission list', { host_permissions: [] }, 'host_permissions'],
     [
       'an additional optional host',
-      { optional_host_permissions: ['https://suno.com/*', 'https://example.com/*'] },
+      {
+        optional_host_permissions: [
+          'https://suno.com/*',
+          'https://*/*',
+          'http://*/*',
+          'https://example.com/*',
+        ],
+      },
       'optional_host_permissions',
     ],
     [
       'a wider optional host',
-      { optional_host_permissions: ['https://*.suno.com/*'] },
+      { optional_host_permissions: ['https://*.suno.com/*', 'https://*/*', 'http://*/*'] },
+      'optional_host_permissions',
+    ],
+    [
+      'the M1 optional host alone',
+      { optional_host_permissions: ['https://suno.com/*'] },
+      'optional_host_permissions',
+    ],
+    [
+      'any scheme',
+      { optional_host_permissions: ['https://suno.com/*', '*://*/*'] },
       'optional_host_permissions',
     ],
     ['every host', { optional_host_permissions: ['<all_urls>'] }, 'optional_host_permissions'],
@@ -92,6 +122,12 @@ describe('validateManifest', () => {
     ['a classic service worker', { background: { service_worker: 'sw.js' } }, 'background'],
     ['no popup', { action: { default_icon: icons } }, 'action.default_popup'],
     ['a missing icon size', { icons: { '16': 'icons/icon-16.png' } }, 'icons'],
+    ['no options page', { options_ui: undefined }, 'options_ui'],
+    [
+      'an options page in the popup frame',
+      { options_ui: { page: 'options/options.html', open_in_tab: false } },
+      'options_ui',
+    ],
   ];
 
   it.each(bad)('rejects %s', (_, change, field) => {
@@ -104,7 +140,7 @@ describe('validateManifest', () => {
   it('reports every problem, not only the first', () => {
     const problems = validateManifest({
       ...validManifest(),
-      permissions: ['storage', 'tabs'],
+      permissions: ['storage', 'scripting', 'tabs', 'downloads'],
       host_permissions: ['<all_urls>'],
     });
 
@@ -161,11 +197,12 @@ describe('transformManifest', () => {
 });
 
 describe('referencedFiles', () => {
-  it('lists the service worker, the popup, and each icon once', () => {
+  it('lists the service worker, the popup, the options page, and each icon once', () => {
     expect(referencedFiles(validManifest()).toSorted()).toEqual([
       'icons/icon-128.png',
       'icons/icon-16.png',
       'icons/icon-48.png',
+      'options/options.html',
       'popup/popup.html',
       'service-worker.js',
     ]);

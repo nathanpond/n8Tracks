@@ -40,8 +40,9 @@ internal sealed class SessionOnlyEndpoint
 }
 
 /// <summary>
-/// Marks the one endpoint any authenticated caller reaches whatever its scopes: the API's own 404
-/// for a path nothing else matched, which does nothing but say so.
+/// Marks the two endpoints any authenticated caller reaches whatever its scopes: the API's own 404
+/// for a path nothing else matched, which does nothing but say so, and the extension handshake,
+/// which tells a token's holder only about that token. A guard test names both.
 /// </summary>
 internal sealed class AnyCallerEndpoint
 {
@@ -65,7 +66,7 @@ internal static class ScopeRequirementExtensions
         where TBuilder : IEndpointConventionBuilder =>
         builder.WithMetadata(SessionOnlyEndpoint.Instance);
 
-    /// <summary>Any authenticated caller, whatever its scopes. For the API's 404 fallback only.</summary>
+    /// <summary>Any authenticated caller, whatever its scopes. For the API's 404 fallback and the extension handshake only.</summary>
     internal static TBuilder AnyCaller<TBuilder>(this TBuilder builder)
         where TBuilder : IEndpointConventionBuilder =>
         builder.WithMetadata(AnyCallerEndpoint.Instance);

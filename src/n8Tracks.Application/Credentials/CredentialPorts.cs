@@ -29,6 +29,7 @@ public sealed record StoredCredential(
 /// <param name="LastUsedUtc">When its token was last used (to the minute), or null if never.</param>
 /// <param name="RevokedUtc">When it was revoked, or null while it is in force.</param>
 /// <param name="Revision">Starts at 1 and goes up by one on each rename or revocation.</param>
+/// <param name="LastSeen">What the last extension handshake with its token reported, or null if none was made.</param>
 public sealed record CredentialSummary(
     Guid Id,
     string Name,
@@ -37,7 +38,15 @@ public sealed record CredentialSummary(
     DateTimeOffset CreatedUtc,
     DateTimeOffset? LastUsedUtc,
     DateTimeOffset? RevokedUtc,
-    int Revision);
+    int Revision,
+    ExtensionSighting? LastSeen = null);
+
+/// <summary>
+/// What an extension handshake reported: the versions it sent in its headers, each null when the
+/// header was missing or unreadable, and when it was made. Recording one does not change the
+/// credential's revision: it is an observation, not an edit.
+/// </summary>
+public sealed record ExtensionSighting(string? ExtensionVersion, string? AdapterVersion, DateTimeOffset SeenUtc);
 
 /// <summary>How a conditional rename in the store ended.</summary>
 public enum CredentialRenameResult
@@ -84,4 +93,7 @@ public interface ICredentialStore
 
     /// <summary>Records that the credential was used at <paramref name="lastUsedUtc"/>.</summary>
     Task TouchAsync(Guid id, DateTimeOffset lastUsedUtc, CancellationToken cancellationToken);
+
+    /// <summary>Records what an extension handshake with the credential's token reported, replacing the last one.</summary>
+    Task RecordSightingAsync(Guid id, ExtensionSighting sighting, CancellationToken cancellationToken);
 }

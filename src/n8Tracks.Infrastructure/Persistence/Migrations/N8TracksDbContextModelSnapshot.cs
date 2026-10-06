@@ -478,6 +478,18 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("kind");
 
+                    b.Property<string>("LastAdapterVersion")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("last_adapter_version");
+
+                    b.Property<string>("LastExtensionVersion")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("last_extension_version");
+
+                    b.Property<string>("LastSeenAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("last_seen_at");
+
                     b.Property<string>("LastUsedUtc")
                         .HasColumnType("TEXT")
                         .HasColumnName("last_used_utc");

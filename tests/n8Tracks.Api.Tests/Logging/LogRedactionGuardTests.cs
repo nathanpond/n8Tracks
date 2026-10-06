@@ -259,6 +259,44 @@ public sealed class LogRedactionGuardTests
     }
 
     /// <summary>
+    /// The extension's handshake carries its token and two version headers. At Debug, through a
+    /// handshake that is answered and one with a revoked token, neither the token nor its hash
+    /// reaches the log, while the request itself is logged.
+    /// </summary>
+    [Fact]
+    public async Task TheExtensionHandshakeNeverLogsItsToken()
+    {
+        using var factory = new LoggingApiFactory("Debug");
+        using var client = factory.CreateClient();
+        await SetupApi.CompleteAsync(client);
+        var created = Assert.IsType<n8Tracks.Application.Credentials.CredentialOutcome.Created>(await CredentialApi.CreateAsync(
+            factory,
+            new n8Tracks.Application.Credentials.CredentialRequest("sentinel extension", "extension", ["suno.sync"])));
+
+        foreach (var status in new[] { HttpStatusCode.OK, HttpStatusCode.Unauthorized })
+        {
+            if (status == HttpStatusCode.Unauthorized)
+            {
+                await using var scope = factory.Services.CreateAsyncScope();
+                await scope.ServiceProvider.GetRequiredService<n8Tracks.Application.Credentials.CredentialService>().RevokeAsync(created.Id, CancellationToken.None);
+            }
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, new Uri("/api/v1/extension/handshake", UriKind.Relative));
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", created.Token);
+            Assert.True(request.Headers.TryAddWithoutValidation("X-N8Tracks-Extension-Version", "0.1.0"));
+            Assert.True(request.Headers.TryAddWithoutValidation("X-N8Tracks-Adapter-Version", "1"));
+            using var response = await client.SendAsync(request);
+            Assert.Equal(status, response.StatusCode);
+            await factory.CompletionLine(LoggingApiFactory.RequestId(response));
+        }
+
+        var captured = factory.CapturedText;
+        Assert.Contains("/api/v1/extension/handshake", captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(created.Token[4..], captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(n8Tracks.Application.Credentials.CredentialToken.Hash(created.Token), captured, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// The token is in one answer only, to the request that creates the credential. At Debug,
     /// through creating, listing, renaming, revoking, and a call with the token before and after
     /// revocation, neither the token nor its stored hash reaches the log, while the requests and the

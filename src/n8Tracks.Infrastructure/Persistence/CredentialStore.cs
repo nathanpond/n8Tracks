@@ -135,6 +135,22 @@ internal sealed class CredentialStore(N8TracksDbContext context) : ICredentialSt
             .ExecuteUpdateAsync(setters => setters.SetProperty(credential => credential.LastUsedUtc, lastUsed), cancellationToken);
     }
 
+    public Task RecordSightingAsync(Guid id, ExtensionSighting sighting, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(sighting);
+
+        var seen = UtcText.From(sighting.SeenUtc);
+
+        return context.Credentials
+            .Where(credential => credential.Id == id)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(credential => credential.LastExtensionVersion, sighting.ExtensionVersion)
+                    .SetProperty(credential => credential.LastAdapterVersion, sighting.AdapterVersion)
+                    .SetProperty(credential => credential.LastSeenAt, seen),
+                cancellationToken);
+    }
+
     private static CredentialSummary Summary(CredentialRecord record) =>
         new(
             record.Id,
@@ -144,7 +160,10 @@ internal sealed class CredentialStore(N8TracksDbContext context) : ICredentialSt
             UtcText.Parse(record.CreatedUtc),
             record.LastUsedUtc is { } lastUsed ? UtcText.Parse(lastUsed) : null,
             record.RevokedUtc is { } revoked ? UtcText.Parse(revoked) : null,
-            record.Revision);
+            record.Revision,
+            record.LastSeenAt is { } seen
+                ? new ExtensionSighting(record.LastExtensionVersion, record.LastAdapterVersion, UtcText.Parse(seen))
+                : null);
 
     private static string[] SplitScopes(string scopes) => scopes.Split(ScopeSeparator, StringSplitOptions.RemoveEmptyEntries);
 

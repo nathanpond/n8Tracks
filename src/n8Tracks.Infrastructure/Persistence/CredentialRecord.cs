@@ -38,4 +38,16 @@ public sealed class CredentialRecord
 
     /// <summary>Starts at 1 and goes up by one on each edit.</summary>
     public int Revision { get; set; } = 1;
+
+    /// <summary>
+    /// The extension version the last handshake reported (<c>X-N8Tracks-Extension-Version</c>);
+    /// null before the first handshake, or when that handshake sent none.
+    /// </summary>
+    public string? LastExtensionVersion { get; set; }
+
+    /// <summary>The adapter version the last handshake reported; null as for the extension version.</summary>
+    public string? LastAdapterVersion { get; set; }
+
+    /// <summary>When the last handshake was made: UTC, ISO 8601, millisecond precision; null before the first.</summary>
+    public string? LastSeenAt { get; set; }
 }

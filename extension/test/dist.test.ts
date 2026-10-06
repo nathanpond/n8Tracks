@@ -2,22 +2,48 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { distDirectory, extensionRoot, productVersion } from '../scripts/lib/build.ts';
-import { referencedFiles, validateManifest, type Manifest } from '../scripts/lib/manifest.ts';
+import {
+  referencedFiles,
+  relayOutput,
+  validateManifest,
+  type Manifest,
+} from '../scripts/lib/manifest.ts';
 
 // The global setup has just built dist/; these tests read what the build really wrote.
 const manifest = JSON.parse(readFileSync(join(distDirectory, 'manifest.json'), 'utf8')) as Manifest;
 
 describe('the built manifest', () => {
-  it('is Manifest V3 and asks only for storage', () => {
+  it('is Manifest V3 and asks only for storage, scripting, and tabs', () => {
     expect(manifest.manifest_version).toBe(3);
-    expect(manifest.permissions).toEqual(['storage']);
+    expect(manifest.permissions).toEqual(['storage', 'scripting', 'tabs']);
+    expect(manifest).not.toHaveProperty('optional_permissions');
   });
 
-  it('has no host access beyond suno.com as an optional host', () => {
+  it('holds no host access of its own: hosts are optional, granted one origin at a time', () => {
     expect(manifest).not.toHaveProperty('host_permissions');
-    expect(manifest.optional_host_permissions).toEqual(['https://suno.com/*']);
+    expect(manifest.optional_host_permissions).toEqual([
+      'https://suno.com/*',
+      'https://*/*',
+      'http://*/*',
+    ]);
+    // Content scripts are registered at pairing for the paired origin, never declared.
     expect(manifest).not.toHaveProperty('content_scripts');
     expect(manifest).not.toHaveProperty('externally_connectable');
+  });
+
+  it('fails validation with host_permissions or any permission beyond storage, scripting, and tabs', () => {
+    expect(validateManifest({ ...manifest, host_permissions: ['https://suno.com/*'] })).toEqual([
+      'host_permissions must be absent.',
+    ]);
+    for (const extra of ['downloads', 'cookies', 'webRequest', 'activeTab']) {
+      expect(
+        validateManifest({
+          ...manifest,
+          permissions: [...(manifest.permissions as string[]), extra],
+        }),
+        extra,
+      ).toHaveLength(1);
+    }
   });
 
   it('passes validation', () => {
@@ -33,12 +59,13 @@ describe('the built manifest', () => {
     expect(manifest.version_name).toBe(version.isPreRelease ? version.full : undefined);
   });
 
-  it('names a service worker, a popup, and icons that the build made', () => {
+  it('names a service worker, a popup, an options page, and icons that the build made', () => {
     const files = referencedFiles(manifest);
 
     expect(files).toContain('service-worker.js');
     expect(files).toContain('popup/popup.html');
-    expect(files).toHaveLength(5);
+    expect(files).toContain('options/options.html');
+    expect(files).toHaveLength(6);
     for (const file of files) {
       expect(existsSync(join(distDirectory, file)), file).toBe(true);
     }
@@ -72,6 +99,16 @@ describe('the built popup', () => {
       .join('\n');
 
     expect(css).toMatch(/prefers-color-scheme:\s*dark/);
+  });
+});
+
+describe('the built relay', () => {
+  const relay = readFileSync(join(distDirectory, relayOutput), 'utf8');
+
+  it('is one classic script, as a registered content script must be', () => {
+    expect(relay).not.toMatch(/^\s*import[\s{*]/m);
+    expect(relay).not.toMatch(/^\s*export\s/m);
+    expect(relay).toContain('n8tracks-extension');
   });
 });
 

@@ -32,6 +32,7 @@ public static class DependencyInjection
         services.AddScoped<AccountService>();
         services.AddScoped<CredentialService>();
         services.AddScoped<CredentialVerifier>();
+        services.AddScoped<ExtensionHandshakeService>();
         services.AddSingleton<JobSignal>();
         services.AddSingleton<JobQueue>();
         services.AddSingleton<IJobQueue>(static provider => provider.GetRequiredService<JobQueue>());

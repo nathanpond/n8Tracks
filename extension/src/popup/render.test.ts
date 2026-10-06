@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest';
 import popupHtml from './popup.html?raw';
-import { renderPopup } from './render.ts';
+import { renderConnection, renderPopup } from './render.ts';
 
 function text(id: string): string | null | undefined {
   return document.getElementById(id)?.textContent;
@@ -36,5 +36,13 @@ describe('renderPopup', () => {
     expect(() => {
       renderPopup(document, { name: 'n8Tracks', version: '0.1.0' });
     }).toThrow('#version');
+  });
+
+  it('shows Cannot reach n8Tracks with the address, keeping Disconnect available', () => {
+    renderConnection(document, { status: 'unreachable', address: 'https://n8tracks.example.com' });
+
+    expect(text('connection')).toBe('Cannot reach n8Tracks');
+    expect(text('detail')).toContain('https://n8tracks.example.com');
+    expect(document.getElementById('disconnect')?.hidden).toBe(false);
   });
 });

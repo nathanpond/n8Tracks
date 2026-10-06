@@ -15,6 +15,8 @@ export const CREDENTIAL_SCOPES = [
   'generations.evaluate',
   'artwork.write',
   'catalog.bulk-write',
+  'suno.sync',
+  'suno.generate',
 ] as const;
 
 /** A credential as the API lists it: never its token. Times are UTC ISO 8601. */
@@ -27,6 +29,10 @@ export interface Credential {
   lastUsedUtc: string | null;
   revokedUtc: string | null;
   revision: number;
+  /** What the last extension handshake with this credential's token reported; null until one is made. */
+  lastExtensionVersion?: string | null;
+  lastAdapterVersion?: string | null;
+  lastSeenAt?: string | null;
 }
 
 export interface NewCredential {
@@ -66,7 +72,10 @@ export function isCredential(value: unknown): value is Credential {
     typeof value.createdUtc === 'string' &&
     isNullableString(value.lastUsedUtc) &&
     isNullableString(value.revokedUtc) &&
-    typeof value.revision === 'number'
+    typeof value.revision === 'number' &&
+    (value.lastExtensionVersion === undefined || isNullableString(value.lastExtensionVersion)) &&
+    (value.lastAdapterVersion === undefined || isNullableString(value.lastAdapterVersion)) &&
+    (value.lastSeenAt === undefined || isNullableString(value.lastSeenAt))
   );
 }
 
@@ -89,8 +98,32 @@ async function body(response: Response): Promise<unknown> {
 
 /** Only the listed fields, so the token is not kept anywhere the list is. */
 function withoutToken(credential: Credential): Credential {
-  const { id, name, kind, scopes, createdUtc, lastUsedUtc, revokedUtc, revision } = credential;
-  return { id, name, kind, scopes, createdUtc, lastUsedUtc, revokedUtc, revision };
+  const {
+    id,
+    name,
+    kind,
+    scopes,
+    createdUtc,
+    lastUsedUtc,
+    revokedUtc,
+    revision,
+    lastExtensionVersion,
+    lastAdapterVersion,
+    lastSeenAt,
+  } = credential;
+  return {
+    id,
+    name,
+    kind,
+    scopes,
+    createdUtc,
+    lastUsedUtc,
+    revokedUtc,
+    revision,
+    lastExtensionVersion,
+    lastAdapterVersion,
+    lastSeenAt,
+  };
 }
 
 /** The refusals every write shares: field errors, a conflict with the current record, not found. */

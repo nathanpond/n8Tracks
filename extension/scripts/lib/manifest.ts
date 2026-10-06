@@ -3,12 +3,26 @@ import type { ProductVersion } from './version.ts';
 export type Manifest = Record<string, unknown>;
 
 export const extensionName = 'n8Tracks';
-export const allowedPermissions: readonly string[] = ['storage'];
-export const allowedOptionalHosts: readonly string[] = ['https://suno.com/*'];
+/**
+ * Exactly what the extension may ask for (the Suno integration design). `scripting` registers the
+ * relay on the paired n8Tracks origin; `tabs` lets the extension find the Suno tab. The optional
+ * hosts are only the ceiling of what may be requested: at pairing the extension requests exactly
+ * `https://suno.com/*` and the one n8Tracks origin entered. Widening this list is a deliberate
+ * change, and anything not on it fails validation (`downloads` waits for its own story).
+ */
+export const allowedPermissions: readonly string[] = ['storage', 'scripting', 'tabs'];
+export const allowedOptionalHosts: readonly string[] = [
+  'https://suno.com/*',
+  'https://*/*',
+  'http://*/*',
+];
 export const iconSizes: readonly string[] = ['16', '48', '128'];
 
 const serviceWorkerSource = 'src/background/service-worker.ts';
 export const serviceWorkerOutput = 'service-worker.js';
+
+/** The relay content script, which the service worker registers by this path (`RELAY_FILE`). */
+export const relayOutput = 'relay.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -46,9 +60,12 @@ function builtPaths(value: unknown, what: string): Record<string, string> {
  * the version is filled in. A pre-release version keeps its full string in `version_name`.
  */
 export function transformManifest(source: Manifest, version: ProductVersion): Manifest {
-  const { action, background } = source;
+  const { action, background, options_ui: optionsUi } = source;
   if (!isRecord(action) || typeof action.default_popup !== 'string') {
     throw new Error('The source manifest has no action.default_popup.');
+  }
+  if (!isRecord(optionsUi) || typeof optionsUi.page !== 'string') {
+    throw new Error('The source manifest has no options_ui.page.');
   }
   if (!isRecord(background) || typeof background.service_worker !== 'string') {
     throw new Error('The source manifest has no background.service_worker.');
@@ -78,6 +95,7 @@ export function transformManifest(source: Manifest, version: ProductVersion): Ma
     default_icon: builtPaths(action.default_icon, 'action.default_icon'),
   };
   built.background = { ...background, service_worker: builtPath(background.service_worker) };
+  built.options_ui = { ...optionsUi, page: builtPath(optionsUi.page) };
   return built;
 }
 
@@ -150,7 +168,15 @@ export function validateManifest(manifest: unknown): string[] {
     }
   }
 
-  const { action, background } = manifest;
+  const { action, background, options_ui: optionsUi } = manifest;
+  if (
+    !isRecord(optionsUi) ||
+    typeof optionsUi.page !== 'string' ||
+    optionsUi.open_in_tab !== true ||
+    Object.keys(optionsUi).length !== 2
+  ) {
+    problems.push('options_ui must name the options page, opened in a tab, and nothing else.');
+  }
   if (
     !isRecord(background) ||
     typeof background.service_worker !== 'string' ||
@@ -169,10 +195,13 @@ export function validateManifest(manifest: unknown): string[] {
 
 /** Every file the built manifest refers to, relative to `dist/`. */
 export function referencedFiles(manifest: Manifest): string[] {
-  const { action, background, icons } = manifest;
+  const { action, background, icons, options_ui: optionsUi } = manifest;
   const files: unknown[] = [];
   if (isRecord(background)) {
     files.push(background.service_worker);
+  }
+  if (isRecord(optionsUi)) {
+    files.push(optionsUi.page);
   }
   if (isRecord(action)) {
     files.push(action.default_popup);
