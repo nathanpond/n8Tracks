@@ -18,6 +18,33 @@ public static class RetainedRecordTypes
 
     /// <summary>A Generation (<c>generations</c>), deleted with its Version.</summary>
     public const string Generation = "generation";
+
+    /// <summary>A Song (<c>songs</c>), deleted with everything that is its own.</summary>
+    public const string Song = "song";
+
+    /// <summary>A number a Song's Version has used (<c>used_version_numbers</c>), deleted with its Song.</summary>
+    public const string UsedVersionNumber = "used-version-number";
+
+    /// <summary>A link of a Song's release details (<c>song_links</c>), deleted with its Song.</summary>
+    public const string SongLink = "song-link";
+
+    /// <summary>A Song's Genre assignment (<c>song_genres</c>), deleted with its Song.</summary>
+    public const string SongGenre = "song-genre";
+
+    /// <summary>A Song's Tag assignment (<c>song_tags</c>), deleted with its Song.</summary>
+    public const string SongTag = "song-tag";
+
+    /// <summary>A Song's Artist credit (<c>song_artist_credits</c>), deleted with its Song.</summary>
+    public const string SongCredit = "song-credit";
+
+    /// <summary>A Song's place on an Album (<c>album_songs</c>), deleted with its Song.</summary>
+    public const string AlbumTrack = "album-track";
+
+    /// <summary>A Song's entry on a Playlist (<c>playlist_songs</c>), deleted with its Song.</summary>
+    public const string PlaylistEntry = "playlist-entry";
+
+    /// <summary>A relationship between two Songs (<c>song_relationships</c>), deleted with either Song.</summary>
+    public const string SongRelationship = "song-relationship";
 }
 
 /// <summary>A record a deletion names: the root of what goes into retention with it.</summary>

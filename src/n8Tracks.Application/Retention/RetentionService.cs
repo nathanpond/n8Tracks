@@ -68,6 +68,14 @@ public sealed class RetentionService(
         return store.FindByRecordAsync(recordType, id, cancellationToken);
     }
 
+    /// <summary>
+    /// The identifying fields <paramref name="columns"/> of every record of <paramref name="recordType"/>
+    /// in the group with <paramref name="groupId"/>, as stored text (see <see cref="IRetentionStore.RecordFieldsAsync"/>).
+    /// Only internal callers, which ask for IDs, numbers, and titles, never for lyrics or prompts.
+    /// </summary>
+    internal Task<IReadOnlyList<IReadOnlyDictionary<string, string?>>> RecordFieldsAsync(Guid groupId, string recordType, IReadOnlyList<string> columns, CancellationToken cancellationToken) =>
+        store.RecordFieldsAsync(groupId, recordType, columns, cancellationToken);
+
     /// <summary>Every unpruned group, newest first (the recovery listing).</summary>
     public Task<IReadOnlyList<RetentionGroup>> ListAsync(CancellationToken cancellationToken) => store.ListAsync(cancellationToken);
 
@@ -102,7 +110,7 @@ public sealed class RetentionService(
             return new RetentionRestoreOutcome.NotFound();
         }
 
-        var notes = await store.RestoreAsync(id, cancellationToken).ConfigureAwait(false);
+        var notes = await store.RestoreAsync(id, time.GetUtcNow(), cancellationToken).ConfigureAwait(false);
         return new RetentionRestoreOutcome.Restored(group, notes);
     }
 

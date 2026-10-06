@@ -43,6 +43,14 @@ internal sealed record RetainedType(string RecordType, string Table, string Noun
     public bool Optional { get; init; }
 
     /// <summary>
+    /// Run inside the restore's transaction before anything of the group is checked or written, with
+    /// the row as retained: the values it is to be restored with (a membership moved to the end of its
+    /// Album, a workflow state that is gone replaced), or none, to leave it out with the reason given.
+    /// The key columns must not change. The checks that follow see the values returned.
+    /// </summary>
+    public Func<RestoredRow, CancellationToken, Task<RestorePreparation>>? PrepareRestoreAsync { get; init; }
+
+    /// <summary>
     /// Run inside the restore's transaction just before the row is inserted again, with the values it
     /// is inserted with: lets a live-side record that the insert itself writes (a trigger's) make way.
     /// </summary>
@@ -57,15 +65,37 @@ internal sealed record RetainedType(string RecordType, string Table, string Noun
 
 /// <summary>
 /// A row a restore is putting back or has just put back, as stored, the context it is written
-/// through, and when its group was deleted.
+/// through, when its group was deleted, what the group's deletion deleted (its kind, see
+/// <see cref="RetentionRequest.Kind"/>), the time of the restore, and the keys of every row in the group.
 /// </summary>
-internal sealed record RestoredRow(N8TracksDbContext Context, IReadOnlyDictionary<string, object?> Values, DateTimeOffset GroupDeletedUtc)
+internal sealed record RestoredRow(
+    N8TracksDbContext Context,
+    IReadOnlyDictionary<string, object?> Values,
+    DateTimeOffset GroupDeletedUtc,
+    string GroupKind,
+    DateTimeOffset RestoredUtc,
+    IReadOnlySet<(string Table, string Key)> GroupKeys)
 {
+    /// <summary>Whether the group being restored holds the row of <paramref name="table"/> whose key is <paramref name="key"/> (as stored).</summary>
+    public bool InGroup(string table, string key) => GroupKeys.Contains((table, key));
+
     /// <summary>A GUID column's value.</summary>
     public Guid GuidOf(string column) => Guid.Parse((string)Values[column]!, CultureInfo.InvariantCulture);
 
     /// <summary>A text column's value.</summary>
     public string TextOf(string column) => (string)Values[column]!;
+}
+
+/// <summary>How a type's <see cref="RetainedType.PrepareRestoreAsync"/> wants a row restored.</summary>
+/// <param name="Values">The values to insert; null to leave the row out.</param>
+/// <param name="Note">Why it is left out, or what restored differently; null for nothing to say.</param>
+internal sealed record RestorePreparation(IReadOnlyDictionary<string, object?>? Values, string? Note)
+{
+    /// <summary>Restore with <paramref name="values"/>, saying <paramref name="note"/> when not null.</summary>
+    public static RestorePreparation With(IReadOnlyDictionary<string, object?> values, string? note = null) => new(values, note);
+
+    /// <summary>Leave the row out, because of <paramref name="reason"/> ("the Playlist is full").</summary>
+    public static RestorePreparation LeftOut(string reason) => new(null, reason);
 }
 
 /// <summary>The retained types n8Tracks itself registers.</summary>
@@ -106,8 +136,86 @@ internal static class RetainedTypes
     /// <summary>A Generation, deleted with its Version. In V1 it is the minimal record (#69); its own deletion rules are M4's.</summary>
     public static readonly RetainedType Generation = new(RetainedRecordTypes.Generation, "generations", "Generation", ShapeVersion: 1);
 
+    /// <summary>
+    /// A Song, deleted with its Versions, Generations, and everything of its own (#102). Its shortcode
+    /// number is never given out again (the sequence only goes up). Restored into the workflow state
+    /// it was in, or into the first visible one when that state was deleted meanwhile.
+    /// </summary>
+    public static readonly RetainedType Song = new(RetainedRecordTypes.Song, "songs", "Song", ShapeVersion: 1)
+    {
+        PrepareRestoreAsync = static (row, cancellationToken) => SongRestore.KeepStateAsync(row, cancellationToken),
+    };
+
+    /// <summary>
+    /// A number one of a deleted Song's Versions used. Restored after the Versions, whose insert
+    /// trigger has already recorded their own numbers: that row makes way, so the result is the same rows.
+    /// </summary>
+    public static readonly RetainedType UsedVersionNumber = new(RetainedRecordTypes.UsedVersionNumber, "used_version_numbers", "used Version number", ShapeVersion: 1)
+    {
+        BeforeRestoreAsync = static (row, cancellationToken) => SongRestore.FreeUsedNumberAsync(row, cancellationToken),
+    };
+
+    /// <summary>A link of a deleted Song's release details.</summary>
+    public static readonly RetainedType SongLink = new(RetainedRecordTypes.SongLink, "song_links", "Song link", ShapeVersion: 1);
+
+    /// <summary>A deleted Song's Genre; left out of a restore when the Genre was deleted meanwhile.</summary>
+    public static readonly RetainedType SongGenre = new(RetainedRecordTypes.SongGenre, "song_genres", "Genre assignment", ShapeVersion: 1) { Optional = true };
+
+    /// <summary>A deleted Song's Tag; left out of a restore when the Tag was deleted meanwhile.</summary>
+    public static readonly RetainedType SongTag = new(RetainedRecordTypes.SongTag, "song_tags", "Tag assignment", ShapeVersion: 1) { Optional = true };
+
+    /// <summary>A deleted Song's credit; left out of a restore when the Artist was deleted meanwhile.</summary>
+    public static readonly RetainedType SongCredit = new(RetainedRecordTypes.SongCredit, "song_artist_credits", "Artist credit", ShapeVersion: 1) { Optional = true };
+
+    /// <summary>
+    /// A deleted Song's place on an Album. Restored at the end of the Album's last disc (the Album may
+    /// have changed meanwhile), raising the Album's revision; left out when the Album is gone or its
+    /// last disc is full.
+    /// </summary>
+    public static readonly RetainedType AlbumTrack = new(RetainedRecordTypes.AlbumTrack, "album_songs", "membership of an Album", ShapeVersion: 1)
+    {
+        Optional = true,
+        PrepareRestoreAsync = static (row, cancellationToken) => SongRestore.AtAlbumEndAsync(row, cancellationToken),
+        AfterRestoreAsync = static (row, cancellationToken) => SongRestore.TouchAsync(row, "albums", "album_id", cancellationToken),
+    };
+
+    /// <summary>
+    /// A deleted Song's entry on a Playlist. Restored at the end of the Playlist, raising its
+    /// revision; left out when the Playlist is gone or full.
+    /// </summary>
+    public static readonly RetainedType PlaylistEntry = new(RetainedRecordTypes.PlaylistEntry, "playlist_songs", "membership of a Playlist", ShapeVersion: 1)
+    {
+        Optional = true,
+        PrepareRestoreAsync = static (row, cancellationToken) => SongRestore.AtPlaylistEndAsync(row, cancellationToken),
+        AfterRestoreAsync = static (row, cancellationToken) => SongRestore.TouchAsync(row, "playlists", "playlist_id", cancellationToken),
+    };
+
+    /// <summary>
+    /// A relationship of a deleted Song. Left out of a restore when the other Song or the type is
+    /// gone; once back, the other Song's revision goes up, as it shows the relationship again.
+    /// </summary>
+    public static readonly RetainedType SongRelationship = new(RetainedRecordTypes.SongRelationship, "song_relationships", "relationship", ShapeVersion: 1)
+    {
+        Optional = true,
+        AfterRestoreAsync = static async (row, cancellationToken) =>
+        {
+            foreach (var column in (string[])["from_song_id", "to_song_id"])
+            {
+                // The Song restored with it is back as it was; only the other Song changed.
+                if (!row.InGroup("songs", row.TextOf(column)))
+                {
+                    await SongRestore.TouchAsync(row, "songs", column, cancellationToken).ConfigureAwait(false);
+                }
+            }
+        },
+    };
+
     /// <summary>Every built-in type.</summary>
-    public static IReadOnlyList<RetainedType> BuiltIn { get; } = [EditorSnapshot, ArtworkAttachment, Version, Generation];
+    public static IReadOnlyList<RetainedType> BuiltIn { get; } =
+    [
+        EditorSnapshot, ArtworkAttachment, Version, Generation,
+        Song, UsedVersionNumber, SongLink, SongGenre, SongTag, SongCredit, AlbumTrack, PlaylistEntry, SongRelationship,
+    ];
 }
 
 /// <summary>The registered retained types, checked once when the first is needed.</summary>

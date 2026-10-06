@@ -57,7 +57,8 @@ internal static class ResolveEndpoints
 
 /// <summary>
 /// What a reference names. <c>entityType</c> is <c>song</c>, <c>version</c>, or <c>generation</c>;
-/// <c>status</c> is <c>active</c> or, for a Version, <c>archived</c>; <c>song</c> is there for a
+/// <c>status</c> is <c>active</c>, <c>deleted</c> (within its 30-day retention: a deleted Song with
+/// its Versions and Generations, or a Version deleted on its own), or, for a Version, <c>archived</c>; <c>song</c> is there for a
 /// Version or a Generation, and <c>version</c> for a Generation only.
 /// </summary>
 internal sealed record ResolveResponse(

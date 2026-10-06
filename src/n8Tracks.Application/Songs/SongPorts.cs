@@ -352,3 +352,24 @@ public interface IVersionStore
     /// </summary>
     Task<Guid?> FindGenerationIdByShortcodeAsync(long songShortcodeNumber, string number, int ordinal, CancellationToken cancellationToken);
 }
+
+/// <summary>What deleting a Song (#102) reads and writes beyond the Song's own records, which retention moves.</summary>
+public interface ISongDeletionStore
+{
+    /// <summary>The IDs of every Generation of the Song with <paramref name="songId"/>'s live Versions.</summary>
+    Task<IReadOnlyList<Guid>> GenerationIdsAsync(Guid songId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Inside the caller's transaction, once the Song is gone: raises the revision of each of
+    /// <paramref name="albumIds"/>, <paramref name="playlistIds"/>, and <paramref name="songIds"/> by
+    /// one and sets its updated time to <paramref name="updatedUtc"/>, as the Song left each of them.
+    /// An Album whose disc the Song was alone on closes the gap (later discs move down by one; track
+    /// numbers stay as they are). Missing IDs are skipped.
+    /// </summary>
+    Task TouchAsync(
+        IReadOnlyCollection<Guid> albumIds,
+        IReadOnlyCollection<Guid> playlistIds,
+        IReadOnlyCollection<Guid> songIds,
+        DateTimeOffset updatedUtc,
+        CancellationToken cancellationToken);
+}

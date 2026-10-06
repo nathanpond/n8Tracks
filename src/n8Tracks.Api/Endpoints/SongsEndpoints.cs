@@ -48,7 +48,7 @@ internal static class SongsEndpoints
 
         endpoints.MapGet(SongPath, GetAsync)
             .WithName("GetSong")
-            .WithSummary("One Song, by its ID or its shortcode (n8-12) in any letter case.")
+            .WithSummary("One Song, by its ID or its shortcode (n8-12) in any letter case. A Song deleted within the last 30 days is 404 song_deleted.")
             .RequireScope(CredentialScopes.CatalogRead)
             .Produces<SongResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
@@ -172,10 +172,11 @@ internal static class SongsEndpoints
         };
     }
 
-    /// <summary>200 with the Song; 404 <c>not_found</c> when the reference names none.</summary>
+    /// <summary>200 with the Song; 404 <c>not_found</c> when the reference names none (<c>song_deleted</c> when it names a deleted one).</summary>
     private static async Task<Results<Ok<SongResponse>, ProblemHttpResult>> GetAsync(
         CatalogReference reference,
         SongService songs,
+        SongDeletionService deletions,
         HttpContext context,
         CancellationToken cancellationToken)
     {
@@ -183,7 +184,7 @@ internal static class SongsEndpoints
 
         if (await songs.FindAsync(reference.Text, cancellationToken) is not { } song)
         {
-            return NoSuchSong(context);
+            return await SongDeletionEndpoints.MissingSongAsync(context, reference, deletions, cancellationToken);
         }
 
         Revisions.SetETag(context, song.Revision);

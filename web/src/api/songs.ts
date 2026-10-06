@@ -442,12 +442,16 @@ export function songQueryFrom(parameters: URLSearchParams): SongQuery {
   };
 }
 
+/** A resource as it loads; `not-found` keeps the 404's answer, which may say why (a deleted Song). */
 export type LoadState<T> =
-  { phase: 'loading' } | { phase: 'error' } | { phase: 'not-found' } | { phase: 'ready'; data: T };
+  | { phase: 'loading' }
+  | { phase: 'error' }
+  | { phase: 'not-found'; problem?: unknown }
+  | { phase: 'ready'; data: T };
 
 /**
  * GETs `path` and keeps what `accept` takes from the answer. A new path starts loading again; a 404
- * is `not-found`; anything else unexpected is `error`. `reload` asks again.
+ * is `not-found`, with its answer; anything else unexpected is `error`. `reload` asks again.
  */
 export function useResource<T>(
   path: string,
@@ -474,7 +478,9 @@ export function useResource<T>(
         if (data !== undefined) {
           settle({ phase: 'ready', data });
         } else {
-          settle({ phase: response.status === 404 ? 'not-found' : 'error' });
+          settle(
+            response.status === 404 ? { phase: 'not-found', problem: answer } : { phase: 'error' },
+          );
         }
       } catch {
         settle({ phase: 'error' });

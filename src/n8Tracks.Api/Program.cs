@@ -289,6 +289,7 @@ public sealed class Program
             app.MapCredentials();
             app.MapJobs();
             app.MapSongs();
+            app.MapSongDeletion();
             app.MapLanguages();
             app.MapGenres();
             app.MapTags();

@@ -71,6 +71,10 @@ public sealed class ReferenceParameterGuardTests
         ["PATCH /api/v1/songs/{reference}"] = static async (c, song, _) =>
             await c.SendAsync(HttpMethod.Patch, $"songs/{song}", "{}", await c.SongRevisionAsync()),
         ["GET /api/v1/songs/{reference}/versions"] = static (c, song, _) => c.SendAsync(HttpMethod.Get, $"songs/{song}/versions"),
+        ["GET /api/v1/songs/{reference}/deletion-impact"] = static (c, song, _) => c.SendAsync(HttpMethod.Get, $"songs/{song}/deletion-impact"),
+
+        // 409 revision_conflict: the Song was found, and a revision it is not at deletes nothing.
+        ["DELETE /api/v1/songs/{reference}"] = static (c, song, _) => c.SendAsync(HttpMethod.Delete, $"songs/{song}", revision: 999),
 
         // 200: the Song is credited to no one already, so nothing changes.
         ["PUT /api/v1/songs/{reference}/credits"] = static async (c, song, _) =>

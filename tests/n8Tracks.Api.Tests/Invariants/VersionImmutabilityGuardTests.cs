@@ -403,6 +403,19 @@ public sealed class VersionImmutabilityGuardTests
                 await target.InputsJsonAsync("{", "}"));
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         })),
+        ["DELETE /api/v1/songs/{reference}"] = new(static target => DeleteSongAndRestoreAsync(target, static async target =>
+        {
+            // Deleting a Song retains every Version's row as stored (inputs untouched); the inputs sent
+            // alongside the typed title are not read.
+            var (title, revision) = await target.SongAsync();
+            using var response = await SendAsync(
+                target.Client,
+                HttpMethod.Delete,
+                new Uri($"/api/v1/songs/{target.SongShortcode}", UriKind.Relative),
+                SongApi.Quoted(revision),
+                await target.InputsJsonAsync($$"""{"confirmTitle":{{JsonSerializer.Serialize(title)}},""", "}"));
+            Assert.True(response.StatusCode == HttpStatusCode.NoContent, await response.Content.ReadAsStringAsync());
+        })),
         ["POST /api/v1/playlists/{id:guid}/songs"] = new(async target =>
         {
             // A Playlist holds the Song, never a Version: the inputs sent alongside are not read.
@@ -582,6 +595,15 @@ public sealed class VersionImmutabilityGuardTests
         ["VersionDeletionService.FindDeletedAsync(CatalogReference, CancellationToken)"] = Service<VersionDeletionService>(static (service, target) =>
             service.FindDeletedAsync(CatalogReference.Parse(target.VersionShortcode), default)),
         ["VersionDeletionService.DeleteAsync(Guid, Int32, CancellationToken)"] = new(static target => DeleteAndRestoreAsync(target, ServiceDeleteAsync)),
+        ["SongDeletionService.ImpactAsync(Guid, CancellationToken)"] = Service<SongDeletionService>(static (service, target) => service.ImpactAsync(target.SongId, default)),
+        ["SongDeletionService.FindDeletedAsync(CatalogReference, CancellationToken)"] = Service<SongDeletionService>(static (service, target) =>
+            service.FindDeletedAsync(CatalogReference.Parse(target.SongShortcode), default)),
+        ["SongDeletionService.DeleteAsync(Guid, Int32, String, CancellationToken)"] = new(static target => DeleteSongAndRestoreAsync(target, static async target =>
+        {
+            var (title, revision) = await target.SongAsync();
+            Assert.IsType<SongDeleteOutcome.Deleted>(
+                await InScopeAsync<SongDeletionService, SongDeleteOutcome>(target, service => service.DeleteAsync(target.SongId, revision, title, default)));
+        })),
         ["GenerationService.AttachAsync(String, CancellationToken)"] = Service<GenerationService>(static (service, target) => service.AttachAsync(target.VersionShortcode, default)),
         ["SongService.FindAsync(String, CancellationToken)"] = Service<SongService>(static (service, target) => service.FindAsync(target.SongShortcode, default)),
         ["SongService.UpdateAsync(Guid, SongEdit, Int32, CancellationToken)"] = Service<SongService>(static async (service, target) =>
@@ -660,6 +682,20 @@ public sealed class VersionImmutabilityGuardTests
         await delete(target);
         var group = await InScopeAsync<RetentionService, RetentionGroup?>(target, service => service.FindByShortcodeAsync(target.VersionShortcode, default));
         Assert.NotNull(group);
+        Assert.IsType<RetentionRestoreOutcome.Restored>(await InScopeAsync<RetentionService, RetentionRestoreOutcome>(target, service => service.RestoreAsync(group.Id, default)));
+    }
+
+    /// <summary>
+    /// Deletes the target's Song with <paramref name="delete"/> (every Version goes with it) and
+    /// restores the group it went into, asserting both went through: the Song and its Versions are
+    /// back as they were, their revisions incremented.
+    /// </summary>
+    private static async Task DeleteSongAndRestoreAsync(Target target, Func<Target, Task> delete)
+    {
+        await delete(target);
+        var group = await InScopeAsync<RetentionService, RetentionGroup?>(target, service => service.FindByShortcodeAsync(target.SongShortcode, default));
+        Assert.NotNull(group);
+        Assert.Equal(RetainedRecordTypes.Song, group.Kind);
         Assert.IsType<RetentionRestoreOutcome.Restored>(await InScopeAsync<RetentionService, RetentionRestoreOutcome>(target, service => service.RestoreAsync(group.Id, default)));
     }
 
@@ -967,6 +1003,15 @@ public sealed class VersionImmutabilityGuardTests
             var list = await SetupApi.JsonAsync(await Client.GetAsync(new Uri("/api/v1/suno/models", UriKind.Relative)));
             var model = list.GetProperty("items").EnumerateArray().Single(item => item.GetProperty("name").GetString() == name);
             return (model.GetProperty("id").GetGuid(), list.GetProperty("revision").GetInt32());
+        }
+
+        /// <summary>The Song's title and revision as they are now (other exercisers rename it).</summary>
+        public async Task<(string Title, int Revision)> SongAsync()
+        {
+            using var response = await Client.GetAsync(new Uri($"/api/v1/songs/{SongId}", UriKind.Relative));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var song = await SetupApi.JsonAsync(response);
+            return (song.GetProperty("title").GetString()!, song.GetProperty("revision").GetInt32());
         }
 
         /// <summary>The Version's current revision, so the freeze, not a stale revision, is what refuses.</summary>

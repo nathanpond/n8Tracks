@@ -33,11 +33,17 @@ internal static class VersionRestore
     /// stays used. If it was current, the restored Version becomes current. Otherwise the current
     /// Version is left alone. Either way the Song's revision goes up, as its Versions changed.
     /// The blank Version is recognised by its Song and by being created at the moment the group was
-    /// deleted, which only the deletion itself does.
+    /// deleted, which only the deletion itself does. Only a Version's own group can have created one:
+    /// a Version restored with its Song (#102) leaves every Version alone, however new.
     /// </summary>
     public static async Task RemoveAutoCreatedBlankAsync(RestoredRow row, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(row);
+
+        if (row.GroupKind != Application.Retention.RetainedRecordTypes.Version)
+        {
+            return;
+        }
 
         var database = row.Context.Database;
         var songId = row.TextOf("song_id");

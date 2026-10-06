@@ -70,6 +70,7 @@ public static class DependencyInjection
         services.AddScoped<ISongCreditStore, SongCreditStore>();
         services.AddScoped<ICatalogSettingsStore, CatalogSettingsStore>();
         services.AddScoped<IVersionStore, VersionStore>();
+        services.AddScoped<ISongDeletionStore, SongDeletionStore>();
         services.AddScoped<IEditorRevisionStore, EditorRevisionStore>();
         services.AddScoped<IWorkflowStateStore, WorkflowStateStore>();
         services.AddScoped<ISunoModelStore, SunoModelStore>();

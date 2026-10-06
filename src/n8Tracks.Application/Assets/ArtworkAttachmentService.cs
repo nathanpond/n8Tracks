@@ -157,6 +157,22 @@ public sealed class ArtworkAttachmentService(
     }
 
     /// <summary>
+    /// What an owner's deletion retains of its artwork: its attachment as a root (there is no foreign
+    /// key from the attachment to its owner, so nothing else would), and the asset's files, which the
+    /// group then keeps at least until it is pruned. No root and no files when it has none.
+    /// </summary>
+    internal async Task<(RetainedRoot? Root, IReadOnlyList<string> Files)> RetentionOfAsync(string ownerType, Guid ownerId, CancellationToken cancellationToken)
+    {
+        if (await attachments.FindAsync(ownerType, ownerId, cancellationToken).ConfigureAwait(false) is not { } attachment)
+        {
+            return (null, []);
+        }
+
+        var asset = await assets.FindAsync(attachment.AssetId, cancellationToken).ConfigureAwait(false);
+        return (new RetainedRoot(RetainedRecordTypes.ArtworkAttachment, attachment.Id), asset is null ? [] : ArtworkPaths.Files(asset));
+    }
+
+    /// <summary>
     /// Inside the caller's transaction: makes <paramref name="assetId"/> the owner's artwork with
     /// <paramref name="crop"/> (null for the centred square), or removes it (null).
     /// The attachment it had goes into retention, labelled "Artwork of

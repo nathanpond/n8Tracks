@@ -2,6 +2,7 @@ import {
   Anchor,
   Button,
   Chip,
+  CloseButton,
   Group,
   Loader,
   MultiSelect,
@@ -49,6 +50,45 @@ const FAILED_MESSAGE =
 /** What a Song page is told about the list it was opened from, so it can link back to that view. */
 export interface FromSongs {
   songsSearch: string;
+}
+
+/** What a page hands the Songs table to tell the user: the Song just deleted. */
+export interface SongsNotice {
+  deletedSong: { title: string; shortcode: string };
+}
+
+function isSongsNotice(value: unknown): value is SongsNotice {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'deletedSong' in value &&
+    typeof value.deletedSong === 'object' &&
+    value.deletedSong !== null &&
+    'title' in value.deletedSong &&
+    typeof value.deletedSong.title === 'string' &&
+    'shortcode' in value.deletedSong &&
+    typeof value.deletedSong.shortcode === 'string'
+  );
+}
+
+/** The dismissible notice naming the Song just deleted. */
+function DeletedNotice({
+  deleted,
+  onDismiss,
+}: {
+  deleted: SongsNotice['deletedSong'];
+  onDismiss: () => void;
+}) {
+  return (
+    <Paper p="sm" withBorder data-testid="song-deleted-notice">
+      <Group justify="space-between" wrap="nowrap" gap="sm">
+        <Text role="status" style={{ overflowWrap: 'anywhere' }}>
+          Deleted {deleted.shortcode} “{deleted.title}”.
+        </Text>
+        <CloseButton aria-label="Dismiss" onClick={onDismiss} />
+      </Group>
+    </Paper>
+  );
 }
 
 const PAGE_CONTROL_LABELS: Record<'first' | 'previous' | 'next' | 'last', string> = {
@@ -281,7 +321,16 @@ export function SongsPage() {
   const { state: tagsState } = useTags();
   const timeZone = useConfiguredTimeZone();
   const [creating, setCreating] = useState(false);
+  const [deleted, setDeleted] = useState(() =>
+    isSongsNotice(location.state) ? location.state.deletedSong : undefined,
+  );
   const from: FromSongs = { songsSearch: location.search };
+
+  const dismiss = () => {
+    setDeleted(undefined);
+    // Forget it in this history entry too, so going back here does not show it again.
+    void navigate({ search: location.search }, { replace: true, state: null });
+  };
 
   const show = (next: SongQuery) => {
     setSearchParams(songListParameters(next));
@@ -331,6 +380,7 @@ export function SongsPage() {
           </Button>
         )}
       </Group>
+      {deleted !== undefined && <DeletedNotice deleted={deleted} onDismiss={dismiss} />}
 
       {statesState.phase === 'ready' && !empty && (
         <StateFilter states={statesState.data} selected={query.states} onChange={filter} />

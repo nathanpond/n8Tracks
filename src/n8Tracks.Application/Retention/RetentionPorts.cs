@@ -38,9 +38,18 @@ public interface IRetentionStore
     /// Inside the caller's transaction: puts the group's records back, each revision incremented, and
     /// removes the group. Returns notes on what restored differently. Throws
     /// <see cref="RetentionRestoreRefusedException"/> when a parent is missing or a key clashes; the
-    /// caller's transaction must then be rolled back.
+    /// caller's transaction must then be rolled back. <paramref name="restoredUtc"/> is the time a
+    /// type's restore rule writes where it touches a live record (an Album a membership returns to).
     /// </summary>
-    Task<IReadOnlyList<string>> RestoreAsync(Guid id, CancellationToken cancellationToken);
+    Task<IReadOnlyList<string>> RestoreAsync(Guid id, DateTimeOffset restoredUtc, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// For each record of <paramref name="recordType"/> in the group with <paramref name="groupId"/>,
+    /// in the group's order: the stored values of <paramref name="columns"/> as text (null for SQL
+    /// null). How a deleted Song's Versions and Generations are named by their numbers. Callers ask
+    /// only for identifying columns, never for lyrics, prompts, or other text that is never shown.
+    /// </summary>
+    Task<IReadOnlyList<IReadOnlyDictionary<string, string?>>> RecordFieldsAsync(Guid groupId, string recordType, IReadOnlyList<string> columns, CancellationToken cancellationToken);
 
     /// <summary>
     /// Inside the caller's transaction: removes every group whose prune-after time is at or before

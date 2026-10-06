@@ -3,5 +3,14 @@
   "editor-snapshot": { "shapeVersion": 1, "hash": "1478e55e8e635532af8498033927cc6e8a11be32068dfd197a2a4a6fd7b9787f" },
   "artwork-attachment": { "shapeVersion": 1, "hash": "b8ca786d5139b838675f0487b1e9d7c6e808b1f4b435cdab0add51aed8ee254f" },
   "version": { "shapeVersion": 1, "hash": "1661a485fb008102fed2d4d03567b6a46301e95b0c73fa44c29a478600b1e37c" },
-  "generation": { "shapeVersion": 1, "hash": "e73f3e53b090ef37cbfa8128431f558abe6a193a8fb2c68021042d19d81d795c" }
+  "generation": { "shapeVersion": 1, "hash": "e73f3e53b090ef37cbfa8128431f558abe6a193a8fb2c68021042d19d81d795c" },
+  "song": { "shapeVersion": 1, "hash": "8ca296b846fc4e3f7d2adcc0a46d98e78ebf9ba3aa5b20d8e0725bff68b9de13" },
+  "used-version-number": { "shapeVersion": 1, "hash": "f30feb019fece4c1d32bb19851fa7dd8e80e3f9a3b6563943adbd4435adf0b67" },
+  "song-link": { "shapeVersion": 1, "hash": "ea8d78cbd0c8c1fdd57de98a7b5ad84952a92a2229056ccc1ecfa9d621b8dbb9" },
+  "song-genre": { "shapeVersion": 1, "hash": "5415900a0bbcfa00613202e752c340d95a790dc6aaf4ce4d0325b732e8c53cbb" },
+  "song-tag": { "shapeVersion": 1, "hash": "1554861530ae1f16f441d5c1df29d1e0358bdfb9d2b3464cd3d9d95769d27026" },
+  "song-credit": { "shapeVersion": 1, "hash": "59bcbb3dca1194e53c41a642889f978a3edacd0ea9985e11e2c61744cdaf06fd" },
+  "album-track": { "shapeVersion": 1, "hash": "5b0b23b1e906e52345a5c3393d1d6ca4e6f5f9cb88233afc6d90e5e9861c7312" },
+  "playlist-entry": { "shapeVersion": 1, "hash": "a1148c4e37d2881fe11ce1639a350f47da6e70c8ff72ed890dad22680de93947" },
+  "song-relationship": { "shapeVersion": 1, "hash": "d4922af63b7dfa62507749ecf4e279ca8861be70f78a2e84811f8a6dcbd53bf5" }
 }

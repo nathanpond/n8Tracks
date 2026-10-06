@@ -99,7 +99,9 @@ export interface ReceivedWrite {
  * source's options), deleting a Version on its revision (its descendants stay under a placeholder,
  * the current Version moves as the API moves it, and the last one is replaced by a blank one), and
  * Suno's Create-screen fields ({@link CREATE_FIELDS}). A deleted Version answers 404
- * `version_deleted` and resolves as `deleted`. A test changes `server.versions` to play another
+ * `version_deleted` and resolves as `deleted`. The Song's deletion impact and deletion (on its
+ * revision, with the typed title when the API's rule asks for one) are answered too; once deleted the
+ * Song answers 404 `song_deleted`, and the Songs list is empty. A test changes `server.versions` to play another
  * client, or sets `server.next` to answer the next write some other way.
  */
 export function versionServer(versions: VersionDetail[], song: Song = baseSong) {
@@ -133,6 +135,14 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     next: undefined as (() => Response | Promise<Response>) | undefined,
     /** The Versions deleted, in order. */
     deleted: [] as VersionDetail[],
+    /** When the Song itself was deleted (it then answers 404 `song_deleted`); undefined while live. */
+    songDeletedAt: undefined as string | undefined,
+    /** Every Song deletion request, in order: its If-Match and body. */
+    songDeletes: [] as { ifMatch: string | null; body: Record<string, unknown> }[],
+    /** When set, answers the next Song deletion (once) instead of the fake API. */
+    nextSongDelete: undefined as (() => Response | Promise<Response>) | undefined,
+    /** Generations counted by the deletion impact (the fake keeps none of its own). */
+    generationCount: 0,
     /** Every number the Song has used, deleted Versions' included. */
     usedNumbers: new Set(versions.map((version) => version.number)),
     /** Plays another client deleting the Version numbered `number` (no current Version moves). */
@@ -377,6 +387,33 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
       : jsonResponse(404, { code: 'reference_not_found' });
   };
 
+  /** What deleting the Song would do, as the API counts it; the title rule is the API's. */
+  const songImpact = () => {
+    const song = server.song;
+    const counts = {
+      versionCount: server.versions.length,
+      generationCount: server.generationCount,
+      artworkCount: song.artwork === null ? 0 : 1,
+      albumCount: song.albums.length,
+      playlistCount: song.playlists.length,
+      relationshipCount: song.relationships.length,
+      audioFileCount: 0,
+    };
+    return {
+      id: song.id,
+      shortcode: song.shortcode,
+      title: song.title,
+      ...counts,
+      titleRequired:
+        counts.versionCount > 1 ||
+        counts.generationCount > 0 ||
+        counts.albumCount > 0 ||
+        counts.playlistCount > 0 ||
+        counts.relationshipCount > 0,
+      revision: song.revision,
+    };
+  };
+
   const mock = stubFetch();
   mock.mockImplementation(async (input, init) => {
     const path = requestPath(input);
@@ -500,6 +537,49 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
       };
       server.versions = server.versions.map((other) => (other.id === version.id ? changed : other));
       return jsonResponse(200, changed);
+    }
+
+    if (path.endsWith('/api/v1/songs') && method === 'GET') {
+      const items = server.songDeletedAt === undefined ? [server.song] : [];
+      return jsonResponse(200, { items, page: 1, pageSize: 50, total: items.length });
+    }
+    const deletion = /\/api\/v1\/songs\/([^/]+)(\/deletion-impact)?$/.exec(path);
+    const named = deletion?.[1] === undefined ? undefined : decodeURIComponent(deletion[1]);
+    const isSong = named === server.song.id || named === server.song.shortcode;
+    if (isSong && server.songDeletedAt !== undefined) {
+      return jsonResponse(404, {
+        code: 'song_deleted',
+        songId: server.song.id,
+        shortcode: server.song.shortcode,
+        title: server.song.title,
+        deletedAt: server.songDeletedAt,
+      });
+    }
+    if (isSong && (deletion?.[2] !== undefined || method === 'DELETE')) {
+      const impact = songImpact();
+      if (method === 'GET') {
+        return jsonResponse(200, impact);
+      }
+      const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as Record<
+        string,
+        unknown
+      >;
+      const ifMatch = new Headers(init?.headers).get('If-Match');
+      server.songDeletes.push({ ifMatch, body });
+      const nextSongDelete = server.nextSongDelete;
+      if (nextSongDelete) {
+        server.nextSongDelete = undefined;
+        return nextSongDelete();
+      }
+      if (ifMatch !== `"${String(server.song.revision)}"`) {
+        return jsonResponse(409, { code: 'revision_conflict', current: server.song });
+      }
+      const typed = typeof body.confirmTitle === 'string' ? body.confirmTitle.trim() : undefined;
+      if (impact.titleRequired && typed !== server.song.title) {
+        return jsonResponse(422, { code: 'confirmation_required', impact });
+      }
+      server.songDeletedAt = '2026-10-01T10:00:00Z';
+      return new Response(null, { status: 204 });
     }
 
     const match = /\/api\/v1\/songs\/([^/]+)(\/versions|\/current-version)?$/.exec(path);

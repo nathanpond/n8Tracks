@@ -225,7 +225,29 @@ internal sealed class RetentionStore(N8TracksDbContext context, RetainedTypeRegi
             [.. byGroup[group.Id].OrderBy(static record => record.Position).Select(static record => new RetainedRecord(record.RecordType, record.OriginalId, record.ShapeVersion))]))];
     }
 
-    public async Task<IReadOnlyList<string>> RestoreAsync(Guid id, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<IReadOnlyDictionary<string, string?>>> RecordFieldsAsync(Guid groupId, string recordType, IReadOnlyList<string> columns, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(columns);
+
+        var documents = await context.RetentionRecords.AsNoTracking()
+            .Where(record => record.GroupId == groupId && record.RecordType == recordType)
+            .OrderBy(static record => record.Position)
+            .Select(static record => record.Document)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        // Only the named columns leave this method; the rest of each document is never read out.
+        return [.. documents.Select(text =>
+        {
+            var document = JsonNode.Parse(text)?.AsObject() ?? throw new InvalidOperationException("A retained document is not a JSON object.");
+            return (IReadOnlyDictionary<string, string?>)columns.ToDictionary(
+                static column => column,
+                column => Deserialize(document[column]) is { } value ? Text(value) : null,
+                StringComparer.Ordinal);
+        })];
+    }
+
+    public async Task<IReadOnlyList<string>> RestoreAsync(Guid id, DateTimeOffset restoredUtc, CancellationToken cancellationToken)
     {
         RequireTransaction();
 
@@ -234,12 +256,14 @@ internal sealed class RetentionStore(N8TracksDbContext context, RetainedTypeRegi
         // this method, once every row is back, rather than row by row. Reset when the transaction ends.
         await ExecuteAsync("PRAGMA defer_foreign_keys = ON;", [], cancellationToken).ConfigureAwait(false);
 
-        var deletedUtc = await context.RetentionGroups.AsNoTracking()
+        var held = await context.RetentionGroups.AsNoTracking()
             .Where(group => group.Id == id)
-            .Select(static group => group.DeletedUtc)
+            .Select(static group => new { group.DeletedUtc, group.Kind })
             .SingleOrDefaultAsync(cancellationToken)
             .ConfigureAwait(false)
             ?? throw new InvalidOperationException("There is no such retention group.");
+        var keys = new HashSet<(string Table, string Key)>();
+        RestoredRow Restoring(IReadOnlyDictionary<string, object?> values) => new(context, values, UtcText.Parse(held.DeletedUtc), held.Kind, restoredUtc, keys);
         var records = await context.RetentionRecords.AsNoTracking()
             .Where(record => record.GroupId == id)
             .OrderBy(static record => record.Position)
@@ -248,15 +272,39 @@ internal sealed class RetentionStore(N8TracksDbContext context, RetainedTypeRegi
         var rows = new List<LiveRow>();
         foreach (var record in records)
         {
-            rows.Add(await UpgradeAsync(record, cancellationToken).ConfigureAwait(false));
+            var row = await UpgradeAsync(record, cancellationToken).ConfigureAwait(false);
+            rows.Add(row);
+            keys.Add((row.Type.Table, row.OriginalId));
         }
 
         // Up front, before anything is written: every parent there (live, or earlier in the group and
         // not left out), and no ID or unique key held by a live row.
         var notes = new List<string>();
         var skipped = new HashSet<LiveRow>();
-        foreach (var row in rows)
+        for (var index = 0; index < rows.Count; index++)
         {
+            var row = rows[index];
+
+            // A type may restore a row with other values than it was retained with (a membership
+            // goes to the end of its Album), or leave it out, saying why.
+            if (row.Type.PrepareRestoreAsync is { } prepare)
+            {
+                var prepared = await prepare(Restoring(row.Values), cancellationToken).ConfigureAwait(false);
+                if (prepared.Values is null)
+                {
+                    skipped.Add(row);
+                    notes.Add($"A {row.Type.Noun} was not restored: {prepared.Note}");
+                    continue;
+                }
+
+                if (prepared.Note is { } note)
+                {
+                    notes.Add(note);
+                }
+
+                row = rows[index] = row with { Values = prepared.Values };
+            }
+
             if (await MissingParentAsync(row, rows, skipped, cancellationToken).ConfigureAwait(false) is { } missing)
             {
                 if (!row.Type.Optional)
@@ -309,7 +357,7 @@ internal sealed class RetentionStore(N8TracksDbContext context, RetainedTypeRegi
 
             if (row.Type.BeforeRestoreAsync is { } before)
             {
-                await before(new RestoredRow(context, values, UtcText.Parse(deletedUtc)), cancellationToken).ConfigureAwait(false);
+                await before(Restoring(values), cancellationToken).ConfigureAwait(false);
             }
 
             var names = values.Keys.ToList();
@@ -336,7 +384,7 @@ internal sealed class RetentionStore(N8TracksDbContext context, RetainedTypeRegi
         {
             if (row.Type.AfterRestoreAsync is { } after)
             {
-                await after(new RestoredRow(context, row.Values, UtcText.Parse(deletedUtc)), cancellationToken).ConfigureAwait(false);
+                await after(Restoring(row.Values), cancellationToken).ConfigureAwait(false);
             }
         }
 
