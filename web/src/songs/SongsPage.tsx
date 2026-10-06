@@ -214,6 +214,20 @@ function TagFilter({
   );
 }
 
+/** The title filter, set from a Song page's "same title" list: shown, and cleared with a button. */
+function TitleFilter({ title, onClear }: { title: string; onClear: () => void }) {
+  return (
+    <Group gap="xs" role="group" aria-label="Title filter" data-testid="title-filter">
+      <Text size="sm">
+        Title is <Text span fw={700}>{`“${title}”`}</Text>
+      </Text>
+      <Button variant="subtle" size="compact-sm" onClick={onClear}>
+        Clear the title filter
+      </Button>
+    </Group>
+  );
+}
+
 function SongRow({ song, timeZone, from }: { song: Song; timeZone: string; from: FromSongs }) {
   return (
     <Table.Tr data-song={song.shortcode}>
@@ -246,9 +260,10 @@ function SongRow({ song, timeZone, from }: { song: Song; timeZone: string; from:
 
 /**
  * Songs: every Song in a table, newest first, sortable by title and by last update, filtered by
- * workflow state, by Genre, by Tag, and by Artist (primary or featured), fifty to a page. Each row
- * shows its primary Artist, its first three Tags, and "+N" for the rest. The view (sort, direction,
- * states, Genres, Tags, Artists, page) is the page URL's query string, the list API's own
+ * workflow state, by Genre, by Tag, by Artist (primary or featured), and by title (ignoring case and
+ * spacing; set from a Song page and cleared here), fifty to a page. Each row shows its primary
+ * Artist, its first three Tags, and "+N" for the rest. The view (sort, direction, states, Genres,
+ * Tags, Artists, title, page) is the page URL's query string, the list API's own
  * parameters, so going back to it or reloading shows the same rows.
  */
 export function SongsPage() {
@@ -284,13 +299,17 @@ export function SongsPage() {
   const filterArtists = (artists: string[]) => {
     show({ ...query, artists, page: 1 });
   };
+  const clearTitle = () => {
+    show({ ...query, title: undefined, page: 1 });
+  };
 
   const page = state.phase === 'ready' ? state.data : undefined;
   const filtered =
     query.states.length > 0 ||
     query.genres.length > 0 ||
     query.tags.length > 0 ||
-    query.artists.length > 0;
+    query.artists.length > 0 ||
+    query.title !== undefined;
   const empty = page?.total === 0 && !filtered;
   const pages = page === undefined ? 0 : Math.ceil(page.total / page.pageSize);
 
@@ -319,6 +338,7 @@ export function SongsPage() {
         <TagFilter tags={tagsState.data} selected={query.tags} onChange={filterTags} />
       )}
       {!empty && <ArtistFilter selected={query.artists} onChange={filterArtists} />}
+      {query.title !== undefined && <TitleFilter title={query.title} onClear={clearTitle} />}
 
       {state.phase === 'loading' && <Loader aria-label="Loading Songs" />}
       {(state.phase === 'error' || state.phase === 'not-found') && (
@@ -356,14 +376,25 @@ export function SongsPage() {
         <Paper p="sm" withBorder>
           <Stack gap="xs" align="flex-start">
             {page.total === 0 &&
-            (query.genres.length > 0 || query.tags.length > 0 || query.artists.length > 0) ? (
+            (query.genres.length > 0 ||
+              query.tags.length > 0 ||
+              query.artists.length > 0 ||
+              query.title !== undefined) ? (
               <>
                 <Text>No Songs match the chosen filters.</Text>
                 <Button
                   variant="default"
                   size="xs"
                   onClick={() => {
-                    show({ ...query, states: [], genres: [], tags: [], artists: [], page: 1 });
+                    show({
+                      ...query,
+                      states: [],
+                      genres: [],
+                      tags: [],
+                      artists: [],
+                      title: undefined,
+                      page: 1,
+                    });
                   }}
                 >
                   Show every Song

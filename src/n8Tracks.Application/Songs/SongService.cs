@@ -26,7 +26,9 @@ public sealed record SongRequest(
 /// <paramref name="Genres"/> is a Genre's ID or <see cref="SongService.NoGenre"/>, and each of
 /// <paramref name="Tags"/> a Tag's ID or <see cref="SongService.NoTag"/>, and each of
 /// <paramref name="Artists"/> an Artist's ID or <see cref="SongService.NoArtist"/>.
-/// <paramref name="Query"/> is the search text (<see cref="SongService.QueryParameter"/>).
+/// <paramref name="Query"/> is the search text (<see cref="SongService.QueryParameter"/>),
+/// <paramref name="Title"/> a title to match exactly (<see cref="SongService.TitleParameter"/>), and
+/// <paramref name="ExcludeId"/> a Song's ID to leave out (<see cref="SongService.ExcludeIdParameter"/>).
 /// </summary>
 public sealed record SongListRequest(
     string? Sort,
@@ -37,7 +39,9 @@ public sealed record SongListRequest(
     IReadOnlyList<string?>? Genres = null,
     IReadOnlyList<string?>? Tags = null,
     IReadOnlyList<string?>? Artists = null,
-    string? Query = null);
+    string? Query = null,
+    string? Title = null,
+    string? ExcludeId = null);
 
 /// <summary>How creating a Song ended.</summary>
 public abstract record SongOutcome
@@ -200,6 +204,15 @@ public sealed class SongService(
     /// with it. A page of <see cref="SearchPageSize"/> by default; nothing for blank text.
     /// </summary>
     public const string QueryParameter = "q";
+
+    /// <summary>
+    /// A title, as typed: Songs whose title is the same once both are trimmed, inner white space
+    /// collapsed, NFC-normalised, and case-folded (<see cref="SongRules.TitleKey"/>). Blank is refused.
+    /// </summary>
+    public const string TitleParameter = "title";
+
+    /// <summary>The ID of a Song to leave out of the list (the Song asking who shares its title).</summary>
+    public const string ExcludeIdParameter = "excludeId";
 
     /// <summary>How many Songs a search answers unless <see cref="PageSizeParameter"/> says otherwise.</summary>
     public const int SearchPageSize = 10;
@@ -435,7 +448,10 @@ public sealed class SongService(
     /// <see cref="NoTag"/>; each <c>artist</c> is the ID of an Artist, credited as primary or featured,
     /// or <see cref="NoArtist"/> for Songs credited to no one; <c>q</c> keeps the Songs whose title
     /// contains it (ignoring case) or whose shortcode starts with it, and a blank <c>q</c> matches
-    /// nothing (states, Genres, Tags, Artists, and <c>q</c> combine by AND); <c>page</c> counts from
+    /// nothing; <c>title</c> keeps the Songs with that title ignoring case and spacing
+    /// (<see cref="SongRules.TitleKey"/>) and a blank one is refused; <c>excludeId</c> leaves out the
+    /// Song with that ID (states, Genres, Tags, Artists, <c>q</c>, <c>title</c>, and <c>excludeId</c>
+    /// combine by AND); <c>page</c> counts from
     /// 1; <c>pageSize</c> is 1 to <see cref="MaximumPageSize"/>, <see cref="DefaultPageSize"/> by
     /// default and <see cref="SearchPageSize"/> with <c>q</c>.
     /// </summary>
@@ -567,6 +583,27 @@ public sealed class SongService(
             return Invalid($"Each {ArtistParameter} must be the ID of an Artist, or {NoArtist}.");
         }
 
+        string? titleKey = null;
+        if (request.Title is not null)
+        {
+            titleKey = SongRules.TitleKey(request.Title);
+            if (titleKey.Length == 0)
+            {
+                return Invalid($"{TitleParameter} must not be blank.");
+            }
+        }
+
+        Guid? excludeId = null;
+        if (request.ExcludeId is not null)
+        {
+            if (!Guid.TryParseExact(request.ExcludeId, "D", out var excluded))
+            {
+                return Invalid($"{ExcludeIdParameter} must be the ID of a Song.");
+            }
+
+            excludeId = excluded;
+        }
+
         string? search = null;
         if (request.Query is not null)
         {
@@ -577,7 +614,7 @@ public sealed class SongService(
             }
         }
 
-        var query = new SongListQuery(sort, descending, stateIds, page, pageSize, genreIds, noGenre, tagIds, noTag, artistIds, noArtist, search);
+        var query = new SongListQuery(sort, descending, stateIds, page, pageSize, genreIds, noGenre, tagIds, noTag, artistIds, noArtist, search, titleKey, excludeId);
         return new SongListOutcome.Listed(await songs.ListAsync(query, cancellationToken).ConfigureAwait(false));
     }
 

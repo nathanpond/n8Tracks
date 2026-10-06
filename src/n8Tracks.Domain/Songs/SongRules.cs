@@ -81,6 +81,13 @@ public static class SongRules
         return title.Trim();
     }
 
+    /// <summary>
+    /// What Songs sharing a title are found by: trimmed, each inner run of white space as one space,
+    /// NFC, and upper-cased invariantly, so case and spacing are ignored but diacritics and width are
+    /// not. Empty for a title of nothing but white space.
+    /// </summary>
+    public static string TitleKey(string title) => Catalog.GenreRules.NameKey(title);
+
     /// <summary>A concept as stored: line endings as <c>\n</c>, trimmed, and null when nothing but white space is left.</summary>
     public static string? NormaliseConcept(string? concept)
     {

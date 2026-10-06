@@ -17,6 +17,12 @@ public sealed class SongRecord
     /// <summary>What titles are ordered by: NFC-normalised and lower-cased invariantly.</summary>
     public required string TitleSortKey { get; set; }
 
+    /// <summary>
+    /// What Songs sharing a title are found by (<see cref="Domain.Songs.SongRules.TitleKey"/>):
+    /// trimmed, inner white space collapsed, NFC, and upper-cased invariantly. Indexed, not unique.
+    /// </summary>
+    public required string TitleKey { get; set; }
+
     /// <summary>Up to 2,000 UTF-16 code units; null when there is none.</summary>
     public string? Concept { get; set; }
 

@@ -152,8 +152,10 @@ internal static class SongsEndpoints
             [.. query[SongService.GenreParameter]],
             [.. query[SongService.TagParameter]],
             [.. query[SongService.ArtistParameter]],
-            Single(query, SongService.QueryParameter, out var searchRepeated));
-        if (sortRepeated || directionRepeated || pageRepeated || pageSizeRepeated || searchRepeated)
+            Single(query, SongService.QueryParameter, out var searchRepeated),
+            Single(query, SongService.TitleParameter, out var titleRepeated),
+            Single(query, SongService.ExcludeIdParameter, out var excludeRepeated));
+        if (sortRepeated || directionRepeated || pageRepeated || pageSizeRepeated || searchRepeated || titleRepeated || excludeRepeated)
         {
             return ApiProblem.For(
                 context,

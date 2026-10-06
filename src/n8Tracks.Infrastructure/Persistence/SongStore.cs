@@ -40,6 +40,7 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
             ShortcodeNumber = song.ShortcodeNumber,
             Title = song.Title,
             TitleSortKey = TitleSortKey(song.Title),
+            TitleKey = SongRules.TitleKey(song.Title),
             Concept = song.Concept,
             WorkflowStateId = song.StateId,
             CreatedUtc = UtcText.From(song.CreatedUtc),
@@ -128,6 +129,16 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
             songs = Matching(songs, search);
         }
 
+        if (query.TitleKey is { } titleKey)
+        {
+            songs = songs.Where(song => song.TitleKey == titleKey);
+        }
+
+        if (query.ExcludeId is { } excludeId)
+        {
+            songs = songs.Where(song => song.Id != excludeId);
+        }
+
         var total = await songs.CountAsync(cancellationToken).ConfigureAwait(false);
 
         // Times are fixed-width UTC text, so text order is time order; the shortcode number breaks ties.
@@ -153,6 +164,7 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
 
         var title = details.Title;
         var titleSortKey = TitleSortKey(title);
+        var titleKey = SongRules.TitleKey(title);
         var concept = details.Concept;
         var notes = details.Notes;
         var stateId = details.StateId;
@@ -167,6 +179,7 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
                 setters => setters
                     .SetProperty(song => song.Title, title)
                     .SetProperty(song => song.TitleSortKey, titleSortKey)
+                    .SetProperty(song => song.TitleKey, titleKey)
                     .SetProperty(song => song.Concept, concept)
                     .SetProperty(song => song.Notes, notes)
                     .SetProperty(song => song.WorkflowStateId, stateId)

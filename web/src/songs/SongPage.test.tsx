@@ -151,7 +151,9 @@ describe('the Song page', () => {
     await waitFor(() => {
       const lists = mock.mock.calls
         .filter(([input]) => requestPath(input).endsWith('/api/v1/songs'))
-        .map(([input]) => searchOf(input));
+        .map(([input]) => searchOf(input))
+        // The Song page asks for the other Songs with its title, which is not the table's list.
+        .filter((search) => !search.includes('excludeId='));
       expect(lists).toEqual([`?sort=title&state=${WRITING_ID}`, `?sort=title&state=${WRITING_ID}`]);
     });
   });

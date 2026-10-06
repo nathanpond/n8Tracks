@@ -86,6 +86,22 @@ public sealed class SongRulesTests
     }
 
     [Fact]
+    public void TitlesShareAKeyIgnoringCaseAndSpacingButNotDiacriticsOrWidth()
+    {
+        Assert.Equal("WORKING TITLE", SongRules.TitleKey("  working \t  Title "));
+        Assert.Equal(SongRules.TitleKey("Working Title"), SongRules.TitleKey("WORKING   title"));
+
+        // Precomposed and decomposed "é" are the same title; "e" and full-width letters are not.
+        Assert.Equal(SongRules.TitleKey("Café"), SongRules.TitleKey("Café"));
+        Assert.NotEqual(SongRules.TitleKey("Café"), SongRules.TitleKey("Cafe"));
+        Assert.NotEqual(SongRules.TitleKey("Title"), SongRules.TitleKey("Ｔitle"));
+
+        // Complement: a prefix is a different title, and blank text has an empty key.
+        Assert.NotEqual(SongRules.TitleKey("Working Title"), SongRules.TitleKey("Working Title Two"));
+        Assert.Equal(string.Empty, SongRules.TitleKey(" \t "));
+    }
+
+    [Fact]
     public void AConceptIsOptionalTrimmedAndWhitespaceOnlyIsNone()
     {
         Assert.Empty(SongRules.ConceptErrors(null));

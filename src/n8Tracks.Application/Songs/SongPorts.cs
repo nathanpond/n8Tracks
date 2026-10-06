@@ -82,6 +82,8 @@ public enum SongSort
 /// <param name="ArtistIds">Only Songs crediting any of these Artists, as primary or featured (or, with <paramref name="NoArtist"/>, crediting no one); every Song when both are empty.</param>
 /// <param name="NoArtist">Also Songs with no credits at all.</param>
 /// <param name="Search">Trimmed, not empty: only Songs whose title contains it (ignoring case) or whose shortcode starts with it (ignoring case); every Song when null.</param>
+/// <param name="TitleKey">Not empty: only Songs whose <see cref="Domain.Songs.SongRules.TitleKey"/> is exactly this; every Song when null.</param>
+/// <param name="ExcludeId">Every Song but this one; every Song when null.</param>
 public sealed record SongListQuery(
     SongSort Sort,
     bool Descending,
@@ -94,7 +96,9 @@ public sealed record SongListQuery(
     bool NoTag,
     IReadOnlyList<Guid> ArtistIds,
     bool NoArtist,
-    string? Search = null);
+    string? Search = null,
+    string? TitleKey = null,
+    Guid? ExcludeId = null);
 
 /// <summary>A page of Songs and how many match in all.</summary>
 public sealed record SongPage(IReadOnlyList<SongSummary> Items, int Page, int PageSize, int Total);

@@ -17,6 +17,7 @@ import { CONCEPT_MAXIMUM_LENGTH, type Song, type WorkflowState } from '../api/so
 import { ShortcodeBadge } from '../common/ShortcodeBadge';
 import { focusOnMount, saveError, useInPlaceEdit } from '../common/useInPlaceEdit';
 import type { SaveOutcome } from '../common/useRevisionedSave';
+import { DuplicateTitleIndicator } from './DuplicateTitleIndicator';
 import { StateBadge, TagLabels } from './SongParts';
 import { conceptError, singleLine, titleError } from './songRules';
 
@@ -31,7 +32,10 @@ function normaliseConcept(draft: string): FieldValue {
   return normalised === '' ? null : normalised;
 }
 
-/** The title: the page's h2, edited in place on one line. Enter or blur saves; Escape cancels. */
+/**
+ * The title: the page's h2, edited in place on one line. Enter or blur saves; Escape cancels. Beside
+ * it, how many other Songs share it.
+ */
 function TitleField({
   song,
   save,
@@ -56,6 +60,7 @@ function TitleField({
         <Button variant="subtle" size="compact-sm" onClick={edit.start} aria-label="Edit title">
           Edit
         </Button>
+        <DuplicateTitleIndicator key={song.id} song={song} />
       </Group>
     );
   }

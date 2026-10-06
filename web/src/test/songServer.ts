@@ -289,6 +289,11 @@ function released(
   return Object.keys(errors).length > 0 ? { errors } : { release: next };
 }
 
+/** What the API compares titles by: trimmed, inner spacing collapsed, NFC, upper-cased. */
+function titleKey(title: string): string {
+  return title.trim().replace(/\s+/g, ' ').normalize('NFC').toUpperCase();
+}
+
 /** One relationship write the fake server received. */
 export interface ReceivedRelationship {
   method: string;
@@ -318,8 +323,10 @@ export function songServer(
 ) {
   const server = {
     song: { ...song },
-    /** The Songs the search finds, the Song itself included. */
+    /** The Songs the search and the exact-title filter find, the Song itself included. */
     others: [SONG_B, SONG_C],
+    /** The query string of every exact-title list request, in order. */
+    titleQueries: [] as string[],
     relationshipTypes: [...SYSTEM_TYPES, SEQUEL, SIBLING],
     /** Every relationship POST and DELETE, in order. */
     relationships: [] as ReceivedRelationship[],
@@ -417,6 +424,23 @@ export function songServer(
         input instanceof Request ? input.url : input.toString(),
         document.baseURI,
       );
+      const title = url.searchParams.get('title');
+      if (title !== null) {
+        // The exact-title filter: same title ignoring case and spacing, leaving out `excludeId`.
+        server.titleQueries.push(url.searchParams.toString());
+        const key = titleKey(title);
+        const excludeId = url.searchParams.get('excludeId');
+        const pageSize = Number(url.searchParams.get('pageSize') ?? '50');
+        const same = [server.song, ...server.others]
+          .filter((candidate) => titleKey(candidate.title) === key && candidate.id !== excludeId)
+          .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+        return jsonResponse(200, {
+          items: same.slice(0, pageSize),
+          page: 1,
+          pageSize,
+          total: same.length,
+        });
+      }
       const q = (url.searchParams.get('q') ?? '').trim().toLowerCase();
       const found = [server.song, ...server.others].filter(
         (candidate) =>

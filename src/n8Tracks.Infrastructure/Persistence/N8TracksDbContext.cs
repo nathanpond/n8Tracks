@@ -230,6 +230,9 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
             song.Property(record => record.ShortcodeNumber).ValueGeneratedNever();
             song.HasIndex(record => record.ShortcodeNumber).IsUnique();
             song.HasIndex(record => new { record.TitleSortKey, record.ShortcodeNumber });
+
+            // The duplicate title indicator looks titles up by key. Not unique: titles may be shared.
+            song.HasIndex(record => record.TitleKey);
             song.HasIndex(record => new { record.UpdatedUtc, record.ShortcodeNumber });
 
             // The duplicate ISRC warning looks codes up. Not unique: a shared ISRC is allowed. The

@@ -587,6 +587,34 @@ describe('Songs', () => {
     expect(filter).toHaveTextContent('Summer');
   });
 
+  it('opens on a title filter given in the address, shows it, and clears it', async () => {
+    const mock = backend({ list: () => jsonResponse(200, page([song(1), song(2)])) });
+    const user = userEvent.setup();
+
+    renderApp('/songs?title=Working+Title&tag=none');
+
+    await screen.findByRole('table', { name: 'Songs' });
+    expect(listRequests(mock).at(-1)).toBe('?tag=none&title=Working+Title');
+    const filter = screen.getByRole('group', { name: 'Title filter' });
+    expect(filter).toHaveTextContent('Title is “Working Title”');
+
+    await user.click(within(filter).getByRole('button', { name: 'Clear the title filter' }));
+    await waitFor(() => {
+      expect(listRequests(mock).at(-1)).toBe('?tag=none');
+    });
+    expect(screen.queryByRole('group', { name: 'Title filter' })).not.toBeInTheDocument();
+  });
+
+  it('ignores a blank title in the address', async () => {
+    const mock = backend({ list: () => jsonResponse(200, page([song(1)])) });
+
+    renderApp('/songs?title=%20%20');
+
+    await screen.findByRole('table', { name: 'Songs' });
+    expect(listRequests(mock)).toEqual(['']);
+    expect(screen.queryByRole('group', { name: 'Title filter' })).not.toBeInTheDocument();
+  });
+
   it('offers a hidden state in the filter only while Songs are in it', async () => {
     backend({
       list: () => jsonResponse(200, page([song(1)])),

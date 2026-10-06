@@ -210,6 +210,11 @@ export interface SongQuery {
   tags: string[];
   /** Artist IDs, and {@link NO_ARTIST} for Songs credited to no one: Songs crediting any of them. */
   artists: string[];
+  /**
+   * A title as typed: Songs with that title, ignoring case and spacing (the server compares). Left
+   * out (undefined) for every title; never blank.
+   */
+  title?: string;
   page: number;
 }
 
@@ -397,6 +402,9 @@ export function songListParameters(query: SongQuery): URLSearchParams {
   for (const artist of query.artists) {
     parameters.append('artist', artist);
   }
+  if (query.title !== undefined) {
+    parameters.set('title', query.title);
+  }
   if (query.page !== 1) {
     parameters.set('page', String(query.page));
   }
@@ -416,6 +424,8 @@ export function songQueryFrom(parameters: URLSearchParams): SongQuery {
   const sort: SongSort = parameters.get('sort') === 'title' ? 'title' : 'updated';
   const direction = parameters.get('direction');
   const page = Number(parameters.get('page') ?? '1');
+  // A blank title would be refused, so it means no title filter.
+  const title = parameters.get('title') ?? '';
   return {
     sort,
     direction: direction === 'asc' || direction === 'desc' ? direction : defaultDirection(sort),
@@ -423,6 +433,7 @@ export function songQueryFrom(parameters: URLSearchParams): SongQuery {
     genres: [...new Set(parameters.getAll('genre'))],
     tags: [...new Set(parameters.getAll('tag'))],
     artists: [...new Set(parameters.getAll('artist'))],
+    ...(title.trim() === '' ? {} : { title }),
     page: Number.isSafeInteger(page) && page >= 1 ? page : 1,
   };
 }
@@ -500,6 +511,23 @@ export function useSong(reference: string) {
 /** Every workflow state, hidden ones included, in order. */
 export function useWorkflowStates() {
   return useResource(WORKFLOW_STATES_PATH, acceptStates);
+}
+
+/** How many other Songs with the same title the Song page lists. */
+export const SAME_TITLE_LIMIT = 20;
+
+/**
+ * The other Songs with `title` (ignoring case and spacing), leaving out the Song `excludeId`, most
+ * recently updated first: the first {@link SAME_TITLE_LIMIT}, and how many there are (`total`). A
+ * new title asks again.
+ */
+export function useSongsTitled(title: string, excludeId: string) {
+  const parameters = new URLSearchParams({
+    title,
+    excludeId,
+    pageSize: String(SAME_TITLE_LIMIT),
+  });
+  return useResource(`${SONGS_PATH}?${parameters.toString()}`, acceptSongPage);
 }
 
 /** How many Songs a search answers at once: the API's default for `q`. */
