@@ -113,7 +113,7 @@ export function TagLabels({
  * Text with more to it shown on hover and on keyboard focus: the target is in the tab order so a
  * keyboard user can reach what a pointer user sees.
  */
-function WithDetail({
+export function WithDetail({
   detail,
   style,
   children,

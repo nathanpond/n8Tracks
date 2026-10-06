@@ -1,6 +1,7 @@
 import { Anchor, Button, Grid, Group, Paper, Stack, Text, Title } from '@mantine/core';
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router';
+import { isNamedBy, useSongGenerations, type Generation } from '../api/generations';
 import { resolveReference } from '../api/references';
 import { readSong, type Song } from '../api/songs';
 import {
@@ -12,13 +13,22 @@ import {
   type VersionList,
 } from '../api/versions';
 import type { EditorText } from '../editor/useSnapshots';
+import { GenerationPanel, type GenerationPanelContent } from '../generations/GenerationPanel';
 import { CreateVersionDialog } from './CreateVersionDialog';
 import { DeleteVersionDialog } from './DeleteVersionDialog';
 import { VersionDetails } from './VersionDetails';
+import { VersionsTable } from './VersionsTable';
+import { isListed } from './versionsTableRules';
 import { VersionTree, type VersionActions } from './VersionTree';
 
 const FAILED_MESSAGE =
   'Not changed: n8Tracks did not answer as expected. Check that it is running and try again.';
+
+/** The URL parameter that lists archived Versions in the Versions table. */
+export const SHOW_ARCHIVED_PARAMETER = 'archived';
+
+/** The URL parameter that lists archived Generations in the Versions table. */
+export const SHOW_ARCHIVED_GENERATIONS_PARAMETER = 'archivedGenerations';
 
 /** Where this browser keeps the "Show archived" choice. */
 const SHOW_ARCHIVED_STORAGE_KEY = 'n8tracks-show-archived-versions';
@@ -117,9 +127,14 @@ export function SongVersions({
   loaded: VersionList;
   onSong: (song: Song) => void;
 }) {
-  const { number } = useParams();
-  const location: { state: unknown } = useLocation();
+  const { number: routeNumber, generation: generationReference } = useParams();
+  const location: { state: unknown; search: string } = useLocation();
   const navigate = useNavigate();
+  const generations = useSongGenerations(song.id);
+  const reloadGenerations = generations.reload;
+  const parameters = new URLSearchParams(location.search);
+  const showArchivedVersions = parameters.get(SHOW_ARCHIVED_PARAMETER) === '1';
+  const showArchivedGenerations = parameters.get(SHOW_ARCHIVED_GENERATIONS_PARAMETER) === '1';
   const [versions, setVersions] = useState(loaded.items);
   const [placeholders, setPlaceholders] = useState(loaded.deletedPlaceholders);
   const [deleting, setDeleting] = useState<Version | undefined>();
@@ -132,6 +147,16 @@ export function SongVersions({
   const [busy, setBusy] = useState(false);
 
   const current = versions.find((version) => version.current);
+  // A Generation's page (`/songs/<song>/generations/<shortcode>`) shows its Version in the editor.
+  const openGeneration =
+    generationReference !== undefined && generations.state.phase === 'ready'
+      ? generations.state.data.find((generation) => isNamedBy(generation, generationReference))
+      : undefined;
+  const generationVersion =
+    openGeneration === undefined
+      ? undefined
+      : versions.find((version) => version.id === openGeneration.version.id);
+  const number = routeNumber ?? generationVersion?.number;
   const named =
     number === undefined ? current : versions.find((version) => version.number === number);
   const hiddenNow = (version: Version | undefined, show: boolean) =>
@@ -146,17 +171,89 @@ export function SongVersions({
   }
 
   // A selected Version that becomes hidden (archived, or "Show archived" turned off) hands the
-  // selection to the current Version.
-  const hidden = number !== undefined && hiddenNow(named, showArchived);
-  const selected = hidden ? current : named;
+  // selection to the current Version; a Version page's address goes back to the Song's. (A
+  // Generation's page keeps its address: its panel stays open.)
+  const hiddenSelection = number !== undefined && hiddenNow(named, showArchived);
+  const selected = hiddenSelection ? current : named;
+  const hidden = routeNumber !== undefined && hiddenSelection;
+  const search = location.search;
   useEffect(() => {
     if (hidden) {
-      void navigate(`/songs/${song.shortcode}`, { replace: true, state: location.state });
+      void navigate(`/songs/${song.shortcode}${search}`, { replace: true, state: location.state });
     }
-  }, [hidden, navigate, song.shortcode, location.state]);
+  }, [hidden, navigate, song.shortcode, search, location.state]);
 
-  const linkTo = (version: Version) => `/songs/${song.shortcode}/v/${version.number}`;
+  // The Versions table's choices are the URL's, so they stay as the user moves around the Song.
+  const linkTo = (version: Version) => `/songs/${song.shortcode}/v/${version.number}${search}`;
+  const generationLink = (generation: Generation) =>
+    `/songs/${song.shortcode}/generations/${generation.shortcode}${search}`;
   const wasDeleted = useWasDeleted(song, number, number !== undefined && selected === undefined);
+
+  /** Turns one of the Versions table's choices on or off in the URL, replacing this history entry. */
+  const setChoice = useCallback(
+    (choices: Record<string, boolean>) => {
+      const next = new URLSearchParams(search);
+      for (const [name, on] of Object.entries(choices)) {
+        if (on) {
+          next.set(name, '1');
+        } else {
+          next.delete(name);
+        }
+      }
+      const text = next.toString();
+      void navigate(
+        { search: text === '' ? '' : `?${text}` },
+        { replace: true, state: location.state },
+      );
+    },
+    [location.state, navigate, search],
+  );
+
+  // A link to a Generation the table hides (an archived one, or one of an archived Version) turns
+  // on what it takes to list it.
+  const needsArchivedGenerations =
+    openGeneration?.state === 'archived' && !openGeneration.isSelected && !showArchivedGenerations;
+  const needsArchivedVersions =
+    generationVersion !== undefined && !isListed(generationVersion, showArchivedVersions);
+  useEffect(() => {
+    if (needsArchivedGenerations || needsArchivedVersions) {
+      setChoice({
+        ...(needsArchivedGenerations ? { [SHOW_ARCHIVED_GENERATIONS_PARAMETER]: true } : {}),
+        ...(needsArchivedVersions ? { [SHOW_ARCHIVED_PARAMETER]: true } : {}),
+      });
+    }
+  }, [needsArchivedGenerations, needsArchivedVersions, setChoice]);
+
+  const panelContent = ((): GenerationPanelContent => {
+    if (generationReference === undefined || generations.state.phase === 'loading') {
+      return { kind: 'loading' };
+    }
+    if (generations.state.phase !== 'ready') {
+      return { kind: 'failed' };
+    }
+    if (openGeneration === undefined) {
+      return { kind: 'not-found', reference: generationReference };
+    }
+    return {
+      kind: 'found',
+      generation: openGeneration,
+      versionNumber: generationVersion?.number ?? '',
+      versionLink:
+        generationVersion === undefined
+          ? `/songs/${song.shortcode}${search}`
+          : linkTo(generationVersion),
+    };
+  })();
+
+  /** The panel closes onto the Generation's Version, which the editor already shows. */
+  const closePanel = () => {
+    void navigate(
+      generationVersion === undefined
+        ? `/songs/${song.shortcode}${search}`
+        : linkTo(generationVersion),
+      { state: location.state },
+    );
+  };
 
   /** Reads the Versions and the Song again (after a deletion here or elsewhere); false when that fails. */
   const refresh = useCallback(async () => {
@@ -167,8 +264,9 @@ export function SongVersions({
     setVersions(list.items);
     setPlaceholders(list.deletedPlaceholders);
     onSong(read);
+    reloadGenerations();
     return true;
-  }, [onSong, song.id]);
+  }, [onSong, song.id, reloadGenerations]);
 
   const deleted = (version: Version, current: VersionDetail) => {
     setDeleting(undefined);
@@ -192,13 +290,13 @@ export function SongVersions({
         setCarried({ number: version.number, text });
       }
       // Its own page says it was deleted, and offers the text there.
-      void navigate(`/songs/${song.shortcode}/v/${version.number}`, {
+      void navigate(`/songs/${song.shortcode}/v/${version.number}${search}`, {
         replace: true,
         state: location.state,
       });
       void refresh();
     },
-    [location.state, navigate, refresh, song.shortcode],
+    [location.state, navigate, refresh, search, song.shortcode],
   );
 
   const replace = (changed: Version) => {
@@ -381,7 +479,11 @@ export function SongVersions({
                     </div>
                   </Stack>
                 )}
-                <Anchor component={Link} to={`/songs/${song.shortcode}`} state={location.state}>
+                <Anchor
+                  component={Link}
+                  to={`/songs/${song.shortcode}${search}`}
+                  state={location.state}
+                >
                   Open {song.shortcode} at its current Version
                 </Anchor>
               </Stack>
@@ -417,6 +519,29 @@ export function SongVersions({
           onDeleted={deleted}
         />
       </Grid>
+      <VersionsTable
+        versions={versions}
+        generations={generations.state}
+        onRetry={reloadGenerations}
+        selectedId={selected?.id}
+        openGenerationId={openGeneration?.id}
+        revealVersionId={openGeneration?.version.id}
+        showArchived={showArchivedVersions}
+        showArchivedGenerations={showArchivedGenerations}
+        onShowArchived={(show) => {
+          setChoice({ [SHOW_ARCHIVED_PARAMETER]: show });
+        }}
+        onShowArchivedGenerations={(show) => {
+          setChoice({ [SHOW_ARCHIVED_GENERATIONS_PARAMETER]: show });
+        }}
+        versionLink={linkTo}
+        generationLink={generationLink}
+      />
+      <GenerationPanel
+        opened={generationReference !== undefined}
+        content={panelContent}
+        onClose={closePanel}
+      />
     </Stack>
   );
 }

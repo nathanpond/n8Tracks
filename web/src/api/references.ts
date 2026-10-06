@@ -64,19 +64,18 @@ export async function resolveReference(
 }
 
 /**
- * The app page that shows what a reference resolved to: the Song's page, or its Song's page with
- * the Version selected (a Generation's Version, until Generations have a page of their own). A
- * path inside the app, for the router.
+ * The app page that shows what a reference resolved to: the Song's page, its Song's page with the
+ * Version selected, or a Generation's panel on its Song's page
+ * (`/songs/<song>/generations/<shortcode>`). A path inside the app, for the router.
  */
 export function pageFor(resolved: ResolvedReference): string {
   if (resolved.entityType === 'song' || resolved.song === undefined) {
     return `/songs/${resolved.shortcode}`;
   }
-  const version = resolved.entityType === 'generation' ? resolved.version : resolved;
-  if (version === undefined) {
-    return `/songs/${resolved.song.shortcode}`;
+  if (resolved.entityType === 'generation') {
+    return `/songs/${resolved.song.shortcode}/generations/${resolved.shortcode}`;
   }
-  const number = version.shortcode.slice(`${resolved.song.shortcode}-v`.length);
+  const number = resolved.shortcode.slice(`${resolved.song.shortcode}-v`.length);
   return `/songs/${resolved.song.shortcode}/v/${number}`;
 }
 
@@ -99,8 +98,9 @@ function decoded(segment: string): string | undefined {
 
 /**
  * Reads what was typed or pasted into the Go to box, ignoring surrounding whitespace: a stable ID
- * or shortcode as it is, or a URL of this instance (`/go/<reference>`, `/songs/<reference>`, or
- * `/songs/<reference>/v/<number>`, absolute or from the root). A URL of another host, or of another
+ * or shortcode as it is, or a URL of this instance (`/go/<reference>`, `/songs/<reference>`,
+ * `/songs/<reference>/v/<number>`, or `/songs/<reference>/generations/<generation>`, absolute or
+ * from the root). A URL of another host, or of another
  * kind of page, names nothing.
  */
 export function goToTarget(text: string): GoToTarget {
@@ -135,6 +135,14 @@ export function goToTarget(text: string): GoToTarget {
   const [first, second, third, fourth] = segments;
   if (segments.length === 2 && (first === 'go' || first === 'songs') && second !== undefined) {
     return { kind: 'reference', reference: second };
+  }
+  if (
+    segments.length === 4 &&
+    first === 'songs' &&
+    third === 'generations' &&
+    fourth !== undefined
+  ) {
+    return { kind: 'reference', reference: fourth };
   }
   if (
     segments.length === 4 &&

@@ -85,8 +85,9 @@ internal static partial class FrontendHosting
     /// <summary>
     /// True for the requests the shell answers: a GET or HEAD whose first segment is not reserved and
     /// whose last segment has no file extension (<c>index.html</c> itself excepted), or is a Version
-    /// number after a <c>v</c> segment (<c>/songs/n8-1/v/1.1</c>) or the reference of a <c>/go/</c> link
-    /// (<c>/go/n8-1-v1.1</c>), whose dots are not an extension.
+    /// number after a <c>v</c> segment (<c>/songs/n8-1/v/1.1</c>), a Generation shortcode after a
+    /// <c>generations</c> segment (<c>/songs/n8-1/generations/n8-1-v1.1-g2</c>), or the reference of a
+    /// <c>/go/</c> link (<c>/go/n8-1-v1.1</c>), whose dots are not an extension.
     /// </summary>
     internal static bool IsShellRequest(string method, PathString path)
     {
@@ -119,6 +120,12 @@ internal static partial class FrontendHosting
         }
 
         if (segments.Length >= 2 && segments[^2] == "v" && VersionNumber.TryParse(segments[^1], out _))
+        {
+            return true;
+        }
+
+        // A Generation's panel (/songs/n8-1/generations/n8-1-v1.1-g2) is named by its shortcode, whose dots are not an extension.
+        if (segments.Length >= 2 && segments[^2] == "generations" && Shortcodes.TryParseGeneration(segments[^1], out _, out _, out _))
         {
             return true;
         }

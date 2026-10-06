@@ -1,3 +1,4 @@
+import type { Generation } from '../api/generations';
 import type { Snapshot } from '../api/snapshots';
 import type { Song } from '../api/songs';
 import {
@@ -31,6 +32,42 @@ export function testVersion(number: string, change: Partial<VersionDetail> = {})
     inputs,
     // A Version's kind is its options' kind, unless the test says otherwise.
     kind: isVersionKind(inputs.kind) ? inputs.kind : 'song',
+    ...change,
+  };
+}
+
+/**
+ * Generation `ordinal` of the Version of `baseSong` numbered `number`: an Active, complete clip of
+ * 2:05 with a Suno ID built from the shortcode, unrated and without comments.
+ */
+export function testGeneration(
+  number: string,
+  ordinal: number,
+  change: Partial<Generation> = {},
+): Generation {
+  const version = testVersion(number);
+  const shortcode = `${version.shortcode}-g${String(ordinal)}`;
+  return {
+    id: `0199b1a0-6000-7000-9000-${`${number.replace(/\./g, '0')}0${String(ordinal)}`.padStart(12, '0')}`,
+    shortcode,
+    ordinal,
+    song: { id: baseSong.id, shortcode: baseSong.shortcode },
+    version: { id: version.id, shortcode: version.shortcode },
+    sunoId: `suno-${shortcode}`,
+    providerStatus: 'complete',
+    state: 'active',
+    remoteState: 'present',
+    title: `Take ${String(ordinal)}`,
+    durationSeconds: 125,
+    modelVersion: 'chirp-v5',
+    modelName: null,
+    modelLabel: 'v5',
+    sunoCreatedAt: '2026-10-01T09:30:00Z',
+    isSelected: false,
+    createdAt: '2026-10-01T09:31:00Z',
+    revision: 1,
+    rating: null,
+    commentCount: 0,
     ...change,
   };
 }
@@ -141,8 +178,14 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     songDeletes: [] as { ifMatch: string | null; body: Record<string, unknown> }[],
     /** When set, answers the next Song deletion (once) instead of the fake API. */
     nextSongDelete: undefined as (() => Response | Promise<Response>) | undefined,
-    /** Generations counted by the deletion impact (the fake keeps none of its own). */
+    /** Generations counted by the deletion impact (apart from {@link generations}). */
     generationCount: 0,
+    /** The Song's Generations, as its Generation list answers them (Version order, then ordinal). */
+    generations: [] as Generation[],
+    /** How many times the Song's Generation list was read. */
+    generationReads: 0,
+    /** When set, answers the next read of the Generation list (once) instead of the fake API. */
+    nextGenerations: undefined as (() => Response | Promise<Response>) | undefined,
     /** Every number the Song has used, deleted Versions' included. */
     usedNumbers: new Set(versions.map((version) => version.number)),
     /** Plays another client deleting the Version numbered `number` (no current Version moves). */
@@ -537,6 +580,28 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
       };
       server.versions = server.versions.map((other) => (other.id === version.id ? changed : other));
       return jsonResponse(200, changed);
+    }
+
+    const songGenerations = /\/api\/v1\/songs\/([^/]+)\/generations$/.exec(path);
+    if (songGenerations && method === 'GET') {
+      server.generationReads++;
+      const nextGenerations = server.nextGenerations;
+      if (nextGenerations) {
+        server.nextGenerations = undefined;
+        return nextGenerations();
+      }
+      const named = decodeURIComponent(songGenerations[1] ?? '');
+      if (named !== server.song.id && named !== server.song.shortcode) {
+        return jsonResponse(404, { code: 'not_found' });
+      }
+      const numberOf = (generation: Generation) =>
+        generation.version.shortcode.slice(`${server.song.shortcode}-v`.length);
+      const items = [...server.generations].sort(
+        (left, right) =>
+          byNumber(testVersion(numberOf(left)), testVersion(numberOf(right))) ||
+          left.ordinal - right.ordinal,
+      );
+      return jsonResponse(200, { items });
     }
 
     if (path.endsWith('/api/v1/songs') && method === 'GET') {

@@ -57,7 +57,7 @@ public class FrontendHostingTests
         using var client = Client(factory);
         var shell = await client.GetStringAsync(Relative(pathBase + "/"));
 
-        foreach (var deepLink in new[] { "/songs", "/songs/0198c0de/versions", "/apiary", "/healthy/x", "/index.html", "/songs?tab=lyrics", "/songs/n8-1/v/1.1", "/songs/n8-1/v/1.10.2", "/go/n8-1", "/go/N8-1-V1.1", "/go/n8-1-v1.10.2" })
+        foreach (var deepLink in new[] { "/songs", "/songs/0198c0de/versions", "/apiary", "/healthy/x", "/index.html", "/songs?tab=lyrics", "/songs/n8-1/v/1.1", "/songs/n8-1/v/1.10.2", "/go/n8-1", "/go/N8-1-V1.1", "/go/n8-1-v1.10.2", "/songs/n8-1/generations/n8-1-v1.1-g2", "/songs/n8-1/generations/N8-1-V1.10.2-G12" })
         {
             using var response = await client.GetAsync(Relative(pathBase + deepLink));
 
@@ -157,6 +157,8 @@ public class FrontendHostingTests
     [InlineData("", "/songs/cover.png")]
     [InlineData("", "/songs/n8-1/v/cover.png")]
     [InlineData("", "/songs/n8-1/v/1.png")]
+    [InlineData("", "/songs/n8-1/generations/cover.png")]
+    [InlineData("", "/songs/n8-1/generations/n8-1-v1.1-g0.png")]
     [InlineData("/n8tracks", "/api/unknown")]
     [InlineData("/n8tracks", "/openapi/unknown")]
     [InlineData("/n8tracks", "/health/unknown")]

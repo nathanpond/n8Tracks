@@ -47,6 +47,7 @@ export function App() {
                 <Route path="songs" element={<SongsPage />} />
                 <Route path="songs/:reference" element={<SongPage />} />
                 <Route path="songs/:reference/v/:number" element={<SongPage />} />
+                <Route path="songs/:reference/generations/:generation" element={<SongPage />} />
                 <Route path="artists" element={<ArtistsPage />} />
                 <Route path="artists/:id" element={<ArtistPage />} />
                 <Route path="albums" element={<AlbumsPage />} />

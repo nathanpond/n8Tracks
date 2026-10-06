@@ -15,7 +15,7 @@ describe('reading what the Go to box was given', () => {
     expect(goToTarget('   ')).toEqual({ kind: 'none' });
   });
 
-  it('reads links to /go/, a Song page, and a Version page of this instance', () => {
+  it('reads links to /go/, a Song page, a Version page, and a Generation page of this instance', () => {
     expect(goToTarget(at('go/n8-3-v2.1'))).toEqual({ kind: 'reference', reference: 'n8-3-v2.1' });
     expect(goToTarget(` ${at('songs/n8-3')} `)).toEqual({ kind: 'reference', reference: 'n8-3' });
     expect(goToTarget(at('songs/n8-3/v/2.1?tab=x#y'))).toEqual({
@@ -24,6 +24,10 @@ describe('reading what the Go to box was given', () => {
       number: '2.1',
     });
     expect(goToTarget('/go/n8-3')).toEqual({ kind: 'reference', reference: 'n8-3' });
+    expect(goToTarget(at('songs/n8-3/generations/n8-3-v2.1-g4?archived=1'))).toEqual({
+      kind: 'reference',
+      reference: 'n8-3-v2.1-g4',
+    });
   });
 
   it('names nothing for another host or another kind of page', () => {
@@ -64,7 +68,7 @@ describe('the page a resolved reference opens', () => {
     ).toBe('/songs/n8-12/v/1.10.2');
   });
 
-  it("is a Generation's Version, selected on its Song page", () => {
+  it("is a Generation's panel on its Song page", () => {
     expect(
       pageFor({
         entityType: 'generation',
@@ -74,6 +78,6 @@ describe('the page a resolved reference opens', () => {
         song: { id: 'a', shortcode: 'n8-12' },
         version: { id: 'b', shortcode: 'n8-12-v1.10.2' },
       }),
-    ).toBe('/songs/n8-12/v/1.10.2');
+    ).toBe('/songs/n8-12/generations/n8-12-v1.10.2-g3');
   });
 });
