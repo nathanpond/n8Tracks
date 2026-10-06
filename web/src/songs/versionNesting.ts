@@ -1,8 +1,15 @@
 import type { Version } from '../api/versions';
 
-/** A Version in the tree, with the Versions drawn under it. */
+/**
+ * A node of the tree: a Version with the nodes drawn under it, or a "Deleted Version" placeholder
+ * (no `version`) that only holds the place of a deleted Version's number above its descendants.
+ */
 export interface VersionNode {
-  version: Version;
+  /** Unique in the tree: the Version's ID, or `deleted-<number>` for a placeholder. */
+  key: string;
+  number: string;
+  /** The Version; undefined for a placeholder. */
+  version: Version | undefined;
   children: VersionNode[];
 }
 
@@ -33,29 +40,49 @@ function ancestors(number: string): string[] {
   return result;
 }
 
+/** The nodes left once every placeholder with nothing drawn under it is dropped. */
+function withoutEmptyPlaceholders(nodes: VersionNode[]): VersionNode[] {
+  return nodes.flatMap((node) => {
+    const children = withoutEmptyPlaceholders(node.children);
+    return node.version === undefined && children.length === 0 ? [] : [{ ...node, children }];
+  });
+}
+
 /**
  * Nests the Versions `shown` keeps by their numbers: each goes under its nearest ancestor that is
  * drawn, so a Version whose parent is missing (or hidden) is drawn at the nearest existing ancestor,
- * or at the top level when there is none. Siblings are in numeric order.
+ * or at the top level when there is none. `placeholders` are deleted Versions' numbers, drawn as
+ * "Deleted Version" nodes in their place, with their descendants under them, only while something
+ * is drawn under them. Siblings are in numeric order.
  */
 export function nestVersions(
   versions: Version[],
   shown: (version: Version) => boolean = () => true,
+  placeholders: readonly string[] = [],
 ): VersionNode[] {
-  const drawn = versions
-    .filter(shown)
-    .sort((left, right) => compareNumbers(left.number, right.number));
+  const drawn: VersionNode[] = [
+    ...versions
+      .filter(shown)
+      .map((version) => ({ key: version.id, number: version.number, version, children: [] })),
+    ...placeholders
+      .filter((number) => !versions.some((version) => version.number === number))
+      .map((number) => ({ key: `deleted-${number}`, number, version: undefined, children: [] })),
+  ].sort((left, right) => compareNumbers(left.number, right.number));
   const nodes = new Map<string, VersionNode>();
   const roots: VersionNode[] = [];
-  for (const version of drawn) {
-    const node: VersionNode = { version, children: [] };
-    nodes.set(version.number, node);
-    const parent = ancestors(version.number)
+  for (const node of drawn) {
+    nodes.set(node.number, node);
+    const parent = ancestors(node.number)
       .map((number) => nodes.get(number))
       .find((candidate) => candidate !== undefined);
     (parent?.children ?? roots).push(node);
   }
-  return roots;
+  return withoutEmptyPlaceholders(roots);
+}
+
+/** A placeholder's accessible name and text. */
+export function placeholderLabel(number: string): string {
+  return `Deleted Version ${number}`;
 }
 
 /** A Version's accessible name: its number, name, and whether it is current or archived. */

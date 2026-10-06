@@ -16,7 +16,7 @@ namespace n8Tracks.Api.Endpoints;
 /// flat list, one Version with its lyrics, styles, and Suno options, and its editing history
 /// (<c>catalog.read</c>); creating a Version from another, choosing a Song's current Version, editing
 /// a Version's name, notes, archived flag, lyrics, styles, and options, and taking and restoring snapshots of its lyrics and
-/// styles (<c>versions.write</c>). A Song or a Version is named by its ID or its shortcode
+/// styles (<c>versions.write</c>); deleting a snapshot (session only). A Song or a Version is named by its ID or its shortcode
 /// (<see cref="CatalogReference"/>), in the route and in body fields alike; a reference of the other
 /// kind, or a Version of another Song, is not found. Every answer is <c>no-store</c>, and a single
 /// Version sends its revision as the <c>ETag</c>.
@@ -31,6 +31,13 @@ internal static class VersionsEndpoints
     public const string SnapshotsPath = VersionPath + "/snapshots";
     public const string SnapshotByIdPath = SnapshotsPath + "/{snapshotId:guid}";
     public const string RestorePath = SnapshotByIdPath + "/restore";
+    public const string DeletionImpactPath = VersionPath + "/deletion-impact";
+
+    /// <summary>
+    /// The Version was deleted (on its own, within its retention period): reads and writes of it say
+    /// so, with <c>versionShortcode</c>, <c>number</c>, and <c>deletedAt</c>, rather than a plain 404.
+    /// </summary>
+    public const string DeletedCode = "version_deleted";
 
     /// <summary>The number sent is not one of the options for the source.</summary>
     public const string NotOfferedCode = "version_number_not_offered";
@@ -158,7 +165,150 @@ internal static class VersionsEndpoints
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
+        endpoints.MapGet(DeletionImpactPath, DeletionImpactAsync)
+            .WithName("GetVersionDeletionImpact")
+            .WithSummary("What deleting a Version would do: its Generations (deleted with it), its descendants (which remain), whether it is the Song's last Version, and its revision. Web UI only (session).")
+            .SessionOnly()
+            .Produces<VersionDeletionImpactResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        endpoints.MapDelete(VersionPath, DeleteVersionAsync)
+            .WithName("DeleteVersion")
+            .WithSummary("Deletes a Version with its Generations and history, given its revision in If-Match; its descendants remain. Answers the Song's current Version now (a new blank one when it was the last). Web UI only (session).")
+            .SessionOnly()
+            .Produces<VersionDetailResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        endpoints.MapDelete(SnapshotByIdPath, DeleteSnapshotAsync)
+            .WithName("DeleteVersionSnapshot")
+            .WithSummary("Deletes one entry of a Version's history. Needs no revision; frozen Versions included. Web UI only (session).")
+            .SessionOnly()
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
         return endpoints;
+    }
+
+    /// <summary>200 with what deleting the Version would do; 404 (<c>version_deleted</c> when it was deleted) when there is no such Version.</summary>
+    private static async Task<Results<Ok<VersionDeletionImpactResponse>, ProblemHttpResult>> DeletionImpactAsync(
+        CatalogReference reference,
+        ReferenceResolver references,
+        VersionDeletionService deletions,
+        HttpContext context,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        if (await references.VersionIdAsync(reference, cancellationToken) is { } id
+            && await deletions.ImpactAsync(id, cancellationToken) is VersionDeletionImpactOutcome.Found found)
+        {
+            var impact = found.Impact;
+            return TypedResults.Ok(new VersionDeletionImpactResponse(impact.GenerationCount, impact.RemainingDescendantCount, impact.IsLastVersion, impact.Version.Revision));
+        }
+
+        return await MissingVersionAsync(context, reference, deletions, cancellationToken);
+    }
+
+    /// <summary>
+    /// 200 with the Song's current Version now, once the Version, its Generations, and its history
+    /// are in retention (re-pointed when the deleted one was current; a new blank one when it was the
+    /// last); 409 <c>revision_conflict</c> with <c>current</c> on a stale revision; 404 when there is
+    /// no such Version (<c>version_deleted</c> when it was already deleted). Nothing is changed unless
+    /// the answer is 200.
+    /// </summary>
+    private static async Task<Results<Ok<VersionDetailResponse>, ProblemHttpResult>> DeleteVersionAsync(
+        CatalogReference reference,
+        ReferenceResolver references,
+        VersionDeletionService deletions,
+        HttpContext context,
+        ILoggerFactory loggers,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        if (await references.VersionIdAsync(reference, cancellationToken) is not { } id)
+        {
+            return await MissingVersionAsync(context, reference, deletions, cancellationToken);
+        }
+
+        var (revision, problem) = Revisions.Read(context);
+        if (problem is not null)
+        {
+            return problem;
+        }
+
+        switch (await deletions.DeleteAsync(id, revision!.Value, cancellationToken))
+        {
+            case VersionDeleteOutcome.Deleted deleted:
+                loggers.CreateLogger(typeof(VersionsEndpoints)).LogInformation(
+                    "Version deleted: {VersionId} into retention group {RetentionGroupId}; current Version now {CurrentVersionId} (new blank: {CreatedBlank})",
+                    id,
+                    deleted.Group.Id,
+                    deleted.Current.Summary.Id,
+                    deleted.CreatedBlank);
+                Revisions.SetETag(context, deleted.Current.Summary.Revision);
+                return TypedResults.Ok(VersionDetailResponse.From(deleted.Current));
+
+            case VersionDeleteOutcome.Conflict conflict:
+                return Revisions.Conflict(context, VersionDetailResponse.From(conflict.Current));
+
+            case VersionDeleteOutcome.NotFound:
+                return await MissingVersionAsync(context, reference, deletions, cancellationToken);
+
+            default:
+                throw new InvalidOperationException("Unknown Version deletion outcome.");
+        }
+    }
+
+    /// <summary>
+    /// 204 once the entry is deleted (it goes into retention, never shown again); 404 <c>not_found</c>
+    /// when there is no such Version or the Version has no such snapshot. Nothing is changed unless the
+    /// answer is 204.
+    /// </summary>
+    private static async Task<Results<NoContent, ProblemHttpResult>> DeleteSnapshotAsync(
+        CatalogReference reference,
+        ReferenceResolver references,
+        Guid snapshotId,
+        EditorRevisionService history,
+        HttpContext context,
+        ILoggerFactory loggers,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        if (await references.VersionIdAsync(reference, cancellationToken) is not { } id)
+        {
+            return NoSuchVersion(context);
+        }
+
+        switch (await history.DeleteAsync(id, snapshotId, cancellationToken))
+        {
+            case SnapshotDeleteOutcome.Deleted deleted:
+                loggers.CreateLogger(typeof(VersionsEndpoints)).LogInformation(
+                    "Version snapshot deleted: {SnapshotId} of {VersionId} into retention group {RetentionGroupId}",
+                    snapshotId,
+                    id,
+                    deleted.Group.Id);
+                return TypedResults.NoContent();
+
+            case SnapshotDeleteOutcome.VersionNotFound:
+                return NoSuchVersion(context);
+
+            case SnapshotDeleteOutcome.SnapshotNotFound:
+                return ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "There is no such snapshot of this Version.");
+
+            default:
+                throw new InvalidOperationException("Unknown snapshot deletion outcome.");
+        }
     }
 
     /// <summary>
@@ -171,6 +321,7 @@ internal static class VersionsEndpoints
         ReferenceResolver references,
         SnapshotRequest? request,
         EditorRevisionService history,
+        VersionDeletionService deletions,
         HttpContext context,
         ILoggerFactory loggers,
         CancellationToken cancellationToken)
@@ -179,7 +330,7 @@ internal static class VersionsEndpoints
 
         if (await references.VersionIdAsync(reference, cancellationToken) is not { } id)
         {
-            return NoSuchVersion(context);
+            return await MissingVersionAsync(context, reference, deletions, cancellationToken);
         }
 
         var typeErrors = new Dictionary<string, string[]>(StringComparer.Ordinal);
@@ -207,7 +358,7 @@ internal static class VersionsEndpoints
                 return ApiProblem.ValidationFailed(context, invalid.Errors);
 
             case SnapshotOutcome.NotFound:
-                return NoSuchVersion(context);
+                return await MissingVersionAsync(context, reference, deletions, cancellationToken);
 
             default:
                 throw new InvalidOperationException("Unknown snapshot outcome.");
@@ -318,21 +469,26 @@ internal static class VersionsEndpoints
         }
     }
 
-    /// <summary>200 with every Version of the Song; 404 <c>not_found</c> when the reference names none.</summary>
+    /// <summary>
+    /// 200 with every Version of the Song and the numbers drawn as "Deleted Version" placeholders;
+    /// 404 <c>not_found</c> when the reference names none.
+    /// </summary>
     private static async Task<Results<Ok<VersionListResponse>, ProblemHttpResult>> ListAsync(
         CatalogReference reference,
         VersionService versions,
+        VersionDeletionService deletions,
         HttpContext context,
         CancellationToken cancellationToken)
     {
         SessionEndpoints.NoStore(context);
 
-        if (await versions.ListAsync(reference.Text, cancellationToken) is not { } list)
+        if (await versions.ListAsync(reference.Text, cancellationToken) is not { Count: > 0 } list)
         {
             return SongsEndpoints.NoSuchSong(context);
         }
 
-        return TypedResults.Ok(new VersionListResponse([.. list.Select(VersionResponse.From)]));
+        var placeholders = await deletions.PlaceholdersAsync(list[0].SongId, cancellationToken);
+        return TypedResults.Ok(new VersionListResponse([.. list.Select(VersionResponse.From)], [.. placeholders]));
     }
 
     /// <summary>
@@ -423,7 +579,7 @@ internal static class VersionsEndpoints
         {
             case SetCurrentOutcome.Updated updated:
                 Revisions.SetETag(context, updated.Song.Revision);
-                return TypedResults.Ok(SongResponse.From(updated.Song));
+                return TypedResults.Ok(SongResponse.From(updated.Song, context.Request.PathBase));
 
             case SetCurrentOutcome.SongNotFound:
                 return SongsEndpoints.NoSuchSong(context);
@@ -436,24 +592,24 @@ internal static class VersionsEndpoints
         }
     }
 
-    /// <summary>200 with the Version, its lyrics, and its styles; 404 <c>not_found</c> when there is none.</summary>
+    /// <summary>
+    /// 200 with the Version, its lyrics, and its styles; 404 <c>version_deleted</c> when it was
+    /// deleted within its retention period, or <c>not_found</c> when there is none.
+    /// </summary>
     private static async Task<Results<Ok<VersionDetailResponse>, ProblemHttpResult>> GetAsync(
         CatalogReference reference,
         ReferenceResolver references,
         VersionService versions,
+        VersionDeletionService deletions,
         HttpContext context,
         CancellationToken cancellationToken)
     {
         SessionEndpoints.NoStore(context);
 
-        if (await references.VersionIdAsync(reference, cancellationToken) is not { } id)
+        if (await references.VersionIdAsync(reference, cancellationToken) is not { } id
+            || await versions.FindAsync(id, cancellationToken) is not { } version)
         {
-            return NoSuchVersion(context);
-        }
-
-        if (await versions.FindAsync(id, cancellationToken) is not { } version)
-        {
-            return NoSuchVersion(context);
+            return await MissingVersionAsync(context, reference, deletions, cancellationToken);
         }
 
         Revisions.SetETag(context, version.Summary.Revision);
@@ -465,14 +621,15 @@ internal static class VersionsEndpoints
     /// <c>revision_conflict</c> with <c>current</c> on a stale revision; 409 <c>version_frozen</c>
     /// when a Generation is attached and the edit changes the lyrics, styles, or an option (sending
     /// them unchanged is fine); 422 <c>validation_failed</c> on a wrong field (an option's errors are
-    /// keyed <c>inputs.&lt;key&gt;</c>); 404 when there is no such Version.
-    /// Nothing is changed unless the answer is 200.
+    /// keyed <c>inputs.&lt;key&gt;</c>); 404 when there is no such Version (<c>version_deleted</c> when
+    /// it was deleted, so an editor still open on it can say so). Nothing is changed unless the answer is 200.
     /// </summary>
     private static async Task<Results<Ok<VersionDetailResponse>, ProblemHttpResult>> UpdateAsync(
         CatalogReference reference,
         ReferenceResolver references,
         UpdateVersionRequest? request,
         VersionService versions,
+        VersionDeletionService deletions,
         HttpContext context,
         ILoggerFactory loggers,
         CancellationToken cancellationToken)
@@ -481,7 +638,7 @@ internal static class VersionsEndpoints
 
         if (await references.VersionIdAsync(reference, cancellationToken) is not { } id)
         {
-            return NoSuchVersion(context);
+            return await MissingVersionAsync(context, reference, deletions, cancellationToken);
         }
 
         var (revision, problem) = Revisions.Read(context);
@@ -527,7 +684,7 @@ internal static class VersionsEndpoints
                 return ApiProblem.ValidationFailed(context, invalid.Errors);
 
             case VersionUpdateOutcome.NotFound:
-                return NoSuchVersion(context);
+                return await MissingVersionAsync(context, reference, deletions, cancellationToken);
 
             case VersionUpdateOutcome.Frozen frozen:
                 return Frozen(context, frozen.Version);
@@ -545,6 +702,25 @@ internal static class VersionsEndpoints
             FrozenCode,
             VersionFrozenException.DefaultMessage,
             [new("versionId", version.Summary.Id), new("versionShortcode", version.Summary.Shortcode)]);
+
+    /// <summary>
+    /// 404 for a reference that names no live Version: <c>version_deleted</c>, with its shortcode,
+    /// number, and when, when it names a Version deleted on its own within its retention period;
+    /// otherwise <c>not_found</c>.
+    /// </summary>
+    private static async Task<ProblemHttpResult> MissingVersionAsync(
+        HttpContext context,
+        CatalogReference reference,
+        VersionDeletionService deletions,
+        CancellationToken cancellationToken) =>
+        await deletions.FindDeletedAsync(reference, cancellationToken) is { } deleted
+            ? ApiProblem.For(
+                context,
+                StatusCodes.Status404NotFound,
+                DeletedCode,
+                $"Version {deleted.Number} was deleted.",
+                [new("versionId", deleted.Id), new("versionShortcode", deleted.Shortcode), new("number", deleted.Number), new("deletedAt", deleted.DeletedUtc.UtcDateTime)])
+            : NoSuchVersion(context);
 
     /// <summary>404 <c>not_found</c>: the reference names no Version (an unknown one, or one of another kind).</summary>
     private static ProblemHttpResult NoSuchVersion(HttpContext context) =>
@@ -799,8 +975,14 @@ internal sealed record VersionDetailResponse(
     }
 }
 
-/// <summary>Every Version of a Song, in tree order.</summary>
-internal sealed record VersionListResponse(VersionResponse[] Items);
+/// <summary>
+/// Every Version of a Song, in tree order, and the numbers its tree draws as "Deleted Version"
+/// placeholders (a deleted Version's number with a live descendant), in tree order.
+/// </summary>
+internal sealed record VersionListResponse(VersionResponse[] Items, string[] DeletedPlaceholders);
+
+/// <summary>What deleting a Version would do, and the revision a delete must send.</summary>
+internal sealed record VersionDeletionImpactResponse(int GenerationCount, int RemainingDescendantCount, bool IsLastVersion, int Revision);
 
 /// <summary>
 /// A snapshot request: the lyrics and styles as the editor has them (both required) and, optionally,

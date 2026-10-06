@@ -1,7 +1,9 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import type { Song, SongPage } from '../api/songs';
+import { NO_RELEASE, type Song, type SongPage } from '../api/songs';
+import { testArtist } from '../test/artistServer';
+import { testArtwork } from '../test/songServer';
 import { formatDateTime } from '../api/timeZone';
 import {
   healthyReport,
@@ -44,9 +46,34 @@ function song(number: number, overrides: Partial<Song> = {}): Song {
     createdAt: '2026-10-01T09:00:00Z',
     updatedAt: '2026-10-01T09:00:00Z',
     revision: 1,
+    notes: null,
+    genres: [],
+    tags: [],
+    credits: { primary: null, featured: [] },
+    playlists: [],
+    albums: [],
+    relationships: [],
+    release: NO_RELEASE,
+    warnings: [],
+    artwork: null,
     ...overrides,
   };
 }
+
+const FOLK = { id: '0199b1a0-0000-7000-a000-000000000001', name: 'Folk', songCount: 2 };
+const ROCK = { id: '0199b1a0-0000-7000-a000-000000000003', name: 'Rock', songCount: 1 };
+const GENRES = [FOLK, ROCK];
+
+const RUNNING = { id: '0199b1a0-0000-7000-b000-000000000001', name: 'running', colour: 'gray' };
+const SUMMER = { id: '0199b1a0-0000-7000-b000-000000000002', name: 'Summer', colour: 'red' };
+const NIGHT = { id: '0199b1a0-0000-7000-b000-000000000003', name: 'night', colour: 'teal' };
+const ROAD = { id: '0199b1a0-0000-7000-b000-000000000004', name: 'road', colour: 'blue' };
+const WINTER = { id: '0199b1a0-0000-7000-b000-000000000005', name: 'winter', colour: 'cyan' };
+const TAGS = [RUNNING, SUMMER, NIGHT, ROAD, WINTER].map((tag) => ({ ...tag, songCount: 1 }));
+
+const N8 = testArtist('n8', { id: '01a10e00-0000-7000-9000-000000000001' });
+const GUEST = testArtist('Guest Singer', { id: '01a10e00-0000-7000-9000-000000000002' });
+const ARTISTS = [GUEST, N8];
 
 function page(items: Song[], extra: Partial<SongPage> = {}): SongPage {
   return { items, page: 1, pageSize: 50, total: items.length, ...extra };
@@ -68,6 +95,8 @@ interface Backend {
   create?: (body: unknown) => Response;
   /** The workflow states, when not Idea, Writing, and Archived. */
   states?: unknown[];
+  /** The catalog settings; when left out, reading them fails. */
+  catalog?: unknown;
 }
 
 /** The query string a request was made with, whatever form `fetch` was given it in. */
@@ -82,7 +111,7 @@ function sentBody(init: RequestInit | undefined): unknown {
 }
 
 /** A backend: the health report names UTC, the states are Idea, Writing, and Archived. */
-function backend({ list, song: one, create, states = STATES }: Backend) {
+function backend({ list, song: one, create, states = STATES, catalog }: Backend) {
   const mock = stubFetch();
   mock.mockImplementation((input, init) => {
     const path = requestPath(input);
@@ -92,6 +121,26 @@ function backend({ list, song: one, create, states = STATES }: Backend) {
     }
     if (path.endsWith('/api/v1/workflow-states')) {
       return Promise.resolve(jsonResponse(200, { revision: 1, items: states }));
+    }
+    if (path.endsWith('/api/v1/genres')) {
+      return Promise.resolve(jsonResponse(200, { items: GENRES }));
+    }
+    if (path.endsWith('/api/v1/tags')) {
+      return Promise.resolve(jsonResponse(200, { items: TAGS }));
+    }
+    if (path.endsWith('/api/v1/settings/catalog') && catalog !== undefined) {
+      return Promise.resolve(jsonResponse(200, catalog));
+    }
+    if (path.endsWith('/api/v1/artists')) {
+      const search = new URLSearchParams(searchOf(input)).get('search')?.toLowerCase() ?? '';
+      const items = ARTISTS.filter((artist) => artist.name.toLowerCase().includes(search));
+      return Promise.resolve(
+        jsonResponse(200, { items, page: 1, pageSize: 20, total: items.length }),
+      );
+    }
+    const artist = ARTISTS.find((candidate) => path.endsWith(`/api/v1/artists/${candidate.id}`));
+    if (artist !== undefined) {
+      return Promise.resolve(jsonResponse(200, artist));
     }
     if (path.endsWith('/api/v1/songs') && method === 'GET' && list) {
       const url = new URL(
@@ -194,7 +243,17 @@ describe('Songs', () => {
       within(table)
         .getAllByRole('columnheader')
         .map((cell) => cell.textContent),
-    ).toEqual(['Shortcode', 'Title', 'Concept', 'State', 'Kind', 'Versions', 'Updated ▼']);
+    ).toEqual([
+      'Shortcode',
+      'Title',
+      'Artist',
+      'Concept',
+      'State',
+      'Kind',
+      'Versions',
+      'Tags',
+      'Updated ▼',
+    ]);
     const first = row('n8-3');
     expect(within(first).getByRole('link', { name: 'Running in a Pack' })).toHaveAttribute(
       'href',
@@ -353,6 +412,244 @@ describe('Songs', () => {
       expect(listRequests(mock).at(-1)).toBe('');
     });
     expect(await screen.findByRole('table', { name: 'Songs' })).toBeVisible();
+  });
+
+  it('filters by any of several Genres or by none, alongside the states', async () => {
+    const mock = backend({
+      list: (search) =>
+        jsonResponse(200, search.getAll('genre').includes(ROCK.id) ? page([]) : page([song(1)])),
+    });
+    const user = userEvent.setup();
+
+    renderApp(`/songs?state=${IDEA.id}`);
+
+    const filter = await screen.findByRole('combobox', { name: 'Genre' });
+    await user.click(filter);
+    await user.click(await screen.findByRole('option', { name: 'Folk' }));
+    await waitFor(() => {
+      expect(listRequests(mock).at(-1)).toBe(`?state=${IDEA.id}&genre=${FOLK.id}`);
+    });
+    await user.click(await screen.findByRole('option', { name: 'No Genre' }));
+    await waitFor(() => {
+      expect(listRequests(mock).at(-1)).toBe(`?state=${IDEA.id}&genre=${FOLK.id}&genre=none`);
+    });
+    await user.click(await screen.findByRole('option', { name: 'Rock' }));
+    expect(await screen.findByText('No Songs match the chosen filters.')).toBeVisible();
+
+    await user.click(screen.getByRole('button', { name: 'Show every Song' }));
+    await waitFor(() => {
+      expect(listRequests(mock).at(-1)).toBe('');
+    });
+    expect(await screen.findByRole('table', { name: 'Songs' })).toBeVisible();
+  });
+
+  it('shows a row’s first three Tags as named labels and reveals the rest on hover and focus of “+N”', async () => {
+    backend({
+      list: () =>
+        jsonResponse(
+          200,
+          page([
+            song(2, { tags: [NIGHT, ROAD, RUNNING, SUMMER, WINTER] }),
+            song(1, { tags: [SUMMER] }),
+          ]),
+        ),
+    });
+    const user = userEvent.setup();
+
+    renderApp('/songs');
+
+    await screen.findByRole('table', { name: 'Songs' });
+    const labels = (shortcode: string) =>
+      [...row(shortcode).querySelectorAll('[data-tag-colour]')].map(
+        (label) => `${label.textContent} ${label.getAttribute('data-tag-colour') ?? ''}`,
+      );
+    expect(labels('n8-2')).toEqual(['night teal', 'road blue', 'running gray']);
+    expect(labels('n8-1')).toEqual(['Summer red']);
+    expect(within(row('n8-1')).queryByTestId('more-tags')).not.toBeInTheDocument();
+
+    // The rest are named for a screen reader, and shown on keyboard focus.
+    const more = within(row('n8-2')).getByTestId('more-tags');
+    expect(more).toHaveTextContent('+2 more Tags: Summer, winter');
+    await user.tab();
+    while (document.activeElement !== more) {
+      await user.tab();
+    }
+    const tooltip = await screen.findByRole('tooltip');
+    expect(
+      [...tooltip.querySelectorAll('[data-tag-colour]')].map((label) => label.textContent),
+    ).toEqual(['Summer', 'winter']);
+  });
+
+  it('filters by any of several Tags or by none, alongside the Genres', async () => {
+    const mock = backend({
+      list: (search) =>
+        jsonResponse(200, search.getAll('tag').includes(NIGHT.id) ? page([]) : page([song(1)])),
+    });
+    const user = userEvent.setup();
+
+    renderApp(`/songs?genre=${FOLK.id}`);
+
+    const filter = await screen.findByRole('combobox', { name: 'Tag' });
+    await user.click(filter);
+    await user.click(await screen.findByRole('option', { name: 'running' }));
+    await waitFor(() => {
+      expect(listRequests(mock).at(-1)).toBe(`?genre=${FOLK.id}&tag=${RUNNING.id}`);
+    });
+    await user.click(await screen.findByRole('option', { name: 'No Tags' }));
+    await waitFor(() => {
+      expect(listRequests(mock).at(-1)).toBe(`?genre=${FOLK.id}&tag=${RUNNING.id}&tag=none`);
+    });
+    await user.click(await screen.findByRole('option', { name: 'night' }));
+    expect(await screen.findByText('No Songs match the chosen filters.')).toBeVisible();
+
+    await user.click(screen.getByRole('button', { name: 'Show every Song' }));
+    await waitFor(() => {
+      expect(listRequests(mock).at(-1)).toBe('');
+    });
+    expect(await screen.findByRole('table', { name: 'Songs' })).toBeVisible();
+  });
+
+  it('shows each row’s primary Artist', async () => {
+    backend({
+      list: () =>
+        jsonResponse(
+          200,
+          page([
+            song(2, {
+              credits: {
+                primary: { id: N8.id, name: N8.name },
+                featured: [{ id: GUEST.id, name: GUEST.name }],
+              },
+            }),
+            song(1),
+          ]),
+        ),
+    });
+
+    renderApp('/songs');
+
+    await screen.findByRole('table', { name: 'Songs' });
+    expect(within(row('n8-2')).getAllByRole('cell')[1]).toHaveTextContent(/^n8$/);
+    expect(within(row('n8-1')).getAllByRole('cell')[1]).toHaveTextContent(/^$/);
+  });
+
+  it('shows each Song’s 96-pixel artwork beside its title, as its crop, or a placeholder', async () => {
+    const assetId = '01a20000-0000-7000-8000-000000000001';
+    const original = `/api/v1/artwork/${assetId}`;
+    backend({
+      list: () =>
+        jsonResponse(
+          200,
+          page([
+            song(3, {
+              title: 'Night Drive',
+              artwork: testArtwork(assetId, { crop: { x: 0, y: 0, size: 600 } }),
+            }),
+            song(2, { title: 'Centred', artwork: testArtwork(assetId) }),
+            song(1),
+          ]),
+        ),
+    });
+
+    renderApp('/songs');
+
+    await screen.findByRole('table', { name: 'Songs' });
+    const titleCell = within(row('n8-3')).getAllByRole('cell')[0];
+    if (titleCell === undefined) {
+      throw new Error('No title cell.');
+    }
+    const image = within(titleCell).getByRole('img', { name: 'Artwork for Night Drive' });
+    expect(image).toHaveAttribute('src', `${original}/crops/0-0-600/96`);
+    expect(titleCell).toHaveTextContent(/^Night Drive$/);
+    expect(within(row('n8-2')).getByRole('img', { name: 'Artwork for Centred' })).toHaveAttribute(
+      'src',
+      `${original}/96`,
+    );
+    expect(within(row('n8-1')).getAllByRole('img', { name: 'No artwork' })).toHaveLength(1);
+  });
+
+  it('filters by any of several Artists, primary or featured, or by no Artist', async () => {
+    const mock = backend({
+      list: (search) =>
+        jsonResponse(200, search.getAll('artist').length > 1 ? page([]) : page([song(1)])),
+    });
+    const user = userEvent.setup();
+
+    renderApp(`/songs?tag=${SUMMER.id}`);
+
+    const filter = await screen.findByRole('combobox', { name: 'Artist' });
+    await user.click(filter);
+    await user.type(filter, 'gue');
+    await user.click(await screen.findByRole('option', { name: 'Guest Singer' }));
+    await waitFor(() => {
+      expect(listRequests(mock).at(-1)).toBe(`?tag=${SUMMER.id}&artist=${GUEST.id}`);
+    });
+    await user.click(await screen.findByRole('option', { name: 'No Artist' }));
+    await waitFor(() => {
+      expect(listRequests(mock).at(-1)).toBe(`?tag=${SUMMER.id}&artist=${GUEST.id}&artist=none`);
+    });
+    expect(await screen.findByText('No Songs match the chosen filters.')).toBeVisible();
+
+    await user.click(screen.getByRole('button', { name: 'Show every Song' }));
+    await waitFor(() => {
+      expect(listRequests(mock).at(-1)).toBe('');
+    });
+  });
+
+  it('opens on an Artist filter given in the address, naming the Artist', async () => {
+    const mock = backend({ list: () => jsonResponse(200, page([song(1)])) });
+
+    renderApp(`/songs?artist=${N8.id}`);
+
+    await screen.findByRole('table', { name: 'Songs' });
+    expect(listRequests(mock).at(-1)).toBe(`?artist=${N8.id}`);
+    const filter = screen
+      .getByRole('combobox', { name: 'Artist' })
+      .closest('.mantine-MultiSelect-root');
+    await waitFor(() => {
+      expect(filter).toHaveTextContent('n8');
+    });
+  });
+
+  it('opens on a Tag filter given in the address', async () => {
+    const mock = backend({ list: () => jsonResponse(200, page([song(1, { tags: [SUMMER] })])) });
+
+    renderApp(`/songs?tag=${SUMMER.id}`);
+
+    await screen.findByRole('table', { name: 'Songs' });
+    expect(listRequests(mock).at(-1)).toBe(`?tag=${SUMMER.id}`);
+    const filter = screen
+      .getByRole('combobox', { name: 'Tag' })
+      .closest('.mantine-MultiSelect-root');
+    expect(filter).toHaveTextContent('Summer');
+  });
+
+  it('opens on a title filter given in the address, shows it, and clears it', async () => {
+    const mock = backend({ list: () => jsonResponse(200, page([song(1), song(2)])) });
+    const user = userEvent.setup();
+
+    renderApp('/songs?title=Working+Title&tag=none');
+
+    await screen.findByRole('table', { name: 'Songs' });
+    expect(listRequests(mock).at(-1)).toBe('?tag=none&title=Working+Title');
+    const filter = screen.getByRole('group', { name: 'Title filter' });
+    expect(filter).toHaveTextContent('Title is “Working Title”');
+
+    await user.click(within(filter).getByRole('button', { name: 'Clear the title filter' }));
+    await waitFor(() => {
+      expect(listRequests(mock).at(-1)).toBe('?tag=none');
+    });
+    expect(screen.queryByRole('group', { name: 'Title filter' })).not.toBeInTheDocument();
+  });
+
+  it('ignores a blank title in the address', async () => {
+    const mock = backend({ list: () => jsonResponse(200, page([song(1)])) });
+
+    renderApp('/songs?title=%20%20');
+
+    await screen.findByRole('table', { name: 'Songs' });
+    expect(listRequests(mock)).toEqual(['']);
+    expect(screen.queryByRole('group', { name: 'Title filter' })).not.toBeInTheDocument();
   });
 
   it('offers a hidden state in the filter only while Songs are in it', async () => {
@@ -553,6 +850,65 @@ describe('New Song', () => {
       title: 'Running in a Pack',
       concept: '',
     });
+  });
+
+  it('starts the primary Artist as the default Artist and sends it', async () => {
+    const mock = backend({
+      list: () => jsonResponse(200, page([])),
+      create: () => jsonResponse(201, song(1)),
+      song: () => jsonResponse(200, song(1)),
+      catalog: { revision: 2, defaultArtist: { id: N8.id, name: N8.name } },
+    });
+    const user = userEvent.setup();
+
+    renderApp('/songs');
+    const form = await openDialog(user);
+    expect(await within(form).findByTestId('new-song-primary')).toHaveTextContent(
+      'n8 (the default Artist)',
+    );
+    await user.type(within(form).getByLabelText(/Title/), 'Running in a Pack');
+    await user.click(within(form).getByRole('button', { name: 'Create Song' }));
+
+    await waitFor(() => {
+      expect(posts(mock)).toHaveLength(1);
+    });
+    expect(sentBody(posts(mock)[0]?.[1])).toEqual({
+      title: 'Running in a Pack',
+      concept: '',
+      primaryArtistId: N8.id,
+    });
+  });
+
+  it('lets the user choose no primary Artist, or another one, over the default', async () => {
+    const mock = backend({
+      list: () => jsonResponse(200, page([])),
+      create: () => problem(500, 'internal_error'),
+      catalog: { revision: 2, defaultArtist: { id: N8.id, name: N8.name } },
+    });
+    const user = userEvent.setup();
+
+    renderApp('/songs');
+    const form = await openDialog(user);
+    await user.click(await within(form).findByRole('button', { name: 'Remove primary Artist n8' }));
+    expect(within(form).getByTestId('new-song-primary')).toHaveTextContent('None');
+    await user.type(within(form).getByLabelText(/Title/), 'Alone');
+    await user.click(within(form).getByRole('button', { name: 'Create Song' }));
+    await waitFor(() => {
+      expect(posts(mock)).toHaveLength(1);
+    });
+    expect(sentBody(posts(mock)[0]?.[1])).toMatchObject({ primaryArtistId: null });
+
+    await user.type(
+      within(form).getByRole('textbox', { name: 'Choose another primary Artist' }),
+      'gue',
+    );
+    await user.click(await screen.findByRole('option', { name: 'Guest Singer' }));
+    expect(within(form).getByTestId('new-song-primary')).toHaveTextContent(/^Guest SingerRemove$/);
+    await user.click(within(form).getByRole('button', { name: 'Create Song' }));
+    await waitFor(() => {
+      expect(posts(mock)).toHaveLength(2);
+    });
+    expect(sentBody(posts(mock)[1]?.[1])).toMatchObject({ primaryArtistId: GUEST.id });
   });
 
   it('creates the Song and opens its page', async () => {

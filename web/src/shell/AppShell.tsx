@@ -33,8 +33,8 @@ function SidebarLink({
 
 /**
  * The signed-in shell: the header (sidebar toggle, product name, colour control, Go to box, user menu), the
- * sidebar, and the current page. The sidebar lists Songs and Settings, and Settings has Account,
- * Credentials, Workflow, Suno, Backups, and System; later stories add pages. On a narrow screen the sidebar is hidden until the toggle opens
+ * sidebar, and the current page. The sidebar lists Songs, Artists, Albums, and Settings, and Settings has Account,
+ * Credentials, Workflow, Catalog, Genres, Tags, Relationships, Suno, Backups, and System; later stories add pages. On a narrow screen the sidebar is hidden until the toggle opens
  * it, and choosing a page closes it again.
  */
 export function SignedInShell() {
@@ -59,6 +59,9 @@ export function SignedInShell() {
       <AppShell.Navbar p="xs" id="app-navigation" aria-label="Main">
         <Stack gap={4}>
           <SidebarLink to="/songs" label="Songs" onNavigate={close} />
+          <SidebarLink to="/artists" label="Artists" onNavigate={close} />
+          <SidebarLink to="/albums" label="Albums" onNavigate={close} />
+          <SidebarLink to="/playlists" label="Playlists" onNavigate={close} />
           <Text
             id="navigation-settings"
             size="xs"
@@ -74,6 +77,10 @@ export function SignedInShell() {
             <SidebarLink to="/settings/account" label="Account" onNavigate={close} />
             <SidebarLink to="/settings/credentials" label="Credentials" onNavigate={close} />
             <SidebarLink to="/settings/workflow" label="Workflow" onNavigate={close} />
+            <SidebarLink to="/settings/catalog" label="Catalog" onNavigate={close} />
+            <SidebarLink to="/settings/genres" label="Genres" onNavigate={close} />
+            <SidebarLink to="/settings/tags" label="Tags" onNavigate={close} />
+            <SidebarLink to="/settings/relationships" label="Relationships" onNavigate={close} />
             <SidebarLink to="/settings/suno" label="Suno" onNavigate={close} />
             <SidebarLink to="/settings/backups" label="Backups" onNavigate={close} />
             <SidebarLink to="/settings/system" label="System" onNavigate={close} />

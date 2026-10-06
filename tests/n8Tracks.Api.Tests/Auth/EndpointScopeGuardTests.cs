@@ -42,6 +42,46 @@ public sealed class EndpointScopeGuardTests
         Assert.Equal("scope", markers["GET /api/v1/songs"]);
         Assert.Equal("scope", markers["GET /api/v1/songs/{reference}"]);
         Assert.Equal("scope", markers["PATCH /api/v1/songs/{reference}"]);
+        Assert.Equal("scope", markers["GET /api/v1/languages"]);
+        Assert.Equal("scope", markers["GET /api/v1/genres"]);
+        Assert.Equal("scope", markers["POST /api/v1/genres"]);
+        Assert.Equal("session-only", markers["PATCH /api/v1/genres/{id:guid}"]);
+        Assert.Equal("session-only", markers["POST /api/v1/genres/{id:guid}/merge"]);
+        Assert.Equal("session-only", markers["DELETE /api/v1/genres/{id:guid}"]);
+        Assert.Equal("scope", markers["GET /api/v1/tags"]);
+        Assert.Equal("scope", markers["POST /api/v1/tags"]);
+        Assert.Equal("session-only", markers["PATCH /api/v1/tags/{id:guid}"]);
+        Assert.Equal("session-only", markers["POST /api/v1/tags/{id:guid}/merge"]);
+        Assert.Equal("session-only", markers["DELETE /api/v1/tags/{id:guid}"]);
+        Assert.Equal("scope", markers["GET /api/v1/artists"]);
+        Assert.Equal("scope", markers["GET /api/v1/artists/{id:guid}"]);
+        Assert.Equal("scope", markers["POST /api/v1/artists"]);
+        Assert.Equal("scope", markers["PATCH /api/v1/artists/{id:guid}"]);
+        Assert.Equal("session-only", markers["DELETE /api/v1/artists/{id:guid}"]);
+        Assert.Equal("scope", markers["GET /api/v1/albums"]);
+        Assert.Equal("scope", markers["GET /api/v1/albums/{id:guid}"]);
+        Assert.Equal("scope", markers["POST /api/v1/albums"]);
+        Assert.Equal("scope", markers["PATCH /api/v1/albums/{id:guid}"]);
+        Assert.Equal("scope", markers["POST /api/v1/albums/{id:guid}/tracks"]);
+        Assert.Equal("scope", markers["DELETE /api/v1/albums/{id:guid}/tracks/{reference}"]);
+        Assert.Equal("scope", markers["PUT /api/v1/albums/{id:guid}/tracks"]);
+        Assert.Equal("scope", markers["GET /api/v1/playlists"]);
+        Assert.Equal("scope", markers["GET /api/v1/playlists/{id:guid}"]);
+        Assert.Equal("scope", markers["POST /api/v1/playlists"]);
+        Assert.Equal("scope", markers["PATCH /api/v1/playlists/{id:guid}"]);
+        Assert.Equal("scope", markers["POST /api/v1/playlists/{id:guid}/songs"]);
+        Assert.Equal("scope", markers["DELETE /api/v1/playlists/{id:guid}/songs/{reference}"]);
+        Assert.Equal("scope", markers["PUT /api/v1/playlists/{id:guid}/songs"]);
+        Assert.Equal("scope", markers["GET /api/v1/relationship-types"]);
+        Assert.Equal("session-only", markers["POST /api/v1/relationship-types"]);
+        Assert.Equal("session-only", markers["PATCH /api/v1/relationship-types/{id:guid}"]);
+        Assert.Equal("session-only", markers["DELETE /api/v1/relationship-types/{id:guid}"]);
+        Assert.Equal("scope", markers["POST /api/v1/songs/{reference}/relationships"]);
+        Assert.Equal("scope", markers["DELETE /api/v1/songs/{reference}/relationships/{id:guid}"]);
+        Assert.Equal("scope", markers["POST /api/v1/artwork"]);
+        Assert.Equal("scope", markers["GET /api/v1/artwork/{assetId:guid}"]);
+        Assert.Equal("scope", markers["GET /api/v1/artwork/{assetId:guid}/{size}"]);
+        Assert.Equal("scope", markers["GET /api/v1/artwork/{assetId:guid}/crops/{cropKey}/{size}"]);
         Assert.Equal("scope", markers["GET /api/v1/versions/{reference}/next-numbers"]);
         Assert.Equal("scope", markers["GET /api/v1/songs/{reference}/versions"]);
         Assert.Equal("scope", markers["POST /api/v1/songs/{reference}/versions"]);
@@ -52,6 +92,13 @@ public sealed class EndpointScopeGuardTests
         Assert.Equal("scope", markers["GET /api/v1/versions/{reference}/snapshots"]);
         Assert.Equal("scope", markers["GET /api/v1/versions/{reference}/snapshots/{snapshotId:guid}"]);
         Assert.Equal("scope", markers["POST /api/v1/versions/{reference}/snapshots/{snapshotId:guid}/restore"]);
+        Assert.Equal("session-only", markers["DELETE /api/v1/versions/{reference}/snapshots/{snapshotId:guid}"]);
+        Assert.Equal("session-only", markers["GET /api/v1/versions/{reference}/deletion-impact"]);
+        Assert.Equal("session-only", markers["DELETE /api/v1/versions/{reference}"]);
+        Assert.Equal("session-only", markers["GET /api/v1/songs/{reference}/deletion-impact"]);
+        Assert.Equal("session-only", markers["DELETE /api/v1/songs/{reference}"]);
+        Assert.Equal("session-only", markers["DELETE /api/v1/albums/{id:guid}"]);
+        Assert.Equal("session-only", markers["DELETE /api/v1/playlists/{id:guid}"]);
         Assert.Equal("scope", markers["GET /api/v1/resolve/{reference}"]);
         Assert.Equal("scope", markers["GET /api/v1/suno/create-fields"]);
         Assert.Equal("scope", markers["GET /api/v1/suno/models"]);
@@ -61,6 +108,9 @@ public sealed class EndpointScopeGuardTests
         Assert.Equal("session-only", markers["DELETE /api/v1/suno/models/{id:guid}"]);
         Assert.Equal("scope", markers["GET /api/v1/settings/version-defaults"]);
         Assert.Equal("session-only", markers["PUT /api/v1/settings/version-defaults"]);
+        Assert.Equal("session-only", markers["GET /api/v1/settings/catalog"]);
+        Assert.Equal("session-only", markers["PUT /api/v1/settings/catalog"]);
+        Assert.Equal("scope", markers["PUT /api/v1/songs/{reference}/credits"]);
         Assert.Equal("scope", markers["GET /api/v1/workflow-states"]);
         Assert.Equal("session-only", markers["POST /api/v1/workflow-states"]);
         Assert.Equal("session-only", markers["PATCH /api/v1/workflow-states/{id:guid}"]);
@@ -140,7 +190,7 @@ public sealed class EndpointScopeGuardTests
             }
         }
 
-        Assert.Equal(26, sessionOnly);
+        Assert.Equal(45, sessionOnly);
 
         // An anonymous endpoint answers as it would without the header, even to a token that is not one.
         using var status = await CredentialApi.SendRawAsync(client, HttpMethod.Get, SetupApi.Status, "Bearer not-a-token");

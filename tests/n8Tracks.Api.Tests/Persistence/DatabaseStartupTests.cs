@@ -1,4 +1,5 @@
 using System.Globalization;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using n8Tracks.Api.Tests.Logging;
@@ -39,7 +40,21 @@ public sealed class DatabaseStartupTests : IDisposable
             migration => Assert.Matches("^[0-9]{14}_AddGenerations\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AddVersionInputs\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AddSpeechAndSoundInputs\\|10\\.0\\.", migration),
-            migration => Assert.Matches("^[0-9]{14}_AddSunoModels\\|10\\.0\\.", migration));
+            migration => Assert.Matches("^[0-9]{14}_AddSunoModels\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddGenresAndSongNotes\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddGenreRevisions\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddTags\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddArtists\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddSongArtistCredits\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddAlbums\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddPlaylists\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddAlbumTracks\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddSongRelationships\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddSongRelease\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddSongTitleKey\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddRetention\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddAssets\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddArtworkAttachments\\|10\\.0\\.", migration));
 
         // ISO 8601 UTC with milliseconds and Z, taken when the migration ran.
         var initialized = TestDatabase.SchemaInitializedUtc(directory.Path);
@@ -58,7 +73,7 @@ public sealed class DatabaseStartupTests : IDisposable
         Start();
 
         Assert.Equal(
-            ["__EFMigrationsHistory", "administrators", "app_metadata", "credentials", "editor_revisions", "generations", "jobs", "sessions", "settings", "shortcode_sequence", "songs", "suno_models", "used_version_numbers", "versions", "workflow_states"],
+            ["__EFMigrationsHistory", "administrators", "album_links", "album_songs", "albums", "app_metadata", "artist_aliases", "artist_links", "artists", "artwork_attachments", "assets", "credentials", "editor_revisions", "generations", "genres", "jobs", "pending_file_deletions", "playlist_songs", "playlists", "retention_groups", "retention_records", "sessions", "settings", "shortcode_sequence", "song_artist_credits", "song_genres", "song_links", "song_relationship_types", "song_relationships", "song_tags", "songs", "suno_models", "tags", "used_version_numbers", "versions", "workflow_states"],
             TestDatabase.Rows(
                 directory.Path,
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> '__EFMigrationsLock' ORDER BY name;"));
@@ -144,6 +159,32 @@ public sealed class DatabaseStartupTests : IDisposable
     }
 
     [Fact]
+    public async Task AfterStartupTheContextNeverCreatesADatabaseFileThatWasDeleted()
+    {
+        using var host = TestDatabase.Host(directory.Path);
+        using (var scope = host.Services.CreateScope())
+        {
+            Assert.True(await scope.ServiceProvider.GetRequiredService<N8TracksDbContext>().Database.CanConnectAsync());
+        }
+
+        SqliteConnection.ClearAllPools();
+        foreach (var file in Directory.EnumerateFiles(directory.Path, "n8tracks.db*"))
+        {
+            File.Delete(file);
+        }
+
+        // What a background task or a request does next (#300): before, this opened a new, empty file.
+        using (var scope = host.Services.CreateScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<N8TracksDbContext>();
+            var refused = await Assert.ThrowsAsync<SqliteException>(() => context.AppMetadata.AsNoTracking().ToListAsync());
+            Assert.Equal(14, refused.SqliteErrorCode); // SQLITE_CANTOPEN
+        }
+
+        Assert.Empty(Directory.EnumerateFiles(directory.Path, "n8tracks.db*"));
+    }
+
+    [Fact]
     public async Task EveryConnectionHasForeignKeysOnAFiveSecondBusyTimeoutAndSynchronousNormalOverAWalDatabase()
     {
         using var host = TestDatabase.Host(directory.Path);
@@ -173,7 +214,7 @@ public sealed class DatabaseStartupTests : IDisposable
 
         Assert.Equal(MigrationStatus.UpToDate, state.Status);
         Assert.Equal(TestDatabase.History(directory.Path)[^1].Split('|')[0], state.LastAppliedMigrationId);
-        Assert.EndsWith("_AddSunoModels", state.LastAppliedMigrationId, StringComparison.Ordinal);
+        Assert.EndsWith("_AddArtworkAttachments", state.LastAppliedMigrationId, StringComparison.Ordinal);
     }
 
     [Fact]

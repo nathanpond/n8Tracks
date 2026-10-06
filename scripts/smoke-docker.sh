@@ -635,6 +635,54 @@ section "Disaster recovery: back up, stop, restore with the command, start" disa
 
 # ---------------------------------------------------------------------------------------------------
 
+# The Demo of recovering a deleted item (#105): a Song deleted through the API is listed by
+# n8tracks list-deleted and put back by n8tracks restore-deleted, run with docker exec beside the
+# running app, which serves it again at once.
+deleted_recovery() {
+    local name="$PREFIX-deleted" jar="$WORK/cookies-deleted" created shortcode revision listed restored
+    run_app() {
+        docker run --detach --name "$name" --publish "$HOST_PORT:8787" \
+            --env PUID="$RUN_UID" --env PGID="$RUN_GID" --volume "$PREFIX-data:/data" "$IMAGE" >/dev/null
+    }
+
+    run_app
+    wait_for_http "$name" /health
+    expect "setup of the instance to recover in" 201 "$(submit_setup)" "$name"
+    expect "signing in to the instance to recover in" 201 "$(sign_in "$jar")" "$name"
+    created="$(api "$jar" POST /api/v1/songs '{"title":"Deleted by mistake"}')"
+    expect "creating the Song to delete" 201 "$(printf '%s' "$created" | tail -n 1)" "$name"
+    shortcode="$(printf '%s' "$created" | sed '$d' | json_field shortcode)"
+    revision="$(printf '%s' "$created" | sed '$d' | json_field revision)"
+    expect "deleting the Song through the API" 204 "$(curl --silent --output /dev/null --max-time 10 --write-out '%{http_code}' \
+        --cookie "$jar" --header 'X-N8Tracks-Request: 1' --header 'Content-Type: application/json' \
+        --header "If-Match: \"$revision\"" --request DELETE --data '{"confirmTitle":"Deleted by mistake"}' \
+        "$(url "/api/v1/songs/$shortcode")" || true)" "$name"
+    expect "the deleted Song is gone from the API" 404 "$(api "$jar" GET "/api/v1/songs/$shortcode" | tail -n 1)" "$name"
+
+    listed="$(docker exec "$name" n8tracks list-deleted 2>/dev/null || true)"
+    case "$listed" in
+        *Song*"$shortcode (Deleted by mistake)"*" $shortcode "*) pass "n8tracks list-deleted lists the Song with its shortcode" ;;
+        *) fail "n8tracks list-deleted lists the Song with its shortcode (got: $listed)" "$name" ;;
+    esac
+
+    restored="$(docker exec "$name" n8tracks restore-deleted "$shortcode" 2>/dev/null || true)"
+    case "$restored" in
+        "Restored Song $shortcode (Deleted by mistake)"*"Song: 1"*) pass "n8tracks restore-deleted $shortcode reports what it put back" ;;
+        *) fail "n8tracks restore-deleted $shortcode reports what it put back (got: $restored)" "$name" ;;
+    esac
+    expect "the restored Song is readable again without a restart" 200 "$(api "$jar" GET "/api/v1/songs/$shortcode" | tail -n 1)" "$name"
+    expect "the restored Song keeps its title" "Deleted by mistake" "$(song_titles "$jar")" "$name"
+    refute "n8tracks restore-deleted refuses what is no longer in retention" "$name" docker exec "$name" n8tracks restore-deleted "$shortcode"
+    expect "the database after the restore still belongs to PUID:PGID" "$RUN_UID:$RUN_GID" \
+        "$(docker exec "$name" stat -c '%u:%g' /data/n8tracks.db)" "$name"
+    assert_log_is_json "$name"
+    remove "$name"
+}
+
+section "Recovering a deleted Song with the container commands" deleted_recovery
+
+# ---------------------------------------------------------------------------------------------------
+
 no_media() {
     local name="$PREFIX-nomedia"
     mkdir -p "$WORK/data-nomedia"

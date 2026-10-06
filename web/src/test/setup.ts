@@ -30,6 +30,11 @@ Range.prototype.getBoundingClientRect = function getBoundingClientRect() {
   return document.createElement('span').getBoundingClientRect();
 };
 
+// Nor anything to scroll: Mantine's Combobox scrolls the option it selects into view.
+Element.prototype.scrollIntoView = function scrollIntoView() {
+  // Nothing is laid out in jsdom, so there is nowhere to scroll to.
+};
+
 beforeEach(() => {
   vi.stubGlobal('ResizeObserver', ResizeObserverStub);
   vi.stubGlobal('matchMedia', (query: string): MediaQueryList => ({

@@ -9,7 +9,7 @@ import {
 } from 'react';
 import type { Version } from '../api/versions';
 import type { EditorText } from '../editor/useSnapshots';
-import { nestVersions, versionLabel, type VersionNode } from './versionNesting';
+import { nestVersions, placeholderLabel, versionLabel, type VersionNode } from './versionNesting';
 
 /** What can be done with a Version, from its actions menu in the tree or the selected Version's header. */
 export interface VersionActions {
@@ -21,6 +21,8 @@ export interface VersionActions {
   onCreateFrom: (version: Version, content?: EditorText) => void;
   onMakeCurrent: (version: Version) => void;
   onSetArchived: (version: Version, archived: boolean) => void;
+  /** Opens the confirmation for deleting `version`. */
+  onDelete: (version: Version) => void;
 }
 
 /** The tree's nodes in the order the arrow keys walk them: depth first, skipping collapsed branches. */
@@ -38,9 +40,7 @@ function walk(
 ): Visible[] {
   return nodes.flatMap((node) => [
     { node, level, parentId },
-    ...(collapsed.has(node.version.id)
-      ? []
-      : walk(node.children, collapsed, level + 1, node.version.id)),
+    ...(collapsed.has(node.key) ? [] : walk(node.children, collapsed, level + 1, node.key)),
   ]);
 }
 
@@ -71,6 +71,14 @@ function ActionItems({ version, actions }: { version: Version; actions: VersionA
       >
         {version.archived ? 'Unarchive' : 'Archive'}
       </Menu.Item>
+      {/* Not red: Mantine's red menu text fails contrast on the menu (axe). */}
+      <Menu.Item
+        onClick={() => {
+          actions.onDelete(version);
+        }}
+      >
+        Delete
+      </Menu.Item>
     </>
   );
 }
@@ -81,7 +89,10 @@ function ActionItems({ version, actions }: { version: Version; actions: VersionA
  * drawn), siblings in numeric order, every branch expanded at first. The selected Version is
  * `aria-selected`; the current working Version is `aria-current` and marked; a frozen one (it has a
  * Generation) shows a lock, which its accessible name also says. Archived Versions are
- * drawn, dimmed, only while "Show archived" is on; the current one is always drawn.
+ * drawn, dimmed, only while "Show archived" is on; the current one is always drawn. A deleted
+ * Version that still has descendants drawn is a "Deleted Version" placeholder in its place: it
+ * carries its number and can be reached with the arrow keys, but cannot be selected and has no
+ * actions.
  *
  * One node is in the tab order at a time (roving tabindex). Up and Down move between drawn nodes,
  * Home and End go to the first and last, Right expands a branch or enters it, Left collapses it or
@@ -90,6 +101,7 @@ function ActionItems({ version, actions }: { version: Version; actions: VersionA
  */
 export function VersionTree({
   versions,
+  placeholders = [],
   selectedId,
   showArchived,
   onShowArchived,
@@ -97,6 +109,8 @@ export function VersionTree({
   actions,
 }: {
   versions: Version[];
+  /** Deleted Versions' numbers that have live descendants. */
+  placeholders?: readonly string[];
   selectedId: string | undefined;
   showArchived: boolean;
   onShowArchived: (show: boolean) => void;
@@ -112,16 +126,17 @@ export function VersionTree({
   const roots = nestVersions(
     versions,
     (version) => showArchived || !version.archived || version.current,
+    placeholders,
   );
   const visible = walk(roots, collapsed);
   const tabbableId =
     [focusedId, selectedId]
-      .map((id) => visible.find((entry) => entry.node.version.id === id))
-      .find((entry) => entry !== undefined)?.node.version.id ?? visible[0]?.node.version.id;
+      .map((id) => visible.find((entry) => entry.node.key === id))
+      .find((entry) => entry !== undefined)?.node.key ?? visible[0]?.node.key;
 
   // A node that held focus and is no longer drawn (archived while "Show archived" is off) hands
   // focus to the node now in the tab order, so a keyboard user is not dropped on the page body.
-  const visibleKey = visible.map((entry) => entry.node.version.id).join(' ');
+  const visibleKey = visible.map((entry) => entry.node.key).join(' ');
   useEffect(() => {
     const active = document.activeElement;
     if (hadFocus.current && (active === null || active === document.body) && tabbableId) {
@@ -158,48 +173,55 @@ export function VersionTree({
     if (entry === undefined) {
       return;
     }
-    const { version, children } = entry.node;
-    const expanded = children.length > 0 && !collapsed.has(version.id);
+    const { key, version, children } = entry.node;
+    const expanded = children.length > 0 && !collapsed.has(key);
     let handled = true;
     switch (event.key) {
       case 'ArrowDown':
-        focusNode(visible[index + 1]?.node.version.id);
+        focusNode(visible[index + 1]?.node.key);
         break;
       case 'ArrowUp':
-        focusNode(visible[index - 1]?.node.version.id);
+        focusNode(visible[index - 1]?.node.key);
         break;
       case 'Home':
-        focusNode(visible[0]?.node.version.id);
+        focusNode(visible[0]?.node.key);
         break;
       case 'End':
-        focusNode(visible[visible.length - 1]?.node.version.id);
+        focusNode(visible[visible.length - 1]?.node.key);
         break;
       case 'ArrowRight':
         if (children.length > 0) {
           if (expanded) {
-            focusNode(children[0]?.version.id);
+            focusNode(children[0]?.key);
           } else {
-            setExpanded(version.id, true);
+            setExpanded(key, true);
           }
         }
         break;
       case 'ArrowLeft':
         if (expanded) {
-          setExpanded(version.id, false);
+          setExpanded(key, false);
         } else {
           focusNode(entry.parentId);
         }
         break;
       case 'Enter':
       case ' ':
-        onSelect(version);
+        // A placeholder cannot be selected.
+        if (version !== undefined) {
+          onSelect(version);
+        }
         break;
       case 'ContextMenu':
-        setMenuFor(version.id);
+        if (version !== undefined) {
+          setMenuFor(key);
+        }
         break;
       case 'F10':
         if (event.shiftKey) {
-          setMenuFor(version.id);
+          if (version !== undefined) {
+            setMenuFor(key);
+          }
         } else {
           handled = false;
         }
@@ -222,48 +244,120 @@ export function VersionTree({
     ) {
       return;
     }
-    const { version, children } = node;
-    setFocusedId(version.id);
+    const { key, version, children } = node;
+    setFocusedId(key);
     if (children.length > 0 && target.closest('[data-disclosure]') !== null) {
-      setExpanded(version.id, collapsed.has(version.id));
+      setExpanded(key, collapsed.has(key));
       return;
     }
-    onSelect(version);
+    if (version !== undefined) {
+      onSelect(version);
+    }
   };
 
-  const groupId = (version: Version) => `version-group-${version.id}`;
+  const groupId = (key: string) => `version-group-${key}`;
+
+  /** What a Version's row shows after its number. */
+  const marks = (version: Version) => (
+    <>
+      {version.name !== null && (
+        <Text span truncate>
+          {version.name}
+        </Text>
+      )}
+      {version.current && (
+        <Badge size="sm" variant="filled" radius="sm" tt="none">
+          Current
+        </Badge>
+      )}
+      {version.isFrozen && (
+        <Text
+          span
+          size="sm"
+          role="img"
+          aria-label="Frozen: has a Generation"
+          title="Frozen: has a Generation, so its lyrics and styles are locked"
+          data-testid="frozen-lock"
+        >
+          🔒
+        </Text>
+      )}
+      {version.archived && (
+        <Text span size="xs">
+          (archived)
+        </Text>
+      )}
+    </>
+  );
+
+  /** A Version's actions menu, the next tab stop after its node. */
+  const menu = (version: Version, tabbable: boolean) => (
+    // No focus placeholder: Mantine's is a focusable element with role="presentation" inside the
+    // menu, which axe reports as a child a menu may not have.
+    <Menu
+      position="bottom-end"
+      withinPortal
+      withInitialFocusPlaceholder={false}
+      hideDetached={false}
+      opened={menuFor === version.id}
+      onChange={(opened) => {
+        setMenuFor(opened ? version.id : undefined);
+      }}
+      onClose={() => {
+        items.current.get(version.id)?.focus();
+      }}
+    >
+      <Menu.Target>
+        <ActionIcon
+          variant="subtle"
+          color="gray"
+          size="sm"
+          tabIndex={tabbable ? 0 : -1}
+          aria-label={`Actions for Version ${version.number}`}
+        >
+          <span aria-hidden="true">⋯</span>
+        </ActionIcon>
+      </Menu.Target>
+      <Menu.Dropdown>
+        <ActionItems version={version} actions={actions} />
+      </Menu.Dropdown>
+    </Menu>
+  );
 
   const draw = (nodes: VersionNode[], level: number): ReactNode =>
     nodes.map((node, position) => {
-      const { version, children } = node;
-      const index = visible.findIndex((entry) => entry.node.version.id === version.id);
+      const { key, number, version, children } = node;
+      const index = visible.findIndex((entry) => entry.node.key === key);
       const branch = children.length > 0;
-      const expanded = branch && !collapsed.has(version.id);
-      const selected = version.id === selectedId;
-      const tabbable = version.id === tabbableId;
+      const expanded = branch && !collapsed.has(key);
+      const selected = version !== undefined && key === selectedId;
+      const tabbable = key === tabbableId;
+      const dimmed = version === undefined || version.archived;
       return (
-        <div key={version.id} role="none">
+        <div key={key} role="none">
           <div
             role="treeitem"
             ref={(element) => {
               if (element) {
-                items.current.set(version.id, element);
+                items.current.set(key, element);
               } else {
-                items.current.delete(version.id);
+                items.current.delete(key);
               }
             }}
             className="mantine-focus-auto"
             tabIndex={tabbable ? 0 : -1}
-            aria-label={versionLabel(version)}
+            aria-label={version === undefined ? placeholderLabel(number) : versionLabel(version)}
             aria-level={level}
             aria-setsize={nodes.length}
             aria-posinset={position + 1}
             aria-selected={selected}
-            aria-current={version.current ? 'true' : undefined}
+            aria-disabled={version === undefined ? true : undefined}
+            aria-current={version?.current ? 'true' : undefined}
             aria-expanded={branch ? expanded : undefined}
-            aria-owns={expanded ? groupId(version) : undefined}
-            data-version-number={version.number}
-            data-archived={version.archived || undefined}
+            aria-owns={expanded ? groupId(key) : undefined}
+            data-version-number={version === undefined ? undefined : number}
+            data-deleted-number={version === undefined ? number : undefined}
+            data-archived={version?.archived === true ? true : undefined}
             onKeyDown={(event) => {
               keys(event, index);
             }}
@@ -272,14 +366,14 @@ export function VersionTree({
             }}
             onFocus={(event) => {
               if (event.target === event.currentTarget) {
-                setFocusedId(version.id);
+                setFocusedId(key);
               }
             }}
             style={{
               display: 'flex',
               alignItems: 'center',
               gap: 4,
-              cursor: 'pointer',
+              cursor: version === undefined ? 'default' : 'pointer',
               paddingBlock: 2,
               paddingInline: 'var(--mantine-spacing-xs)',
               borderRadius: 'var(--mantine-radius-sm)',
@@ -287,8 +381,8 @@ export function VersionTree({
               borderInlineStart: selected
                 ? '3px solid var(--mantine-primary-color-filled)'
                 : '3px solid transparent',
-              color: version.archived ? 'var(--n8-color-secondary-text)' : undefined,
-              fontStyle: version.archived ? 'italic' : undefined,
+              color: dimmed ? 'var(--n8-color-secondary-text)' : undefined,
+              fontStyle: dimmed ? 'italic' : undefined,
             }}
           >
             {/* The disclosure arrow is for the mouse (a click on it expands or collapses); keyboard
@@ -296,73 +390,30 @@ export function VersionTree({
             <Text span aria-hidden="true" w="1em" ta="center" data-disclosure>
               {branch ? (expanded ? '▾' : '▸') : ''}
             </Text>
-            <Group gap={6} wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
-              <Text span fw={700} ff="monospace">
-                {version.number}
+            {version === undefined ? (
+              // A placeholder holds the deleted number's place; it is not a Version to open.
+              <Text span size="sm" style={{ flex: 1, minWidth: 0 }}>
+                Deleted Version{' '}
+                <Text span fw={700} ff="monospace" inherit>
+                  {number}
+                </Text>
               </Text>
-              {version.name !== null && (
-                <Text span truncate>
-                  {version.name}
-                </Text>
-              )}
-              {version.current && (
-                <Badge size="sm" variant="filled" radius="sm" tt="none">
-                  Current
-                </Badge>
-              )}
-              {version.isFrozen && (
-                <Text
-                  span
-                  size="sm"
-                  role="img"
-                  aria-label="Frozen: has a Generation"
-                  title="Frozen: has a Generation, so its lyrics and styles are locked"
-                  data-testid="frozen-lock"
-                >
-                  🔒
-                </Text>
-              )}
-              {version.archived && (
-                <Text span size="xs">
-                  (archived)
-                </Text>
-              )}
-            </Group>
-            {/* No focus placeholder: Mantine's is a focusable element with role="presentation"
-                inside the menu, which axe reports as a child a menu may not have. */}
-            <Menu
-              position="bottom-end"
-              withinPortal
-              withInitialFocusPlaceholder={false}
-              hideDetached={false}
-              opened={menuFor === version.id}
-              onChange={(opened) => {
-                setMenuFor(opened ? version.id : undefined);
-              }}
-              onClose={() => {
-                items.current.get(version.id)?.focus();
-              }}
-            >
-              <Menu.Target>
-                <ActionIcon
-                  variant="subtle"
-                  color="gray"
-                  size="sm"
-                  tabIndex={tabbable ? 0 : -1}
-                  aria-label={`Actions for Version ${version.number}`}
-                >
-                  <span aria-hidden="true">⋯</span>
-                </ActionIcon>
-              </Menu.Target>
-              <Menu.Dropdown>
-                <ActionItems version={version} actions={actions} />
-              </Menu.Dropdown>
-            </Menu>
+            ) : (
+              <>
+                <Group gap={6} wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
+                  <Text span fw={700} ff="monospace">
+                    {number}
+                  </Text>
+                  {marks(version)}
+                </Group>
+                {menu(version, tabbable)}
+              </>
+            )}
           </div>
           {expanded && (
             <div
               role="group"
-              id={groupId(version)}
+              id={groupId(key)}
               style={{ paddingInlineStart: 'var(--mantine-spacing-md)' }}
             >
               {draw(children, level + 1)}

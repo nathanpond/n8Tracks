@@ -132,14 +132,125 @@ function optionsOf(value: unknown): NumberOption[] | undefined {
     : undefined;
 }
 
-const acceptVersions = (answer: unknown) =>
-  isRecord(answer) && Array.isArray(answer.items) && answer.items.every(isVersion)
-    ? answer.items
+/**
+ * A Song's Versions, archived ones included, flat, in tree order, and the numbers its tree draws as
+ * "Deleted Version" placeholders: deleted Versions' numbers that still have a live descendant.
+ */
+export interface VersionList {
+  items: Version[];
+  deletedPlaceholders: string[];
+}
+
+const acceptVersions = (answer: unknown): VersionList | undefined =>
+  isRecord(answer) &&
+  Array.isArray(answer.items) &&
+  answer.items.every(isVersion) &&
+  Array.isArray(answer.deletedPlaceholders) &&
+  answer.deletedPlaceholders.every((number) => typeof number === 'string')
+    ? { items: answer.items, deletedPlaceholders: answer.deletedPlaceholders }
     : undefined;
 
-/** Every Version of a Song (by ID or shortcode), archived ones included, flat, in tree order. */
+function songVersionsPath(reference: string): string {
+  return `${SONGS_PATH}/${encodeURIComponent(reference)}/versions`;
+}
+
+/** Every Version of a Song (by ID or shortcode), archived ones included, with its tree's placeholders. */
 export function useSongVersions(reference: string) {
-  return useResource(`${SONGS_PATH}/${encodeURIComponent(reference)}/versions`, acceptVersions);
+  return useResource(songVersionsPath(reference), acceptVersions);
+}
+
+/** Reads a Song's Versions again, as {@link useSongVersions} does; undefined when that fails. */
+export async function readSongVersions(reference: string): Promise<VersionList | undefined> {
+  try {
+    const response = await apiFetch(songVersionsPath(reference));
+    const answer = await body(response);
+    return response.ok ? acceptVersions(answer) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** What deleting a Version would do, read when its confirmation opens. */
+export interface DeletionImpact {
+  /** Its Generations, deleted with it. */
+  generationCount: number;
+  /** Its descendant Versions, which remain. */
+  remainingDescendantCount: number;
+  /** Whether it is the Song's only Version: a new blank one is created. */
+  isLastVersion: boolean;
+  revision: number;
+}
+
+function isDeletionImpact(value: unknown): value is DeletionImpact {
+  return (
+    isRecord(value) &&
+    typeof value.generationCount === 'number' &&
+    typeof value.remainingDescendantCount === 'number' &&
+    typeof value.isLastVersion === 'boolean' &&
+    typeof value.revision === 'number'
+  );
+}
+
+/** How reading a deletion's impact ended. Never a rejection. */
+export type DeletionImpactResult =
+  { kind: 'found'; impact: DeletionImpact } | { kind: 'gone' } | { kind: 'failed' };
+
+/** What deleting the Version `versionId` would do now. */
+export async function fetchDeletionImpact(
+  versionId: string,
+  signal?: AbortSignal,
+): Promise<DeletionImpactResult> {
+  try {
+    const response = await apiFetch(
+      `${VERSIONS_PATH}/${encodeURIComponent(versionId)}/deletion-impact`,
+      { signal },
+    );
+    const answer = await body(response);
+    if (response.ok && isDeletionImpact(answer)) {
+      return { kind: 'found', impact: answer };
+    }
+    return response.status === 404 ? { kind: 'gone' } : { kind: 'failed' };
+  } catch {
+    return { kind: 'failed' };
+  }
+}
+
+/**
+ * How deleting a Version ended: `deleted` with the Song's current Version now (a new blank one when
+ * it was the last); `conflict` when it changed since it was read (nothing was deleted); `gone` when
+ * it is no longer there; `failed` otherwise.
+ */
+export type DeleteVersionResult =
+  | { kind: 'deleted'; current: VersionDetail }
+  | { kind: 'conflict'; current: VersionDetail }
+  | { kind: 'gone' }
+  | { kind: 'failed' };
+
+/** Deletes a Version, based on the revision it was read at. */
+export async function deleteVersion(
+  version: Pick<Version, 'id' | 'revision'>,
+): Promise<DeleteVersionResult> {
+  try {
+    const response = await apiFetch(`${VERSIONS_PATH}/${encodeURIComponent(version.id)}`, {
+      method: 'DELETE',
+      headers: { 'If-Match': ifMatch(version.revision) },
+    });
+    const answer = await body(response);
+    if (response.ok && isVersionDetail(answer)) {
+      return { kind: 'deleted', current: answer };
+    }
+    if (
+      response.status === 409 &&
+      isRecord(answer) &&
+      answer.code === 'revision_conflict' &&
+      isVersionDetail(answer.current)
+    ) {
+      return { kind: 'conflict', current: answer.current };
+    }
+    return response.status === 404 ? { kind: 'gone' } : { kind: 'failed' };
+  } catch {
+    return { kind: 'failed' };
+  }
 }
 
 /** What asking for a source's next numbers came to. Never a rejection. */

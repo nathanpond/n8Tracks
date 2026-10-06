@@ -22,7 +22,7 @@ internal sealed class DatabaseSchemaCheck(N8TracksOptions options, N8TracksDbCon
             return DatabaseCondition.Upgrading;
         }
 
-        // Checked first: opening the context's connection would create a missing file.
+        // Checked first, so a missing file is told apart from one that cannot be opened.
         if (!File.Exists(DatabaseFile))
         {
             return DatabaseCondition.Missing;

@@ -206,6 +206,7 @@ public sealed class NextNumbersEndpointTests
     public async Task UpgradingRecordsTheNumberOfEveryExistingVersionAsUsed()
     {
         using var directory = new TemporaryDirectory();
+        SqliteDatabase.CreateIfMissing(TestDatabase.FilePath(directory.Path));
         var builder = new DbContextOptionsBuilder<N8TracksDbContext>();
         builder.UseN8TracksSqlite(TestDatabase.FilePath(directory.Path));
         var options = builder.Options;

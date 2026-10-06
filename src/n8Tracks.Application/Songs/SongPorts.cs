@@ -1,3 +1,5 @@
+using n8Tracks.Domain.Assets;
+using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
 
 namespace n8Tracks.Application.Songs;
@@ -13,6 +15,19 @@ namespace n8Tracks.Application.Songs;
 /// <param name="CreatedUtc">When it was created.</param>
 /// <param name="UpdatedUtc">When it or any of its Versions last changed.</param>
 /// <param name="Revision">The Song's own revision.</param>
+/// <param name="Notes">The Song's free-form notes; null when there are none.</param>
+/// <param name="Genres">Its Genres, alphabetically.</param>
+/// <param name="Tags">Its Tags, alphabetically (ignoring case, invariant culture).</param>
+/// <param name="Credits">Its primary Artist and featured Artists, in the user's order.</param>
+/// <param name="Playlists">The Playlists it is on, by title (ignoring case).</param>
+/// <param name="Albums">The Albums it is on, with its disc and track on each, by title (ignoring case).</param>
+/// <param name="Relationships">
+/// Its relationships to other Songs, each read from this Song: by the type's name as seen from here
+/// (ignoring case), then by the other Song's title (ignoring case).
+/// </param>
+/// <param name="Release">Its release details; <see cref="SongRelease.None"/> when it has none.</param>
+/// <param name="SameIsrc">The other Songs with its ISRC, by title (ignoring case); empty when it has none or no other Song shares it.</param>
+/// <param name="Artwork">Its own artwork (the asset and the crop it set), or null when it has none.</param>
 public sealed record SongSummary(
     Guid Id,
     long ShortcodeNumber,
@@ -23,7 +38,17 @@ public sealed record SongSummary(
     int VersionCount,
     DateTimeOffset CreatedUtc,
     DateTimeOffset UpdatedUtc,
-    int Revision)
+    int Revision,
+    string? Notes,
+    IReadOnlyList<Genre> Genres,
+    IReadOnlyList<Tag> Tags,
+    SongCredits Credits,
+    IReadOnlyList<PlaylistNamed> Playlists,
+    IReadOnlyList<AlbumMembership> Albums,
+    IReadOnlyList<SongRelation> Relationships,
+    SongRelease Release,
+    IReadOnlyList<RelatedSong> SameIsrc,
+    AttachedArtwork? Artwork)
 {
     public string Shortcode => Shortcodes.ForSong(ShortcodeNumber);
 }
@@ -53,7 +78,30 @@ public enum SongSort
 /// <param name="StateIds">Only Songs in one of these states; every Song when empty.</param>
 /// <param name="Page">From 1.</param>
 /// <param name="PageSize">1 to <see cref="SongService.MaximumPageSize"/>.</param>
-public sealed record SongListQuery(SongSort Sort, bool Descending, IReadOnlyList<Guid> StateIds, int Page, int PageSize);
+/// <param name="GenreIds">Only Songs with any of these Genres (or, with <paramref name="NoGenre"/>, with none); every Song when both are empty.</param>
+/// <param name="NoGenre">Also Songs with no Genre at all.</param>
+/// <param name="TagIds">Only Songs with any of these Tags (or, with <paramref name="NoTag"/>, with none); every Song when both are empty.</param>
+/// <param name="NoTag">Also Songs with no Tag at all.</param>
+/// <param name="ArtistIds">Only Songs crediting any of these Artists, as primary or featured (or, with <paramref name="NoArtist"/>, crediting no one); every Song when both are empty.</param>
+/// <param name="NoArtist">Also Songs with no credits at all.</param>
+/// <param name="Search">Trimmed, not empty: only Songs whose title contains it (ignoring case) or whose shortcode starts with it (ignoring case); every Song when null.</param>
+/// <param name="TitleKey">Not empty: only Songs whose <see cref="Domain.Songs.SongRules.TitleKey"/> is exactly this; every Song when null.</param>
+/// <param name="ExcludeId">Every Song but this one; every Song when null.</param>
+public sealed record SongListQuery(
+    SongSort Sort,
+    bool Descending,
+    IReadOnlyList<Guid> StateIds,
+    int Page,
+    int PageSize,
+    IReadOnlyList<Guid> GenreIds,
+    bool NoGenre,
+    IReadOnlyList<Guid> TagIds,
+    bool NoTag,
+    IReadOnlyList<Guid> ArtistIds,
+    bool NoArtist,
+    string? Search = null,
+    string? TitleKey = null,
+    Guid? ExcludeId = null);
 
 /// <summary>A page of Songs and how many match in all.</summary>
 public sealed record SongPage(IReadOnlyList<SongSummary> Items, int Page, int PageSize, int Total);
@@ -62,7 +110,9 @@ public sealed record SongPage(IReadOnlyList<SongSummary> Items, int Page, int Pa
 /// <param name="Title">Trimmed.</param>
 /// <param name="Concept">Normalised; null when there is none.</param>
 /// <param name="StateId">The ID of a workflow state, hidden or not.</param>
-public sealed record SongDetails(string Title, string? Concept, Guid StateId);
+/// <param name="Notes">Normalised; null when there are none.</param>
+/// <param name="Release">Valid and normalised; links written as a whole.</param>
+public sealed record SongDetails(string Title, string? Concept, Guid StateId, string? Notes, SongRelease Release);
 
 /// <summary>Where Songs and their Versions are kept.</summary>
 public interface ISongStore
@@ -87,8 +137,9 @@ public interface ISongStore
 
     /// <summary>
     /// Stores <paramref name="details"/> on the Song if it is at <paramref name="revision"/>, raising
-    /// the revision by one and setting its updated time, in one statement. False when the Song is
-    /// gone or at another revision, which leaves it as it is.
+    /// the revision by one and setting its updated time, in one statement, then replaces its links.
+    /// False when the Song is gone or at another revision, which leaves it as it is. Only inside a
+    /// transaction, so the links go with the rest.
     /// </summary>
     Task<bool> TryUpdateAsync(Guid id, SongDetails details, int revision, DateTimeOffset updatedUtc, CancellationToken cancellationToken);
 }
@@ -279,9 +330,46 @@ public interface IVersionStore
     /// <summary>The Generation with <paramref name="id"/>; null when there is none.</summary>
     Task<GenerationSummary?> FindGenerationAsync(Guid id, CancellationToken cancellationToken);
 
+    /// <summary>The IDs of the Generations attached to the Version with <paramref name="versionId"/>, in ordinal order.</summary>
+    Task<IReadOnlyList<Guid>> GenerationIdsAsync(Guid versionId, CancellationToken cancellationToken);
+
+    /// <summary>Every number the Song with <paramref name="songId"/> has ever used, deleted Versions' included, as stored.</summary>
+    Task<IReadOnlyList<string>> UsedNumbersAsync(Guid songId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Leaves the Song with <paramref name="songId"/> without a current Version for a moment, inside
+    /// the caller's transaction, so the Version that was current can be deleted before its
+    /// replacement exists. The caller sets a current Version again before the transaction ends.
+    /// </summary>
+    Task ClearCurrentAsync(Guid songId, CancellationToken cancellationToken);
+
+    /// <summary>Raises the revision of the Song with <paramref name="songId"/> by one and sets its updated time to <paramref name="updatedUtc"/>.</summary>
+    Task RaiseSongRevisionAsync(Guid songId, DateTimeOffset updatedUtc, CancellationToken cancellationToken);
+
     /// <summary>
     /// The ID of Generation <paramref name="ordinal"/> of the Version numbered <paramref name="number"/>
     /// of the Song whose shortcode is <c>n8-<paramref name="songShortcodeNumber"/></c>; null when there is none.
     /// </summary>
     Task<Guid?> FindGenerationIdByShortcodeAsync(long songShortcodeNumber, string number, int ordinal, CancellationToken cancellationToken);
+}
+
+/// <summary>What deleting a Song (#102) reads and writes beyond the Song's own records, which retention moves.</summary>
+public interface ISongDeletionStore
+{
+    /// <summary>The IDs of every Generation of the Song with <paramref name="songId"/>'s live Versions.</summary>
+    Task<IReadOnlyList<Guid>> GenerationIdsAsync(Guid songId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Inside the caller's transaction, once the Song is gone: raises the revision of each of
+    /// <paramref name="albumIds"/>, <paramref name="playlistIds"/>, and <paramref name="songIds"/> by
+    /// one and sets its updated time to <paramref name="updatedUtc"/>, as the Song left each of them.
+    /// An Album whose disc the Song was alone on closes the gap (later discs move down by one; track
+    /// numbers stay as they are). Missing IDs are skipped.
+    /// </summary>
+    Task TouchAsync(
+        IReadOnlyCollection<Guid> albumIds,
+        IReadOnlyCollection<Guid> playlistIds,
+        IReadOnlyCollection<Guid> songIds,
+        DateTimeOffset updatedUtc,
+        CancellationToken cancellationToken);
 }

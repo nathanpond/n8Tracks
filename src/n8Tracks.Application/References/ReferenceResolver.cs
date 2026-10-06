@@ -1,3 +1,4 @@
+using n8Tracks.Application.Retention;
 using n8Tracks.Application.Songs;
 using n8Tracks.Domain.Songs;
 
@@ -98,7 +99,10 @@ public readonly record struct CatalogReference
 /// <param name="EntityType"><see cref="ReferenceResolver.SongType"/>, <see cref="ReferenceResolver.VersionType"/>, or <see cref="ReferenceResolver.GenerationType"/>.</param>
 /// <param name="Id">Its stable ID.</param>
 /// <param name="Shortcode">Its canonical (lower-case) shortcode.</param>
-/// <param name="Status"><see cref="ReferenceResolver.ActiveStatus"/> or, for a Version, <see cref="ReferenceResolver.ArchivedStatus"/>.</param>
+/// <param name="Status">
+/// <see cref="ReferenceResolver.ActiveStatus"/> or, for a Version, <see cref="ReferenceResolver.ArchivedStatus"/>
+/// or <see cref="ReferenceResolver.DeletedStatus"/>.
+/// </param>
 /// <param name="Song">For a Version or a Generation, its Song; null for a Song.</param>
 /// <param name="Version">For a Generation, its Version; null otherwise.</param>
 public sealed record ResolvedReference(string EntityType, Guid Id, string Shortcode, string Status, ResolvedSong? Song, ResolvedVersion? Version = null);
@@ -116,7 +120,7 @@ public sealed record ResolvedVersion(Guid Id, string Shortcode);
 /// they are resolved by parsing and looking those up; nothing extra is stored. A reference of the
 /// wrong kind for what is asked (a Version shortcode where a Song is wanted) names nothing.
 /// </summary>
-public sealed class ReferenceResolver(ISongStore songs, IVersionStore versions)
+public sealed class ReferenceResolver(ISongStore songs, IVersionStore versions, RetentionService retention, TimeProvider time)
 {
     public const string SongType = "song";
     public const string VersionType = "version";
@@ -125,10 +129,142 @@ public sealed class ReferenceResolver(ISongStore songs, IVersionStore versions)
     public const string ArchivedStatus = "archived";
 
     /// <summary>
-    /// The Song, Version, or Generation a reference names, whichever it is; null when it names none.
-    /// Deleted and moved statuses come with later milestones. A Generation is always active for now.
+    /// Deleted within its retention period: a Version deleted on its own (#101), or a Song with its
+    /// Versions and Generations (#102).
     /// </summary>
-    public async Task<ResolvedReference?> ResolveAsync(CatalogReference reference, CancellationToken cancellationToken)
+    public const string DeletedStatus = "deleted";
+
+    /// <summary>
+    /// The Song, Version, or Generation a reference names, whichever it is; null when it names none.
+    /// A Version deleted on its own resolves as <see cref="DeletedStatus"/> for its retention period,
+    /// by its ID or its shortcode, while its Song is live. A moved status comes with a later
+    /// milestone. A Generation is always active for now.
+    /// </summary>
+    public async Task<ResolvedReference?> ResolveAsync(CatalogReference reference, CancellationToken cancellationToken) =>
+        await ResolveLiveAsync(reference, cancellationToken).ConfigureAwait(false)
+            ?? await ResolveDeletedAsync(reference, cancellationToken).ConfigureAwait(false);
+
+    private async Task<ResolvedReference?> ResolveDeletedAsync(CatalogReference reference, CancellationToken cancellationToken)
+    {
+        if (await VersionDeletionService.FindDeletedAsync(retention, time, reference, cancellationToken).ConfigureAwait(false) is { } deleted
+            && await songs.FindByShortcodeNumberAsync(deleted.SongShortcodeNumber, cancellationToken).ConfigureAwait(false) is { } song)
+        {
+            return new(VersionType, deleted.Id, deleted.Shortcode, DeletedStatus, new ResolvedSong(song.Id, song.Shortcode));
+        }
+
+        return await ResolveInDeletedSongAsync(reference, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// A deleted Song (#102), or a Version or Generation of one, within the Song's retention period:
+    /// <see cref="DeletedStatus"/>. A Version or Generation is found in the Song's group, or in the
+    /// group of its own earlier deletion; either way its Song must be deleted too (a Version deleted on
+    /// its own while its Song is live is <see cref="VersionDeletionService.FindDeletedAsync(CatalogReference, CancellationToken)"/>'s).
+    /// </summary>
+    private async Task<ResolvedReference?> ResolveInDeletedSongAsync(CatalogReference reference, CancellationToken cancellationToken)
+    {
+        switch (reference.Kind)
+        {
+            case ReferenceKind.Song:
+                return await SongDeletionService.FindDeletedAsync(retention, time, reference, cancellationToken).ConfigureAwait(false) is { } named
+                    ? new(SongType, named.Id, named.Shortcode, DeletedStatus, null)
+                    : null;
+
+            case ReferenceKind.Id:
+                if (await SongDeletionService.FindDeletedAsync(retention, time, reference, cancellationToken).ConfigureAwait(false) is { } byId)
+                {
+                    return new(SongType, byId.Id, byId.Shortcode, DeletedStatus, null);
+                }
+
+                foreach (var recordType in (string[])[RetainedRecordTypes.Version, RetainedRecordTypes.Generation])
+                {
+                    if (await retention.FindByRecordAsync(recordType, reference.Id, cancellationToken).ConfigureAwait(false) is { } holding
+                        && await ItemsOfAsync(holding, cancellationToken).ConfigureAwait(false) is { } items
+                        && await SongDeletionService.FindDeletedAsync(retention, time, items.SongShortcodeNumber, cancellationToken).ConfigureAwait(false) is { } song)
+                    {
+                        return items.Resolve(recordType == RetainedRecordTypes.Version ? VersionType : GenerationType, reference.Id, song);
+                    }
+                }
+
+                return null;
+
+            case ReferenceKind.Version or ReferenceKind.Generation:
+                if (await SongDeletionService.FindDeletedAsync(retention, time, reference.SongShortcodeNumber, cancellationToken).ConfigureAwait(false) is not { } deletedSong)
+                {
+                    return null;
+                }
+
+                var number = reference.VersionNumber!.ToString();
+                var groups = new List<RetentionGroup> { deletedSong.Group };
+                if (await retention.FindByShortcodeAsync(Shortcodes.ForVersion(reference.SongShortcodeNumber, number), cancellationToken).ConfigureAwait(false) is { Kind: RetainedRecordTypes.Version } alone
+                    && alone.PruneAfterUtc > time.GetUtcNow())
+                {
+                    groups.Add(alone);
+                }
+
+                foreach (var group in groups)
+                {
+                    if (await ItemsOfAsync(group, cancellationToken).ConfigureAwait(false) is not { } items
+                        || items.Versions.FirstOrDefault(version => version.Number == number) is not { } version)
+                    {
+                        continue;
+                    }
+
+                    if (reference.Kind == ReferenceKind.Version)
+                    {
+                        return items.Resolve(VersionType, version.Id, deletedSong);
+                    }
+
+                    if (items.Generations.FirstOrDefault(generation => generation.VersionId == version.Id && generation.Ordinal == reference.GenerationOrdinal) is { } generation)
+                    {
+                        return items.Resolve(GenerationType, generation.Id, deletedSong);
+                    }
+                }
+
+                return null;
+
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>
+    /// The Versions and Generations a group of a deleted Song or Version holds, with the Song's
+    /// shortcode number; null when it is neither, or has expired.
+    /// </summary>
+    private async Task<DeletedItems?> ItemsOfAsync(RetentionGroup group, CancellationToken cancellationToken)
+    {
+        if (group.PruneAfterUtc <= time.GetUtcNow())
+        {
+            return null;
+        }
+
+        long songNumber;
+        if (group.Kind == RetainedRecordTypes.Song)
+        {
+            var song = (await retention.RecordFieldsAsync(group.Id, RetainedRecordTypes.Song, ["shortcode_number"], cancellationToken).ConfigureAwait(false)).FirstOrDefault();
+            if (song?["shortcode_number"] is not { } text || !long.TryParse(text, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out songNumber))
+            {
+                return null;
+            }
+        }
+        else if (group.Kind != RetainedRecordTypes.Version || group.Shortcode is null || !Shortcodes.TryParseVersion(group.Shortcode, out songNumber, out _))
+        {
+            return null;
+        }
+
+        var versionFields = await retention.RecordFieldsAsync(group.Id, RetainedRecordTypes.Version, ["id", "number"], cancellationToken).ConfigureAwait(false);
+        var generationFields = await retention.RecordFieldsAsync(group.Id, RetainedRecordTypes.Generation, ["id", "version_id", "ordinal"], cancellationToken).ConfigureAwait(false);
+        return new DeletedItems(
+            songNumber,
+            [.. versionFields.Select(static fields => new DeletedVersionItem(Guid.Parse(fields["id"]!, System.Globalization.CultureInfo.InvariantCulture), fields["number"]!))],
+            [.. generationFields.Select(static fields => new DeletedGenerationItem(
+                Guid.Parse(fields["id"]!, System.Globalization.CultureInfo.InvariantCulture),
+                Guid.Parse(fields["version_id"]!, System.Globalization.CultureInfo.InvariantCulture),
+                int.Parse(fields["ordinal"]!, System.Globalization.CultureInfo.InvariantCulture)))]);
+    }
+
+    private async Task<ResolvedReference?> ResolveLiveAsync(CatalogReference reference, CancellationToken cancellationToken)
     {
         switch (reference.Kind)
         {
@@ -209,6 +345,42 @@ public sealed class ReferenceResolver(ISongStore songs, IVersionStore versions)
         await VersionIdAsync(store, reference, cancellationToken).ConfigureAwait(false) is { } id
             ? await store.FindSummaryAsync(id, cancellationToken).ConfigureAwait(false)
             : null;
+
+    /// <summary>A retained Version, by its ID and number.</summary>
+    private sealed record DeletedVersionItem(Guid Id, string Number);
+
+    /// <summary>A retained Generation, by its ID, its Version's ID, and its ordinal.</summary>
+    private sealed record DeletedGenerationItem(Guid Id, Guid VersionId, int Ordinal);
+
+    /// <summary>What one group holds of a deleted Song's tree.</summary>
+    private sealed record DeletedItems(long SongShortcodeNumber, IReadOnlyList<DeletedVersionItem> Versions, IReadOnlyList<DeletedGenerationItem> Generations)
+    {
+        /// <summary>The Version or Generation with <paramref name="id"/> as deleted, under <paramref name="song"/>; null when the group does not hold it.</summary>
+        public ResolvedReference? Resolve(string entityType, Guid id, DeletedSong song)
+        {
+            if (entityType == VersionType)
+            {
+                return Versions.FirstOrDefault(version => version.Id == id) is { } version
+                    ? new(VersionType, id, Shortcodes.ForVersion(SongShortcodeNumber, version.Number), DeletedStatus, new ResolvedSong(song.Id, song.Shortcode))
+                    : null;
+            }
+
+            if (Generations.FirstOrDefault(generation => generation.Id == id) is not { } generation
+                || Versions.FirstOrDefault(version => version.Id == generation.VersionId) is not { } parent)
+            {
+                return null;
+            }
+
+            var versionShortcode = Shortcodes.ForVersion(SongShortcodeNumber, parent.Number);
+            return new(
+                GenerationType,
+                id,
+                Shortcodes.ForGeneration(SongShortcodeNumber, parent.Number, generation.Ordinal),
+                DeletedStatus,
+                new ResolvedSong(song.Id, song.Shortcode),
+                new ResolvedVersion(parent.Id, versionShortcode));
+        }
+    }
 
     private static ResolvedReference Of(SongSummary song) => new(SongType, song.Id, song.Shortcode, ActiveStatus, null);
 

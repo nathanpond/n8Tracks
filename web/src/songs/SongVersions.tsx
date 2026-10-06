@@ -1,10 +1,19 @@
 import { Anchor, Button, Grid, Group, Paper, Stack, Text, Title } from '@mantine/core';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router';
-import type { Song } from '../api/songs';
-import { setCurrentVersion, setVersionArchived, type Version } from '../api/versions';
+import { resolveReference } from '../api/references';
+import { readSong, type Song } from '../api/songs';
+import {
+  readSongVersions,
+  setCurrentVersion,
+  setVersionArchived,
+  type Version,
+  type VersionDetail,
+  type VersionList,
+} from '../api/versions';
 import type { EditorText } from '../editor/useSnapshots';
 import { CreateVersionDialog } from './CreateVersionDialog';
+import { DeleteVersionDialog } from './DeleteVersionDialog';
 import { VersionDetails } from './VersionDetails';
 import { VersionTree, type VersionActions } from './VersionTree';
 
@@ -31,17 +40,73 @@ function storeShowArchived(show: boolean) {
   }
 }
 
-/** What the page tells the user after an action: an archive that can be undone, or a failure. */
-type Notice = { kind: 'archived'; version: Version } | { kind: 'failed' } | undefined;
+/** What the page tells the user after an action: an archive that can be undone, a deletion, or a failure. */
+type Notice =
+  | { kind: 'archived'; version: Version }
+  | { kind: 'deleted'; number: string; current: string; createdBlank: boolean }
+  | { kind: 'failed' }
+  | undefined;
+
+/** A Version as the tree lists it, from one read with its lyrics and styles. */
+function summaryOf(detail: VersionDetail): Version {
+  const { id, songId, number, shortcode, name, notes, archived, current } = detail;
+  const { createdAt, updatedAt, revision, isFrozen, kind } = detail;
+  return {
+    id,
+    songId,
+    number,
+    shortcode,
+    name,
+    notes,
+    archived,
+    current,
+    createdAt,
+    updatedAt,
+    revision,
+    isFrozen,
+    kind,
+  };
+}
+
+/**
+ * Whether the Version numbered `number` of `song` was deleted (its shortcode resolves as deleted),
+ * asked only while `asking`; undefined until the answer comes.
+ */
+function useWasDeleted(song: Song, number: string | undefined, asking: boolean) {
+  const reference = `${song.shortcode}-v${number ?? ''}`;
+  const [answer, setAnswer] = useState<{ reference: string; deleted: boolean } | undefined>();
+  useEffect(() => {
+    if (!asking || number === undefined) {
+      return undefined;
+    }
+    const controller = new AbortController();
+    void resolveReference(reference, controller.signal).then((result) => {
+      if (!controller.signal.aborted) {
+        setAnswer({
+          reference,
+          deleted: result.kind === 'found' && result.resolved.status === 'deleted',
+        });
+      }
+    });
+    return () => {
+      controller.abort();
+    };
+  }, [asking, number, reference]);
+  return answer?.reference === reference ? answer.deleted : undefined;
+}
 
 /**
  * A Song's Versions: the tree on the left and the selected Version on the right. The selection is
  * the URL's (`/songs/<shortcode>/v/<number>`), or the current working Version when the URL names
  * none or names one that is hidden. "Show archived" is remembered per browser; a link to an
  * archived Version turns it on for this visit. Creating a Version makes it current and selects it;
- * any Version can be made current, archived, or unarchived from its actions menu in the tree or
- * from the selected Version's header. Archiving happens at once, with an Undo notice. `loaded` is
- * the list as first read; the page keeps its own copy from then on.
+ * any Version can be made current, archived, unarchived, or deleted from its actions menu in the
+ * tree or from the selected Version's header. Archiving happens at once, with an Undo notice;
+ * deleting asks first ({@link DeleteVersionDialog}), then selects the Song's current Version. A
+ * deleted Version's descendants stay under a "Deleted Version" placeholder, and its page URL says
+ * it was deleted. An editor open on a Version deleted elsewhere hands its unsaved text here, offered
+ * as the content of a new Version. `loaded` is the list as first read; the page keeps its own copy
+ * from then on.
  */
 export function SongVersions({
   song,
@@ -49,13 +114,17 @@ export function SongVersions({
   onSong,
 }: {
   song: Song;
-  loaded: Version[];
+  loaded: VersionList;
   onSong: (song: Song) => void;
 }) {
   const { number } = useParams();
   const location: { state: unknown } = useLocation();
   const navigate = useNavigate();
-  const [versions, setVersions] = useState(loaded);
+  const [versions, setVersions] = useState(loaded.items);
+  const [placeholders, setPlaceholders] = useState(loaded.deletedPlaceholders);
+  const [deleting, setDeleting] = useState<Version | undefined>();
+  /** Unsaved lyrics and styles of a Version deleted elsewhere while it was open here. */
+  const [carried, setCarried] = useState<{ number: string; text: EditorText } | undefined>();
   const [showArchived, setShowArchived] = useState(storedShowArchived);
   const [seenNumber, setSeenNumber] = useState<string | undefined | null>(null);
   const [source, setSource] = useState<{ version: Version; content?: EditorText } | undefined>();
@@ -87,6 +156,50 @@ export function SongVersions({
   }, [hidden, navigate, song.shortcode, location.state]);
 
   const linkTo = (version: Version) => `/songs/${song.shortcode}/v/${version.number}`;
+  const wasDeleted = useWasDeleted(song, number, number !== undefined && selected === undefined);
+
+  /** Reads the Versions and the Song again (after a deletion here or elsewhere); false when that fails. */
+  const refresh = useCallback(async () => {
+    const [list, read] = await Promise.all([readSongVersions(song.id), readSong(song.id)]);
+    if (list === undefined || read === undefined) {
+      return false;
+    }
+    setVersions(list.items);
+    setPlaceholders(list.deletedPlaceholders);
+    onSong(read);
+    return true;
+  }, [onSong, song.id]);
+
+  const deleted = (version: Version, current: VersionDetail) => {
+    setDeleting(undefined);
+    const createdBlank = !versions.some((other) => other.id === current.id);
+    setNotice({ kind: 'deleted', number: version.number, current: current.number, createdBlank });
+    // Until the list is read again, the page's own copy drops the Version and marks the current one.
+    setVersions((previous) => [
+      ...previous
+        .filter((other) => other.id !== version.id && other.id !== current.id)
+        .map((other) => ({ ...other, current: false })),
+      summaryOf(current),
+    ]);
+    void refresh();
+    void navigate(linkTo(current), { replace: true, state: location.state });
+  };
+
+  /** The open Version turned out to be deleted elsewhere: its unsaved text, if any, waits here. */
+  const deletedElsewhere = useCallback(
+    (version: Version, text: EditorText | undefined) => {
+      if (text !== undefined) {
+        setCarried({ number: version.number, text });
+      }
+      // Its own page says it was deleted, and offers the text there.
+      void navigate(`/songs/${song.shortcode}/v/${version.number}`, {
+        replace: true,
+        state: location.state,
+      });
+      void refresh();
+    },
+    [location.state, navigate, refresh, song.shortcode],
+  );
 
   const replace = (changed: Version) => {
     setVersions((previous) =>
@@ -140,6 +253,10 @@ export function SongVersions({
         );
       });
     },
+    onDelete: (version) => {
+      setNotice(undefined);
+      setDeleting(latest(version));
+    },
     onSetArchived: (version, archived) => {
       setBusy(true);
       setNotice(undefined);
@@ -190,6 +307,27 @@ export function SongVersions({
           </Group>
         </Paper>
       )}
+      {notice?.kind === 'deleted' && (
+        <Paper p="xs" withBorder role="status" data-testid="version-deleted">
+          <Group gap="sm" justify="space-between" wrap="wrap">
+            <Text size="sm">
+              Version {notice.number} deleted.{' '}
+              {notice.createdBlank
+                ? `It was the only Version, so a new blank Version ${notice.current} was created and is current.`
+                : `Version ${notice.current} is current.`}
+            </Text>
+            <Button
+              size="compact-sm"
+              variant="subtle"
+              onClick={() => {
+                setNotice(undefined);
+              }}
+            >
+              Dismiss
+            </Button>
+          </Group>
+        </Paper>
+      )}
       {notice?.kind === 'failed' && (
         <Text size="sm" c="var(--mantine-color-error)" role="alert">
           {FAILED_MESSAGE}
@@ -199,6 +337,7 @@ export function SongVersions({
         <Grid.Col span={{ base: 12, sm: 4 }}>
           <VersionTree
             versions={versions}
+            placeholders={placeholders}
             selectedId={selected?.id}
             showArchived={showArchived}
             onShowArchived={(show) => {
@@ -216,11 +355,32 @@ export function SongVersions({
             <Paper p="md" withBorder component="section" aria-labelledby="version-heading">
               <Stack gap="sm">
                 <Title order={3} size="h4" id="version-heading">
-                  Version not found
+                  {wasDeleted === true
+                    ? `Version ${number ?? ''} was deleted`
+                    : 'Version not found'}
                 </Title>
                 <Text>
-                  {song.shortcode} has no Version {number}.
+                  {wasDeleted === true
+                    ? `${song.shortcode}-v${number ?? ''} was deleted. Its number is not used again.`
+                    : `${song.shortcode} has no Version ${number ?? ''}.`}
                 </Text>
+                {carried !== undefined && carried.number === number && current !== undefined && (
+                  <Stack gap="xs" data-testid="carried-text">
+                    <Text fw={700}>
+                      Your unsaved changes to its lyrics and styles could not be saved. They are
+                      kept here until you leave the page: start a new Version with them.
+                    </Text>
+                    <div>
+                      <Button
+                        onClick={() => {
+                          setSource({ version: current, content: carried.text });
+                        }}
+                      >
+                        Create a new Version with my text
+                      </Button>
+                    </div>
+                  </Stack>
+                )}
                 <Anchor component={Link} to={`/songs/${song.shortcode}`} state={location.state}>
                   Open {song.shortcode} at its current Version
                 </Anchor>
@@ -231,6 +391,7 @@ export function SongVersions({
               key={selected.id}
               version={selected}
               onVersion={replace}
+              onDeletedElsewhere={deletedElsewhere}
               actions={actions}
               busy={busy}
             />
@@ -243,7 +404,17 @@ export function SongVersions({
           onClose={() => {
             setSource(undefined);
           }}
-          onCreated={created}
+          onCreated={(version) => {
+            setCarried(undefined);
+            created(version);
+          }}
+        />
+        <DeleteVersionDialog
+          version={deleting}
+          onClose={() => {
+            setDeleting(undefined);
+          }}
+          onDeleted={deleted}
         />
       </Grid>
     </Stack>

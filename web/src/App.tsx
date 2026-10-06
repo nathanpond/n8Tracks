@@ -1,11 +1,21 @@
 import { MantineProvider } from '@mantine/core';
 import { Navigate, Route, Routes } from 'react-router';
 import { SessionGate } from './auth/SessionGate';
+import { AlbumPage } from './albums/AlbumPage';
+import { AlbumsPage } from './albums/AlbumsPage';
+import { ArtistPage } from './artists/ArtistPage';
+import { ArtistsPage } from './artists/ArtistsPage';
 import { MaintenanceGate } from './maintenance/MaintenanceGate';
+import { PlaylistPage } from './playlists/PlaylistPage';
+import { PlaylistsPage } from './playlists/PlaylistsPage';
 import { AccountPage } from './settings/AccountPage';
 import { BackupsPage } from './settings/BackupsPage';
+import { CatalogPage } from './settings/CatalogPage';
 import { CredentialsPage } from './settings/CredentialsPage';
+import { GenresPage } from './settings/GenresPage';
 import { SunoPage } from './settings/SunoPage';
+import { RelationshipsPage } from './settings/RelationshipsPage';
+import { TagsPage } from './settings/TagsPage';
 import { SystemPage } from './settings/SystemPage';
 import { WorkflowPage } from './settings/WorkflowPage';
 import { SetupGate } from './setup/SetupGate';
@@ -37,11 +47,21 @@ export function App() {
                 <Route path="songs" element={<SongsPage />} />
                 <Route path="songs/:reference" element={<SongPage />} />
                 <Route path="songs/:reference/v/:number" element={<SongPage />} />
+                <Route path="artists" element={<ArtistsPage />} />
+                <Route path="artists/:id" element={<ArtistPage />} />
+                <Route path="albums" element={<AlbumsPage />} />
+                <Route path="albums/:id" element={<AlbumPage />} />
+                <Route path="playlists" element={<PlaylistsPage />} />
+                <Route path="playlists/:id" element={<PlaylistPage />} />
                 <Route path="go/:reference" element={<GoPage />} />
                 <Route path="settings" element={<Navigate to="/settings/account" replace />} />
                 <Route path="settings/account" element={<AccountPage />} />
                 <Route path="settings/credentials" element={<CredentialsPage />} />
                 <Route path="settings/workflow" element={<WorkflowPage />} />
+                <Route path="settings/catalog" element={<CatalogPage />} />
+                <Route path="settings/genres" element={<GenresPage />} />
+                <Route path="settings/tags" element={<TagsPage />} />
+                <Route path="settings/relationships" element={<RelationshipsPage />} />
                 <Route path="settings/suno" element={<SunoPage />} />
                 <Route path="settings/backups" element={<BackupsPage />} />
                 <Route path="settings/system" element={<SystemPage />} />

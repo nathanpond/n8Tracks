@@ -1,0 +1,271 @@
+import type { Album } from '../api/albums';
+import type { Artist, ArtistMatch } from '../api/artists';
+import type { Song } from '../api/songs';
+import { artworkFake } from './artworkFake';
+import { healthyReport, jsonResponse, requestPath, stubFetch } from './helpers';
+
+/** One write the fake server received. */
+export interface ArtistWrite {
+  method: string;
+  path: string;
+  ifMatch: string | null;
+  body: Record<string, unknown>;
+}
+
+const key = (name: string) => name.trim().replace(/\s+/g, ' ').normalize('NFC').toUpperCase();
+
+let sequence = 0;
+
+/** A test Artist: `name`, no aliases, notes, or links, at revision 1, unless `change` says otherwise. */
+export function testArtist(name: string, change: Partial<Artist> = {}): Artist {
+  sequence += 1;
+  return {
+    id: `01a10e00-0000-7000-8000-${String(sequence).padStart(12, '0')}`,
+    name,
+    aliases: [],
+    notes: null,
+    links: [],
+    songCount: 0,
+    albumCount: 0,
+    createdAt: '2026-10-05T09:00:00.000Z',
+    updatedAt: '2026-10-05T09:00:00.000Z',
+    revision: 1,
+    artwork: null,
+    ...change,
+  };
+}
+
+function problem(status: number, code: string, extra: Record<string, unknown> = {}): Response {
+  return new Response(JSON.stringify({ status, code, title: 'refused', ...extra }), {
+    status,
+    headers: { 'Content-Type': 'application/problem+json' },
+  });
+}
+
+/**
+ * A fake n8Tracks holding Artists, answering as the API does: the list sorted by name ignoring case
+ * and filtered by `search` (any part of a name or alias, ignoring case), paged by `pageSize`
+ * (`server.pageSize`, 50 by default); POST and PATCH with the duplicate check (409
+ * `duplicate_artist_name` unless `confirmDuplicate`, only for names an Artist did not already have)
+ * and, for PATCH, the revision check first. `server.next` answers the next write some other way;
+ * `server.changeElsewhere` plays another client. `server.songs` are the Songs the list answers for
+ * `GET /api/v1/songs?artist=<id>` (those crediting that Artist, by title), and `server.albums` those
+ * it answers for `GET /api/v1/albums?artist=<id>` (those whose Album Artist it is, by title).
+ * Artwork uploads and the PATCH's artwork fields follow {@link artworkFake} (`server.artwork`).
+ * `GET /api/v1/settings/catalog` answers `server.catalog` (no default Artist unless set). DELETE of
+ * an Artist under its revision answers as the API does: 422 for both choices or an unknown
+ * `reassignTo`, 409 `artist_in_use` for a credited Artist (by its `songCount` and `albumCount`) with
+ * neither, otherwise 204, recording `{id, query}` in `server.deleted` and clearing a default that
+ * was it.
+ */
+export function artistServer(artists: Artist[] = [], songs: Song[] = [], albums: Album[] = []) {
+  const server = {
+    artists: artists.map((artist) => ({ ...artist })),
+    songs: [...songs],
+    albums: [...albums],
+    artwork: artworkFake(),
+    writes: [] as ArtistWrite[],
+    queries: [] as string[],
+    pageSize: 50,
+    catalog: { revision: 1, defaultArtist: null as { id: string; name: string } | null },
+    /** The Artists deleted, in order, each with the query string it was deleted with. */
+    deleted: [] as { id: string; query: string }[],
+    next: undefined as (() => Response) | undefined,
+    changeElsewhere(id: string, change: Partial<Artist>) {
+      server.artists = server.artists.map((artist) =>
+        artist.id === id ? { ...artist, ...change, revision: artist.revision + 1 } : artist,
+      );
+    },
+  };
+
+  const matches = (keys: Set<string>, excluding?: string): ArtistMatch[] =>
+    server.artists
+      .filter((artist) => artist.id !== excluding)
+      .flatMap((artist) => [
+        ...(keys.has(key(artist.name))
+          ? [
+              {
+                id: artist.id,
+                name: artist.name,
+                matchedText: artist.name,
+                matchedOn: 'name' as const,
+              },
+            ]
+          : []),
+        ...artist.aliases
+          .filter((alias) => keys.has(key(alias)))
+          .map((alias) => ({
+            id: artist.id,
+            name: artist.name,
+            matchedText: alias,
+            matchedOn: 'alias' as const,
+          })),
+      ]);
+
+  const keysOf = (name: string, aliases: readonly string[]) =>
+    new Set([key(name), ...aliases.map(key)]);
+
+  stubFetch().mockImplementation((input, init) => {
+    const path = requestPath(input);
+    const method = (init?.method ?? 'GET').toUpperCase();
+    const url = new URL(input instanceof Request ? input.url : input.toString(), document.baseURI);
+    if (path.endsWith('/health')) {
+      return Promise.resolve(jsonResponse(200, healthyReport));
+    }
+    if (path.endsWith('/api/v1/songs') && method === 'GET') {
+      const artist = url.searchParams.get('artist');
+      const items = server.songs
+        .filter(
+          (song) =>
+            song.credits.primary?.id === artist ||
+            song.credits.featured.some((featured) => featured.id === artist),
+        )
+        .sort((a, b) => a.title.localeCompare(b.title));
+      return Promise.resolve(
+        jsonResponse(200, {
+          items: items.slice(0, 50),
+          page: 1,
+          pageSize: 50,
+          total: items.length,
+        }),
+      );
+    }
+    if (path.endsWith('/api/v1/albums') && method === 'GET') {
+      const artist = url.searchParams.get('artist');
+      const items = server.albums
+        .filter((album) => album.albumArtist?.id === artist)
+        .sort((a, b) => a.title.localeCompare(b.title));
+      return Promise.resolve(
+        jsonResponse(200, { items, page: 1, pageSize: 50, total: items.length }),
+      );
+    }
+    if (path.endsWith('/api/v1/artwork')) {
+      return Promise.resolve(server.artwork.upload(init));
+    }
+    if (path.endsWith('/api/v1/settings/catalog') && method === 'GET') {
+      return Promise.resolve(jsonResponse(200, server.catalog));
+    }
+    if (!path.includes('/api/v1/artists')) {
+      return Promise.resolve(problem(404, 'not_found'));
+    }
+
+    if (method !== 'GET') {
+      const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as Record<
+        string,
+        unknown
+      >;
+      const headers = new Headers(init?.headers);
+      server.writes.push({ method, path, ifMatch: headers.get('If-Match'), body });
+      const next = server.next;
+      if (next !== undefined) {
+        server.next = undefined;
+        return Promise.resolve(next());
+      }
+    }
+
+    const id = /\/api\/v1\/artists\/([^/]+)$/.exec(path)?.[1];
+    if (method === 'GET' && id === undefined) {
+      server.queries.push(url.search);
+      const search = key(url.searchParams.get('search') ?? '');
+      const page = Number(url.searchParams.get('page') ?? '1');
+      const found = server.artists
+        .filter(
+          (artist) =>
+            search === '' ||
+            key(artist.name).includes(search) ||
+            artist.aliases.some((alias) => key(alias).includes(search)),
+        )
+        .sort((a, b) => key(a.name).localeCompare(key(b.name)));
+      return Promise.resolve(
+        jsonResponse(200, {
+          items: found.slice((page - 1) * server.pageSize, page * server.pageSize),
+          page,
+          pageSize: server.pageSize,
+          total: found.length,
+        }),
+      );
+    }
+
+    if (method === 'POST') {
+      const write = server.writes[server.writes.length - 1];
+      const name = typeof write?.body.name === 'string' ? write.body.name.trim() : '';
+      const aliases = (write?.body.aliases as string[] | undefined) ?? [];
+      const found = matches(keysOf(name, aliases));
+      if (found.length > 0 && write?.body.confirmDuplicate !== true) {
+        return Promise.resolve(problem(409, 'duplicate_artist_name', { matches: found }));
+      }
+      const artist = testArtist(name, { aliases });
+      server.artists.push(artist);
+      return Promise.resolve(jsonResponse(201, artist));
+    }
+
+    const current = server.artists.find((artist) => artist.id === id);
+    if (current === undefined) {
+      return Promise.resolve(problem(404, 'not_found'));
+    }
+    if (method === 'GET') {
+      return Promise.resolve(jsonResponse(200, current));
+    }
+
+    const write = server.writes[server.writes.length - 1];
+    if (write?.ifMatch !== `"${String(current.revision)}"`) {
+      return Promise.resolve(problem(409, 'revision_conflict', { current }));
+    }
+    if (method === 'DELETE') {
+      const reassignTo = url.searchParams.get('reassignTo');
+      const remove = url.searchParams.get('removeCredits') === 'true';
+      if (
+        (reassignTo !== null && remove) ||
+        (reassignTo !== null &&
+          (reassignTo === current.id || !server.artists.some((artist) => artist.id === reassignTo)))
+      ) {
+        return Promise.resolve(
+          problem(422, 'validation_failed', {
+            errors: { reassignTo: ['The Artist chosen to take the credits no longer exists.'] },
+          }),
+        );
+      }
+      const isDefaultArtist = server.catalog.defaultArtist?.id === current.id;
+      if (current.songCount + current.albumCount > 0 && reassignTo === null && !remove) {
+        return Promise.resolve(
+          problem(409, 'artist_in_use', {
+            songCount: current.songCount,
+            albumCount: current.albumCount,
+            isDefaultArtist,
+            current,
+          }),
+        );
+      }
+      server.artists = server.artists.filter((artist) => artist.id !== current.id);
+      server.deleted.push({ id: current.id, query: url.search });
+      if (isDefaultArtist) {
+        server.catalog = { revision: server.catalog.revision + 1, defaultArtist: null };
+      }
+      return Promise.resolve(new Response(null, { status: 204 }));
+    }
+    const edit = write.body as Partial<Artist> & { confirmDuplicate?: boolean };
+    const artwork = server.artwork.apply(current.artwork, write.body);
+    if ('errors' in artwork) {
+      return Promise.resolve(problem(422, 'validation_failed', { errors: artwork.errors }));
+    }
+    const changed: Artist = {
+      ...current,
+      artwork: artwork.artwork,
+      ...(edit.name === undefined ? {} : { name: edit.name }),
+      ...(edit.aliases === undefined ? {} : { aliases: edit.aliases }),
+      ...(edit.notes === undefined ? {} : { notes: edit.notes }),
+      ...(edit.links === undefined ? {} : { links: edit.links }),
+    };
+    const before = keysOf(current.name, current.aliases);
+    const added = new Set([...keysOf(changed.name, changed.aliases)].filter((k) => !before.has(k)));
+    const found = matches(added, current.id);
+    if (found.length > 0 && edit.confirmDuplicate !== true) {
+      return Promise.resolve(problem(409, 'duplicate_artist_name', { matches: found }));
+    }
+    const saved = { ...changed, revision: current.revision + 1 };
+    server.artists = server.artists.map((artist) => (artist.id === id ? saved : artist));
+    return Promise.resolve(jsonResponse(200, saved));
+  });
+
+  return server;
+}

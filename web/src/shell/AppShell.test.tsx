@@ -24,7 +24,7 @@ function sidebar(): HTMLElement {
 }
 
 describe('the signed-in shell', () => {
-  it('has a sidebar listing Songs, and Settings with Account, Credentials, Workflow, Suno, Backups, and System', async () => {
+  it('has a sidebar listing Songs, Artists, Albums, Playlists, and Settings with Account, Credentials, Workflow, Catalog, Genres, Tags, Relationships, Suno, Backups, and System', async () => {
     stubFetch().mockImplementation(() => Promise.resolve(jsonResponse(200, healthyReport)));
 
     renderAt('/songs');
@@ -33,9 +33,16 @@ describe('the signed-in shell', () => {
     const links = within(sidebar()).getAllByRole('link');
     expect(links.map((link) => link.textContent)).toEqual([
       'Songs',
+      'Artists',
+      'Albums',
+      'Playlists',
       'Account',
       'Credentials',
       'Workflow',
+      'Catalog',
+      'Genres',
+      'Tags',
+      'Relationships',
       'Suno',
       'Backups',
       'System',

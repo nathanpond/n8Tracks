@@ -1,20 +1,28 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_INPUTS } from '../../test/createFieldsFixture';
-import { renderApp } from '../../test/helpers';
+import { advanceTimers, fakeTimeouts, renderApp } from '../../test/helpers';
 import { testVersion, versionServer } from '../../test/versionServer';
 
 const TEXT = { lyrics: '[Verse]\nRun with me\n', styles: 'punk, fast' };
 
+/**
+ * Opens the Song's current Version. Autosave's pause runs on the fake clock (fakeTimeouts), so a
+ * loaded machine spends no real time waiting for it and cannot run the test's timeout out.
+ */
 async function openVersion() {
-  const user = userEvent.setup();
+  fakeTimeouts();
+  const user = userEvent.setup({ advanceTimers });
   renderApp('/songs/n8-7');
   await screen.findByRole('radiogroup', { name: 'Kind' });
   return user;
 }
 
-/** Waits for the autosave after the user's pause (1.5 s) to have sent `count` writes. */
+/**
+ * Waits for the autosave after the user's pause (1.5 s) to have sent `count` writes, within
+ * `timeout` on the fake clock.
+ */
 async function writesReach(writes: unknown[], count: number, timeout = 4_000) {
   await waitFor(
     () => {
@@ -183,7 +191,10 @@ describe('a Speech’s and a Sound’s options', () => {
     expect(screen.getByRole('radio', { name: 'One-Shot' })).toBeChecked();
     expect(within(key).getByRole('radio', { name: 'C#' })).toBeChecked();
 
-    await new Promise((resolve) => setTimeout(resolve, 1_700));
+    // Past the autosave pause (1.5 s): nothing is sent.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_700);
+    });
     expect(server.writes).toHaveLength(0);
   });
 

@@ -9,6 +9,7 @@ using n8Tracks.Api.Tests.Auth;
 using n8Tracks.Api.Tests.Setup;
 using n8Tracks.Api.Tests.Songs;
 using n8Tracks.Application.References;
+using n8Tracks.Domain.Catalog;
 
 namespace n8Tracks.Api.Tests.References;
 
@@ -31,8 +32,36 @@ public sealed class ReferenceParameterGuardTests
         "DELETE /api/v1/workflow-states/{id:guid}: id",
         "PATCH /api/v1/suno/models/{id:guid}: id",
         "DELETE /api/v1/suno/models/{id:guid}: id",
+        "PATCH /api/v1/genres/{id:guid}: id",
+        "POST /api/v1/genres/{id:guid}/merge: id",
+        "DELETE /api/v1/genres/{id:guid}: id",
+        "PATCH /api/v1/tags/{id:guid}: id",
+        "POST /api/v1/tags/{id:guid}/merge: id",
+        "DELETE /api/v1/tags/{id:guid}: id",
+        "GET /api/v1/artists/{id:guid}: id",
+        "PATCH /api/v1/artists/{id:guid}: id",
+        "DELETE /api/v1/artists/{id:guid}: id",
+        "GET /api/v1/albums/{id:guid}: id",
+        "PATCH /api/v1/albums/{id:guid}: id",
+        "GET /api/v1/playlists/{id:guid}: id",
+        "PATCH /api/v1/playlists/{id:guid}: id",
+        "DELETE /api/v1/albums/{id:guid}: id",
+        "DELETE /api/v1/playlists/{id:guid}: id",
+        "POST /api/v1/playlists/{id:guid}/songs: id",
+        "DELETE /api/v1/playlists/{id:guid}/songs/{reference}: id",
+        "PUT /api/v1/playlists/{id:guid}/songs: id",
+        "POST /api/v1/albums/{id:guid}/tracks: id",
+        "DELETE /api/v1/albums/{id:guid}/tracks/{reference}: id",
+        "PUT /api/v1/albums/{id:guid}/tracks: id",
+        "PATCH /api/v1/relationship-types/{id:guid}: id",
+        "DELETE /api/v1/relationship-types/{id:guid}: id",
+        "DELETE /api/v1/songs/{reference}/relationships/{id:guid}: id",
         "GET /api/v1/versions/{reference}/snapshots/{snapshotId:guid}: snapshotId",
         "POST /api/v1/versions/{reference}/snapshots/{snapshotId:guid}/restore: snapshotId",
+        "DELETE /api/v1/versions/{reference}/snapshots/{snapshotId:guid}: snapshotId",
+        "GET /api/v1/artwork/{assetId:guid}: assetId",
+        "GET /api/v1/artwork/{assetId:guid}/{size}: assetId",
+        "GET /api/v1/artwork/{assetId:guid}/crops/{cropKey}/{size}: assetId",
     };
 
     /// <summary>
@@ -45,6 +74,22 @@ public sealed class ReferenceParameterGuardTests
         ["PATCH /api/v1/songs/{reference}"] = static async (c, song, _) =>
             await c.SendAsync(HttpMethod.Patch, $"songs/{song}", "{}", await c.SongRevisionAsync()),
         ["GET /api/v1/songs/{reference}/versions"] = static (c, song, _) => c.SendAsync(HttpMethod.Get, $"songs/{song}/versions"),
+        ["GET /api/v1/songs/{reference}/deletion-impact"] = static (c, song, _) => c.SendAsync(HttpMethod.Get, $"songs/{song}/deletion-impact"),
+
+        // 409 revision_conflict: the Song was found, and a revision it is not at deletes nothing.
+        ["DELETE /api/v1/songs/{reference}"] = static (c, song, _) => c.SendAsync(HttpMethod.Delete, $"songs/{song}", revision: 999),
+
+        // 200: the Song is credited to no one already, so nothing changes.
+        ["PUT /api/v1/songs/{reference}/credits"] = static async (c, song, _) =>
+            await c.SendAsync(HttpMethod.Put, $"songs/{song}/credits", """{"primaryArtistId":null,"featuredArtistIds":[]}""", await c.SongRevisionAsync()),
+
+        // 422 validation_failed: the Song was found, and is named as its own other Song.
+        ["POST /api/v1/songs/{reference}/relationships"] = static (c, song, _) =>
+            c.SendAsync(HttpMethod.Post, $"songs/{song}/relationships", $$"""{"typeId":"{{SystemRelationshipTypes.Cover.Id}}","direction":"forward","otherSong":"{{song}}"}"""),
+
+        // 200: a relationship made for the call (by ID, so it is there whatever the reference) is removed.
+        ["DELETE /api/v1/songs/{reference}/relationships/{id:guid}"] = static async (c, song, _) =>
+            await c.SendAsync(HttpMethod.Delete, $"songs/{song}/relationships/{await c.RelationshipAsync()}"),
 
         // 422 version_number_not_offered: the Song and the source were both found, and nothing is stored.
         ["POST /api/v1/songs/{reference}/versions"] = static (c, song, version) =>
@@ -64,7 +109,23 @@ public sealed class ReferenceParameterGuardTests
             c.SendAsync(HttpMethod.Get, $"versions/{version}/snapshots/{c.SnapshotId}"),
         ["POST /api/v1/versions/{reference}/snapshots/{snapshotId:guid}/restore"] = static async (c, _, version) =>
             await c.SendAsync(HttpMethod.Post, $"versions/{version}/snapshots/{c.SnapshotId}/restore", "{}", await c.VersionRevisionAsync()),
+
+        // 204: a history entry taken for the call (by ID, so it is there whatever the reference) is deleted.
+        ["DELETE /api/v1/versions/{reference}/snapshots/{snapshotId:guid}"] = static async (c, _, version) =>
+            await c.SendAsync(HttpMethod.Delete, $"versions/{version}/snapshots/{await c.HistoryEntryAsync()}"),
+        ["GET /api/v1/versions/{reference}/deletion-impact"] = static (c, _, version) => c.SendAsync(HttpMethod.Get, $"versions/{version}/deletion-impact"),
+
+        // 409 revision_conflict: the Version was found, and a revision it is not at deletes nothing.
+        ["DELETE /api/v1/versions/{reference}"] = static (c, _, version) => c.SendAsync(HttpMethod.Delete, $"versions/{version}", revision: 999),
         ["GET /api/v1/resolve/{reference}"] = static (c, _, version) => c.SendAsync(HttpMethod.Get, $"resolve/{version}"),
+
+        // 200: the Song is not on the Playlist, so nothing changes.
+        ["DELETE /api/v1/playlists/{id:guid}/songs/{reference}"] = static async (c, song, _) =>
+            await c.SendAsync(HttpMethod.Delete, $"playlists/{c.PlaylistId}/songs/{song}", revision: await c.PlaylistRevisionAsync()),
+
+        // 200: the Song is not on the Album, so nothing changes.
+        ["DELETE /api/v1/albums/{id:guid}/tracks/{reference}"] = static async (c, song, _) =>
+            await c.SendAsync(HttpMethod.Delete, $"albums/{c.AlbumId}/tracks/{song}", revision: await c.AlbumRevisionAsync()),
     };
 
     [Fact]
@@ -110,6 +171,18 @@ public sealed class ReferenceParameterGuardTests
         {
             Assert.Equal(HttpStatusCode.Created, first.StatusCode);
             context.SnapshotId = (await SetupApi.JsonAsync(first)).GetProperty("id").GetString()!;
+        }
+
+        using (var playlist = await context.SendAsync(HttpMethod.Post, "playlists", """{"title":"Referenced"}"""))
+        {
+            Assert.Equal(HttpStatusCode.Created, playlist.StatusCode);
+            context.PlaylistId = (await SetupApi.JsonAsync(playlist)).GetProperty("id").GetString()!;
+        }
+
+        using (var album = await context.SendAsync(HttpMethod.Post, "albums", """{"title":"Referenced"}"""))
+        {
+            Assert.Equal(HttpStatusCode.Created, album.StatusCode);
+            context.AlbumId = (await SetupApi.JsonAsync(album)).GetProperty("id").GetString()!;
         }
 
         // Every endpoint that binds a reference has a call here, and every call is to such an endpoint.
@@ -224,6 +297,10 @@ public sealed class ReferenceParameterGuardTests
     {
         public string SnapshotId { get; set; } = string.Empty;
 
+        public string PlaylistId { get; set; } = string.Empty;
+
+        public string AlbumId { get; set; } = string.Empty;
+
         public async Task<HttpResponseMessage> SendAsync(HttpMethod method, string path, string? json = null, int? revision = null)
         {
             using var request = new HttpRequestMessage(method, new Uri("/api/v1/" + path, UriKind.Relative));
@@ -243,7 +320,27 @@ public sealed class ReferenceParameterGuardTests
 
         public Task<int> SongRevisionAsync() => RevisionAsync($"songs/{songId}");
 
+        /// <summary>Relates the Song to the second one under Cover, by ID, and answers the relationship's ID.</summary>
+        public async Task<string> RelationshipAsync()
+        {
+            using var response = await SendAsync(HttpMethod.Post, $"songs/{songId}/relationships", $$"""{"typeId":"{{SystemRelationshipTypes.Cover.Id}}","direction":"forward","otherSong":"n8-2"}""");
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            return (await SetupApi.JsonAsync(response)).GetProperty("relationships")[0].GetProperty("id").GetString()!;
+        }
+
+        /// <summary>Takes a snapshot of the Version, by ID, and answers its ID (the existing one when the text is the newest's).</summary>
+        public async Task<string> HistoryEntryAsync()
+        {
+            using var response = await SendAsync(HttpMethod.Post, $"versions/{versionId}/snapshots", """{"lyrics":"Deleted by the guard","styles":""}""");
+            Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+            return (await SetupApi.JsonAsync(response)).GetProperty("id").GetString()!;
+        }
+
         public Task<int> VersionRevisionAsync() => RevisionAsync($"versions/{versionId}");
+
+        public Task<int> PlaylistRevisionAsync() => RevisionAsync($"playlists/{PlaylistId}");
+
+        public Task<int> AlbumRevisionAsync() => RevisionAsync($"albums/{AlbumId}");
 
         private async Task<int> RevisionAsync(string path)
         {

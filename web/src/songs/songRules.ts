@@ -1,4 +1,8 @@
-import { CONCEPT_MAXIMUM_LENGTH, TITLE_MAXIMUM_LENGTH } from '../api/songs';
+import {
+  CONCEPT_MAXIMUM_LENGTH,
+  SONG_NOTES_MAXIMUM_LENGTH,
+  TITLE_MAXIMUM_LENGTH,
+} from '../api/songs';
 import { VERSION_NAME_MAXIMUM_LENGTH, VERSION_NOTES_MAXIMUM_LENGTH } from '../api/versions';
 
 // The Song rules the New Song dialog checks before sending, as the API checks them (`SongRules`).
@@ -39,5 +43,18 @@ export function notesError(notes: string): string | undefined {
   const normalised = notes.replace(/\r\n|\r/g, '\n').trim();
   return normalised.length > VERSION_NOTES_MAXIMUM_LENGTH
     ? atMost(VERSION_NOTES_MAXIMUM_LENGTH)
+    : undefined;
+}
+
+/** A Song's notes as they are saved: line endings as `\n`, trimmed, and null when nothing is left. */
+export function normaliseNotes(draft: string): string | null {
+  const normalised = draft.replace(/\r\n|\r/g, '\n').trim();
+  return normalised === '' ? null : normalised;
+}
+
+/** A Song's notes' error before they are sent: optional, at most 10,000 once normalised. */
+export function songNotesError(notes: string): string | undefined {
+  return (normaliseNotes(notes) ?? '').length > SONG_NOTES_MAXIMUM_LENGTH
+    ? atMost(SONG_NOTES_MAXIMUM_LENGTH)
     : undefined;
 }

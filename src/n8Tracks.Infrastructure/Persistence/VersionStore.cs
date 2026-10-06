@@ -326,6 +326,38 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
                 found.Number);
     }
 
+    public async Task<IReadOnlyList<Guid>> GenerationIdsAsync(Guid versionId, CancellationToken cancellationToken) =>
+        await context.Generations.AsNoTracking()
+            .Where(generation => generation.VersionId == versionId)
+            .OrderBy(static generation => generation.Ordinal)
+            .Select(static generation => generation.Id)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+    public async Task<IReadOnlyList<string>> UsedNumbersAsync(Guid songId, CancellationToken cancellationToken) =>
+        await context.UsedVersionNumbers.AsNoTracking()
+            .Where(number => number.SongId == songId)
+            .Select(static number => number.Number)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+    public Task ClearCurrentAsync(Guid songId, CancellationToken cancellationToken) =>
+        context.Songs
+            .Where(song => song.Id == songId)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(static song => song.CurrentVersionId, (Guid?)null), cancellationToken);
+
+    public Task RaiseSongRevisionAsync(Guid songId, DateTimeOffset updatedUtc, CancellationToken cancellationToken)
+    {
+        var updated = UtcText.From(updatedUtc);
+        return context.Songs
+            .Where(song => song.Id == songId)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(static song => song.Revision, static song => song.Revision + 1)
+                    .SetProperty(static song => song.UpdatedUtc, updated),
+                cancellationToken);
+    }
+
     public async Task<Guid?> FindGenerationIdByShortcodeAsync(long songShortcodeNumber, string number, int ordinal, CancellationToken cancellationToken) =>
         await FindIdByShortcodeAsync(songShortcodeNumber, number, cancellationToken).ConfigureAwait(false) is { } versionId
             ? await context.Generations.AsNoTracking()

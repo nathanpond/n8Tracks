@@ -24,6 +24,11 @@
     <Compile Include="..\Shared\TestPorts.cs" Link="Shared\TestPorts.cs" />
   </ItemGroup>
 
+  <!-- The retained-shape baseline the guard compares each retained table with. -->
+  <ItemGroup>
+    <None Update="Retention\retained-shapes.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\..\src\n8Tracks.Api\n8Tracks.Api.csproj" />
   </ItemGroup>

@@ -5,16 +5,39 @@ import { setColourScheme } from './shell.ts';
 /** WCAG 2.1 levels A and AA, the project's accessibility target. */
 const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
 
-/** Lets running transitions finish, so colours are measured at rest and not half-way. */
+/**
+ * Waits until the page is at rest, so colours are measured as they settle and not half-way: every
+ * finite animation and transition has finished, and none has started over two checks in a row,
+ * each two frames apart. A transition a component starts from script is not running yet when the
+ * state it belongs to is first reached: Mantine mounts a tooltip at its start styles (opacity 0)
+ * and starts the fade a frame or two later, so a single look at `getAnimations()` can find nothing
+ * and let axe run while the fade is under way, measuring text blended with the background (#296).
+ * After `MAXIMUM_ROUNDS` rounds the scan goes ahead with whatever is on the page.
+ */
 async function animationsFinished(page: Page): Promise<void> {
   await page.evaluate(async () => {
-    await Promise.allSettled(
-      document
+    const MAXIMUM_ROUNDS = 100;
+    const frame = () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          resolve();
+        });
+      });
+    let quiet = 0;
+    for (let round = 0; round < MAXIMUM_ROUNDS && quiet < 2; round++) {
+      await frame();
+      await frame();
+      const running = document
         .getAnimations()
         // An endless animation (the loading indicator) never finishes; it is not a colour change.
-        .filter((animation) => animation.effect?.getComputedTiming().endTime !== Infinity)
-        .map((animation) => animation.finished),
-    );
+        .filter((animation) => animation.effect?.getComputedTiming().endTime !== Infinity);
+      if (running.length === 0) {
+        quiet++;
+      } else {
+        quiet = 0;
+        await Promise.allSettled(running.map((animation) => animation.finished));
+      }
+    }
   });
 }
 

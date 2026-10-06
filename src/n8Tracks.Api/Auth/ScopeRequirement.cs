@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http.HttpResults;
 using n8Tracks.Api.Problems;
 using n8Tracks.Application.Credentials;
 
@@ -147,5 +148,25 @@ internal sealed class ScopeMiddleware(RequestDelegate next)
             InsufficientScopeCode,
             $"This credential needs the scope {string.Join(" and ", missing)}.",
             [new("requiredScope", requiredScope)]).ExecuteAsync(context);
+    }
+
+    /// <summary>
+    /// For a part of a request that needs more than the endpoint's marker (a Song edit that changes
+    /// the artwork also needs <c>artwork.write</c>): 403 <c>insufficient_scope</c> when a credential
+    /// lacks <paramref name="scope"/>, as the marker's own refusal is; null for a session, or a
+    /// credential that holds it.
+    /// </summary>
+    internal static ProblemHttpResult? Lacking(HttpContext context, string scope)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        return !CredentialPrincipal.IsCredential(context.User) || CredentialPrincipal.Scopes(context.User).Contains(scope)
+            ? null
+            : ApiProblem.For(
+                context,
+                StatusCodes.Status403Forbidden,
+                InsufficientScopeCode,
+                $"This credential needs the scope {scope}.",
+                [new("requiredScope", scope)]);
     }
 }

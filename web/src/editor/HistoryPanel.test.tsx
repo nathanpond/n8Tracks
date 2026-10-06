@@ -4,7 +4,7 @@ import { EditorView } from '@codemirror/view';
 import { describe, expect, it } from 'vitest';
 import type { Snapshot } from '../api/snapshots';
 import { formatDateTime } from '../api/timeZone';
-import { renderApp } from '../test/helpers';
+import { jsonResponse, renderApp } from '../test/helpers';
 import { testVersion, versionServer } from '../test/versionServer';
 
 const ONE = testVersion('1', {
@@ -25,6 +25,7 @@ function snapshot(id: number, createdAt: string, lyrics: string, styles: string)
 
 const EARLY = snapshot(91, '2026-10-01T08:00:00Z', '[Verse]\nFirst line\nKept line\n', 'folk');
 const LATER = snapshot(92, '2026-10-01T08:30:00Z', '[Verse]\nRewritten line\nKept line\n', 'metal');
+const LATEST = snapshot(93, '2026-10-01T08:45:00Z', '[Verse]\nNewest line\n', 'metal');
 
 async function openHistory() {
   const user = userEvent.setup();
@@ -270,5 +271,168 @@ describe('the History panel', () => {
       expect(editor().state.doc.toString()).toBe('Changed by a tool');
     });
     expect(server.versions[0]?.lyrics).toBe('Changed by a tool');
+  });
+
+  describe('deleting an entry', () => {
+    async function chooseAndAskToDelete(entry: Snapshot) {
+      const user = await openHistory();
+      await user.click(await screen.findByRole('button', { name: when(entry.createdAt) }));
+      await screen.findByTestId('snapshot');
+      await user.click(screen.getByRole('button', { name: 'Delete this snapshot' }));
+      const dialog = await screen.findByRole('dialog', { name: 'Delete this snapshot?' });
+      await waitFor(() => {
+        expect(dialog).toBeVisible();
+      });
+      return { user, dialog };
+    }
+
+    function entry(snapshot: Snapshot) {
+      return within(screen.getByRole('list', { name: 'Snapshots' })).getByRole('button', {
+        name: when(snapshot.createdAt),
+      });
+    }
+
+    it('deletes the selected entry after a confirmation calling it permanent, then selects the newest remaining one', async () => {
+      const { server } = versionServer([ONE]);
+      server.snapshots = [EARLY, LATER, LATEST];
+      const { user, dialog } = await chooseAndAskToDelete(LATEST);
+
+      const summary = within(dialog).getByTestId('delete-snapshot-summary');
+      expect(summary).toHaveTextContent(
+        `The snapshot from ${when(LATEST.createdAt)} is deleted permanently. This cannot be undone.`,
+      );
+      // Deletion is presented as permanent: the retention period is never mentioned.
+      expect(dialog).not.toHaveTextContent(/30|days?\b|retain|recover/i);
+
+      await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+
+      await waitFor(() => {
+        expect(screen.queryByRole('button', { name: when(LATEST.createdAt) })).toBeNull();
+      });
+      expect(server.deletedSnapshots).toEqual([LATEST.id]);
+      expect(entry(LATER)).toHaveAttribute('aria-pressed', 'true');
+      expect(entry(EARLY)).toHaveAttribute('aria-pressed', 'false');
+      expect(
+        await screen.findByRole('heading', { name: `Snapshot from ${when(LATER.createdAt)}` }),
+      ).toBeVisible();
+      expect(screen.getByText(/^2 snapshots, newest first\./)).toBeVisible();
+      expect(screen.getByTestId('snapshot-deleted')).toHaveTextContent(
+        `Deleted the snapshot from ${when(LATEST.createdAt)}.`,
+      );
+      await waitFor(() => {
+        expect(entry(LATER)).toHaveFocus();
+      });
+      // The editor's text and the Version are not touched.
+      expect(editor().state.doc.toString()).toBe(ONE.lyrics);
+      expect(server.writes).toHaveLength(0);
+    });
+
+    it('selects the newest remaining entry when an older selected one is deleted, and says when none remain', async () => {
+      const { server } = versionServer([ONE]);
+      server.snapshots = [EARLY, LATER];
+      const { user, dialog } = await chooseAndAskToDelete(EARLY);
+      await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+
+      await waitFor(() => {
+        expect(entry(LATER)).toHaveAttribute('aria-pressed', 'true');
+      });
+      expect(screen.queryByRole('button', { name: when(EARLY.createdAt) })).toBeNull();
+
+      await user.click(screen.getByRole('button', { name: 'Delete this snapshot' }));
+      const last = await screen.findByRole('dialog', { name: 'Delete this snapshot?' });
+      await user.click(within(last).getByRole('button', { name: 'Delete' }));
+      expect(await screen.findByText(/^No snapshots yet\./)).toBeVisible();
+      expect(server.deletedSnapshots).toEqual([EARLY.id, LATER.id]);
+      expect(server.snapshots).toEqual([]);
+    });
+
+    it('deletes nothing when cancelled', async () => {
+      const { server } = versionServer([ONE]);
+      server.snapshots = [EARLY, LATER];
+      const { user, dialog } = await chooseAndAskToDelete(EARLY);
+
+      await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog', { name: 'Delete this snapshot?' })).toBeNull();
+      });
+      expect(server.deletedSnapshots).toEqual([]);
+      expect(entry(EARLY)).toHaveAttribute('aria-pressed', 'true');
+      expect(screen.getByText(/^2 snapshots, newest first\./)).toBeVisible();
+    });
+
+    it('keeps the entry and says so when the deletion fails, and deletes it on a second try', async () => {
+      const { server } = versionServer([ONE]);
+      server.snapshots = [EARLY, LATER];
+      server.nextDelete = () => jsonResponse(500, { code: 'internal_error' });
+      const { user, dialog } = await chooseAndAskToDelete(LATER);
+
+      await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+      expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+        'Not deleted: n8Tracks could not be reached or refused it. Try again.',
+      );
+      expect(entry(LATER)).toBeVisible();
+
+      await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+      await waitFor(() => {
+        expect(screen.queryByRole('button', { name: when(LATER.createdAt) })).toBeNull();
+      });
+      expect(entry(EARLY)).toHaveAttribute('aria-pressed', 'true');
+    });
+
+    it('treats an entry already gone as deleted', async () => {
+      const { server } = versionServer([ONE]);
+      server.snapshots = [EARLY, LATER];
+      server.nextDelete = () => jsonResponse(404, { code: 'not_found' });
+      const { user, dialog } = await chooseAndAskToDelete(LATER);
+
+      await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+      await waitFor(() => {
+        expect(entry(EARLY)).toHaveAttribute('aria-pressed', 'true');
+      });
+      expect(screen.queryByRole('button', { name: when(LATER.createdAt) })).toBeNull();
+    });
+
+    it('is offered while the editor has unsaved changes', async () => {
+      const { server } = versionServer([ONE]);
+      server.snapshots = [EARLY, LATER];
+      const user = await openHistory();
+      await user.click(await screen.findByRole('button', { name: when(EARLY.createdAt) }));
+      await screen.findByTestId('snapshot');
+
+      server.next = () => Promise.reject(new TypeError('Failed to fetch'));
+      typeLyrics('Unsaved');
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Restore this snapshot' })).toBeDisabled();
+      });
+      const remove = screen.getByRole('button', { name: 'Delete this snapshot' });
+      expect(remove).toBeEnabled();
+
+      await user.click(remove);
+      const dialog = await screen.findByRole('dialog', { name: 'Delete this snapshot?' });
+      await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+      await waitFor(() => {
+        expect(server.deletedSnapshots).toEqual([EARLY.id]);
+      });
+      // The unsaved text stays in the editor.
+      expect(editor().state.doc.toString()).toBe(`${ONE.lyrics}Unsaved`);
+    });
+
+    it('is offered on a frozen Version', async () => {
+      const frozen = { ...ONE, isFrozen: true };
+      const { server } = versionServer([frozen]);
+      server.snapshots = [EARLY, LATER];
+      const user = await openHistory();
+      await user.click(await screen.findByRole('button', { name: when(LATER.createdAt) }));
+      await screen.findByTestId('snapshot');
+      expect(screen.getByRole('button', { name: 'Restore into a new Version' })).toBeVisible();
+
+      await user.click(screen.getByRole('button', { name: 'Delete this snapshot' }));
+      const dialog = await screen.findByRole('dialog', { name: 'Delete this snapshot?' });
+      await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+      await waitFor(() => {
+        expect(entry(EARLY)).toHaveAttribute('aria-pressed', 'true');
+      });
+      expect(server.deletedSnapshots).toEqual([LATER.id]);
+    });
   });
 });

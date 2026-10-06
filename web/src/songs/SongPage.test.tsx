@@ -1,7 +1,7 @@
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import type { Song } from '../api/songs';
+import { NO_RELEASE, type Song } from '../api/songs';
 import {
   healthyReport,
   jsonResponse,
@@ -29,6 +29,16 @@ const song: Song = {
   createdAt: '2026-10-01T09:00:00Z',
   updatedAt: '2026-10-01T09:00:00Z',
   revision: 1,
+  notes: null,
+  genres: [],
+  tags: [],
+  credits: { primary: null, featured: [] },
+  playlists: [],
+  albums: [],
+  relationships: [],
+  release: NO_RELEASE,
+  warnings: [],
+  artwork: null,
 };
 
 /** The query string a request was made with, whatever form `fetch` was given it in. */
@@ -142,7 +152,9 @@ describe('the Song page', () => {
     await waitFor(() => {
       const lists = mock.mock.calls
         .filter(([input]) => requestPath(input).endsWith('/api/v1/songs'))
-        .map(([input]) => searchOf(input));
+        .map(([input]) => searchOf(input))
+        // The Song page asks for the other Songs with its title, which is not the table's list.
+        .filter((search) => !search.includes('excludeId='));
       expect(lists).toEqual([`?sort=title&state=${WRITING_ID}`, `?sort=title&state=${WRITING_ID}`]);
     });
   });

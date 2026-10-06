@@ -41,6 +41,8 @@ const FAILURE_MESSAGES: Record<FailureReason, string> = {
   'signed-out': 'you are signed out. Sign in again, then choose Try again.',
   frozen:
     'this Version’s lyrics and styles can no longer change. Create a new Version from it to keep editing them.',
+  deleted:
+    'this Version was deleted. Your text is kept here: create a new Version with it to keep it.',
   gone: 'this Version is no longer there. Copy your text somewhere safe before you leave.',
   refused: 'n8Tracks refused the change. Reload the page and try again.',
 };

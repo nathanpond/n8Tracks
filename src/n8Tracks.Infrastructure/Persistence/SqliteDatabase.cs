@@ -21,7 +21,12 @@ public static class SqliteDatabase
         return Path.Combine(dataPath, FileName);
     }
 
-    /// <summary>The connection string: the file is created when missing, and foreign keys are enforced.</summary>
+    /// <summary>
+    /// The connection string of the context: read-write, with foreign keys enforced, and never creating
+    /// the file. Only database startup makes a new database (<see cref="CreateIfMissing"/>): a file
+    /// deleted while the app runs stays missing, so the health check reports it, instead of the next
+    /// background poll or request putting an empty file in its place.
+    /// </summary>
     public static string ConnectionString(string filePath)
     {
         ArgumentException.ThrowIfNullOrEmpty(filePath);
@@ -29,9 +34,28 @@ public static class SqliteDatabase
         return new SqliteConnectionStringBuilder
         {
             DataSource = filePath,
-            Mode = SqliteOpenMode.ReadWriteCreate,
+            Mode = SqliteOpenMode.ReadWrite,
             ForeignKeys = true,
         }.ToString();
+    }
+
+    /// <summary>Creates an empty database file when there is none; a file already there is left as it is.</summary>
+    public static void CreateIfMissing(string filePath)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(filePath);
+
+        if (File.Exists(filePath))
+        {
+            return;
+        }
+
+        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = filePath,
+            Mode = SqliteOpenMode.ReadWriteCreate,
+            Pooling = false,
+        }.ToString());
+        connection.Open();
     }
 
     /// <summary>

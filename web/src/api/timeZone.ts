@@ -64,6 +64,13 @@ export function formatDateTime(utc: string, timeZone: string): string {
   }).format(new Date(utc));
 }
 
+/** A UTC ISO 8601 time as a date in `timeZone`, in the browser's locale. */
+export function formatDate(utc: string, timeZone: string): string {
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeZone }).format(
+    new Date(utc),
+  );
+}
+
 const RELATIVE_UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
   ['year', 365 * 24 * 60 * 60],
   ['month', 30 * 24 * 60 * 60],

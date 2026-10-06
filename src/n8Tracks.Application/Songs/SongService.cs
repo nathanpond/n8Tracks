@@ -1,8 +1,12 @@
 using System.Globalization;
 using System.Text.Json;
+using n8Tracks.Application.Assets;
 using n8Tracks.Application.Auth;
+using n8Tracks.Application.Catalog;
 using n8Tracks.Application.References;
 using n8Tracks.Application.Suno;
+using n8Tracks.Domain.Assets;
+using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
 
 namespace n8Tracks.Application.Songs;
@@ -10,11 +14,36 @@ namespace n8Tracks.Application.Songs;
 /// <summary>
 /// What creating a Song asks for. Either field may be missing. <paramref name="Inputs"/> holds Suno
 /// options for its Version 1, by API name, as sent; each one sent wins over the user's default.
+/// <paramref name="PrimaryArtistId"/>, when sent, is the Song's primary Artist (an Artist's ID, or
+/// null for none) instead of the default Artist; an import from Suno always sends it.
 /// </summary>
-public sealed record SongRequest(string? Title, string? Concept, IReadOnlyDictionary<string, JsonElement>? Inputs = null);
+public sealed record SongRequest(
+    string? Title,
+    string? Concept,
+    IReadOnlyDictionary<string, JsonElement>? Inputs = null,
+    SongEditField PrimaryArtistId = default);
 
-/// <summary>A list request as the caller sent it: every value unread text, any of them missing.</summary>
-public sealed record SongListRequest(string? Sort, string? Direction, IReadOnlyList<string?> States, string? Page, string? PageSize);
+/// <summary>
+/// A list request as the caller sent it: every value unread text, any of them missing. Each of
+/// <paramref name="Genres"/> is a Genre's ID or <see cref="SongService.NoGenre"/>, and each of
+/// <paramref name="Tags"/> a Tag's ID or <see cref="SongService.NoTag"/>, and each of
+/// <paramref name="Artists"/> an Artist's ID or <see cref="SongService.NoArtist"/>.
+/// <paramref name="Query"/> is the search text (<see cref="SongService.QueryParameter"/>),
+/// <paramref name="Title"/> a title to match exactly (<see cref="SongService.TitleParameter"/>), and
+/// <paramref name="ExcludeId"/> a Song's ID to leave out (<see cref="SongService.ExcludeIdParameter"/>).
+/// </summary>
+public sealed record SongListRequest(
+    string? Sort,
+    string? Direction,
+    IReadOnlyList<string?> States,
+    string? Page,
+    string? PageSize,
+    IReadOnlyList<string?>? Genres = null,
+    IReadOnlyList<string?>? Tags = null,
+    IReadOnlyList<string?>? Artists = null,
+    string? Query = null,
+    string? Title = null,
+    string? ExcludeId = null);
 
 /// <summary>How creating a Song ended.</summary>
 public abstract record SongOutcome
@@ -42,9 +71,51 @@ public readonly record struct SongEditField(bool IsSent, string? Value)
 
 /// <summary>
 /// An edit of a Song's details: a partial merge, so only the fields sent change. <c>StateId</c> is
-/// the unread text of a workflow state's ID.
+/// the unread text of a workflow state's ID. <paramref name="GenreIds"/>, when sent (not null), is
+/// the Song's whole new list of Genres, each the unread text of a Genre's ID; <paramref name="TagIds"/>
+/// likewise for its Tags. <paramref name="Release"/>, when sent, changes the release details it sends.
+/// <paramref name="ArtworkAssetId"/>, when sent, is the unread text of the asset to show as the
+/// Song's artwork, or null to remove it. <paramref name="ArtworkCrop"/>, when sent, is the square
+/// crop of that artwork (null for the centred square); artwork replaced without one sent gets the
+/// centred square.
 /// </summary>
-public sealed record SongEdit(SongEditField Title, SongEditField Concept, SongEditField StateId);
+public sealed record SongEdit(
+    SongEditField Title,
+    SongEditField Concept,
+    SongEditField StateId,
+    SongEditField Notes = default,
+    IReadOnlyList<string?>? GenreIds = null,
+    IReadOnlyList<string?>? TagIds = null,
+    SongReleaseEdit? Release = null,
+    SongEditField ArtworkAssetId = default,
+    ArtworkCropEdit ArtworkCrop = default);
+
+/// <summary>A link as sent: its label (missing or null for none) and its URL.</summary>
+public sealed record SongLinkInput(string? Label, string? Url);
+
+/// <summary>
+/// An edit of a Song's release details: only the members sent change, and a null one clears it.
+/// <see cref="Explicit"/> is <c>explicit</c>, <c>clean</c>, or null; <see cref="Links"/>, when sent
+/// (not null), is the Song's whole new list of links.
+/// </summary>
+public sealed record SongReleaseEdit
+{
+    public SongEditField ReleaseDate { get; init; }
+
+    public SongEditField OriginalReleaseDate { get; init; }
+
+    public SongEditField Explicit { get; init; }
+
+    public SongEditField Copyright { get; init; }
+
+    public SongEditField Publishing { get; init; }
+
+    public SongEditField Isrc { get; init; }
+
+    public SongEditField Language { get; init; }
+
+    public IReadOnlyList<SongLinkInput>? Links { get; init; }
+}
 
 /// <summary>How editing a Song ended.</summary>
 public abstract record SongUpdateOutcome
@@ -90,6 +161,10 @@ public sealed class SongService(
     IWorkflowStateStore states,
     ISunoModelList models,
     VersionDefaultsService defaults,
+    GenreService genres,
+    TagService tags,
+    SongCreditService credits,
+    ArtworkAttachmentService artwork,
     IExclusiveTransaction transaction,
     TimeProvider time)
 {
@@ -97,6 +172,22 @@ public sealed class SongService(
     public const string TitleField = "title";
     public const string ConceptField = "concept";
     public const string StateIdField = "stateId";
+    public const string NotesField = "notes";
+    public const string GenreIdsField = "genreIds";
+    public const string TagIdsField = "tagIds";
+    public const string ArtworkAssetIdField = ArtworkAttachmentService.AssetIdField;
+    public const string ArtworkCropField = ArtworkAttachmentService.CropField;
+
+    /// <summary>The release details object, and the names its members' errors are keyed by (<c>release.isrc</c>).</summary>
+    public const string ReleaseField = "release";
+    public const string ReleaseDateField = ReleaseField + ".releaseDate";
+    public const string OriginalReleaseDateField = ReleaseField + ".originalReleaseDate";
+    public const string ExplicitField = ReleaseField + ".explicit";
+    public const string CopyrightField = ReleaseField + ".copyright";
+    public const string PublishingField = ReleaseField + ".publishing";
+    public const string IsrcField = ReleaseField + ".isrc";
+    public const string LanguageField = ReleaseField + ".language";
+    public const string LinksField = ReleaseField + ".links";
 
     /// <summary>The list parameters, as the API spells them.</summary>
     public const string SortParameter = "sort";
@@ -104,6 +195,38 @@ public sealed class SongService(
     public const string StateParameter = "state";
     public const string PageParameter = "page";
     public const string PageSizeParameter = "pageSize";
+    public const string GenreParameter = "genre";
+
+    /// <summary>The <see cref="GenreParameter"/> value that matches Songs with no Genre.</summary>
+    public const string NoGenre = "none";
+
+    public const string TagParameter = "tag";
+
+    /// <summary>The <see cref="TagParameter"/> value that matches Songs with no Tag.</summary>
+    public const string NoTag = "none";
+
+    public const string ArtistParameter = "artist";
+
+    /// <summary>The <see cref="ArtistParameter"/> value that matches Songs credited to no one.</summary>
+    public const string NoArtist = "none";
+
+    /// <summary>
+    /// The search text: Songs whose title contains it, ignoring case, or whose shortcode starts
+    /// with it. A page of <see cref="SearchPageSize"/> by default; nothing for blank text.
+    /// </summary>
+    public const string QueryParameter = "q";
+
+    /// <summary>
+    /// A title, as typed: Songs whose title is the same once both are trimmed, inner white space
+    /// collapsed, NFC-normalised, and case-folded (<see cref="SongRules.TitleKey"/>). Blank is refused.
+    /// </summary>
+    public const string TitleParameter = "title";
+
+    /// <summary>The ID of a Song to leave out of the list (the Song asking who shares its title).</summary>
+    public const string ExcludeIdParameter = "excludeId";
+
+    /// <summary>How many Songs a search answers unless <see cref="PageSizeParameter"/> says otherwise.</summary>
+    public const int SearchPageSize = 10;
 
     public const string SortUpdated = "updated";
     public const string SortTitle = "title";
@@ -119,7 +242,10 @@ public sealed class SongService(
     /// with the options <see cref="VersionDefaultsService.NewVersionInputsAsync"/> builds for every
     /// kind (Suno's defaults, Suno's title pre-filled with the Song's, the first model offered, then
     /// the user's valid defaults), and then each option the request sends, checked as a Version edit's
-    /// are (errors keyed <c>inputs.&lt;key&gt;</c>, nothing stored).
+    /// are (errors keyed <c>inputs.&lt;key&gt;</c>, nothing stored). It is credited to the primary
+    /// Artist the request names, to none when it sends null, and otherwise to the default Artist as
+    /// it is in this transaction (<see cref="SongCreditService"/>); an Artist that does not exist is an
+    /// error keyed <c>primaryArtistId</c>.
     /// </summary>
     public async Task<SongOutcome> CreateAsync(SongRequest request, CancellationToken cancellationToken)
     {
@@ -143,6 +269,12 @@ public sealed class SongService(
                     }
                 }
 
+                var (primary, primaryError) = await credits.PrimaryForNewSongAsync(request.PrimaryArtistId.IsSent, request.PrimaryArtistId.Value, ct).ConfigureAwait(false);
+                if (primaryError is not null)
+                {
+                    return (Guid.Empty, new Dictionary<string, string[]>(StringComparer.Ordinal) { [SongCreditService.PrimaryArtistIdField] = [primaryError] });
+                }
+
                 var initial = WorkflowState.Initial(await states.ListAsync(ct).ConfigureAwait(false))
                     ?? throw new InvalidOperationException("Every workflow state is hidden, so a new Song has no state to start in.");
                 var number = await songs.NextShortcodeNumberAsync(ct).ConfigureAwait(false);
@@ -152,6 +284,10 @@ public sealed class SongService(
                     sentInputs);
                 var (song, version) = Song.Create(Guid.CreateVersion7(now), Guid.CreateVersion7(now), number, request.Title!, request.Concept, initial, inputs, now);
                 await songs.AddAsync(song, version, ct).ConfigureAwait(false);
+                if (primary is { } artistId)
+                {
+                    await credits.AddPrimaryAsync(song.Id, artistId, ct).ConfigureAwait(false);
+                }
 
                 return (song.Id, null);
             },
@@ -185,11 +321,20 @@ public sealed class SongService(
     }
 
     /// <summary>
-    /// Edits a Song's title, concept, or workflow state, given the revision the caller read. Only the
-    /// fields sent change: the title follows the creation rule, a null or blank concept clears it, and
-    /// the state may be any state, hidden ones included, so a Song can move from any state to any
-    /// other. A stale revision (lower or higher) changes nothing and answers the Song as it is now.
-    /// An edit that changes nothing once normalised is not written and answers the Song unchanged.
+    /// Edits a Song's title, concept, workflow state, notes, Genres, Tags, release details, or artwork, given
+    /// the revision the caller read. Only the fields sent change: the title follows the creation rule,
+    /// a null or blank concept or notes clears them, the state may be any state, hidden ones included,
+    /// so a Song can move from any state to any other, and the Genres or Tags sent replace the Song's
+    /// (each must be a Genre or Tag; one taken off stays in the list). Release members follow
+    /// <see cref="SongReleaseRules"/> (errors keyed <c>release.&lt;member&gt;</c>), a null one is
+    /// cleared, and links sent replace the Song's; an ISRC another Song has is allowed (the answer
+    /// names the others in <see cref="SongSummary.SameIsrc"/>). The artwork sent replaces the Song's
+    /// (a live asset's ID; null removes it), and the artwork it had goes into retention
+    /// (<see cref="ArtworkAttachmentService"/>); a crop sent must fit the artwork it applies to
+    /// (<see cref="ArtworkCropRules"/>), and its square thumbnails are made in the same request. A stale revision (lower or higher)
+    /// changes nothing and answers the Song as it is now. An edit that changes nothing once
+    /// normalised is not written and answers the Song unchanged; any other moves its revision and
+    /// last-updated time.
     /// </summary>
     public Task<SongUpdateOutcome> UpdateAsync(Guid id, SongEdit edit, int revision, CancellationToken cancellationToken)
     {
@@ -209,6 +354,52 @@ public sealed class SongService(
                 if (edit.Concept.IsSent && SongRules.ConceptErrors(edit.Concept.Value) is { Length: > 0 } conceptErrors)
                 {
                     errors[ConceptField] = conceptErrors;
+                }
+
+                if (edit.Notes.IsSent && SongRules.NotesErrors(edit.Notes.Value) is { Length: > 0 } notesErrors)
+                {
+                    errors[NotesField] = notesErrors;
+                }
+
+                if (edit.Release is { } release)
+                {
+                    AddReleaseErrors(errors, release);
+                }
+
+                IReadOnlyList<Guid>? genreIds = null;
+                if (edit.GenreIds is { } sentGenres)
+                {
+                    var (ids, genreError) = await genres.ReadAssignmentAsync(sentGenres, ct).ConfigureAwait(false);
+                    if (genreError is not null)
+                    {
+                        errors[GenreIdsField] = [genreError];
+                    }
+
+                    genreIds = ids;
+                }
+
+                IReadOnlyList<Guid>? tagIds = null;
+                if (edit.TagIds is { } sentTags)
+                {
+                    var (ids, tagError) = await tags.ReadAssignmentAsync(sentTags, ct).ConfigureAwait(false);
+                    if (tagError is not null)
+                    {
+                        errors[TagIdsField] = [tagError];
+                    }
+
+                    tagIds = ids;
+                }
+
+                Guid? artworkId = null;
+                if (edit.ArtworkAssetId.IsSent)
+                {
+                    var (assetId, artworkError) = await artwork.ReadAssetAsync(edit.ArtworkAssetId.Value, ct).ConfigureAwait(false);
+                    if (artworkError is not null)
+                    {
+                        errors[ArtworkAssetIdField] = [artworkError];
+                    }
+
+                    artworkId = assetId;
                 }
 
                 var stateId = Guid.Empty;
@@ -237,8 +428,34 @@ public sealed class SongService(
                 var details = new SongDetails(
                     edit.Title.IsSent ? SongRules.NormaliseTitle(edit.Title.Value!) : current.Title,
                     edit.Concept.IsSent ? SongRules.NormaliseConcept(edit.Concept.Value) : current.Concept,
-                    edit.StateId.IsSent ? stateId : current.State.Id);
-                if (details == new SongDetails(current.Title, current.Concept, current.State.Id))
+                    edit.StateId.IsSent ? stateId : current.State.Id,
+                    edit.Notes.IsSent ? SongRules.NormaliseNotes(edit.Notes.Value) : current.Notes,
+                    edit.Release is { } sentRelease ? Released(current.Release, sentRelease) : current.Release);
+                var genresChange = genreIds is not null && !genreIds.ToHashSet().SetEquals(current.Genres.Select(static genre => genre.Id))
+                    ? genreIds
+                    : null;
+                var tagsChange = tagIds is not null && !tagIds.ToHashSet().SetEquals(current.Tags.Select(static tag => tag.Id))
+                    ? tagIds
+                    : null;
+                var artworkChanges = edit.ArtworkAssetId.IsSent && artworkId != current.Artwork?.AssetId;
+                var croppedAsset = artworkChanges ? artworkId : current.Artwork?.AssetId;
+                if (edit.ArtworkCrop is { IsSent: true, Value: { } sentCrop }
+                    && (croppedAsset is { } cropped
+                        ? await artwork.CropErrorAsync(cropped, sentCrop, ct).ConfigureAwait(false)
+                        : ArtworkAttachmentService.NothingToCropMessage) is { } cropError)
+                {
+                    return new SongUpdateOutcome.Invalid(new Dictionary<string, string[]>(StringComparer.Ordinal) { [ArtworkCropField] = [cropError] });
+                }
+
+                var cropChanges = !artworkChanges
+                    && edit.ArtworkCrop.IsSent
+                    && current.Artwork is not null
+                    && edit.ArtworkCrop.Value != current.Artwork.Crop;
+                if (details == new SongDetails(current.Title, current.Concept, current.State.Id, current.Notes, current.Release)
+                    && genresChange is null
+                    && tagsChange is null
+                    && !artworkChanges
+                    && !cropChanges)
                 {
                     return new SongUpdateOutcome.Updated(current);
                 }
@@ -248,6 +465,25 @@ public sealed class SongService(
                     return await songs.FindAsync(id, ct).ConfigureAwait(false) is { } changed
                         ? new SongUpdateOutcome.Conflict(changed)
                         : new SongUpdateOutcome.NotFound();
+                }
+
+                if (genresChange is not null)
+                {
+                    await genres.ReplaceSongGenresAsync(id, genresChange, ct).ConfigureAwait(false);
+                }
+
+                if (tagsChange is not null)
+                {
+                    await tags.ReplaceSongTagsAsync(id, tagsChange, ct).ConfigureAwait(false);
+                }
+
+                if (artworkChanges)
+                {
+                    await artwork.ReplaceAsync(ArtworkOwnerTypes.Song, id, current.Shortcode, artworkId, edit.ArtworkCrop.Value, ct).ConfigureAwait(false);
+                }
+                else if (cropChanges)
+                {
+                    await artwork.SetCropAsync(ArtworkOwnerTypes.Song, id, edit.ArtworkCrop.Value, ct).ConfigureAwait(false);
                 }
 
                 var updated = await songs.FindAsync(id, ct).ConfigureAwait(false)
@@ -260,8 +496,17 @@ public sealed class SongService(
     /// <summary>
     /// A page of Songs. <c>sort</c> is <c>updated</c> (the default) or <c>title</c>; <c>direction</c>
     /// is <c>asc</c> or <c>desc</c> (by default newest first, and titles A to Z); each <c>state</c> is
-    /// the ID of a workflow state; <c>page</c> counts from 1; <c>pageSize</c> is 1 to
-    /// <see cref="MaximumPageSize"/>, <see cref="DefaultPageSize"/> by default.
+    /// the ID of a workflow state; each <c>genre</c> is the ID of a Genre or <see cref="NoGenre"/>,
+    /// and several match Songs with any of them; each <c>tag</c> likewise is the ID of a Tag or
+    /// <see cref="NoTag"/>; each <c>artist</c> is the ID of an Artist, credited as primary or featured,
+    /// or <see cref="NoArtist"/> for Songs credited to no one; <c>q</c> keeps the Songs whose title
+    /// contains it (ignoring case) or whose shortcode starts with it, and a blank <c>q</c> matches
+    /// nothing; <c>title</c> keeps the Songs with that title ignoring case and spacing
+    /// (<see cref="SongRules.TitleKey"/>) and a blank one is refused; <c>excludeId</c> leaves out the
+    /// Song with that ID (states, Genres, Tags, Artists, <c>q</c>, <c>title</c>, and <c>excludeId</c>
+    /// combine by AND); <c>page</c> counts from
+    /// 1; <c>pageSize</c> is 1 to <see cref="MaximumPageSize"/>, <see cref="DefaultPageSize"/> by
+    /// default and <see cref="SearchPageSize"/> with <c>q</c>.
     /// </summary>
     public async Task<SongListOutcome> ListAsync(SongListRequest request, CancellationToken cancellationToken)
     {
@@ -298,7 +543,7 @@ public sealed class SongService(
             return Invalid($"{PageParameter} must be a whole number from 1.");
         }
 
-        if (!TryReadWhole(request.PageSize, 1, MaximumPageSize, DefaultPageSize, out var pageSize))
+        if (!TryReadWhole(request.PageSize, 1, MaximumPageSize, request.Query is null ? DefaultPageSize : SearchPageSize, out var pageSize))
         {
             return Invalid(string.Create(CultureInfo.InvariantCulture, $"{PageSizeParameter} must be a whole number from 1 to {MaximumPageSize}."));
         }
@@ -321,7 +566,108 @@ public sealed class SongService(
             }
         }
 
-        var query = new SongListQuery(sort, descending, stateIds, page, pageSize);
+        var genreIds = new List<Guid>();
+        var noGenre = false;
+        var sentGenres = request.Genres ?? [];
+        foreach (var genre in sentGenres)
+        {
+            if (genre == NoGenre)
+            {
+                noGenre = true;
+            }
+            else if (!Guid.TryParseExact(genre, "D", out var genreId))
+            {
+                return Invalid($"Each {GenreParameter} must be the ID of a Genre, or {NoGenre}.");
+            }
+            else if (!genreIds.Contains(genreId))
+            {
+                genreIds.Add(genreId);
+            }
+        }
+
+        if (genreIds.Count > 0 && (await genres.ExistingAsync(genreIds, cancellationToken).ConfigureAwait(false)).Count != genreIds.Count)
+        {
+            return Invalid($"Each {GenreParameter} must be the ID of a Genre, or {NoGenre}.");
+        }
+
+        var tagIds = new List<Guid>();
+        var noTag = false;
+        foreach (var tag in request.Tags ?? [])
+        {
+            if (tag == NoTag)
+            {
+                noTag = true;
+            }
+            else if (!Guid.TryParseExact(tag, "D", out var tagId))
+            {
+                return Invalid($"Each {TagParameter} must be the ID of a Tag, or {NoTag}.");
+            }
+            else if (!tagIds.Contains(tagId))
+            {
+                tagIds.Add(tagId);
+            }
+        }
+
+        if (tagIds.Count > 0 && (await tags.ExistingAsync(tagIds, cancellationToken).ConfigureAwait(false)).Count != tagIds.Count)
+        {
+            return Invalid($"Each {TagParameter} must be the ID of a Tag, or {NoTag}.");
+        }
+
+        var artistIds = new List<Guid>();
+        var noArtist = false;
+        foreach (var artist in request.Artists ?? [])
+        {
+            if (artist == NoArtist)
+            {
+                noArtist = true;
+            }
+            else if (!Guid.TryParseExact(artist, "D", out var artistId))
+            {
+                return Invalid($"Each {ArtistParameter} must be the ID of an Artist, or {NoArtist}.");
+            }
+            else if (!artistIds.Contains(artistId))
+            {
+                artistIds.Add(artistId);
+            }
+        }
+
+        if (artistIds.Count > 0 && (await credits.ExistingArtistsAsync(artistIds, cancellationToken).ConfigureAwait(false)).Count != artistIds.Count)
+        {
+            return Invalid($"Each {ArtistParameter} must be the ID of an Artist, or {NoArtist}.");
+        }
+
+        string? titleKey = null;
+        if (request.Title is not null)
+        {
+            titleKey = SongRules.TitleKey(request.Title);
+            if (titleKey.Length == 0)
+            {
+                return Invalid($"{TitleParameter} must not be blank.");
+            }
+        }
+
+        Guid? excludeId = null;
+        if (request.ExcludeId is not null)
+        {
+            if (!Guid.TryParseExact(request.ExcludeId, "D", out var excluded))
+            {
+                return Invalid($"{ExcludeIdParameter} must be the ID of a Song.");
+            }
+
+            excludeId = excluded;
+        }
+
+        string? search = null;
+        if (request.Query is not null)
+        {
+            search = request.Query.Trim();
+            if (search.Length == 0)
+            {
+                return new SongListOutcome.Listed(new SongPage([], page, pageSize, 0));
+            }
+        }
+
+        var query = new SongListQuery(sort, descending, stateIds, page, pageSize, genreIds, noGenre, tagIds, noTag, artistIds, noArtist, search, titleKey, excludeId);
         return new SongListOutcome.Listed(await songs.ListAsync(query, cancellationToken).ConfigureAwait(false));
     }
 
@@ -345,6 +691,43 @@ public sealed class SongService(
     }
 
     private static SongListOutcome.Invalid Invalid(string message) => new(message);
+
+    /// <summary>Adds the errors of each release member sent, keyed <c>release.&lt;member&gt;</c>.</summary>
+    private static void AddReleaseErrors(Dictionary<string, string[]> errors, SongReleaseEdit release)
+    {
+        void Check(string field, SongEditField value, Func<string?, string[]> rule)
+        {
+            if (value.IsSent && rule(value.Value) is { Length: > 0 } found)
+            {
+                errors[field] = found;
+            }
+        }
+
+        Check(ReleaseDateField, release.ReleaseDate, SongReleaseRules.DateErrors);
+        Check(OriginalReleaseDateField, release.OriginalReleaseDate, SongReleaseRules.DateErrors);
+        Check(ExplicitField, release.Explicit, SongReleaseRules.ExplicitErrors);
+        Check(CopyrightField, release.Copyright, SongReleaseRules.RightsErrors);
+        Check(PublishingField, release.Publishing, SongReleaseRules.RightsErrors);
+        Check(IsrcField, release.Isrc, SongReleaseRules.IsrcErrors);
+        Check(LanguageField, release.Language, SongReleaseRules.LanguageErrors);
+        if (release.Links is { } links && SongReleaseRules.LinkErrors([.. links.Select(static link => (link.Label, link.Url))]) is { Length: > 0 } linkErrors)
+        {
+            errors[LinksField] = linkErrors;
+        }
+    }
+
+    /// <summary><paramref name="current"/> with each member <paramref name="edit"/> sends, valid, normalised.</summary>
+    private static SongRelease Released(SongRelease current, SongReleaseEdit edit) => new(
+        edit.ReleaseDate.IsSent ? SongReleaseRules.NormaliseDate(edit.ReleaseDate.Value) : current.ReleaseDate,
+        edit.OriginalReleaseDate.IsSent ? SongReleaseRules.NormaliseDate(edit.OriginalReleaseDate.Value) : current.OriginalReleaseDate,
+        edit.Explicit.IsSent ? SongReleaseRules.ParseExplicit(edit.Explicit.Value) : current.Explicit,
+        edit.Copyright.IsSent ? SongReleaseRules.NormaliseText(edit.Copyright.Value) : current.Copyright,
+        edit.Publishing.IsSent ? SongReleaseRules.NormaliseText(edit.Publishing.Value) : current.Publishing,
+        edit.Isrc.IsSent ? SongReleaseRules.NormaliseIsrc(edit.Isrc.Value) : current.Isrc,
+        edit.Language.IsSent ? SongReleaseRules.NormaliseLanguage(edit.Language.Value) : current.Language,
+        edit.Links is null
+            ? current.Links
+            : [.. edit.Links.Select(static link => new SongLink(SongReleaseRules.NormaliseLabel(link.Label), SongReleaseRules.NormaliseUrl(link.Url!)))]);
 
     /// <summary>A whole number from <paramref name="minimum"/> to <paramref name="maximum"/>, written plainly; <paramref name="fallback"/> when missing.</summary>
     private static bool TryReadWhole(string? text, int minimum, int maximum, int fallback, out int value)

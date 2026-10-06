@@ -96,8 +96,13 @@ export interface ReceivedWrite {
  * lyrics, styles, or options on its revision (lyrics and styles kept as sent, line endings aside,
  * and refused over their limits; options merged key by key; 409 `version_frozen` when a frozen
  * Version's inputs would change; a create may carry its own lyrics and styles and copies the
- * source's options), and Suno's Create-screen fields ({@link CREATE_FIELDS}). A test changes `server.versions` to play another client, or sets `server.next` to
- * answer the next write some other way.
+ * source's options), deleting a Version on its revision (its descendants stay under a placeholder,
+ * the current Version moves as the API moves it, and the last one is replaced by a blank one), and
+ * Suno's Create-screen fields ({@link CREATE_FIELDS}). A deleted Version answers 404
+ * `version_deleted` and resolves as `deleted`. The Song's deletion impact and deletion (on its
+ * revision, with the typed title when the API's rule asks for one) are answered too; once deleted the
+ * Song answers 404 `song_deleted`, and the Songs list is empty. A test changes `server.versions` to play another
+ * client, or sets `server.next` to answer the next write some other way.
  */
 export function versionServer(versions: VersionDetail[], song: Song = baseSong) {
   // The Song names its current Version, and says what it creates.
@@ -122,11 +127,36 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     snapshotRequests: [] as Record<string, unknown>[],
     /** When set, answers the next snapshot request (once) instead of the fake API. */
     nextSnapshot: undefined as (() => Response | Promise<Response>) | undefined,
+    /** The IDs of the snapshots deleted, in order (a refused or unknown one included). */
+    deletedSnapshots: [] as string[],
+    /** When set, answers the next snapshot deletion (once) instead of the fake API. */
+    nextDelete: undefined as (() => Response | Promise<Response>) | undefined,
     /** When set, answers the next write (once) instead of the fake API. */
     next: undefined as (() => Response | Promise<Response>) | undefined,
+    /** The Versions deleted, in order. */
+    deleted: [] as VersionDetail[],
+    /** When the Song itself was deleted (it then answers 404 `song_deleted`); undefined while live. */
+    songDeletedAt: undefined as string | undefined,
+    /** Every Song deletion request, in order: its If-Match and body. */
+    songDeletes: [] as { ifMatch: string | null; body: Record<string, unknown> }[],
+    /** When set, answers the next Song deletion (once) instead of the fake API. */
+    nextSongDelete: undefined as (() => Response | Promise<Response>) | undefined,
+    /** Generations counted by the deletion impact (the fake keeps none of its own). */
+    generationCount: 0,
+    /** Every number the Song has used, deleted Versions' included. */
+    usedNumbers: new Set(versions.map((version) => version.number)),
+    /** Plays another client deleting the Version numbered `number` (no current Version moves). */
+    deleteElsewhere(number: string) {
+      const version = server.versions.find((candidate) => candidate.number === number);
+      if (version) {
+        server.versions = server.versions.filter((candidate) => candidate !== version);
+        server.deleted.push(version);
+      }
+    },
     /** Plays another client creating a Version with `number`. */
     addElsewhere(number: string) {
       server.versions.push(testVersion(number));
+      server.usedNumbers.add(number);
     },
     /** Plays another client editing the Version numbered `number`: its revision goes up by one. */
     changeElsewhere(number: string, change: Partial<VersionDetail>) {
@@ -138,7 +168,83 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     },
   };
 
-  const used = () => new Set(server.versions.map((version) => version.number));
+  const used = () => server.usedNumbers;
+
+  const isBelow = (number: string, ancestor: string) => number.startsWith(`${ancestor}.`);
+  const byNumber = (left: VersionDetail, right: VersionDetail) => {
+    const a = left.number.split('.').map(Number);
+    const b = right.number.split('.').map(Number);
+    for (let index = 0; index < Math.min(a.length, b.length); index++) {
+      const difference = (a[index] ?? 0) - (b[index] ?? 0);
+      if (difference !== 0) {
+        return difference;
+      }
+    }
+    return a.length - b.length;
+  };
+  /** The tree's placeholders: used numbers without a live Version, with a live descendant. */
+  const placeholders = () =>
+    [...used()]
+      .filter(
+        (number) =>
+          !server.versions.some((version) => version.number === number) &&
+          server.versions.some((version) => isBelow(version.number, number)),
+      )
+      .sort((left, right) => byNumber(testVersion(left), testVersion(right)));
+  const deletedAnswer = (id: string) => {
+    const version = server.deleted.find((candidate) => candidate.id === id);
+    return version
+      ? jsonResponse(404, {
+          code: 'version_deleted',
+          versionId: version.id,
+          versionShortcode: version.shortcode,
+          number: version.number,
+          deletedAt: '2026-10-01T10:00:00Z',
+        })
+      : jsonResponse(404, { code: 'not_found' });
+  };
+
+  /** Deletes `version` as the API does; the Song's current Version afterwards. */
+  const remove = (version: VersionDetail): VersionDetail => {
+    server.versions = server.versions.filter((candidate) => candidate.id !== version.id);
+    server.deleted.push(version);
+    let current = server.versions.find((candidate) => candidate.current);
+    if (server.versions.length === 0) {
+      const top = Math.max(...[...used()].map((number) => Number(number.split('.')[0])));
+      const blank = testVersion(String(top + 1), { current: true, inputs: version.inputs });
+      server.versions.push(blank);
+      server.usedNumbers.add(blank.number);
+      current = blank;
+    } else if (version.current) {
+      const ancestors = version.number
+        .split('.')
+        .map((_, index, parts) => parts.slice(0, parts.length - 1 - index).join('.'))
+        .filter((number) => number !== '');
+      const sorted = [...server.versions].sort(byNumber);
+      current =
+        ancestors
+          .map((number) => server.versions.find((other) => other.number === number))
+          .find((other) => other !== undefined && !other.archived) ??
+        sorted.find((other) => !other.archived) ??
+        sorted[0];
+    }
+    if (current === undefined) {
+      throw new Error('The fake Song lost its current Version.');
+    }
+    const currentId = current.id;
+    server.versions = server.versions.map((other) => ({
+      ...other,
+      current: other.id === currentId,
+    }));
+    const now = server.versions.find((other) => other.id === currentId) ?? current;
+    server.song = {
+      ...server.song,
+      currentVersion: { id: now.id, number: now.number, shortcode: now.shortcode, kind: now.kind },
+      versionCount: server.versions.length,
+      revision: server.song.revision + 1,
+    };
+    return now;
+  };
   let snapshotCount = 0;
 
   const keep = (versionId: string, lyrics: string, styles: string, createdAt: string) => {
@@ -159,7 +265,7 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     return { snapshot, created: true };
   };
 
-  /** The snapshots API: take one, list them newest first, read one, restore one on a revision. */
+  /** The snapshots API: take one, list them newest first, read one, restore one on a revision, delete one. */
   const answerHistory = async (
     versionId: string,
     snapshotId: string | undefined,
@@ -197,6 +303,19 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
       });
     }
     await Promise.resolve();
+    if (method === 'DELETE' && !restore) {
+      server.deletedSnapshots.push(snapshotId);
+      const next = server.nextDelete;
+      if (next) {
+        server.nextDelete = undefined;
+        return next();
+      }
+      if (!own.some((candidate) => candidate.id === snapshotId)) {
+        return jsonResponse(404, { code: 'not_found' });
+      }
+      server.snapshots = server.snapshots.filter((candidate) => candidate.id !== snapshotId);
+      return new Response(null, { status: 204 });
+    }
     const snapshot = own.find((candidate) => candidate.id === snapshotId);
     if (!snapshot) {
       return jsonResponse(404, { code: 'not_found' });
@@ -253,15 +372,46 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     const version = server.versions.find(
       (candidate) => key === candidate.shortcode || key === candidate.id.toLowerCase(),
     );
-    return version
+    const deleted = server.deleted.find(
+      (candidate) => key === candidate.shortcode || key === candidate.id.toLowerCase(),
+    );
+    const found = version ?? deleted;
+    return found
       ? jsonResponse(200, {
           entityType: 'version',
-          id: version.id,
-          shortcode: version.shortcode,
-          status: version.archived ? 'archived' : 'active',
+          id: found.id,
+          shortcode: found.shortcode,
+          status: version === undefined ? 'deleted' : version.archived ? 'archived' : 'active',
           song: { id: song.id, shortcode: song.shortcode },
         })
       : jsonResponse(404, { code: 'reference_not_found' });
+  };
+
+  /** What deleting the Song would do, as the API counts it; the title rule is the API's. */
+  const songImpact = () => {
+    const song = server.song;
+    const counts = {
+      versionCount: server.versions.length,
+      generationCount: server.generationCount,
+      artworkCount: song.artwork === null ? 0 : 1,
+      albumCount: song.albums.length,
+      playlistCount: song.playlists.length,
+      relationshipCount: song.relationships.length,
+      audioFileCount: 0,
+    };
+    return {
+      id: song.id,
+      shortcode: song.shortcode,
+      title: song.title,
+      ...counts,
+      titleRequired:
+        counts.versionCount > 1 ||
+        counts.generationCount > 0 ||
+        counts.albumCount > 0 ||
+        counts.playlistCount > 0 ||
+        counts.relationshipCount > 0,
+      revision: song.revision,
+    };
   };
 
   const mock = stubFetch();
@@ -288,6 +438,20 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
         ? jsonResponse(200, { options: optionsFor(source.number, used()) })
         : jsonResponse(404, { code: 'not_found' });
     }
+    const impact = /\/api\/v1\/versions\/([^/]+)\/deletion-impact$/.exec(path);
+    if (impact) {
+      const version = server.versions.find((candidate) => candidate.id === impact[1]);
+      return version
+        ? jsonResponse(200, {
+            generationCount: version.isFrozen ? 1 : 0,
+            remainingDescendantCount: server.versions.filter((other) =>
+              isBelow(other.number, version.number),
+            ).length,
+            isLastVersion: server.versions.length === 1,
+            revision: version.revision,
+          })
+        : deletedAnswer(impact[1] ?? '');
+    }
     const history = /\/api\/v1\/versions\/([^/]+)\/snapshots(?:\/([^/]+))?(\/restore)?$/.exec(path);
     if (history) {
       return answerHistory(history[1] ?? '', history[2], history[3] !== undefined, method, init);
@@ -295,7 +459,24 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     const edited = /\/api\/v1\/versions\/([^/]+)$/.exec(path);
     if (edited && method === 'GET') {
       const version = server.versions.find((candidate) => candidate.id === edited[1]);
-      return version ? jsonResponse(200, version) : jsonResponse(404, { code: 'not_found' });
+      return version ? jsonResponse(200, version) : deletedAnswer(edited[1] ?? '');
+    }
+    if (edited && method === 'DELETE') {
+      server.writes.push({ method, path, body: {} });
+      const next = server.next;
+      if (next) {
+        server.next = undefined;
+        return next();
+      }
+      const version = server.versions.find((candidate) => candidate.id === edited[1]);
+      if (!version) {
+        return deletedAnswer(edited[1] ?? '');
+      }
+      const ifMatch = new Headers(init?.headers).get('If-Match');
+      if (ifMatch !== `"${String(version.revision)}"`) {
+        return jsonResponse(409, { code: 'revision_conflict', current: version });
+      }
+      return jsonResponse(200, remove(version));
     }
     if (edited && method === 'PATCH') {
       const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as Record<
@@ -310,7 +491,7 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
       }
       const version = server.versions.find((candidate) => candidate.id === edited[1]);
       if (!version) {
-        return jsonResponse(404, { code: 'not_found' });
+        return deletedAnswer(edited[1] ?? '');
       }
       const ifMatch = new Headers(init?.headers).get('If-Match');
       if (ifMatch !== `"${String(version.revision)}"`) {
@@ -358,6 +539,49 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
       return jsonResponse(200, changed);
     }
 
+    if (path.endsWith('/api/v1/songs') && method === 'GET') {
+      const items = server.songDeletedAt === undefined ? [server.song] : [];
+      return jsonResponse(200, { items, page: 1, pageSize: 50, total: items.length });
+    }
+    const deletion = /\/api\/v1\/songs\/([^/]+)(\/deletion-impact)?$/.exec(path);
+    const named = deletion?.[1] === undefined ? undefined : decodeURIComponent(deletion[1]);
+    const isSong = named === server.song.id || named === server.song.shortcode;
+    if (isSong && server.songDeletedAt !== undefined) {
+      return jsonResponse(404, {
+        code: 'song_deleted',
+        songId: server.song.id,
+        shortcode: server.song.shortcode,
+        title: server.song.title,
+        deletedAt: server.songDeletedAt,
+      });
+    }
+    if (isSong && (deletion?.[2] !== undefined || method === 'DELETE')) {
+      const impact = songImpact();
+      if (method === 'GET') {
+        return jsonResponse(200, impact);
+      }
+      const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as Record<
+        string,
+        unknown
+      >;
+      const ifMatch = new Headers(init?.headers).get('If-Match');
+      server.songDeletes.push({ ifMatch, body });
+      const nextSongDelete = server.nextSongDelete;
+      if (nextSongDelete) {
+        server.nextSongDelete = undefined;
+        return nextSongDelete();
+      }
+      if (ifMatch !== `"${String(server.song.revision)}"`) {
+        return jsonResponse(409, { code: 'revision_conflict', current: server.song });
+      }
+      const typed = typeof body.confirmTitle === 'string' ? body.confirmTitle.trim() : undefined;
+      if (impact.titleRequired && typed !== server.song.title) {
+        return jsonResponse(422, { code: 'confirmation_required', impact });
+      }
+      server.songDeletedAt = '2026-10-01T10:00:00Z';
+      return new Response(null, { status: 204 });
+    }
+
     const match = /\/api\/v1\/songs\/([^/]+)(\/versions|\/current-version)?$/.exec(path);
     const reference = match?.[1] === undefined ? undefined : decodeURIComponent(match[1]);
     if (reference !== server.song.id && reference !== server.song.shortcode) {
@@ -366,7 +590,10 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     const resource = match?.[2];
     if (method === 'GET') {
       return resource === '/versions'
-        ? jsonResponse(200, { items: server.versions.map(summary) })
+        ? jsonResponse(200, {
+            items: [...server.versions].sort(byNumber).map(summary),
+            deletedPlaceholders: placeholders(),
+          })
         : jsonResponse(200, server.song);
     }
 
@@ -430,6 +657,7 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
         inputs: source.inputs,
       });
       server.versions.push(created);
+      server.usedNumbers.add(created.number);
       makeCurrent(created);
       server.song = { ...server.song, versionCount: server.versions.length };
       return jsonResponse(201, summary(created));

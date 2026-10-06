@@ -11,6 +11,7 @@ public static class SongRules
 {
     public const int TitleMaximumLength = 300;
     public const int ConceptMaximumLength = 2000;
+    public const int NotesMaximumLength = VersionRules.NotesMaximumLength;
 
     /// <summary>
     /// The errors of a title, empty when it is valid: trimmed, 1 to <see cref="TitleMaximumLength"/>
@@ -62,6 +63,16 @@ public static class SongRules
         return normalised.Length > ConceptMaximumLength ? [AtMost(ConceptMaximumLength)] : [];
     }
 
+    /// <summary>
+    /// The errors of a Song's notes, empty when they are valid: free-form plain text by the same
+    /// rule as a Version's (<see cref="VersionRules.NotesErrors"/>), up to
+    /// <see cref="NotesMaximumLength"/> code units once normalised.
+    /// </summary>
+    public static string[] NotesErrors(string? notes) => VersionRules.NotesErrors(notes);
+
+    /// <summary>A Song's notes as stored (<see cref="VersionRules.NormaliseNotes"/>): null when there are none.</summary>
+    public static string? NormaliseNotes(string? notes) => VersionRules.NormaliseNotes(notes);
+
     /// <summary>A title as stored: trimmed.</summary>
     public static string NormaliseTitle(string title)
     {
@@ -69,6 +80,13 @@ public static class SongRules
 
         return title.Trim();
     }
+
+    /// <summary>
+    /// What Songs sharing a title are found by: trimmed, each inner run of white space as one space,
+    /// NFC, and upper-cased invariantly, so case and spacing are ignored but diacritics and width are
+    /// not. Empty for a title of nothing but white space.
+    /// </summary>
+    public static string TitleKey(string title) => Catalog.GenreRules.NameKey(title);
 
     /// <summary>A concept as stored: line endings as <c>\n</c>, trimmed, and null when nothing but white space is left.</summary>
     public static string? NormaliseConcept(string? concept)

@@ -84,6 +84,14 @@ export function isStateColour(name: string): name is StateColourName {
   return Object.hasOwn(stateColours, name);
 }
 
+/**
+ * The CSS colour a palette colour name (a workflow state's or a Tag's) is drawn in, in the scheme
+ * in use; the body text colour for a name this build does not know.
+ */
+export function paletteColour(colour: string): string {
+  return isStateColour(colour) ? `var(--n8-state-${colour})` : 'var(--mantine-color-text)';
+}
+
 export function isKnownStatus(status: string): status is KnownStatus {
   return (knownStatuses as readonly string[]).includes(status);
 }

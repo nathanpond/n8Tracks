@@ -65,6 +65,153 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.AlbumLinkRecord", b =>
+                {
+                    b.Property<Guid>("AlbumId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("album_id");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("position");
+
+                    b.Property<string>("Label")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("label");
+
+                    b.Property<string>("Url")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("url");
+
+                    b.HasKey("AlbumId", "Position")
+                        .HasName("pk_album_links");
+
+                    b.ToTable("album_links", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_album_links_url", "url LIKE 'http://%' OR url LIKE 'https://%'");
+                        });
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.AlbumRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<Guid?>("AlbumArtistId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("album_artist_id");
+
+                    b.Property<string>("Copyright")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("copyright");
+
+                    b.Property<string>("CreatedUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_utc");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("description");
+
+                    b.Property<string>("OriginalReleaseDate")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("original_release_date");
+
+                    b.Property<string>("Publishing")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("publishing");
+
+                    b.Property<string>("ReleaseDate")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("release_date");
+
+                    b.Property<int>("Revision")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("revision");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("title");
+
+                    b.Property<string>("TitleKey")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("title_key");
+
+                    b.Property<string>("Upc")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("upc");
+
+                    b.Property<string>("UpcKey")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("upc_key");
+
+                    b.Property<string>("UpdatedUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("updated_utc");
+
+                    b.HasKey("Id")
+                        .HasName("pk_albums");
+
+                    b.HasIndex("AlbumArtistId")
+                        .HasDatabaseName("ix_albums_album_artist_id");
+
+                    b.HasIndex("UpcKey")
+                        .HasDatabaseName("ix_albums_upc_key");
+
+                    b.HasIndex("TitleKey", "CreatedUtc")
+                        .HasDatabaseName("ix_albums_title_key_created_utc");
+
+                    b.ToTable("albums", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_albums_title", "length(title) > 0");
+
+                            t.HasCheckConstraint("ck_albums_upc", "upc IS NULL OR ((length(upc) = 12 OR length(upc) = 13) AND upc NOT GLOB '*[^0-9]*')");
+                        });
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.AlbumSongRecord", b =>
+                {
+                    b.Property<Guid>("AlbumId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("album_id");
+
+                    b.Property<Guid>("SongId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("song_id");
+
+                    b.Property<int>("Disc")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("disc");
+
+                    b.Property<int>("Track")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("track");
+
+                    b.HasKey("AlbumId", "SongId")
+                        .HasName("pk_album_songs");
+
+                    b.HasIndex("SongId")
+                        .HasDatabaseName("ix_album_songs_song_id");
+
+                    b.HasIndex("AlbumId", "Disc", "Track")
+                        .IsUnique()
+                        .HasDatabaseName("ix_album_songs_album_id_disc_track");
+
+                    b.ToTable("album_songs", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_album_songs_disc", "disc BETWEEN 1 AND 999");
+
+                            t.HasCheckConstraint("ck_album_songs_track", "track BETWEEN 1 AND 999");
+                        });
+                });
+
             modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.AppMetadataEntry", b =>
                 {
                     b.Property<string>("Key")
@@ -80,6 +227,238 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         .HasName("pk_app_metadata");
 
                     b.ToTable("app_metadata");
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.ArtistAliasRecord", b =>
+                {
+                    b.Property<Guid>("ArtistId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("artist_id");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("position");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("name");
+
+                    b.Property<string>("NameKey")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("name_key");
+
+                    b.HasKey("ArtistId", "Position")
+                        .HasName("pk_artist_aliases");
+
+                    b.HasIndex("NameKey")
+                        .HasDatabaseName("ix_artist_aliases_name_key");
+
+                    b.HasIndex("ArtistId", "NameKey")
+                        .IsUnique()
+                        .HasDatabaseName("ix_artist_aliases_artist_id_name_key");
+
+                    b.ToTable("artist_aliases", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_artist_aliases_name", "length(name) > 0");
+                        });
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.ArtistLinkRecord", b =>
+                {
+                    b.Property<Guid>("ArtistId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("artist_id");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("position");
+
+                    b.Property<string>("Label")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("label");
+
+                    b.Property<string>("Url")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("url");
+
+                    b.HasKey("ArtistId", "Position")
+                        .HasName("pk_artist_links");
+
+                    b.ToTable("artist_links", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_artist_links_url", "url LIKE 'http://%' OR url LIKE 'https://%'");
+                        });
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.ArtistRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("CreatedUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_utc");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("name");
+
+                    b.Property<string>("NameKey")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("name_key");
+
+                    b.Property<string>("Notes")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("notes");
+
+                    b.Property<int>("Revision")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("revision");
+
+                    b.Property<string>("UpdatedUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("updated_utc");
+
+                    b.HasKey("Id")
+                        .HasName("pk_artists");
+
+                    b.HasIndex("NameKey", "CreatedUtc")
+                        .HasDatabaseName("ix_artists_name_key_created_utc");
+
+                    b.ToTable("artists", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_artists_name", "length(name) > 0");
+                        });
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.ArtworkAttachmentRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("AssetId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("asset_id");
+
+                    b.Property<string>("AttachedUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("attached_utc");
+
+                    b.Property<int?>("CropSize")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("crop_size");
+
+                    b.Property<int?>("CropX")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("crop_x");
+
+                    b.Property<int?>("CropY")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("crop_y");
+
+                    b.Property<Guid>("OwnerId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("owner_id");
+
+                    b.Property<string>("OwnerType")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("owner_type");
+
+                    b.HasKey("Id")
+                        .HasName("pk_artwork_attachments");
+
+                    b.HasIndex("AssetId")
+                        .HasDatabaseName("ix_artwork_attachments_asset_id");
+
+                    b.HasIndex("OwnerType", "OwnerId")
+                        .IsUnique()
+                        .HasDatabaseName("ix_artwork_attachments_owner_type_owner_id");
+
+                    b.ToTable("artwork_attachments", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_artwork_attachments_crop", "(crop_x IS NULL AND crop_y IS NULL AND crop_size IS NULL) OR (crop_x IS NOT NULL AND crop_y IS NOT NULL AND crop_size IS NOT NULL AND crop_x >= 0 AND crop_y >= 0 AND crop_size > 0)");
+
+                            t.HasCheckConstraint("ck_artwork_attachments_owner_type", "owner_type IN ('song', 'album', 'playlist', 'artist')");
+                        });
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.AssetRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<long>("Bytes")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("bytes");
+
+                    b.Property<string>("ContentHash")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("content_hash");
+
+                    b.Property<string>("CreatedUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_utc");
+
+                    b.Property<int>("Height")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("height");
+
+                    b.Property<string>("MediaType")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("media_type");
+
+                    b.Property<string>("ThumbnailSizes")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("thumbnail_sizes");
+
+                    b.Property<string>("UploadedUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("uploaded_utc");
+
+                    b.Property<int>("Width")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("width");
+
+                    b.HasKey("Id")
+                        .HasName("pk_assets");
+
+                    b.HasIndex("ContentHash")
+                        .IsUnique()
+                        .HasDatabaseName("ix_assets_content_hash");
+
+                    b.HasIndex("UploadedUtc")
+                        .HasDatabaseName("ix_assets_uploaded_utc");
+
+                    b.ToTable("assets", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_assets_bytes", "bytes > 0");
+
+                            t.HasCheckConstraint("ck_assets_dimensions", "width > 0 AND height > 0");
+
+                            t.HasCheckConstraint("ck_assets_media_type", "media_type IN ('image/jpeg', 'image/png', 'image/webp')");
+
+                            t.HasCheckConstraint("ck_assets_thumbnail_sizes_json", "json_valid(thumbnail_sizes) AND json_type(thumbnail_sizes) = 'array'");
+                        });
                 });
 
             modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.CredentialRecord", b =>
@@ -236,6 +615,40 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.GenreRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("name");
+
+                    b.Property<string>("NameKey")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("name_key");
+
+                    b.Property<int>("Revision")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("revision");
+
+                    b.HasKey("Id")
+                        .HasName("pk_genres");
+
+                    b.HasIndex("NameKey")
+                        .IsUnique()
+                        .HasDatabaseName("ix_genres_name_key");
+
+                    b.ToTable("genres", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_genres_name", "length(name) > 0");
+                        });
+                });
+
             modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.JobRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -312,6 +725,240 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("ck_jobs_result_json", "result IS NULL OR json_valid(result)");
 
                             t.HasCheckConstraint("ck_jobs_status", "status IN ('queued', 'running', 'succeeded', 'failed')");
+                        });
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.PlaylistRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("CreatedUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_utc");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("description");
+
+                    b.Property<int>("Revision")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("revision");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("title");
+
+                    b.Property<string>("TitleKey")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("title_key");
+
+                    b.Property<string>("UpdatedUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("updated_utc");
+
+                    b.HasKey("Id")
+                        .HasName("pk_playlists");
+
+                    b.HasIndex("TitleKey", "CreatedUtc")
+                        .HasDatabaseName("ix_playlists_title_key_created_utc");
+
+                    b.ToTable("playlists", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_playlists_title", "length(title) > 0");
+                        });
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.PlaylistSongRecord", b =>
+                {
+                    b.Property<Guid>("PlaylistId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("playlist_id");
+
+                    b.Property<Guid>("SongId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("song_id");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("position");
+
+                    b.HasKey("PlaylistId", "SongId")
+                        .HasName("pk_playlist_songs");
+
+                    b.HasIndex("SongId")
+                        .HasDatabaseName("ix_playlist_songs_song_id");
+
+                    b.HasIndex("PlaylistId", "Position")
+                        .IsUnique()
+                        .HasDatabaseName("ix_playlist_songs_playlist_id_position");
+
+                    b.ToTable("playlist_songs", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_playlist_songs_position", "position >= 0");
+                        });
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.RelationshipTypeRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<bool>("IsSystem")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("is_system");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("name");
+
+                    b.Property<string>("NameKey")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("name_key");
+
+                    b.Property<string>("ReverseName")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("reverse_name");
+
+                    b.Property<string>("ReverseNameKey")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("reverse_name_key");
+
+                    b.Property<int>("Revision")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("revision");
+
+                    b.Property<string>("SunoAction")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("suno_action");
+
+                    b.HasKey("Id")
+                        .HasName("pk_song_relationship_types");
+
+                    b.HasIndex("NameKey")
+                        .IsUnique()
+                        .HasDatabaseName("ix_song_relationship_types_name_key");
+
+                    b.HasIndex("ReverseNameKey")
+                        .IsUnique()
+                        .HasDatabaseName("ix_song_relationship_types_reverse_name_key");
+
+                    b.ToTable("song_relationship_types", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_song_relationship_types_names", "length(name) > 0 AND length(reverse_name) > 0");
+
+                            t.HasCheckConstraint("ck_song_relationship_types_suno_action", "suno_action IS NULL OR is_system = 1");
+                        });
+
+                    b.HasData(
+                        new
+                        {
+                            Id = new Guid("01a10a6e-de00-7000-8000-000000000001"),
+                            IsSystem = true,
+                            Name = "Cover",
+                            NameKey = "COVER",
+                            ReverseName = "Covered by",
+                            ReverseNameKey = "COVERED BY",
+                            Revision = 1,
+                            SunoAction = "cover"
+                        },
+                        new
+                        {
+                            Id = new Guid("01a10a6e-de01-7001-8000-000000000002"),
+                            IsSystem = true,
+                            Name = "Extend",
+                            NameKey = "EXTEND",
+                            ReverseName = "Extended by",
+                            ReverseNameKey = "EXTENDED BY",
+                            Revision = 1,
+                            SunoAction = "extend"
+                        },
+                        new
+                        {
+                            Id = new Guid("01a10a6e-de02-7002-8000-000000000003"),
+                            IsSystem = true,
+                            Name = "Reuse Prompt",
+                            NameKey = "REUSE PROMPT",
+                            ReverseName = "Prompt reused by",
+                            ReverseNameKey = "PROMPT REUSED BY",
+                            Revision = 1,
+                            SunoAction = "reuse_prompt"
+                        },
+                        new
+                        {
+                            Id = new Guid("01a10a6e-de03-7003-8000-000000000004"),
+                            IsSystem = true,
+                            Name = "Mashup",
+                            NameKey = "MASHUP",
+                            ReverseName = "Used in mashup",
+                            ReverseNameKey = "USED IN MASHUP",
+                            Revision = 1,
+                            SunoAction = "mashup"
+                        },
+                        new
+                        {
+                            Id = new Guid("01a10a6e-de04-7004-8000-000000000005"),
+                            IsSystem = true,
+                            Name = "Sample This Song",
+                            NameKey = "SAMPLE THIS SONG",
+                            ReverseName = "Sampled by",
+                            ReverseNameKey = "SAMPLED BY",
+                            Revision = 1,
+                            SunoAction = "sample"
+                        },
+                        new
+                        {
+                            Id = new Guid("01a10a6e-de05-7005-8000-000000000006"),
+                            IsSystem = true,
+                            Name = "Use as Inspiration",
+                            NameKey = "USE AS INSPIRATION",
+                            ReverseName = "Inspired",
+                            ReverseNameKey = "INSPIRED",
+                            Revision = 1,
+                            SunoAction = "inspiration"
+                        },
+                        new
+                        {
+                            Id = new Guid("01a10a6e-de06-7006-8000-000000000007"),
+                            IsSystem = true,
+                            Name = "Voice",
+                            NameKey = "VOICE",
+                            ReverseName = "Voice used by",
+                            ReverseNameKey = "VOICE USED BY",
+                            Revision = 1,
+                            SunoAction = "voice"
+                        },
+                        new
+                        {
+                            Id = new Guid("01a10a6e-de07-7007-8000-000000000008"),
+                            IsSystem = true,
+                            Name = "Remix",
+                            NameKey = "REMIX",
+                            ReverseName = "Remixed by",
+                            ReverseNameKey = "REMIXED BY",
+                            Revision = 1
+                        },
+                        new
+                        {
+                            Id = new Guid("01a10a6e-de08-7008-8000-000000000009"),
+                            IsSystem = true,
+                            Name = "Derived From",
+                            NameKey = "DERIVED FROM",
+                            ReverseName = "Source of",
+                            ReverseNameKey = "SOURCE OF",
+                            Revision = 1
                         });
                 });
 
@@ -399,6 +1046,88 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.SongCreditRecord", b =>
+                {
+                    b.Property<Guid>("SongId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("song_id");
+
+                    b.Property<Guid>("ArtistId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("artist_id");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("position");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("role");
+
+                    b.HasKey("SongId", "ArtistId")
+                        .HasName("pk_song_artist_credits");
+
+                    b.HasIndex("ArtistId")
+                        .HasDatabaseName("ix_song_artist_credits_artist_id");
+
+                    b.HasIndex("SongId", "Role", "Position")
+                        .IsUnique()
+                        .HasDatabaseName("ix_song_artist_credits_song_id_role_position");
+
+                    b.ToTable("song_artist_credits", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_song_artist_credits_role", "(role = 'primary' AND position = 0) OR (role = 'featured' AND position >= 0)");
+                        });
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.SongGenreRecord", b =>
+                {
+                    b.Property<Guid>("SongId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("song_id");
+
+                    b.Property<Guid>("GenreId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("genre_id");
+
+                    b.HasKey("SongId", "GenreId")
+                        .HasName("pk_song_genres");
+
+                    b.HasIndex("GenreId")
+                        .HasDatabaseName("ix_song_genres_genre_id");
+
+                    b.ToTable("song_genres", (string)null);
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.SongLinkRecord", b =>
+                {
+                    b.Property<Guid>("SongId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("song_id");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("position");
+
+                    b.Property<string>("Label")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("label");
+
+                    b.Property<string>("Url")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("url");
+
+                    b.HasKey("SongId", "Position")
+                        .HasName("pk_song_links");
+
+                    b.ToTable("song_links", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_song_links_url", "url LIKE 'http://%' OR url LIKE 'https://%'");
+                        });
+                });
+
             modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.SongRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -410,6 +1139,10 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("concept");
 
+                    b.Property<string>("Copyright")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("copyright");
+
                     b.Property<string>("CreatedUtc")
                         .IsRequired()
                         .HasColumnType("TEXT")
@@ -418,6 +1151,34 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("CurrentVersionId")
                         .HasColumnType("TEXT")
                         .HasColumnName("current_version_id");
+
+                    b.Property<string>("ExplicitContent")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("explicit_content");
+
+                    b.Property<string>("Isrc")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("isrc");
+
+                    b.Property<string>("Language")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("language");
+
+                    b.Property<string>("Notes")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("notes");
+
+                    b.Property<string>("OriginalReleaseDate")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("original_release_date");
+
+                    b.Property<string>("Publishing")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("publishing");
+
+                    b.Property<string>("ReleaseDate")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("release_date");
 
                     b.Property<int>("Revision")
                         .HasColumnType("INTEGER")
@@ -431,6 +1192,11 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT")
                         .HasColumnName("title");
+
+                    b.Property<string>("TitleKey")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("title_key");
 
                     b.Property<string>("TitleSortKey")
                         .IsRequired()
@@ -452,9 +1218,15 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                     b.HasIndex("CurrentVersionId")
                         .HasDatabaseName("ix_songs_current_version_id");
 
+                    b.HasIndex("Isrc")
+                        .HasDatabaseName("ix_songs_isrc");
+
                     b.HasIndex("ShortcodeNumber")
                         .IsUnique()
                         .HasDatabaseName("ix_songs_shortcode_number");
+
+                    b.HasIndex("TitleKey")
+                        .HasDatabaseName("ix_songs_title_key");
 
                     b.HasIndex("WorkflowStateId")
                         .HasDatabaseName("ix_songs_workflow_state_id");
@@ -473,6 +1245,67 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("ck_songs_title", "length(title) > 0");
                         });
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.SongRelationshipRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("CreatedUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_utc");
+
+                    b.Property<Guid>("FromSongId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("from_song_id");
+
+                    b.Property<Guid>("ToSongId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("to_song_id");
+
+                    b.Property<Guid>("TypeId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("type_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_song_relationships");
+
+                    b.HasIndex("TypeId")
+                        .HasDatabaseName("ix_song_relationships_type_id");
+
+                    b.HasIndex("FromSongId", "TypeId")
+                        .HasDatabaseName("ix_song_relationships_from_song_id_type_id");
+
+                    b.HasIndex("ToSongId", "TypeId")
+                        .HasDatabaseName("ix_song_relationships_to_song_id_type_id");
+
+                    b.ToTable("song_relationships", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_song_relationships_two_songs", "from_song_id <> to_song_id");
+                        });
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.SongTagRecord", b =>
+                {
+                    b.Property<Guid>("SongId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("song_id");
+
+                    b.Property<Guid>("TagId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("tag_id");
+
+                    b.HasKey("SongId", "TagId")
+                        .HasName("pk_song_tags");
+
+                    b.HasIndex("TagId")
+                        .HasDatabaseName("ix_song_tags_tag_id");
+
+                    b.ToTable("song_tags", (string)null);
                 });
 
             modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.SunoModelRecord", b =>
@@ -553,6 +1386,47 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                             NameKey = "V6-MINI",
                             Position = 3,
                             Retired = false
+                        });
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.TagRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Colour")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("colour");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("name");
+
+                    b.Property<string>("NameKey")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("name_key");
+
+                    b.Property<int>("Revision")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("revision");
+
+                    b.HasKey("Id")
+                        .HasName("pk_tags");
+
+                    b.HasIndex("NameKey")
+                        .IsUnique()
+                        .HasDatabaseName("ix_tags_name_key");
+
+                    b.ToTable("tags", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_tags_colour", "colour IN ('gray', 'red', 'pink', 'grape', 'violet', 'indigo', 'blue', 'cyan', 'teal', 'green', 'yellow', 'orange')");
+
+                            t.HasCheckConstraint("ck_tags_name", "length(name) > 0");
                         });
                 });
 
@@ -797,6 +1671,195 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("n8Tracks.Infrastructure.Retention.PendingFileDeletionRecord", b =>
+                {
+                    b.Property<string>("Path")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("path");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("attempts");
+
+                    b.Property<string>("LastAttemptUtc")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("last_attempt_utc");
+
+                    b.Property<string>("LastError")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("last_error");
+
+                    b.Property<string>("QueuedUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("queued_utc");
+
+                    b.HasKey("Path")
+                        .HasName("pk_pending_file_deletions");
+
+                    b.ToTable("pending_file_deletions", (string)null);
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Retention.RetentionGroupRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("DeletedUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("deleted_utc");
+
+                    b.Property<string>("Files")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("files");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("kind");
+
+                    b.Property<string>("Label")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("label");
+
+                    b.Property<string>("PruneAfterUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("prune_after_utc");
+
+                    b.Property<string>("Shortcode")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("shortcode");
+
+                    b.HasKey("Id")
+                        .HasName("pk_retention_groups");
+
+                    b.HasIndex("PruneAfterUtc")
+                        .HasDatabaseName("ix_retention_groups_prune_after_utc");
+
+                    b.HasIndex("Shortcode")
+                        .HasDatabaseName("ix_retention_groups_shortcode");
+
+                    b.ToTable("retention_groups", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_retention_groups_files_json", "json_valid(files) AND json_type(files) = 'array'");
+                        });
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Retention.RetentionRecordRecord", b =>
+                {
+                    b.Property<Guid>("GroupId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("group_id");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("position");
+
+                    b.Property<string>("Document")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("document");
+
+                    b.Property<string>("OriginalId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("original_id");
+
+                    b.Property<string>("RecordType")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("record_type");
+
+                    b.Property<int>("ShapeVersion")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("shape_version");
+
+                    b.HasKey("GroupId", "Position")
+                        .HasName("pk_retention_records");
+
+                    b.HasIndex("RecordType", "OriginalId")
+                        .HasDatabaseName("ix_retention_records_record_type_original_id");
+
+                    b.ToTable("retention_records", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_retention_records_document_json", "json_valid(document) AND json_type(document) = 'object'");
+
+                            t.HasCheckConstraint("ck_retention_records_shape_version", "shape_version >= 1");
+                        });
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.AlbumLinkRecord", b =>
+                {
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.AlbumRecord", null)
+                        .WithMany()
+                        .HasForeignKey("AlbumId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_album_links_albums_album_id");
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.AlbumRecord", b =>
+                {
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.ArtistRecord", null)
+                        .WithMany()
+                        .HasForeignKey("AlbumArtistId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_albums_artists_album_artist_id");
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.AlbumSongRecord", b =>
+                {
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.AlbumRecord", null)
+                        .WithMany()
+                        .HasForeignKey("AlbumId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_album_songs_albums_album_id");
+
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.SongRecord", null)
+                        .WithMany()
+                        .HasForeignKey("SongId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_album_songs_songs_song_id");
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.ArtistAliasRecord", b =>
+                {
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.ArtistRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ArtistId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_artist_aliases_artists_artist_id");
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.ArtistLinkRecord", b =>
+                {
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.ArtistRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ArtistId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_artist_links_artists_artist_id");
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.ArtworkAttachmentRecord", b =>
+                {
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.AssetRecord", null)
+                        .WithMany()
+                        .HasForeignKey("AssetId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_artwork_attachments_assets_asset_id");
+                });
+
             modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.EditorRevisionRecord", b =>
                 {
                     b.HasOne("n8Tracks.Infrastructure.Persistence.VersionRecord", null)
@@ -824,6 +1887,23 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         .HasConstraintName("fk_generations_versions_version_id");
                 });
 
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.PlaylistSongRecord", b =>
+                {
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.PlaylistRecord", null)
+                        .WithMany()
+                        .HasForeignKey("PlaylistId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_playlist_songs_playlists_playlist_id");
+
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.SongRecord", null)
+                        .WithMany()
+                        .HasForeignKey("SongId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_playlist_songs_songs_song_id");
+                });
+
             modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.SessionRecord", b =>
                 {
                     b.HasOne("n8Tracks.Infrastructure.Persistence.AdministratorRecord", null)
@@ -832,6 +1912,50 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_sessions_administrators_administrator_id");
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.SongCreditRecord", b =>
+                {
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.ArtistRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ArtistId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_song_artist_credits_artists_artist_id");
+
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.SongRecord", null)
+                        .WithMany()
+                        .HasForeignKey("SongId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_song_artist_credits_songs_song_id");
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.SongGenreRecord", b =>
+                {
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.GenreRecord", null)
+                        .WithMany()
+                        .HasForeignKey("GenreId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_song_genres_genres_genre_id");
+
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.SongRecord", null)
+                        .WithMany()
+                        .HasForeignKey("SongId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_song_genres_songs_song_id");
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.SongLinkRecord", b =>
+                {
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.SongRecord", null)
+                        .WithMany()
+                        .HasForeignKey("SongId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_song_links_songs_song_id");
                 });
 
             modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.SongRecord", b =>
@@ -848,6 +1972,47 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_songs_workflow_states_workflow_state_id");
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.SongRelationshipRecord", b =>
+                {
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.SongRecord", null)
+                        .WithMany()
+                        .HasForeignKey("FromSongId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_song_relationships_songs_from_song_id");
+
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.SongRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ToSongId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_song_relationships_songs_to_song_id");
+
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.RelationshipTypeRecord", null)
+                        .WithMany()
+                        .HasForeignKey("TypeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_song_relationships_song_relationship_types_type_id");
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.SongTagRecord", b =>
+                {
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.SongRecord", null)
+                        .WithMany()
+                        .HasForeignKey("SongId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_song_tags_songs_song_id");
+
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.TagRecord", null)
+                        .WithMany()
+                        .HasForeignKey("TagId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_song_tags_tags_tag_id");
                 });
 
             modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.UsedVersionNumberRecord", b =>
@@ -868,6 +2033,16 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_versions_songs_song_id");
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Retention.RetentionRecordRecord", b =>
+                {
+                    b.HasOne("n8Tracks.Infrastructure.Retention.RetentionGroupRecord", null)
+                        .WithMany()
+                        .HasForeignKey("GroupId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_retention_records_retention_groups_group_id");
                 });
 #pragma warning restore 612, 618
         }
