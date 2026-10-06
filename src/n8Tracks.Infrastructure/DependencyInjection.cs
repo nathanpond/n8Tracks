@@ -10,6 +10,7 @@ using n8Tracks.Application.Health;
 using n8Tracks.Application.Jobs;
 using n8Tracks.Application.Maintenance;
 using n8Tracks.Application.Persistence;
+using n8Tracks.Application.Retention;
 using n8Tracks.Application.Setup;
 using n8Tracks.Application.Songs;
 using n8Tracks.Application.Suno;
@@ -18,6 +19,8 @@ using n8Tracks.Infrastructure.Health;
 using n8Tracks.Infrastructure.Jobs;
 using n8Tracks.Infrastructure.Maintenance;
 using n8Tracks.Infrastructure.Persistence;
+using n8Tracks.Infrastructure.Retention;
+using n8Tracks.Infrastructure.Scheduling;
 using n8Tracks.Infrastructure.Security;
 using n8Tracks.Infrastructure.Setup;
 
@@ -86,11 +89,22 @@ public static class DependencyInjection
         services.AddSingleton<RestoreRunner>();
         services.AddSingleton<IRestoreRunner>(static provider => provider.GetRequiredService<RestoreRunner>());
 
+        foreach (var type in RetainedTypes.BuiltIn)
+        {
+            services.AddSingleton(type);
+        }
+
+        services.AddSingleton<RetainedTypeRegistry>();
+        services.AddScoped<IRetentionStore, RetentionStore>();
+        services.AddScoped<IRetentionPruneStateStore, RetentionPruneStateStore>();
+        services.AddSingleton<IManagedFiles, ManagedFiles>();
+        services.AddJobHandler<RetentionPruneJobHandler>(RetentionPruneTask.JobType);
+
         return services;
     }
 
     /// <summary>
-    /// Adds the background worker that runs queued jobs and the backup scheduler. Only the server
+    /// Adds the background worker that runs queued jobs and the daily-task scheduler. Only the server
     /// adds them: a command run in the container starts nothing on its own.
     /// </summary>
     public static IServiceCollection AddJobWorker(this IServiceCollection services)
@@ -98,11 +112,11 @@ public static class DependencyInjection
         ArgumentNullException.ThrowIfNull(services);
 
         services.TryAddSingleton(new JobWorkerOptions());
-        services.TryAddSingleton(new BackupSchedulerOptions());
+        services.TryAddSingleton(new DailyTaskSchedulerOptions());
         services.AddHostedService<BackupStartupCleanup>();
         services.AddHostedService<RestoreHousekeeping>();
         services.AddHostedService<JobWorker>();
-        services.AddHostedService<BackupScheduler>();
+        services.AddHostedService<DailyTaskScheduler>();
 
         return services;
     }

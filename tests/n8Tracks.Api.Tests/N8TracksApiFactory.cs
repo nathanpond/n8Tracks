@@ -8,6 +8,7 @@ using Microsoft.Extensions.Hosting;
 using n8Tracks.Api.Configuration;
 using n8Tracks.Api.Frontend;
 using n8Tracks.Infrastructure.Backups;
+using n8Tracks.Infrastructure.Scheduling;
 using n8Tracks.TestSupport;
 
 namespace n8Tracks.Api.Tests;
@@ -107,10 +108,11 @@ public class N8TracksApiFactory : WebApplicationFactory<Program>
             services.AddSingleton<PhysicalFileProvider>(_ => new PhysicalFileProvider(WebRootPath));
             services.AddSingleton(provider => new FrontendFiles(provider.GetRequiredService<PhysicalFileProvider>()));
 
-            // A test decides when the schedule is looked at (BackupScheduleService.TickAsync), so no
-            // scheduled backup starts on its own whatever the time is when the suite runs.
-            services.RemoveAll<BackupSchedulerOptions>();
-            services.AddSingleton(new BackupSchedulerOptions { Enabled = false });
+            // A test decides when the daily tasks are looked at (BackupScheduleService.TickAsync, the
+            // retention prune's tick), so no scheduled backup or prune starts on its own whatever the
+            // time is when the suite runs.
+            services.RemoveAll<DailyTaskSchedulerOptions>();
+            services.AddSingleton(new DailyTaskSchedulerOptions { Enabled = false });
             TestServices?.Invoke(services);
         });
     }

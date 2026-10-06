@@ -63,6 +63,9 @@ public static class RedactionPolicy
 
         // A job's payload: whatever the code that enqueued it passed, which may be any of the above.
         "payload",
+
+        // A retained row as it was (retention_records.document): it may hold any of the above.
+        "document",
     ];
 
     /// <summary>Names that end with a sensitive word but never hold a sensitive value.</summary>

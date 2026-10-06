@@ -1,0 +1,4 @@
+{
+  "$comment": "The shape of each retained type's table, as RetainedShapeGuardTests hashes it. Change an entry only together with the type's ShapeVersion and an upgrader from the shape before (see that test).",
+  "editor-snapshot": { "shapeVersion": 1, "hash": "1478e55e8e635532af8498033927cc6e8a11be32068dfd197a2a4a6fd7b9787f" }
+}

@@ -2,6 +2,7 @@ using n8Tracks.Application.Auth;
 using n8Tracks.Application.Configuration;
 using n8Tracks.Application.Jobs;
 using n8Tracks.Application.Maintenance;
+using n8Tracks.Application.Scheduling;
 using n8Tracks.Application.Setup;
 
 namespace n8Tracks.Application.Backups;
@@ -155,4 +156,15 @@ public sealed class BackupScheduleService(
         attempt is { Outcome: BackupAttemptOutcome.Running }
             ? BackupScheduleRules.Reconcile(attempt, await jobs.FindAsync(attempt.JobId, cancellationToken).ConfigureAwait(false))
             : attempt;
+}
+
+/// <summary>The scheduled backup as one of the shared scheduler's daily tasks: <see cref="BackupScheduleService.TickAsync"/>.</summary>
+public sealed class BackupScheduleTask(BackupScheduleService schedule) : IDailyTask
+{
+    public string Name => "backup";
+
+    public async Task<string?> TickAsync(CancellationToken cancellationToken) =>
+        await schedule.TickAsync(cancellationToken).ConfigureAwait(false) is var action && action != BackupScheduleAction.None
+            ? $"queued a scheduled backup ({action})"
+            : null;
 }

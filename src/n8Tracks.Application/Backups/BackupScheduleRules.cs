@@ -1,54 +1,30 @@
 using n8Tracks.Application.Jobs;
+using n8Tracks.Application.Scheduling;
 
 namespace n8Tracks.Application.Backups;
 
 /// <summary>
 /// When scheduled backups are planned and when one is due. Pure: the clock, the zone, and the
-/// records are given.
+/// records are given. Planned times follow the shared <see cref="DailyTaskRules"/>.
 /// </summary>
 public static class BackupScheduleRules
 {
     /// <summary>How long after a first failure its one retry runs.</summary>
     public static readonly TimeSpan RetryDelay = TimeSpan.FromHours(1);
 
-    /// <summary>How many days either side of today are searched for a planned time: more than a week.</summary>
-    private const int SearchDays = 9;
-
     /// <summary>
     /// The instant <paramref name="time"/> on <paramref name="date"/> is in <paramref name="zone"/>.
     /// A time the clocks skip (they go forward) is the next minute that exists; a time that happens
     /// twice (they go back) is its first occurrence, so it is planned once.
     /// </summary>
-    public static DateTimeOffset PlannedOn(DateOnly date, TimeOnly time, TimeZoneInfo zone)
-    {
-        ArgumentNullException.ThrowIfNull(zone);
-
-        var local = date.ToDateTime(time, DateTimeKind.Unspecified);
-        for (var step = 0; step < 24 * 60 && zone.IsInvalidTime(local); step++)
-        {
-            local = local.AddMinutes(1);
-        }
-
-        var offset = zone.IsAmbiguousTime(local) ? zone.GetAmbiguousTimeOffsets(local).Max() : zone.GetUtcOffset(local);
-        return new DateTimeOffset(local, offset).ToUniversalTime();
-    }
+    public static DateTimeOffset PlannedOn(DateOnly date, TimeOnly time, TimeZoneInfo zone) => DailyTaskRules.PlannedOn(date, time, zone);
 
     /// <summary>The latest planned time at or before <paramref name="now"/>.</summary>
     public static DateTimeOffset? MostRecent(BackupSchedule schedule, TimeZoneInfo zone, DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(schedule);
 
-        var today = Today(zone, now);
-        for (var day = 1; day >= -SearchDays; day--)
-        {
-            var date = today.AddDays(day);
-            if (Runs(schedule.Frequency, date) && PlannedOn(date, schedule.Time, zone) is var planned && planned <= now)
-            {
-                return planned;
-            }
-        }
-
-        return null;
+        return DailyTaskRules.MostRecent(schedule.Time, date => Runs(schedule.Frequency, date), zone, now);
     }
 
     /// <summary>The first planned time after <paramref name="now"/>.</summary>
@@ -56,17 +32,7 @@ public static class BackupScheduleRules
     {
         ArgumentNullException.ThrowIfNull(schedule);
 
-        var today = Today(zone, now);
-        for (var day = -1; day <= SearchDays; day++)
-        {
-            var date = today.AddDays(day);
-            if (Runs(schedule.Frequency, date) && PlannedOn(date, schedule.Time, zone) is var planned && planned > now)
-            {
-                return planned;
-            }
-        }
-
-        return null;
+        return DailyTaskRules.Next(schedule.Time, date => Runs(schedule.Frequency, date), zone, now);
     }
 
     /// <summary>
@@ -139,13 +105,6 @@ public static class BackupScheduleRules
             { Status: JobStatus.Failed } => attempt with { Outcome = BackupAttemptOutcome.Failed, FinishedUtc = job.FinishedUtc, Error = job.Error ?? "The backup failed." },
             _ => attempt,
         };
-    }
-
-    private static DateOnly Today(TimeZoneInfo zone, DateTimeOffset now)
-    {
-        ArgumentNullException.ThrowIfNull(zone);
-
-        return DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(now, zone).DateTime);
     }
 
     private static bool Runs(BackupFrequency frequency, DateOnly date) =>

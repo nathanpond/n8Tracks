@@ -1,6 +1,7 @@
 using n8Tracks.Application.Backups;
 using n8Tracks.Application.Jobs;
 using n8Tracks.Infrastructure.Backups;
+using n8Tracks.Infrastructure.Scheduling;
 
 namespace n8Tracks.Api.Tests.Backups;
 
@@ -295,9 +296,9 @@ public sealed class BackupScheduleRulesTests
     {
         var past = TimeSpan.FromSeconds(2);
 
-        Assert.Equal(TimeSpan.FromSeconds(2), BackupScheduler.UntilNextLook(At("2026-10-05T10:00:00Z"), past));
-        Assert.Equal(TimeSpan.FromSeconds(1), BackupScheduler.UntilNextLook(At("2026-10-05T10:00:01Z"), past));
-        Assert.Equal(TimeSpan.FromSeconds(60), BackupScheduler.UntilNextLook(At("2026-10-05T10:00:02Z"), past));
-        Assert.Equal(TimeSpan.FromSeconds(32), BackupScheduler.UntilNextLook(At("2026-10-05T10:00:30Z"), past));
+        Assert.Equal(TimeSpan.FromSeconds(2), DailyTaskScheduler.UntilNextLook(At("2026-10-05T10:00:00Z"), past));
+        Assert.Equal(TimeSpan.FromSeconds(1), DailyTaskScheduler.UntilNextLook(At("2026-10-05T10:00:01Z"), past));
+        Assert.Equal(TimeSpan.FromSeconds(60), DailyTaskScheduler.UntilNextLook(At("2026-10-05T10:00:02Z"), past));
+        Assert.Equal(TimeSpan.FromSeconds(32), DailyTaskScheduler.UntilNextLook(At("2026-10-05T10:00:30Z"), past));
     }
 }

@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
 using n8Tracks.Domain.Suno;
+using n8Tracks.Infrastructure.Retention;
 
 namespace n8Tracks.Infrastructure.Persistence;
 
@@ -89,6 +90,12 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
 
     public DbSet<SongRelationshipRecord> SongRelationships => Set<SongRelationshipRecord>();
 
+    public DbSet<RetentionGroupRecord> RetentionGroups => Set<RetentionGroupRecord>();
+
+    public DbSet<RetentionRecordRecord> RetentionRecords => Set<RetentionRecordRecord>();
+
+    public DbSet<PendingFileDeletionRecord> PendingFileDeletions => Set<PendingFileDeletionRecord>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         ArgumentNullException.ThrowIfNull(configurationBuilder);
@@ -159,6 +166,44 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
         });
 
         OnCatalogCreating(modelBuilder);
+        OnRetentionCreating(modelBuilder);
+    }
+
+    /// <summary>
+    /// The retention store: deleted rows leave their live tables for these, so no live query needs a
+    /// "not deleted" filter. Nothing here has a foreign key to a live table: a group outlives the
+    /// parents of what it holds, and a restore checks them itself.
+    /// </summary>
+    private static void OnRetentionCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<RetentionGroupRecord>(group =>
+        {
+            group.ToTable("retention_groups", static table => table.HasCheckConstraint("ck_retention_groups_files_json", "json_valid(files) AND json_type(files) = 'array'"));
+            group.HasKey(record => record.Id);
+            group.HasIndex(record => record.PruneAfterUtc);
+            group.HasIndex(record => record.Shortcode);
+        });
+
+        modelBuilder.Entity<RetentionRecordRecord>(record =>
+        {
+            record.ToTable("retention_records", static table =>
+            {
+                table.HasCheckConstraint("ck_retention_records_document_json", "json_valid(document) AND json_type(document) = 'object'");
+                table.HasCheckConstraint("ck_retention_records_shape_version", "shape_version >= 1");
+            });
+            record.HasKey(row => new { row.GroupId, row.Position });
+            record.HasIndex(row => new { row.RecordType, row.OriginalId });
+            record.HasOne<RetentionGroupRecord>()
+                .WithMany()
+                .HasForeignKey(row => row.GroupId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<PendingFileDeletionRecord>(pending =>
+        {
+            pending.ToTable("pending_file_deletions");
+            pending.HasKey(record => record.Path);
+        });
     }
 
     private static void OnCatalogCreating(ModelBuilder modelBuilder)

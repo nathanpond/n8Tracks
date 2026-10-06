@@ -10,11 +10,14 @@ using n8Tracks.Api.Tests.Inventory;
 using n8Tracks.Api.Tests.Persistence;
 using n8Tracks.Api.Tests.Setup;
 using n8Tracks.Api.Tests.Songs;
+using n8Tracks.Application.Auth;
 using n8Tracks.Application.References;
+using n8Tracks.Application.Retention;
 using n8Tracks.Application.Songs;
 using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
 using n8Tracks.Infrastructure.Persistence;
+using n8Tracks.Infrastructure.Retention;
 
 namespace n8Tracks.Api.Tests.Invariants;
 
@@ -32,8 +35,11 @@ namespace n8Tracks.Api.Tests.Invariants;
 /// the stored inputs other than byte-identical. The complement (the same calls on a mutable Version
 /// do change them) keeps it from passing because nothing works.</item>
 /// </list>
-/// It covers the web UI and the REST API (which the extension uses). Import (M4) and the MCP gateway
-/// (M7) are not covered yet: those milestones extend this test.
+/// It covers the web UI and the REST API (which the extension uses), and retention (#95): the retention
+/// service's methods are exercised like any catalog service's, and a retained type over the
+/// <c>versions</c> table must come with an exerciser that retains and restores a frozen Version through
+/// every shape upgrader. Import (M4) and the MCP gateway (M7) are not covered yet: those milestones
+/// extend this test.
 /// </summary>
 public sealed class VersionImmutabilityGuardTests
 {
@@ -223,7 +229,7 @@ public sealed class VersionImmutabilityGuardTests
         Assert.Equal(methods.Order(StringComparer.Ordinal), exercisers.Keys.Concat(exempt.Keys).Order(StringComparer.Ordinal));
 
         // Services elsewhere take nothing that names a Version or a Song.
-        var catalogNamespaces = new[] { typeof(SongVersion).Namespace, typeof(VersionService).Namespace, typeof(CatalogReference).Namespace };
+        var catalogNamespaces = new[] { typeof(SongVersion).Namespace, typeof(VersionService).Namespace, typeof(CatalogReference).Namespace, typeof(RetentionService).Namespace };
         foreach (var type in ApplicationServices().Where(type => !catalogNamespaces.Contains(type.Namespace)))
         {
             foreach (var method in PublicMethods(type))
@@ -551,6 +557,25 @@ public sealed class VersionImmutabilityGuardTests
         ["ReferenceResolver.ResolveAsync(CatalogReference, CancellationToken)"] = Service<ReferenceResolver>(static (service, target) => service.ResolveAsync(CatalogReference.Parse(target.VersionShortcode), default)),
         ["ReferenceResolver.SongIdAsync(CatalogReference, CancellationToken)"] = Service<ReferenceResolver>(static (service, target) => service.SongIdAsync(CatalogReference.Parse(target.SongShortcode), default)),
         ["ReferenceResolver.VersionIdAsync(CatalogReference, CancellationToken)"] = Service<ReferenceResolver>(static (service, target) => service.VersionIdAsync(CatalogReference.Parse(target.VersionShortcode), default)),
+
+        // Retention: each call retains a new history entry of the Version and restores it, so the
+        // Version's own row is what a later story's retained type would put back.
+        ["RetentionService.RetainAsync(RetentionRequest, CancellationToken)"] = new(static target => RetainAndRestoreAsync(target, static (service, request, _) => service.RetainAsync(request, default))),
+        ["RetentionService.RetainWithinAsync(RetentionRequest, CancellationToken)"] = new(static target => RetainAndRestoreAsync(target, static (service, request, transaction) =>
+            transaction.RunAsync(token => service.RetainWithinAsync(request, token), default))),
+        ["RetentionService.RestoreAsync(Guid, CancellationToken)"] = new(static target => RetainAndRestoreAsync(target, static (service, request, _) => service.RetainAsync(request, default))),
+        ["RetentionService.RestoreWithinAsync(Guid, CancellationToken)"] = new(static target => RetainAndRestoreAsync(
+            target,
+            static (service, request, _) => service.RetainAsync(request, default),
+            static (service, group, transaction) => transaction.RunAsync(token => service.RestoreWithinAsync(group, token), default))),
+        ["RetentionService.FindAsync(Guid, CancellationToken)"] = Service<RetentionService>(static (service, target) => service.FindAsync(target.VersionId, default)),
+        ["RetentionService.FindByShortcodeAsync(String, CancellationToken)"] = Service<RetentionService>(static (service, target) => service.FindByShortcodeAsync(target.VersionShortcode, default)),
+        ["RetentionService.ListAsync(CancellationToken)"] = Service<RetentionService>(static (service, _) => service.ListAsync(default)),
+        ["RetentionService.PruneAsync(CancellationToken)"] = new(static async target =>
+        {
+            await RetainAndRestoreAsync(target, static (service, request, _) => service.RetainAsync(request, default), restore: null);
+            await InScopeAsync<RetentionService, RetentionPruneSummary>(target, static service => service.PruneAsync(default));
+        }),
     };
 
     /// <summary>Public catalog-service methods that take neither a Song nor a Version, and why.</summary>
@@ -565,7 +590,80 @@ public sealed class VersionImmutabilityGuardTests
         ["WorkflowStateService.UpdateAsync(Guid, WorkflowStateEdit, Int32, CancellationToken)"] = "workflow states",
         ["WorkflowStateService.ReorderAsync(IReadOnlyList`1, Int32, CancellationToken)"] = "workflow states",
         ["WorkflowStateService.DeleteAsync(Guid, String, Int32, CancellationToken)"] = "workflow states; moves Songs to another state, never a Version",
+        ["RetentionService.IsManagedFilePath(String)"] = "pure path check",
+        ["RetentionPruneTask.TickAsync(CancellationToken)"] = "queues the prune job; the prune itself is RetentionService.PruneAsync, exercised above",
     };
+
+    /// <summary>
+    /// Retained types over the <c>versions</c> table, each with how it retains and restores a frozen
+    /// Version (its shape upgraders run on fixtures of every earlier shape). None is registered until
+    /// Version deletion (#101), which adds its type here; the test below fails until it does.
+    /// </summary>
+    private static Dictionary<string, Exerciser> RetainedVersionTypes() => new(StringComparer.Ordinal);
+
+    [Fact]
+    public async Task EveryRetainedTypeOverTheVersionsTableRestoresAFrozenVersionWithItsInputsUnchanged()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var overVersions = factory.Services.GetRequiredService<RetainedTypeRegistry>().All
+            .Where(static type => type.Table == "versions")
+            .Select(static type => type.RecordType)
+            .Order(StringComparer.Ordinal)
+            .ToList();
+        var exercisers = RetainedVersionTypes();
+
+        Assert.True(
+            overVersions.SequenceEqual(exercisers.Keys.Order(StringComparer.Ordinal), StringComparer.Ordinal),
+            $"Retained types over versions ({string.Join(", ", overVersions)}) must each have an exerciser here: retain and restore a frozen Version, through every shape upgrader.");
+
+        var frozen = await TargetAsync(factory, client, "Retained frozen guard", frozen: true);
+        foreach (var (type, exercise) in exercisers)
+        {
+            var before = Stored(factory, frozen.VersionId);
+            await exercise.Run(frozen);
+            Assert.True(before == Stored(factory, frozen.VersionId), $"Restoring {type} changed a frozen Version's inputs.");
+            Assert.True((await frozen.ReadAsync()).GetProperty("isFrozen").GetBoolean(), $"Restoring {type} unfroze the Version.");
+        }
+    }
+
+    /// <summary>
+    /// Takes a new history entry of the target, retains it with <paramref name="retain"/>, and restores
+    /// it with <see cref="RetentionService.RestoreAsync"/>, asserting the restore succeeded.
+    /// </summary>
+    private static Task RetainAndRestoreAsync(
+        Target target,
+        Func<RetentionService, RetentionRequest, IExclusiveTransaction, Task<RetentionGroup>> retain) =>
+        RetainAndRestoreAsync(target, retain, static (service, group, _) => service.RestoreAsync(group, default));
+
+    /// <summary>As above, restoring with <paramref name="restore"/>; with null, the entry stays retained.</summary>
+    private static async Task RetainAndRestoreAsync(
+        Target target,
+        Func<RetentionService, RetentionRequest, IExclusiveTransaction, Task<RetentionGroup>> retain,
+        Func<RetentionService, Guid, IExclusiveTransaction, Task<RetentionRestoreOutcome>>? restore)
+    {
+        var snapshot = await InScopeAsync<EditorRevisionService, SnapshotOutcome>(target, service =>
+            service.SnapshotAsync(target.VersionId, new EditorRevisionRequest(Changed + " " + Guid.NewGuid(), Changed, null), default));
+        var id = Assert.IsType<SnapshotOutcome.Created>(snapshot).Revision.Id;
+        var request = new RetentionRequest(
+            RetainedRecordTypes.EditorSnapshot,
+            $"History entry of {target.VersionShortcode}",
+            null,
+            [new RetainedRoot(RetainedRecordTypes.EditorSnapshot, id)],
+            []);
+
+        var scope = target.Factory.Services.CreateAsyncScope();
+        await using (scope.ConfigureAwait(false))
+        {
+            var service = scope.ServiceProvider.GetRequiredService<RetentionService>();
+            var transaction = scope.ServiceProvider.GetRequiredService<IExclusiveTransaction>();
+            var group = await retain(service, request, transaction);
+            if (restore is not null)
+            {
+                Assert.IsType<RetentionRestoreOutcome.Restored>(await restore(service, group.Id, transaction));
+            }
+        }
+    }
 
     /// <summary>The Version's edit through the service: each input alone (every option in turn), all of them, and all with metadata.</summary>
     private static async Task EachInputEditAsync(Target target, Func<VersionService, Guid, VersionEdit, int, Task<VersionUpdateOutcome>> update)
@@ -681,10 +779,12 @@ public sealed class VersionImmutabilityGuardTests
             .Where(static type => type is { IsClass: true, IsAbstract: false } && type.GetMethod("<Clone>$") is null && !type.IsSubclassOf(typeof(Exception)))
             .Where(static type => PublicMethods(type).Any());
 
-    /// <summary>Every public method of a class in the catalog namespaces (Songs, References), described by its signature.</summary>
+    /// <summary>Every public method of a class in the catalog namespaces (Songs, References, Retention), described by its signature.</summary>
     private static List<string> CatalogServiceMethods() =>
         [.. ApplicationServices()
-            .Where(static type => type.Namespace == typeof(VersionService).Namespace || type.Namespace == typeof(CatalogReference).Namespace)
+            .Where(static type => type.Namespace == typeof(VersionService).Namespace
+                || type.Namespace == typeof(CatalogReference).Namespace
+                || type.Namespace == typeof(RetentionService).Namespace)
             .SelectMany(PublicMethods)
             .Select(Describe)
             .Distinct(StringComparer.Ordinal)];
