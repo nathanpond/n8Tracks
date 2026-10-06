@@ -1,3 +1,4 @@
+import { isArtwork, type Artwork, type ArtworkCrop } from './artwork';
 import { apiFetch } from './client';
 import { failureOf, ifMatch, type SaveResult } from './saves';
 import { body, isErrorMap, isRecord, useResource } from './songs';
@@ -35,6 +36,8 @@ export interface Artist {
   createdAt: string;
   updatedAt: string;
   revision: number;
+  /** Its own artwork, or null when it has none (never its Songs'). */
+  artwork: Artwork | null;
 }
 
 export interface ArtistPage {
@@ -81,7 +84,8 @@ export function isArtist(value: unknown): value is Artist {
     typeof value.albumCount === 'number' &&
     typeof value.createdAt === 'string' &&
     typeof value.updatedAt === 'string' &&
-    typeof value.revision === 'number'
+    typeof value.revision === 'number' &&
+    (value.artwork === null || isArtwork(value.artwork))
   );
 }
 
@@ -206,6 +210,10 @@ export interface ArtistEdit {
   aliases?: string[];
   notes?: string | null;
   links?: ArtistLink[];
+  /** An uploaded asset's ID to show as the Artist's artwork, or null to remove it. */
+  artworkAssetId?: string | null;
+  /** The artwork's square crop, in pixels of the original, or null for the centred square. */
+  artworkCrop?: ArtworkCrop | null;
 }
 
 /** How an edit ended: a save's result, or the other Artists that already have a new name. */

@@ -20,13 +20,10 @@ import {
 } from '../api/artwork';
 import { ArtworkImage } from './ArtworkImage';
 import { CropDialog } from './CropDialog';
-import { ARTWORK_CROP_KEY, type ArtworkEdit } from './artworkField';
+import { ARTWORK_CROP_KEY, ARTWORK_KEY, type ArtworkEdit } from './artworkField';
 import { keptCrop } from './cropRules';
 import { saveError } from './useInPlaceEdit';
 import type { SaveOutcome } from './useRevisionedSave';
-
-/** The edit field every owner takes its artwork in. */
-export const ARTWORK_KEY = 'artworkAssetId';
 
 /** How big the picker shows the artwork, in CSS pixels (from the 320-pixel thumbnail). */
 const SHOWN_PIXELS = 200;

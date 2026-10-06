@@ -17,7 +17,7 @@ namespace n8Tracks.Api.Endpoints;
 /// original or thumbnails (<c>catalog.read</c>). An upload is judged by its content alone: the file
 /// name and the declared content type are never read, and what is served carries n8Tracks' own media
 /// type with <c>nosniff</c>. Attaching an asset to a Song, Album, Playlist, or Artist is that
-/// record's own edit (later stories).
+/// record's own edit (its PATCH's <c>artworkAssetId</c> and <c>artworkCrop</c>).
 /// </summary>
 internal static class ArtworkEndpoints
 {
@@ -141,6 +141,43 @@ internal static class ArtworkEndpoints
     }
 
     private const string CropShapeMessage = "Send the crop as whole numbers of pixels {x, y, size}, or null for the centred square.";
+
+    /// <summary>
+    /// The artwork fields of an Album's, Playlist's, or Artist's edit as sent: <c>artworkAssetId</c>
+    /// (missing is left alone; text or null, or else an error) and <c>artworkCrop</c>
+    /// (<see cref="ReadCrop"/>). Errors are keyed by the field names.
+    /// </summary>
+    internal static OwnerArtworkEdit ReadOwnerArtwork(JsonElement? assetId, JsonElement? crop, Dictionary<string, string[]> errors)
+    {
+        ArgumentNullException.ThrowIfNull(errors);
+
+        var sent = false;
+        string? id = null;
+        switch (assetId?.ValueKind)
+        {
+            case null or JsonValueKind.Undefined:
+                break;
+            case JsonValueKind.Null:
+                sent = true;
+                break;
+            case JsonValueKind.String:
+                sent = true;
+                id = assetId.Value.GetString();
+                break;
+            default:
+                errors[ArtworkAttachmentService.AssetIdField] = ["Send text or null."];
+                break;
+        }
+
+        return new OwnerArtworkEdit(sent, id, ReadCrop(crop, ArtworkAttachmentService.CropField, errors));
+    }
+
+    /// <summary>
+    /// 403 <c>insufficient_scope</c> when a credential changes an owner's artwork without
+    /// <c>artwork.write</c> (the owner's own scope is the endpoint's marker); null otherwise.
+    /// </summary>
+    internal static ProblemHttpResult? LackingArtworkScope(HttpContext context, OwnerArtworkEdit edit) =>
+        edit.IsSent ? ScopeMiddleware.Lacking(context, CredentialScopes.ArtworkWrite) : null;
 
     /// <summary>
     /// Reads the first file part of the multipart body into memory, counted against the limit as it

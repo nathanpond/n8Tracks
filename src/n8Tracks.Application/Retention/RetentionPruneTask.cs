@@ -39,6 +39,14 @@ public sealed class RetentionPruneTask(
             return null;
         }
 
+        // A prune queued or running is looked for before the state is read: the job records its start
+        // before it can finish, so once none is active the state read next has the last start. Read
+        // the other way round, a job finishing between the two reads looked due again and was queued twice.
+        if (await jobs.FindActiveAsync(JobType, cancellationToken).ConfigureAwait(false) is not null)
+        {
+            return null;
+        }
+
         var now = time.GetUtcNow();
         if (await state.FindAsync(cancellationToken).ConfigureAwait(false) is not { } stored)
         {
@@ -48,7 +56,6 @@ public sealed class RetentionPruneTask(
 
         var since = stored.LastStartedUtc is { } started && started > stored.ArmedUtc ? started : stored.ArmedUtc;
         if (!DailyTaskRules.IsDue(PlannedTime, options.TimeZone, since, now)
-            || await jobs.FindActiveAsync(JobType, cancellationToken).ConfigureAwait(false) is not null
             || await jobs.FindActiveAsync(BackupService.JobType, cancellationToken).ConfigureAwait(false) is not null)
         {
             return null;

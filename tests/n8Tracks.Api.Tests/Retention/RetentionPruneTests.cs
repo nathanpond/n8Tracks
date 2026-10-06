@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using n8Tracks.Api.Tests.Auth;
 using n8Tracks.Api.Tests.Jobs;
 using n8Tracks.Api.Tests.Persistence;
@@ -7,6 +8,7 @@ using n8Tracks.Application.Backups;
 using n8Tracks.Application.Configuration;
 using n8Tracks.Application.Retention;
 using n8Tracks.Application.Scheduling;
+using n8Tracks.Infrastructure.Retention;
 using static n8Tracks.Api.Tests.Retention.RetentionApi;
 
 namespace n8Tracks.Api.Tests.Retention;
@@ -186,6 +188,47 @@ public sealed class RetentionPruneTests
     }
 
     [Fact]
+    public async Task ALookWhileThePruneRunsNeverQueuesASecondOneHoweverTheRunEndsAroundIt()
+    {
+        // Regression: the task read the prune state, then looked for an active prune. A run that
+        // started and finished between the two reads left the state read before its start, so the
+        // prune looked due again and was queued twice (seen as an intermittent failure under load).
+        // Here the run is held at its start, and the state read, if the task makes one, lets it finish.
+        var clock = new TestClock();
+        var gate = new PruneStartGate();
+        using var factory = new N8TracksApiFactory
+        {
+            TestServices = services =>
+            {
+                services.RemoveAll<TimeProvider>();
+                services.AddSingleton<TimeProvider>(clock);
+                services.RemoveAll<IRetentionPruneStateStore>();
+                services.AddScoped<RetentionPruneStateStore>();
+                services.AddScoped<IRetentionPruneStateStore>(provider => new GatedPruneState(provider.GetRequiredService<RetentionPruneStateStore>(), gate));
+            },
+        };
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        Assert.Null(await TickAsync(factory));
+        clock.Advance(TimeSpan.FromHours(19));
+        Assert.Equal("queued the retention prune", await TickAsync(factory));
+        var job = Assert.Single(PruneJobs(factory));
+        await gate.Reached.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        gate.AfterRead = async () =>
+        {
+            gate.Release.TrySetResult();
+            await SucceededAsync(factory, job);
+        };
+
+        Assert.Null(await TickAsync(factory));
+
+        gate.AfterRead = null;
+        gate.Release.TrySetResult();
+        await SucceededAsync(factory, job);
+        Assert.Null(await TickAsync(factory));
+        Assert.Equal([job], PruneJobs(factory));
+    }
+
+    [Fact]
     public async Task TheQueuedJobPrunesWhatIsDue()
     {
         var clock = new TestClock();
@@ -246,4 +289,38 @@ public sealed class RetentionPruneTests
 
     private static List<Guid> PruneJobs(N8TracksApiFactory factory) =>
         [.. TestDatabase.Rows(factory.DataPath, $"SELECT id FROM jobs WHERE type = '{RetentionPruneTask.JobType}' ORDER BY sequence;").Select(Guid.Parse)];
+
+    /// <summary>Holds the prune job at its first state write until released, and runs a hook after each state read.</summary>
+    private sealed class PruneStartGate
+    {
+        public TaskCompletionSource Reached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Func<Task>? AfterRead { get; set; }
+    }
+
+    /// <summary>The real prune state store, with <see cref="PruneStartGate"/> around its reads and writes.</summary>
+    private sealed class GatedPruneState(IRetentionPruneStateStore inner, PruneStartGate gate) : IRetentionPruneStateStore
+    {
+        public async Task<RetentionPruneState?> FindAsync(CancellationToken cancellationToken)
+        {
+            var found = await inner.FindAsync(cancellationToken);
+            if (gate.AfterRead is { } hook)
+            {
+                await hook();
+            }
+
+            return found;
+        }
+
+        public async Task WriteAsync(RetentionPruneState state, CancellationToken cancellationToken)
+        {
+            gate.Reached.TrySetResult();
+            await gate.Release.Task.WaitAsync(cancellationToken);
+            await inner.WriteAsync(state, cancellationToken);
+        }
+
+        public Task<bool> TryAddAsync(RetentionPruneState state, CancellationToken cancellationToken) => inner.TryAddAsync(state, cancellationToken);
+    }
 }

@@ -29,7 +29,7 @@ describe('the Artists page', () => {
       within(row)
         .getAllByRole('cell')
         .map((cell) => cell.textContent),
-    ).toEqual(['Nate, N. Pond', '3', '1']);
+    ).toEqual(['', 'Nate, N. Pond', '3', '1']);
     expect(within(row).getByRole('link', { name: 'n8' })).toHaveAttribute(
       'href',
       `/artists/${N8.id}`,

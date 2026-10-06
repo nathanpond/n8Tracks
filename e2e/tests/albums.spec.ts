@@ -87,7 +87,8 @@ test.describe('Albums', () => {
     await expect(page.getByRole('heading', { level: 2, name: 'Albums' })).toBeVisible();
     const row = page.locator(`tr[data-album-title="${title}"]`);
     await expect(row).toBeVisible();
-    await expect(row.getByRole('cell')).toHaveText([artist, '0', 'March 1, 2026']);
+    // The first cell is the artwork, a placeholder with no text.
+    await expect(row.getByRole('cell')).toHaveText(['', artist, '0', 'March 1, 2026']);
     await expectAccessibleInLightAndDark(page);
 
     // The Artist page lists the Album too.

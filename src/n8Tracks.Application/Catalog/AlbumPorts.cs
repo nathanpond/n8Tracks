@@ -1,3 +1,4 @@
+using n8Tracks.Domain.Assets;
 using n8Tracks.Domain.Catalog;
 
 namespace n8Tracks.Application.Catalog;
@@ -8,7 +9,8 @@ public sealed record AlbumNamed(Guid Id, string Name);
 /// <summary>
 /// An Album as it is read: the record, its Album Artist's name, how many Songs it holds, when it was
 /// created and last changed, its revision, the other Albums with the same UPC/EAN
-/// (<see cref="AlbumRules.UpcKey"/>), by title, and its tracks in order (disc, then track number).
+/// (<see cref="AlbumRules.UpcKey"/>), by title, its tracks in order (disc, then track number), and
+/// its own artwork (null when it has none; never its Songs').
 /// </summary>
 public sealed record AlbumDetails(
     Album Album,
@@ -18,7 +20,8 @@ public sealed record AlbumDetails(
     DateTimeOffset UpdatedAt,
     int Revision,
     IReadOnlyList<AlbumNamed> SameUpc,
-    IReadOnlyList<AlbumTrack> Tracks);
+    IReadOnlyList<AlbumTrack> Tracks,
+    AttachedArtwork? Artwork);
 
 /// <summary>A Song on an Album, as the Album page shows it: the Song and its disc and track number.</summary>
 /// <param name="SongId">The Song's ID.</param>

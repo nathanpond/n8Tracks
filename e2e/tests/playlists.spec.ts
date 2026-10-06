@@ -158,7 +158,9 @@ test.describe('Playlists', () => {
 
     // The Playlist is in the list with its Song count.
     await sidebar(page).getByRole('link', { name: 'Playlists' }).click();
+    // The first cell is the artwork, a placeholder with no text.
     await expect(page.locator(`tr[data-playlist-title="${title}"]`).getByRole('cell')).toHaveText([
+      '',
       '3',
     ]);
   });

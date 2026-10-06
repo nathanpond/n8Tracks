@@ -36,7 +36,7 @@ export interface ArtworkSquareUrls {
   '1024': string;
 }
 
-/** An owner's artwork, as a Song (and later an Album, Playlist, or Artist) carries it. */
+/** An owner's artwork, as a Song, Album, Playlist, or Artist carries it. */
 export interface Artwork {
   assetId: string;
   /** The original's width in pixels, its orientation applied: what a crop is measured in. */

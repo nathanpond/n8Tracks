@@ -220,7 +220,7 @@ internal static class AlbumTracksEndpoints
     private static ProblemHttpResult Refusal(HttpContext context, AlbumTrackOutcome outcome) =>
         outcome switch
         {
-            AlbumTrackOutcome.Conflict conflict => Revisions.Conflict(context, AlbumResponse.From(conflict.Current)),
+            AlbumTrackOutcome.Conflict conflict => Revisions.Conflict(context, AlbumResponse.From(conflict.Current, context.Request.PathBase)),
             AlbumTrackOutcome.Invalid invalid => ApiProblem.ValidationFailed(context, invalid.Errors),
             AlbumTrackOutcome.NotFound => AlbumsEndpoints.NoSuchAlbum(context),
             AlbumTrackOutcome.NoSuchSong => NoSuchSong(context),
@@ -229,19 +229,19 @@ internal static class AlbumTracksEndpoints
                 StatusCodes.Status409Conflict,
                 AlreadyOnAlbumCode,
                 "This Song is on the Album already.",
-                [new("current", AlbumResponse.From(already.Current))]),
+                [new("current", AlbumResponse.From(already.Current, context.Request.PathBase))]),
             AlbumTrackOutcome.DiscFull full => ApiProblem.For(
                 context,
                 StatusCodes.Status409Conflict,
                 DiscFullCode,
                 string.Create(CultureInfo.InvariantCulture, $"Disc {full.Disc} already has track {AlbumTrackRules.MaximumNumber}. Move a track to a new disc to start another, then add the Song."),
-                [new("current", AlbumResponse.From(full.Current))]),
+                [new("current", AlbumResponse.From(full.Current, context.Request.PathBase))]),
             AlbumTrackOutcome.Mismatch mismatch => ApiProblem.For(
                 context,
                 StatusCodes.Status409Conflict,
                 OrderMismatchCode,
                 "The tracks must list every Song on the Album exactly once.",
-                [new("current", AlbumResponse.From(mismatch.Current))]),
+                [new("current", AlbumResponse.From(mismatch.Current, context.Request.PathBase))]),
             AlbumTrackOutcome.TrackNumberTaken taken => ApiProblem.For(
                 context,
                 StatusCodes.Status409Conflict,
@@ -249,7 +249,7 @@ internal static class AlbumTracksEndpoints
                 string.Create(CultureInfo.InvariantCulture, $"Track {taken.Holder.Track} on disc {taken.Holder.Disc} is held by {taken.Holder.Title} ({taken.Holder.Shortcode})."),
                 [
                     new("heldBy", AlbumTrackResponse.From(taken.Holder)),
-                    new("current", AlbumResponse.From(taken.Current)),
+                    new("current", AlbumResponse.From(taken.Current, context.Request.PathBase)),
                 ]),
             _ => throw new InvalidOperationException("Unknown Album track outcome."),
         };

@@ -1,3 +1,4 @@
+using n8Tracks.Domain.Assets;
 using n8Tracks.Domain.Catalog;
 
 namespace n8Tracks.Application.Catalog;
@@ -6,8 +7,9 @@ namespace n8Tracks.Application.Catalog;
 /// An Artist as it is read: the record, how many Songs and Albums are credited to it, when it was
 /// created and last changed, and its revision. A Song counts once whether its credit is primary or
 /// featured, in every workflow state; an Album counts when the Artist is its Album Artist.
+/// <paramref name="Artwork"/> is the Artist's own artwork, or null when it has none.
 /// </summary>
-public sealed record ArtistDetails(Artist Artist, int SongCount, int AlbumCount, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, int Revision);
+public sealed record ArtistDetails(Artist Artist, int SongCount, int AlbumCount, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, int Revision, AttachedArtwork? Artwork);
 
 /// <summary>A page of Artists, by name.</summary>
 public sealed record ArtistPage(IReadOnlyList<ArtistDetails> Items, int Page, int PageSize, int Total);

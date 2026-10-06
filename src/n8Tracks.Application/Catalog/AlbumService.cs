@@ -1,5 +1,7 @@
 using System.Globalization;
+using n8Tracks.Application.Assets;
 using n8Tracks.Application.Auth;
+using n8Tracks.Domain.Assets;
 using n8Tracks.Domain.Catalog;
 
 namespace n8Tracks.Application.Catalog;
@@ -18,7 +20,8 @@ public readonly record struct AlbumEditText(bool Sent, string? Value)
 /// <summary>
 /// An edit of an Album: only what was sent changes. A null <see cref="Title"/> or <see cref="Links"/>
 /// was not sent (links replace the whole list); <see cref="AlbumArtistSent"/> says whether
-/// <see cref="AlbumArtistId"/> was (null clears it).
+/// <see cref="AlbumArtistId"/> was (null clears it). <see cref="Artwork"/> is the Album's own
+/// artwork, when sent.
 /// </summary>
 public sealed record AlbumEdit
 {
@@ -41,6 +44,8 @@ public sealed record AlbumEdit
     public AlbumEditText Publishing { get; init; }
 
     public IReadOnlyList<AlbumLinkInput>? Links { get; init; }
+
+    public OwnerArtworkEdit Artwork { get; init; }
 }
 
 /// <summary>The Albums list's query as sent: each value as text, or null when not given.</summary>
@@ -83,9 +88,11 @@ public abstract record AlbumOutcome
 /// Albums: titled collections with an optional Album Artist (independent of the Songs' credits) and
 /// optional release details. Titles need not be unique. A UPC/EAN another Album already has is
 /// allowed; the answer carries the other Albums (<see cref="AlbumDetails.SameUpc"/>) so the caller
-/// can warn. An edit is made under the Album's revision.
+/// can warn. An edit is made under the Album's revision, its artwork included: the Album's own,
+/// never borrowed from its Songs, and replaced or removed artwork goes into retention
+/// (<see cref="ArtworkAttachmentService"/>).
 /// </summary>
-public sealed class AlbumService(IAlbumStore albums, IExclusiveTransaction transaction, TimeProvider time)
+public sealed class AlbumService(IAlbumStore albums, ArtworkAttachmentService artwork, IExclusiveTransaction transaction, TimeProvider time)
 {
     /// <summary>The field names validation errors are keyed by, as the API spells them.</summary>
     public const string TitleField = "title";
@@ -191,7 +198,7 @@ public sealed class AlbumService(IAlbumStore albums, IExclusiveTransaction trans
             async ct =>
             {
                 await albums.AddAsync(album, now, ct).ConfigureAwait(false);
-                return new AlbumOutcome.Saved(new AlbumDetails(album, null, 0, now, now, 1, [], []), Changed: true);
+                return new AlbumOutcome.Saved(new AlbumDetails(album, null, 0, now, now, 1, [], [], Artwork: null), Changed: true);
             },
             cancellationToken).ConfigureAwait(false);
     }
@@ -199,7 +206,8 @@ public sealed class AlbumService(IAlbumStore albums, IExclusiveTransaction trans
     /// <summary>
     /// Changes what <paramref name="edit"/> sends of the Album <paramref name="id"/>, when its revision
     /// is still <paramref name="revision"/>. Sending what the Album already has is no change and keeps
-    /// the revision. An Album Artist that does not exist is <see cref="AlbumOutcome.Invalid"/>.
+    /// the revision. An Album Artist that does not exist is <see cref="AlbumOutcome.Invalid"/>, as is
+    /// artwork that is not a live upload or a crop that does not fit it.
     /// </summary>
     public async Task<AlbumOutcome> UpdateAsync(Guid id, AlbumEdit edit, int revision, CancellationToken cancellationToken)
     {
@@ -249,6 +257,12 @@ public sealed class AlbumService(IAlbumStore albums, IExclusiveTransaction trans
                     return new AlbumOutcome.Invalid(new Dictionary<string, string[]>(StringComparer.Ordinal) { [AlbumArtistField] = ["There is no such Artist."] });
                 }
 
+                var (artworkChange, artworkErrors) = await artwork.CheckAsync(edit.Artwork, current.Artwork, ct).ConfigureAwait(false);
+                if (artworkErrors is not null)
+                {
+                    return new AlbumOutcome.Invalid(artworkErrors);
+                }
+
                 var release = album.Release;
                 var changed = album with
                 {
@@ -265,14 +279,18 @@ public sealed class AlbumService(IAlbumStore albums, IExclusiveTransaction trans
                         ? album.Links
                         : [.. edit.Links.Select(static link => new AlbumLink(AlbumRules.NormaliseLabel(link.Label), AlbumRules.NormaliseUrl(link.Url!)))],
                 };
-                if (Same(album, changed))
+                if (Same(album, changed) && !artworkChange.Changes)
                 {
                     return new AlbumOutcome.Saved(current, Changed: false);
                 }
 
-                return await albums.TryUpdateAsync(changed, revision, time.GetUtcNow(), ct).ConfigureAwait(false)
-                    ? new AlbumOutcome.Saved((await albums.FindAsync(id, ct).ConfigureAwait(false))!, Changed: true)
-                    : new AlbumOutcome.Conflict((await albums.FindAsync(id, ct).ConfigureAwait(false))!);
+                if (!await albums.TryUpdateAsync(changed, revision, time.GetUtcNow(), ct).ConfigureAwait(false))
+                {
+                    return new AlbumOutcome.Conflict((await albums.FindAsync(id, ct).ConfigureAwait(false))!);
+                }
+
+                await artwork.ApplyAsync(ArtworkOwnerTypes.Album, id, $"the Album {changed.Title}", artworkChange, ct).ConfigureAwait(false);
+                return new AlbumOutcome.Saved((await albums.FindAsync(id, ct).ConfigureAwait(false))!, Changed: true);
             },
             cancellationToken).ConfigureAwait(false);
     }

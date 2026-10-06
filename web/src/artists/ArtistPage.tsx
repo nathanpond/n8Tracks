@@ -30,6 +30,8 @@ import { DEFAULT_ALBUM_QUERY, useAlbums } from '../api/albums';
 import type { FieldValue, SaveResult } from '../api/saves';
 import { formatAlbumDate, shownDate } from '../albums/albumRules';
 import { songListParameters, useSongs, type SongQuery } from '../api/songs';
+import { ArtworkPicker } from '../common/ArtworkPicker';
+import { artworkFields, artworkPatchOf, artworkValues } from '../common/artworkField';
 import { useRevisionedSave, type SavedField } from '../common/useRevisionedSave';
 import { Notice } from '../components/Notice';
 import {
@@ -127,6 +129,9 @@ const FIELDS: readonly SavedField<Artist>[] = [
   },
 ];
 
+/** The form's fields and the artwork's, which the picker saves on its own, for the shared save helper. */
+const SAVED_FIELDS: readonly SavedField<Artist>[] = [...FIELDS, ...artworkFields<Artist>()];
+
 /** The fields of `drafts` (normalised as the API stores them) that differ from `artist`. */
 function editOf(drafts: Drafts, artist: Artist): Record<string, FieldValue> {
   const values: Record<string, FieldValue> = {
@@ -145,7 +150,7 @@ function editOf(drafts: Drafts, artist: Artist): Record<string, FieldValue> {
 
 /** The edit the API's PATCH takes for what the save helper holds. */
 function artistEditOf(edit: Readonly<Record<string, FieldValue>>): ArtistEdit {
-  const result: ArtistEdit = {};
+  const result: ArtistEdit = artworkPatchOf(edit);
   if (Object.hasOwn(edit, 'name')) {
     result.name = edit.name ?? '';
   }
@@ -378,7 +383,7 @@ function LoadedArtist({ initial }: { initial: Artist }) {
   const { saveFields, dialog } = useRevisionedSave({
     record: artist,
     onRecord: takeRecord,
-    fields: FIELDS,
+    fields: SAVED_FIELDS,
     send,
     subject: 'This Artist',
   });
@@ -436,6 +441,13 @@ function LoadedArtist({ initial }: { initial: Artist }) {
     <Stack gap="lg">
       <BackToArtists />
       <Title order={2}>{artist.name}</Title>
+
+      <ArtworkPicker
+        title={artist.name}
+        noun="Artist"
+        artwork={artist.artwork}
+        save={(edit) => saveFields(artworkValues(edit))}
+      />
 
       <form
         noValidate
@@ -658,8 +670,9 @@ function LoadedArtist({ initial }: { initial: Artist }) {
 }
 
 /**
- * An Artist's page (`/artists/<id>`): its name, aliases, notes, and links, edited in one form and
- * saved under the Artist's revision; a new name or alias another Artist has asks for confirmation.
+ * An Artist's page (`/artists/<id>`): its own artwork (never borrowed from its Songs), saved as
+ * soon as it is chosen, and its name, aliases, notes, and links, edited in one form; both are saved
+ * under the Artist's revision. A new name or alias another Artist has asks for confirmation.
  * Below are the Songs credited to it, with the role, and the Albums it is Album Artist of.
  */
 export function ArtistPage() {

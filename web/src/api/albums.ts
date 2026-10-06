@@ -1,3 +1,4 @@
+import { isArtwork, type Artwork, type ArtworkCrop } from './artwork';
 import { apiFetch } from './client';
 import { ifMatch, patchWithRevision, type SaveResult } from './saves';
 import { body, isErrorMap, isRecord, useResource } from './songs';
@@ -65,6 +66,8 @@ export interface Album {
   warnings: AlbumWarning[];
   /** Its tracks, by disc and then track number. */
   tracks: AlbumTrack[];
+  /** Its own artwork, or null when it has none (never its Songs'). */
+  artwork: Artwork | null;
 }
 
 export interface AlbumPage {
@@ -144,7 +147,8 @@ export function isAlbum(value: unknown): value is Album {
     Array.isArray(value.warnings) &&
     value.warnings.every(isAlbumWarning) &&
     Array.isArray(value.tracks) &&
-    value.tracks.every(isAlbumTrack)
+    value.tracks.every(isAlbumTrack) &&
+    (value.artwork === null || isArtwork(value.artwork))
   );
 }
 
@@ -246,6 +250,10 @@ export interface AlbumEdit {
   copyright?: string | null;
   publishing?: string | null;
   links?: AlbumLink[];
+  /** An uploaded asset's ID to show as the Album's artwork, or null to remove it. */
+  artworkAssetId?: string | null;
+  /** The artwork's square crop, in pixels of the original, or null for the centred square. */
+  artworkCrop?: ArtworkCrop | null;
 }
 
 /** Edits an Album, based on `album`'s revision; a stale revision comes back as a conflict. */

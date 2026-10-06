@@ -16,6 +16,7 @@ import { NO_RELEASE, type SongRelease, type SongWarning } from '../api/songs';
 import type { Tag } from '../api/tags';
 import { isrcError, normaliseIsrc } from '../songs/details/releaseField';
 import { testArtist } from './artistServer';
+import { TEST_ARTWORK_SIZE, testArtwork, testAssetId } from './artworkFake';
 import { healthyReport, jsonResponse, requestPath, stubFetch } from './helpers';
 
 export const IDEA: WorkflowState = {
@@ -303,42 +304,7 @@ export interface ReceivedRelationship {
   body: Record<string, unknown> | undefined;
 }
 
-/** The ID the fake artwork store gives its `n`th upload, from 1. */
-export function testAssetId(n: number): string {
-  return `01a20000-0000-7000-8000-${String(n).padStart(12, '0')}`;
-}
-
-/** The dimensions the fake artwork store gives every upload unless told otherwise. */
-export const TEST_ARTWORK_SIZE = { width: 1200, height: 600 };
-
-/**
- * Artwork of the asset `assetId`, as a Song carries it: 1,200 × 600 with no crop unless `change`
- * says otherwise. A crop's square URLs name it, as the API's short hash does.
- */
-export function testArtwork(
-  assetId: string,
-  change: Partial<Pick<Artwork, 'width' | 'height' | 'crop'>> = {},
-): Artwork {
-  const original = `/api/v1/artwork/${assetId}`;
-  const crop = change.crop ?? null;
-  const square =
-    crop === null
-      ? original
-      : `${original}/crops/${String(crop.x)}-${String(crop.y)}-${String(crop.size)}`;
-  return {
-    assetId,
-    width: change.width ?? TEST_ARTWORK_SIZE.width,
-    height: change.height ?? TEST_ARTWORK_SIZE.height,
-    urls: {
-      original,
-      '96': `${original}/96`,
-      '320': `${original}/320`,
-      '1024': `${original}/1024`,
-    },
-    crop,
-    squareUrls: { '96': `${square}/96`, '320': `${square}/320`, '1024': `${square}/1024` },
-  };
-}
+export { TEST_ARTWORK_SIZE, testArtwork, testAssetId };
 
 /** One PATCH the fake server received: the revision it named and the edit it sent. */
 export interface ReceivedEdit {

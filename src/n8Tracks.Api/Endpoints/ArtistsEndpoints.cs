@@ -11,7 +11,8 @@ namespace n8Tracks.Api.Endpoints;
 /// <summary>
 /// Artists, reusable records of who made the music: a page of them by name, optionally searched by
 /// name or alias, and one Artist (<c>catalog.read</c>); creating one and editing one under its
-/// revision in <c>If-Match</c> (<c>collections.write</c>). A name or alias another Artist already
+/// revision in <c>If-Match</c> (<c>collections.write</c>, and <c>artwork.write</c> too when the edit
+/// changes its artwork). A name or alias another Artist already
 /// has is 409 <c>duplicate_artist_name</c>, listing the matches, unless the body carries
 /// <c>confirmDuplicate: true</c>. Every answer is <c>no-store</c>.
 /// </summary>
@@ -39,7 +40,7 @@ internal static class ArtistsEndpoints
 
         endpoints.MapGet(ArtistPath, GetAsync)
             .WithName("GetArtist")
-            .WithSummary("One Artist, with its aliases, notes, links, Song and Album counts, and revision (also the ETag).")
+            .WithSummary("One Artist, with its aliases, notes, links, Song and Album counts, own artwork (or null), and revision (also the ETag).")
             .RequireScope(CredentialScopes.CatalogRead)
             .Produces<ArtistResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
@@ -58,7 +59,7 @@ internal static class ArtistsEndpoints
 
         endpoints.MapPatch(ArtistPath, UpdateAsync)
             .WithName("UpdateArtist")
-            .WithSummary("Edits an Artist (only the fields sent; aliases and links as whole lists), given its revision in If-Match. A new name or alias another Artist has is 409 duplicate_artist_name unless confirmDuplicate is true.")
+            .WithSummary("Edits an Artist (only the fields sent; aliases and links as whole lists; artworkAssetId is an uploaded asset's ID, or null to remove the Artist's own artwork, and artworkCrop is {x, y, size} or null for the centred square, both also needing artwork.write), given its revision in If-Match. A new name or alias another Artist has is 409 duplicate_artist_name unless confirmDuplicate is true. Replaced or removed artwork is retained for 30 days.")
             .RequireScope(CredentialScopes.CollectionsWrite)
             .Produces<ArtistResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
@@ -90,7 +91,7 @@ internal static class ArtistsEndpoints
         var request = new ArtistListRequest(query[ArtistService.SearchParameter], query[ArtistService.PageParameter], query[ArtistService.PageSizeParameter]);
         return await artists.ListAsync(request, cancellationToken) switch
         {
-            ArtistListOutcome.Listed listed => TypedResults.Ok(ArtistListResponse.From(listed.Page)),
+            ArtistListOutcome.Listed listed => TypedResults.Ok(ArtistListResponse.From(listed.Page, context.Request.PathBase)),
             ArtistListOutcome.Invalid invalid => ApiProblem.For(context, StatusCodes.Status400BadRequest, ApiProblem.InvalidRequestCode, invalid.Message),
             _ => throw new InvalidOperationException("Unknown list outcome."),
         };
@@ -138,7 +139,7 @@ internal static class ArtistsEndpoints
         {
             loggers.CreateLogger(typeof(ArtistsEndpoints)).LogInformation("Artist created: {ArtistId}", saved.Artist.Artist.Id);
             Revisions.SetETag(context, saved.Artist.Revision);
-            return TypedResults.Created($"{context.Request.PathBase}{ArtistsPath}/{saved.Artist.Artist.Id}", ArtistResponse.From(saved.Artist));
+            return TypedResults.Created($"{context.Request.PathBase}{ArtistsPath}/{saved.Artist.Artist.Id}", ArtistResponse.From(saved.Artist, context.Request.PathBase));
         }
 
         return Refusal(context, outcome);
@@ -177,12 +178,19 @@ internal static class ArtistsEndpoints
         var notes = Text(request?.Notes, ArtistService.NotesField, errors);
         var links = Links(request?.Links, errors);
         var confirm = Flag(request?.ConfirmDuplicate, errors);
+        var artwork = ArtworkEndpoints.ReadOwnerArtwork(request?.ArtworkAssetId, request?.ArtworkCrop, errors);
+        if (ArtworkEndpoints.LackingArtworkScope(context, artwork) is { } lacking)
+        {
+            return lacking;
+        }
+
         if (errors.Count > 0)
         {
             return ApiProblem.ValidationFailed(context, errors);
         }
 
-        var outcome = await artists.UpdateAsync(id, new ArtistEdit(name, aliases, notesSent, notes, links), revision!.Value, confirm, cancellationToken);
+        var edit = new ArtistEdit(name, aliases, notesSent, notes, links, artwork);
+        var outcome = await artists.UpdateAsync(id, edit, revision!.Value, confirm, cancellationToken);
         if (outcome is ArtistOutcome.Saved saved)
         {
             if (saved.Changed)
@@ -281,7 +289,7 @@ internal static class ArtistsEndpoints
     private static Ok<ArtistResponse> Answer(HttpContext context, ArtistDetails artist)
     {
         Revisions.SetETag(context, artist.Revision);
-        return TypedResults.Ok(ArtistResponse.From(artist));
+        return TypedResults.Ok(ArtistResponse.From(artist, context.Request.PathBase));
     }
 
     private static ProblemHttpResult NoSuchArtist(HttpContext context) =>
@@ -291,7 +299,7 @@ internal static class ArtistsEndpoints
     private static ProblemHttpResult Refusal(HttpContext context, ArtistOutcome outcome) =>
         outcome switch
         {
-            ArtistOutcome.Conflict conflict => Revisions.Conflict(context, ArtistResponse.From(conflict.Current)),
+            ArtistOutcome.Conflict conflict => Revisions.Conflict(context, ArtistResponse.From(conflict.Current, context.Request.PathBase)),
             ArtistOutcome.Invalid invalid => ApiProblem.ValidationFailed(context, invalid.Errors),
             ArtistOutcome.NotFound => NoSuchArtist(context),
             ArtistOutcome.Duplicate duplicate => ApiProblem.For(
@@ -306,11 +314,20 @@ internal static class ArtistsEndpoints
 
 /// <summary>
 /// A create or an edit, each field read as raw JSON, so a missing field (<see cref="JsonValueKind.Undefined"/>),
-/// null, and a wrong type can be told apart.
+/// null, and a wrong type can be told apart. Only an edit reads <c>artworkAssetId</c> (the asset to
+/// show as the Artist's artwork, or null for none) and <c>artworkCrop</c> (its square crop, or null
+/// for the centred square): an Artist is created without artwork.
 /// </summary>
-internal sealed record ArtistRequest(JsonElement Name, JsonElement Aliases, JsonElement Notes, JsonElement Links, JsonElement ConfirmDuplicate);
+internal sealed record ArtistRequest(
+    JsonElement Name,
+    JsonElement Aliases,
+    JsonElement Notes,
+    JsonElement Links,
+    JsonElement ConfirmDuplicate,
+    JsonElement ArtworkAssetId,
+    JsonElement ArtworkCrop);
 
-/// <summary>An Artist as the API shows it.</summary>
+/// <summary>An Artist as the API shows it; <c>artwork</c> is its own artwork, or null (never its Songs').</summary>
 internal sealed record ArtistResponse(
     Guid Id,
     string Name,
@@ -321,9 +338,11 @@ internal sealed record ArtistResponse(
     int AlbumCount,
     DateTime CreatedAt,
     DateTime UpdatedAt,
-    int Revision)
+    int Revision,
+    AttachedArtworkResponse? Artwork)
 {
-    public static ArtistResponse From(ArtistDetails details)
+    /// <summary>The Artist as the API shows it; <paramref name="pathBase"/> starts its artwork's URLs.</summary>
+    public static ArtistResponse From(ArtistDetails details, PathString pathBase)
     {
         ArgumentNullException.ThrowIfNull(details);
 
@@ -338,7 +357,8 @@ internal sealed record ArtistResponse(
             details.AlbumCount,
             details.CreatedAt.UtcDateTime,
             details.UpdatedAt.UtcDateTime,
-            details.Revision);
+            details.Revision,
+            details.Artwork is { } artwork ? AttachedArtworkResponse.From(artwork, pathBase) : null);
     }
 }
 
@@ -359,10 +379,10 @@ internal sealed record ArtistMatchResponse(Guid Id, string Name, string MatchedT
 /// <summary>A page of Artists.</summary>
 internal sealed record ArtistListResponse(ArtistResponse[] Items, int Page, int PageSize, int Total)
 {
-    public static ArtistListResponse From(ArtistPage page)
+    public static ArtistListResponse From(ArtistPage page, PathString pathBase)
     {
         ArgumentNullException.ThrowIfNull(page);
 
-        return new([.. page.Items.Select(ArtistResponse.From)], page.Page, page.PageSize, page.Total);
+        return new([.. page.Items.Select(artist => ArtistResponse.From(artist, pathBase))], page.Page, page.PageSize, page.Total);
     }
 }

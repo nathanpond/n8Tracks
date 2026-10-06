@@ -1,5 +1,6 @@
 import type { Playlist, PlaylistSong, PlaylistSummary } from '../api/playlists';
 import type { Song } from '../api/songs';
+import { artworkFake } from './artworkFake';
 import { healthyReport, jsonResponse, requestPath, stubFetch } from './helpers';
 import { baseSong, IDEA, WRITING } from './songServer';
 
@@ -60,6 +61,7 @@ export function testPlaylist(
     createdAt: '2026-10-05T09:00:00.000Z',
     updatedAt: '2026-10-05T09:00:00.000Z',
     revision: 1,
+    artwork: null,
     songs: songs.map(entryOf),
     ...change,
   };
@@ -78,12 +80,14 @@ function problem(status: number, code: string, extra: Record<string, unknown> = 
  * and POST, DELETE, and PUT of its Songs, each under the revision (409 `revision_conflict`, a
  * duplicate 409 `song_already_on_playlist`, a wrong order 409 `order_mismatch`, each with
  * `current`). `GET /api/v1/songs?q=` searches the Songs by title or shortcode. `server.next`
- * answers the next write some other way; `server.changeElsewhere` plays another client.
+ * answers the next write some other way; `server.changeElsewhere` plays another client. Artwork
+ * uploads and the PATCH's artwork fields follow {@link artworkFake} (`server.artwork`).
  */
 export function playlistServer(playlists: Playlist[] = [], songs: Song[] = SONGS) {
   const server = {
     playlists: playlists.map((playlist) => ({ ...playlist })),
     songs,
+    artwork: artworkFake(),
     writes: [] as PlaylistWrite[],
     searches: [] as string[],
     next: undefined as (() => Response) | undefined,
@@ -108,6 +112,7 @@ export function playlistServer(playlists: Playlist[] = [], songs: Song[] = SONGS
     songCount: playlist.songs.length,
     createdAt: playlist.createdAt,
     updatedAt: playlist.updatedAt,
+    artwork: playlist.artwork,
     revision: playlist.revision,
   });
 
@@ -140,6 +145,9 @@ export function playlistServer(playlists: Playlist[] = [], songs: Song[] = SONGS
     }
     if (path.endsWith('/api/v1/workflow-states')) {
       return Promise.resolve(jsonResponse(200, { revision: 1, items: [IDEA, WRITING] }));
+    }
+    if (path.endsWith('/api/v1/artwork')) {
+      return Promise.resolve(server.artwork.upload(init));
     }
     if (!path.includes('/api/v1/playlists')) {
       return Promise.resolve(problem(404, 'not_found'));
@@ -218,6 +226,11 @@ export function playlistServer(playlists: Playlist[] = [], songs: Song[] = SONGS
       if (Object.hasOwn(sent, 'description')) {
         change.description = typeof sent.description === 'string' ? sent.description : null;
       }
+      const artwork = server.artwork.apply(current.artwork, sent);
+      if ('errors' in artwork) {
+        return Promise.resolve(problem(422, 'validation_failed', { errors: artwork.errors }));
+      }
+      change.artwork = artwork.artwork;
       return store(change);
     }
 

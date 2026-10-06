@@ -19,6 +19,8 @@ import {
 } from '../api/playlists';
 import type { FieldValue, SaveResult } from '../api/saves';
 import { descriptionError, normaliseAlbumText } from '../albums/albumRules';
+import { ArtworkPicker } from '../common/ArtworkPicker';
+import { artworkFields, artworkPatchOf, artworkValues } from '../common/artworkField';
 import { move as moved } from '../common/listMove';
 import { SavedTextField, type Save } from '../common/SavedTextField';
 import { SongSearch } from '../common/SongSearch';
@@ -62,11 +64,12 @@ const FIELDS: readonly SavedField<Playlist>[] = [
     read: (playlist) => playlist.description,
     show: none,
   },
+  ...artworkFields<Playlist>(),
 ];
 
 /** The PATCH body for what the save helper holds. */
 function playlistEditOf(edit: Readonly<Record<string, FieldValue>>): PlaylistEdit {
-  const result: PlaylistEdit = {};
+  const result: PlaylistEdit = artworkPatchOf(edit);
   for (const [key, value] of Object.entries(edit)) {
     if (key === 'title') {
       result.title = value ?? '';
@@ -409,7 +412,7 @@ function PlaylistSongs({
   );
 }
 
-/** The Playlist's page once it has loaded: its title and description, saved on their own, and its Songs. */
+/** The Playlist's page once it has loaded: its artwork, title, and description, each saved on its own, and its Songs. */
 function LoadedPlaylist({ initial }: { initial: Playlist }) {
   const [playlist, setPlaylist] = useState(initial);
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
@@ -419,7 +422,7 @@ function LoadedPlaylist({ initial }: { initial: Playlist }) {
       updatePlaylist(base, playlistEditOf(edit)),
     [],
   );
-  const { save, dialog } = useRevisionedSave({
+  const { save, saveFields, dialog } = useRevisionedSave({
     record: playlist,
     onRecord: setPlaylist,
     fields: FIELDS,
@@ -452,6 +455,12 @@ function LoadedPlaylist({ initial }: { initial: Playlist }) {
       </div>
 
       <Stack gap="md" maw={720}>
+        <ArtworkPicker
+          title={playlist.title}
+          noun="Playlist"
+          artwork={playlist.artwork}
+          save={(edit) => saveFields(artworkValues(edit))}
+        />
         <SavedTextField
           key={`title ${playlist.title}`}
           field="title"
@@ -484,8 +493,8 @@ function LoadedPlaylist({ initial }: { initial: Playlist }) {
 }
 
 /**
- * A Playlist's page (`/playlists/<id>`): its title and description, each saved on its own under
- * the Playlist's revision, and its Songs in order, added, reordered, and removed. A Song without a
+ * A Playlist's page (`/playlists/<id>`): its own artwork (never borrowed from its Songs), title,
+ * and description, each saved on its own under the Playlist's revision, and its Songs in order, added, reordered, and removed. A Song without a
  * Selected Generation stays on it, marked "No Selected Generation".
  */
 export function PlaylistPage() {

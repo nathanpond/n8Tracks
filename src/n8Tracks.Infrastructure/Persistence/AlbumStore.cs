@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using n8Tracks.Application.Catalog;
+using n8Tracks.Domain.Assets;
 using n8Tracks.Domain.Catalog;
 
 namespace n8Tracks.Infrastructure.Persistence;
@@ -173,7 +174,7 @@ internal sealed class AlbumStore(N8TracksDbContext context) : IAlbumStore
         }
     }
 
-    /// <summary>Each record with its links, Album Artist, the other Albums sharing its UPC/EAN, and its tracks, in the records' order.</summary>
+    /// <summary>Each record with its links, Album Artist, the other Albums sharing its UPC/EAN, its tracks, and its own artwork, in the records' order.</summary>
     private async Task<List<AlbumDetails>> DetailsAsync(List<AlbumRecord> records, CancellationToken cancellationToken)
     {
         var ids = records.Select(static record => record.Id).ToList();
@@ -203,6 +204,7 @@ internal sealed class AlbumStore(N8TracksDbContext context) : IAlbumStore
                 .ConfigureAwait(false);
         var byUpc = sameUpc.ToLookup(static album => album.UpcKey!, StringComparer.Ordinal);
         var tracks = await AlbumTrackStore.ForAlbumsAsync(context, ids, cancellationToken).ConfigureAwait(false);
+        var artwork = await ArtworkAttachmentStore.ForOwnersAsync(context, ArtworkOwnerTypes.Album, ids, cancellationToken).ConfigureAwait(false);
 
         return [.. records.Select(record => new AlbumDetails(
             new Album(
@@ -220,6 +222,7 @@ internal sealed class AlbumStore(N8TracksDbContext context) : IAlbumStore
             record.UpcKey is { } key
                 ? [.. byUpc[key].Where(other => other.Id != record.Id).Select(static other => new AlbumNamed(other.Id, other.Title))]
                 : [],
-            tracks.GetValueOrDefault(record.Id) ?? []))];
+            tracks.GetValueOrDefault(record.Id) ?? [],
+            artwork.GetValueOrDefault(record.Id)))];
     }
 }

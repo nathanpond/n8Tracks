@@ -1,5 +1,7 @@
 using System.Globalization;
+using n8Tracks.Application.Assets;
 using n8Tracks.Application.Auth;
+using n8Tracks.Domain.Assets;
 using n8Tracks.Domain.Catalog;
 
 namespace n8Tracks.Application.Catalog;
@@ -14,8 +16,15 @@ public sealed record ArtistInput(string? Name, IReadOnlyList<string?>? Aliases, 
 /// An edit of an Artist: only what was sent changes. A null <see cref="Name"/>, <see cref="Aliases"/>,
 /// or <see cref="Links"/> was not sent; aliases and links replace the Artist's whole lists.
 /// <see cref="NotesSent"/> says whether <see cref="Notes"/> was (null or blank clears them).
+/// <see cref="Artwork"/> is the Artist's own artwork, when sent.
 /// </summary>
-public sealed record ArtistEdit(string? Name, IReadOnlyList<string?>? Aliases, bool NotesSent, string? Notes, IReadOnlyList<ArtistLinkInput>? Links);
+public sealed record ArtistEdit(
+    string? Name,
+    IReadOnlyList<string?>? Aliases,
+    bool NotesSent,
+    string? Notes,
+    IReadOnlyList<ArtistLinkInput>? Links,
+    OwnerArtworkEdit Artwork = default);
 
 /// <summary>The Artists list's query as sent: each value as text, or null when not given.</summary>
 public sealed record ArtistListRequest(string? Search, string? Page, string? PageSize);
@@ -66,9 +75,10 @@ public abstract record ArtistOutcome
 /// <see cref="ArtistOutcome.Duplicate"/>, naming the matches, unless the request confirms it. Only
 /// names and aliases the Artist did not already have are checked, so an edit that changes neither
 /// never asks again. An edit is made under the Artist's revision, and a stale revision is reported
-/// before a duplicate.
+/// before a duplicate. Its artwork is its own, never borrowed from its Songs, and is edited under
+/// its revision like the rest.
 /// </summary>
-public sealed class ArtistService(IArtistStore artists, IExclusiveTransaction transaction, TimeProvider time)
+public sealed class ArtistService(IArtistStore artists, ArtworkAttachmentService artwork, IExclusiveTransaction transaction, TimeProvider time)
 {
     /// <summary>The field names validation errors are keyed by, as the API spells them.</summary>
     public const string NameField = "name";
@@ -157,7 +167,7 @@ public sealed class ArtistService(IArtistStore artists, IExclusiveTransaction tr
                 }
 
                 await artists.AddAsync(artist, now, ct).ConfigureAwait(false);
-                return new ArtistOutcome.Saved(new ArtistDetails(artist, 0, 0, now, now, 1), Changed: true);
+                return new ArtistOutcome.Saved(new ArtistDetails(artist, 0, 0, now, now, 1, Artwork: null), Changed: true);
             },
             cancellationToken).ConfigureAwait(false);
     }
@@ -166,7 +176,9 @@ public sealed class ArtistService(IArtistStore artists, IExclusiveTransaction tr
     /// Changes what <paramref name="edit"/> sends of the Artist <paramref name="id"/>, when its
     /// revision is still <paramref name="revision"/>. Sending what the Artist already has is no change
     /// and keeps the revision. A name or alias the Artist did not have before that another Artist has
-    /// is <see cref="ArtistOutcome.Duplicate"/> unless <paramref name="confirmDuplicate"/>.
+    /// is <see cref="ArtistOutcome.Duplicate"/> unless <paramref name="confirmDuplicate"/>. Artwork
+    /// that is not a live upload, or a crop that does not fit it, is <see cref="ArtistOutcome.Invalid"/>;
+    /// replaced or removed artwork goes into retention.
     /// </summary>
     public async Task<ArtistOutcome> UpdateAsync(Guid id, ArtistEdit edit, int revision, bool confirmDuplicate, CancellationToken cancellationToken)
     {
@@ -220,7 +232,13 @@ public sealed class ArtistService(IArtistStore artists, IExclusiveTransaction tr
                     Notes = edit.NotesSent ? ArtistRules.NormaliseNotes(edit.Notes) : current.Artist.Notes,
                     Links = edit.Links is null ? current.Artist.Links : NormaliseLinks(edit.Links),
                 };
-                if (Same(current.Artist, changed))
+                var (artworkChange, artworkErrors) = await artwork.CheckAsync(edit.Artwork, current.Artwork, ct).ConfigureAwait(false);
+                if (artworkErrors is not null)
+                {
+                    return new ArtistOutcome.Invalid(artworkErrors);
+                }
+
+                if (Same(current.Artist, changed) && !artworkChange.Changes)
                 {
                     return new ArtistOutcome.Saved(current, Changed: false);
                 }
@@ -233,9 +251,13 @@ public sealed class ArtistService(IArtistStore artists, IExclusiveTransaction tr
                     return new ArtistOutcome.Duplicate(matches);
                 }
 
-                return await artists.TryUpdateAsync(changed, revision, time.GetUtcNow(), ct).ConfigureAwait(false)
-                    ? new ArtistOutcome.Saved((await artists.FindAsync(id, ct).ConfigureAwait(false))!, Changed: true)
-                    : new ArtistOutcome.Conflict((await artists.FindAsync(id, ct).ConfigureAwait(false))!);
+                if (!await artists.TryUpdateAsync(changed, revision, time.GetUtcNow(), ct).ConfigureAwait(false))
+                {
+                    return new ArtistOutcome.Conflict((await artists.FindAsync(id, ct).ConfigureAwait(false))!);
+                }
+
+                await artwork.ApplyAsync(ArtworkOwnerTypes.Artist, id, $"the Artist {changed.Name}", artworkChange, ct).ConfigureAwait(false);
+                return new ArtistOutcome.Saved((await artists.FindAsync(id, ct).ConfigureAwait(false))!, Changed: true);
             },
             cancellationToken).ConfigureAwait(false);
     }

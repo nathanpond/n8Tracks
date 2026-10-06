@@ -30,10 +30,11 @@ describe('the Albums page', () => {
       within(screen.getByRole('row', { name: new RegExp(title) }))
         .getAllByRole('cell')
         .map((cell) => cell.textContent);
-    expect(cells('Pack EP')).toEqual(['n8', '0', 'March 2026']);
+    // The first cell is the artwork (a placeholder here, with no text).
+    expect(cells('Pack EP')).toEqual(['', 'n8', '0', 'March 2026']);
     // The original release date stands in for a missing release date.
-    expect(cells('alpha')).toEqual(['—', '0', '1999']);
-    expect(cells('Zed')).toEqual(['—', '0', '—']);
+    expect(cells('alpha')).toEqual(['', '—', '0', '1999']);
+    expect(cells('Zed')).toEqual(['', '—', '0', '—']);
     expect(
       within(screen.getByRole('row', { name: /Pack EP/ })).getByRole('link', { name: 'Pack EP' }),
     ).toHaveAttribute('href', `/albums/${PACK.id}`);

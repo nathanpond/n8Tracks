@@ -11,6 +11,32 @@ public readonly record struct ArtworkCropEdit(bool IsSent, ArtworkCrop? Value)
 }
 
 /// <summary>
+/// The artwork fields of an owner's edit, as sent: <paramref name="AssetSent"/> says whether
+/// <c>artworkAssetId</c> was (<paramref name="AssetId"/> is then the unread text of an asset's ID,
+/// or null to remove the artwork), and <paramref name="Crop"/> is <c>artworkCrop</c>.
+/// </summary>
+public readonly record struct OwnerArtworkEdit(bool AssetSent, string? AssetId, ArtworkCropEdit Crop)
+{
+    /// <summary>Whether either field was sent; a credential then also needs <c>artwork.write</c>.</summary>
+    public bool IsSent => AssetSent || Crop.IsSent;
+}
+
+/// <summary>
+/// What an owner's artwork edit changes, once checked against the owner's artwork now: the asset
+/// (when <paramref name="AssetChanges"/>, <paramref name="AssetId"/> replaces it; null removes it),
+/// or else only the crop (when <paramref name="CropChanges"/>); <paramref name="Crop"/> is the crop
+/// to set either way.
+/// </summary>
+internal sealed record OwnerArtworkChange(bool AssetChanges, Guid? AssetId, bool CropChanges, ArtworkCrop? Crop)
+{
+    /// <summary>The change that changes nothing.</summary>
+    public static OwnerArtworkChange None { get; } = new(AssetChanges: false, null, CropChanges: false, null);
+
+    /// <summary>Whether the owner's artwork changes, and so its revision with it.</summary>
+    public bool Changes => AssetChanges || CropChanges;
+}
+
+/// <summary>
 /// Attaching artwork to an owner, as part of that owner's own edit: each owner's service checks the
 /// asset ID its edit sends with <see cref="ReadAssetAsync"/>, and inside its transaction, once its
 /// revision check has passed, calls <see cref="ReplaceAsync"/>. A replaced or removed attachment
@@ -59,6 +85,76 @@ public sealed class ArtworkAttachmentService(
         await assets.FindAsync(assetId, cancellationToken).ConfigureAwait(false) is { } asset
             ? ArtworkCropRules.Errors(crop, asset.Width, asset.Height).FirstOrDefault()
             : NothingToCropMessage;
+
+    /// <summary>
+    /// Inside the caller's transaction, once its revision check has passed: what
+    /// <paramref name="edit"/> changes of the owner's artwork, <paramref name="current"/> (null for
+    /// none), or the errors keyed by field: an asset that is not live (<see cref="ReadAssetAsync"/>),
+    /// or a crop that does not fit the artwork it applies to (<see cref="CropErrorAsync"/>). Sending
+    /// the asset the owner has already keeps its crop unless a crop is sent; replacing the asset
+    /// without a crop gives the centred square. The owner applies the change with
+    /// <see cref="ApplyAsync"/> once its own write has raised its revision.
+    /// </summary>
+    internal async Task<(OwnerArtworkChange Change, Dictionary<string, string[]>? Errors)> CheckAsync(
+        OwnerArtworkEdit edit,
+        AttachedArtwork? current,
+        CancellationToken cancellationToken)
+    {
+        if (!edit.IsSent)
+        {
+            return (OwnerArtworkChange.None, null);
+        }
+
+        var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        Guid? assetId = current?.AssetId;
+        if (edit.AssetSent)
+        {
+            var (read, error) = await ReadAssetAsync(edit.AssetId, cancellationToken).ConfigureAwait(false);
+            if (error is not null)
+            {
+                errors[AssetIdField] = [error];
+            }
+
+            assetId = read;
+        }
+
+        var assetChanges = edit.AssetSent && errors.Count == 0 && assetId != current?.AssetId;
+        if (errors.Count == 0
+            && edit.Crop is { IsSent: true, Value: { } crop }
+            && (assetId is { } cropped
+                ? await CropErrorAsync(cropped, crop, cancellationToken).ConfigureAwait(false)
+                : NothingToCropMessage) is { } cropError)
+        {
+            errors[CropField] = [cropError];
+        }
+
+        if (errors.Count > 0)
+        {
+            return (OwnerArtworkChange.None, errors);
+        }
+
+        var cropChanges = !assetChanges && edit.Crop.IsSent && current is not null && edit.Crop.Value != current.Crop;
+        return (new OwnerArtworkChange(assetChanges, assetId, cropChanges, edit.Crop.Value), null);
+    }
+
+    /// <summary>
+    /// Inside the caller's transaction, once its revision has been raised: applies a change
+    /// <see cref="CheckAsync"/> found, replacing (<see cref="ReplaceAsync"/>) or re-cropping
+    /// (<see cref="SetCropAsync"/>) the owner's artwork. A change that changes nothing does nothing.
+    /// </summary>
+    internal async Task ApplyAsync(string ownerType, Guid ownerId, string ownerLabel, OwnerArtworkChange change, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(change);
+
+        if (change.AssetChanges)
+        {
+            await ReplaceAsync(ownerType, ownerId, ownerLabel, change.AssetId, change.Crop, cancellationToken).ConfigureAwait(false);
+        }
+        else if (change.CropChanges)
+        {
+            await SetCropAsync(ownerType, ownerId, change.Crop, cancellationToken).ConfigureAwait(false);
+        }
+    }
 
     /// <summary>
     /// Inside the caller's transaction: makes <paramref name="assetId"/> the owner's artwork with

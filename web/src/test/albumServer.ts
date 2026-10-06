@@ -3,6 +3,7 @@ import type { Artist } from '../api/artists';
 import type { Song } from '../api/songs';
 import { normaliseUpc, upcError } from '../albums/albumRules';
 import { placesOf } from '../albums/trackOrder';
+import { artworkFake, withoutArtwork } from './artworkFake';
 import { healthyReport, jsonResponse, requestPath, stubFetch } from './helpers';
 import { testArtist } from './artistServer';
 
@@ -36,6 +37,7 @@ export function testAlbum(title: string, change: Partial<Album> = {}): Album {
     revision: 1,
     warnings: [],
     tracks: [],
+    artwork: null,
     ...change,
   };
 }
@@ -72,7 +74,8 @@ const upcKey = (upc: string) => (upc.length === 12 ? `0${upc}` : upc);
  * `song_already_on_album`), DELETE renumbers the rest of its disc, and PUT replaces the list (409
  * `order_mismatch` or `track_number_taken`), each under the revision with `current`; `GET
  * /api/v1/songs?q=` searches `songs`. `server.next` answers the next write some other way;
- * `server.changeElsewhere` plays another client.
+ * `server.changeElsewhere` plays another client. Artwork uploads and the PATCH's artwork fields
+ * follow {@link artworkFake} (`server.artwork`).
  */
 export function albumServer(albums: Album[] = [], artists: Artist[] = [], songs: Song[] = []) {
   const server = {
@@ -80,6 +83,7 @@ export function albumServer(albums: Album[] = [], artists: Artist[] = [], songs:
     artists: artists.map((artist) => ({ ...artist })),
     songs,
     searches: [] as string[],
+    artwork: artworkFake(),
     writes: [] as AlbumWrite[],
     queries: [] as string[],
     next: undefined as (() => Response) | undefined,
@@ -256,6 +260,9 @@ export function albumServer(albums: Album[] = [], artists: Artist[] = [], songs:
         }),
       );
     }
+    if (path.endsWith('/api/v1/artwork')) {
+      return Promise.resolve(server.artwork.upload(init));
+    }
     if (!path.includes('/api/v1/albums')) {
       return Promise.resolve(problem(404, 'not_found'));
     }
@@ -349,10 +356,14 @@ export function albumServer(albums: Album[] = [], artists: Artist[] = [], songs:
       }
       albumArtist = artist === undefined ? null : { id: artist.id, name: artist.name };
     }
-    if (Object.keys(errors).length > 0) {
+    const artwork = server.artwork.apply(current.artwork, edit);
+    if ('errors' in artwork) {
+      Object.assign(errors, artwork.errors);
+    }
+    if (Object.keys(errors).length > 0 || 'errors' in artwork) {
       return Promise.resolve(problem(422, 'validation_failed', { errors }));
     }
-    const fields: Record<string, unknown> = { ...edit };
+    const fields: Record<string, unknown> = withoutArtwork(edit);
     delete fields.albumArtistId;
     delete fields.upc;
     const upc = edit.upc;
@@ -360,6 +371,7 @@ export function albumServer(albums: Album[] = [], artists: Artist[] = [], songs:
       ...current,
       ...(fields as Partial<Album>),
       albumArtist,
+      artwork: artwork.artwork,
       ...(upc === undefined ? {} : { upc: typeof upc === 'string' ? normaliseUpc(upc) : null }),
       revision: current.revision + 1,
     };

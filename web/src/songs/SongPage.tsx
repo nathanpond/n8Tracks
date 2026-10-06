@@ -11,8 +11,7 @@ import {
   type SongEdit,
 } from '../api/songs';
 import { useSongVersions } from '../api/versions';
-import { ARTWORK_KEY } from '../common/ArtworkPicker';
-import { ARTWORK_CROP_KEY, cropOf, cropValue } from '../common/artworkField';
+import { ARTWORK_CROP_KEY, ARTWORK_KEY, cropOf, cropValue } from '../common/artworkField';
 import { cropText } from '../common/cropRules';
 import { ConflictValue } from '../common/ConflictDialog';
 import { useRevisionedSave, type SavedField } from '../common/useRevisionedSave';

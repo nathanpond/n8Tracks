@@ -1,3 +1,4 @@
+using n8Tracks.Domain.Assets;
 using n8Tracks.Domain.Catalog;
 
 namespace n8Tracks.Application.Catalog;
@@ -20,8 +21,11 @@ public sealed record PlaylistSongArtist(Guid Id, string Name);
 /// <summary>A workflow state as a Playlist's Song shows it.</summary>
 public sealed record PlaylistSongState(Guid Id, string Name, string Colour);
 
-/// <summary>A Playlist as the list shows it: the record, how many Songs it holds, when it was created and last changed, and its revision.</summary>
-public sealed record PlaylistSummary(Playlist Playlist, int SongCount, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, int Revision);
+/// <summary>
+/// A Playlist as the list shows it: the record, how many Songs it holds, when it was created and
+/// last changed, its revision, and its own artwork (null when it has none; never its Songs').
+/// </summary>
+public sealed record PlaylistSummary(Playlist Playlist, int SongCount, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, int Revision, AttachedArtwork? Artwork);
 
 /// <summary>A Playlist as its page reads it: the summary and every Song on it, in order.</summary>
 public sealed record PlaylistDetails(PlaylistSummary Summary, IReadOnlyList<PlaylistSong> Songs)

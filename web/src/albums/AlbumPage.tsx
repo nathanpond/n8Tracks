@@ -14,6 +14,8 @@ import {
 } from '../api/albums';
 import type { FieldValue, SaveResult } from '../api/saves';
 import { ArtistPicker } from '../common/ArtistPicker';
+import { ArtworkPicker } from '../common/ArtworkPicker';
+import { artworkFields, artworkPatchOf, artworkValues } from '../common/artworkField';
 import { LinksEditor } from '../common/LinksEditor';
 import { SavedTextField, type Save } from '../common/SavedTextField';
 import { saveError } from '../common/useInPlaceEdit';
@@ -100,11 +102,12 @@ const FIELDS: readonly SavedField<Album>[] = [
         .map((link) => (link.label === null ? link.url : `${link.label}: ${link.url}`))
         .join(', ') || 'None',
   },
+  ...artworkFields<Album>(),
 ];
 
 /** The PATCH body for what the save helper holds. */
 function albumEditOf(edit: Readonly<Record<string, FieldValue>>): AlbumEdit {
-  const result: AlbumEdit = {};
+  const result: AlbumEdit = artworkPatchOf(edit);
   for (const [key, value] of Object.entries(edit)) {
     switch (key) {
       case 'title':
@@ -254,7 +257,7 @@ function LoadedAlbum({ initial }: { initial: Album }) {
       updateAlbum(base, albumEditOf(edit)),
     [],
   );
-  const { save, dialog } = useRevisionedSave({
+  const { save, saveFields, dialog } = useRevisionedSave({
     record: album,
     onRecord: setAlbum,
     fields: FIELDS,
@@ -287,6 +290,12 @@ function LoadedAlbum({ initial }: { initial: Album }) {
       </div>
 
       <Stack gap="md" maw={720}>
+        <ArtworkPicker
+          title={album.title}
+          noun="Album"
+          artwork={album.artwork}
+          save={(edit) => saveFields(artworkValues(edit))}
+        />
         <SavedTextField
           key={`title ${album.title}`}
           field="title"
@@ -380,8 +389,9 @@ function LoadedAlbum({ initial }: { initial: Album }) {
 }
 
 /**
- * An Album's page (`/albums/<id>`): its title, Album Artist, description, release details, and
- * links, each saved on its own under the Album's revision. A UPC/EAN another Album has is kept and
+ * An Album's page (`/albums/<id>`): its own artwork (uploaded, cropped, or removed; never borrowed
+ * from its Songs), title, Album Artist, description, release details, and links, each saved on its
+ * own under the Album's revision. A UPC/EAN another Album has is kept and
  * warned about while it applies. Its tracks are arranged by disc and track number (TrackList), each
  * change also under the Album's revision.
  */

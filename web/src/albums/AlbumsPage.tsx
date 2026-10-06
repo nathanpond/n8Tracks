@@ -10,6 +10,7 @@ import {
   Text,
   Title,
   UnstyledButton,
+  VisuallyHidden,
 } from '@mantine/core';
 import { useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
@@ -21,6 +22,7 @@ import {
   type AlbumQuery,
   type AlbumSort,
 } from '../api/albums';
+import { ArtworkImage } from '../common/ArtworkImage';
 import { Notice } from '../components/Notice';
 import { formatAlbumDate, shownDate } from './albumRules';
 import { NewAlbumDialog } from './NewAlbumDialog';
@@ -83,6 +85,9 @@ function AlbumRow({ album, from }: { album: Album; from: FromAlbums }) {
   const date = shownDate(album);
   return (
     <Table.Tr data-album-title={album.title}>
+      <Table.Td w={56}>
+        <ArtworkImage artwork={album.artwork} title={album.title} size="96" pixels={40} />
+      </Table.Td>
       <Table.Th scope="row">
         <Anchor component={Link} to={`/albums/${album.id}`} state={from}>
           {album.title}
@@ -96,7 +101,7 @@ function AlbumRow({ album, from }: { album: Album; from: FromAlbums }) {
 }
 
 /**
- * Albums: every Album, fifty to a page, with its Album Artist, how many Songs it holds, and its
+ * Albums: every Album, fifty to a page, with its own artwork (a placeholder when it has none), its Album Artist, how many Songs it holds, and its
  * release date (else its original release date), sorted by title, Album Artist, or date; a missing
  * value shows a dash and sorts last. The view is the page URL's query string, the list API's own
  * parameters. "New Album" asks for a title, creates the Album, and opens it.
@@ -186,6 +191,9 @@ export function AlbumsPage() {
             <Table withTableBorder aria-label="Albums">
               <Table.Thead>
                 <Table.Tr>
+                  <Table.Th scope="col">
+                    <VisuallyHidden>Artwork</VisuallyHidden>
+                  </Table.Th>
                   <SortHeader label="Title" sort="title" query={query} onSort={sortBy} />
                   <SortHeader label="Album Artist" sort="artist" query={query} onSort={sortBy} />
                   <Table.Th scope="col" ta="end">

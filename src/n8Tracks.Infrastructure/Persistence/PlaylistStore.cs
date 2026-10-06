@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using n8Tracks.Application.Catalog;
+using n8Tracks.Domain.Assets;
 using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
 
@@ -27,8 +28,13 @@ internal sealed class PlaylistStore(N8TracksDbContext context) : IPlaylistStore
             .Select(static group => new { PlaylistId = group.Key, Count = group.Count() })
             .ToDictionaryAsync(static group => group.PlaylistId, static group => group.Count, cancellationToken)
             .ConfigureAwait(false);
+        var artwork = await ArtworkAttachmentStore.ForOwnersAsync(context, ArtworkOwnerTypes.Playlist, ids, cancellationToken).ConfigureAwait(false);
 
-        return new PlaylistPage([.. records.Select(record => Summary(record, counts.GetValueOrDefault(record.Id)))], page, pageSize, total);
+        return new PlaylistPage(
+            [.. records.Select(record => Summary(record, counts.GetValueOrDefault(record.Id), artwork.GetValueOrDefault(record.Id)))],
+            page,
+            pageSize,
+            total);
     }
 
     public async Task<PlaylistDetails?> FindAsync(Guid id, CancellationToken cancellationToken)
@@ -62,7 +68,8 @@ internal sealed class PlaylistStore(N8TracksDbContext context) : IPlaylistStore
             // Selected Generations arrive in M4; until then no Song has one.
             HasSelectedGeneration: false)).ToList();
 
-        return new PlaylistDetails(Summary(record, songs.Count), songs);
+        var artwork = await ArtworkAttachmentStore.ForOwnersAsync(context, ArtworkOwnerTypes.Playlist, [id], cancellationToken).ConfigureAwait(false);
+        return new PlaylistDetails(Summary(record, songs.Count, artwork.GetValueOrDefault(id)), songs);
     }
 
     public Task<bool> SongExistsAsync(Guid id, CancellationToken cancellationToken) =>
@@ -164,11 +171,12 @@ internal sealed class PlaylistStore(N8TracksDbContext context) : IPlaylistStore
                 static group => (IReadOnlyList<PlaylistNamed>)[.. group.Select(static row => new PlaylistNamed(row.Id, row.Title))]);
     }
 
-    private static PlaylistSummary Summary(PlaylistRecord record, int songCount) =>
+    private static PlaylistSummary Summary(PlaylistRecord record, int songCount, AttachedArtwork? artwork) =>
         new(
             new Playlist(record.Id, record.Title, record.Description),
             songCount,
             UtcText.Parse(record.CreatedUtc),
             UtcText.Parse(record.UpdatedUtc),
-            record.Revision);
+            record.Revision,
+            artwork);
 }

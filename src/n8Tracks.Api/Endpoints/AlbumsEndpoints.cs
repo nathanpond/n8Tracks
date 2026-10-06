@@ -10,7 +10,8 @@ namespace n8Tracks.Api.Endpoints;
 /// <summary>
 /// Albums: a page of them, sorted by title, release date, or Album Artist, and optionally only one
 /// Artist's; one Album with its tracks (<c>catalog.read</c>); creating one from a title and editing
-/// one under its revision in <c>If-Match</c> (<c>collections.write</c>). Its tracks are managed by
+/// one under its revision in <c>If-Match</c> (<c>collections.write</c>, and <c>artwork.write</c> too
+/// when the edit changes its artwork). Its tracks are managed by
 /// <see cref="AlbumTracksEndpoints"/>. A UPC/EAN another Album has is allowed and
 /// answered with a <c>duplicate_upc</c> entry in <c>warnings</c>. Every answer is <c>no-store</c>.
 /// </summary>
@@ -36,7 +37,7 @@ internal static class AlbumsEndpoints
 
         endpoints.MapGet(AlbumPath, GetAsync)
             .WithName("GetAlbum")
-            .WithSummary("One Album, with its Album Artist, release details, links, Song count, warnings, tracks (by disc and track number), and revision (also the ETag).")
+            .WithSummary("One Album, with its Album Artist, release details, links, Song count, warnings, tracks (by disc and track number), own artwork (or null), and revision (also the ETag).")
             .RequireScope(CredentialScopes.CatalogRead)
             .Produces<AlbumResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
@@ -54,7 +55,7 @@ internal static class AlbumsEndpoints
 
         endpoints.MapPatch(AlbumPath, UpdateAsync)
             .WithName("UpdateAlbum")
-            .WithSummary("Edits an Album (only the fields sent; links as a whole list), given its revision in If-Match.")
+            .WithSummary("Edits an Album (only the fields sent; links as a whole list; artworkAssetId is an uploaded asset's ID, or null to remove the Album's own artwork, and artworkCrop is {x, y, size} or null for the centred square, both also needing artwork.write), given its revision in If-Match. Replaced or removed artwork is retained for 30 days.")
             .RequireScope(CredentialScopes.CollectionsWrite)
             .Produces<AlbumResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
@@ -94,7 +95,7 @@ internal static class AlbumsEndpoints
             query[AlbumService.ArtistParameter]);
         return await albums.ListAsync(request, cancellationToken) switch
         {
-            AlbumListOutcome.Listed listed => TypedResults.Ok(AlbumListResponse.From(listed.Page)),
+            AlbumListOutcome.Listed listed => TypedResults.Ok(AlbumListResponse.From(listed.Page, context.Request.PathBase)),
             AlbumListOutcome.Invalid invalid => ApiProblem.For(context, StatusCodes.Status400BadRequest, ApiProblem.InvalidRequestCode, invalid.Message),
             _ => throw new InvalidOperationException("Unknown list outcome."),
         };
@@ -134,7 +135,7 @@ internal static class AlbumsEndpoints
         {
             loggers.CreateLogger(typeof(AlbumsEndpoints)).LogInformation("Album created: {AlbumId}", saved.Album.Album.Id);
             Revisions.SetETag(context, saved.Album.Revision);
-            return TypedResults.Created($"{context.Request.PathBase}{AlbumsPath}/{saved.Album.Album.Id}", AlbumResponse.From(saved.Album));
+            return TypedResults.Created($"{context.Request.PathBase}{AlbumsPath}/{saved.Album.Album.Id}", AlbumResponse.From(saved.Album, context.Request.PathBase));
         }
 
         return Refusal(context, outcome);
@@ -143,7 +144,9 @@ internal static class AlbumsEndpoints
     /// <summary>
     /// 200 with the Album as it is now (unchanged when the edit changed nothing); 404 when there is
     /// no such Album; 409 <c>revision_conflict</c> with <c>current</c> on a stale revision; 422 on a
-    /// wrong field, an Album Artist that does not exist included.
+    /// wrong field, an Album Artist that does not exist included, or artwork that is not a live upload
+    /// or a crop that does not fit it; 403 <c>insufficient_scope</c> when a credential changes the
+    /// artwork without <c>artwork.write</c>.
     /// </summary>
     private static async Task<Results<Ok<AlbumResponse>, ProblemHttpResult>> UpdateAsync(
         Guid id,
@@ -177,7 +180,13 @@ internal static class AlbumsEndpoints
             Copyright = Text(request?.Copyright, AlbumService.CopyrightField, errors),
             Publishing = Text(request?.Publishing, AlbumService.PublishingField, errors),
             Links = Links(request?.Links, errors),
+            Artwork = ArtworkEndpoints.ReadOwnerArtwork(request?.ArtworkAssetId, request?.ArtworkCrop, errors),
         };
+        if (ArtworkEndpoints.LackingArtworkScope(context, edit.Artwork) is { } lacking)
+        {
+            return lacking;
+        }
+
         var artist = Text(request?.AlbumArtistId, AlbumService.AlbumArtistField, errors);
         Guid? artistId = null;
         if (artist.Value is { } artistText)
@@ -267,7 +276,7 @@ internal static class AlbumsEndpoints
     internal static Ok<AlbumResponse> Answer(HttpContext context, AlbumDetails album)
     {
         Revisions.SetETag(context, album.Revision);
-        return TypedResults.Ok(AlbumResponse.From(album));
+        return TypedResults.Ok(AlbumResponse.From(album, context.Request.PathBase));
     }
 
     internal static ProblemHttpResult NoSuchAlbum(HttpContext context) =>
@@ -277,7 +286,7 @@ internal static class AlbumsEndpoints
     private static ProblemHttpResult Refusal(HttpContext context, AlbumOutcome outcome) =>
         outcome switch
         {
-            AlbumOutcome.Conflict conflict => Revisions.Conflict(context, AlbumResponse.From(conflict.Current)),
+            AlbumOutcome.Conflict conflict => Revisions.Conflict(context, AlbumResponse.From(conflict.Current, context.Request.PathBase)),
             AlbumOutcome.Invalid invalid => ApiProblem.ValidationFailed(context, invalid.Errors),
             AlbumOutcome.NotFound => NoSuchAlbum(context),
             _ => throw new InvalidOperationException("Unknown Album outcome."),
@@ -289,7 +298,8 @@ internal sealed record AlbumCreateRequest(JsonElement Title);
 
 /// <summary>
 /// An edit, each field read as raw JSON, so a missing field (<see cref="JsonValueKind.Undefined"/>),
-/// null, and a wrong type can be told apart.
+/// null, and a wrong type can be told apart. <c>artworkAssetId</c> is the asset to show as the
+/// Album's artwork, or null for none; <c>artworkCrop</c> is its square crop, or null for the centred square.
 /// </summary>
 internal sealed record AlbumRequest(
     JsonElement Title,
@@ -300,9 +310,11 @@ internal sealed record AlbumRequest(
     JsonElement Upc,
     JsonElement Copyright,
     JsonElement Publishing,
-    JsonElement Links);
+    JsonElement Links,
+    JsonElement ArtworkAssetId,
+    JsonElement ArtworkCrop);
 
-/// <summary>An Album as the API shows it.</summary>
+/// <summary>An Album as the API shows it; <c>artwork</c> is its own artwork, or null (never its Songs').</summary>
 internal sealed record AlbumResponse(
     Guid Id,
     string Title,
@@ -319,9 +331,11 @@ internal sealed record AlbumResponse(
     DateTime UpdatedAt,
     int Revision,
     AlbumWarningResponse[] Warnings,
-    AlbumTrackResponse[] Tracks)
+    AlbumTrackResponse[] Tracks,
+    AttachedArtworkResponse? Artwork)
 {
-    public static AlbumResponse From(AlbumDetails details)
+    /// <summary>The Album as the API shows it; <paramref name="pathBase"/> starts its artwork's URLs.</summary>
+    public static AlbumResponse From(AlbumDetails details, PathString pathBase)
     {
         ArgumentNullException.ThrowIfNull(details);
 
@@ -353,7 +367,8 @@ internal sealed record AlbumResponse(
             details.UpdatedAt.UtcDateTime,
             details.Revision,
             warnings,
-            [.. details.Tracks.Select(AlbumTrackResponse.From)]);
+            [.. details.Tracks.Select(AlbumTrackResponse.From)],
+            details.Artwork is { } artwork ? AttachedArtworkResponse.From(artwork, pathBase) : null);
     }
 }
 
@@ -405,10 +420,10 @@ internal sealed record AlbumWarningResponse(string Code, string Field, string Me
 /// <summary>A page of Albums.</summary>
 internal sealed record AlbumListResponse(AlbumResponse[] Items, int Page, int PageSize, int Total)
 {
-    public static AlbumListResponse From(AlbumPage page)
+    public static AlbumListResponse From(AlbumPage page, PathString pathBase)
     {
         ArgumentNullException.ThrowIfNull(page);
 
-        return new([.. page.Items.Select(AlbumResponse.From)], page.Page, page.PageSize, page.Total);
+        return new([.. page.Items.Select(album => AlbumResponse.From(album, pathBase))], page.Page, page.PageSize, page.Total);
     }
 }

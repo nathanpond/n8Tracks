@@ -1,6 +1,7 @@
 import type { Album } from '../api/albums';
 import type { Artist, ArtistMatch } from '../api/artists';
 import type { Song } from '../api/songs';
+import { artworkFake } from './artworkFake';
 import { healthyReport, jsonResponse, requestPath, stubFetch } from './helpers';
 
 /** One write the fake server received. */
@@ -29,6 +30,7 @@ export function testArtist(name: string, change: Partial<Artist> = {}): Artist {
     createdAt: '2026-10-05T09:00:00.000Z',
     updatedAt: '2026-10-05T09:00:00.000Z',
     revision: 1,
+    artwork: null,
     ...change,
   };
 }
@@ -49,12 +51,14 @@ function problem(status: number, code: string, extra: Record<string, unknown> = 
  * `server.changeElsewhere` plays another client. `server.songs` are the Songs the list answers for
  * `GET /api/v1/songs?artist=<id>` (those crediting that Artist, by title), and `server.albums` those
  * it answers for `GET /api/v1/albums?artist=<id>` (those whose Album Artist it is, by title).
+ * Artwork uploads and the PATCH's artwork fields follow {@link artworkFake} (`server.artwork`).
  */
 export function artistServer(artists: Artist[] = [], songs: Song[] = [], albums: Album[] = []) {
   const server = {
     artists: artists.map((artist) => ({ ...artist })),
     songs: [...songs],
     albums: [...albums],
+    artwork: artworkFake(),
     writes: [] as ArtistWrite[],
     queries: [] as string[],
     pageSize: 50,
@@ -127,6 +131,9 @@ export function artistServer(artists: Artist[] = [], songs: Song[] = [], albums:
         jsonResponse(200, { items, page: 1, pageSize: 50, total: items.length }),
       );
     }
+    if (path.endsWith('/api/v1/artwork')) {
+      return Promise.resolve(server.artwork.upload(init));
+    }
     if (!path.includes('/api/v1/artists')) {
       return Promise.resolve(problem(404, 'not_found'));
     }
@@ -194,8 +201,13 @@ export function artistServer(artists: Artist[] = [], songs: Song[] = [], albums:
       return Promise.resolve(problem(409, 'revision_conflict', { current }));
     }
     const edit = write.body as Partial<Artist> & { confirmDuplicate?: boolean };
+    const artwork = server.artwork.apply(current.artwork, write.body);
+    if ('errors' in artwork) {
+      return Promise.resolve(problem(422, 'validation_failed', { errors: artwork.errors }));
+    }
     const changed: Artist = {
       ...current,
+      artwork: artwork.artwork,
       ...(edit.name === undefined ? {} : { name: edit.name }),
       ...(edit.aliases === undefined ? {} : { aliases: edit.aliases }),
       ...(edit.notes === undefined ? {} : { notes: edit.notes }),

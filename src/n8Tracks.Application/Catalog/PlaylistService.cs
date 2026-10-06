@@ -1,18 +1,23 @@
 using System.Globalization;
+using n8Tracks.Application.Assets;
 using n8Tracks.Application.Auth;
+using n8Tracks.Domain.Assets;
 using n8Tracks.Domain.Catalog;
 
 namespace n8Tracks.Application.Catalog;
 
 /// <summary>
 /// An edit of a Playlist: only what was sent changes. A null <see cref="Title"/> was not sent;
-/// <see cref="Description"/> says whether it was (null or blank clears it).
+/// <see cref="Description"/> says whether it was (null or blank clears it). <see cref="Artwork"/>
+/// is the Playlist's own artwork, when sent.
 /// </summary>
 public sealed record PlaylistEdit
 {
     public string? Title { get; init; }
 
     public AlbumEditText Description { get; init; }
+
+    public OwnerArtworkEdit Artwork { get; init; }
 }
 
 /// <summary>How listing Playlists ended.</summary>
@@ -63,9 +68,10 @@ public abstract record PlaylistOutcome
 /// <summary>
 /// Playlists: titled, ordered lists of Songs. A Song is on a Playlist at most once, but on any
 /// number of Playlists. Adding, removing, and reordering each work under the Playlist's revision and
-/// raise it; a newly added Song goes to the end. Changing a Playlist never changes its Songs.
+/// raise it; a newly added Song goes to the end. Changing a Playlist never changes its Songs. Its
+/// artwork is its own, never borrowed from its Songs, and is edited under its revision.
 /// </summary>
-public sealed class PlaylistService(IPlaylistStore playlists, IExclusiveTransaction transaction, TimeProvider time)
+public sealed class PlaylistService(IPlaylistStore playlists, ArtworkAttachmentService artwork, IExclusiveTransaction transaction, TimeProvider time)
 {
     /// <summary>The field names validation errors are keyed by, as the API spells them.</summary>
     public const string TitleField = "title";
@@ -118,7 +124,7 @@ public sealed class PlaylistService(IPlaylistStore playlists, IExclusiveTransact
             async ct =>
             {
                 await playlists.AddAsync(playlist, now, ct).ConfigureAwait(false);
-                return new PlaylistOutcome.Saved(new PlaylistDetails(new PlaylistSummary(playlist, 0, now, now, 1), []), Changed: true);
+                return new PlaylistOutcome.Saved(new PlaylistDetails(new PlaylistSummary(playlist, 0, now, now, 1, Artwork: null), []), Changed: true);
             },
             cancellationToken).ConfigureAwait(false);
     }
@@ -126,7 +132,8 @@ public sealed class PlaylistService(IPlaylistStore playlists, IExclusiveTransact
     /// <summary>
     /// Changes what <paramref name="edit"/> sends of the Playlist <paramref name="id"/>, when its
     /// revision is still <paramref name="revision"/>. Sending what the Playlist already has is no
-    /// change and keeps the revision.
+    /// change and keeps the revision. Artwork that is not a live upload, or a crop that does not fit
+    /// it, is <see cref="PlaylistOutcome.Invalid"/>; replaced or removed artwork goes into retention.
     /// </summary>
     public async Task<PlaylistOutcome> UpdateAsync(Guid id, PlaylistEdit edit, int revision, CancellationToken cancellationToken)
     {
@@ -159,14 +166,24 @@ public sealed class PlaylistService(IPlaylistStore playlists, IExclusiveTransact
                     Title = edit.Title is null ? playlist.Title : PlaylistRules.NormaliseTitle(edit.Title),
                     Description = edit.Description.Sent ? PlaylistRules.NormaliseDescription(edit.Description.Value) : playlist.Description,
                 };
-                if (changed == playlist)
+                var (artworkChange, artworkErrors) = await artwork.CheckAsync(edit.Artwork, current.Summary.Artwork, ct).ConfigureAwait(false);
+                if (artworkErrors is not null)
+                {
+                    return new PlaylistOutcome.Invalid(artworkErrors);
+                }
+
+                if (changed == playlist && !artworkChange.Changes)
                 {
                     return new PlaylistOutcome.Saved(current, Changed: false);
                 }
 
-                return await playlists.TryUpdateAsync(changed, revision, time.GetUtcNow(), ct).ConfigureAwait(false)
-                    ? await SavedAsync(id, ct).ConfigureAwait(false)
-                    : await ConflictAsync(id, ct).ConfigureAwait(false);
+                if (!await playlists.TryUpdateAsync(changed, revision, time.GetUtcNow(), ct).ConfigureAwait(false))
+                {
+                    return await ConflictAsync(id, ct).ConfigureAwait(false);
+                }
+
+                await artwork.ApplyAsync(ArtworkOwnerTypes.Playlist, id, $"the Playlist {changed.Title}", artworkChange, ct).ConfigureAwait(false);
+                return await SavedAsync(id, ct).ConfigureAwait(false);
             },
             cancellationToken).ConfigureAwait(false);
     }

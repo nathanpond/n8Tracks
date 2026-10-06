@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using n8Tracks.Application.Catalog;
+using n8Tracks.Domain.Assets;
 using n8Tracks.Domain.Catalog;
 
 namespace n8Tracks.Infrastructure.Persistence;
@@ -164,7 +165,7 @@ internal sealed class ArtistStore(N8TracksDbContext context) : IArtistStore
         }
     }
 
-    /// <summary>Each record with its aliases and links, in the records' order.</summary>
+    /// <summary>Each record with its aliases, links, counts, and own artwork, in the records' order.</summary>
     private async Task<List<ArtistDetails>> DetailsAsync(List<ArtistRecord> records, CancellationToken cancellationToken)
     {
         var ids = records.Select(static record => record.Id).ToList();
@@ -193,6 +194,7 @@ internal sealed class ArtistStore(N8TracksDbContext context) : IArtistStore
             .Select(static group => new { ArtistId = group.Key, Count = group.Count() })
             .ToDictionaryAsync(static group => group.ArtistId, static group => group.Count, cancellationToken)
             .ConfigureAwait(false);
+        var artwork = await ArtworkAttachmentStore.ForOwnersAsync(context, ArtworkOwnerTypes.Artist, ids, cancellationToken).ConfigureAwait(false);
 
         return [.. records.Select(record => new ArtistDetails(
             new Artist(
@@ -205,6 +207,7 @@ internal sealed class ArtistStore(N8TracksDbContext context) : IArtistStore
             AlbumCount: albumCounts.GetValueOrDefault(record.Id),
             UtcText.Parse(record.CreatedUtc),
             UtcText.Parse(record.UpdatedUtc),
-            record.Revision))];
+            record.Revision,
+            artwork.GetValueOrDefault(record.Id)))];
     }
 }

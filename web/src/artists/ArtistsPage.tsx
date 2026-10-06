@@ -10,6 +10,7 @@ import {
   Text,
   TextInput,
   Title,
+  VisuallyHidden,
 } from '@mantine/core';
 import { useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
@@ -20,6 +21,7 @@ import {
   type Artist,
   type ArtistQuery,
 } from '../api/artists';
+import { ArtworkImage } from '../common/ArtworkImage';
 import { Notice } from '../components/Notice';
 import { NewArtistDialog } from './NewArtistDialog';
 
@@ -41,6 +43,9 @@ const PAGE_CONTROL_LABELS: Record<'first' | 'previous' | 'next' | 'last', string
 function ArtistRow({ artist, from }: { artist: Artist; from: FromArtists }) {
   return (
     <Table.Tr data-artist-name={artist.name}>
+      <Table.Td w={56}>
+        <ArtworkImage artwork={artist.artwork} title={artist.name} size="96" pixels={40} />
+      </Table.Td>
       <Table.Th scope="row">
         <Anchor component={Link} to={`/artists/${artist.id}`} state={from}>
           {artist.name}
@@ -54,7 +59,8 @@ function ArtistRow({ artist, from }: { artist: Artist; from: FromArtists }) {
 }
 
 /**
- * Artists: every Artist by name (ignoring case), fifty to a page, with its aliases and how many
+ * Artists: every Artist by name (ignoring case), fifty to a page, with its own artwork (a
+ * placeholder when it has none), its aliases, and how many
  * Songs and Albums are credited to it, and a search box matching any part of a name or alias. The
  * view (search and page) is the page URL's query string, the list API's own parameters, so going
  * back to it or reloading shows the same rows. "New Artist" creates one and opens it.
@@ -169,6 +175,9 @@ export function ArtistsPage() {
             <Table withTableBorder aria-label="Artists">
               <Table.Thead>
                 <Table.Tr>
+                  <Table.Th scope="col">
+                    <VisuallyHidden>Artwork</VisuallyHidden>
+                  </Table.Th>
                   <Table.Th scope="col">Name</Table.Th>
                   <Table.Th scope="col">Aliases</Table.Th>
                   <Table.Th scope="col" ta="end">

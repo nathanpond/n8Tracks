@@ -9,10 +9,12 @@ import {
   Table,
   Text,
   Title,
+  VisuallyHidden,
 } from '@mantine/core';
 import { useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
 import { usePlaylists, type PlaylistSummary } from '../api/playlists';
+import { ArtworkImage } from '../common/ArtworkImage';
 import { Notice } from '../components/Notice';
 import { NewPlaylistDialog } from './NewPlaylistDialog';
 
@@ -34,6 +36,9 @@ const PAGE_CONTROL_LABELS: Record<'first' | 'previous' | 'next' | 'last', string
 function PlaylistRow({ playlist, from }: { playlist: PlaylistSummary; from: FromPlaylists }) {
   return (
     <Table.Tr data-playlist-title={playlist.title}>
+      <Table.Td w={56}>
+        <ArtworkImage artwork={playlist.artwork} title={playlist.title} size="96" pixels={40} />
+      </Table.Td>
       <Table.Th scope="row">
         <Anchor component={Link} to={`/playlists/${playlist.id}`} state={from}>
           {playlist.title}
@@ -45,7 +50,8 @@ function PlaylistRow({ playlist, from }: { playlist: PlaylistSummary; from: From
 }
 
 /**
- * Playlists: every Playlist by title, fifty to a page, with how many Songs it holds. "New Playlist"
+ * Playlists: every Playlist by title, fifty to a page, with its own artwork (a placeholder when it
+ * has none) and how many Songs it holds. "New Playlist"
  * asks for a title, creates the Playlist, and opens it.
  */
 export function PlaylistsPage() {
@@ -122,6 +128,9 @@ export function PlaylistsPage() {
             <Table withTableBorder aria-label="Playlists">
               <Table.Thead>
                 <Table.Tr>
+                  <Table.Th scope="col">
+                    <VisuallyHidden>Artwork</VisuallyHidden>
+                  </Table.Th>
                   <Table.Th scope="col">Title</Table.Th>
                   <Table.Th scope="col" ta="end">
                     Songs

@@ -12,8 +12,8 @@ namespace n8Tracks.Api.Endpoints;
 
 /// <summary>
 /// Playlists: a page of them by title, and one with its Songs in order (<c>catalog.read</c>);
-/// creating one from a title, editing its title and description, and adding, removing, and
-/// reordering its Songs (<c>collections.write</c>). Every change but creating one is made under the
+/// creating one from a title, editing its title, description, and artwork (which also needs
+/// <c>artwork.write</c>), and adding, removing, and reordering its Songs (<c>collections.write</c>). Every change but creating one is made under the
 /// Playlist's revision in <c>If-Match</c> and raises it; a Song is named by its ID or shortcode.
 /// Changing a Playlist never changes its Songs. Every answer is <c>no-store</c>.
 /// </summary>
@@ -34,7 +34,7 @@ internal static class PlaylistsEndpoints
 
         endpoints.MapGet(PlaylistsPath, ListAsync)
             .WithName("ListPlaylists")
-            .WithSummary("A page of Playlists by title, each with its Song count.")
+            .WithSummary("A page of Playlists by title, each with its Song count and own artwork (or null).")
             .RequireScope(CredentialScopes.CatalogRead)
             .Produces<PlaylistListResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
@@ -61,7 +61,7 @@ internal static class PlaylistsEndpoints
 
         endpoints.MapPatch(PlaylistPath, UpdateAsync)
             .WithName("UpdatePlaylist")
-            .WithSummary("Edits a Playlist's title or description (only the fields sent), given its revision in If-Match.")
+            .WithSummary("Edits a Playlist's title, description, or artwork (only the fields sent; artworkAssetId is an uploaded asset's ID, or null to remove the Playlist's own artwork, and artworkCrop is {x, y, size} or null for the centred square, both also needing artwork.write), given its revision in If-Match. Replaced or removed artwork is retained for 30 days.")
             .RequireScope(CredentialScopes.CollectionsWrite)
             .Produces<PlaylistResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
@@ -129,7 +129,7 @@ internal static class PlaylistsEndpoints
 
         return await playlists.ListAsync(query[PlaylistService.PageParameter], query[PlaylistService.PageSizeParameter], cancellationToken) switch
         {
-            PlaylistListOutcome.Listed listed => TypedResults.Ok(PlaylistListResponse.From(listed.Page)),
+            PlaylistListOutcome.Listed listed => TypedResults.Ok(PlaylistListResponse.From(listed.Page, context.Request.PathBase)),
             PlaylistListOutcome.Invalid invalid => ApiProblem.For(context, StatusCodes.Status400BadRequest, ApiProblem.InvalidRequestCode, invalid.Message),
             _ => throw new InvalidOperationException("Unknown list outcome."),
         };
@@ -168,7 +168,7 @@ internal static class PlaylistsEndpoints
         {
             Log(loggers).LogInformation("Playlist created: {PlaylistId}", saved.Playlist.Playlist.Id);
             Revisions.SetETag(context, saved.Playlist.Revision);
-            return TypedResults.Created($"{context.Request.PathBase}{PlaylistsPath}/{saved.Playlist.Playlist.Id}", PlaylistResponse.From(saved.Playlist));
+            return TypedResults.Created($"{context.Request.PathBase}{PlaylistsPath}/{saved.Playlist.Playlist.Id}", PlaylistResponse.From(saved.Playlist, context.Request.PathBase));
         }
 
         return Refusal(context, outcome);
@@ -177,7 +177,8 @@ internal static class PlaylistsEndpoints
     /// <summary>
     /// 200 with the Playlist as it is now (unchanged when the edit changed nothing); 404 when there
     /// is no such Playlist; 409 <c>revision_conflict</c> with <c>current</c> on a stale revision; 422
-    /// on a wrong field.
+    /// on a wrong field, artwork that is not a live upload, or a crop that does not fit it; 403
+    /// <c>insufficient_scope</c> when a credential changes the artwork without <c>artwork.write</c>.
     /// </summary>
     private static async Task<Results<Ok<PlaylistResponse>, ProblemHttpResult>> UpdateAsync(
         Guid id,
@@ -203,12 +204,19 @@ internal static class PlaylistsEndpoints
         }
 
         var description = Text(request?.Description, PlaylistService.DescriptionField, errors);
+        var artwork = ArtworkEndpoints.ReadOwnerArtwork(request?.ArtworkAssetId, request?.ArtworkCrop, errors);
+        if (ArtworkEndpoints.LackingArtworkScope(context, artwork) is { } lacking)
+        {
+            return lacking;
+        }
+
         if (errors.Count > 0)
         {
             return ApiProblem.ValidationFailed(context, errors);
         }
 
-        var outcome = await playlists.UpdateAsync(id, new PlaylistEdit { Title = title.Value, Description = description }, revision!.Value, cancellationToken);
+        var edit = new PlaylistEdit { Title = title.Value, Description = description, Artwork = artwork };
+        var outcome = await playlists.UpdateAsync(id, edit, revision!.Value, cancellationToken);
         if (outcome is PlaylistOutcome.Saved { Changed: true })
         {
             Log(loggers).LogInformation("Playlist changed: {PlaylistId}", id);
@@ -363,7 +371,7 @@ internal static class PlaylistsEndpoints
     private static Ok<PlaylistResponse> Answer(HttpContext context, PlaylistDetails playlist)
     {
         Revisions.SetETag(context, playlist.Revision);
-        return TypedResults.Ok(PlaylistResponse.From(playlist));
+        return TypedResults.Ok(PlaylistResponse.From(playlist, context.Request.PathBase));
     }
 
     private static Results<Ok<PlaylistResponse>, ProblemHttpResult> Result(HttpContext context, PlaylistOutcome outcome) =>
@@ -379,7 +387,7 @@ internal static class PlaylistsEndpoints
     private static ProblemHttpResult Refusal(HttpContext context, PlaylistOutcome outcome) =>
         outcome switch
         {
-            PlaylistOutcome.Conflict conflict => Revisions.Conflict(context, PlaylistResponse.From(conflict.Current)),
+            PlaylistOutcome.Conflict conflict => Revisions.Conflict(context, PlaylistResponse.From(conflict.Current, context.Request.PathBase)),
             PlaylistOutcome.Invalid invalid => ApiProblem.ValidationFailed(context, invalid.Errors),
             PlaylistOutcome.NotFound => NoSuchPlaylist(context),
             PlaylistOutcome.NoSuchSong => NoSuchSong(context),
@@ -388,19 +396,19 @@ internal static class PlaylistsEndpoints
                 StatusCodes.Status409Conflict,
                 AlreadyOnPlaylistCode,
                 "This Song is on the Playlist already.",
-                [new("current", PlaylistResponse.From(already.Current))]),
+                [new("current", PlaylistResponse.From(already.Current, context.Request.PathBase))]),
             PlaylistOutcome.Full full => ApiProblem.For(
                 context,
                 StatusCodes.Status409Conflict,
                 FullCode,
                 string.Create(CultureInfo.InvariantCulture, $"A Playlist holds at most {PlaylistRules.MaximumSongCount:N0} Songs."),
-                [new("current", PlaylistResponse.From(full.Current))]),
+                [new("current", PlaylistResponse.From(full.Current, context.Request.PathBase))]),
             PlaylistOutcome.OrderMismatch mismatch => ApiProblem.For(
                 context,
                 StatusCodes.Status409Conflict,
                 OrderMismatchCode,
                 "The new order must list every Song on the Playlist exactly once.",
-                [new("current", PlaylistResponse.From(mismatch.Current))]),
+                [new("current", PlaylistResponse.From(mismatch.Current, context.Request.PathBase))]),
             _ => throw new InvalidOperationException("Unknown Playlist outcome."),
         };
 }
@@ -408,8 +416,12 @@ internal static class PlaylistsEndpoints
 /// <summary>A create: the title, read as raw JSON so a missing field and a wrong type can be told apart.</summary>
 internal sealed record PlaylistCreateRequest(JsonElement Title);
 
-/// <summary>An edit, each field read as raw JSON, so a missing field, null, and a wrong type can be told apart.</summary>
-internal sealed record PlaylistRequest(JsonElement Title, JsonElement Description);
+/// <summary>
+/// An edit, each field read as raw JSON, so a missing field, null, and a wrong type can be told
+/// apart. <c>artworkAssetId</c> is the asset to show as the Playlist's artwork, or null for none;
+/// <c>artworkCrop</c> is its square crop, or null for the centred square.
+/// </summary>
+internal sealed record PlaylistRequest(JsonElement Title, JsonElement Description, JsonElement ArtworkAssetId, JsonElement ArtworkCrop);
 
 /// <summary>An add: the Song's ID or shortcode, read as raw JSON.</summary>
 internal sealed record PlaylistSongRequest(JsonElement SongId);
@@ -417,10 +429,19 @@ internal sealed record PlaylistSongRequest(JsonElement SongId);
 /// <summary>A reorder: every Song on the Playlist, by ID or shortcode, in the new order, read as raw JSON.</summary>
 internal sealed record PlaylistOrderRequest(JsonElement SongIds);
 
-/// <summary>A Playlist as the list shows it.</summary>
-internal sealed record PlaylistSummaryResponse(Guid Id, string Title, string? Description, int SongCount, DateTime CreatedAt, DateTime UpdatedAt, int Revision)
+/// <summary>A Playlist as the list shows it; <c>artwork</c> is its own artwork, or null (never its Songs').</summary>
+internal sealed record PlaylistSummaryResponse(
+    Guid Id,
+    string Title,
+    string? Description,
+    int SongCount,
+    DateTime CreatedAt,
+    DateTime UpdatedAt,
+    int Revision,
+    AttachedArtworkResponse? Artwork)
 {
-    public static PlaylistSummaryResponse From(PlaylistSummary summary)
+    /// <summary>The Playlist as the list shows it; <paramref name="pathBase"/> starts its artwork's URLs.</summary>
+    public static PlaylistSummaryResponse From(PlaylistSummary summary, PathString pathBase)
     {
         ArgumentNullException.ThrowIfNull(summary);
 
@@ -431,11 +452,12 @@ internal sealed record PlaylistSummaryResponse(Guid Id, string Title, string? De
             summary.SongCount,
             summary.CreatedAt.UtcDateTime,
             summary.UpdatedAt.UtcDateTime,
-            summary.Revision);
+            summary.Revision,
+            summary.Artwork is { } artwork ? AttachedArtworkResponse.From(artwork, pathBase) : null);
     }
 }
 
-/// <summary>A Playlist as its page shows it: its fields and every Song on it, in order.</summary>
+/// <summary>A Playlist as its page shows it: its fields, every Song on it, in order, and its own artwork.</summary>
 internal sealed record PlaylistResponse(
     Guid Id,
     string Title,
@@ -444,13 +466,15 @@ internal sealed record PlaylistResponse(
     DateTime CreatedAt,
     DateTime UpdatedAt,
     int Revision,
-    PlaylistSongResponse[] Songs)
+    PlaylistSongResponse[] Songs,
+    AttachedArtworkResponse? Artwork)
 {
-    public static PlaylistResponse From(PlaylistDetails details)
+    /// <summary>The Playlist as its page shows it; <paramref name="pathBase"/> starts its artwork's URLs.</summary>
+    public static PlaylistResponse From(PlaylistDetails details, PathString pathBase)
     {
         ArgumentNullException.ThrowIfNull(details);
 
-        var summary = PlaylistSummaryResponse.From(details.Summary);
+        var summary = PlaylistSummaryResponse.From(details.Summary, pathBase);
         return new(
             summary.Id,
             summary.Title,
@@ -465,7 +489,8 @@ internal sealed record PlaylistResponse(
                 song.Title,
                 song.PrimaryArtist is { } artist ? new PlaylistSongArtistResponse(artist.Id, artist.Name) : null,
                 new PlaylistSongStateResponse(song.State.Id, song.State.Name, song.State.Colour),
-                song.HasSelectedGeneration))]);
+                song.HasSelectedGeneration))],
+            summary.Artwork);
     }
 }
 
@@ -487,10 +512,10 @@ internal sealed record PlaylistSongStateResponse(Guid Id, string Name, string Co
 /// <summary>A page of Playlists.</summary>
 internal sealed record PlaylistListResponse(PlaylistSummaryResponse[] Items, int Page, int PageSize, int Total)
 {
-    public static PlaylistListResponse From(PlaylistPage page)
+    public static PlaylistListResponse From(PlaylistPage page, PathString pathBase)
     {
         ArgumentNullException.ThrowIfNull(page);
 
-        return new([.. page.Items.Select(PlaylistSummaryResponse.From)], page.Page, page.PageSize, page.Total);
+        return new([.. page.Items.Select(summary => PlaylistSummaryResponse.From(summary, pathBase))], page.Page, page.PageSize, page.Total);
     }
 }
