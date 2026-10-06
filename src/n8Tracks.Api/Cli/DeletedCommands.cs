@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using n8Tracks.Api.Configuration;
 using n8Tracks.Api.DependencyInjection;
@@ -45,7 +46,16 @@ internal static class DeletedCommands
     private const string ListUsage = "Usage: n8tracks list-deleted [--all] [--json]";
     private const string RestoreUsage = "Usage: n8tracks restore-deleted <shortcode or group ID> [--json]";
 
-    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
+    /// <summary>
+    /// The <c>--json</c> output. It goes to a terminal or a pipe, never into a web page, so it uses the
+    /// relaxed encoder: a '+' in an offset and letters outside ASCII print as themselves rather than
+    /// as <c>\u</c> escapes, while quotes, backslashes, and control characters are still escaped.
+    /// </summary>
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
+    {
+        WriteIndented = true,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
 
     /// <summary>Whether the app binary was asked for <c>list-deleted</c>: it is the first argument.</summary>
     public static bool IsListRequested(string[] args)

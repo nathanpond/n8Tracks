@@ -80,6 +80,12 @@ public sealed class DeletedCommandsTests
         Assert.Equal("n8-2", deletedSong.GetProperty("shortcode").GetString());
         Assert.Equal("Song n8-2 (Gone Song)", deletedSong.GetProperty("label").GetString());
         Assert.Equal(TimeZoneInfo.ConvertTime(groups[0].DeletedUtc, zone).ToString("yyyy-MM-dd'T'HH:mm:sszzz", CultureInfo.InvariantCulture), deletedSong.GetProperty("deleted").GetString());
+
+        // Readable as printed (#304): the offset's '+' is itself, and nothing is \u-escaped.
+        var deletedText = TimeZoneInfo.ConvertTime(groups[0].DeletedUtc, zone).ToString("yyyy-MM-dd'T'HH:mm:sszzz", CultureInfo.InvariantCulture);
+        Assert.Contains('+', deletedText);
+        Assert.Contains($"\"deleted\": \"{deletedText}\"", json.Output, StringComparison.Ordinal);
+        Assert.DoesNotContain("\\u", json.Output, StringComparison.Ordinal);
         Assert.True(deletedSong.TryGetProperty("prunes", out _));
         var contents = deletedSong.GetProperty("contents").EnumerateArray().ToDictionary(static count => count.GetProperty("recordType").GetString()!, static count => count.GetProperty("count").GetInt32());
         Assert.Equal(1, contents[RetainedRecordTypes.Song]);
@@ -166,6 +172,9 @@ public sealed class DeletedCommandsTests
         Assert.True(run.ExitCode == 0, run.Error);
         var report = JsonDocument.Parse(run.Output).RootElement;
         Assert.Equal("n8-1-v2", report.GetProperty("restored").GetProperty("shortcode").GetString());
+        Assert.Contains($"\"deleted\": \"{report.GetProperty("restored").GetProperty("deleted").GetString()}\"", run.Output, StringComparison.Ordinal);
+        Assert.Contains("+00:00\"", run.Output, StringComparison.Ordinal);
+        Assert.DoesNotContain("\\u", run.Output, StringComparison.Ordinal);
         Assert.Contains(report.GetProperty("putBack").EnumerateArray(), static count => count.GetProperty("recordType").GetString() == RetainedRecordTypes.Version && count.GetProperty("count").GetInt32() == 1);
         Assert.Equal(["1", "2", "3"], await VersionNumbersAsync(client, "n8-1"));
         var version = await SetupApi.JsonAsync(await client.GetAsync(new Uri("/api/v1/versions/n8-1-v2", UriKind.Relative)));
