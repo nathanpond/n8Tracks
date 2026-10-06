@@ -118,6 +118,12 @@ public sealed class ReferenceParameterGuardTests
         // 409 revision_conflict: the Version was found, and a revision it is not at deletes nothing.
         ["DELETE /api/v1/versions/{reference}"] = static (c, _, version) => c.SendAsync(HttpMethod.Delete, $"versions/{version}", revision: 999),
         ["GET /api/v1/resolve/{reference}"] = static (c, _, version) => c.SendAsync(HttpMethod.Get, $"resolve/{version}"),
+        ["GET /api/v1/versions/{reference}/generations"] = static (c, _, version) => c.SendAsync(HttpMethod.Get, $"versions/{version}/generations"),
+        ["GET /api/v1/songs/{reference}/generations"] = static (c, song, _) => c.SendAsync(HttpMethod.Get, $"songs/{song}/generations"),
+
+        // A Generation by its ID, or by its shortcode (the Version shortcode's Generation 1).
+        ["GET /api/v1/generations/{reference}"] = static (c, _, version) => c.SendAsync(HttpMethod.Get, $"generations/{c.GenerationOf(version)}"),
+        ["GET /api/v1/generations/{reference}/provider-record"] = static (c, _, version) => c.SendAsync(HttpMethod.Get, $"generations/{c.GenerationOf(version)}/provider-record"),
 
         // 200: the Song is not on the Playlist, so nothing changes.
         ["DELETE /api/v1/playlists/{id:guid}/songs/{reference}"] = static async (c, song, _) =>
@@ -184,6 +190,9 @@ public sealed class ReferenceParameterGuardTests
             Assert.Equal(HttpStatusCode.Created, album.StatusCode);
             context.AlbumId = (await SetupApi.JsonAsync(album)).GetProperty("id").GetString()!;
         }
+
+        // Version 1's Generation 1, with a clip: the Generation endpoints read it (its Version is frozen).
+        context.GenerationId = (await SongApi.AttachGenerationAsync(factory, versionId, Generations.Clips.Minimal("referenced-clip"))).Generation.Id.ToString();
 
         // Every endpoint that binds a reference has a call here, and every call is to such an endpoint.
         var bound = ApiEndpoints(factory).Where(static endpoint => Handler(endpoint)?.GetParameters()
@@ -300,6 +309,11 @@ public sealed class ReferenceParameterGuardTests
         public string PlaylistId { get; set; } = string.Empty;
 
         public string AlbumId { get; set; } = string.Empty;
+
+        public string GenerationId { get; set; } = string.Empty;
+
+        /// <summary>The Generation a call names: by ID when given the Version's ID, else Generation 1 of the Version shortcode given.</summary>
+        public string GenerationOf(string version) => version == versionId ? GenerationId : version + "-G1";
 
         public async Task<HttpResponseMessage> SendAsync(HttpMethod method, string path, string? json = null, int? revision = null)
         {

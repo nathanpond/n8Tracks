@@ -1,6 +1,7 @@
 using n8Tracks.Api.Configuration;
 using n8Tracks.Api.DependencyInjection;
 using n8Tracks.Application.Configuration;
+using n8Tracks.Application.Generations;
 using n8Tracks.Application.Persistence;
 using n8Tracks.Application.References;
 using n8Tracks.Application.Songs;
@@ -8,10 +9,12 @@ using n8Tracks.Application.Songs;
 namespace n8Tracks.Api.Cli;
 
 /// <summary>
-/// <c>n8tracks seed-generation &lt;version shortcode&gt;</c>: a test-only command that attaches a new
-/// Generation to a Version, which freezes its lyrics and styles, through the same application
-/// service the tests use (<see cref="GenerationService"/>). There is no public endpoint for it until
-/// Generations arrive in M4; this is how the end-to-end tests and the Demo get a frozen Version.
+/// <c>n8tracks seed-generation &lt;version shortcode&gt; [&lt;clip JSON file&gt;]</c>: a test-only command that
+/// attaches a new Generation to a Version, which freezes its lyrics and styles, through the one
+/// application method that creates Generations (<see cref="GenerationService.AttachAsync"/>). With a
+/// file holding one Suno clip object (such as a fixture's), the Generation keeps that clip's fields
+/// and the file's text as its provider record; without one, it has no Suno data. This is how the
+/// end-to-end tests and the Demos get Generations without Suno.
 /// <para>
 /// It exists only where <c>ASPNETCORE_ENVIRONMENT</c> is <c>Development</c> or
 /// <see cref="EnvironmentOptionsLoader.EnableTestSeeding"/> is <c>1</c> (the end-to-end containers set
@@ -20,14 +23,14 @@ namespace n8Tracks.Api.Cli;
 /// creates the database or applies a migration. Each run adds another Generation, archived Versions
 /// included. On success it writes the new Generation's shortcode, and nothing else, to standard
 /// output; messages go to standard error. Exit code 0 on success, 1 for every refusal (an unknown
-/// shortcode included).
+/// shortcode, an unreadable file, an invalid clip, and a Suno ID a live Generation holds included).
 /// </para>
 /// </summary>
 internal static class SeedGenerationCommand
 {
     public const string Name = "seed-generation";
 
-    private const string Usage = "Usage: n8tracks seed-generation <version shortcode>   (test instances only)";
+    private const string Usage = "Usage: n8tracks seed-generation <version shortcode> [<clip JSON file>]   (test instances only)";
 
     /// <summary>Whether the app binary was asked for this command: it is the first argument.</summary>
     public static bool IsRequested(string[] args)
@@ -73,11 +76,26 @@ internal static class SeedGenerationCommand
             return 1;
         }
 
-        if (args is not [var shortcode] || CatalogReference.Parse(shortcode).Kind != ReferenceKind.Version)
+        if (args.Length is not (1 or 2) || args[0] is not { } shortcode || CatalogReference.Parse(shortcode).Kind != ReferenceKind.Version)
         {
-            error.WriteLine("Give one Version shortcode, such as n8-12-v1.1.");
+            error.WriteLine("Give one Version shortcode, such as n8-12-v1.1, and optionally a file holding one Suno clip object.");
             error.WriteLine(Usage);
             return 1;
+        }
+
+        string? clip = null;
+        if (args is [_, var clipFile])
+        {
+            try
+            {
+                // Read as UTF-8; the text is kept exactly as read.
+                clip = await File.ReadAllTextAsync(clipFile, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+            {
+                error.WriteLine($"The clip file cannot be read ({exception.GetType().Name}). Nothing was changed.");
+                return 1;
+            }
         }
 
         N8TracksOptions options;
@@ -103,7 +121,7 @@ internal static class SeedGenerationCommand
                 var scope = services.CreateAsyncScope();
                 await using (scope.ConfigureAwait(false))
                 {
-                    return await SeedAsync(scope.ServiceProvider, shortcode, output, error, cancellationToken).ConfigureAwait(false);
+                    return await SeedAsync(scope.ServiceProvider, shortcode, clip, output, error, cancellationToken).ConfigureAwait(false);
                 }
             }
             catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
@@ -114,7 +132,7 @@ internal static class SeedGenerationCommand
         }
     }
 
-    private static async Task<int> SeedAsync(IServiceProvider services, string shortcode, TextWriter output, TextWriter error, CancellationToken cancellationToken)
+    private static async Task<int> SeedAsync(IServiceProvider services, string shortcode, string? clip, TextWriter output, TextWriter error, CancellationToken cancellationToken)
     {
         var database = services.GetRequiredService<IDatabaseSchemaCheck>();
         switch (await database.CheckWithoutChangingAsync(cancellationToken).ConfigureAwait(false))
@@ -133,7 +151,7 @@ internal static class SeedGenerationCommand
                 return 1;
         }
 
-        switch (await services.GetRequiredService<GenerationService>().AttachAsync(shortcode, cancellationToken).ConfigureAwait(false))
+        switch (await services.GetRequiredService<GenerationService>().AttachAsync(shortcode, clip, null, cancellationToken).ConfigureAwait(false))
         {
             case GenerationAttachOutcome.Attached attached:
                 output.WriteLine(attached.Generation.Shortcode);
@@ -142,6 +160,14 @@ internal static class SeedGenerationCommand
 
             case GenerationAttachOutcome.VersionNotFound:
                 error.WriteLine($"There is no Version {shortcode}. Nothing was changed.");
+                return 1;
+
+            case GenerationAttachOutcome.InvalidClip invalid:
+                error.WriteLine($"{GenerationService.InvalidClipCode}: {invalid.Reason} Nothing was changed.");
+                return 1;
+
+            case GenerationAttachOutcome.SunoIdExists exists:
+                error.WriteLine($"{GenerationService.SunoIdExistsCode}: Generation {exists.Existing.Shortcode} already holds that Suno ID. Nothing was changed.");
                 return 1;
 
             default:

@@ -41,6 +41,8 @@ public sealed class LogRedactionGuardTests
     private const string PasswordSentinel = "sentinel-password-3e55";
     private const string LyricsSentinel = "sentinel-lyrics-88f1";
     private const string RawPayloadSentinel = "sentinel-raw-payload-d2c7";
+    private const string RawClipSentinel = "sentinel-raw-clip-7b19";
+    private const string StyleTagsSentinel = "sentinel-style-tags-c3d0";
     private const string NestedSentinel = "sentinel-nested-api-key-64ab";
     private const string ScopeSentinel = "sentinel-scope-style-1f90";
     private const string TitleSentinel = "sentinel-title-visible-e3b4";
@@ -59,6 +61,8 @@ public sealed class LogRedactionGuardTests
         PasswordSentinel,
         LyricsSentinel,
         RawPayloadSentinel,
+        RawClipSentinel,
+        StyleTagsSentinel,
         NestedSentinel,
         ScopeSentinel,
         SetupPasswordSentinel,
@@ -464,6 +468,43 @@ public sealed class LogRedactionGuardTests
         Assert.DoesNotContain(ToolLyricsSentinel, captured, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A Generation's raw clip at Debug (#117): attached from a clip whose prompt and style text hold
+    /// sentinels, attached again (refused), refused as invalid with the sentinel in it, and read back
+    /// through every Generation endpoint, the provider record included. The requests reach the log;
+    /// no clip content does.
+    /// </summary>
+    [Fact]
+    public async Task ARawClipNeverReachesTheLog()
+    {
+        const string PromptSentinel = "sentinel-clip-prompt-0f6e";
+        const string InvalidSentinel = "sentinel-invalid-clip-a5b2";
+
+        using var factory = new LoggingApiFactory("Debug");
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        await Songs.SongApi.CreateAsync(client, "Clipped");
+        var raw = Generations.Clips.Handwritten("logged-clip", PromptSentinel);
+        await Songs.SongApi.AttachGenerationAsync(factory, "n8-1-v1", raw);
+        Assert.IsType<n8Tracks.Application.Generations.GenerationAttachOutcome.SunoIdExists>(await Songs.SongApi.AttachAsync(factory, "n8-1-v1", raw));
+        Assert.IsType<n8Tracks.Application.Generations.GenerationAttachOutcome.InvalidClip>(
+            await Songs.SongApi.AttachAsync(factory, "n8-1-v1", "{\"title\":\"" + InvalidSentinel + "\",\"id\":"));
+
+        foreach (var path in new[] { "generations/n8-1-v1-g1/provider-record", "generations/n8-1-v1-g1", "versions/n8-1-v1/generations", "songs/n8-1/generations" })
+        {
+            using var response = await client.GetAsync(new Uri("/api/v1/" + path, UriKind.Relative));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+
+        // The provider-record answer itself held the prompt: the request was logged, its body was not.
+        var captured = factory.CapturedText;
+        Assert.Contains("/api/v1/generations/n8-1-v1-g1/provider-record", captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(PromptSentinel, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(InvalidSentinel, captured, StringComparison.Ordinal);
+        Assert.All(
+            ["rawClip", "raw_clip", "clipJson", "rawClipJson", "providerRecord", "styleTags", "style_tags", "payload"],
+            name => Assert.True(n8Tracks.Infrastructure.Logging.RedactionPolicy.IsSensitive(name), name));
+    }
+
     private static HttpRequestMessage Antiforgery(HttpRequestMessage request)
     {
         request.Headers.Add(SessionApi.AntiforgeryHeader, "1");
@@ -540,6 +581,12 @@ public sealed class LogRedactionGuardTests
                 new ProbeSong(TitleSentinel, PasswordSentinel, LyricsSentinel, RawPayloadSentinel));
 
             logger.LogInformation("Probe logged the body {@Body}, headers {@Headers}, and query {@Query}", body, headers, query);
+
+            // A Generation's raw clip and Suno's style text, under the names they travel by (#117).
+            logger.LogInformation(
+                "Probe logged a Generation {@Generation} and its {ProviderRecord}",
+                new { SunoTitle = "a clip", RawClip = RawClipSentinel, StyleTags = StyleTagsSentinel },
+                RawClipSentinel);
 
             logger.LogInformation(
                 "Probe logged nested {@Outer} and a named value {AccessToken}",

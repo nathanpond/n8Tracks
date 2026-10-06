@@ -145,8 +145,28 @@ internal static class RetainedTypes
         AfterRestoreAsync = static (row, cancellationToken) => VersionRestore.RemoveAutoCreatedBlankAsync(row, cancellationToken),
     };
 
-    /// <summary>A Generation, deleted with its Version. In V1 it is the minimal record (#69); its own deletion rules are M4's.</summary>
-    public static readonly RetainedType Generation = new(RetainedRecordTypes.Generation, "generations", "Generation", ShapeVersion: 1);
+    /// <summary>
+    /// A Generation, deleted with its Version or Song (its own deletion is a later story's). Shape 2
+    /// (#117) added its states, revision, Suno ID, and the clip's normalized fields; a shape-1 record
+    /// (the minimal record of #69, which had no Suno data) restores as an active, present Generation
+    /// with none. Its provider record and event link go with it, as their own types.
+    /// </summary>
+    public static readonly RetainedType Generation = new(RetainedRecordTypes.Generation, "generations", "Generation", ShapeVersion: 2)
+    {
+        Upgraders = new Dictionary<int, Func<JsonObject, JsonObject>> { [1] = GenerationShape1To2 }.ToFrozenDictionary(),
+    };
+
+    /// <summary>A Generation's raw clip, deleted (and restored) with its Generation, which it cascades from.</summary>
+    public static readonly RetainedType ProviderRecord = new(RetainedRecordTypes.ProviderRecord, "provider_records", "provider record", ShapeVersion: 1);
+
+    /// <summary>
+    /// A Generation's link to its Generation Event, deleted with its Generation. Events are never
+    /// deleted today; should one be gone at restore, the Generation comes back without its link.
+    /// </summary>
+    public static readonly RetainedType GenerationEventLink = new(RetainedRecordTypes.GenerationEventLink, "generation_event_links", "Generation Event link", ShapeVersion: 1)
+    {
+        Optional = true,
+    };
 
     /// <summary>
     /// A Song, deleted with its Versions, Generations, and everything of its own (#102). Its shortcode
@@ -294,11 +314,32 @@ internal static class RetainedTypes
     /// <summary>Every built-in type.</summary>
     public static IReadOnlyList<RetainedType> BuiltIn { get; } =
     [
-        EditorSnapshot, ArtworkAttachment, Version, Generation,
+        EditorSnapshot, ArtworkAttachment, Version, Generation, ProviderRecord, GenerationEventLink,
         Song, UsedVersionNumber, SongLink, SongGenre, SongTag, SongCredit, AlbumTrack, PlaylistEntry, SongRelationship,
         Album, AlbumLink, Playlist,
         Artist, ArtistAlias, ArtistLink, AlbumArtist,
     ];
+
+    /// <summary>
+    /// A Generation retained before #117 (shape 1: id, version_id, song_id, ordinal, created_utc) as
+    /// shape 2: active, present, at revision 1, with no Suno data.
+    /// </summary>
+    internal static JsonObject GenerationShape1To2(JsonObject document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+
+        document["state"] = "active";
+        document["remote_state"] = "present";
+        document["revision"] = JsonNode.Parse("1");
+        foreach (var column in (string[])
+            ["suno_id", "provider_status", "suno_title", "duration_seconds", "model_version", "model_name", "model_label", "style_tags",
+             "minimum_bpm", "maximum_bpm", "average_bpm", "musical_key", "suno_created_utc", "audio_url", "image_url", "workspace_id", "batch_index"])
+        {
+            document[column] = null;
+        }
+
+        return document;
+    }
 }
 
 /// <summary>The registered retained types, checked once when the first is needed.</summary>

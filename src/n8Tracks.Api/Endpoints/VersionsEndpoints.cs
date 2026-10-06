@@ -708,7 +708,7 @@ internal static class VersionsEndpoints
     /// number, and when, when it names a Version deleted on its own within its retention period;
     /// otherwise <c>not_found</c>.
     /// </summary>
-    private static async Task<ProblemHttpResult> MissingVersionAsync(
+    internal static async Task<ProblemHttpResult> MissingVersionAsync(
         HttpContext context,
         CatalogReference reference,
         VersionDeletionService deletions,

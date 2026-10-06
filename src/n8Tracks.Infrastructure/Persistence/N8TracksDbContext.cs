@@ -60,6 +60,12 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
 
     public DbSet<GenerationRecord> Generations => Set<GenerationRecord>();
 
+    public DbSet<ProviderRecordRecord> ProviderRecords => Set<ProviderRecordRecord>();
+
+    public DbSet<GenerationEventRecord> GenerationEvents => Set<GenerationEventRecord>();
+
+    public DbSet<GenerationEventLinkRecord> GenerationEventLinks => Set<GenerationEventLinkRecord>();
+
     public DbSet<GenreRecord> Genres => Set<GenreRecord>();
 
     public DbSet<SongGenreRecord> SongGenres => Set<SongGenreRecord>();
@@ -406,11 +412,24 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
             generation.ToTable("generations", static table =>
             {
                 table.HasCheckConstraint("ck_generations_ordinal", "ordinal >= 1");
+                table.HasCheckConstraint("ck_generations_state", $"state IN ('{GenerationRecord.Active}', '{GenerationRecord.Archived}')");
+                table.HasCheckConstraint(
+                    "ck_generations_remote_state",
+                    $"remote_state IN ('{GenerationRecord.Present}', '{GenerationRecord.Trashed}', '{GenerationRecord.Missing}')");
+                table.HasCheckConstraint("ck_generations_revision", "revision >= 1");
+                table.HasCheckConstraint("ck_generations_suno_id", "suno_id IS NULL OR length(suno_id) > 0");
                 table.HasTrigger(GenerationFixedTrigger);
             });
             generation.HasKey(record => record.Id);
             generation.HasIndex(record => new { record.VersionId, record.Ordinal }).IsUnique();
             generation.HasIndex(record => record.SongId);
+            generation.Property(record => record.State).HasDefaultValue(GenerationRecord.Active);
+            generation.Property(record => record.RemoteState).HasDefaultValue(GenerationRecord.Present);
+            generation.Property(record => record.Revision).HasDefaultValue(1);
+
+            // A Suno clip appears in the catalog at most once: unique among the live Generations that
+            // have a Suno ID (deleted ones are in retention, not in this table).
+            generation.HasIndex(record => record.SunoId).IsUnique().HasFilter("suno_id IS NOT NULL");
 
             // Nothing removes a Version or a Song with Generations by accident: deleting them is M3's.
             generation.HasOne<VersionRecord>()
@@ -420,6 +439,50 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
             generation.HasOne<SongRecord>()
                 .WithMany()
                 .HasForeignKey(record => record.SongId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<ProviderRecordRecord>(record =>
+        {
+            record.ToTable("provider_records", static table =>
+            {
+                table.HasCheckConstraint("ck_provider_records_kind", $"kind IN ('{ProviderRecordRecord.ClipKind}')");
+                table.HasCheckConstraint("ck_provider_records_payload_json", "json_valid(payload) AND json_type(payload) = 'object'");
+            });
+            record.HasKey(provider => provider.GenerationId);
+
+            // The raw clip goes with its Generation (into retention with it, as a registered type).
+            record.HasOne<GenerationRecord>()
+                .WithOne()
+                .HasForeignKey<ProviderRecordRecord>(provider => provider.GenerationId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<GenerationEventRecord>(generationEvent =>
+        {
+            generationEvent.ToTable("generation_events", static table =>
+            {
+                table.HasCheckConstraint("ck_generation_events_source", "source IN ('observed', 'inferred', 'user')");
+                table.HasCheckConstraint("ck_generation_events_confidence", "confidence IN ('high', 'medium')");
+                table.HasCheckConstraint("ck_generation_events_batch_size", "batch_size >= 1");
+            });
+            generationEvent.HasKey(record => record.Id);
+        });
+
+        modelBuilder.Entity<GenerationEventLinkRecord>(link =>
+        {
+            link.ToTable("generation_event_links");
+
+            // A Generation has at most one event; an event has any number of Generations.
+            link.HasKey(record => record.GenerationId);
+            link.HasIndex(record => record.EventId);
+            link.HasOne<GenerationRecord>()
+                .WithOne()
+                .HasForeignKey<GenerationEventLinkRecord>(record => record.GenerationId)
+                .OnDelete(DeleteBehavior.Cascade);
+            link.HasOne<GenerationEventRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.EventId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
 

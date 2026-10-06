@@ -314,6 +314,7 @@ public sealed class Program
             app.MapArtwork();
             app.MapWorkflowStates();
             app.MapVersions();
+            app.MapGenerations();
             app.MapResolve();
             app.MapSuno();
             app.MapBackups();

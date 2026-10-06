@@ -61,6 +61,15 @@ public static class RedactionPolicy
         "rawpayload",
         "providerpayload",
 
+        // A Generation's raw clip as Suno returned it (provider_records), under the names it travels
+        // by: it holds prompts, lyrics, and style text.
+        "providerrecord",
+        "rawclip",
+        "clipjson",
+
+        // Suno's style description of a clip (a Generation's metadata.tags): style text.
+        "styletags",
+
         // A job's payload: whatever the code that enqueued it passed, which may be any of the above.
         "payload",
 

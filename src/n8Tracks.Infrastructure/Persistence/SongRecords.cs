@@ -147,11 +147,19 @@ public sealed class VersionRecord
 }
 
 /// <summary>
-/// One row of <c>generations</c>: a Generation attached to a Version. Only its identity, owner, and
-/// ordinal for now; the rest arrives with Generations in M4. Unique on the Version and the ordinal.
+/// One row of <c>generations</c>: a Generation attached to a Version, with its states and what Suno
+/// reported about its clip, normalized (the raw clip is its <see cref="ProviderRecordRecord"/>). Unique
+/// on the Version and the ordinal, and on the Suno ID among the rows that have one: this table holds
+/// only live Generations (deleted ones are moved into retention), so that is "among live Generations".
 /// </summary>
 public sealed class GenerationRecord
 {
+    public const string Active = "active";
+    public const string Archived = "archived";
+    public const string Present = "present";
+    public const string Trashed = "trashed";
+    public const string Missing = "missing";
+
     public required Guid Id { get; set; }
 
     public required Guid VersionId { get; set; }
@@ -163,6 +171,118 @@ public sealed class GenerationRecord
 
     /// <summary>UTC, ISO 8601, millisecond precision: when it was attached.</summary>
     public required string CreatedUtc { get; set; }
+
+    /// <summary><see cref="Active"/> or <see cref="Archived"/>: the user-facing state.</summary>
+    public string State { get; set; } = Active;
+
+    /// <summary><see cref="Present"/>, <see cref="Trashed"/>, or <see cref="Missing"/>: whether Suno still lists the clip.</summary>
+    public string RemoteState { get; set; } = Present;
+
+    /// <summary>Starts at 1; raised by rating, state, and comment changes.</summary>
+    public int Revision { get; set; } = 1;
+
+    /// <summary>The clip's Suno ID; null for a Generation with no Suno data. Unique where set.</summary>
+    public string? SunoId { get; set; }
+
+    /// <summary>Suno's status for the clip, stored as reported.</summary>
+    public string? ProviderStatus { get; set; }
+
+    public string? SunoTitle { get; set; }
+
+    public double? DurationSeconds { get; set; }
+
+    /// <summary>Suno's <c>major_model_version</c>.</summary>
+    public string? ModelVersion { get; set; }
+
+    /// <summary>Suno's <c>model_name</c>.</summary>
+    public string? ModelName { get; set; }
+
+    /// <summary>The model label Suno shows (<c>metadata.model_badges.songrow.display_name</c>).</summary>
+    public string? ModelLabel { get; set; }
+
+    /// <summary>Suno's style description of the clip (<c>metadata.tags</c>): style text, never logged.</summary>
+    public string? StyleTags { get; set; }
+
+    public double? MinimumBpm { get; set; }
+
+    public double? MaximumBpm { get; set; }
+
+    public double? AverageBpm { get; set; }
+
+    /// <summary>Suno's <c>metadata.key</c>, as returned.</summary>
+    public string? MusicalKey { get; set; }
+
+    /// <summary>UTC, ISO 8601, millisecond precision: Suno's <c>created_at</c>.</summary>
+    public string? SunoCreatedUtc { get; set; }
+
+    public string? AudioUrl { get; set; }
+
+    public string? ImageUrl { get; set; }
+
+    /// <summary>Suno's workspace ID (<c>project.id</c>).</summary>
+    public string? WorkspaceId { get; set; }
+
+    public int? BatchIndex { get; set; }
+}
+
+/// <summary>
+/// One row of <c>provider_records</c>: the latest raw clip Suno reported for a Generation, kept whole
+/// as the text received (never re-serialised; earlier payloads are replaced, not kept). Goes with its
+/// Generation, into retention too. Never logged, and answered only by the session-only provider-record
+/// endpoint.
+/// </summary>
+public sealed class ProviderRecordRecord
+{
+    public const string ClipKind = "clip";
+
+    public required Guid GenerationId { get; set; }
+
+    public required string SunoId { get; set; }
+
+    /// <summary>What the payload is: <see cref="ClipKind"/>.</summary>
+    public required string Kind { get; set; }
+
+    /// <summary>The raw JSON object as received, UTF-8, whitespace and all.</summary>
+    public required string Payload { get; set; }
+
+    /// <summary>UTC, ISO 8601, millisecond precision: when n8Tracks received it.</summary>
+    public required string CapturedUtc { get; set; }
+
+    /// <summary>The Suno export it arrived in, when it came through one (exports arrive with a later story).</summary>
+    public Guid? ExportId { get; set; }
+}
+
+/// <summary>
+/// One row of <c>generation_events</c>: one Create on Suno, which the Generations linked to it came
+/// from. Internal: never answered or shown.
+/// </summary>
+public sealed class GenerationEventRecord
+{
+    public required Guid Id { get; set; }
+
+    public string? ProviderRequestId { get; set; }
+
+    /// <summary><c>observed</c>, <c>inferred</c>, or <c>user</c>.</summary>
+    public required string Source { get; set; }
+
+    /// <summary><c>high</c> or <c>medium</c>.</summary>
+    public required string Confidence { get; set; }
+
+    public required int BatchSize { get; set; }
+
+    /// <summary>UTC, ISO 8601, millisecond precision.</summary>
+    public required string OccurredUtc { get; set; }
+}
+
+/// <summary>
+/// One row of <c>generation_event_links</c>: a Generation's Generation Event (a Generation has at most
+/// one). Goes with its Generation; the event stays.
+/// </summary>
+public sealed class GenerationEventLinkRecord
+{
+    public required Guid GenerationId { get; set; }
+
+    public required Guid EventId { get; set; }
 }
 
 /// <summary>

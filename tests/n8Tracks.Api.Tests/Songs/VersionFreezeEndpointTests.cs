@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using n8Tracks.Api.Tests.Auth;
 using n8Tracks.Api.Tests.Persistence;
 using n8Tracks.Api.Tests.Setup;
+using n8Tracks.Application.Generations;
 using n8Tracks.Application.Credentials;
 using n8Tracks.Application.Songs;
 
@@ -329,7 +330,7 @@ public sealed class VersionFreezeEndpointTests
         var generations = scope.ServiceProvider.GetRequiredService<GenerationService>();
         foreach (var reference in new[] { "n8-1-v9", "n8-1", "nonsense", null, Guid.CreateVersion7().ToString() })
         {
-            Assert.IsType<GenerationAttachOutcome.VersionNotFound>(await generations.AttachAsync(reference, CancellationToken.None));
+            Assert.IsType<GenerationAttachOutcome.VersionNotFound>(await generations.AttachAsync(reference, null, null, CancellationToken.None));
         }
 
         Assert.Equal("1", TestDatabase.Scalar(factory.DataPath, "SELECT count(*) FROM generations;"));

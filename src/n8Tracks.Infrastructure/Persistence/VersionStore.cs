@@ -290,41 +290,17 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
             return false;
         }
 
-        var record = new GenerationRecord
-        {
-            Id = generation.Id,
-            VersionId = generation.VersionId,
-            SongId = generation.SongId,
-            Ordinal = generation.Ordinal,
-            CreatedUtc = UtcText.From(generation.CreatedUtc),
-        };
+        // Every column the entity holds: its ordinal, states, and what Suno reported about its clip.
+        var record = GenerationRows.ToRecord(generation);
         context.Generations.Add(record);
         await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         context.Entry(record).State = EntityState.Detached;
         return true;
     }
 
-    public async Task<GenerationSummary?> FindGenerationAsync(Guid id, CancellationToken cancellationToken)
-    {
-        var found = await context.Generations.AsNoTracking()
-            .Where(generation => generation.Id == id)
-            .Join(context.Versions, generation => generation.VersionId, version => version.Id, (generation, version) => new { generation, version.Number })
-            .Join(context.Songs, row => row.generation.SongId, song => song.Id, (row, song) => new { row.generation, row.Number, song.ShortcodeNumber })
-            .SingleOrDefaultAsync(cancellationToken)
-            .ConfigureAwait(false);
-
-        return found is null
-            ? null
-            : new GenerationSummary(
-                new Generation(
-                    found.generation.Id,
-                    found.generation.VersionId,
-                    found.generation.SongId,
-                    found.generation.Ordinal,
-                    UtcText.Parse(found.generation.CreatedUtc)),
-                found.ShortcodeNumber,
-                found.Number);
-    }
+    public async Task<GenerationSummary?> FindGenerationAsync(Guid id, CancellationToken cancellationToken) =>
+        (await GenerationRows.SummariesAsync(context, context.Generations.Where(generation => generation.Id == id), cancellationToken).ConfigureAwait(false))
+            .SingleOrDefault();
 
     public async Task<IReadOnlyList<Guid>> GenerationIdsAsync(Guid versionId, CancellationToken cancellationToken) =>
         await context.Generations.AsNoTracking()

@@ -9,8 +9,8 @@ using n8Tracks.Api.Tests.Songs;
 namespace n8Tracks.Api.Tests.Cli;
 
 /// <summary>
-/// <c>n8tracks seed-generation &lt;version shortcode&gt;</c>, the test-only command that attaches a
-/// Generation, run in-process through the app binary's entry point against the database of an app
+/// <c>n8tracks seed-generation &lt;version shortcode&gt; [&lt;clip JSON file&gt;]</c>, the test-only command that attaches a
+/// Generation (with a Suno clip's data when given a file holding one), run in-process through the app binary's entry point against the database of an app
 /// running in the same test, as <c>docker exec</c> runs it in the end-to-end containers.
 /// </summary>
 public sealed class SeedGenerationCommandTests
@@ -105,7 +105,7 @@ public sealed class SeedGenerationCommandTests
     [InlineData]
     [InlineData("n8-1")]
     [InlineData("n8-1-v1-g1")]
-    [InlineData("n8-1-v1", "n8-1-v1")]
+    [InlineData("n8-1-v1", "clip.json", "n8-1-v1")]
     public async Task AnythingButOneVersionShortcodeIsAUsageError(params string[] args)
     {
         using var data = new TemporaryDirectory();
@@ -115,6 +115,48 @@ public sealed class SeedGenerationCommandTests
         Assert.Equal(1, run.ExitCode);
         Assert.Contains("Usage: n8tracks seed-generation", run.Error, StringComparison.Ordinal);
         Assert.Empty(Directory.EnumerateFileSystemEntries(data.Path));
+    }
+
+    [Fact]
+    public async Task GivenAClipFileTheGenerationKeepsTheClipAndItsTextAndRefusalsChangeNothing()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        await SongApi.CreateAsync(client, "Clip");
+        using var files = new TemporaryDirectory();
+        var clip = Path.Combine(files.Path, "clip.json");
+        var raw = Generations.Clips.FixtureClip("feed-v3.completed-clip.response.json");
+        await File.WriteAllTextAsync(clip, raw);
+
+        var run = await RunAsync(factory.DataPath, ["seed-generation", "n8-1-v1", clip], Seeding);
+
+        Assert.Equal(0, run.ExitCode);
+        Assert.Equal("n8-1-v1-g1" + Environment.NewLine, run.Output);
+        var read = await SetupApi.JsonAsync(await client.GetAsync(new Uri("/api/v1/generations/n8-1-v1-g1", UriKind.Relative)));
+        Assert.Equal("00000000-0000-4000-8000-000000000003", read.GetProperty("sunoId").GetString());
+        using (var record = await client.GetAsync(new Uri("/api/v1/generations/n8-1-v1-g1/provider-record", UriKind.Relative)))
+        {
+            Assert.Equal(raw, await record.Content.ReadAsStringAsync());
+        }
+
+        // The same clip again, an invalid clip, and a file that is not there: refused, nothing changed.
+        var invalid = Path.Combine(files.Path, "invalid.json");
+        await File.WriteAllTextAsync(invalid, """{"title":"no id"}""");
+        foreach (var (file, message) in new[]
+        {
+            (clip, "suno_id_exists: Generation n8-1-v1-g1 already holds that Suno ID"),
+            (invalid, "invalid_clip: The clip has no Suno ID"),
+            (Path.Combine(files.Path, "missing.json"), "The clip file cannot be read"),
+        })
+        {
+            var refused = await RunAsync(factory.DataPath, ["seed-generation", "n8-1-v1", file], Seeding);
+            Assert.Equal(1, refused.ExitCode);
+            Assert.Equal(string.Empty, refused.Output);
+            Assert.Contains(message, refused.Error, StringComparison.Ordinal);
+            Assert.DoesNotContain("redacted", refused.Error, StringComparison.Ordinal);
+        }
+
+        Assert.Equal("1", TestDatabase.Scalar(factory.DataPath, "SELECT count(*) FROM generations;"));
     }
 
     [Fact]

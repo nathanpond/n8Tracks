@@ -100,7 +100,7 @@ public readonly record struct CatalogReference
 /// <param name="Id">Its stable ID.</param>
 /// <param name="Shortcode">Its canonical (lower-case) shortcode.</param>
 /// <param name="Status">
-/// <see cref="ReferenceResolver.ActiveStatus"/> or, for a Version, <see cref="ReferenceResolver.ArchivedStatus"/>
+/// <see cref="ReferenceResolver.ActiveStatus"/> or, for a Version or a Generation, <see cref="ReferenceResolver.ArchivedStatus"/>
 /// or <see cref="ReferenceResolver.DeletedStatus"/>.
 /// </param>
 /// <param name="Song">For a Version or a Generation, its Song; null for a Song.</param>
@@ -138,7 +138,7 @@ public sealed class ReferenceResolver(ISongStore songs, IVersionStore versions, 
     /// The Song, Version, or Generation a reference names, whichever it is; null when it names none.
     /// A Version deleted on its own resolves as <see cref="DeletedStatus"/> for its retention period,
     /// by its ID or its shortcode, while its Song is live. A moved status comes with a later
-    /// milestone. A Generation is always active for now.
+    /// milestone. A Generation is active or archived (its user-facing state).
     /// </summary>
     public async Task<ResolvedReference?> ResolveAsync(CatalogReference reference, CancellationToken cancellationToken) =>
         await ResolveLiveAsync(reference, cancellationToken).ConfigureAwait(false)
@@ -397,7 +397,7 @@ public sealed class ReferenceResolver(ISongStore songs, IVersionStore versions, 
             GenerationType,
             generation.Generation.Id,
             generation.Shortcode,
-            ActiveStatus,
+            generation.Generation.State == GenerationState.Archived ? ArchivedStatus : ActiveStatus,
             new ResolvedSong(generation.Generation.SongId, Shortcodes.ForSong(generation.SongShortcodeNumber)),
             new ResolvedVersion(generation.Generation.VersionId, generation.VersionShortcode));
 }

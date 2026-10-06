@@ -10,7 +10,9 @@ using n8Tracks.Api.Tests.Inventory;
 using n8Tracks.Api.Tests.Persistence;
 using n8Tracks.Api.Tests.Setup;
 using n8Tracks.Api.Tests.Songs;
+using n8Tracks.Api.Tests.Generations;
 using n8Tracks.Application.Auth;
+using n8Tracks.Application.Generations;
 using n8Tracks.Application.References;
 using n8Tracks.Application.Retention;
 using n8Tracks.Application.Songs;
@@ -38,8 +40,9 @@ namespace n8Tracks.Api.Tests.Invariants;
 /// It covers the web UI and the REST API (which the extension uses), and retention (#95): the retention
 /// service's methods are exercised like any catalog service's, and a retained type over the
 /// <c>versions</c> table must come with an exerciser that retains and restores a frozen Version through
-/// every shape upgrader. Import (M4) and the MCP gateway (M7) are not covered yet: those milestones
-/// extend this test.
+/// every shape upgrader. Generations (#117) are a catalog namespace of their own: attaching one from a
+/// raw clip, the one way a Generation is made, is exercised here. The rest of import (M4) and the MCP
+/// gateway (M7) are not covered yet: those stories extend this test.
 /// </summary>
 public sealed class VersionImmutabilityGuardTests
 {
@@ -76,6 +79,24 @@ public sealed class VersionImmutabilityGuardTests
     private static readonly string[] SystemColumns = [.. SystemFields, nameof(VersionRecord.NumberSortKey)];
 
     private const string Changed = "changed by the guard";
+
+    /// <summary>
+    /// The application namespaces whose services may take a Song, a Version, or a Generation, each
+    /// named on its own (no prefix or wildcard), so a write path in a new namespace is enumerated here
+    /// rather than escaping the guard: every public method of a class in one of them must be exercised
+    /// or excused below, and a service anywhere else may take none of their types. A story that adds a
+    /// catalog namespace adds it to this list.
+    /// </summary>
+    private static readonly string?[] CatalogServiceNamespaces =
+    [
+        typeof(VersionService).Namespace, // n8Tracks.Application.Songs
+        typeof(CatalogReference).Namespace, // n8Tracks.Application.References
+        typeof(RetentionService).Namespace, // n8Tracks.Application.Retention
+        typeof(GenerationService).Namespace, // n8Tracks.Application.Generations (#117)
+    ];
+
+    /// <summary>The same, with the domain namespace of the catalog entities: types no service elsewhere may take.</summary>
+    private static readonly string?[] CatalogTypeNamespaces = [typeof(SongVersion).Namespace, .. CatalogServiceNamespaces];
 
     [Fact]
     public void EveryPropertyOfTheVersionEntityIsClassified()
@@ -228,14 +249,13 @@ public sealed class VersionImmutabilityGuardTests
             $"{method} is not known to the Version immutability guard: add how to exercise it on a frozen Version, or why it takes no Version."));
         Assert.Equal(methods.Order(StringComparer.Ordinal), exercisers.Keys.Concat(exempt.Keys).Order(StringComparer.Ordinal));
 
-        // Services elsewhere take nothing that names a Version or a Song.
-        var catalogNamespaces = new[] { typeof(SongVersion).Namespace, typeof(VersionService).Namespace, typeof(CatalogReference).Namespace, typeof(RetentionService).Namespace };
-        foreach (var type in ApplicationServices().Where(type => !catalogNamespaces.Contains(type.Namespace)))
+        // Services elsewhere take nothing that names a Version, a Song, or a Generation.
+        foreach (var type in ApplicationServices().Where(static type => !CatalogServiceNamespaces.Contains(type.Namespace)))
         {
             foreach (var method in PublicMethods(type))
             {
                 Assert.All(method.GetParameters(), parameter => Assert.False(
-                    catalogNamespaces.Contains(parameter.ParameterType.Namespace),
+                    CatalogTypeNamespaces.Contains(parameter.ParameterType.Namespace),
                     $"{Describe(method)} takes a catalog type: move it to the catalog services, where the guard sees it."));
             }
         }
@@ -607,7 +627,31 @@ public sealed class VersionImmutabilityGuardTests
             Assert.IsType<SongDeleteOutcome.Deleted>(
                 await InScopeAsync<SongDeletionService, SongDeleteOutcome>(target, service => service.DeleteAsync(target.SongId, revision, title, default)));
         })),
-        ["GenerationService.AttachAsync(String, CancellationToken)"] = Service<GenerationService>(static (service, target) => service.AttachAsync(target.VersionShortcode, default)),
+        // Generations (#117): attaching one, with Suno data and without, is the one way one is made;
+        // it freezes the Version and never writes its inputs.
+        ["GenerationService.AttachAsync(String, String, GenerationAttachOptions, CancellationToken)"] = new(static async target =>
+        {
+            Assert.IsType<GenerationAttachOutcome.Attached>(await InScopeAsync<GenerationService, GenerationAttachOutcome>(target, service =>
+                service.AttachAsync(target.VersionShortcode, Clips.Minimal(Guid.NewGuid().ToString()), null, default)));
+            Assert.IsType<GenerationAttachOutcome.Attached>(await InScopeAsync<GenerationService, GenerationAttachOutcome>(target, service =>
+                service.AttachAsync(target.VersionId.ToString(), null, new GenerationAttachOptions(), default)));
+        }),
+        ["GenerationService.FindAsync(CatalogReference, CancellationToken)"] = Service<GenerationService>(static (service, target) =>
+            service.FindAsync(CatalogReference.Parse(target.VersionShortcode + "-g1"), default)),
+        ["GenerationService.ListForVersionAsync(CatalogReference, CancellationToken)"] = Service<GenerationService>(static (service, target) =>
+            service.ListForVersionAsync(CatalogReference.Parse(target.VersionShortcode), default)),
+        ["GenerationService.ListForSongAsync(CatalogReference, CancellationToken)"] = Service<GenerationService>(static (service, target) =>
+            service.ListForSongAsync(CatalogReference.Parse(target.SongShortcode), default)),
+        ["GenerationService.ProviderRecordAsync(CatalogReference, CancellationToken)"] = Service<GenerationService>(static (service, target) =>
+            service.ProviderRecordAsync(CatalogReference.Parse(target.VersionShortcode + "-g1"), default)),
+        ["GenerationService.RecordEventAsync(GenerationEventRequest, CancellationToken)"] = new(static async target =>
+        {
+            var attached = Assert.IsType<GenerationAttachOutcome.Attached>(await InScopeAsync<GenerationService, GenerationAttachOutcome>(target, service =>
+                service.AttachAsync(target.VersionShortcode, null, null, default)));
+            Assert.IsType<GenerationEventOutcome.Recorded>(await InScopeAsync<GenerationService, GenerationEventOutcome>(target, service => service.RecordEventAsync(
+                new GenerationEventRequest(null, GenerationEventSource.User, GenerationEventConfidence.High, 1, DateTimeOffset.UnixEpoch, [attached.Generation.Generation.Id]),
+                default)));
+        }),
         ["SongService.FindAsync(String, CancellationToken)"] = Service<SongService>(static (service, target) => service.FindAsync(target.SongShortcode, default)),
         ["SongService.UpdateAsync(Guid, SongEdit, Int32, CancellationToken)"] = Service<SongService>(static async (service, target) =>
         {
@@ -895,12 +939,10 @@ public sealed class VersionImmutabilityGuardTests
             .Where(static type => type is { IsClass: true, IsAbstract: false } && type.GetMethod("<Clone>$") is null && !type.IsSubclassOf(typeof(Exception)))
             .Where(static type => PublicMethods(type).Any());
 
-    /// <summary>Every public method of a class in the catalog namespaces (Songs, References, Retention), described by its signature.</summary>
+    /// <summary>Every public method of a class in the catalog namespaces (<see cref="CatalogServiceNamespaces"/>), described by its signature.</summary>
     private static List<string> CatalogServiceMethods() =>
         [.. ApplicationServices()
-            .Where(static type => type.Namespace == typeof(VersionService).Namespace
-                || type.Namespace == typeof(CatalogReference).Namespace
-                || type.Namespace == typeof(RetentionService).Namespace)
+            .Where(static type => CatalogServiceNamespaces.Contains(type.Namespace))
             .SelectMany(PublicMethods)
             .Select(Describe)
             .Distinct(StringComparer.Ordinal)];
