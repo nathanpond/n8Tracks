@@ -231,7 +231,9 @@ public sealed class DeletedCommandsTests
         Assert.Equal(string.Empty, run.Output);
         Assert.Contains("The Song this Version belongs to no longer exists.", run.Error, StringComparison.Ordinal);
         Assert.Contains("It was deleted as part of Song n8-1 (Parent): restore that first with n8tracks restore-deleted n8-1", run.Error, StringComparison.Ordinal);
-        Assert.Contains("Nothing was changed.", run.Error, StringComparison.Ordinal);
+
+        // The suggested command ends its line, so it can be copied whole; "Nothing was changed." is a line of its own (#303).
+        Assert.Equal(["n8tracks restore-deleted n8-1", "Nothing was changed."], LastLines(run.Error));
         Assert.Equal(before, Snapshot(factory));
     }
 
@@ -249,6 +251,7 @@ public sealed class DeletedCommandsTests
 
         Assert.Equal(1, run.ExitCode);
         Assert.Contains("n8-1-v2 was deleted as part of Song n8-1 (Whole), and comes back only with it. Restore that: n8tracks restore-deleted n8-1", run.Error, StringComparison.Ordinal);
+        Assert.Equal(["n8tracks restore-deleted n8-1", "Nothing was changed."], LastLines(run.Error));
         Assert.Equal(before, Snapshot(factory));
 
         // A Generation of one of its Versions too.
@@ -276,8 +279,21 @@ public sealed class DeletedCommandsTests
 
         Assert.Equal(1, run.ExitCode);
         Assert.Contains(message, run.Error, StringComparison.Ordinal);
-        Assert.Contains("Nothing was changed.", run.Error, StringComparison.Ordinal);
+        Assert.Equal("Nothing was changed.", LastLines(run.Error)[1]);
         Assert.Equal(before, Snapshot(factory));
+    }
+
+    /// <summary>
+    /// The end of the last two lines of <paramref name="error"/>: the last line whole, and the line
+    /// before it from "n8tracks " on when it holds a command, otherwise whole.
+    /// </summary>
+    private static string[] LastLines(string error)
+    {
+        var lines = error.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(static line => line.TrimEnd('\r')).ToArray();
+        Assert.True(lines.Length >= 2, error);
+        var message = lines[^2];
+        var command = message.LastIndexOf("n8tracks ", StringComparison.Ordinal);
+        return [command < 0 ? message : message[command..], lines[^1]];
     }
 
     [Fact]

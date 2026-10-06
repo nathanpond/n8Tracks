@@ -36,6 +36,12 @@ internal static class DeletedCommands
     /// <summary>What the listing prints when nothing was deleted within the retention period.</summary>
     public const string NothingDeleted = "Nothing deleted in the last 30 days.";
 
+    /// <summary>
+    /// The line after a refusal. It is a line of its own, because a refusal can end in a command to
+    /// run, which should be copied without it.
+    /// </summary>
+    private const string NothingChanged = "Nothing was changed.";
+
     private const string ListUsage = "Usage: n8tracks list-deleted [--all] [--json]";
     private const string RestoreUsage = "Usage: n8tracks restore-deleted <shortcode or group ID> [--json]";
 
@@ -141,11 +147,13 @@ internal static class DeletedCommands
                     return 0;
 
                 case DeletedItemRestoreOutcome.NotFound notFound:
-                    error.WriteLine(OneLine(notFound.Message) + " Nothing was changed.");
+                    error.WriteLine(OneLine(notFound.Message));
+                    error.WriteLine(NothingChanged);
                     return 1;
 
                 case DeletedItemRestoreOutcome.Refused refused:
-                    error.WriteLine(OneLine(refused.Message) + " Nothing was changed.");
+                    error.WriteLine(OneLine(refused.Message));
+                    error.WriteLine(NothingChanged);
                     return 1;
 
                 default:
