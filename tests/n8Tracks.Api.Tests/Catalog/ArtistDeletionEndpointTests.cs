@@ -355,6 +355,40 @@ public sealed class ArtistDeletionEndpointTests
         Assert.Equal(["Kept"], Names(await ReadAsync(client, "/api/v1/artists")));
     }
 
+    [Fact]
+    public async Task DeletingAnotherArtistLeavesTheDefaultArtistAlone()
+    {
+        using var factory = SongApi.Host(new TestClock());
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var keeper = await ArtistAsync(client, "Keeper");
+        var reassigned = await ArtistAsync(client, "Reassigned");
+        var removed = await ArtistAsync(client, "Removed");
+        var uncredited = await ArtistAsync(client, "Uncredited");
+        await SongApi.CreateAsync(client, "Reassigned's");
+        await SongApi.CreateAsync(client, "Removed's");
+        await CreditAsync(client, "n8-1", reassigned, []);
+        await CreditAsync(client, "n8-2", removed, [keeper]);
+        await SetDefaultAsync(client, keeper);
+        var settings = await ReadAsync(client, Catalog.ToString());
+
+        // Reassigned (to Keeper itself), removed, and with nothing to choose: the default stays Keeper,
+        // at the same settings revision.
+        foreach (var (artist, query) in ((Guid, string?)[])[(reassigned, $"reassignTo={keeper}"), (removed, "removeCredits=true"), (uncredited, null)])
+        {
+            using (var deleted = await DeleteAsync(client, artist, 1, query))
+            {
+                Assert.True(deleted.StatusCode == HttpStatusCode.NoContent, await deleted.Content.ReadAsStringAsync());
+            }
+
+            Assert.Equal(settings.ToString(), (await ReadAsync(client, Catalog.ToString())).ToString());
+        }
+
+        Assert.Equal(keeper, settings.GetProperty("defaultArtist").GetProperty("id").GetGuid());
+        Assert.Equal("Keeper | -", Credits(await SongApi.CreateAsync(client, "After the deletions")));
+        Assert.Equal("Keeper | -", Credits(await SongAsync(client, "n8-1")));
+        Assert.Equal("- | Keeper", Credits(await SongAsync(client, "n8-2")));
+    }
+
     /// <summary>"primary | featured, featured", with "-" for none.</summary>
     private static string Credits(JsonElement song)
     {
