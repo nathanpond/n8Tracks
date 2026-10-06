@@ -1,4 +1,6 @@
 import type { Generation, GenerationComment } from '../api/generations';
+import type { LineageSource, SunoPersona, SunoPlaylist } from '../api/lineage';
+import type { RelationshipType } from '../api/relationships';
 import type { Snapshot } from '../api/snapshots';
 import type { Song } from '../api/songs';
 import {
@@ -9,7 +11,7 @@ import {
 } from '../api/versions';
 import { CREATE_FIELDS, DEFAULT_INPUTS } from './createFieldsFixture';
 import { healthyReport, jsonResponse, requestPath, stubFetch } from './helpers';
-import { baseSong, STATES } from './songServer';
+import { baseSong, STATES, SYSTEM_TYPES } from './songServer';
 
 /** A Version of `baseSong` numbered `number`, with an ID built from the number and no lyrics or styles. */
 export function testVersion(number: string, change: Partial<VersionDetail> = {}): VersionDetail {
@@ -233,6 +235,16 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     nextGenerationDelete: undefined as (() => Response | Promise<Response>) | undefined,
     /** How many Versions use each Generation (by ID) as a source, as its deletion impact counts them. */
     sourceVersionCounts: new Map<string, number>(),
+    /** The relationship types served (#125's audio actions are the system ones). */
+    relationshipTypes: [...SYSTEM_TYPES] as RelationshipType[],
+    /** The Suno playlists seen in imports (#125), served by name. */
+    playlists: [] as SunoPlaylist[],
+    /** The Suno personas seen in imported clips (#125). */
+    personas: [] as SunoPersona[],
+    /** Other Songs the search finds (#125's source picker), besides the Song itself. */
+    otherSongs: [] as Song[],
+    /** The Generations of {@link otherSongs}, each naming its Song. */
+    otherGenerations: [] as Generation[],
     /** Old shortcodes of moved Generations (#123), each with the Song and shortcode it has now: they resolve as `moved`. */
     moved: new Map<string, { song: string; shortcode: string }>(),
     /** Plays another client editing the Song: its revision goes up. */
@@ -530,6 +542,102 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     };
   };
 
+  // A source as the API reads it back: its Generation or Song looked up (a pasted Suno ID n8Tracks
+  // has is that Generation), with titles, shortcodes, and availability.
+  const readSource = (sent: Record<string, unknown>, withType: boolean): LineageSource => {
+    const all = [...server.generations, ...server.otherGenerations];
+    const songs = [server.song, ...server.otherSongs];
+    const typeId = typeof sent.typeId === 'string' ? sent.typeId : undefined;
+    const typed = withType
+      ? {
+          typeId,
+          sunoAction:
+            server.relationshipTypes.find((type) => type.id === typeId)?.sunoAction ?? null,
+          continueAtSeconds:
+            typeof sent.continueAtSeconds === 'number' ? sent.continueAtSeconds : null,
+          secondaryIds: null,
+        }
+      : {};
+    const idOf = (value: unknown) =>
+      typeof value === 'string'
+        ? value
+        : typeof value === 'object' && value !== null && 'id' in value
+          ? String(value.id)
+          : undefined;
+    const external =
+      typeof sent.external === 'object' && sent.external !== null
+        ? (sent.external as Record<string, unknown>)
+        : undefined;
+    const generation = all.find(
+      (candidate) =>
+        candidate.id === idOf(sent.generation) ||
+        (external?.sunoId !== undefined && candidate.sunoId === external.sunoId),
+    );
+    if (generation !== undefined) {
+      return {
+        ...typed,
+        generation: {
+          id: generation.id,
+          shortcode: generation.shortcode,
+          songId: generation.song.id,
+          songShortcode: generation.song.shortcode,
+          songTitle: songs.find((song) => song.id === generation.song.id)?.title ?? null,
+          title: generation.title,
+          durationSeconds: generation.durationSeconds,
+          missing: false,
+        },
+        availability:
+          generation.remoteState === 'present'
+            ? 'ok'
+            : generation.remoteState === 'trashed'
+              ? 'trashed'
+              : 'missing',
+      };
+    }
+    const song = songs.find((candidate) => candidate.id === idOf(sent.song));
+    if (song !== undefined) {
+      return {
+        ...typed,
+        song: { id: song.id, shortcode: song.shortcode, title: song.title, missing: false },
+        availability: 'ok',
+      };
+    }
+    return {
+      ...typed,
+      external: {
+        sunoId: typeof external?.sunoId === 'string' ? external.sunoId : '',
+        title: typeof external?.title === 'string' ? external.title : null,
+        address: typeof external?.address === 'string' ? external.address : null,
+        label: null,
+      },
+      availability: 'not_imported',
+    };
+  };
+  const readLineage = (sent: Record<string, unknown>): Record<string, unknown> => {
+    const read: Record<string, unknown> = { ...sent };
+    if ('sources' in sent) {
+      read.sources = Array.isArray(sent.sources)
+        ? sent.sources.map((source) => readSource(source as Record<string, unknown>, true))
+        : [];
+    }
+    if ('inspiration' in sent) {
+      const inspiration = sent.inspiration as Record<string, unknown> | null;
+      read.inspiration =
+        inspiration === null
+          ? null
+          : Array.isArray(inspiration.sources) && inspiration.sources.length > 0
+            ? {
+                sources: inspiration.sources.map((source) =>
+                  readSource(source as Record<string, unknown>, false),
+                ),
+              }
+            : inspiration.playlist
+              ? { playlist: inspiration.playlist }
+              : null;
+    }
+    return read;
+  };
+
   const mock = stubFetch();
   mock.mockImplementation(async (input, init) => {
     const path = requestPath(input);
@@ -542,6 +650,15 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     }
     if (path.endsWith('/api/v1/suno/create-fields')) {
       return jsonResponse(200, CREATE_FIELDS);
+    }
+    if (path.endsWith('/api/v1/relationship-types')) {
+      return jsonResponse(200, { items: server.relationshipTypes });
+    }
+    if (path.endsWith('/api/v1/suno/playlists')) {
+      return jsonResponse(200, { items: server.playlists });
+    }
+    if (path.endsWith('/api/v1/suno/personas')) {
+      return jsonResponse(200, { items: server.personas });
     }
     const resolve = /\/api\/v1\/resolve\/([^/]+)$/.exec(path);
     if (resolve) {
@@ -629,7 +746,7 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
       }
       const options =
         typeof body.inputs === 'object' && body.inputs !== null
-          ? (body.inputs as VersionDetail['inputs'])
+          ? (readLineage(body.inputs as Record<string, unknown>) as VersionDetail['inputs'])
           : {};
       const inputs = { ...version.inputs, ...options };
       if (
@@ -947,6 +1064,12 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
         return nextGenerations();
       }
       const named = decodeURIComponent(songGenerations[1] ?? '');
+      const other = server.otherSongs.find((song) => song.id === named || song.shortcode === named);
+      if (other !== undefined) {
+        return jsonResponse(200, {
+          items: server.otherGenerations.filter((generation) => generation.song.id === other.id),
+        });
+      }
       if (named !== server.song.id && named !== server.song.shortcode) {
         return jsonResponse(404, { code: 'not_found' });
       }
@@ -1010,7 +1133,17 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     }
 
     if (path.endsWith('/api/v1/songs') && method === 'GET') {
-      const items = server.songDeletedAt === undefined ? [server.song] : [];
+      const url = input instanceof Request ? input.url : input.toString();
+      const search = new URL(url, document.baseURI).searchParams.get('q')?.toLowerCase();
+      const live = server.songDeletedAt === undefined ? [server.song] : [];
+      const items =
+        search === undefined
+          ? live
+          : [...live, ...server.otherSongs].filter(
+              (song) =>
+                song.title.toLowerCase().includes(search) ||
+                song.shortcode.toLowerCase().startsWith(search),
+            );
       return jsonResponse(200, { items, page: 1, pageSize: 50, total: items.length });
     }
     const deletion = /\/api\/v1\/songs\/([^/]+)(\/deletion-impact)?$/.exec(path);

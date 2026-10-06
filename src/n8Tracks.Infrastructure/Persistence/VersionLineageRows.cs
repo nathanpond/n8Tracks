@@ -78,6 +78,9 @@ internal static class VersionLineageRows
                 pair.Number,
                 song.ShortcodeNumber,
                 song.Title,
+                pair.generation.SunoTitle,
+                pair.generation.DurationSeconds,
+                pair.generation.RemoteState,
             })
             .ToDictionaryAsync(static generation => generation.Id, cancellationToken)
             .ConfigureAwait(false);
@@ -104,7 +107,10 @@ internal static class VersionLineageRows
                         Shortcodes.ForSong(generation.ShortcodeNumber),
                         generation.Title,
                         External: null,
-                        Missing: false)
+                        Missing: false,
+                        generation.SunoTitle,
+                        generation.DurationSeconds,
+                        GenerationStates.RemoteStateOf(generation.RemoteState))
                     : new SourceTargetView(null, null, null, null, null, Missing: true);
             }
 

@@ -737,6 +737,16 @@ public sealed class VersionService(
                     continue;
                 }
             }
+            else if (request.External!.SunoId is var sunoId
+                && !held.Any(source => string.Equals(source.Target.ExternalSunoId, sunoId, StringComparison.Ordinal))
+                && await versions.FindSourceGenerationBySunoIdAsync(sunoId, cancellationToken).ConfigureAwait(false) is { } imported
+                && imported.VersionId != version.Id)
+            {
+                // A pasted Suno ID n8Tracks already has is that Generation (#125); one the group
+                // already names as a Suno clip stays as it is, so a read sent back is no change.
+                generations[imported.Id] = imported;
+                target = VersionSourceTarget.OfGeneration(imported.Id);
+            }
             else
             {
                 var external = request.External!;

@@ -336,6 +336,80 @@ public sealed class VersionSourcesEndpointTests
             $"UPDATE version_sources SET generation_id = NULL, song_id = '{original.GetProperty("id").GetString()!.ToUpperInvariant()}' WHERE version_id = '{version}' AND position = 1;"));
     }
 
+    [Fact]
+    public async Task EachSourceSaysWhetherItIsStillAvailable()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var original = await SongApi.CreateAsync(client, "Available original");
+        var present = await SongApi.AttachGenerationAsync(factory, VersionId(original).ToString(), Clips.Minimal("present-clip"));
+        var trashed = await SongApi.AttachGenerationAsync(factory, VersionId(original).ToString(), Clips.Minimal("trashed-clip"));
+        var gone = await SongApi.AttachGenerationAsync(factory, VersionId(original).ToString(), Clips.Minimal("gone-clip"));
+        TestDatabase.Execute(factory.DataPath, $"""
+            UPDATE generations SET remote_state = 'trashed' WHERE id = '{trashed.Generation.Id.ToString().ToUpperInvariant()}';
+            UPDATE generations SET remote_state = 'missing' WHERE id = '{gone.Generation.Id.ToString().ToUpperInvariant()}';
+            UPDATE generations SET duration_seconds = 187.5 WHERE id = '{present.Generation.Id.ToString().ToUpperInvariant()}';
+            """);
+        var id = VersionId(await SongApi.CreateAsync(client, "Available derived"));
+
+        var edited = await EditAsync(client, id, $$$"""
+            {"inputs":{
+              "sources":[{"typeId":"{{{Mashup}}}","generation":"{{{present.Shortcode}}}"},{"typeId":"{{{Mashup}}}","external":{"sunoId":"never-imported"}}],
+              "inspiration":{"sources":[{"generation":"{{{trashed.Shortcode}}}"},{"generation":"{{{gone.Shortcode}}}"},{"song":"{{{original.GetProperty("shortcode").GetString()}}}"}]}
+            }}
+            """);
+        var sources = edited.GetProperty("inputs").GetProperty("sources").EnumerateArray().ToList();
+        Assert.Equal(["ok", "not_imported"], sources.Select(static source => source.GetProperty("availability").GetString()));
+        Assert.Equal("Minimal clip", sources[0].GetProperty("generation").GetProperty("title").GetString());
+        Assert.Equal(187.5, sources[0].GetProperty("generation").GetProperty("durationSeconds").GetDouble());
+        Assert.Equal(JsonValueKind.Null, sources[1].GetProperty("external").GetProperty("label").ValueKind);
+        var inspiration = edited.GetProperty("inputs").GetProperty("inspiration").GetProperty("sources").EnumerateArray();
+        Assert.Equal(["trashed", "missing", "ok"], inspiration.Select(static source => source.GetProperty("availability").GetString()));
+
+        // Deleting the Song makes each of them Deleted: a Generation with a Suno ID becomes a Suno clip
+        // labelled so, and the Song itself is missing.
+        var (title, revision) = (original.GetProperty("title").GetString()!, (await SongAsync(client, original.GetProperty("id").GetString()!)).GetProperty("revision").GetInt32());
+        using (var deleted = await SendAsync(client, HttpMethod.Delete, SongApi.Song(original.GetProperty("shortcode").GetString()!), SongApi.Quoted(revision), $$$"""{"confirmTitle":{{{JsonSerializer.Serialize(title)}}}}"""))
+        {
+            Assert.True(deleted.StatusCode == HttpStatusCode.NoContent, await deleted.Content.ReadAsStringAsync());
+        }
+
+        var read = (await GetAsync(client, id)).GetProperty("inputs");
+        Assert.Equal(["deleted", "not_imported"], read.GetProperty("sources").EnumerateArray().Select(static source => source.GetProperty("availability").GetString()));
+        Assert.All(read.GetProperty("inspiration").GetProperty("sources").EnumerateArray(), static source => Assert.Equal("deleted", source.GetProperty("availability").GetString()));
+    }
+
+    [Fact]
+    public async Task APastedSunoIdThatIsImportedIsThatGenerationAndAnyOtherIsNotImported()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var original = await SongApi.CreateAsync(client, "Pasted original");
+        var generation = await SongApi.AttachGenerationAsync(factory, VersionId(original).ToString(), Clips.Minimal("known-clip"));
+        var song = await SongApi.CreateAsync(client, "Pasted cover");
+        var id = VersionId(song);
+
+        var edited = await EditAsync(client, id, $$$"""{"inputs":{"sources":[{"typeId":"{{{Cover}}}","external":{"sunoId":"known-clip"}}]}}""");
+        var source = Assert.Single(edited.GetProperty("inputs").GetProperty("sources").EnumerateArray());
+        Assert.False(source.TryGetProperty("external", out _));
+        Assert.Equal(generation.Generation.Id, source.GetProperty("generation").GetProperty("id").GetGuid());
+        Assert.Equal("ok", source.GetProperty("availability").GetString());
+
+        // Complement: an ID n8Tracks does not have stays a Suno clip, Not imported.
+        var unknown = await EditAsync(client, id, $$$"""{"inputs":{"sources":[{"typeId":"{{{Cover}}}","external":{"sunoId":"unknown-clip"}}]}}""");
+        source = Assert.Single(unknown.GetProperty("inputs").GetProperty("sources").EnumerateArray());
+        Assert.Equal("unknown-clip", source.GetProperty("external").GetProperty("sunoId").GetString());
+        Assert.Equal("not_imported", source.GetProperty("availability").GetString());
+
+        // Complement: a Suno clip the Version already names stays one when sent back, even once
+        // n8Tracks has a Generation with that ID, so a read sent back is no change.
+        await SongApi.AttachGenerationAsync(factory, VersionId(original).ToString(), Clips.Minimal("unknown-clip"));
+        var read = await GetAsync(client, id);
+        var resent = await EditAsync(client, id, new JsonObject { ["inputs"] = Lineage(read.GetProperty("inputs")) }.ToJsonString());
+        Assert.Equal(read.GetProperty("revision").GetInt32(), resent.GetProperty("revision").GetInt32());
+        Assert.Equal("unknown-clip", Assert.Single(resent.GetProperty("inputs").GetProperty("sources").EnumerateArray()).GetProperty("external").GetProperty("sunoId").GetString());
+    }
+
     private static string Sources(string typeId) => $$$"""{"inputs":{"sources":[{"typeId":"{{{typeId}}}","external":{"sunoId":"typed"}}]}}""";
 
     /// <summary>The lineage keys of a read's <c>inputs</c>, as an edit sends them.</summary>

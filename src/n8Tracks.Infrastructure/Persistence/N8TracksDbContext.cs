@@ -92,6 +92,10 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
 
     public DbSet<ShortcodeAliasRecord> ShortcodeAliases => Set<ShortcodeAliasRecord>();
 
+    public DbSet<SunoPlaylistRecord> SunoPlaylists => Set<SunoPlaylistRecord>();
+
+    public DbSet<SunoPersonaRecord> SunoPersonas => Set<SunoPersonaRecord>();
+
     public DbSet<VersionSourceRecord> VersionSources => Set<VersionSourceRecord>();
 
     public DbSet<VersionInspirationPlaylistRecord> VersionInspirationPlaylists => Set<VersionInspirationPlaylistRecord>();
@@ -504,6 +508,24 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
             });
             alias.HasKey(record => record.Alias);
             alias.HasIndex(record => record.GenerationId);
+        });
+
+        modelBuilder.Entity<SunoPlaylistRecord>(playlist =>
+        {
+            playlist.ToTable("suno_playlists", static table =>
+            {
+                table.HasCheckConstraint("ck_suno_playlists_suno_id", "length(suno_id) BETWEEN 1 AND 100");
+            });
+            playlist.HasKey(record => record.SunoId);
+        });
+
+        modelBuilder.Entity<SunoPersonaRecord>(persona =>
+        {
+            persona.ToTable("suno_personas", static table =>
+            {
+                table.HasCheckConstraint("ck_suno_personas_suno_id", "length(suno_id) BETWEEN 1 AND 100");
+            });
+            persona.HasKey(record => record.SunoId);
         });
 
         modelBuilder.Entity<ExternalSunoReferenceRecord>(reference =>

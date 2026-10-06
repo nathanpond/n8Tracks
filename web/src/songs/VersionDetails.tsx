@@ -13,6 +13,14 @@ import {
 } from '@mantine/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useCreateFields, type CreateFields, type OptionValue } from '../api/createFields';
+import {
+  inputText,
+  lineageOf,
+  lineageSummary,
+  lineageText,
+  lineageValue,
+  type Lineage,
+} from '../api/lineage';
 import type { FailureReason, FieldValue } from '../api/saves';
 import { restoreSnapshot, type Snapshot } from '../api/snapshots';
 import { useConfiguredTimeZone } from '../api/timeZone';
@@ -20,6 +28,8 @@ import {
   isLineageKey,
   isVersionDetail,
   KIND_OPTION,
+  LINEAGE_KEYS,
+  SONG_MODE_OPTION,
   OPTION_EDIT_PREFIX,
   optionFromText,
   optionText,
@@ -45,6 +55,7 @@ import { LeaveGuard } from '../editor/LeaveGuard';
 import { useAutosave, type AutosaveStatus, type Edit } from '../editor/useAutosave';
 import { useSnapshots, type EditorText } from '../editor/useSnapshots';
 import { VersionInputs } from '../editor/VersionInputs';
+import { SourcesSection } from '../versions/SourcesSection';
 import { OptionsPanel } from './inputs/OptionsPanel';
 import { choiceLabel } from './inputs/optionFormat';
 import { RelativeTime } from './SongParts';
@@ -92,6 +103,22 @@ function optionKeys(...sides: VersionOptions[]): string[] {
   );
 }
 
+/**
+ * Every key of `inputs` either side holds, the lineage keys always among them: a lineage key left
+ * out is an empty one, the same as one held empty.
+ */
+function inputKeys(...sides: VersionOptions[]): string[] {
+  return [...new Set([...sides.flatMap((side) => Object.keys(side)), ...LINEAGE_KEYS])];
+}
+
+/** How the conflict view names each lineage key. */
+const LINEAGE_LABELS: Readonly<Record<string, string>> = {
+  sources: 'Sources',
+  inspiration: 'Inspiration',
+  voice: 'Voice',
+  fileInputs: 'Files to attach in Suno',
+};
+
 /** Each editable field: how its stored value is read, and how a draft of it is saved. */
 const DRAFTED: readonly {
   key: TextKey;
@@ -125,9 +152,9 @@ function editOf(drafts: Drafts, stored: VersionDetail): Edit {
     }
   }
   if (!stored.isFrozen) {
-    for (const key of optionKeys(drafts.inputs)) {
-      const value = optionText(drafts.inputs[key]);
-      if (value !== optionText(stored.inputs[key])) {
+    for (const key of inputKeys(drafts.inputs)) {
+      const value = inputText(key, drafts.inputs[key]);
+      if (value !== inputText(key, stored.inputs[key])) {
         edit[OPTION_EDIT_PREFIX + key] = value;
       }
     }
@@ -158,12 +185,12 @@ function follow(
       next = { ...next, [field.key]: draftsOf(after)[field.key] };
     }
   }
-  for (const key of optionKeys(before.inputs, after.inputs)) {
-    const was = optionText(before.inputs[key]);
+  for (const key of inputKeys(before.inputs, after.inputs)) {
+    const was = inputText(key, before.inputs[key]);
     if (
       !Object.hasOwn(sending, OPTION_EDIT_PREFIX + key) &&
-      optionText(after.inputs[key]) !== was &&
-      optionText(next.inputs[key]) === was
+      inputText(key, after.inputs[key]) !== was &&
+      inputText(key, next.inputs[key]) === was
     ) {
       next = { ...next, inputs: { ...next.inputs, [key]: after.inputs[key] ?? null } };
     }
@@ -178,8 +205,8 @@ function textDiffers(drafts: Drafts, stored: VersionDetail): boolean {
 
 /** Whether `drafts` hold an option `stored` does not. */
 function optionsDiffer(drafts: Drafts, stored: VersionDetail): boolean {
-  return optionKeys(drafts.inputs, stored.inputs).some(
-    (key) => optionText(drafts.inputs[key]) !== optionText(stored.inputs[key]),
+  return inputKeys(drafts.inputs, stored.inputs).some(
+    (key) => inputText(key, drafts.inputs[key]) !== inputText(key, stored.inputs[key]),
   );
 }
 
@@ -202,7 +229,11 @@ function refusesInputs(
   const changesOption = Object.entries(edit).some(
     ([key, value]) =>
       key.startsWith(OPTION_EDIT_PREFIX) &&
-      value !== optionText(current.inputs[key.slice(OPTION_EDIT_PREFIX.length)]),
+      value !==
+        inputText(
+          key.slice(OPTION_EDIT_PREFIX.length),
+          current.inputs[key.slice(OPTION_EDIT_PREFIX.length)],
+        ),
   );
   return current.isFrozen && (changes('lyrics') || changes('styles') || changesOption)
     ? 'frozen'
@@ -528,6 +559,12 @@ function LoadedVersionDetails({
           read: (current) => optionText(current.inputs[key]),
           show: showOption,
         })),
+      ...LINEAGE_KEYS.map((key): SavedField<VersionDetail> => ({
+        key: OPTION_EDIT_PREFIX + key,
+        label: LINEAGE_LABELS[key] ?? key,
+        read: (current) => lineageText(key, current.inputs[key]),
+        show: (value) => <ConflictValue value={lineageSummary(key, value)} />,
+      })),
     ];
   }, [createFields, optionNames]);
 
@@ -592,6 +629,27 @@ function LoadedVersionDetails({
     [capture, rebase, setDrafts],
   );
 
+  /**
+   * After a save, each lineage part it sent is taken as the API stored it (with what it looked up: a
+   * pasted Suno ID it has as a Generation, titles, availability), unless it was changed again since.
+   */
+  const adoptSaved = useCallback(
+    (edit: Edit) => {
+      const now = latestDrafts.current;
+      let inputs = now.inputs;
+      for (const key of LINEAGE_KEYS) {
+        const sent = edit[OPTION_EDIT_PREFIX + key];
+        if (sent !== undefined && inputText(key, now.inputs[key]) === sent) {
+          inputs = { ...inputs, [key]: latest.current.inputs[key] ?? null };
+        }
+      }
+      if (inputs !== now.inputs) {
+        setDrafts({ ...now, inputs });
+      }
+    },
+    [setDrafts],
+  );
+
   /** A 409 `version_frozen` on a Version the page did not know was frozen: it is now. */
   const markFrozen = useCallback(() => {
     if (!latest.current.isFrozen) {
@@ -610,6 +668,9 @@ function LoadedVersionDetails({
         sending.current = edit;
         try {
           const outcome = await saveFields(edit);
+          if (outcome.kind === 'saved') {
+            adoptSaved(edit);
+          }
           if (outcome.kind === 'failed' && outcome.reason === 'deleted') {
             // Deleted elsewhere: the unsaved lyrics and styles go to the page, to start a new Version.
             const now = latestDrafts.current;
@@ -633,12 +694,16 @@ function LoadedVersionDetails({
             return { kind: 'saved' } as const;
           }
           sending.current = rest;
-          return await saveFields(rest);
+          const saved = await saveFields(rest);
+          if (saved.kind === 'saved') {
+            adoptSaved(rest);
+          }
+          return saved;
         } finally {
           sending.current = null;
         }
       },
-      [markFrozen, onDeletedElsewhere, saveFields, takeFrozen],
+      [adoptSaved, markFrozen, onDeletedElsewhere, saveFields, takeFrozen],
     ),
     onReloaded: useCallback(() => {
       // The text being discarded goes into history first; the text taken in may be new to it.
@@ -673,6 +738,19 @@ function LoadedVersionDetails({
     (key: string, value: OptionValue) => {
       const now = latestDrafts.current;
       setDrafts({ ...now, inputs: { ...now.inputs, [key]: value } });
+      changed();
+    },
+    [changed, setDrafts],
+  );
+
+  const changeLineage = useCallback(
+    (lineage: Lineage) => {
+      const now = latestDrafts.current;
+      const inputs: Record<string, OptionValue> = { ...now.inputs };
+      for (const key of ['sources', 'inspiration', 'voice', 'fileInputs'] as const) {
+        inputs[key] = lineageValue(lineage, key);
+      }
+      setDrafts({ ...now, inputs });
       changed();
     },
     [changed, setDrafts],
@@ -804,6 +882,16 @@ function LoadedVersionDetails({
             />
           )}
         />
+        {isSong && <Divider />}
+        {isSong && (
+          <SourcesSection
+            lineage={lineageOf(drafts.inputs)}
+            songMode={drafts.inputs[SONG_MODE_OPTION] === 'simple' ? 'simple' : 'advanced'}
+            versionId={record.id}
+            readOnly={frozen}
+            onChange={changeLineage}
+          />
+        )}
         {isSong && <Divider />}
         {isSong && (
           <HistoryPanel

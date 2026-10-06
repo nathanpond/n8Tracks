@@ -2813,3 +2813,40 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
   - After a delete, the panel closes onto the Version and the notice `generation-deleted` is shown.
   **Why:** The AC puts the control in the Generation panel. The discretion lines ask for every visible state with none pre-selected and no typing. Radio groups make "none chosen" explicit, where a select would show its first option.
   **Issue:** #124
+- **Decision:** The Suno playlist and persona read models are new tables made by this story: `suno_playlists` (`suno_id` PK, `name`, `clip_ids` JSON, `last_seen_utc`) and `suno_personas` (`suno_id` PK, `name`, `last_seen_utc`), in migration `AddSunoPlaylistsAndPersonas` (`20261006230000`, renamed from EF's generated timestamp so it sorts after #123's). They are empty until #137/#153 fill them. `Application/Suno/SunoLibraryService` lists them over `ISunoLibraryStore`.
+  **Why:** The story's discretion says it defines the two read endpoints "against empty tables", and no earlier story made them. #137 records their shape ("ID, name, member clip IDs as last seen" and "ID, name"); `last_seen_utc` is added for the playlist answer's `lastSeen`. Keyed by the Suno ID, because a playlist or persona is identified by it everywhere else (`InspirationPlaylist.SunoPlaylistId`, `VersionVoice.PersonaId`).
+  **Issue:** #125
+- **Decision:** `GET /api/v1/suno/playlists` and `GET /api/v1/suno/personas` (`catalog.read`) answer `{items:[…]}`, not a bare array. Each playlist item is `{id, name, memberCount, clipIds, lastSeen}` and each persona item is `{id, name}`, sorted by name (ignoring case, then by ID) and unpaged.
+  **Why:** Every other list endpoint answers `{items}` (`relationship-types`, `workflow-states`, `songs/{ref}/generations`), so the discretion's `[{…}]` is read as the item shape. `clipIds` is added because a Version keeps the playlist's clip snapshot (`inspiration.playlist.clipIds`, #122), and the picker has nowhere else to take it from.
+  **Issue:** #125
+- **Decision:** Each source in a Version answer has `availability`: `ok`, `not_imported`, `deleted`, `trashed` or `missing`. It is computed by `SourceTargetView.Availability` from the target as read:
+  - A Generation or Song no longer in the catalog, or an external reference labelled "Deleted" (#122's rewrite), is `deleted`.
+  - Any other external reference is `not_imported`.
+  - A Generation's `remote_state` gives `trashed` or `missing`.
+  - Everything else is `ok`.
+  A Generation target also gains `title` (its Suno title) and `durationSeconds`.
+  **Why:** The discretion asks for the server-computed value. The duration lets the editor bound Extend's position as the server's `continue_at_beyond_source` rule does. What a read adds is ignored when it is sent back, so a read sent back is still no change.
+  **Issue:** #125
+- **Decision:** A source sent as `external` whose Suno ID a live Generation has is resolved to that Generation (`IVersionStore.FindSourceGenerationBySunoIdAsync`). This happens only when the group does not already name that Suno ID as an external reference, and never to the Version's own Generation.
+  **Why:** The discretion line reads: "an ID n8Tracks already has resolves to that Generation". The exception keeps the invariant 1 property "a read sent back is no change": a frozen Version's external source stays external, even after an import brings in a Generation with that ID.
+  **Issue:** #125
+- **Decision:** Web structure:
+  - The section is `web/src/versions/SourcesSection.tsx`, at the must-have path. Beside it are `SourcePicker.tsx` and the pure rules in `sourcesRules.ts`. The API side is in `api/lineage.ts`.
+  - The editor keeps each lineage key in `drafts.inputs`, as the API reads it. Edits and conflicts compare them by `lineageText`, the write form with what a read adds left out and empty forms unified, through `inputText(key, value)`.
+  - `inputKeys` always includes the four lineage keys.
+  - After a successful save, each lineage part that was sent is replaced by the API's stored value, unless the user changed it again (`adoptSaved`). This brings in the shortcodes and titles, and a pasted ID resolved to a Generation, without sending it again.
+  - The conflict dialog lists the four parts as "Sources", "Inspiration", "Voice" and "Files to attach in Suno".
+  **Why:** One autosave queue and one revisioned save for the whole Version, as #65 requires. Adopting the answer only after a save, not in `follow`, keeps a conflict's other-client value from silently replacing the user's unsaved change.
+  **Issue:** #125
+- **Decision:** Interaction choices where the discretion leaves room:
+  - The audio action is a native select, "Action", listing the relationship types whose `sunoAction` is an audio action, so a #126-mapped user type appears without change. Before a source exists, the chosen action is local state.
+  - The Inspiration form and the Voice also use native selects. The picker uses the shared `SongSearch`, a table of the Song's Generations (the Version's own left out; those already in the group shown as "Already a source") and a field for a pasted address or ID.
+  - A confirmation is asked whenever a change would also remove something: the second Mashup source, Inspiration on Cover, the audio file note when an action is chosen, or every source when the action is set to None.
+  - The audio-file-note dialog says what it replaces; saving the note is the confirmation.
+  - Individual Inspiration songs stay visible in Simple mode, with a note that Suno takes them only in Advanced.
+  - The playlist chooser is offered only while no song is chosen, and the reverse.
+  **Why:** Native selects are keyboard-operable as they are ("every picker is operable by keyboard"). Showing the record of the other form, rather than switching between two forms, makes the exclusivity visible. The discretion asks for a confirmation for each case it names; the None case removes sources in the same way.
+  **Issue:** #125
+- **Decision:** In component tests, dialogs are found by role and name and are not waited on to become visible.
+  **Why:** Mantine's opening transition advances on animation frames, which the fake clock (`fakeTimeouts`) does not move, so a `toBeVisible` wait timed out at random. user-event acts on the dialog either way.
+  **Issue:** #125

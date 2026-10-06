@@ -299,6 +299,13 @@ internal sealed class VersionStore(N8TracksDbContext context, TimeProvider time)
             .SingleOrDefaultAsync(cancellationToken)
             .ConfigureAwait(false);
 
+    public async Task<SourceGenerationFacts?> FindSourceGenerationBySunoIdAsync(string sunoId, CancellationToken cancellationToken) =>
+        await context.Generations.AsNoTracking()
+            .Where(generation => generation.SunoId == sunoId)
+            .Select(static generation => new SourceGenerationFacts(generation.Id, generation.VersionId, generation.SongId, generation.SunoId, generation.DurationSeconds))
+            .SingleOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+
     public Task RewriteSourcesOfDeletedGenerationsAsync(
         IReadOnlyCollection<Guid> generationIds,
         IReadOnlyCollection<Guid> versionsGoing,

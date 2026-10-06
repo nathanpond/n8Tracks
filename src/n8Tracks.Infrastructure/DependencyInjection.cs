@@ -77,6 +77,7 @@ public static class DependencyInjection
         services.AddScoped<IEditorRevisionStore, EditorRevisionStore>();
         services.AddScoped<IWorkflowStateStore, WorkflowStateStore>();
         services.AddScoped<ISunoModelStore, SunoModelStore>();
+        services.AddScoped<ISunoLibraryStore, SunoLibraryStore>();
         services.AddScoped<IVersionDefaultsStore, VersionDefaultsStore>();
         services.AddSingleton<IBackupStorage, BackupFolders>();
         services.AddSingleton<IBackupWriter, BackupWriter>();

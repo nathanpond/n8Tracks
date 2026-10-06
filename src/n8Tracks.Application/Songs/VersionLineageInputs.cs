@@ -13,8 +13,8 @@ namespace n8Tracks.Application.Songs;
 /// <c>fileInputs</c>). In an edit, a key left out is unchanged and <c>null</c> or an empty array
 /// clears it. A source names its target by <c>generation</c> or <c>song</c> (an ID or shortcode, as
 /// text or as the object a read answers with) or by <c>external</c> (a Suno clip's ID, with its title
-/// and address when known); what a read adds (shortcodes, titles, <c>missing</c>, <c>sunoAction</c>)
-/// is ignored when sent back, so a read can be sent back as it is.
+/// and address when known); what a read adds (shortcodes, titles, durations, <c>missing</c>,
+/// <c>availability</c>, <c>sunoAction</c>) is ignored when sent back, so a read can be sent back as it is.
 /// </summary>
 public static class VersionLineageInputs
 {
@@ -180,6 +180,16 @@ public static class VersionLineageInputs
         _ => "video",
     };
 
+    /// <summary>A source's availability as the API spells it: <c>ok</c>, <c>not_imported</c>, <c>deleted</c>, <c>trashed</c>, or <c>missing</c>.</summary>
+    private static string AvailabilityName(SourceAvailability availability) => availability switch
+    {
+        SourceAvailability.NotImported => "not_imported",
+        SourceAvailability.Deleted => "deleted",
+        SourceAvailability.Trashed => "trashed",
+        SourceAvailability.Missing => "missing",
+        _ => "ok",
+    };
+
     private static JsonObject SourceJson(VersionSource source, SourceTargetView? target, bool withType)
     {
         var json = new JsonObject();
@@ -198,6 +208,8 @@ public static class VersionLineageInputs
                 ["songId"] = target?.GenerationSongId?.ToString(),
                 ["songShortcode"] = target?.SongShortcode,
                 ["songTitle"] = target?.SongTitle,
+                ["title"] = target?.GenerationTitle,
+                ["durationSeconds"] = target?.DurationSeconds,
                 ["missing"] = target?.Missing ?? false,
             };
         }
@@ -223,6 +235,7 @@ public static class VersionLineageInputs
             };
         }
 
+        json["availability"] = AvailabilityName(target?.Availability ?? (source.Target.ExternalSunoId is null ? SourceAvailability.Ok : SourceAvailability.NotImported));
         if (withType)
         {
             json["continueAtSeconds"] = source.ContinueAtSeconds is { } seconds ? JsonValue.Create(seconds) : null;

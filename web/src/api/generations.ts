@@ -627,6 +627,22 @@ function songGenerationsPath(reference: string): string {
 }
 
 /**
+ * A Song's Generations (by its ID or shortcode) read once, as {@link useSongGenerations} reads them;
+ * undefined when they cannot be read.
+ */
+export async function readSongGenerations(
+  reference: string,
+  signal?: AbortSignal,
+): Promise<Generation[] | undefined> {
+  try {
+    const response = await apiFetch(songGenerationsPath(reference), { signal });
+    return response.ok ? generationsOf(await body(response)) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * A Song's Generations (by its ID or shortcode), every state included, by Version number in tree
  * order and then ordinal, as one request. While any of them is still being made in Suno the list is
  * read again every {@link GENERATING_REFRESH_MS}; a read again that fails keeps the list already

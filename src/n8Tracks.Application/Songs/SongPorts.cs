@@ -284,13 +284,56 @@ public sealed record VersionLineageView(VersionLineage Lineage, IReadOnlyList<So
 /// <param name="SongTitle">The target Song's title, or the Generation's Song's.</param>
 /// <param name="External">The external reference, for a Suno clip target.</param>
 /// <param name="Missing">Whether a Generation or Song target is no longer in the catalog.</param>
+/// <param name="GenerationTitle">The target Generation's Suno title, when it has one.</param>
+/// <param name="DurationSeconds">The target Generation's length, when Suno reported one (Extend's position cannot pass it).</param>
+/// <param name="RemoteState">Whether Suno still lists the target Generation's clip; null for any other target.</param>
 public sealed record SourceTargetView(
     string? GenerationShortcode,
     Guid? GenerationSongId,
     string? SongShortcode,
     string? SongTitle,
     ExternalSunoReference? External,
-    bool Missing);
+    bool Missing,
+    string? GenerationTitle = null,
+    double? DurationSeconds = null,
+    GenerationRemoteState? RemoteState = null)
+{
+    /// <summary>
+    /// Whether the source can still be used (#125): a Generation or Song no longer in the catalog, or a
+    /// Suno clip that replaced a deleted Generation, is <see cref="SourceAvailability.Deleted"/>; any
+    /// other Suno clip is <see cref="SourceAvailability.NotImported"/>; a Generation whose clip is in
+    /// Suno's Trash or no longer listed is <see cref="SourceAvailability.Trashed"/> or
+    /// <see cref="SourceAvailability.Missing"/>; everything else is <see cref="SourceAvailability.Ok"/>.
+    /// </summary>
+    public SourceAvailability Availability =>
+        Missing ? SourceAvailability.Deleted
+        : External is { } external ? string.Equals(external.Label, ExternalSunoReferenceRules.DeletedLabel, StringComparison.Ordinal) ? SourceAvailability.Deleted : SourceAvailability.NotImported
+        : RemoteState switch
+        {
+            GenerationRemoteState.Trashed => SourceAvailability.Trashed,
+            GenerationRemoteState.Missing => SourceAvailability.Missing,
+            _ => SourceAvailability.Ok,
+        };
+}
+
+/// <summary>Whether a Version's source can still be used, as the Sources editor labels it.</summary>
+public enum SourceAvailability
+{
+    /// <summary>In the catalog, and Suno still lists it.</summary>
+    Ok,
+
+    /// <summary>A Suno clip n8Tracks has never imported.</summary>
+    NotImported,
+
+    /// <summary>Deleted from the catalog (in retention, or gone for good).</summary>
+    Deleted,
+
+    /// <summary>A Generation whose clip is in Suno's Trash.</summary>
+    Trashed,
+
+    /// <summary>A Generation whose clip Suno no longer lists (Remote Missing).</summary>
+    Missing,
+}
 
 /// <summary>What checking a source needs about a target Generation: where it is, its Suno ID, and its length.</summary>
 /// <param name="Id">The Generation.</param>
@@ -409,6 +452,9 @@ public interface IVersionStore
 
     /// <summary>What checking a source needs about the Generation with <paramref name="id"/>; null when there is none.</summary>
     Task<SourceGenerationFacts?> FindSourceGenerationAsync(Guid id, CancellationToken cancellationToken);
+
+    /// <summary>What checking a source needs about the live Generation whose clip has Suno ID <paramref name="sunoId"/>; null when none has.</summary>
+    Task<SourceGenerationFacts?> FindSourceGenerationBySunoIdAsync(string sunoId, CancellationToken cancellationToken);
 
     /// <summary>
     /// Inside the caller's transaction, before Generations are deleted: every source of a Version not
