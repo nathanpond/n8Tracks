@@ -51,12 +51,13 @@ describe('the same-title indicator', () => {
       namesake(12),
       { ...namesake(13), title: 'Running in a Pack Again' },
     ];
+    // Stored oldest first: newest first comes only from the sort the request asks for.
     const user = userEvent.setup();
     await openSong();
 
     const button = await indicator('2 others with this title');
     expect(server.titleQueries).toEqual([
-      `title=Running+in+a+Pack&excludeId=${baseSong.id}&pageSize=20`,
+      `title=Running+in+a+Pack&excludeId=${baseSong.id}&pageSize=20&sort=updated&direction=desc`,
     ]);
 
     await user.click(button);
@@ -141,7 +142,7 @@ describe('the same-title indicator', () => {
     expect(await screen.findByRole('heading', { level: 2, name: 'Running Alone' })).toBeVisible();
     await waitFor(() => {
       expect(server.titleQueries.at(-1)).toBe(
-        `title=Running+Alone&excludeId=${baseSong.id}&pageSize=20`,
+        `title=Running+Alone&excludeId=${baseSong.id}&pageSize=20&sort=updated&direction=desc`,
       );
     });
     expect(screen.queryByRole('button', { name: /with this title/ })).not.toBeInTheDocument();

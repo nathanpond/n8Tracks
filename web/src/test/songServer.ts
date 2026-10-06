@@ -454,14 +454,22 @@ export function songServer(
       );
       const title = url.searchParams.get('title');
       if (title !== null) {
-        // The exact-title filter: same title ignoring case and spacing, leaving out `excludeId`.
+        // The exact-title filter: same title ignoring case and spacing, leaving out `excludeId`. Only
+        // a sort that is asked for is applied; otherwise the Songs stay in stored order, so a request
+        // that leaves the sort to the API's default shows up.
         server.titleQueries.push(url.searchParams.toString());
         const key = titleKey(title);
         const excludeId = url.searchParams.get('excludeId');
         const pageSize = Number(url.searchParams.get('pageSize') ?? '50');
-        const same = [server.song, ...server.others]
-          .filter((candidate) => titleKey(candidate.title) === key && candidate.id !== excludeId)
-          .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+        const sort = url.searchParams.get('sort');
+        const descending = url.searchParams.get('direction') === 'desc' ? -1 : 1;
+        const same = [server.song, ...server.others].filter(
+          (candidate) => titleKey(candidate.title) === key && candidate.id !== excludeId,
+        );
+        if (sort === 'updated' || sort === 'title') {
+          const field = sort === 'updated' ? 'updatedAt' : 'title';
+          same.sort((a, b) => descending * a[field].localeCompare(b[field]));
+        }
         return jsonResponse(200, {
           items: same.slice(0, pageSize),
           page: 1,
