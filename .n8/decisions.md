@@ -2927,3 +2927,50 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** `GenerationServiceTests.TheSunoIdIsUniqueAmongLiveGenerationsOnly` (#117) now attaches the deleted Version's Suno ID again only with `Reimport: true`. First it asserts that the plain attach is refused with `SunoIdTombstoned`.
   **Why:** The test assumed a retained Generation's Suno ID could simply be attached again. #130 deliberately changes that (invariant 3). The test's own comment had deferred reimport to "the deletion story", which is this one.
   **Issue:** #130
+- **Decision:** The branch head 03bc122 was checked before any change by a full `dotnet test` (Release). Results: Architecture 138, Gateway 215, AppHost 23, and Api 1,898 passed, with none failing. No Rule 3 fix was needed.
+  **Why:** The task asked for the baseline to be confirmed green first.
+  **Issue:** #131
+- **Decision:** Export staging uses five new tables, all from one migration, `AddSunoExportStaging` (`20261006235500`). EF's generated timestamp was renamed so that it sorts after `AddProviderTombstones`.
+  - `suno_exports`: the export's state, its creator credential (null for a session), the header fields, the raw workspaces and playlists, the times, the job, and the `revision`.
+  - `suno_export_parts`: each part's body as received, keyed `(export_id, part_number)`.
+  - `suno_export_records`: one row per Suno ID, keyed `(export_id, suno_id)`. It holds the raw JSON, the trashed flag, the list fields, the class, the `flags` and `changed_fields` JSON, the `generation_id` (no FK), the `artwork_asset_id` (FK to `assets`, RESTRICT), and the empty `proposal_json` and `choice_json`.
+  - `suno_export_record_playlists`: the playlist join table.
+  - `suno_ignored_items`: created empty, in the shape #143 gives (`suno_id` PK, `title`, `workspace_id`, `ignored_utc`, `last_status`, `last_seen_utc`, no FK).
+  Rows cascade from the export.
+  **Why:** The story names `suno_exports`, `suno_export_records`, the playlist join table, and the empty ignore table. `suno_export_parts` is my addition inside the staging subsystem the story creates. It holds no catalog data. Keeping each part whole makes "a repeated partNumber replaces" a delete-and-insert, and keeps the trashed-wins and last-wins collapse deterministic whatever order the parts arrive in. Collapsing at completion, one part at a time, keeps memory to one part (at most 20 MB) for an export of 50,000 clips.
+  **Issue:** #131
+- **Decision:** An export has a state the design doc did not list, `classifying`, between `receiving` and `ready`. Completion moves the export there. An export of at most 2,000 clips (counted as received) is classified inline and answers `ready`. A larger one answers `classifying` with `jobId` (job type `suno-export-classify`), and becomes `ready` when the job ends. Each step of classification runs in its own transaction, which first checks that the export is still classifying, so discarding it midway stops the job. A failure marks the export `failed` and removes its staged rows. `docs/suno-integration.md` now describes the states and endpoints.
+  **Why:** "Completing twice is 409 `export_not_receiving`" needs a state that is no longer receiving while a large export is classified in the background, and `ready` would be untrue until classification finishes.
+  **Issue:** #131
+- **Decision:** These choices fill in what the story left open about errors and the API shape:
+  - The `formatVersion` refusal is 422 `unsupported_format`, carrying `formatVersion` and `supported`.
+  - The header must have `format`, `formatVersion`, `capturedAt`, `scope.kind`, `libraryComplete`, and `trashedComplete`. `workspaces`, `workspacesComplete`, and `playlists` are optional. Clips in the header are refused.
+  - A body that is not UTF-8 JSON is 400 `invalid_request`.
+  - Both size limits are 413 `export_too_large`, carrying `limit` and `count`.
+  - Discarding an export that is being committed, or has been committed, is 409 `export_not_discardable`. Discarding one that has already ended answers 200 with the export as it is.
+  - Staging artwork on an export that is not ready is 409 `export_not_ready`, because #134/#152 send images after the export is ready.
+  - The records list returns 400 `invalid_request` for an unknown, repeated, or out-of-range parameter.
+  **Why:** These are low-cost choices. They match the existing problem codes and the order the extension uses.
+  **Issue:** #131
+- **Decision:** Exports are visible according to who asks. A credential's calls reach only the exports it created. For another credential's export, every route answers 404, so the export's existence is not revealed. A signed-in session reaches every export. Workspaces from a complete list (`workspacesComplete: true`) are applied through `SunoWorkspaceService.RecordAsync(..., complete: true)` when the export becomes ready, not when it is created. An incomplete list waits for the commit (#140).
+  **Why:** The AC says "a credential can read only the exports it created" and "a signed-in session can read every export". Applying the workspaces at completion means a sync cancelled midway (which the extension discards, #134) changes nothing.
+  **Issue:** #131
+- **Decision:** The classifier compares title, tags, duration, `major_model_version`, `model_name`, the three BPM values, key, and the image address without its query or fragment. It does not compare the model label, the status, the audio address, the workspace, or the batch index. A changed record carries the fields that differ in `changedFields`. The record `flags` are `repeated` (the ID appeared more than once) and `alsoInLibrary` (the ID was in both lists). `conflict` is never produced yet: `Classify` takes an `inputsDiffer` flag, which the classifier passes as false until the mapping stories (#135–#137) can compute it, and a unit test covers the rule. The tombstone lookup is batched through a new `TombstoneService.TombstonedAsync` and `IProviderTombstoneStore.TombstonedAsync`. Live Generations and the ignore list are batched through `ISunoClipLookup` (`SunoExportStore`). Batches hold 500 records.
+  **Why:** The story's discretion lines name these fields and the order of precedence. #130's note asked for a batch lookup for large exports. "Reported model" is defined in the design doc as `major_model_version` and `model_name`.
+  **Issue:** #131
+- **Decision:** Every table is classified as catalog or not. The invariant 3 guard (`SunoExportStagingGuardTests`) puts each one in exactly one of two lists, and a table in neither list fails the guard.
+  - **Catalog:** every M2–M4 catalog table, plus `provider_tombstones`, `suno_ignored_items`, `suno_playlists`, `suno_personas`, `suno_models`, the retention tables, and `settings`.
+  - **Not catalog:** the four staging tables, `suno_workspaces`, `assets`, `credentials`, `sessions`, `jobs`, `administrators`, `app_metadata`, and the EF history and lock.
+  `suno_workspaces` is not catalog data, because its names and availability are provider state that a complete list applies at once. The Song association it supports is catalog data, and lives in `songs.suno_workspace_id`. The guard's bite test makes the clip lookup write `provider_records` during classification, and asserts that the guard reports that table.
+  **Why:** The discretion line says the guard names the catalog tables explicitly and fails on a new table in neither list. A staged image is an asset row, stored content that nothing in the catalog references until the commit.
+  **Issue:** #131
+- **Decision:** Expiry is a second step of `RetentionPruneJobHandler`, the daily job from #95, through `ExportStagingService.ExpireAsync`. It runs even if the prune step fails. Its counts go into the job result (`exportsExpired`, `exportsDiscarded`, `exportsFailed`, `committedExportsCleared`). Each export it ends keeps its row, so its final state can still be read.
+  - A ready export is expired 7 days after it became ready.
+  - An export still receiving is discarded 24 hours after it was created.
+  - An export still classifying is failed 24 hours after it was completed.
+  - A committed export has its staged rows removed 24 hours after the commit.
+  **Why:** The key link names "a second step in the same scheduled job". A job interrupted by a restart would otherwise leave an export stuck in `classifying`.
+  **Issue:** #131
+- **Decision:** A staged cover image is uploaded through `ArtworkService.UploadAsync`, which validates it like any artwork, and is held on the record as `artwork_asset_id`. `SunoExportStore` is registered as an `IArtworkAttachments`, so the sweep keeps the asset while a staged record holds it. Once the export's rows are gone, the sweep removes the image. A second image replaces the first. The answer is `{sunoId, artwork}`.
+  **Why:** This is AC 9: "held with the export, and changes nothing in the catalog". Using the attachment port that already exists means no new sweep rule is needed.
+  **Issue:** #131

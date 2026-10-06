@@ -75,7 +75,15 @@ JSON, `format: "n8tracks.suno-export"`, `formatVersion: 1`:
   playlists: [ { id, name, clipIds: [] } ] }
 ```
 
-Raw objects are sent as Suno returned them. It is uploaded in parts: `POST /api/v1/suno/exports` (header fields, returns an ID), `POST /api/v1/suno/exports/{id}/parts` (up to 200 clips per part), `POST /api/v1/suno/exports/{id}/complete`. An export moves through `receiving → ready → committing → committed`, or `discarded`, `failed`, or `expired` (seven days after it became ready). An unknown `formatVersion` is refused with `unsupported_format`.
+Raw objects are sent as Suno returned them. It is uploaded in parts: `POST /api/v1/suno/exports` (the header fields, without clips; returns an ID), `POST /api/v1/suno/exports/{id}/parts` (`{ partNumber, clips, trashedClips, playlists? }`), `POST /api/v1/suno/exports/{id}/complete`. An export moves through `receiving → classifying → ready → committing → committed`, or `discarded`, `failed`, or `expired` (seven days after it became ready). An unknown `formatVersion` is refused with `unsupported_format` (#131).
+
+- **Limits:** 200 clips and 20 MB per part (413 `export_too_large`), 50,000 clips per export. Parts come in any order; a repeated `partNumber` replaces the earlier part. A clip without a string `id` refuses the whole part with 422 `invalid_export`, which names the field.
+- **Staging:** an export is held in `suno_exports`, `suno_export_parts`, `suno_export_records` (one per Suno ID), and `suno_export_record_playlists`. None of these is a catalog table. When a Suno ID appears more than once, the copy from the Trash list wins; within one list, the last copy wins. Playlists from the header and the parts are merged.
+- **Classification:** it runs at completion, inline for up to 2,000 clips and as the `suno-export-classify` job above that. Each record is `new`, `linked`, `changed`, `conflict`, `ignored`, or `deleted`, by Suno ID alone. A live Generation decides first, then a provider tombstone, then the ignore list (`suno_ignored_items`). Receiving and classifying change nothing in the catalog. A complete workspace list (`workspacesComplete`) updates the workspaces' names and availability at completion.
+- **One under review:** completing an export discards any earlier export under review, whoever created it. An export being committed makes a new one wait with 409 `import_in_progress`. `POST .../discard` discards an export.
+- **Expiry:** the daily retention job's second step expires a ready export after seven days. It discards an export still receiving after 24 hours, and removes a committed export's staged rows after 24 hours.
+- **Reading:** `GET /api/v1/suno/exports/{id}` returns the state and the counts per class. `GET .../records` lists the records, filtered by `class`, `workspace`, and `playlist`, and paged (`page`, `pageSize`, at most 200). The records list is session-only. A credential reaches only the exports it created.
+- **Cover images:** `PUT /api/v1/suno/exports/{id}/artwork/{sunoId}` stages a cover image with a record of a ready export. The image is checked like any artwork, and the commit gives it to the Generation.
 
 ## Extension structure
 

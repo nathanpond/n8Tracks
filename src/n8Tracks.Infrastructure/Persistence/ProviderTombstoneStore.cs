@@ -15,6 +15,18 @@ internal sealed class ProviderTombstoneStore(N8TracksDbContext context) : IProvi
         return record is null ? null : new ProviderTombstone(record.SunoId, ProviderTombstoneKind.Clip, UtcText.Parse(record.DeletedUtc), record.Title);
     }
 
+    public async Task<IReadOnlySet<string>> TombstonedAsync(IReadOnlyCollection<string> sunoIds, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(sunoIds);
+
+        var ids = sunoIds.ToList();
+        return (await context.ProviderTombstones.AsNoTracking()
+            .Where(row => ids.Contains(row.SunoId))
+            .Select(static row => row.SunoId)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false)).ToHashSet(StringComparer.Ordinal);
+    }
+
     public async Task<IReadOnlyDictionary<string, string?>> SunoClipsOfAsync(IReadOnlyCollection<Guid> generationIds, CancellationToken cancellationToken)
     {
         var clips = await context.Generations.AsNoTracking()

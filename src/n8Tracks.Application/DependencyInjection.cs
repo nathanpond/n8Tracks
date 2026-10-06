@@ -15,6 +15,7 @@ using n8Tracks.Application.Scheduling;
 using n8Tracks.Application.Setup;
 using n8Tracks.Application.Songs;
 using n8Tracks.Application.Suno;
+using n8Tracks.Application.Suno.Import;
 
 namespace n8Tracks.Application;
 
@@ -44,6 +45,9 @@ public static class DependencyInjection
         services.AddScoped<SunoLibraryService>();
         services.AddScoped<TombstoneService>();
         services.AddScoped<SunoWorkspaceService>();
+        services.AddScoped<RecordClassifier>();
+        services.AddScoped<ExportStagingService>();
+        services.AddJobHandler<ExportClassifyJobHandler>(ExportStagingService.ClassifyJobType);
         services.AddScoped<GenreService>();
         services.AddScoped<TagService>();
         services.AddScoped<ArtistService>();

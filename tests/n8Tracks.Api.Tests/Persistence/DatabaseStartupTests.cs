@@ -65,7 +65,8 @@ public sealed class DatabaseStartupTests : IDisposable
             migration => Assert.Matches("^[0-9]{14}_AddSunoPlaylistsAndPersonas\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AllowUserTypeSunoAction\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AddSunoWorkspaces\\|10\\.0\\.", migration),
-            migration => Assert.Matches("^[0-9]{14}_AddProviderTombstones\\|10\\.0\\.", migration));
+            migration => Assert.Matches("^[0-9]{14}_AddProviderTombstones\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddSunoExportStaging\\|10\\.0\\.", migration));
 
         // ISO 8601 UTC with milliseconds and Z, taken when the migration ran.
         var initialized = TestDatabase.SchemaInitializedUtc(directory.Path);
@@ -84,7 +85,7 @@ public sealed class DatabaseStartupTests : IDisposable
         Start();
 
         Assert.Equal(
-            ["__EFMigrationsHistory", "administrators", "album_links", "album_songs", "albums", "app_metadata", "artist_aliases", "artist_links", "artists", "artwork_attachments", "assets", "credentials", "editor_revisions", "external_suno_references", "generation_comments", "generation_event_links", "generation_events", "generations", "genres", "jobs", "pending_file_deletions", "playlist_songs", "playlists", "provider_records", "provider_tombstones", "retention_groups", "retention_records", "sessions", "settings", "shortcode_aliases", "shortcode_sequence", "song_artist_credits", "song_genres", "song_links", "song_relationship_types", "song_relationships", "song_tags", "songs", "suno_models", "suno_personas", "suno_playlists", "suno_workspaces", "tags", "used_version_numbers", "version_file_inputs", "version_inspiration_playlists", "version_sources", "version_voices", "versions", "workflow_states"],
+            ["__EFMigrationsHistory", "administrators", "album_links", "album_songs", "albums", "app_metadata", "artist_aliases", "artist_links", "artists", "artwork_attachments", "assets", "credentials", "editor_revisions", "external_suno_references", "generation_comments", "generation_event_links", "generation_events", "generations", "genres", "jobs", "pending_file_deletions", "playlist_songs", "playlists", "provider_records", "provider_tombstones", "retention_groups", "retention_records", "sessions", "settings", "shortcode_aliases", "shortcode_sequence", "song_artist_credits", "song_genres", "song_links", "song_relationship_types", "song_relationships", "song_tags", "songs", "suno_export_parts", "suno_export_record_playlists", "suno_export_records", "suno_exports", "suno_ignored_items", "suno_models", "suno_personas", "suno_playlists", "suno_workspaces", "tags", "used_version_numbers", "version_file_inputs", "version_inspiration_playlists", "version_sources", "version_voices", "versions", "workflow_states"],
             TestDatabase.Rows(
                 directory.Path,
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> '__EFMigrationsLock' ORDER BY name;"));
@@ -207,6 +208,22 @@ public sealed class DatabaseStartupTests : IDisposable
             ["suno_id|TEXT|1|1", "kind|TEXT|1|0", "deleted_utc|TEXT|1|0", "title|TEXT|0|0"],
             TestDatabase.Rows(directory.Path, "SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('provider_tombstones') ORDER BY cid;"));
         Assert.Empty(TestDatabase.Rows(directory.Path, "SELECT \"table\" FROM pragma_foreign_key_list('provider_tombstones');"));
+
+        // Suno export staging (#131): the staged rows go with their export; a staged image keeps its asset
+        // (RESTRICT); the staged record names a Generation without a foreign key. The ignore list has none.
+        Assert.Equal(
+            ["suno_exports|CASCADE"],
+            TestDatabase.Rows(directory.Path, "SELECT \"table\", on_delete FROM pragma_foreign_key_list('suno_export_parts');"));
+        Assert.Equal(
+            ["assets|RESTRICT", "suno_exports|CASCADE"],
+            TestDatabase.Rows(directory.Path, "SELECT \"table\", on_delete FROM pragma_foreign_key_list('suno_export_records') ORDER BY \"table\";"));
+        Assert.Equal(
+            ["suno_export_records|CASCADE", "suno_export_records|CASCADE"],
+            TestDatabase.Rows(directory.Path, "SELECT \"table\", on_delete FROM pragma_foreign_key_list('suno_export_record_playlists');"));
+        Assert.Equal(
+            ["suno_id|TEXT|1|1", "title|TEXT|0|0", "workspace_id|TEXT|0|0", "ignored_utc|TEXT|1|0", "last_status|TEXT|0|0", "last_seen_utc|TEXT|0|0"],
+            TestDatabase.Rows(directory.Path, "SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('suno_ignored_items') ORDER BY cid;"));
+        Assert.Empty(TestDatabase.Rows(directory.Path, "SELECT \"table\" FROM pragma_foreign_key_list('suno_ignored_items');"));
         Assert.Equal(
             ["MigrationId", "ProductVersion"],
             TestDatabase.Rows(directory.Path, "SELECT name FROM pragma_table_info('__EFMigrationsHistory') ORDER BY cid;"));
@@ -305,7 +322,7 @@ public sealed class DatabaseStartupTests : IDisposable
 
         Assert.Equal(MigrationStatus.UpToDate, state.Status);
         Assert.Equal(TestDatabase.History(directory.Path)[^1].Split('|')[0], state.LastAppliedMigrationId);
-        Assert.EndsWith("_AddProviderTombstones", state.LastAppliedMigrationId, StringComparison.Ordinal);
+        Assert.EndsWith("_AddSunoExportStaging", state.LastAppliedMigrationId, StringComparison.Ordinal);
     }
 
     [Fact]

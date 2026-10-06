@@ -16,6 +16,7 @@ using n8Tracks.Application.Retention;
 using n8Tracks.Application.Setup;
 using n8Tracks.Application.Songs;
 using n8Tracks.Application.Suno;
+using n8Tracks.Application.Suno.Import;
 using n8Tracks.Infrastructure.Assets;
 using n8Tracks.Infrastructure.Backups;
 using n8Tracks.Infrastructure.Health;
@@ -80,6 +81,9 @@ public static class DependencyInjection
         services.AddScoped<ISunoLibraryStore, SunoLibraryStore>();
         services.AddScoped<IProviderTombstoneStore, ProviderTombstoneStore>();
         services.AddScoped<ISunoWorkspaceStore, SunoWorkspaceStore>();
+        services.AddScoped<SunoExportStore>();
+        services.AddScoped<ISunoExportStore>(static provider => provider.GetRequiredService<SunoExportStore>());
+        services.AddScoped<ISunoClipLookup>(static provider => provider.GetRequiredService<SunoExportStore>());
         services.AddScoped<ISongWorkspaceStore, SunoWorkspaceStore>();
         services.AddScoped<IVersionDefaultsStore, VersionDefaultsStore>();
         services.AddSingleton<IBackupStorage, BackupFolders>();
@@ -114,6 +118,7 @@ public static class DependencyInjection
         services.AddScoped<IArtworkAttachmentStore>(static provider => provider.GetRequiredService<ArtworkAttachmentStore>());
         services.AddScoped<IArtworkAttachments>(static provider => provider.GetRequiredService<ArtworkAttachmentStore>());
         services.AddScoped<IArtworkAttachments>(static provider => provider.GetRequiredService<GenerationStore>());
+        services.AddScoped<IArtworkAttachments>(static provider => provider.GetRequiredService<SunoExportStore>());
         services.AddSingleton<IManagedAssetStore, ManagedAssetStore>();
         services.AddSingleton<IArtworkImaging, SkiaArtworkImaging>();
         services.AddJobHandler<RetentionPruneJobHandler>(RetentionPruneTask.JobType);

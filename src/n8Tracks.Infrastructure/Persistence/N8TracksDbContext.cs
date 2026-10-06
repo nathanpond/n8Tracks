@@ -100,6 +100,16 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
 
     public DbSet<ProviderTombstoneRecord> ProviderTombstones => Set<ProviderTombstoneRecord>();
 
+    public DbSet<SunoExportRecord> SunoExports => Set<SunoExportRecord>();
+
+    public DbSet<SunoExportPartRecord> SunoExportParts => Set<SunoExportPartRecord>();
+
+    public DbSet<StagedClipRecord> StagedClips => Set<StagedClipRecord>();
+
+    public DbSet<StagedClipPlaylistRecord> StagedClipPlaylists => Set<StagedClipPlaylistRecord>();
+
+    public DbSet<SunoIgnoredItemRecord> SunoIgnoredItems => Set<SunoIgnoredItemRecord>();
+
     public DbSet<VersionSourceRecord> VersionSources => Set<VersionSourceRecord>();
 
     public DbSet<VersionInspirationPlaylistRecord> VersionInspirationPlaylists => Set<VersionInspirationPlaylistRecord>();
@@ -550,6 +560,82 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                 table.HasCheckConstraint("ck_provider_tombstones_kind", $"kind IN ('{ProviderTombstoneRecord.ClipKind}')");
             });
             tombstone.HasKey(record => record.SunoId);
+        });
+
+        // Suno export staging (#131): staging tables, not catalog tables. The rows of an export go with it
+        // (cascade); a staged record names a Generation without a foreign key, and its staged image keeps
+        // its asset live (RESTRICT, and the store reports it as attached to the artwork sweep).
+        modelBuilder.Entity<SunoExportRecord>(export =>
+        {
+            export.ToTable("suno_exports", static table =>
+            {
+                table.HasCheckConstraint(
+                    "ck_suno_exports_state",
+                    "state IN ('receiving', 'classifying', 'ready', 'committing', 'committed', 'discarded', 'failed', 'expired')");
+                table.HasCheckConstraint("ck_suno_exports_scope", "scope IN ('library', 'workspaces', 'playlists', 'clips')");
+            });
+            export.HasKey(record => record.Id);
+            export.HasIndex(record => record.State);
+            export.Property(record => record.Revision).HasDefaultValue(1);
+        });
+
+        modelBuilder.Entity<SunoExportPartRecord>(part =>
+        {
+            part.ToTable("suno_export_parts", static table =>
+            {
+                table.HasCheckConstraint("ck_suno_export_parts_part_number", "part_number >= 1");
+            });
+            part.HasKey(record => new { record.ExportId, record.PartNumber });
+            part.HasOne<SunoExportRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.ExportId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<StagedClipRecord>(clip =>
+        {
+            clip.ToTable("suno_export_records", static table =>
+            {
+                table.HasCheckConstraint("ck_suno_export_records_suno_id", "length(suno_id) > 0");
+                table.HasCheckConstraint(
+                    "ck_suno_export_records_class",
+                    "class IS NULL OR class IN ('new', 'linked', 'changed', 'conflict', 'ignored', 'deleted')");
+            });
+            clip.HasKey(record => new { record.ExportId, record.SunoId });
+            clip.HasIndex(record => new { record.ExportId, record.Class });
+            clip.HasIndex(record => new { record.ExportId, record.SunoCreatedUtc });
+            clip.HasIndex(record => record.ArtworkAssetId);
+            clip.Property(record => record.Flags).HasDefaultValue("[]");
+            clip.Property(record => record.ChangedFields).HasDefaultValue("[]");
+            clip.HasOne<SunoExportRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.ExportId)
+                .OnDelete(DeleteBehavior.Cascade);
+            clip.HasOne<AssetRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.ArtworkAssetId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<StagedClipPlaylistRecord>(membership =>
+        {
+            membership.ToTable("suno_export_record_playlists");
+            membership.HasKey(record => new { record.ExportId, record.SunoId, record.PlaylistId });
+            membership.HasIndex(record => new { record.ExportId, record.PlaylistId });
+            membership.HasOne<StagedClipRecord>()
+                .WithMany()
+                .HasForeignKey(record => new { record.ExportId, record.SunoId })
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // The ignore list (#143 fills it): keyed by Suno ID, with no foreign key.
+        modelBuilder.Entity<SunoIgnoredItemRecord>(item =>
+        {
+            item.ToTable("suno_ignored_items", static table =>
+            {
+                table.HasCheckConstraint("ck_suno_ignored_items_suno_id", "length(suno_id) > 0");
+            });
+            item.HasKey(record => record.SunoId);
         });
 
         modelBuilder.Entity<SunoPersonaRecord>(persona =>

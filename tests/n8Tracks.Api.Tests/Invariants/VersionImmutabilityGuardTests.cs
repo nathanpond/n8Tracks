@@ -836,6 +836,11 @@ public sealed class VersionImmutabilityGuardTests
         ["POST /api/v1/artwork"] = "stores an uploaded image as an asset (assets and its files); attaching it is the owner's own edit, and no Version is touched",
         ["POST /api/v1/restores"] = "starts maintenance and a safety backup; it replaces the instance as a whole (#74), never edits a Version",
         ["PUT /api/v1/suno/workspaces/discovered"] = "records Suno workspaces as the extension reports them (suno_workspaces, #129); no Song or Version is touched, even when one becomes unavailable",
+        ["POST /api/v1/suno/exports"] = "stages a Suno export's header (suno_exports, #131); the catalog is not touched (invariant 3, SunoExportStagingGuardTests)",
+        ["POST /api/v1/suno/exports/{id:guid}/parts"] = "stages a part of a Suno export (suno_export_parts, #131); the catalog is not touched",
+        ["POST /api/v1/suno/exports/{id:guid}/complete"] = "classifies a staged export (suno_export_records, #131) and applies a complete workspace list (provider state); no Song, Version, or Generation is touched",
+        ["POST /api/v1/suno/exports/{id:guid}/discard"] = "removes a staged export's rows (#131); the catalog is not touched",
+        ["PUT /api/v1/suno/exports/{id:guid}/artwork/{sunoId}"] = "stores an image as an asset held by a staged record (#131); no Generation or Version is touched until the commit",
     };
 
     /// <summary>How each public method of a catalog service is called, each creation input touched in turn.</summary>

@@ -544,6 +544,49 @@ public sealed class LogRedactionGuardTests
     }
 
     /// <summary>
+    /// A Suno export at Debug (#131): a header whose raw workspace and playlist hold sentinels, a part whose
+    /// clip holds one in its prompt, a refused part with one in a clip that cannot be kept, the completion,
+    /// and the reads. The export's ID and counts reach the log; no raw payload does.
+    /// </summary>
+    [Fact]
+    public async Task ARawSunoExportNeverReachesTheLog()
+    {
+        const string PromptSentinel = "sentinel-export-prompt-5e21";
+        const string WorkspaceSentinel = "sentinel-export-workspace-b08c";
+        const string RefusedSentinel = "sentinel-export-refused-71fa";
+
+        using var factory = new LoggingApiFactory("Debug");
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var token = await Suno.SunoWorkspaceApi.ExtensionTokenAsync(factory);
+        var header = Suno.SunoExportApi.Header(
+            workspaces: [Suno.SunoWorkspaceApi.Project("ws", "Studio", description: WorkspaceSentinel)],
+            workspacesComplete: true,
+            playlists: [Suno.SunoExportApi.Playlist("pl", WorkspaceSentinel, "logged-clip")]);
+        var id = await Suno.SunoExportApi.CreateAsync(client, token, header);
+        await Suno.SunoExportApi.PartAsync(client, token, id, Suno.SunoExportApi.Part(1, [System.Text.Json.Nodes.JsonNode.Parse(Generations.Clips.Handwritten("logged-clip", PromptSentinel))!]));
+        using (var refused = await Suno.SunoExportApi.SendAsync(
+            client,
+            HttpMethod.Post,
+            Suno.SunoExportApi.Export(id, "/parts"),
+            token,
+            "{\"partNumber\":2,\"clips\":[{\"id\":5,\"prompt\":\"" + RefusedSentinel + "\"}]}"))
+        {
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, refused.StatusCode);
+        }
+
+        await Suno.SunoExportApi.CompleteAsync(client, token, id);
+        await Suno.SunoExportApi.GetAsync(client, token, id);
+        await Suno.SunoExportApi.RecordsAsync(client, id);
+
+        var captured = factory.CapturedText;
+        Assert.Contains("Suno export completed", captured, StringComparison.Ordinal);
+        Assert.Contains(id.ToString(), captured, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(PromptSentinel, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(WorkspaceSentinel, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(RefusedSentinel, captured, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// A Generation comment at Debug (#119): added, edited, refused as too long, read back with its
     /// Generation, and deleted, each with sentinel text. The requests and the comment IDs reach the
     /// log; no comment text does.

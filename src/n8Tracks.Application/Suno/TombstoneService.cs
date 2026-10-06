@@ -8,6 +8,9 @@ public interface IProviderTombstoneStore
     /// <summary>The tombstone of <paramref name="sunoId"/>, or null.</summary>
     Task<ProviderTombstone?> FindAsync(string sunoId, CancellationToken cancellationToken);
 
+    /// <summary>Those of <paramref name="sunoIds"/> that have a tombstone.</summary>
+    Task<IReadOnlySet<string>> TombstonedAsync(IReadOnlyCollection<string> sunoIds, CancellationToken cancellationToken);
+
     /// <summary>
     /// The Suno IDs, with Suno's titles, of those of the live Generations <paramref name="generationIds"/>
     /// that have one; a Generation without Suno data is left out.
@@ -39,6 +42,17 @@ public sealed class TombstoneService(IProviderTombstoneStore store)
         ArgumentException.ThrowIfNullOrEmpty(sunoId);
 
         return store.FindAsync(sunoId, cancellationToken);
+    }
+
+    /// <summary>
+    /// Those of <paramref name="sunoIds"/> that have a tombstone: the export classifier's batch form of
+    /// <see cref="FindAsync"/> (#131), for exports of thousands of clips.
+    /// </summary>
+    public Task<IReadOnlySet<string>> TombstonedAsync(IReadOnlyCollection<string> sunoIds, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(sunoIds);
+
+        return store.TombstonedAsync(sunoIds, cancellationToken);
     }
 
     /// <summary>
