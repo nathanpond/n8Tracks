@@ -1,11 +1,12 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using n8Tracks.Application.Generations;
+using n8Tracks.Application.Artwork;
 using n8Tracks.Application.Assets;
 using n8Tracks.Application.Auth;
 using n8Tracks.Application.Backups;
 using n8Tracks.Application.Catalog;
 using n8Tracks.Application.Credentials;
+using n8Tracks.Application.Generations;
 using n8Tracks.Application.Jobs;
 using n8Tracks.Application.Maintenance;
 using n8Tracks.Application.References;
@@ -56,6 +57,7 @@ public static class DependencyInjection
         services.AddScoped<GenerationService>();
         services.AddScoped<GenerationEvaluationService>();
         services.AddScoped<GenerationSelectionService>();
+        services.AddScoped<GenerationArtworkService>();
         services.AddScoped<WorkflowStateService>();
         services.AddScoped<ReferenceResolver>();
         services.AddSingleton<BackupStartLock>();

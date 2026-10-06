@@ -25,6 +25,7 @@ import {
 import { createTag, tagNameError, useTags, type Tag } from '../api/tags';
 import { ArtworkPicker } from '../common/ArtworkPicker';
 import { artworkValues } from '../common/artworkField';
+import { GenerationArtworkChooser } from './GenerationArtworkChooser';
 import { TokenPicker } from '../common/TokenPicker';
 import {
   focusOnMount,
@@ -376,6 +377,16 @@ function AlbumsSection({ song }: { song: Song }) {
   );
 }
 
+/**
+ * Where the artwork a Song shows comes from when it is not its own (#121): its Selected
+ * Generation's image, shown until the Song has artwork of its own; undefined when it is its own or none.
+ */
+function inheritedArtworkNote(song: Song): string | undefined {
+  return song.artwork?.source === 'selectedGeneration'
+    ? `Showing the image of the Selected Generation${song.selectedGeneration === null ? '' : ` ${song.selectedGeneration.shortcode}`} until the Song has artwork of its own.`
+    : undefined;
+}
+
 /** What the Details panel holds for a Song: its artwork, credits, Genres, Tags, notes, release details, related Songs, Albums, and Playlists. Later stories add sections. */
 export function SongDetails({
   song,
@@ -393,6 +404,11 @@ export function SongDetails({
         noun="Song"
         artwork={song.artwork}
         save={(edit) => saveFields(artworkValues(edit))}
+        inherited={inheritedArtworkNote(song)}
+        afterRemoval="its Selected Generation’s image, or a placeholder when that has none,"
+        choose={(controls) => (
+          <GenerationArtworkChooser song={song} controls={controls} onSong={onSong} />
+        )}
       />
       <CreditsSection song={song} saveFields={saveFields} onSong={onSong} />
       <GenresSection song={song} saveFields={saveFields} onSong={onSong} />

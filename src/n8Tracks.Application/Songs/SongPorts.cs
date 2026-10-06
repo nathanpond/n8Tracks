@@ -29,6 +29,10 @@ namespace n8Tracks.Application.Songs;
 /// <param name="SameIsrc">The other Songs with its ISRC, by title (ignoring case); empty when it has none or no other Song shares it.</param>
 /// <param name="Artwork">Its own artwork (the asset and the crop it set), or null when it has none.</param>
 /// <param name="SelectedGeneration">Its Selected Generation (#120), with that Generation's states; null when it has none.</param>
+/// <param name="SelectedGenerationArtwork">
+/// Its Selected Generation's image (#121, no crop), which the Song shows while it has no artwork of
+/// its own; null when it has no Selected Generation or that Generation has no image.
+/// </param>
 public sealed record SongSummary(
     Guid Id,
     long ShortcodeNumber,
@@ -50,8 +54,10 @@ public sealed record SongSummary(
     SongRelease Release,
     IReadOnlyList<RelatedSong> SameIsrc,
     AttachedArtwork? Artwork,
-    SelectedGenerationSummary? SelectedGeneration)
+    SelectedGenerationSummary? SelectedGeneration,
+    AttachedArtwork? SelectedGenerationArtwork = null)
 {
+
     public string Shortcode => Shortcodes.ForSong(ShortcodeNumber);
 }
 
@@ -274,6 +280,12 @@ public sealed record GenerationSummary(Generation Generation, long SongShortcode
 
     /// <summary>Whether it is its Song's Selected Generation (#120).</summary>
     public bool IsSelected { get; init; }
+
+    /// <summary>
+    /// Its cover image in the managed artwork store (#121): the asset and the original's dimensions,
+    /// never a crop (a Generation's image is shown whole); null when it has none.
+    /// </summary>
+    public AttachedArtwork? Artwork { get; init; }
 
     public string Shortcode => Shortcodes.ForGeneration(SongShortcodeNumber, VersionNumber, Generation.Ordinal);
 

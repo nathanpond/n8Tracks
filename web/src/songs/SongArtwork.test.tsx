@@ -132,7 +132,7 @@ describe('a Song’s artwork', () => {
     await user.click(within(group).getByRole('button', { name: 'Remove artwork' }));
     let dialog = await screen.findByRole('dialog', { name: 'Remove the artwork?' });
     expect(within(dialog).getByTestId('remove-artwork-summary')).toHaveTextContent(
-      'The Song will show a placeholder instead.',
+      'The Song will show its Selected Generation’s image, or a placeholder when that has none, instead.',
     );
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     await waitFor(() => {

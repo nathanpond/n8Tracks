@@ -90,7 +90,7 @@ public sealed class ArtworkService(
                 return new ArtworkUploadOutcome.Undecodable(format);
         }
 
-        var hash = Convert.ToHexStringLower(SHA256.HashData(content.Span));
+        var hash = ContentHashOf(content);
         return await transaction.RunAsync<ArtworkUploadOutcome>(
                 async token =>
                 {
@@ -274,7 +274,33 @@ public sealed class ArtworkService(
         return new ArtworkSweepSummary(removed, failed);
     }
 
-    private async Task<SweepResult> RemoveIfUnusedAsync(Guid id, DateTimeOffset cutoff, CancellationToken cancellationToken)
+    /// <summary>The SHA-256 of <paramref name="content"/> in lower-case hexadecimal: what an asset with these bytes is stored under.</summary>
+    internal static string ContentHashOf(ReadOnlyMemory<byte> content) => Convert.ToHexStringLower(SHA256.HashData(content.Span));
+
+    /// <summary>Whether the original of <paramref name="asset"/> is in the store, so a copy of it can be shown.</summary>
+    internal bool HasOriginal(Asset asset)
+    {
+        ArgumentNullException.ThrowIfNull(asset);
+
+        return storage.Exists(ArtworkPaths.Original(asset.ContentHash, asset.Format));
+    }
+
+    /// <summary>
+    /// Inside the caller's transaction: removes the asset with <paramref name="id"/> and its files now,
+    /// whenever it was uploaded, unless a live record attaches it or an unpruned retention group lists
+    /// one of its files (a Generation's replaced image, #121, which is not retained). Best effort: a
+    /// file that cannot be removed leaves the asset for the sweep.
+    /// </summary>
+    internal async Task RemoveNowIfUnusedAsync(Guid id, CancellationToken cancellationToken)
+    {
+        var asset = await assets.FindAsync(id, cancellationToken).ConfigureAwait(false);
+        if (asset is not null && await RemoveIfUnusedAsync(id, cutoff: null, cancellationToken).ConfigureAwait(false) == SweepResult.Removed)
+        {
+            storage.RemoveEmptyFolders(ArtworkPaths.Folder(asset.ContentHash));
+        }
+    }
+
+    private async Task<SweepResult> RemoveIfUnusedAsync(Guid id, DateTimeOffset? cutoff, CancellationToken cancellationToken)
     {
         // Read again inside the transaction: an upload may have restarted the clock since the list.
         if (await assets.FindAsync(id, cancellationToken).ConfigureAwait(false) is not { } asset

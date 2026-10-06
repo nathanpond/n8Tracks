@@ -80,4 +80,13 @@ public interface IGenerationStore
 
     /// <summary>Removes the comment with <paramref name="commentId"/> if it is still at <paramref name="revision"/>; false when it is not (or is gone).</summary>
     Task<bool> TryDeleteCommentAsync(Guid commentId, int revision, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Sets the cover image of the Generation with <paramref name="generationId"/> to the asset
+    /// <paramref name="assetId"/> (#121), touching no other column: not its revision. Only inside a transaction.
+    /// </summary>
+    Task SetArtworkAsync(Guid generationId, Guid assetId, CancellationToken cancellationToken);
+
+    /// <summary>The distinct assets the cover images of <paramref name="generationIds"/> are, for those that have one.</summary>
+    Task<IReadOnlyList<Guid>> ArtworkAssetIdsAsync(IReadOnlyCollection<Guid> generationIds, CancellationToken cancellationToken);
 }

@@ -5,13 +5,15 @@ using n8Tracks.Application.Credentials;
 namespace n8Tracks.Api.Auth;
 
 /// <summary>
-/// Marks an endpoint a credential may call when it holds every one of <see cref="Scopes"/>. A
-/// browser session holds every scope. Scopes do not imply one another.
+/// Marks an endpoint a credential may call when it holds every one of <see cref="Scopes"/>, or, when
+/// <see cref="AnyOf"/>, at least one of them. A browser session holds every scope. Scopes do not
+/// imply one another.
 /// </summary>
 internal sealed class RequiredScopes
 {
-    public RequiredScopes(IReadOnlyList<string> scopes)
+    public RequiredScopes(IReadOnlyList<string> scopes, bool anyOf = false)
     {
+        AnyOf = anyOf;
         ArgumentNullException.ThrowIfNull(scopes);
         if (scopes.Count == 0)
         {
@@ -27,6 +29,9 @@ internal sealed class RequiredScopes
     }
 
     public IReadOnlyList<string> Scopes { get; }
+
+    /// <summary>Whether one of <see cref="Scopes"/> is enough (a Generation's image comes from a sync, a generation, or an artwork edit).</summary>
+    public bool AnyOf { get; }
 }
 
 /// <summary>
@@ -60,6 +65,11 @@ internal static class ScopeRequirementExtensions
     public static TBuilder RequireScope<TBuilder>(this TBuilder builder, params string[] scopes)
         where TBuilder : IEndpointConventionBuilder =>
         builder.WithMetadata(new RequiredScopes(scopes));
+
+    /// <summary>A credential needs at least one of <paramref name="scopes"/>; a session needs none.</summary>
+    public static TBuilder RequireAnyScope<TBuilder>(this TBuilder builder, params string[] scopes)
+        where TBuilder : IEndpointConventionBuilder =>
+        builder.WithMetadata(new RequiredScopes(scopes, anyOf: true));
 
     /// <summary>Only a browser session may call it; a token is refused with 403 <c>session_required</c>.</summary>
     public static TBuilder SessionOnly<TBuilder>(this TBuilder builder)
@@ -136,6 +146,18 @@ internal sealed class ScopeMiddleware(RequestDelegate next)
         }
 
         var held = CredentialPrincipal.Scopes(context.User);
+        if (required.AnyOf)
+        {
+            return required.Scopes.Any(held.Contains)
+                ? next(context)
+                : ApiProblem.For(
+                    context,
+                    StatusCodes.Status403Forbidden,
+                    InsufficientScopeCode,
+                    $"This credential needs one of the scopes {string.Join(", ", required.Scopes)}.",
+                    [new("requiredScope", required.Scopes)]).ExecuteAsync(context);
+        }
+
         var missing = required.Scopes.Where(scope => !held.Contains(scope)).ToList();
         if (missing.Count == 0)
         {
@@ -157,11 +179,8 @@ internal sealed class ScopeMiddleware(RequestDelegate next)
     /// lacks <paramref name="scope"/>, as the marker's own refusal is; null for a session, or a
     /// credential that holds it.
     /// </summary>
-    internal static ProblemHttpResult? Lacking(HttpContext context, string scope)
-    {
-        ArgumentNullException.ThrowIfNull(context);
-
-        return !CredentialPrincipal.IsCredential(context.User) || CredentialPrincipal.Scopes(context.User).Contains(scope)
+    internal static ProblemHttpResult? Lacking(HttpContext context, string scope) =>
+        Holds(context, scope)
             ? null
             : ApiProblem.For(
                 context,
@@ -169,5 +188,12 @@ internal sealed class ScopeMiddleware(RequestDelegate next)
                 InsufficientScopeCode,
                 $"This credential needs the scope {scope}.",
                 [new("requiredScope", scope)]);
+
+    /// <summary>Whether the caller holds <paramref name="scope"/>: a session always does, a credential when it was given it.</summary>
+    internal static bool Holds(HttpContext context, string scope)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        return !CredentialPrincipal.IsCredential(context.User) || CredentialPrincipal.Scopes(context.User).Contains(scope);
     }
 }

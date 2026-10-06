@@ -71,7 +71,8 @@ public static class DependencyInjection
         services.AddScoped<ISongCreditStore, SongCreditStore>();
         services.AddScoped<ICatalogSettingsStore, CatalogSettingsStore>();
         services.AddScoped<IVersionStore, VersionStore>();
-        services.AddScoped<IGenerationStore, GenerationStore>();
+        services.AddScoped<GenerationStore>();
+        services.AddScoped<IGenerationStore>(static provider => provider.GetRequiredService<GenerationStore>());
         services.AddScoped<ISongDeletionStore, SongDeletionStore>();
         services.AddScoped<IEditorRevisionStore, EditorRevisionStore>();
         services.AddScoped<IWorkflowStateStore, WorkflowStateStore>();
@@ -108,6 +109,7 @@ public static class DependencyInjection
         services.AddScoped<ArtworkAttachmentStore>();
         services.AddScoped<IArtworkAttachmentStore>(static provider => provider.GetRequiredService<ArtworkAttachmentStore>());
         services.AddScoped<IArtworkAttachments>(static provider => provider.GetRequiredService<ArtworkAttachmentStore>());
+        services.AddScoped<IArtworkAttachments>(static provider => provider.GetRequiredService<GenerationStore>());
         services.AddSingleton<IManagedAssetStore, ManagedAssetStore>();
         services.AddSingleton<IArtworkImaging, SkiaArtworkImaging>();
         services.AddJobHandler<RetentionPruneJobHandler>(RetentionPruneTask.JobType);

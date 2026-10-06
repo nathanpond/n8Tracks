@@ -504,7 +504,8 @@ internal sealed record UpdateSongRequest(
 /// Songs, each read from this Song, by the type's name as seen from here, then the other Song's title;
 /// <c>release</c> is always there, with null for each member not set; <c>warnings</c> holds what is
 /// allowed but worth telling the user (<c>duplicate_isrc</c>, naming the other Songs); <c>artwork</c>
-/// is its own artwork, or null. <c>selectedGeneration</c> is its Selected Generation (#120:
+/// is what it shows (#121): its own artwork (<c>source</c> <c>own</c>), or else its Selected
+/// Generation's image, uncropped (<c>source</c> <c>selectedGeneration</c>), or null. <c>selectedGeneration</c> is its Selected Generation (#120:
 /// <c>{ id, shortcode, state, remoteState }</c>) or null, and <c>hasSelectedGeneration</c> says
 /// whether it has one, as Album and Playlist tracks say it.
 /// </summary>
@@ -528,7 +529,7 @@ internal sealed record SongResponse(
     SongRelationshipResponse[] Relationships,
     SongReleaseResponse Release,
     SongWarningResponse[] Warnings,
-    AttachedArtworkResponse? Artwork,
+    SongArtworkResponse? Artwork,
     bool HasSelectedGeneration,
     SelectedGenerationResponse? SelectedGeneration)
 {
@@ -570,12 +571,49 @@ internal sealed record SongResponse(
                         song.SameIsrc.Count == 1 ? "Another Song has this ISRC." : "Other Songs have this ISRC.",
                         [.. song.SameIsrc.Select(static other => new SongNamedResponse(other.Id, other.Shortcode, other.Title))]),
                 ],
-            song.Artwork is { } artwork ? AttachedArtworkResponse.From(artwork, pathBase) : null,
+            SongArtworkResponse.From(song, pathBase),
             song.SelectedGeneration is not null,
             song.SelectedGeneration is { } selected
                 ? new SelectedGenerationResponse(selected.Id, selected.Shortcode, GenerationStates.NameOf(selected.State), GenerationStates.NameOf(selected.RemoteState))
                 : null);
     }
+}
+
+/// <summary>
+/// The artwork a Song shows (#121), as <see cref="AttachedArtworkResponse"/> with where it comes from:
+/// <c>source</c> is <c>own</c> for the Song's own artwork (uploaded, or picked from a Generation and
+/// so copied), or <c>selectedGeneration</c> for its Selected Generation's image, which it shows while
+/// it has none of its own, centred and uncropped. Worked out when the Song is read.
+/// </summary>
+internal sealed record SongArtworkResponse(
+    Guid AssetId,
+    int Width,
+    int Height,
+    IReadOnlyDictionary<string, string> Urls,
+    ArtworkCropResponse? Crop,
+    IReadOnlyDictionary<string, string> SquareUrls,
+    string Source)
+{
+    public const string Own = "own";
+    public const string SelectedGeneration = "selectedGeneration";
+
+    /// <summary>What <paramref name="song"/> shows, or null when it has no artwork and no Selected Generation's image.</summary>
+    public static SongArtworkResponse? From(SongSummary song, PathString pathBase)
+    {
+        ArgumentNullException.ThrowIfNull(song);
+
+        if (song.Artwork is { } own)
+        {
+            return Of(AttachedArtworkResponse.From(own, pathBase), Own);
+        }
+
+        return song.SelectedGenerationArtwork is { } defaulted
+            ? Of(AttachedArtworkResponse.From(defaulted with { Crop = null }, pathBase), SelectedGeneration)
+            : null;
+    }
+
+    private static SongArtworkResponse Of(AttachedArtworkResponse shown, string source) =>
+        new(shown.AssetId, shown.Width, shown.Height, shown.Urls, shown.Crop, shown.SquareUrls, source);
 }
 
 /// <summary>

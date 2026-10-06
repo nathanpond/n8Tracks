@@ -1,4 +1,5 @@
 using System.Globalization;
+using n8Tracks.Application.Artwork;
 using n8Tracks.Application.Auth;
 using n8Tracks.Application.References;
 using n8Tracks.Application.Retention;
@@ -75,6 +76,7 @@ public sealed class VersionDeletionService(
     RetentionService retention,
     VersionDefaultsService defaults,
     ISongStore songs,
+    GenerationArtworkService generationArtwork,
     IExclusiveTransaction transaction,
     TimeProvider time)
 {
@@ -219,19 +221,21 @@ public sealed class VersionDeletionService(
 
     /// <summary>
     /// Inside the transaction: the Version and its Generations as roots (its history follows by
-    /// cascade), labelled by its shortcode. When one of them is the Song's Selected Generation, the
-    /// selection is cleared and kept with the group (#120), so a restore sets it again.
+    /// cascade), labelled by its shortcode, with the files of the Generations' images (#121), which
+    /// the group keeps. When one of them is the Song's Selected Generation, the selection is cleared
+    /// and kept with the group (#120), so a restore sets it again.
     /// </summary>
     private async Task<RetentionGroup> RetainAsync(VersionSummary version, CancellationToken cancellationToken)
     {
         var generations = await versions.GenerationIdsAsync(version.Id, cancellationToken).ConfigureAwait(false);
+        var files = await generationArtwork.RetainedFilesAsync(generations, cancellationToken).ConfigureAwait(false);
         return await retention.RetainWithinAsync(
             new RetentionRequest(
                 RetainedRecordTypes.Version,
                 Label(version.Shortcode),
                 version.Shortcode,
                 [new RetainedRoot(RetainedRecordTypes.Version, version.Id), .. generations.Select(static generation => new RetainedRoot(RetainedRecordTypes.Generation, generation))],
-                Files: [],
+                files,
                 Referring: [RetainedRecordTypes.SelectedGeneration]),
             cancellationToken).ConfigureAwait(false);
     }

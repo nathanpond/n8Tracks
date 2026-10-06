@@ -326,9 +326,25 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
                 .ConfigureAwait(false))
             .ToLookup(static link => link.SongId);
         var selectedIds = records.Select(static song => song.SelectedGenerationId).OfType<Guid>().ToList();
-        var selected = await context.Generations.AsNoTracking()
-            .Where(generation => selectedIds.Contains(generation.Id))
-            .Join(context.Versions, static generation => generation.VersionId, static version => version.Id, static (generation, version) => new { generation.Id, generation.Ordinal, generation.State, generation.RemoteState, version.Number })
+        // With each Selected Generation, its image (#121), which a Song without its own shows: joined
+        // in the same query, so a page of Songs reads its defaults at once.
+        var selected = await (
+                from generation in context.Generations.AsNoTracking()
+                where selectedIds.Contains(generation.Id)
+                join version in context.Versions on generation.VersionId equals version.Id
+                join asset in context.Assets on generation.ArtworkAssetId equals (Guid?)asset.Id into images
+                from image in images.DefaultIfEmpty()
+                select new
+                {
+                    generation.Id,
+                    generation.Ordinal,
+                    generation.State,
+                    generation.RemoteState,
+                    version.Number,
+                    ImageId = image == null ? (Guid?)null : image.Id,
+                    ImageWidth = image == null ? 0 : image.Width,
+                    ImageHeight = image == null ? 0 : image.Height,
+                })
             .ToDictionaryAsync(static generation => generation.Id, cancellationToken)
             .ConfigureAwait(false);
 
@@ -388,6 +404,9 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
                         Shortcodes.ForGeneration(song.ShortcodeNumber, chosen.Number, chosen.Ordinal),
                         GenerationStates.StateOf(chosen.State),
                         GenerationStates.RemoteStateOf(chosen.RemoteState))
+                    : null,
+                song.SelectedGenerationId is { } shownId && selected.TryGetValue(shownId, out var shown) && shown.ImageId is { } image
+                    ? new AttachedArtwork(image, null, shown.ImageWidth, shown.ImageHeight)
                     : null);
         })];
     }

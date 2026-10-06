@@ -58,7 +58,8 @@ public sealed class DatabaseStartupTests : IDisposable
             migration => Assert.Matches("^[0-9]{14}_AddGenerationProviderData\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AddCredentialExtensionSightings\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AddGenerationEvaluations\\|10\\.0\\.", migration),
-            migration => Assert.Matches("^[0-9]{14}_AddSelectedGeneration\\|10\\.0\\.", migration));
+            migration => Assert.Matches("^[0-9]{14}_AddSelectedGeneration\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddGenerationArtwork\\|10\\.0\\.", migration));
 
         // ISO 8601 UTC with milliseconds and Z, taken when the migration ran.
         var initialized = TestDatabase.SchemaInitializedUtc(directory.Path);
@@ -121,12 +122,15 @@ public sealed class DatabaseStartupTests : IDisposable
                 "maximum_bpm|REAL|0|0", "minimum_bpm|REAL|0|0", "model_label|TEXT|0|0", "model_name|TEXT|0|0", "model_version|TEXT|0|0",
                 "musical_key|TEXT|0|0", "provider_status|TEXT|0|0", "style_tags|TEXT|0|0", "suno_created_utc|TEXT|0|0", "suno_title|TEXT|0|0",
                 "workspace_id|TEXT|0|0", "state|TEXT|1|0", "remote_state|TEXT|1|0", "revision|INTEGER|1|0", "suno_id|TEXT|0|0",
-                "rating|INTEGER|0|0",
+                "rating|INTEGER|0|0", "artwork_asset_id|TEXT|0|0",
             ],
             TestDatabase.Rows(directory.Path, "SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('generations') ORDER BY cid;"));
         Assert.Equal(
-            ["ix_generations_song_id|0|0", "ix_generations_suno_id|1|1", "ix_generations_version_id_ordinal|1|0"],
+            ["ix_generations_artwork_asset_id|0|0", "ix_generations_song_id|0|0", "ix_generations_suno_id|1|1", "ix_generations_version_id_ordinal|1|0"],
             TestDatabase.Rows(directory.Path, "SELECT name, CAST(\"unique\" AS TEXT), CAST(partial AS TEXT) FROM pragma_index_list('generations') WHERE origin = 'c' ORDER BY name;"));
+        Assert.Equal(
+            ["assets|artwork_asset_id|RESTRICT", "songs|song_id|RESTRICT", "versions|version_id|RESTRICT"],
+            TestDatabase.Rows(directory.Path, "SELECT \"table\", \"from\", on_delete FROM pragma_foreign_key_list('generations') ORDER BY \"table\";"));
         Assert.Equal(
             ["generation_id|TEXT|1|1", "suno_id|TEXT|1|0", "kind|TEXT|1|0", "payload|TEXT|1|0", "captured_utc|TEXT|1|0", "export_id|TEXT|0|0"],
             TestDatabase.Rows(directory.Path, "SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('provider_records') ORDER BY cid;"));
@@ -255,7 +259,7 @@ public sealed class DatabaseStartupTests : IDisposable
 
         Assert.Equal(MigrationStatus.UpToDate, state.Status);
         Assert.Equal(TestDatabase.History(directory.Path)[^1].Split('|')[0], state.LastAppliedMigrationId);
-        Assert.EndsWith("_AddSelectedGeneration", state.LastAppliedMigrationId, StringComparison.Ordinal);
+        Assert.EndsWith("_AddGenerationArtwork", state.LastAppliedMigrationId, StringComparison.Ordinal);
     }
 
     [Fact]

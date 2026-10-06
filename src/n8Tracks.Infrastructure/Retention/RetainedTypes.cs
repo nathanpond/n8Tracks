@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
+using Microsoft.EntityFrameworkCore;
 using n8Tracks.Application.Retention;
 using n8Tracks.Application.Songs;
 using n8Tracks.Infrastructure.Persistence;
@@ -149,12 +150,15 @@ internal static class RetainedTypes
     /// A Generation, deleted with its Version or Song (its own deletion is a later story's). Shape 2
     /// (#117) added its states, revision, Suno ID, and the clip's normalized fields; a shape-1 record
     /// (the minimal record of #69, which had no Suno data) restores as an active, present Generation
-    /// with none. Shape 3 (#119) added its rating; an earlier record restores unrated. Its provider
+    /// with none. Shape 3 (#119) added its rating; an earlier record restores unrated. Shape 4 (#121)
+    /// added its image, whose files the deleting group lists; an earlier record restores with none,
+    /// and one whose asset is gone all the same restores without it, with a note. Its provider
     /// record, event link, and comments go with it, as their own types.
     /// </summary>
-    public static readonly RetainedType Generation = new(RetainedRecordTypes.Generation, "generations", "Generation", ShapeVersion: 3)
+    public static readonly RetainedType Generation = new(RetainedRecordTypes.Generation, "generations", "Generation", ShapeVersion: 4)
     {
-        Upgraders = new Dictionary<int, Func<JsonObject, JsonObject>> { [1] = GenerationShape1To2, [2] = GenerationShape2To3 }.ToFrozenDictionary(),
+        Upgraders = new Dictionary<int, Func<JsonObject, JsonObject>> { [1] = GenerationShape1To2, [2] = GenerationShape2To3, [3] = GenerationShape3To4 }.ToFrozenDictionary(),
+        PrepareRestoreAsync = static (row, cancellationToken) => KeepArtworkIfStoredAsync(row, cancellationToken),
     };
 
     /// <summary>A comment on a Generation, deleted (and restored) with its Generation, which it cascades from.</summary>
@@ -376,6 +380,37 @@ internal static class RetainedTypes
 
         document["rating"] = null;
         return document;
+    }
+
+    /// <summary>A Generation retained before #121 (shape 3) as shape 4: with no image.</summary>
+    internal static JsonObject GenerationShape3To4(JsonObject document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+
+        document["artwork_asset_id"] = null;
+        return document;
+    }
+
+    /// <summary>
+    /// A Generation comes back with its image while the asset is still stored (its group lists the
+    /// files, so the sweep keeps it); should it be gone all the same, the Generation comes back without one.
+    /// </summary>
+    private static async Task<RestorePreparation> KeepArtworkIfStoredAsync(RestoredRow row, CancellationToken cancellationToken)
+    {
+        if (row.Values.GetValueOrDefault("artwork_asset_id") is null)
+        {
+            return RestorePreparation.With(row.Values);
+        }
+
+        var assetId = row.TextOf("artwork_asset_id");
+        var stored = await row.Context.Database.SqlQuery<int>($"SELECT count(*) AS \"Value\" FROM assets WHERE id = {assetId}")
+            .SingleAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return stored > 0
+            ? RestorePreparation.With(row.Values)
+            : RestorePreparation.With(
+                new Dictionary<string, object?>(row.Values, StringComparer.Ordinal) { ["artwork_asset_id"] = null },
+                "The Generation's image was no longer stored, so it was restored without one.");
     }
 }
 

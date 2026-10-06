@@ -157,7 +157,7 @@ internal static class GenerationsEndpoints
         SessionEndpoints.NoStore(context);
 
         return await generations.ListForVersionAsync(reference, cancellationToken) is { } list
-            ? TypedResults.Ok(GenerationListResponse.From(list))
+            ? TypedResults.Ok(GenerationListResponse.From(list, context.Request.PathBase))
             : await VersionsEndpoints.MissingVersionAsync(context, reference, deletions, cancellationToken);
     }
 
@@ -172,7 +172,7 @@ internal static class GenerationsEndpoints
         SessionEndpoints.NoStore(context);
 
         return await generations.ListForSongAsync(reference, cancellationToken) is { } list
-            ? TypedResults.Ok(GenerationListResponse.From(list))
+            ? TypedResults.Ok(GenerationListResponse.From(list, context.Request.PathBase))
             : await SongDeletionEndpoints.MissingSongAsync(context, reference, deletions, cancellationToken);
     }
 
@@ -191,7 +191,7 @@ internal static class GenerationsEndpoints
         }
 
         Revisions.SetETag(context, generation.Generation.Revision);
-        return TypedResults.Ok(GenerationResponse.From(generation));
+        return TypedResults.Ok(GenerationResponse.From(generation, context.Request.PathBase));
     }
 
     /// <summary>
@@ -289,9 +289,9 @@ internal static class GenerationsEndpoints
                 }
 
                 Revisions.SetETag(context, updated.Generation.Generation.Revision);
-                return TypedResults.Ok(GenerationResponse.From(updated.Generation));
+                return TypedResults.Ok(GenerationResponse.From(updated.Generation, context.Request.PathBase));
             case GenerationUpdateOutcome.Conflict conflict:
-                return Revisions.Conflict(context, GenerationResponse.From(conflict.Current));
+                return Revisions.Conflict(context, GenerationResponse.From(conflict.Current, context.Request.PathBase));
             case GenerationUpdateOutcome.Invalid invalid:
                 return ApiProblem.ValidationFailed(context, invalid.Errors);
             case GenerationUpdateOutcome.NotFound:
@@ -466,7 +466,8 @@ internal sealed record GenerationOwnerResponse(Guid Id, string Shortcode);
 /// <c>trashed</c>, or <c>missing</c>. <c>isSelected</c> says whether it is its Song's Selected
 /// Generation (#120). <c>styleTags</c> is Suno's own style description of the clip
 /// (<c>metadata.tags</c>), not the Version's styles. <c>rating</c> (1 to 5, or null) and
-/// <c>comments</c> (oldest first) are the user's own. Times are UTC. Never the raw clip.
+/// <c>comments</c> (oldest first) are the user's own. <c>artwork</c> (#121) is its cover image in the
+/// managed store, shown whole (<c>crop</c> is always null), or null. Times are UTC. Never the raw clip.
 /// </summary>
 internal sealed record GenerationResponse(
     Guid Id,
@@ -498,9 +499,11 @@ internal sealed record GenerationResponse(
     int? Rating,
     IReadOnlyList<GenerationCommentResponse> Comments,
     DateTime CreatedAt,
-    int Revision)
+    int Revision,
+    AttachedArtworkResponse? Artwork)
 {
-    public static GenerationResponse From(GenerationSummary summary)
+    /// <summary>The Generation as the API shows it; <paramref name="pathBase"/> starts its image's URLs.</summary>
+    public static GenerationResponse From(GenerationSummary summary, PathString pathBase)
     {
         ArgumentNullException.ThrowIfNull(summary);
 
@@ -536,13 +539,14 @@ internal sealed record GenerationResponse(
             generation.Rating,
             [.. summary.Comments.Select(GenerationCommentResponse.From)],
             generation.CreatedUtc.UtcDateTime,
-            generation.Revision);
+            generation.Revision,
+            summary.Artwork is { } artwork ? AttachedArtworkResponse.From(artwork with { Crop = null }, pathBase) : null);
     }
 }
 
 /// <summary>Generations, in the order the endpoint gives.</summary>
 internal sealed record GenerationListResponse(IReadOnlyList<GenerationResponse> Items)
 {
-    public static GenerationListResponse From(IReadOnlyList<GenerationSummary> generations) =>
-        new([.. generations.Select(GenerationResponse.From)]);
+    public static GenerationListResponse From(IReadOnlyList<GenerationSummary> generations, PathString pathBase) =>
+        new([.. generations.Select(generation => GenerationResponse.From(generation, pathBase))]);
 }

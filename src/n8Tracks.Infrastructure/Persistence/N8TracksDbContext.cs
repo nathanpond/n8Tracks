@@ -451,6 +451,14 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                 .WithMany()
                 .HasForeignKey(record => record.SongId)
                 .OnDelete(DeleteBehavior.Restrict);
+
+            // Its cover image (#121): the asset is kept while the Generation names it, and the artwork
+            // sweep cannot remove a named asset.
+            generation.HasIndex(record => record.ArtworkAssetId);
+            generation.HasOne<AssetRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.ArtworkAssetId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<ProviderRecordRecord>(record =>

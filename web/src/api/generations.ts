@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { isArtwork, type Artwork } from './artwork';
 import { apiFetch } from './client';
 import {
   failureOf,
@@ -72,6 +73,8 @@ export interface Generation {
   revision: number;
   rating: number | null;
   comments: GenerationComment[];
+  /** Its cover image in n8Tracks' artwork store (#121), shown whole (`crop` is always null); null when it has none. */
+  artwork: Artwork | null;
 }
 
 function isOwner(value: unknown): value is { id: string; shortcode: string } {
@@ -140,7 +143,13 @@ export function generationOf(value: unknown): Generation | undefined {
   }
   const rating = value.rating;
   const comments = commentsOf(value.comments);
-  if (!numberOrNull(rating) || comments === undefined) {
+  // An answer from before #121 has no image field: it has no image.
+  const artwork = value.artwork ?? null;
+  if (
+    !numberOrNull(rating) ||
+    comments === undefined ||
+    (artwork !== null && !isArtwork(artwork))
+  ) {
     return undefined;
   }
   return {
@@ -164,6 +173,7 @@ export function generationOf(value: unknown): Generation | undefined {
     revision: value.revision,
     rating,
     comments,
+    artwork,
   };
 }
 
@@ -281,6 +291,57 @@ export function selectGeneration(
     { generation },
     (answer) => (isSong(answer) ? answer : undefined),
   );
+}
+
+/** How picking a Generation's image as the Song's artwork ended. A refusal carries the API's reason. */
+export type PickArtworkResult =
+  | { kind: 'saved'; record: Song }
+  | { kind: 'conflict'; current: Song }
+  | { kind: 'refused'; message: string }
+  | { kind: 'failed'; reason: FailureReason };
+
+/**
+ * Makes the image of `generation` (its ID or shortcode, one of the Song's) the Song's own artwork,
+ * based on the Song's `revision` (#121): n8Tracks copies it, so the Song keeps it whatever happens to
+ * the Generation. The Song as it is now, a conflict with it, or a refusal saying why (the Generation
+ * has no image, is another Song's, or its image is no longer stored).
+ */
+export async function pickGenerationArtwork(
+  song: string,
+  generation: string,
+  revision: number,
+): Promise<PickArtworkResult> {
+  try {
+    const response = await apiFetch(
+      `${SONGS_PATH}/${encodeURIComponent(song)}/artwork/from-generation`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'If-Match': ifMatch(revision) },
+        body: JSON.stringify({ generation }),
+      },
+    );
+    const answer = await body(response);
+    if (response.ok) {
+      return isSong(answer)
+        ? { kind: 'saved', record: answer }
+        : { kind: 'failed', reason: 'server' };
+    }
+    if (response.status === 409 && isRecord(answer) && answer.code === 'revision_conflict') {
+      return isSong(answer.current)
+        ? { kind: 'conflict', current: answer.current }
+        : { kind: 'failed', reason: 'server' };
+    }
+    if (
+      (response.status === 409 || response.status === 422) &&
+      isRecord(answer) &&
+      typeof answer.title === 'string'
+    ) {
+      return { kind: 'refused', message: answer.title };
+    }
+    return { kind: 'failed', reason: failureOf(response.status, answer) };
+  } catch {
+    return { kind: 'failed', reason: 'unreachable' };
+  }
 }
 
 /** Leaves the Song with no Selected Generation, based on its `revision`. */

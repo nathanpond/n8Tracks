@@ -25,6 +25,7 @@ import {
 import type { LoadState } from '../api/songs';
 import { formatDateTime, useConfiguredTimeZone } from '../api/timeZone';
 import { kindLabel, type Version } from '../api/versions';
+import { ArtworkImage } from '../common/ArtworkImage';
 import { ShortcodeBadge } from '../common/ShortcodeBadge';
 import { Notice } from '../components/Notice';
 import {
@@ -116,14 +117,24 @@ function GenerationRows({
                   <ShortcodeBadge shortcode={generation.shortcode} testId="generation-shortcode" />
                 </Table.Td>
                 <Table.Th scope="row" fw="normal">
-                  <Anchor
-                    component={Link}
-                    to={linkTo(generation)}
-                    aria-label={`${title}, ${generation.shortcode}`}
-                    aria-current={open ? 'true' : undefined}
-                  >
-                    {title}
-                  </Anchor>
+                  <Group gap="xs" wrap="nowrap">
+                    {generation.artwork !== null && (
+                      <ArtworkImage
+                        artwork={generation.artwork}
+                        title={generation.shortcode}
+                        size="96"
+                        pixels={32}
+                      />
+                    )}
+                    <Anchor
+                      component={Link}
+                      to={linkTo(generation)}
+                      aria-label={`${title}, ${generation.shortcode}`}
+                      aria-current={open ? 'true' : undefined}
+                    >
+                      {title}
+                    </Anchor>
+                  </Group>
                 </Table.Th>
                 <Table.Td style={{ whiteSpace: 'nowrap' }} data-testid="generation-duration">
                   {generationDuration(generation)}

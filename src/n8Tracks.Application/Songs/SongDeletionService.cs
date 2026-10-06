@@ -1,4 +1,5 @@
 using System.Globalization;
+using n8Tracks.Application.Artwork;
 using n8Tracks.Application.Assets;
 using n8Tracks.Application.Auth;
 using n8Tracks.Application.References;
@@ -79,6 +80,7 @@ public sealed class SongDeletionService(
     IVersionStore versions,
     ISongDeletionStore store,
     ArtworkAttachmentService artwork,
+    GenerationArtworkService generationArtwork,
     RetentionService retention,
     IExclusiveTransaction transaction,
     TimeProvider time)
@@ -119,7 +121,11 @@ public sealed class SongDeletionService(
 
                 var all = await versions.ListAsync(id, ct).ConfigureAwait(false);
                 var generations = await store.GenerationIdsAsync(id, ct).ConfigureAwait(false);
-                var (artworkRoot, files) = await artwork.RetentionOfAsync(ArtworkOwnerTypes.Song, id, ct).ConfigureAwait(false);
+                var (artworkRoot, ownFiles) = await artwork.RetentionOfAsync(ArtworkOwnerTypes.Song, id, ct).ConfigureAwait(false);
+
+                // The Generations' images (#121) are kept with the group too; the Song's own artwork
+                // may be a copy of one of them, so each file is listed once.
+                string[] files = [.. ownFiles.Concat(await generationArtwork.RetainedFilesAsync(generations, ct).ConfigureAwait(false)).Distinct(StringComparer.Ordinal)];
                 // Parents first: the Song, its Versions, their Generations (both refer to the Song and
                 // their Versions without cascading), then the artwork, which no key ties to the Song.
                 List<RetainedRoot> roots =

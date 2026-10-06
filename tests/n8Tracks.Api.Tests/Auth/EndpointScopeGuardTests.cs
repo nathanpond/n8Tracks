@@ -125,6 +125,8 @@ public sealed class EndpointScopeGuardTests
         Assert.Equal("scope", markers["PUT /api/v1/songs/{reference}/credits"]);
         Assert.Equal("scope", markers["PUT /api/v1/songs/{reference}/selected-generation"]);
         Assert.Equal("scope", markers["DELETE /api/v1/songs/{reference}/selected-generation"]);
+        Assert.Equal("scope", markers["PUT /api/v1/generations/{reference}/artwork"]);
+        Assert.Equal("scope", markers["POST /api/v1/songs/{reference}/artwork/from-generation"]);
         Assert.Equal("scope", markers["GET /api/v1/workflow-states"]);
         Assert.Equal("session-only", markers["POST /api/v1/workflow-states"]);
         Assert.Equal("session-only", markers["PATCH /api/v1/workflow-states/{id:guid}"]);
@@ -180,6 +182,11 @@ public sealed class EndpointScopeGuardTests
         Assert.Equal(
             [CredentialScopes.SongsWrite, CredentialScopes.CatalogBulkWrite],
             new RequiredScopes([CredentialScopes.SongsWrite, CredentialScopes.CatalogBulkWrite, CredentialScopes.SongsWrite]).Scopes);
+
+        // Every one is needed unless the marker says one of them is enough (#121's Generation image).
+        Assert.False(new RequiredScopes([CredentialScopes.SongsWrite]).AnyOf);
+        Assert.True(new RequiredScopes([CredentialScopes.SunoSync, CredentialScopes.ArtworkWrite], anyOf: true).AnyOf);
+        Assert.Throws<ArgumentException>(static () => new RequiredScopes([], anyOf: true));
     }
 
     /// <summary>

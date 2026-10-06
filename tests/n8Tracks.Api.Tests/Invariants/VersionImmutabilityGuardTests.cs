@@ -5,12 +5,14 @@ using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using n8Tracks.Api.Tests.Assets;
 using n8Tracks.Api.Tests.Auth;
 using n8Tracks.Api.Tests.Inventory;
 using n8Tracks.Api.Tests.Persistence;
 using n8Tracks.Api.Tests.Setup;
 using n8Tracks.Api.Tests.Songs;
 using n8Tracks.Api.Tests.Generations;
+using n8Tracks.Application.Artwork;
 using n8Tracks.Application.Auth;
 using n8Tracks.Application.Generations;
 using n8Tracks.Application.References;
@@ -42,7 +44,8 @@ namespace n8Tracks.Api.Tests.Invariants;
 /// <c>versions</c> table must come with an exerciser that retains and restores a frozen Version through
 /// every shape upgrader. Generations (#117) are a catalog namespace of their own: attaching one from a
 /// raw clip, the one way a Generation is made, is exercised here, and so are rating it, commenting
-/// on it (#119), archiving it, and choosing or clearing the Song's Selected Generation (#120). The rest of import (M4) and the MCP
+/// on it (#119), archiving it, choosing or clearing the Song's Selected Generation (#120), and
+/// giving it an image and picking that image as the Song's artwork (#121, <c>Application.Artwork</c>). The rest of import (M4) and the MCP
 /// gateway (M7) are not covered yet: those stories extend this test.
 /// </summary>
 public sealed class VersionImmutabilityGuardTests
@@ -94,6 +97,7 @@ public sealed class VersionImmutabilityGuardTests
         typeof(CatalogReference).Namespace, // n8Tracks.Application.References
         typeof(RetentionService).Namespace, // n8Tracks.Application.Retention
         typeof(GenerationService).Namespace, // n8Tracks.Application.Generations (#117)
+        typeof(GenerationArtworkService).Namespace, // n8Tracks.Application.Artwork (#121)
     ];
 
     /// <summary>The same, with the domain namespace of the catalog entities: types no service elsewhere may take.</summary>
@@ -569,6 +573,28 @@ public sealed class VersionImmutabilityGuardTests
             using var response = await SendAsync(target.Client, HttpMethod.Delete, new Uri($"/api/v1/generations/{shortcode}/comments/{id}", UriKind.Relative), SongApi.Quoted(1), json: null);
             Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
         }),
+
+        // A Generation's image and picking it as the Song's artwork (#121): an asset and the Song's
+        // artwork attachment, never a creation input; the inputs sent alongside the pick are not read.
+        ["PUT /api/v1/generations/{reference}/artwork"] = new(static async target =>
+        {
+            foreach (var colour in new[] { ArtworkImages.Red, ArtworkImages.Blue })
+            {
+                await target.GenerationImageAsync(colour);
+            }
+        }),
+        ["POST /api/v1/songs/{reference}/artwork/from-generation"] = new(async target =>
+        {
+            await target.GenerationImageAsync(ArtworkImages.Red);
+            var (_, revision) = await target.SongAsync();
+            using var response = await SendAsync(
+                target.Client,
+                HttpMethod.Post,
+                new Uri($"/api/v1/songs/{target.SongShortcode}/artwork/from-generation", UriKind.Relative),
+                SongApi.Quoted(revision),
+                await target.InputsJsonAsync($$"""{"generation":"{{target.VersionShortcode}}-g1",""", "}"));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }),
     };
 
     /// <summary>Unsafe endpoints that take neither a Song nor a Version, and why they cannot change one's inputs.</summary>
@@ -724,6 +750,23 @@ public sealed class VersionImmutabilityGuardTests
             var (_, revision) = await target.SongAsync();
             Assert.IsType<GenerationSelectionOutcome.Selected>(await InScopeAsync<GenerationSelectionService, GenerationSelectionOutcome>(target, service =>
                 service.ClearAsync(CatalogReference.Parse(target.SongShortcode), revision, default)));
+        }),
+        // A Generation's image and its use as the Song's artwork (#121): never a creation input.
+        ["GenerationArtworkService.UploadAsync(CatalogReference, ReadOnlyMemory`1, Boolean, CancellationToken)"] = new(static async target =>
+        {
+            foreach (var colour in new[] { ArtworkImages.Blue, ArtworkImages.Red })
+            {
+                var image = ArtworkImages.Solid(SkiaSharp.SKEncodedImageFormat.Png, 64, 64, colour);
+                Assert.IsType<GenerationArtworkUploadOutcome.Stored>(await InScopeAsync<GenerationArtworkService, GenerationArtworkUploadOutcome>(target, service =>
+                    service.UploadAsync(CatalogReference.Parse(target.VersionShortcode + "-g1"), image, mayReplace: true, default)));
+            }
+        }),
+        ["GenerationArtworkService.CopyToSongAsync(CatalogReference, String, Int32, CancellationToken)"] = new(static async target =>
+        {
+            await target.GenerationImageAsync(ArtworkImages.Blue);
+            var (_, revision) = await target.SongAsync();
+            Assert.IsType<GenerationArtworkCopyOutcome.Copied>(await InScopeAsync<GenerationArtworkService, GenerationArtworkCopyOutcome>(target, service =>
+                service.CopyToSongAsync(CatalogReference.Parse(target.SongShortcode), target.VersionShortcode + "-g1", revision, default)));
         }),
         ["GenerationEvaluationService.AddCommentAsync(CatalogReference, String, CancellationToken)"] = Service<GenerationEvaluationService>(static async (service, target) =>
             Assert.IsType<GenerationCommentOutcome.Saved>(await service.AddCommentAsync(CatalogReference.Parse(target.VersionShortcode + "-g1"), "Added by the guard", default))),
@@ -1180,6 +1223,17 @@ public sealed class VersionImmutabilityGuardTests
                 await InputsJsonAsync("""{"text":"Written by the guard",""", "}"));
             Assert.Equal(HttpStatusCode.Created, response.StatusCode);
             return (shortcode, (await SetupApi.JsonAsync(response)).GetProperty("id").GetGuid());
+        }
+
+        /// <summary>Gives the Version's first Generation a 64-pixel image of <paramref name="colour"/>, as the browser uploads one.</summary>
+        public async Task GenerationImageAsync(SkiaSharp.SKColor colour)
+        {
+            using var form = new MultipartFormDataContent();
+            form.Add(new ByteArrayContent(ArtworkImages.Solid(SkiaSharp.SKEncodedImageFormat.Png, 64, 64, colour)), "file", "cover.png");
+            using var request = new HttpRequestMessage(HttpMethod.Put, new Uri($"/api/v1/generations/{VersionShortcode}-g1/artwork", UriKind.Relative)) { Content = form };
+            request.Headers.Add(SessionApi.AntiforgeryHeader, "1");
+            using var response = await Client.SendAsync(request);
+            Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
         }
 
         public async Task<string> IfMatchAsync() => SongApi.Quoted((await ReadAsync()).GetProperty("revision").GetInt32());

@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore;
+using n8Tracks.Application.Assets;
 using n8Tracks.Application.Generations;
 using n8Tracks.Application.Songs;
+using n8Tracks.Domain.Assets;
 using n8Tracks.Domain.Songs;
 using n8Tracks.Domain.Suno;
 
@@ -10,10 +12,28 @@ namespace n8Tracks.Infrastructure.Persistence;
 /// <c>generations</c> (read, and the rating), <c>provider_records</c>, <c>generation_events</c>,
 /// <c>generation_event_links</c>, and <c>generation_comments</c>. The Generation row itself is
 /// written only by <see cref="VersionStore.TryAttachGenerationAsync"/>, with the freeze; afterwards
-/// only its rating, state, and revision are, by <see cref="TryUpdateAsync"/>.
+/// only its rating, state, and revision are, by <see cref="TryUpdateAsync"/>, and its cover image, by
+/// <see cref="SetArtworkAsync"/>.
 /// </summary>
-internal sealed class GenerationStore(N8TracksDbContext context) : IGenerationStore
+internal sealed class GenerationStore(N8TracksDbContext context) : IGenerationStore, IArtworkAttachments
 {
+    /// <summary>A Generation's cover image (#121) keeps its asset live, as an owner's attachment does.</summary>
+    public Task<bool> IsAttachedAsync(Guid assetId, CancellationToken cancellationToken) =>
+        context.Generations.AsNoTracking().AnyAsync(generation => generation.ArtworkAssetId == assetId, cancellationToken);
+
+    public Task SetArtworkAsync(Guid generationId, Guid assetId, CancellationToken cancellationToken) =>
+        context.Generations
+            .Where(generation => generation.Id == generationId)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(static generation => generation.ArtworkAssetId, assetId), cancellationToken);
+
+    public async Task<IReadOnlyList<Guid>> ArtworkAssetIdsAsync(IReadOnlyCollection<Guid> generationIds, CancellationToken cancellationToken) =>
+        await context.Generations.AsNoTracking()
+            .Where(generation => generationIds.Contains(generation.Id) && generation.ArtworkAssetId != null)
+            .Select(static generation => generation.ArtworkAssetId!.Value)
+            .Distinct()
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
     public async Task<GenerationSummary?> FindAsync(Guid id, CancellationToken cancellationToken) =>
         (await GenerationRows.SummariesAsync(context, context.Generations.Where(generation => generation.Id == id), cancellationToken).ConfigureAwait(false))
             .SingleOrDefault();
@@ -232,11 +252,36 @@ internal static class GenerationRows
             .ThenBy(static comment => comment.Id)
             .ToLookup(static comment => comment.GenerationId);
 
+        var artwork = await ArtworkOfAsync(context, rows.Select(static row => row.generation.ArtworkAssetId), cancellationToken).ConfigureAwait(false);
+
         return [.. rows.Select(row => new GenerationSummary(ToDomain(row.generation) with { EventId = row.EventId }, row.ShortcodeNumber, row.Number)
         {
             Comments = [.. comments[row.generation.Id]],
             IsSelected = row.IsSelected,
+            Artwork = row.generation.ArtworkAssetId is { } assetId ? artwork.GetValueOrDefault(assetId) : null,
         })];
+    }
+
+    /// <summary>
+    /// The artwork, as a Generation or the Song defaulting to it shows it (no crop), of each of
+    /// <paramref name="assetIds"/> that is an asset, by asset ID; nulls are skipped.
+    /// </summary>
+    public static async Task<Dictionary<Guid, AttachedArtwork>> ArtworkOfAsync(
+        N8TracksDbContext context,
+        IEnumerable<Guid?> assetIds,
+        CancellationToken cancellationToken)
+    {
+        var ids = assetIds.OfType<Guid>().Distinct().ToList();
+        if (ids.Count == 0)
+        {
+            return [];
+        }
+
+        return await context.Assets.AsNoTracking()
+            .Where(asset => ids.Contains(asset.Id))
+            .Select(static asset => new { asset.Id, asset.Width, asset.Height })
+            .ToDictionaryAsync(static asset => asset.Id, static asset => new AttachedArtwork(asset.Id, null, asset.Width, asset.Height), cancellationToken)
+            .ConfigureAwait(false);
     }
 
     /// <summary>A stored comment as the entity.</summary>

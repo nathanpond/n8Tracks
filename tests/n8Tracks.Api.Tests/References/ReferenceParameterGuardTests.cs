@@ -142,6 +142,13 @@ public sealed class ReferenceParameterGuardTests
         // 201: each call adds a comment.
         ["POST /api/v1/generations/{reference}/comments"] = static (c, _, version) => c.SendAsync(HttpMethod.Post, $"generations/{c.GenerationOf(version)}/comments", """{"text":"Referenced"}"""),
 
+        // A Generation's image (#121): stored by ID, then the same bytes again by shortcode (no change).
+        ["PUT /api/v1/generations/{reference}/artwork"] = static (c, _, version) => c.UploadAsync($"generations/{c.GenerationOf(version)}/artwork"),
+
+        // 409 revision_conflict, or 422 while the Generation has no image: the Song and its Generation were found.
+        ["POST /api/v1/songs/{reference}/artwork/from-generation"] = static (c, song, _) =>
+            c.SendAsync(HttpMethod.Post, $"songs/{song}/artwork/from-generation", $$"""{"generation":"{{c.GenerationId}}"}""", revision: 999),
+
         // 200: the Song is not on the Playlist, so nothing changes.
         ["DELETE /api/v1/playlists/{id:guid}/songs/{reference}"] = static async (c, song, _) =>
             await c.SendAsync(HttpMethod.Delete, $"playlists/{c.PlaylistId}/songs/{song}", revision: await c.PlaylistRevisionAsync()),
@@ -353,6 +360,16 @@ public sealed class ReferenceParameterGuardTests
                 Assert.True(request.Headers.TryAddWithoutValidation("If-Match", SongApi.Quoted(value)));
             }
 
+            return await client.SendAsync(request);
+        }
+
+        /// <summary>A <c>PUT</c> of a small PNG as a multipart upload, as the browser sends one.</summary>
+        public async Task<HttpResponseMessage> UploadAsync(string path)
+        {
+            using var form = new MultipartFormDataContent();
+            form.Add(new ByteArrayContent(Assets.ArtworkImages.Solid(SkiaSharp.SKEncodedImageFormat.Png, 64, 64, Assets.ArtworkImages.Red)), "file", "cover.png");
+            using var request = new HttpRequestMessage(HttpMethod.Put, new Uri("/api/v1/" + path, UriKind.Relative)) { Content = form };
+            request.Headers.Add(SessionApi.AntiforgeryHeader, "1");
             return await client.SendAsync(request);
         }
 

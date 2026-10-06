@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 import { generationDuration, ratingText, reportedModel, type Generation } from '../api/generations';
 import { formatDateTime, useConfiguredTimeZone } from '../api/timeZone';
+import { ArtworkImage } from '../common/ArtworkImage';
 import { ShortcodeBadge } from '../common/ShortcodeBadge';
 import { GenerationComments, type UpdateGeneration } from './GenerationComments';
 import { selectionActionLabel, stateActionLabel } from './evaluationRules';
@@ -54,6 +55,20 @@ function Details({
   return (
     <Stack gap="md">
       <ShortcodeBadge shortcode={generation.shortcode} testId="generation-panel-shortcode" />
+      <div data-testid="generation-panel-artwork">
+        {generation.artwork === null ? (
+          <Text size="sm" c="var(--n8-color-secondary-text)">
+            No image from Suno yet.
+          </Text>
+        ) : (
+          <ArtworkImage
+            artwork={generation.artwork}
+            title={generation.shortcode}
+            size="320"
+            pixels={160}
+          />
+        )}
+      </div>
       <Stack component="dl" gap="sm" m={0}>
         <Detail label="Suno title">{generation.title ?? 'Untitled'}</Detail>
         <Detail label="Version">
@@ -139,8 +154,8 @@ function Details({
  * or cleared here, `onRate`), its state with the Song's Selected marker, Suno's page for it, and the
  * user's comments (`update` keeps the Song's one cached copy in step), and (#120, `actions`) its
  * Archive or Reactivate control and the control that makes it the Song's Selected Generation or
- * clears that. `problem` says why a rating or a choice was not saved. The artwork, move, and delete
- * controls arrive with their own stories. A reference that names no Generation of
+ * clears that, and (#121) its cover image, shown whole. `problem` says why a rating or a choice was
+ * not saved. The move and delete controls arrive with their own stories. A reference that names no Generation of
  * this Song says so. Closes with Escape or its close control.
  */
 export function GenerationPanel({

@@ -233,6 +233,13 @@ public sealed class GenerationRecord
     public string? WorkspaceId { get; set; }
 
     public int? BatchIndex { get; set; }
+
+    /// <summary>
+    /// The Generation's cover image in the managed artwork store (#121), or null when it has none. It
+    /// is the Generation's own: written only by the Generation artwork upload, never by an import's
+    /// refresh of the clip columns, and replacing it removes the old asset unless something else uses it.
+    /// </summary>
+    public Guid? ArtworkAssetId { get; set; }
 }
 
 /// <summary>

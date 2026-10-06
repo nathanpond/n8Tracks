@@ -1,6 +1,7 @@
 import type { Artwork } from '../api/artwork';
 import type { Artist } from '../api/artists';
 import type { CatalogSettings } from '../api/catalogSettings';
+import type { Generation } from '../api/generations';
 import type { Genre } from '../api/genres';
 import type { RelationshipType } from '../api/relationships';
 import type {
@@ -360,6 +361,13 @@ export function songServer(
     uploadSizes: [] as { width: number; height: number }[],
     /** When set, answers the next PATCH (once) instead of the fake API. */
     next: undefined as (() => Response | Promise<Response>) | undefined,
+    /**
+     * The Song's Generations (#121), served at `GET …/generations` when set; a pick of one's image
+     * (`POST …/artwork/from-generation`) makes it the Song's own artwork, uncropped.
+     */
+    generations: undefined as Generation[] | undefined,
+    /** Every pick of a Generation's image, in order: the revision it named and the Generation. */
+    picks: [] as { ifMatch: string | null; generation: unknown }[],
     /** Plays another tab: changes the Song and raises its revision. */
     changeElsewhere(change: Partial<Song>) {
       server.song = { ...server.song, ...change, revision: server.song.revision + 1 };
@@ -426,6 +434,42 @@ export function songServer(
       });
       server.artists.push(artist);
       return jsonResponse(201, artist);
+    }
+    if (
+      server.generations !== undefined &&
+      path.endsWith(`/api/v1/songs/${server.song.id}/generations`)
+    ) {
+      return jsonResponse(200, { items: server.generations });
+    }
+    if (path.endsWith(`/api/v1/songs/${server.song.id}/artwork/from-generation`)) {
+      const ifMatch = new Headers(init?.headers).get('If-Match');
+      const sent = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as Record<
+        string,
+        unknown
+      >;
+      server.picks.push({ ifMatch, generation: sent.generation });
+      if (ifMatch !== `"${String(server.song.revision)}"`) {
+        return jsonResponse(409, { code: 'revision_conflict', current: server.song });
+      }
+      const chosen = server.generations?.find(
+        (generation) =>
+          generation.id === sent.generation || generation.shortcode === sent.generation,
+      );
+      if (chosen === undefined) {
+        return jsonResponse(404, { code: 'not_found', title: 'There is no such Generation.' });
+      }
+      if (chosen.artwork === null) {
+        return jsonResponse(422, {
+          code: 'generation_has_no_artwork',
+          title: `Generation ${chosen.shortcode} has no image.`,
+        });
+      }
+      server.song = {
+        ...server.song,
+        artwork: { ...chosen.artwork, crop: null, source: 'own' },
+        revision: server.song.revision + 1,
+      };
+      return jsonResponse(200, server.song);
     }
     if (path.endsWith('/api/v1/artwork')) {
       const file = init?.body instanceof FormData ? init.body.get('file') : null;

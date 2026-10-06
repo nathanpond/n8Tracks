@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from './client';
-import { isArtwork, type Artwork, type ArtworkCrop } from './artwork';
+import { isSongArtwork, type ArtworkCrop, type SongArtwork } from './artwork';
 import { patchWithRevision, writeWithRevision, type SaveResult } from './saves';
 
 const SONGS_PATH = 'api/v1/songs';
@@ -178,8 +178,11 @@ export interface Song {
   release: SongRelease;
   /** What is allowed but worth telling the user, such as an ISRC another Song has. */
   warnings: SongWarning[];
-  /** Its own artwork, or null when it has none. */
-  artwork: Artwork | null;
+  /**
+   * What it shows as artwork: its own (`source` `own`), or else its Selected Generation's image
+   * (`selectedGeneration`, uncropped), or null when it has neither.
+   */
+  artwork: SongArtwork | null;
   /** Whether it has a Selected Generation. */
   hasSelectedGeneration: boolean;
   /** Its Selected Generation, the Song's chosen output, with that Generation's states; null when it has none. */
@@ -354,7 +357,7 @@ export function isSong(value: unknown): value is Song {
     isSongRelease(value.release) &&
     Array.isArray(value.warnings) &&
     value.warnings.every(isSongWarning) &&
-    (value.artwork === null || isArtwork(value.artwork)) &&
+    (value.artwork === null || isSongArtwork(value.artwork)) &&
     typeof value.hasSelectedGeneration === 'boolean' &&
     (value.selectedGeneration === null || isSelectedGeneration(value.selectedGeneration))
   );

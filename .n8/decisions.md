@@ -2599,3 +2599,65 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** Carry 1 is done. `hasSelectedGeneration` is computed from `songs.selected_generation_id` in `AlbumTrackStore.ForAlbumsAsync` and `PlaylistStore.FindAsync`. `GenerationResponse.isSelected` comes from `GenerationRows`, which joins the Song's selection. Tests cover Albums (detail and list) and Playlists.
   **Why:** This is the orchestrator's Carry 1 (m4-plan drift row).
   **Issue:** #120
+- **Decision:** A Generation's cover image is a nullable `generations.artwork_asset_id`, a foreign key to `assets` (RESTRICT) with an index. Migration `AddGenerationArtwork` adds it in place with a hand-written `ALTER TABLE ... REFERENCES`. It is not an `artwork_attachments` row with a new owner type. `GenerationStore` is registered as a second `IArtworkAttachments`, so an image a Generation names stays live and the sweep keeps it.
+  **Why:**
+  - `artwork_attachments` has no foreign key to its owner, so deleting a Version or Song would leave the row behind.
+  - Its owner-type CHECK could only change by rebuilding the table.
+  - A column goes into retention with the Generation's own row.
+  - EF's `AddForeignKey` would rebuild `generations` and drop its identity trigger.
+  **Issue:** #121
+- **Decision:** Retention changes:
+  - Generation retention is now **shape 4**, with the upgrader `GenerationShape3To4`, which gives an earlier record no image.
+  - A `PrepareRestoreAsync` hook restores a Generation without its image, with a note, when the asset has gone all the same.
+  - Rule 2: Version deletion and Song deletion now list the files of their Generations' images in the group (`GenerationArtworkService.RetainedFilesAsync`, internal). Without this, the sweep could remove an image 24 hours after its Generation was deleted, and the restore would then fail on the foreign key. Regression tests cover a round trip and the vanished-asset note.
+  **Why:** Otherwise a deleted Generation's image would be lost before the 30-day retention ends.
+  **Issue:** #121
+- **Decision:** "Copies it into a managed asset owned by the Song" is done as a new Song attachment of the same asset. The store is content-addressed (#97/#98: identical bytes are one asset), so a byte copy would be the same asset anyway.
+  - The copy is independent of the Generation: the asset stays while the Song's attachment names it.
+  - Tested: replacing the Generation's image leaves the Song's artwork byte-identical, and deleting the Generation's Version leaves the Song's cover served.
+  - Picking goes through `ArtworkAttachmentService.ReplaceAsync`, so the Song's earlier artwork is retained and the crop is reset.
+  - Picking the image the Song already owns uncropped stores nothing. Owned with a crop, the crop is reset and the revision is raised.
+  **Why:** This follows the discretion line and #98's replacement rule without duplicating bytes the store would merge anyway.
+  **Issue:** #121
+- **Decision:** API shapes:
+  - The Song's `artwork` keeps #98/#99's shape `{assetId, width, height, urls, crop, squareUrls}` and adds `source: own | selectedGeneration` (`SongArtworkResponse`).
+  - The default comes from a new trailing `SongSummary.SelectedGenerationArtwork`, joined in the same query as the Selected Generation (left join on `assets`). It is computed at read time and never stored.
+  - A Generation's `artwork` has the same shape (`AttachedArtworkResponse`), with `crop` always null. `GenerationResponse.From` / `GenerationListResponse.From` now take the `PathString`.
+  - The planner's `{assetId, url, thumbnails}` is `urls.original` plus the size keys of `urls` and `squareUrls`.
+  **Why:** Renaming fields would break the contract that #98's web client and the e2e tests read. The new field only adds to it.
+  **Issue:** #121
+- **Decision:** `PUT /api/v1/generations/{reference}/artwork` uses a new any-of scope marker, `RequireAnyScope(suno.sync, suno.generate, artwork.write)`.
+  - `RequiredScopes.AnyOf`: when the token holds none of them, the answer is 403 `insufficient_scope` with `requiredScope` as the list of all three.
+  - A session or an `artwork.write` token may replace an image (`ScopeMiddleware.Holds`). A `suno.*` token gets 409 `artwork_exists` (with `generationId` and `shortcode`) when the Generation already has a different image.
+  - Identical bytes are a 200 no-op for anyone.
+  - Both refusals and the no-op are decided from the content hash before anything is stored.
+  - The session-only count stays 46.
+  **Why:** The AC says one of three scopes. The existing marker requires every scope it lists.
+  **Issue:** #121
+- **Decision:** Generations have no last-updated column. An image upload moves the Song's updated time and raises no revision, as comments and archiving do.
+  **Why:** The discretion line says "moves the Generation's last-updated time" and "bumps no revision". Adding a column only for this was not worth a schema change.
+  **Issue:** #121
+- **Decision:** A replaced Generation image leaves the store in the same transaction (`ArtworkService.RemoveNowIfUnusedAsync`, internal), whatever its upload time. It stays only if a live record attaches it or an unpruned retention group lists its files.
+  **Why:** The discretion line says the image is removed at once and not retained. Accepted race: identical bytes uploaded moments earlier for another owner, but not yet attached, would be removed. That upload's PATCH then gets #98's 422 "upload the image again".
+  **Issue:** #121
+- **Decision:** `POST /api/v1/songs/{reference}/artwork/from-generation` (`artwork.write` only, per the AC) checks in this order:
+  1. 404 for the Song (or `song_deleted`).
+  2. 422 `validation_failed` on `generation`.
+  3. 404 for the Generation.
+  4. 422 `generation_not_in_song`.
+  5. 422 `generation_has_no_artwork`.
+  6. 409 `revision_conflict`.
+  7. 409 `artwork_unavailable` when the original is missing from the store.
+  **Why:** This matches #120's selection order: refusals before the revision check.
+  **Issue:** #121
+- **Decision:** Where the default shows: the Song header, the Details panel, and the Songs table (96-pixel thumbnail) all read the Song's computed `artwork`. Album and Playlist track lists show no Song artwork today, so nothing changes there.
+  **Why:** The discretion line covers every place Song artwork is shown, and the track lists are not among them yet. A later story that adds artwork to the track lists should reuse `SongSummary.SelectedGenerationArtwork` / `SongArtworkResponse`.
+  **Issue:** #121
+- **Decision:** Web:
+  - `ArtworkPicker` gains `inherited` (the note shown when the artwork is not the owner's own; Crop, Remove, and Keep crop are hidden then), `afterRemoval` (text for the confirmation), and `choose`, a render prop for a further control.
+  - `songs/GenerationArtworkChooser.tsx` opens "Choose a Generation's image". It loads the Song's Generations when it opens, lists those with images ("Use the image of <sc>"), and retries a 409 once with the current revision.
+  - `SongPage`'s artwork save fields read only `ownArtwork(song.artwork)`.
+  - A Generation's image sits in its row's title cell (32 px), so cell indexes do not change. The panel shows it at 160 px, or "No image from Suno yet."
+  - `testArtwork` now returns a `SongArtwork` (`source: 'own'` by default). `testGeneration` gives `artwork: null`.
+  **Why:** A defaulted image is not the Song's own, so it cannot be cropped or removed. Treating it as the Song's own field would make the conflict check see changes nobody made.
+  **Issue:** #121

@@ -183,8 +183,14 @@ public sealed class GenerationServiceTests
         Assert.True(shape3.ContainsKey("rating"));
         Assert.Null(shape3["rating"]);
         Assert.Equal(26, shape3.Count);
-        Assert.Equal(3, RetainedTypes.Generation.ShapeVersion);
         Assert.True(RetainedTypes.Generation.Upgraders.ContainsKey(2));
+
+        // Shape 4 (#121) adds the image: an earlier Generation restores with none.
+        var shape4 = RetainedTypes.GenerationShape3To4(shape3);
+        Assert.Null(shape4["artwork_asset_id"]);
+        Assert.Equal(27, shape4.Count);
+        Assert.Equal(4, RetainedTypes.Generation.ShapeVersion);
+        Assert.True(RetainedTypes.Generation.Upgraders.ContainsKey(3));
     }
 
     [Fact]

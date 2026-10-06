@@ -68,6 +68,7 @@ export function testGeneration(
     revision: 1,
     rating: null,
     comments: [],
+    artwork: null,
     ...change,
   };
 }
