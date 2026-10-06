@@ -58,6 +58,7 @@ function song(number: number, overrides: Partial<Song> = {}): Song {
     artwork: null,
     hasSelectedGeneration: false,
     selectedGeneration: null,
+    sunoWorkspace: null,
     ...overrides,
   };
 }

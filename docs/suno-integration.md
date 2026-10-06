@@ -43,6 +43,25 @@ A Generation (the minimal record from #69) gains:
 - The latest raw clip JSON, kept whole in `provider_records` (Suno ID, kind, payload, captured time, export). Earlier payloads are replaced, not kept. Raw payloads are never logged.
 - An optional Generation Event: `generation_events` (provider request ID, source `observed`, `inferred`, or `user`, confidence `high` or `medium`, batch size, time). Events are internal: no screen or public response names them.
 
+## Workspaces
+
+Workspaces are kept in `suno_workspaces`, one record per Suno workspace ID (#129). Each record holds the latest name and description, Available or Unavailable, when the workspace was first and last seen, and the raw project object. Records are never deleted in V1.
+
+- **Discovery:** `PUT /api/v1/suno/workspaces/discovered` (`suno.sync`) takes `{ complete, workspaces: [<raw project>] }`. It reads `id`, `name`, `description`, and `is_trashed`.
+  - An entry without an `id` refuses the whole body with 422.
+  - If an ID is repeated, the last entry wins.
+  - A blank name never overwrites a known one.
+- **Availability:** only a complete list changes it. A known workspace that the list leaves out, or that it reports as trashed, becomes Unavailable. A workspace listed untrashed becomes Available again. Nothing about any Song changes.
+- **New workspaces:** a workspace first seen is Available, unless it is first seen trashed. Imports record the workspaces their clips name as an incomplete list.
+- **Listing:** `GET /api/v1/suno/workspaces` (`catalog.read`) lists every workspace by name, with blank names shown as "(unnamed)", plus its live Song count.
+- **A Song's workspace:** a Song lives in at most one workspace, always named by Suno ID. Its `sunoWorkspace` is `{ id, name, state }` or null.
+  - It is changed with the Song's PATCH (`sunoWorkspaceId`, `songs.write`) under the Song's revision. Only an Available workspace can be chosen. Resending the Unavailable workspace a Song already has counts as unchanged.
+  - It is not a creation input and never freezes. A Version's `effectiveInputs.workspace` reports it for Generate on Suno.
+- **Bulk move:** `POST /api/v1/suno/workspaces/{id}/move-songs` (session only) takes `{ songIds | all, targetWorkspaceId }`.
+  - It moves at most 5,000 Songs, all or nothing, and raises each moved Song's revision.
+  - The target must be another workspace, and Available.
+  - Errors are `too_many_songs` and `song_not_in_workspace`.
+
 ## Export format
 
 JSON, `format: "n8tracks.suno-export"`, `formatVersion: 1`:

@@ -206,12 +206,13 @@ internal static class RetainedTypes
     /// number is never given out again (the sequence only goes up). Restored into the workflow state
     /// it was in, or into the first visible one when that state was deleted meanwhile. Shape 2 (#120)
     /// added its Selected Generation, which is one of its own Generations, so it goes and comes back
-    /// with the group; an earlier record restores with none.
+    /// with the group; an earlier record restores with none. Shape 3 (#129) added its Suno workspace,
+    /// a record that is never deleted, so it comes back as it was; an earlier record restores with none.
     /// </summary>
-    public static readonly RetainedType Song = new(RetainedRecordTypes.Song, "songs", "Song", ShapeVersion: 2)
+    public static readonly RetainedType Song = new(RetainedRecordTypes.Song, "songs", "Song", ShapeVersion: 3)
     {
         PrepareRestoreAsync = static (row, cancellationToken) => SongRestore.KeepStateAsync(row, cancellationToken),
-        Upgraders = new Dictionary<int, Func<JsonObject, JsonObject>> { [1] = SongShape1To2 }.ToFrozenDictionary(),
+        Upgraders = new Dictionary<int, Func<JsonObject, JsonObject>> { [1] = SongShape1To2, [2] = SongShape2To3 }.ToFrozenDictionary(),
     };
 
     /// <summary>
@@ -396,6 +397,15 @@ internal static class RetainedTypes
         ArgumentNullException.ThrowIfNull(document);
 
         document["selected_generation_id"] = null;
+        return document;
+    }
+
+    /// <summary>A Song retained before #129 (shape 2) as shape 3: in no Suno workspace.</summary>
+    internal static JsonObject SongShape2To3(JsonObject document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+
+        document["suno_workspace_id"] = null;
         return document;
     }
 

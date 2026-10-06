@@ -31,7 +31,7 @@
 
   <!-- Suno's clip responses as the spikes captured them (sanitized), for the clip reader's tests. -->
   <ItemGroup>
-    <None Include="..\..\extension\fixtures\suno\feed-v3.*.response.json;..\..\extension\fixtures\suno\generate-v2-web*.response.json" LinkBase="SunoFixtures" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\extension\fixtures\suno\feed-v3.*.response.json;..\..\extension\fixtures\suno\generate-v2-web*.response.json;..\..\extension\fixtures\suno\project-me.*.response.json" LinkBase="SunoFixtures" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

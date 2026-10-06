@@ -171,6 +171,7 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
         var stateId = details.StateId;
         var release = details.Release;
         var explicitContent = SongReleaseRules.ExplicitText(release.Explicit);
+        var workspaceId = details.SunoWorkspaceId;
         var updated = UtcText.From(updatedUtc);
 
         // One conditional statement: the revision check and the write cannot be split by another writer.
@@ -191,6 +192,7 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
                     .SetProperty(song => song.Publishing, release.Publishing)
                     .SetProperty(song => song.Isrc, release.Isrc)
                     .SetProperty(song => song.Language, release.Language)
+                    .SetProperty(song => song.SunoWorkspaceId, workspaceId)
                     .SetProperty(song => song.UpdatedUtc, updated)
                     .SetProperty(song => song.Revision, song => song.Revision + 1),
                 cancellationToken)
@@ -348,6 +350,12 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
             .ToDictionaryAsync(static generation => generation.Id, cancellationToken)
             .ConfigureAwait(false);
 
+        var workspaces = await SunoWorkspaceStore.ForIdsAsync(
+                context,
+                [.. records.Select(static song => song.SunoWorkspaceId).OfType<string>().Distinct(StringComparer.Ordinal)],
+                cancellationToken)
+            .ConfigureAwait(false);
+
         // Retention does not exist yet: the Song deletion story must leave Songs in retention out here.
         var isrcs = records.Where(static song => song.Isrc is not null).Select(static song => song.Isrc!).Distinct(StringComparer.Ordinal).ToList();
         var sameIsrc = (isrcs.Count == 0
@@ -407,7 +415,8 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
                     : null,
                 song.SelectedGenerationId is { } shownId && selected.TryGetValue(shownId, out var shown) && shown.ImageId is { } image
                     ? new AttachedArtwork(image, null, shown.ImageWidth, shown.ImageHeight)
-                    : null);
+                    : null,
+                song.SunoWorkspaceId is { } workspaceId ? workspaces[workspaceId] : null);
         })];
     }
 }

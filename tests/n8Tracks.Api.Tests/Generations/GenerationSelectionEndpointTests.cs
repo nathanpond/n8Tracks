@@ -411,7 +411,7 @@ public sealed class GenerationSelectionEndpointTests
 
         Assert.True(shape2.ContainsKey("selected_generation_id"));
         Assert.Null(shape2["selected_generation_id"]);
-        Assert.Equal(2, RetainedTypes.Song.ShapeVersion);
+        Assert.True(RetainedTypes.Song.ShapeVersion >= 2);
         Assert.True(RetainedTypes.Song.Upgraders.ContainsKey(1));
     }
 

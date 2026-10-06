@@ -8,6 +8,7 @@ using n8Tracks.Application.Suno;
 using n8Tracks.Domain.Assets;
 using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
+using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Application.Songs;
 
@@ -77,7 +78,8 @@ public readonly record struct SongEditField(bool IsSent, string? Value)
 /// <paramref name="ArtworkAssetId"/>, when sent, is the unread text of the asset to show as the
 /// Song's artwork, or null to remove it. <paramref name="ArtworkCrop"/>, when sent, is the square
 /// crop of that artwork (null for the centred square); artwork replaced without one sent gets the
-/// centred square.
+/// centred square. <paramref name="SunoWorkspaceId"/>, when sent, is the Suno ID of the workspace
+/// the Song lives in (#129), or null for none.
 /// </summary>
 public sealed record SongEdit(
     SongEditField Title,
@@ -88,7 +90,8 @@ public sealed record SongEdit(
     IReadOnlyList<string?>? TagIds = null,
     SongReleaseEdit? Release = null,
     SongEditField ArtworkAssetId = default,
-    ArtworkCropEdit ArtworkCrop = default);
+    ArtworkCropEdit ArtworkCrop = default,
+    SongEditField SunoWorkspaceId = default);
 
 /// <summary>A link as sent: its label (missing or null for none) and its URL.</summary>
 public sealed record SongLinkInput(string? Label, string? Url);
@@ -165,6 +168,7 @@ public sealed class SongService(
     TagService tags,
     SongCreditService credits,
     ArtworkAttachmentService artwork,
+    ISunoWorkspaceStore workspaces,
     IExclusiveTransaction transaction,
     TimeProvider time)
 {
@@ -177,6 +181,7 @@ public sealed class SongService(
     public const string TagIdsField = "tagIds";
     public const string ArtworkAssetIdField = ArtworkAttachmentService.AssetIdField;
     public const string ArtworkCropField = ArtworkAttachmentService.CropField;
+    public const string SunoWorkspaceIdField = "sunoWorkspaceId";
 
     /// <summary>The release details object, and the names its members' errors are keyed by (<c>release.isrc</c>).</summary>
     public const string ReleaseField = "release";
@@ -331,7 +336,9 @@ public sealed class SongService(
     /// names the others in <see cref="SongSummary.SameIsrc"/>). The artwork sent replaces the Song's
     /// (a live asset's ID; null removes it), and the artwork it had goes into retention
     /// (<see cref="ArtworkAttachmentService"/>); a crop sent must fit the artwork it applies to
-    /// (<see cref="ArtworkCropRules"/>), and its square thumbnails are made in the same request. A stale revision (lower or higher)
+    /// (<see cref="ArtworkCropRules"/>), and its square thumbnails are made in the same request. The
+    /// Suno workspace sent (#129) is a known workspace's Suno ID, or null for none; only an Available one
+    /// can be chosen, though resending the Unavailable one the Song has is no change. A stale revision (lower or higher)
     /// changes nothing and answers the Song as it is now. An edit that changes nothing once
     /// normalised is not written and answers the Song unchanged; any other moves its revision and
     /// last-updated time.
@@ -402,6 +409,17 @@ public sealed class SongService(
                     artworkId = assetId;
                 }
 
+                // The workspace is named by its Suno ID, never by its name (#129).
+                SunoWorkspace? workspace = null;
+                if (edit.SunoWorkspaceId is { IsSent: true, Value: { } sunoWorkspaceId })
+                {
+                    workspace = await workspaces.FindAsync(sunoWorkspaceId, ct).ConfigureAwait(false);
+                    if (workspace is null)
+                    {
+                        errors[SunoWorkspaceIdField] = ["There is no Suno workspace with this ID."];
+                    }
+                }
+
                 var stateId = Guid.Empty;
                 if (edit.StateId.IsSent
                     && (!Guid.TryParseExact(edit.StateId.Value, "D", out stateId)
@@ -425,12 +443,23 @@ public sealed class SongService(
                     return new SongUpdateOutcome.Conflict(current);
                 }
 
+                // Only an Available workspace can be chosen; the Unavailable one the Song already has is
+                // accepted as unchanged.
+                if (workspace is { State: SunoWorkspaceState.Unavailable } && workspace.SunoId != current.SunoWorkspace?.SunoId)
+                {
+                    return new SongUpdateOutcome.Invalid(new Dictionary<string, string[]>(StringComparer.Ordinal)
+                    {
+                        [SunoWorkspaceIdField] = ["This Suno workspace is unavailable: choose an available one."],
+                    });
+                }
+
                 var details = new SongDetails(
                     edit.Title.IsSent ? SongRules.NormaliseTitle(edit.Title.Value!) : current.Title,
                     edit.Concept.IsSent ? SongRules.NormaliseConcept(edit.Concept.Value) : current.Concept,
                     edit.StateId.IsSent ? stateId : current.State.Id,
                     edit.Notes.IsSent ? SongRules.NormaliseNotes(edit.Notes.Value) : current.Notes,
-                    edit.Release is { } sentRelease ? Released(current.Release, sentRelease) : current.Release);
+                    edit.Release is { } sentRelease ? Released(current.Release, sentRelease) : current.Release,
+                    edit.SunoWorkspaceId.IsSent ? workspace?.SunoId : current.SunoWorkspace?.SunoId);
                 var genresChange = genreIds is not null && !genreIds.ToHashSet().SetEquals(current.Genres.Select(static genre => genre.Id))
                     ? genreIds
                     : null;
@@ -451,7 +480,7 @@ public sealed class SongService(
                     && edit.ArtworkCrop.IsSent
                     && current.Artwork is not null
                     && edit.ArtworkCrop.Value != current.Artwork.Crop;
-                if (details == new SongDetails(current.Title, current.Concept, current.State.Id, current.Notes, current.Release)
+                if (details == new SongDetails(current.Title, current.Concept, current.State.Id, current.Notes, current.Release, current.SunoWorkspace?.SunoId)
                     && genresChange is null
                     && tagsChange is null
                     && !artworkChanges

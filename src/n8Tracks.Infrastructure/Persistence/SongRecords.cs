@@ -76,6 +76,12 @@ public sealed class SongRecord
     /// service's check. Whatever deletes or moves a Generation resolves the selection first.
     /// </summary>
     public Guid? SelectedGenerationId { get; set; }
+
+    /// <summary>
+    /// The Suno ID of the workspace the Song lives in (#129), or null for none: a foreign key to
+    /// <c>suno_workspaces</c> with restrict on delete (workspace records are never deleted).
+    /// </summary>
+    public string? SunoWorkspaceId { get; set; }
 }
 
 /// <summary>One row of <c>song_links</c>: an external link of a Song, at its place in the Song's list.</summary>

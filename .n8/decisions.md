@@ -2871,3 +2871,35 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** Invariant 1: the guard's exemption reasons for PATCH and DELETE `relationship-types` now name #126. A dedicated API test freezes a Version that has a source of a mapped type, tries to change and clear the mapping and to delete the type, and compares `VersionImmutabilityGuardTests.Stored` and the `version_sources` rows. No new Application namespace was added. `Application.Catalog` and `Application.Suno` are not in `CatalogServiceNamespaces`, and the complement test confirms that neither takes a catalog type.
   **Why:** The orchestrator asked for confirmation. `RelationshipService` takes only IDs and text.
   **Issue:** #126
+- **Decision:** A workspace is identified by its Suno ID everywhere: it is the `suno_workspaces` primary key, as for `suno_playlists` (#125); the value of `songs.suno_workspace_id`, a FK with RESTRICT; the API's `id`; the Song PATCH's `sunoWorkspaceId`; and the bulk-move route's `{id}`, a plain string because Suno's default workspace has the ID `default`. There is no separate n8Tracks UUID.
+  **Why:** The AC says association is always by workspace ID, and the discretion line asks for the Suno ID to be unique. A surrogate key would add a second identity that every client would have to map back to Suno's. The default workspace's ID is not a UUID, so the route could not use `{id:guid}`.
+  **Issue:** #129
+- **Decision:** Schema: migration `AddSunoWorkspaces` (`20261006234000`; EF's generated timestamp was renamed so it sorts after `AllowUserTypeSunoAction`) creates `suno_workspaces`, with suno_id, name, description, state, first/last seen, and raw_json, and CHECKs on state and on the ID's length. It adds `songs.suno_workspace_id` with a hand-written `ALTER TABLE … ADD COLUMN … REFERENCES`, as #120 did. Song retention moves to shape 3, with upgrader `SongShape2To3`, which gives a Song "no workspace".
+  **Why:** EF Core would have added the FK by rebuilding `songs`, and the M4 notes forbid rebuilding a table on SQLite. The CHECKs are in `CreateTable`, so no table is rebuilt for them. Workspace records are never deleted, so a restored Song's FK always holds.
+  **Issue:** #129
+- **Decision:** The discovery rules, beyond the discretion lines:
+  - The extension's PUT returns every workspace plus the Suno IDs that were added, renamed, became unavailable, or became available.
+  - In an incomplete list, a known workspace keeps its state even when reported as trashed. A workspace seen for the first time takes its state from `is_trashed` either way.
+  - Limits: at most 1,000 workspaces per report, a name of at most 500 characters, a description of at most 5,000, and a raw project of at most 64 KB. Exceeding any of them is a 422 for the whole body.
+  - The description is overwritten only when one is sent.
+  **Why:** The key link says availability changes only when `complete` is true, so an incomplete report never moves a known workspace's state; the first-seen rule comes from the discretion. The limits stop a token from growing the database without bound. They are well beyond Suno's 20-per-page list.
+  **Issue:** #129
+- **Decision:** In the Song PATCH, an Unavailable workspace other than the Song's own is refused with 422 on `sunoWorkspaceId`. That check runs after the revision check, because it needs the Song's current workspace. The workspace is part of `SongDetails` (now a required sixth member) and of `SongStore.TryUpdateAsync`. `GenerationSelectionService` passes the Song's current workspace through.
+  **Why:** The association is part of the Song's revision, per the discretion, so it travels with the Song's other details in one conditional write.
+  **Issue:** #129
+- **Decision:** `effectiveInputs.workspace` (`{id, name, state}`) is reported for every kind and mode whenever the Song has a workspace. It is never added to `inputs`. `VersionDetail` gains a trailing `Workspace`, which `VersionStore.FindDetailAsync` fills.
+  **Why:** The discretion says `effectiveInputs` reports it for Generate on Suno. A result is saved to a workspace whatever the form, even though Suno shows the "Save to…" control only in Advanced mode.
+  **Issue:** #129
+- **Decision:** The bulk move is implemented here, as the API only, even though its page is #151's. `POST /api/v1/suno/workspaces/{id}/move-songs` is session-only, so the session-only count goes from 49 to 50. It is served by `Application.Songs.SongWorkspaceService.MoveSongsAsync`, which accepts each Song by ID or shortcode. Exactly one of `songIds` (not empty) and `all: true` must be sent. Error codes are 422 `too_many_songs` (with `limit` and `count`), 422 `song_not_in_workspace` (with `songs`, as sent), 422 `validation_failed` on `targetWorkspaceId` (unknown, the same workspace, or unavailable), and 404 for an unknown source workspace. Discovery and the list are `Application.Suno.SunoWorkspaceService`.
+  **Why:** AC 6 makes the bulk move session-only and the Test plan tests it here, and #151 links to "the command described in #129's discretion". The move changes Songs, so it belongs in a catalog namespace that the invariant-1 guard enumerates (API and service exercisers added). Discovery touches no catalog type, so it is in the guard's exempt table.
+  **Issue:** #129
+- **Decision:** Web: the Details panel has a "Suno workspace" section after Tags, with a native "Workspace" select: None, then every Available workspace, plus the Song's own even when it is unavailable, labelled "(unavailable)". The select saves as soon as a choice is made, through the page's one `useRevisionedSave` under the key `sunoWorkspaceId`. While the Song's workspace is unavailable, a "Workspace unavailable" badge shows in both the header and the Details, with a notice in the Details. When a choice is refused, the workspace list is read again. There is no Settings page; that is #151.
+  **Why:** This matches the Language field's choose-to-save pattern. The discretion puts the badge in the Song header and Details only.
+  **Issue:** #129
+- **Decision:** The inventory coverage test no longer has an exclusion list. It maps `workspace` to the Song association `sunoWorkspaceId` and checks it end to end:
+  - a workspace reported with a `suno.sync` token can be set and is read back on the Song and in `effectiveInputs.workspace`;
+  - an unknown ID is refused with a field error and changes nothing;
+  - null clears it.
+  The bite tests are "mapping removed" and "mapped to a field that does not store it".
+  **Why:** This is AC 7. The checker still knows nothing of how n8Tracks stores the association.
+  **Issue:** #129

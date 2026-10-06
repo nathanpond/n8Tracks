@@ -95,12 +95,23 @@ internal sealed class VersionStore(N8TracksDbContext context, TimeProvider time)
         }
 
         var lineage = await VersionLineageRows.ReadAsync(context, id, cancellationToken).ConfigureAwait(false);
+
+        // The Song's workspace (#129) is not the Version's, but where Generate on Suno saves its result.
+        var workspaceId = await context.Songs.AsNoTracking()
+            .Where(song => song.Id == summary.SongId)
+            .Select(static song => song.SunoWorkspaceId)
+            .SingleOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var workspace = workspaceId is null
+            ? null
+            : (await SunoWorkspaceStore.ForIdsAsync(context, [workspaceId], cancellationToken).ConfigureAwait(false)).GetValueOrDefault(workspaceId);
         return new VersionDetail(
             summary,
             inputs.Lyrics,
             inputs.Styles,
             VersionInputsColumns.Read(inputs.Kind, inputs.Model, inputs.Inputs),
-            await VersionLineageRows.ViewAsync(context, lineage, cancellationToken).ConfigureAwait(false));
+            await VersionLineageRows.ViewAsync(context, lineage, cancellationToken).ConfigureAwait(false),
+            workspace);
     }
 
     public async Task<IReadOnlyList<VersionSummary>> ListAsync(Guid songId, CancellationToken cancellationToken)

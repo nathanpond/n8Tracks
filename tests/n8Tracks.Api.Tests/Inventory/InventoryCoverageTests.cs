@@ -28,8 +28,14 @@ namespace n8Tracks.Api.Tests.Inventory;
 /// </summary>
 public sealed class InventoryCoverageTests
 {
-    /// <summary>The workspace a result is saved to: owned by the workspace story (#129), not a Version's input.</summary>
-    private static readonly string[] Excluded = ["workspace"];
+    /// <summary>
+    /// The fields stored on the Song rather than its Version, each with the Song PATCH field that sets
+    /// it: the workspace a result is saved to is the Song's association with a Suno workspace (#129).
+    /// </summary>
+    private static readonly Dictionary<string, string> SongAssociations = new(StringComparer.Ordinal)
+    {
+        ["workspace"] = SongService.SunoWorkspaceIdField,
+    };
 
     /// <summary>
     /// For each reference or file field, a value of it as its lineage key takes one (sent in Simple mode
@@ -74,12 +80,14 @@ public sealed class InventoryCoverageTests
     private static readonly string[] ModelKeys = ["model", "sounds_model"];
 
     [Fact]
-    public void TheExclusionListNamesOnlyTheWorkspaceAndEveryReferenceFieldIsMapped()
+    public void TheWorkspaceIsTheSongsAssociationAndEveryReferenceFieldIsMapped()
     {
         var inventory = CreateFieldInventory.Embedded;
 
-        Assert.Equal(["workspace"], Excluded);
+        // The workspace is no longer left out (#129): it maps to the Song's association.
+        Assert.Equal(["workspace"], SongAssociations.Keys);
         Assert.Equal(CreateField.ReferenceType, inventory.Get("workspace").Type);
+        Assert.Equal("sunoWorkspaceId", SongAssociations["workspace"]);
 
         // The six reference and file fields #111 left out are each stored by a part of the lineage (#122).
         Assert.Equal(
@@ -95,7 +103,7 @@ public sealed class InventoryCoverageTests
     [Fact]
     public async Task EveryInventoryFieldIsStoredRoundTrippedAndBoundedAsTheInventorySays()
     {
-        var problems = await CheckAsync(CreateFieldInventory.Embedded, Excluded, VersionLineageInputs.InventoryFields);
+        var problems = await CheckAsync(CreateFieldInventory.Embedded, SongAssociations, VersionLineageInputs.InventoryFields);
 
         Assert.True(problems.Count == 0, string.Join(Environment.NewLine, problems));
     }
@@ -112,7 +120,7 @@ public sealed class InventoryCoverageTests
     {
         var mapping = VersionLineageInputs.InventoryFields.Where(pair => pair.Key != key).ToDictionary(StringComparer.Ordinal);
 
-        var problems = await CheckAsync(CreateFieldInventory.Embedded, Excluded, mapping);
+        var problems = await CheckAsync(CreateFieldInventory.Embedded, SongAssociations, mapping);
 
         Assert.Contains(problems, problem => problem.StartsWith(key + ":", StringComparison.Ordinal));
     }
@@ -128,18 +136,28 @@ public sealed class InventoryCoverageTests
         copy["fields"]!.AsArray().Add(JsonNode.Parse(field));
         var key = JsonNode.Parse(field)!["key"]!.GetValue<string>();
 
-        var problems = await CheckAsync(CreateFieldInventory.Parse(copy.ToJsonString()), Excluded, VersionLineageInputs.InventoryFields);
+        var problems = await CheckAsync(CreateFieldInventory.Parse(copy.ToJsonString()), SongAssociations, VersionLineageInputs.InventoryFields);
 
         Assert.Contains(problems, problem => problem.StartsWith(key + ":", StringComparison.Ordinal));
     }
 
-    /// <summary>It bites: the workspace taken off the exclusion list fails, since nothing stores it yet.</summary>
-    [Fact]
-    public async Task AKeyTakenOffTheExclusionListFailsTheCheck()
+    /// <summary>
+    /// It bites: the workspace without its mapping to the Song's association fails, since no Version
+    /// option stores it; and with a mapping to a Song field that does not store it, it fails too.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("concept")]
+    public async Task TheWorkspaceWithoutItsSongAssociationFailsTheCheck(string? field)
     {
         const string key = "workspace";
+        var associations = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (field is not null)
+        {
+            associations[key] = field;
+        }
 
-        var problems = await CheckAsync(CreateFieldInventory.Embedded, [], VersionLineageInputs.InventoryFields);
+        var problems = await CheckAsync(CreateFieldInventory.Embedded, associations, VersionLineageInputs.InventoryFields);
 
         Assert.Contains(problems, problem => problem.StartsWith(key + ":", StringComparison.Ordinal));
     }
@@ -163,7 +181,7 @@ public sealed class InventoryCoverageTests
         var copy = JsonNode.Parse(CreateFieldInventory.Embedded.Json)!;
         copy["fields"]!.AsArray().Single(field => field!["key"]!.GetValue<string>() == key)![property] = JsonNode.Parse(value);
 
-        var problems = await CheckAsync(CreateFieldInventory.Parse(copy.ToJsonString()), Excluded, VersionLineageInputs.InventoryFields);
+        var problems = await CheckAsync(CreateFieldInventory.Parse(copy.ToJsonString()), SongAssociations, VersionLineageInputs.InventoryFields);
 
         Assert.Contains(problems, problem => problem.StartsWith(key + ":", StringComparison.Ordinal));
     }
@@ -172,16 +190,21 @@ public sealed class InventoryCoverageTests
     /// Every way <paramref name="inventory"/> and the API disagree, each line starting with the field's
     /// key, or with the API's name for an option no field describes.
     /// </summary>
-    private static async Task<List<string>> CheckAsync(CreateFieldInventory inventory, IReadOnlyCollection<string> excluded, IReadOnlyDictionary<string, string> lineage)
+    private static async Task<List<string>> CheckAsync(CreateFieldInventory inventory, IReadOnlyDictionary<string, string> songAssociations, IReadOnlyDictionary<string, string> lineage)
     {
         using var factory = SongApi.Host();
         using var client = await SessionApi.SignedInClientAsync(factory);
         var problems = new List<string>();
 
-        foreach (var field in inventory.Fields.Where(field => !excluded.Contains(field.Key, StringComparer.Ordinal)))
+        foreach (var field in inventory.Fields)
         {
-            var version = new CoveredVersion(client, (await SongApi.CreateAsync(client, SongTitle)).GetProperty("currentVersion").GetProperty("id").GetGuid());
-            if (lineage.TryGetValue(field.Key, out var lineageKey))
+            var song = await SongApi.CreateAsync(client, SongTitle);
+            var version = new CoveredVersion(client, song.GetProperty("currentVersion").GetProperty("id").GetGuid());
+            if (songAssociations.TryGetValue(field.Key, out var songField))
+            {
+                await CheckSongAssociationAsync(factory, client, field, songField, song.GetProperty("id").GetString()!, version, problems);
+            }
+            else if (lineage.TryGetValue(field.Key, out var lineageKey))
             {
                 await CheckLineageAsync(field, lineageKey, version, problems);
             }
@@ -269,6 +292,77 @@ public sealed class InventoryCoverageTests
         if ((await version.ReadAsync()).GetRawText() != before)
         {
             Fail($"{sample.Refused} was refused but changed the Version.");
+        }
+    }
+
+    /// <summary>
+    /// A field stored on the Song (#129): the workspace. A workspace is reported as the extension
+    /// reports one (a <c>suno.sync</c> token), the Song's <paramref name="songField"/> set to its Suno ID
+    /// is read back on the Song (<c>sunoWorkspace</c>) and in the Version's <c>effectiveInputs</c> under
+    /// the field's key, a workspace that does not exist is refused with a field error changing nothing,
+    /// and null clears it.
+    /// </summary>
+    private static async Task CheckSongAssociationAsync(N8TracksApiFactory factory, HttpClient client, CreateField field, string songField, string songId, CoveredVersion version, List<string> problems)
+    {
+        void Fail(string problem) => problems.Add($"{field.Key}: {problem}");
+
+        async Task<JsonElement> SongAsync() => await SetupApi.JsonAsync(await client.GetAsync(SongApi.Song(songId)));
+
+        if (!(await SongAsync()).TryGetProperty("sunoWorkspace", out _))
+        {
+            Fail("no association is stored on the Song (expected sunoWorkspace).");
+            return;
+        }
+
+        var sunoId = "coverage-" + Guid.NewGuid().ToString("N");
+        await Suno.SunoWorkspaceApi.ReportAsync(client, await Suno.SunoWorkspaceApi.ExtensionTokenAsync(factory), complete: false, Suno.SunoWorkspaceApi.Project(sunoId, "Coverage"));
+
+        async Task<HttpResponseMessage> PatchAsync(JsonNode? value) => await SongApi.PatchAsync(
+            client,
+            songId,
+            SongApi.Quoted((await SongAsync()).GetProperty("revision").GetInt32()),
+            new JsonObject { [songField] = value }.ToJsonString());
+
+        using (var accepted = await PatchAsync(sunoId))
+        {
+            if (accepted.StatusCode != HttpStatusCode.OK)
+            {
+                Fail($"the Song's {songField} refuses a reported workspace ({(int)accepted.StatusCode}: {await accepted.Content.ReadAsStringAsync()}).");
+                return;
+            }
+        }
+
+        if ((await SongAsync()).GetProperty("sunoWorkspace") is not { ValueKind: JsonValueKind.Object } stored || stored.GetProperty("id").GetString() != sunoId)
+        {
+            Fail($"{songField} is not read back as the Song's sunoWorkspace.");
+        }
+
+        if (!(await version.ReadAsync()).GetProperty("effectiveInputs").TryGetProperty(field.Key, out var effective)
+            || effective.ValueKind != JsonValueKind.Object
+            || effective.GetProperty("id").GetString() != sunoId)
+        {
+            Fail($"the Version's effectiveInputs does not report the Song's workspace under {field.Key}.");
+        }
+
+        var before = (await SongAsync()).GetRawText();
+        using (var refused = await PatchAsync("coverage-unknown"))
+        {
+            if (refused.StatusCode != HttpStatusCode.UnprocessableEntity
+                || !(await SetupApi.ProblemAsync(refused, HttpStatusCode.UnprocessableEntity, ApiProblem.ValidationFailedCode)).GetProperty("errors").TryGetProperty(songField, out _))
+            {
+                Fail($"a workspace that does not exist is not refused with an error for {songField}.");
+            }
+        }
+
+        if ((await SongAsync()).GetRawText() != before)
+        {
+            Fail("a workspace that does not exist was refused but changed the Song.");
+        }
+
+        using var cleared = await PatchAsync(null);
+        if (cleared.StatusCode != HttpStatusCode.OK || (await SongAsync()).GetProperty("sunoWorkspace").ValueKind != JsonValueKind.Null)
+        {
+            Fail($"null in {songField} does not clear the association.");
         }
     }
 

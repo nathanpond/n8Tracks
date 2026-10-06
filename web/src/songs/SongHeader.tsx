@@ -22,6 +22,7 @@ import { SelectedGenerationBadges } from '../generations/GenerationParts';
 import { focusOnMount, saveError, useInPlaceEdit } from '../common/useInPlaceEdit';
 import type { SaveOutcome } from '../common/useRevisionedSave';
 import { DuplicateTitleIndicator } from './DuplicateTitleIndicator';
+import { UnavailableWorkspaceBadge } from './details/WorkspaceSection';
 import { StateBadge, TagLabels } from './SongParts';
 import { conceptError, singleLine, titleError } from './songRules';
 
@@ -306,7 +307,8 @@ function SelectedGenerationField({ song }: { song: Song }) {
  * The Song page's header: its artwork (chosen in the Details panel; a placeholder when it has
  * none), shortcode, title, workflow state, and concept, each edited where it is
  * shown, the Song's Tags as coloured labels (chosen in the Details panel), and `actions` (the
- * Details control) beside the shortcode, and its Selected Generation with a link to it. Every save goes through the
+ * Details control) beside the shortcode, its Selected Generation with a link to it, and a badge when
+ * its Suno workspace is unavailable (#129). Every save goes through the
  * page's one `useRevisionedSave` (`save`), so a save based on an old revision is refused and offered
  * for comparison and reapplying instead of overwriting.
  */
@@ -335,6 +337,9 @@ export function SongHeader({
               Kind: {kindLabel(song.currentVersion.kind)}
             </Text>
             <SelectedGenerationField song={song} />
+            {song.sunoWorkspace?.state === 'unavailable' && (
+              <UnavailableWorkspaceBadge workspace={song.sunoWorkspace} />
+            )}
             {actions !== undefined && <div style={{ marginInlineStart: 'auto' }}>{actions}</div>}
           </Group>
           <Group gap="md" align="flex-start" wrap="wrap">

@@ -8,6 +8,7 @@ using n8Tracks.Application.References;
 using n8Tracks.Application.Songs;
 using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
+using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Api.Endpoints;
 
@@ -57,7 +58,7 @@ internal static class SongsEndpoints
 
         endpoints.MapPatch(SongPath, UpdateAsync)
             .WithName("UpdateSong")
-            .WithSummary("Edits a Song's title, concept, workflow state, notes, Genres, Tags, release details, or artwork (only the fields sent; genreIds and tagIds replace the Song's Genres and Tags; in release, only the members sent change, null clears one, and links replace the Song's; artworkAssetId is an uploaded asset's ID, or null to remove the artwork; artworkCrop is {x, y, size} in pixels of the original, or null for the centred square, and is reset when the artwork is replaced without one; both also need artwork.write), given the revision read in If-Match. Replaced or removed artwork is retained for 30 days. An ISRC another Song has is allowed and answered with a duplicate_isrc warning.")
+            .WithSummary("Edits a Song's title, concept, workflow state, notes, Genres, Tags, release details, or artwork (only the fields sent; genreIds and tagIds replace the Song's Genres and Tags; in release, only the members sent change, null clears one, and links replace the Song's; artworkAssetId is an uploaded asset's ID, or null to remove the artwork; artworkCrop is {x, y, size} in pixels of the original, or null for the centred square, and is reset when the artwork is replaced without one; both also need artwork.write; sunoWorkspaceId is the Suno ID of a known, available workspace, or null for none), given the revision read in If-Match. Replaced or removed artwork is retained for 30 days. An ISRC another Song has is allowed and answered with a duplicate_isrc warning.")
             .RequireScope(CredentialScopes.SongsWrite)
             .Produces<SongResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
@@ -223,7 +224,8 @@ internal static class SongsEndpoints
             IdList(request?.TagIds, SongService.TagIdsField, "Tag", typeErrors),
             Release(request?.Release, typeErrors),
             Field(request?.ArtworkAssetId, SongService.ArtworkAssetIdField, typeErrors),
-            ArtworkEndpoints.ReadCrop(request?.ArtworkCrop, SongService.ArtworkCropField, typeErrors));
+            ArtworkEndpoints.ReadCrop(request?.ArtworkCrop, SongService.ArtworkCropField, typeErrors),
+            Field(request?.SunoWorkspaceId, SongService.SunoWorkspaceIdField, typeErrors));
         if ((edit.ArtworkAssetId.IsSent || edit.ArtworkCrop.IsSent) && ScopeMiddleware.Lacking(context, CredentialScopes.ArtworkWrite) is { } lacking)
         {
             return lacking;
@@ -483,7 +485,8 @@ internal sealed record SongCreditsRequest(JsonElement PrimaryArtistId, JsonEleme
 /// <c>genreIds</c> and <c>tagIds</c> are the Song's whole new lists of Genre and Tag IDs;
 /// <c>release</c> is an object of the release details to change; <c>artworkAssetId</c> is the asset
 /// to show as its artwork, or null for none; <c>artworkCrop</c> is its square crop
-/// (<c>{x, y, size}</c> in pixels of the original), or null for the centred square.
+/// (<c>{x, y, size}</c> in pixels of the original), or null for the centred square;
+/// <c>sunoWorkspaceId</c> is the Suno ID of the workspace the Song lives in, or null for none (#129).
 /// </summary>
 internal sealed record UpdateSongRequest(
     JsonElement Title,
@@ -494,7 +497,8 @@ internal sealed record UpdateSongRequest(
     JsonElement TagIds,
     JsonElement Release,
     JsonElement ArtworkAssetId,
-    JsonElement ArtworkCrop);
+    JsonElement ArtworkCrop,
+    JsonElement SunoWorkspaceId);
 
 /// <summary>
 /// A Song as the API shows it. Times are UTC. <c>genres</c> and <c>tags</c> are alphabetical;
@@ -507,7 +511,8 @@ internal sealed record UpdateSongRequest(
 /// is what it shows (#121): its own artwork (<c>source</c> <c>own</c>), or else its Selected
 /// Generation's image, uncropped (<c>source</c> <c>selectedGeneration</c>), or null. <c>selectedGeneration</c> is its Selected Generation (#120:
 /// <c>{ id, shortcode, state, remoteState }</c>) or null, and <c>hasSelectedGeneration</c> says
-/// whether it has one, as Album and Playlist tracks say it.
+/// whether it has one, as Album and Playlist tracks say it. <c>sunoWorkspace</c> is the Suno
+/// workspace it lives in (#129: <c>{ id, name, state }</c>, the ID being Suno's) or null.
 /// </summary>
 internal sealed record SongResponse(
     Guid Id,
@@ -531,7 +536,8 @@ internal sealed record SongResponse(
     SongWarningResponse[] Warnings,
     SongArtworkResponse? Artwork,
     bool HasSelectedGeneration,
-    SelectedGenerationResponse? SelectedGeneration)
+    SelectedGenerationResponse? SelectedGeneration,
+    SongWorkspaceResponse? SunoWorkspace)
 {
     /// <summary>The Song as the API shows it; <paramref name="pathBase"/> starts its artwork's URLs.</summary>
     public static SongResponse From(SongSummary song, PathString pathBase)
@@ -575,7 +581,22 @@ internal sealed record SongResponse(
             song.SelectedGeneration is not null,
             song.SelectedGeneration is { } selected
                 ? new SelectedGenerationResponse(selected.Id, selected.Shortcode, GenerationStates.NameOf(selected.State), GenerationStates.NameOf(selected.RemoteState))
-                : null);
+                : null,
+            song.SunoWorkspace is { } workspace ? SongWorkspaceResponse.From(workspace) : null);
+    }
+}
+
+/// <summary>
+/// The Suno workspace a Song lives in, as the Song shows it (#129): Suno's ID for it (<c>id</c>), its
+/// name as last seen (may be blank), and <c>state</c> (<c>available</c> or <c>unavailable</c>).
+/// </summary>
+internal sealed record SongWorkspaceResponse(string Id, string Name, string State)
+{
+    public static SongWorkspaceResponse From(SunoWorkspace workspace)
+    {
+        ArgumentNullException.ThrowIfNull(workspace);
+
+        return new(workspace.SunoId, workspace.Name, SunoWorkspaceRules.NameOf(workspace.State));
     }
 }
 

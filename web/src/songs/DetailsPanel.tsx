@@ -38,6 +38,7 @@ import { paletteColour } from '../theme/palette';
 import { CreditsSection } from './CreditsSection';
 import { RelatedSection } from './RelatedSection';
 import { ReleaseSection } from './details/ReleaseSection';
+import { WorkspaceSection } from './details/WorkspaceSection';
 import { DETAILS_PANEL_ID, DETAILS_PANEL_WIDTH } from './detailsPanelState';
 import { alphabetical, GENRES_KEY, genresValue } from './genreField';
 import { normaliseNotes, songNotesError } from './songRules';
@@ -387,7 +388,7 @@ function inheritedArtworkNote(song: Song): string | undefined {
     : undefined;
 }
 
-/** What the Details panel holds for a Song: its artwork, credits, Genres, Tags, notes, release details, related Songs, Albums, and Playlists. Later stories add sections. */
+/** What the Details panel holds for a Song: its artwork, credits, Genres, Tags, Suno workspace, notes, release details, related Songs, Albums, and Playlists. Later stories add sections. */
 export function SongDetails({
   song,
   saveFields,
@@ -413,6 +414,7 @@ export function SongDetails({
       <CreditsSection song={song} saveFields={saveFields} onSong={onSong} />
       <GenresSection song={song} saveFields={saveFields} onSong={onSong} />
       <TagsSection song={song} saveFields={saveFields} onSong={onSong} />
+      <WorkspaceSection song={song} save={(key, value) => saveFields({ [key]: value })} />
       <NotesSection song={song} save={(key, value) => saveFields({ [key]: value })} />
       <ReleaseSection song={song} save={(key, value) => saveFields({ [key]: value })} />
       <RelatedSection song={song} onSong={onSong} />

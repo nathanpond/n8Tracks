@@ -195,7 +195,7 @@ public sealed class GenerationSelectionService(
             return false;
         }
 
-        var details = new SongDetails(song.Title, song.Concept, stateId, song.Notes, song.Release);
+        var details = new SongDetails(song.Title, song.Concept, stateId, song.Notes, song.Release, song.SunoWorkspace?.SunoId);
         if (!await songs.TrySelectGenerationAsync(song.Id, null, song.Revision, now, cancellationToken).ConfigureAwait(false)
             || !await songs.TryUpdateAsync(song.Id, details, song.Revision + 1, now, cancellationToken).ConfigureAwait(false))
         {

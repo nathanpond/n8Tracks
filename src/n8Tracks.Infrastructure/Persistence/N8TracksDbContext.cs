@@ -96,6 +96,8 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
 
     public DbSet<SunoPersonaRecord> SunoPersonas => Set<SunoPersonaRecord>();
 
+    public DbSet<SunoWorkspaceRecord> SunoWorkspaces => Set<SunoWorkspaceRecord>();
+
     public DbSet<VersionSourceRecord> VersionSources => Set<VersionSourceRecord>();
 
     public DbSet<VersionInspirationPlaylistRecord> VersionInspirationPlaylists => Set<VersionInspirationPlaylistRecord>();
@@ -390,6 +392,13 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                 .WithMany()
                 .HasForeignKey(record => record.SelectedGenerationId)
                 .OnDelete(DeleteBehavior.Restrict);
+
+            // The Suno workspace the Song lives in (#129), by Suno ID. Workspace records are never
+            // deleted, so the key only guards against a dangling name.
+            song.HasOne<SunoWorkspaceRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.SunoWorkspaceId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<SongLinkRecord>(link =>
@@ -517,6 +526,16 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                 table.HasCheckConstraint("ck_suno_playlists_suno_id", "length(suno_id) BETWEEN 1 AND 100");
             });
             playlist.HasKey(record => record.SunoId);
+        });
+
+        modelBuilder.Entity<SunoWorkspaceRecord>(workspace =>
+        {
+            workspace.ToTable("suno_workspaces", static table =>
+            {
+                table.HasCheckConstraint("ck_suno_workspaces_suno_id", "length(suno_id) BETWEEN 1 AND 100");
+                table.HasCheckConstraint("ck_suno_workspaces_state", "state IN ('available', 'unavailable')");
+            });
+            workspace.HasKey(record => record.SunoId);
         });
 
         modelBuilder.Entity<SunoPersonaRecord>(persona =>

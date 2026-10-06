@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from './client';
 import { isSongArtwork, type ArtworkCrop, type SongArtwork } from './artwork';
 import { patchWithRevision, writeWithRevision, type SaveResult } from './saves';
+import { isSongWorkspace, type SongWorkspace } from './sunoWorkspaces';
 
 const SONGS_PATH = 'api/v1/songs';
 export const WORKFLOW_STATES_PATH = 'api/v1/workflow-states';
@@ -187,6 +188,8 @@ export interface Song {
   hasSelectedGeneration: boolean;
   /** Its Selected Generation, the Song's chosen output, with that Generation's states; null when it has none. */
   selectedGeneration: SelectedGeneration | null;
+  /** The Suno workspace it lives in (#129), by Suno's ID, with its name and state; null when it is in none. */
+  sunoWorkspace: SongWorkspace | null;
 }
 
 /**
@@ -359,7 +362,8 @@ export function isSong(value: unknown): value is Song {
     value.warnings.every(isSongWarning) &&
     (value.artwork === null || isSongArtwork(value.artwork)) &&
     typeof value.hasSelectedGeneration === 'boolean' &&
-    (value.selectedGeneration === null || isSelectedGeneration(value.selectedGeneration))
+    (value.selectedGeneration === null || isSelectedGeneration(value.selectedGeneration)) &&
+    (value.sunoWorkspace === null || isSongWorkspace(value.sunoWorkspace))
   );
 }
 
@@ -669,6 +673,8 @@ export interface SongEdit {
   artworkAssetId?: string | null;
   /** The artwork's square crop, in pixels of the original, or null for the centred square. */
   artworkCrop?: ArtworkCrop | null;
+  /** The Suno ID of the workspace the Song lives in (an Available one), or null for none. */
+  sunoWorkspaceId?: string | null;
 }
 
 /** Edits a Song, based on `song`'s revision; a stale revision comes back as a conflict. */

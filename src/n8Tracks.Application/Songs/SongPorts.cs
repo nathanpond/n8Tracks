@@ -34,6 +34,10 @@ namespace n8Tracks.Application.Songs;
 /// Its Selected Generation's image (#121, no crop), which the Song shows while it has no artwork of
 /// its own; null when it has no Selected Generation or that Generation has no image.
 /// </param>
+/// <param name="SunoWorkspace">
+/// The Suno workspace it lives in (#129), as last seen, or null when it is in none. Part of the Song,
+/// not of a Version: it is not a creation input and never freezes.
+/// </param>
 public sealed record SongSummary(
     Guid Id,
     long ShortcodeNumber,
@@ -56,7 +60,8 @@ public sealed record SongSummary(
     IReadOnlyList<RelatedSong> SameIsrc,
     AttachedArtwork? Artwork,
     SelectedGenerationSummary? SelectedGeneration,
-    AttachedArtwork? SelectedGenerationArtwork = null)
+    AttachedArtwork? SelectedGenerationArtwork = null,
+    SunoWorkspace? SunoWorkspace = null)
 {
 
     public string Shortcode => Shortcodes.ForSong(ShortcodeNumber);
@@ -127,7 +132,8 @@ public sealed record SongPage(IReadOnlyList<SongSummary> Items, int Page, int Pa
 /// <param name="StateId">The ID of a workflow state, hidden or not.</param>
 /// <param name="Notes">Normalised; null when there are none.</param>
 /// <param name="Release">Valid and normalised; links written as a whole.</param>
-public sealed record SongDetails(string Title, string? Concept, Guid StateId, string? Notes, SongRelease Release);
+/// <param name="SunoWorkspaceId">The Suno ID of the workspace it lives in (#129), or null for none.</param>
+public sealed record SongDetails(string Title, string? Concept, Guid StateId, string? Notes, SongRelease Release, string? SunoWorkspaceId);
 
 /// <summary>Where Songs and their Versions are kept.</summary>
 public interface ISongStore
@@ -261,7 +267,11 @@ public sealed record VersionAnnotations(string? Name, string? Notes, bool Archiv
 /// <param name="Styles">As stored; empty when there are none.</param>
 /// <param name="Inputs">Its kind, modes, and every Suno option.</param>
 /// <param name="Lineage">Its sources, Inspiration, Voice, and file inputs, with what each source points at.</param>
-public sealed record VersionDetail(VersionSummary Summary, string Lyrics, string Styles, VersionInputs Inputs, VersionLineageView Lineage);
+/// <param name="Workspace">
+/// Its Song's Suno workspace (#129), or null: not an input of the Version (it never freezes), but
+/// where Generate on Suno saves the result, so <c>effectiveInputs</c> reports it.
+/// </param>
+public sealed record VersionDetail(VersionSummary Summary, string Lyrics, string Styles, VersionInputs Inputs, VersionLineageView Lineage, SunoWorkspace? Workspace = null);
 
 /// <summary>
 /// A Version's lineage as it is read: the lineage itself, and for each source (audio, then

@@ -18,8 +18,10 @@ using n8Tracks.Application.Generations;
 using n8Tracks.Application.References;
 using n8Tracks.Application.Retention;
 using n8Tracks.Application.Songs;
+using n8Tracks.Application.Suno;
 using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
+using n8Tracks.Domain.Suno;
 using n8Tracks.Infrastructure.Persistence;
 using n8Tracks.Infrastructure.Retention;
 
@@ -760,6 +762,19 @@ public sealed class VersionImmutabilityGuardTests
                 await target.GenerationImageAsync(colour);
             }
         }),
+        // The Suno workspace a Song lives in (#129) is the Song's own, never a Version's: a bulk move
+        // changes only the Songs' workspace and revision. The inputs sent alongside are not read.
+        ["POST /api/v1/suno/workspaces/{id}/move-songs"] = new(async target =>
+        {
+            var (from, to) = await InWorkspaceAsync(target);
+            using var response = await SendAsync(
+                target.Client,
+                HttpMethod.Post,
+                new Uri($"/api/v1/suno/workspaces/{from}/move-songs", UriKind.Relative),
+                SongApi.Quoted(1),
+                await target.InputsJsonAsync($$"""{"songIds":["{{target.SongShortcode}}"],"targetWorkspaceId":"{{to}}",""", "}"));
+            Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        }),
         ["POST /api/v1/songs/{reference}/artwork/from-generation"] = new(async target =>
         {
             await target.GenerationImageAsync(ArtworkImages.Red);
@@ -820,6 +835,7 @@ public sealed class VersionImmutabilityGuardTests
         ["POST /api/v1/restores/uploads"] = "writes an uploaded archive to a temporary file and reads it; changes no row",
         ["POST /api/v1/artwork"] = "stores an uploaded image as an asset (assets and its files); attaching it is the owner's own edit, and no Version is touched",
         ["POST /api/v1/restores"] = "starts maintenance and a safety backup; it replaces the instance as a whole (#74), never edits a Version",
+        ["PUT /api/v1/suno/workspaces/discovered"] = "records Suno workspaces as the extension reports them (suno_workspaces, #129); no Song or Version is touched, even when one becomes unavailable",
     };
 
     /// <summary>How each public method of a catalog service is called, each creation input touched in turn.</summary>
@@ -979,6 +995,13 @@ public sealed class VersionImmutabilityGuardTests
             var (shortcode, id) = await target.CommentAsync();
             Assert.IsType<GenerationCommentOutcome.Deleted>(await InScopeAsync<GenerationEvaluationService, GenerationCommentOutcome>(target, service =>
                 service.DeleteCommentAsync(CatalogReference.Parse(shortcode), id, 1, default)));
+        }),
+        // A bulk move between Suno workspaces (#129): only the Songs' workspace and revision change.
+        ["SongWorkspaceService.MoveSongsAsync(String, SongWorkspaceMove, CancellationToken)"] = new(static async target =>
+        {
+            var (from, to) = await InWorkspaceAsync(target);
+            Assert.IsType<SongWorkspaceMoveOutcome.Moved>(await InScopeAsync<SongWorkspaceService, SongWorkspaceMoveOutcome>(target, service =>
+                service.MoveSongsAsync(from, new SongWorkspaceMove(null, All: true, to), default)));
         }),
         ["SongService.FindAsync(String, CancellationToken)"] = Service<SongService>(static (service, target) => service.FindAsync(target.SongShortcode, default)),
         ["SongService.UpdateAsync(Guid, SongEdit, Int32, CancellationToken)"] = Service<SongService>(static async (service, target) =>
@@ -1386,6 +1409,24 @@ public sealed class VersionImmutabilityGuardTests
         using var added = await SendAsync(target.Client, HttpMethod.Post, new Uri($"/api/v1/playlists/{id}/songs", UriKind.Relative), SongApi.Quoted(1), $$"""{"songId":"{{target.SongId}}"}""");
         Assert.Equal(HttpStatusCode.OK, added.StatusCode);
         return (id, 2);
+    }
+
+    /// <summary>
+    /// Two available Suno workspaces (#129), reported as the extension would, with the target's Song
+    /// put in the first through the Song's own edit: the Suno IDs to move from and to.
+    /// </summary>
+    private static async Task<(string From, string To)> InWorkspaceAsync(Target target)
+    {
+        var from = "guard-" + Guid.NewGuid().ToString("N");
+        var to = "guard-" + Guid.NewGuid().ToString("N");
+        await InScopeAsync<SunoWorkspaceService, SunoWorkspaceReport>(target, service => service.ReportAsync(
+            [new SunoWorkspaceSighting(from, "Guard from", null, false, "{}"), new SunoWorkspaceSighting(to, "Guard to", null, false, "{}")],
+            complete: false,
+            default));
+        var (_, revision) = await target.SongAsync();
+        Assert.IsType<SongUpdateOutcome.Updated>(await InScopeAsync<SongService, SongUpdateOutcome>(target, service =>
+            service.UpdateAsync(target.SongId, new SongEdit(SongEditField.Unsent, SongEditField.Unsent, SongEditField.Unsent, SunoWorkspaceId: SongEditField.Of(from)), revision, default)));
+        return (from, to);
     }
 
     private static async Task<HttpResponseMessage> SendAsync(HttpClient client, HttpMethod method, Uri uri, string ifMatch, string? json)

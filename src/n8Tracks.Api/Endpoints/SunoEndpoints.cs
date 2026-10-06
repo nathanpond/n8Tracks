@@ -55,6 +55,7 @@ internal static class SunoEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden);
 
         endpoints.MapSunoModels();
+        endpoints.MapSunoWorkspaces();
 
         return endpoints;
     }

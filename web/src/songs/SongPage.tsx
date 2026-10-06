@@ -12,6 +12,7 @@ import {
   type Song,
   type SongEdit,
 } from '../api/songs';
+import { SUNO_WORKSPACE_KEY } from '../api/sunoWorkspaces';
 import { formatDateTime, useConfiguredTimeZone } from '../api/timeZone';
 import { useSongVersions } from '../api/versions';
 import { ARTWORK_CROP_KEY, ARTWORK_KEY, cropOf, cropValue } from '../common/artworkField';
@@ -21,6 +22,7 @@ import { useRevisionedSave, type SavedField } from '../common/useRevisionedSave'
 import { Notice } from '../components/Notice';
 import { DeleteSongDialog, type DeletedSongNotice } from './DeleteSongDialog';
 import { DetailsPanel, SongDetails } from './DetailsPanel';
+import { WorkspaceValue } from './details/WorkspaceSection';
 import { CREDITS_KEY, creditsOf, creditsText, creditsValue } from './creditsField';
 import { DETAILS_PANEL_ID, useDetailsPanel } from './detailsPanelState';
 import {
@@ -160,6 +162,12 @@ function LoadedSong({ loaded }: { loaded: Song }) {
         merge: mergeTags,
       },
       { key: 'notes', label: 'Notes', read: (record) => record.notes, show: showText },
+      {
+        key: SUNO_WORKSPACE_KEY,
+        label: 'Suno workspace',
+        read: (record) => record.sunoWorkspace?.id ?? null,
+        show: (value) => <WorkspaceValue id={value} />,
+      },
       ...RELEASE_FIELDS,
       {
         key: ARTWORK_KEY,

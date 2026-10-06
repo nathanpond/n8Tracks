@@ -8,6 +8,7 @@ using n8Tracks.Application.References;
 using n8Tracks.Application.Songs;
 using n8Tracks.Application.Suno;
 using n8Tracks.Domain.Songs;
+using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Api.Endpoints;
 
@@ -971,9 +972,35 @@ internal sealed record VersionDetailResponse(
             version.Lyrics,
             version.Styles,
             With(VersionInputRules.ToJson(version.Inputs), VersionLineageInputs.ToJson(version.Lineage)),
-            With(
-                VersionInputRules.Effective(CreateFieldInventory.Embedded, version.Inputs, version.Lyrics, version.Styles),
-                VersionLineageInputs.Effective(version.Lineage, version.Inputs)));
+            WithWorkspace(
+                With(
+                    VersionInputRules.Effective(CreateFieldInventory.Embedded, version.Inputs, version.Lyrics, version.Styles),
+                    VersionLineageInputs.Effective(version.Lineage, version.Inputs)),
+                version.Workspace));
+    }
+
+    /// <summary>The key of <c>effectiveInputs</c> that reports the Song's Suno workspace (the inventory's <c>workspace</c>, #129).</summary>
+    public const string WorkspaceKey = "workspace";
+
+    /// <summary>
+    /// <paramref name="effective"/> with the Song's Suno workspace under <see cref="WorkspaceKey"/>
+    /// (<c>{ id, name, state }</c>, the ID being Suno's) when it has one: where Generate on Suno saves
+    /// the result, for every kind and mode. It is the Song's, not an input of the Version, so it is
+    /// never in <c>inputs</c> and never frozen.
+    /// </summary>
+    private static JsonObject WithWorkspace(JsonObject effective, SunoWorkspace? workspace)
+    {
+        if (workspace is not null)
+        {
+            effective[WorkspaceKey] = new JsonObject
+            {
+                ["id"] = workspace.SunoId,
+                ["name"] = workspace.Name,
+                ["state"] = SunoWorkspaceRules.NameOf(workspace.State),
+            };
+        }
+
+        return effective;
     }
 
     /// <summary><paramref name="options"/> followed by the lineage keys in <paramref name="lineage"/>.</summary>
