@@ -73,6 +73,8 @@ export interface GenerationRowActions {
   onClearSelection: () => void;
   /** Opens "Create new Song from Generation" (#123); the control is left out without it. */
   onMoveToNewSong?: (generation: Generation) => void;
+  /** Opens the confirmation for deleting it (#124); the control is left out without it. */
+  onDelete?: (generation: Generation) => void;
   busy: boolean;
 }
 

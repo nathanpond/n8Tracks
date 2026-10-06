@@ -408,6 +408,131 @@ export async function moveGenerationToNewSong(
   }
 }
 
+/**
+ * What deleting a Generation would take with it (#124): whether it is its Song's Selected Generation
+ * and, if so, the Song's other Generations it may select instead (`replacements`); its comments and
+ * its own Suno artwork (`artworkCount`, none or one), deleted with it; how many Versions use it as a
+ * source (they will show it as Deleted); and the `revision` to delete it under.
+ */
+export interface GenerationDeletionImpact {
+  id: string;
+  shortcode: string;
+  isSelected: boolean;
+  replacements: Generation[];
+  commentCount: number;
+  artworkCount: number;
+  sourceVersionCount: number;
+  revision: number;
+}
+
+function deletionImpactOf(value: unknown): GenerationDeletionImpact | undefined {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== 'string' ||
+    typeof value.shortcode !== 'string' ||
+    typeof value.isSelected !== 'boolean' ||
+    typeof value.commentCount !== 'number' ||
+    typeof value.artworkCount !== 'number' ||
+    typeof value.sourceVersionCount !== 'number' ||
+    typeof value.revision !== 'number'
+  ) {
+    return undefined;
+  }
+  const replacements = generationsOf({ items: value.replacements });
+  return replacements === undefined
+    ? undefined
+    : {
+        id: value.id,
+        shortcode: value.shortcode,
+        isSelected: value.isSelected,
+        replacements,
+        commentCount: value.commentCount,
+        artworkCount: value.artworkCount,
+        sourceVersionCount: value.sourceVersionCount,
+        revision: value.revision,
+      };
+}
+
+/** What a read of a Generation's deletion impact found: it, `gone` (no such Generation), or `failed`. */
+export type GenerationDeletionImpactResult =
+  { kind: 'found'; impact: GenerationDeletionImpact } | { kind: 'gone' } | { kind: 'failed' };
+
+/** Reads what deleting the Generation with `id` would do now. */
+export async function fetchGenerationDeletionImpact(
+  id: string,
+  signal?: AbortSignal,
+): Promise<GenerationDeletionImpactResult> {
+  try {
+    const response = await apiFetch(`${generationPath(id)}/deletion-impact`, { signal });
+    const answer = await body(response);
+    const impact = response.ok ? deletionImpactOf(answer) : undefined;
+    if (impact !== undefined) {
+      return { kind: 'found', impact };
+    }
+    return response.status === 404 ? { kind: 'gone' } : { kind: 'failed' };
+  } catch {
+    return { kind: 'failed' };
+  }
+}
+
+/**
+ * How deleting a Generation ended: `deleted` with its Song as it is now; `conflict` when it changed
+ * since its impact was read; `choice-required` when it has become the Song's Selected Generation
+ * meanwhile; `invalid` when the choice was refused (errors by field); `gone` when it is no longer
+ * there; `failed` otherwise. Only `deleted` changed anything.
+ */
+export type DeleteGenerationResult =
+  | { kind: 'deleted'; song: Song }
+  | { kind: 'conflict' }
+  | { kind: 'choice-required' }
+  | { kind: 'invalid'; errors: Record<string, string[]> }
+  | { kind: 'gone' }
+  | { kind: 'failed' };
+
+/**
+ * Deletes a Generation from n8Tracks (#124; nothing in Suno changes), based on the `revision` its
+ * impact was read at. When it is its Song's Selected Generation, `choice` says what the Song selects instead.
+ */
+export async function deleteGeneration(
+  generation: { id: string; revision: number },
+  choice: SelectionChoice,
+): Promise<DeleteGenerationResult> {
+  try {
+    const sent = Object.keys(choice).length > 0;
+    const response = await apiFetch(generationPath(generation.id), {
+      method: 'DELETE',
+      headers: {
+        'If-Match': ifMatch(generation.revision),
+        ...(sent ? { 'Content-Type': 'application/json' } : {}),
+      },
+      ...(sent ? { body: JSON.stringify(choice) } : {}),
+    });
+    const answer = await body(response);
+    if (response.ok) {
+      return isRecord(answer) && isSong(answer.song)
+        ? { kind: 'deleted', song: answer.song }
+        : { kind: 'failed' };
+    }
+    if (response.status === 404) {
+      return { kind: 'gone' };
+    }
+    if (response.status === 409 && isRecord(answer) && answer.code === 'revision_conflict') {
+      return { kind: 'conflict' };
+    }
+    if (response.status === 422 && isRecord(answer)) {
+      if (answer.code === 'selection_choice_required') {
+        return { kind: 'choice-required' };
+      }
+      if (isErrorMap(answer.errors)) {
+        return { kind: 'invalid', errors: answer.errors };
+      }
+    }
+    return { kind: 'failed' };
+  } catch {
+    return { kind: 'failed' };
+  }
+}
+
 /** Leaves the Song with no Selected Generation, based on its `revision`. */
 export function clearSelectedGeneration(song: string, revision: number): Promise<SaveResult<Song>> {
   return writeWithRevision('DELETE', selectedGenerationPath(song), revision, undefined, (answer) =>

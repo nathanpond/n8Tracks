@@ -136,6 +136,8 @@ public sealed class ReferenceParameterGuardTests
         ["PATCH /api/v1/generations/{reference}"] = static (c, _, version) => c.SendAsync(HttpMethod.Patch, $"generations/{c.GenerationOf(version)}", """{"rating":4}""", revision: 999),
         ["POST /api/v1/generations/{reference}/move-to-new-song"] = static (c, _, version) =>
             c.SendAsync(HttpMethod.Post, $"generations/{c.GenerationOf(version)}/move-to-new-song", """{"title":"Moved"}""", revision: 999),
+        ["DELETE /api/v1/generations/{reference}"] = static (c, _, version) => c.SendAsync(HttpMethod.Delete, $"generations/{c.GenerationOf(version)}", revision: 999),
+        ["GET /api/v1/generations/{reference}/deletion-impact"] = static (c, _, version) => c.SendAsync(HttpMethod.Get, $"generations/{c.GenerationOf(version)}/deletion-impact"),
         ["PATCH /api/v1/generations/{reference}/comments/{commentId:guid}"] = static (c, _, version) =>
             c.SendAsync(HttpMethod.Patch, $"generations/{c.GenerationOf(version)}/comments/{c.CommentId}", """{"text":"Changed"}""", revision: 999),
         ["DELETE /api/v1/generations/{reference}/comments/{commentId:guid}"] = static (c, _, version) =>

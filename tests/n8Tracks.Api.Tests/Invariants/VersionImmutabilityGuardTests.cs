@@ -700,6 +700,21 @@ public sealed class VersionImmutabilityGuardTests
             Assert.Equal(Stored(target.Factory, target.VersionId), Stored(target.Factory, moved));
         }),
 
+        // Deleting a Generation (#124): a fresh Generation of the frozen Version goes into retention and
+        // comes back; the Version stays frozen with its inputs. The inputs sent alongside are not read.
+        ["DELETE /api/v1/generations/{reference}"] = new(async target =>
+        {
+            var leaving = await SongApi.AttachGenerationAsync(target.Factory, target.VersionId.ToString());
+            using var response = await SendAsync(
+                target.Client,
+                HttpMethod.Delete,
+                new Uri($"/api/v1/generations/{leaving.Shortcode}", UriKind.Relative),
+                SongApi.Quoted(leaving.Generation.Revision),
+                await target.InputsJsonAsync("{", "}"));
+            Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+            Assert.IsType<DeletedItemRestoreOutcome.Restored>(await InScopeAsync<DeletedItemsService, DeletedItemRestoreOutcome>(target, service => service.RestoreAsync(leaving.Shortcode, default)));
+        }),
+
         // The Song's Selected Generation (#120): the inputs sent alongside are not read.
         ["PUT /api/v1/songs/{reference}/selected-generation"] = new(async target =>
         {
@@ -921,6 +936,17 @@ public sealed class VersionImmutabilityGuardTests
             var outcome = Assert.IsType<GenerationMoveOutcome.Moved>(await InScopeAsync<GenerationMoveService, GenerationMoveOutcome>(target, service =>
                 service.MoveToNewSongAsync(CatalogReference.Parse(leaving.Shortcode), new GenerationMoveRequest("Moved by the guard", SelectionChoice.None), leaving.Generation.Revision, default)));
             Assert.Equal(Stored(target.Factory, target.VersionId), Stored(target.Factory, outcome.Version.Id));
+        }),
+
+        // Deleting a Generation (#124): the Version it leaves keeps its inputs, frozen, before and after a restore.
+        ["GenerationDeletionService.ImpactAsync(CatalogReference, CancellationToken)"] = Service<GenerationDeletionService>(static (service, target) =>
+            service.ImpactAsync(CatalogReference.Parse(target.VersionShortcode + "-g1"), default)),
+        ["GenerationDeletionService.DeleteAsync(CatalogReference, SelectionChoice, Int32, CancellationToken)"] = new(static async target =>
+        {
+            var leaving = await SongApi.AttachGenerationAsync(target.Factory, target.VersionShortcode);
+            Assert.IsType<GenerationDeleteOutcome.Deleted>(await InScopeAsync<GenerationDeletionService, GenerationDeleteOutcome>(target, service =>
+                service.DeleteAsync(CatalogReference.Parse(leaving.Shortcode), SelectionChoice.None, leaving.Generation.Revision, default)));
+            Assert.IsType<DeletedItemRestoreOutcome.Restored>(await InScopeAsync<DeletedItemsService, DeletedItemRestoreOutcome>(target, service => service.RestoreAsync(leaving.Shortcode, default)));
         }),
 
         // A Generation's image and its use as the Song's artwork (#121): never a creation input.

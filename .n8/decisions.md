@@ -2763,3 +2763,53 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** Rule 3: `e2e/tests/generation-artwork.spec.ts` (#121) had a `playwright/no-conditional-in-test` warning, so `npm run lint` failed in `e2e/` on the branch. The conditional chevron click now sits in a helper, `openVersionOne`, which is the same pattern as its `openDetails`.
   **Why:** The gate must pass. This is a one-line move with no change in behaviour.
   **Issue:** #123
+- **Decision:** #124 covers only deleting, retaining, and restoring a Generation, with the Song's selection resolved first. Its tombstone criteria (the attach refusal `suno_id_tombstoned`, tombstones that outlive the prune, one tombstone per Generation from Version and Song deletion) are left to #130, and Reimport to #140, as the story's own discretion lines say.
+  **Why:** The planner moved those criteria to the sibling stories. #130 depends on #124.
+  **Issue:** #124
+- **Decision:** `GenerationDeletionService` (`Application.Generations`) puts the Generation into one retention group:
+  - Kind `generation`, label `Generation <shortcode>`, and the group shortcode is the Generation's own shortcode, so `restore-deleted <shortcode>` finds it.
+  - The only root is the Generation. Its comments, provider record and event link follow by cascade, through the types #117 and #119 registered.
+  - The group's files are those of its own image, from `GenerationArtworkService.RetainedFilesAsync`.
+  - The selection is resolved first, with #123's `CheckChoiceAsync` and `ApplyChoiceAsync`, so the group carries no `selected-generation` reference. A restore therefore never brings back the selection or the Song's state.
+  - When the Generation is not selected, only the Song's updated time moves (`TouchSongAsync`) and its revision stays. With a choice, the Song's revision goes up, as #123's does.
+  **Why:** The discretion lines say "restoring never restores the selection or changes the workflow state", that the retention group includes the provider record, and that the event link comes back if the event still exists (`generation-event-link` is Optional).
+  **Issue:** #124
+- **Decision:** Before retaining, the service calls `IVersionStore.RewriteSourcesOfDeletedGenerationsAsync([id], [], now)` (#122). Another Version's source that pointed at the Generation then points at the external reference for its Suno ID, labelled "Deleted". A Generation without a Suno ID stays pointed at by ID and reads as missing.
+  **Why:** This is the orchestrator note for #124. It also matches the discretion line "keeps pointing at its Suno ID as an external reference labelled Deleted". #122 built this rewrite to keep the source's identity (its Suno ID), so the frozen Version's stored lineage is byte-identical. The test asserts this with the guard's `Stored()`.
+  **Issue:** #124
+- **Decision:** The API has two endpoints, both `SessionOnly()`, which brings the session-only count to **49**:
+  - `GET /api/v1/generations/{reference}/deletion-impact` answers `{id, shortcode, isSelected, replacements[], commentCount, artworkCount, sourceVersionCount, revision}`:
+    - `replacements` are full Generation answers: the Song's other live Generations in any state, and only when this one is selected.
+    - `artworkCount` is 0 or 1.
+    - `sourceVersionCount` counts distinct Versions, from the new `IGenerationStore.SourceVersionCountAsync`.
+  - `DELETE /api/v1/generations/{reference}` takes If-Match and an optional body `{replacementGeneration | workflowState}`, and answers 200 `{song}`. Its errors are:
+    - 422 `selection_choice_required`, with `generationId` and `shortcode`.
+    - 422 `invalid_replacement`, with `errors`, for every choice #123's check refuses: both choices sent, a Generation that is not another of this Song's, an unknown state, or a choice sent for an unselected Generation.
+    - 422 `validation_failed` for a field of the wrong type.
+    - 400 `invalid_request` for a body that is not a JSON object.
+    - 409, 428, and 404.
+
+  The body is read by hand, as the Song DELETE reads its body.
+  **Why:** The route and error codes come from the story. A bound body parameter on a DELETE makes a request without a body miss the endpoint and fall through to the 404 fallback, which was seen in the first test run. #123's check already validates the replacement and the state, so this story reuses it and maps its refusals to the story's one code.
+  **Issue:** #124
+- **Decision:** Restore uses #105's `DeletedItemsService`, unchanged except in two places:
+  - `HolderHintAsync` has a Generation case: when the Generation's Version or Song is in a retention group, the refusal names that group and how to restore it first.
+  - The "not a shortcode" message gives a Generation example.
+
+  A restore puts back the rating, comments, image and provider record. Like every restored record (#95), it raises the comments' revisions. A Generation deleted on its own does not resolve as `deleted` through `/resolve`; a GET of it is 404 `not_found`.
+  **Why:** `FindByShortcodeAsync` already looked up Generation shortcodes, and the generic parent check already refuses with `MissingParent`, which is the story's `parent_missing` rule. No AC asks for a resolver status. It can be added with #130 or later if the import review needs it.
+  **Issue:** #124
+- **Decision:** Guards:
+  - The invariant 1 guard has an API exerciser (`DELETE /generations/{reference}`) and service exercisers (`GenerationDeletionService.DeleteAsync` and `ImpactAsync`). Each deletes a fresh Generation off the frozen target and restores it.
+  - The scope guard and `ReferenceParameterGuardTests.Calls` cover both new routes.
+  - The new architecture test `DeletingAGenerationReachesNeitherTheNetworkNorTheExtension` walks the constructor-dependency closure of `GenerationDeletionService`, following ports into their Application and Infrastructure implementations. It asserts that nothing in the closure depends on `System.Net.Http`, `System.Net.Sockets`, `System.Net.WebSockets` or `n8Tracks.Application.Credentials`, where the extension handshake lives. Its complements: the closure reaches `GenerationStore` and `RetentionStore`, and the rule flags `ExtensionHandshakeService`.
+  **Why:** The test plan asks for "no dependency that can reach the extension or the network (asserted by the layering guard)". A check of direct dependencies only would miss the stores behind the ports.
+  **Issue:** #124
+- **Decision:** Web:
+  - The Generation panel has a "Delete Generation" button, beside "Create new Song from Generation". The row actions menu does not get one.
+  - `generations/DeleteGenerationDialog.tsx` reads the impact when it opens. Its summary (`deletionRules.ts`, testid `delete-generation-summary`) names the shortcode, the rating, the comment count, the Suno artwork, and the Versions that use it as a source, and says that nothing in Suno changes and that it can be restored for 30 days.
+  - For a selected Generation, the dialog shows radio groups ("Instead"; "Generation to select instead"; "Workflow state once the selection is cleared"). Nothing is pre-selected and nothing needs typing. When the Song has no other Generation, only the state group is shown. Only visible states are listed. Delete stays disabled until a choice is complete.
+  - A conflict, a `choice-required` answer or a refused choice reads the impact again.
+  - After a delete, the panel closes onto the Version and the notice `generation-deleted` is shown.
+  **Why:** The AC puts the control in the Generation panel. The discretion lines ask for every visible state with none pre-selected and no typing. Radio groups make "none chosen" explicit, where a select would show its first option.
+  **Issue:** #124

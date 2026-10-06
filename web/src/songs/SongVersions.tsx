@@ -14,6 +14,8 @@ import {
 } from '../api/versions';
 import type { EditorText } from '../editor/useSnapshots';
 import { GenerationPanel, type GenerationPanelContent } from '../generations/GenerationPanel';
+import { DeleteGenerationDialog } from '../generations/DeleteGenerationDialog';
+import { RETENTION_DAYS } from '../generations/deletionRules';
 import { MoveToNewSongDialog } from '../generations/MoveToNewSongDialog';
 import { useGenerationChoices } from '../generations/useGenerationChoices';
 import { useRateGeneration, type RatingProblem } from '../generations/useRateGeneration';
@@ -68,6 +70,7 @@ function storeShowArchived(show: boolean) {
 type Notice =
   | { kind: 'archived'; version: Version }
   | { kind: 'deleted'; number: string; current: string; createdBlank: boolean }
+  | { kind: 'generation-deleted'; shortcode: string }
   | { kind: 'failed' }
   | undefined;
 
@@ -164,11 +167,14 @@ export function SongVersions({
   });
   /** The Generation "Create new Song from Generation" is open for (#123). */
   const [moving, setMoving] = useState<Generation | undefined>();
+  /** The Generation the delete confirmation is open for (#124). */
+  const [deletingGeneration, setDeletingGeneration] = useState<Generation | undefined>();
   const generationActions = {
     onSetState: choices.setState,
     onSelect: choices.select,
     onClearSelection: choices.clear,
     onMoveToNewSong: setMoving,
+    onDelete: setDeletingGeneration,
     busy: choices.busy,
   };
   const parameters = new URLSearchParams(location.search);
@@ -490,6 +496,25 @@ export function SongVersions({
           </Group>
         </Paper>
       )}
+      {notice?.kind === 'generation-deleted' && (
+        <Paper p="xs" withBorder role="status" data-testid="generation-deleted">
+          <Group gap="sm" justify="space-between" wrap="wrap">
+            <Text size="sm">
+              Generation {notice.shortcode} deleted. Nothing in Suno was changed; it can be restored
+              for {RETENTION_DAYS} days.
+            </Text>
+            <Button
+              size="compact-sm"
+              variant="subtle"
+              onClick={() => {
+                setNotice(undefined);
+              }}
+            >
+              Dismiss
+            </Button>
+          </Group>
+        </Paper>
+      )}
       {notice?.kind === 'failed' && (
         <Text size="sm" c="var(--mantine-color-error)" role="alert">
           {FAILED_MESSAGE}
@@ -617,6 +642,23 @@ export function SongVersions({
         actions={generationActions}
         problem={ratingProblem}
         movedFrom={movedFromOf(location.state)}
+      />
+      <DeleteGenerationDialog
+        generation={deletingGeneration}
+        song={song}
+        onClose={() => {
+          setDeletingGeneration(undefined);
+        }}
+        onDeleted={(generation, changed) => {
+          setDeletingGeneration(undefined);
+          setNotice({ kind: 'generation-deleted', shortcode: generation.shortcode });
+          onSong(changed);
+          reloadGenerations();
+          // Its panel closes onto its Version, which stays (frozen) with its other Generations.
+          if (generationReference !== undefined && openGeneration?.id === generation.id) {
+            closePanel();
+          }
+        }}
       />
       <MoveToNewSongDialog
         generation={moving}

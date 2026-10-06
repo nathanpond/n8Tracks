@@ -320,6 +320,7 @@ public sealed class Program
             app.MapSongSelection();
             app.MapGenerationArtwork();
             app.MapGenerationMoves();
+            app.MapGenerationDeletion();
             app.MapResolve();
             app.MapSuno();
             app.MapBackups();

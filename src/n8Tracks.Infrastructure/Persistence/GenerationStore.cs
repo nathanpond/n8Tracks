@@ -35,6 +35,13 @@ internal sealed class GenerationStore(N8TracksDbContext context) : IGenerationSt
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
 
+    public Task<int> SourceVersionCountAsync(Guid generationId, CancellationToken cancellationToken) =>
+        context.VersionSources.AsNoTracking()
+            .Where(source => source.GenerationId == generationId)
+            .Select(static source => source.VersionId)
+            .Distinct()
+            .CountAsync(cancellationToken);
+
     public async Task<GenerationSummary?> FindAsync(Guid id, CancellationToken cancellationToken) =>
         (await GenerationRows.SummariesAsync(context, context.Generations.Where(generation => generation.Id == id), cancellationToken).ConfigureAwait(false))
             .SingleOrDefault();

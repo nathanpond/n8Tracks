@@ -223,6 +223,16 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     moves: [] as { reference: string; ifMatch: string | null; body: Record<string, unknown> }[],
     /** When set, answers the next move (once) instead of the fake API. */
     nextMove: undefined as (() => Response | Promise<Response>) | undefined,
+    /** Every Generation deletion request (#124), in order: its Generation, If-Match, and body (null when none). */
+    generationDeletes: [] as {
+      reference: string;
+      ifMatch: string | null;
+      body: Record<string, unknown> | null;
+    }[],
+    /** When set, answers the next Generation deletion (once) instead of the fake API. */
+    nextGenerationDelete: undefined as (() => Response | Promise<Response>) | undefined,
+    /** How many Versions use each Generation (by ID) as a source, as its deletion impact counts them. */
+    sourceVersionCounts: new Map<string, number>(),
     /** Old shortcodes of moved Generations (#123), each with the Song and shortcode it has now: they resolve as `moved`. */
     moved: new Map<string, { song: string; shortcode: string }>(),
     /** Plays another client editing the Song: its revision goes up. */
@@ -707,6 +717,99 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
         generation: moved,
         alias: generation.shortcode,
       });
+    }
+
+    const generationDeletion = /\/api\/v1\/generations\/([^/]+)(\/deletion-impact)?$/.exec(path);
+    if (
+      generationDeletion &&
+      ((generationDeletion[2] !== undefined && method === 'GET') ||
+        (generationDeletion[2] === undefined && method === 'DELETE'))
+    ) {
+      const reference = decodeURIComponent(generationDeletion[1] ?? '').toLowerCase();
+      const generation = server.generations.find(
+        (candidate) =>
+          candidate.id.toLowerCase() === reference ||
+          candidate.shortcode.toLowerCase() === reference,
+      );
+      if (method === 'GET') {
+        return generation === undefined
+          ? jsonResponse(404, { code: 'not_found' })
+          : jsonResponse(200, {
+              id: generation.id,
+              shortcode: generation.shortcode,
+              isSelected: generation.isSelected,
+              replacements: generation.isSelected
+                ? server.generations.filter((other) => other.id !== generation.id)
+                : [],
+              commentCount: generation.comments.length,
+              artworkCount: generation.artwork === null ? 0 : 1,
+              sourceVersionCount: server.sourceVersionCounts.get(generation.id) ?? 0,
+              revision: generation.revision,
+            });
+      }
+      const ifMatch = new Headers(init?.headers).get('If-Match');
+      const body =
+        typeof init?.body === 'string' ? (JSON.parse(init.body) as Record<string, unknown>) : null;
+      server.generationDeletes.push({ reference, ifMatch, body });
+      const nextGenerationDelete = server.nextGenerationDelete;
+      if (nextGenerationDelete) {
+        server.nextGenerationDelete = undefined;
+        return nextGenerationDelete();
+      }
+      if (generation === undefined) {
+        return jsonResponse(404, { code: 'not_found' });
+      }
+      if (ifMatch !== `"${String(generation.revision)}"`) {
+        return jsonResponse(409, { code: 'revision_conflict', current: generation });
+      }
+      const replacement = body?.replacementGeneration;
+      const stateId = body?.workflowState;
+      if (generation.isSelected && replacement === undefined && stateId === undefined) {
+        return jsonResponse(422, { code: 'selection_choice_required' });
+      }
+      const chosen = server.generations.find(
+        (other) => other.id === replacement && other.id !== generation.id,
+      );
+      const state = STATES.find((candidate) => candidate.id === stateId);
+      if (
+        (replacement !== undefined || stateId !== undefined) &&
+        (!generation.isSelected ||
+          (replacement !== undefined) === (stateId !== undefined) ||
+          (replacement !== undefined && chosen === undefined) ||
+          (stateId !== undefined && state === undefined))
+      ) {
+        return jsonResponse(422, {
+          code: 'invalid_replacement',
+          errors: { replacementGeneration: ['Choose another Generation of this Song.'] },
+        });
+      }
+      if (chosen !== undefined || state !== undefined) {
+        server.song = {
+          ...server.song,
+          hasSelectedGeneration: chosen !== undefined,
+          selectedGeneration:
+            chosen === undefined
+              ? null
+              : {
+                  id: chosen.id,
+                  shortcode: chosen.shortcode,
+                  state: chosen.state,
+                  remoteState: chosen.remoteState,
+                },
+          state:
+            state === undefined
+              ? server.song.state
+              : { id: state.id, name: state.name, colour: state.colour },
+          revision: server.song.revision + 1,
+        };
+      }
+      server.generations = server.generations
+        .filter((other) => other.id !== generation.id)
+        .map((other) => ({
+          ...other,
+          isSelected: other.id === chosen?.id || (other.isSelected && chosen === undefined),
+        }));
+      return jsonResponse(200, { song: server.song });
     }
 
     const generationWrite = /\/api\/v1\/generations\/([^/]+)(?:\/comments(?:\/([^/]+))?)?$/.exec(

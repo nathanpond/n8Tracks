@@ -141,19 +141,33 @@ function Details({
       <div>
         <OpenInSuno generation={generation} />
       </div>
-      {actions.onMoveToNewSong !== undefined && (
-        <div>
-          <Button
-            variant="default"
-            size="compact-sm"
-            disabled={actions.busy}
-            onClick={() => {
-              actions.onMoveToNewSong?.(generation);
-            }}
-          >
-            Create new Song from Generation
-          </Button>
-        </div>
+      {(actions.onMoveToNewSong !== undefined || actions.onDelete !== undefined) && (
+        <Group gap="sm" wrap="wrap">
+          {actions.onMoveToNewSong !== undefined && (
+            <Button
+              variant="default"
+              size="compact-sm"
+              disabled={actions.busy}
+              onClick={() => {
+                actions.onMoveToNewSong?.(generation);
+              }}
+            >
+              Create new Song from Generation
+            </Button>
+          )}
+          {actions.onDelete !== undefined && (
+            <Button
+              variant="default"
+              size="compact-sm"
+              disabled={actions.busy}
+              onClick={() => {
+                actions.onDelete?.(generation);
+              }}
+            >
+              Delete Generation
+            </Button>
+          )}
+        </Group>
       )}
       <Divider />
       <GenerationComments generation={generation} update={update} />
@@ -170,8 +184,8 @@ function Details({
  * Archive or Reactivate control and the control that makes it the Song's Selected Generation or
  * clears that, and (#121) its cover image, shown whole. `problem` says why a rating or a choice was
  * not saved. "Create new Song from Generation" (#123) opens through `actions`; `movedFrom` (the old
- * shortcode it was opened by) says the Generation moved. The delete control arrives with its own
- * story. A reference that names no Generation of this Song says so. Closes with Escape or its close
+ * shortcode it was opened by) says the Generation moved. "Delete Generation" (#124) opens its
+ * confirmation through `actions`. A reference that names no Generation of this Song says so. Closes with Escape or its close
  * control.
  */
 export function GenerationPanel({

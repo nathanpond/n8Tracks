@@ -89,4 +89,7 @@ public interface IGenerationStore
 
     /// <summary>The distinct assets the cover images of <paramref name="generationIds"/> are, for those that have one.</summary>
     Task<IReadOnlyList<Guid>> ArtworkAssetIdsAsync(IReadOnlyCollection<Guid> generationIds, CancellationToken cancellationToken);
+
+    /// <summary>How many Versions use the Generation with <paramref name="generationId"/> as a source (#122), each counted once.</summary>
+    Task<int> SourceVersionCountAsync(Guid generationId, CancellationToken cancellationToken);
 }

@@ -231,7 +231,7 @@ public sealed class DeletedItemsService(
         if (shortcode is null)
         {
             return (null, new DeletedItemRestoreOutcome.NotFound(
-                $"{reference.Text} is not a shortcode: a Song's is like n8-3, a Version's like n8-3-v1.2. A group ID can be given instead."));
+                $"{reference.Text} is not a shortcode: a Song's is like n8-3, a Version's like n8-3-v1.2, a Generation's like n8-3-v1.2-g1. A group ID can be given instead."));
         }
 
         var now = time.GetUtcNow();
@@ -296,6 +296,22 @@ public sealed class DeletedItemsService(
                 if (versions.FirstOrDefault()?["version_id"] is { } text && Guid.TryParse(text, CultureInfo.InvariantCulture, out var versionId))
                 {
                     holder = await retention.FindByRecordAsync(RetainedRecordTypes.Version, versionId, cancellationToken).ConfigureAwait(false);
+                }
+
+                break;
+
+            // A Generation deleted on its own (#124) whose Version, or Song, was deleted after it.
+            case RetainedRecordTypes.Generation:
+                var parents = await retention.RecordFieldsAsync(group.Id, RetainedRecordTypes.Generation, ["version_id", "song_id"], cancellationToken).ConfigureAwait(false);
+                if (parents.FirstOrDefault() is { } parent)
+                {
+                    foreach (var (recordType, field) in ((string, string)[])[(RetainedRecordTypes.Version, "version_id"), (RetainedRecordTypes.Song, "song_id")])
+                    {
+                        if (holder is null && parent[field] is { } parentText && Guid.TryParse(parentText, CultureInfo.InvariantCulture, out var parentId))
+                        {
+                            holder = await retention.FindByRecordAsync(recordType, parentId, cancellationToken).ConfigureAwait(false);
+                        }
+                    }
                 }
 
                 break;

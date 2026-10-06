@@ -124,6 +124,76 @@ public class LayeringTests
         Assert.Contains("n8Tracks.Api.Endpoints.HealthEndpoint", examined);
     }
 
+    /// <summary>
+    /// What deleting a Generation (#124) must never reach: the network (so nothing in Suno can be
+    /// touched) or the extension's pairing and handshake (<c>n8Tracks.Application.Credentials</c>).
+    /// </summary>
+    private static readonly string[] ForbiddenToGenerationDeletion =
+    [
+        "System.Net.Http",
+        "System.Net.Sockets",
+        "System.Net.WebSockets",
+        "n8Tracks.Application.Credentials",
+    ];
+
+    [Fact]
+    public void DeletingAGenerationReachesNeitherTheNetworkNorTheExtension()
+    {
+        var reached = DependencyClosure(typeof(n8Tracks.Application.Generations.GenerationDeletionService));
+        var offenders = Types.InAssemblies([Application, Infrastructure])
+            .That()
+            .HaveDependencyOnAny(ForbiddenToGenerationDeletion)
+            .GetTypes()
+            .Select(static type => OuterName(type.FullName))
+            .ToHashSet(StringComparer.Ordinal);
+
+        Assert.Empty(reached.Where(offenders.Contains).Order(StringComparer.Ordinal));
+
+        // Complement: the walk followed the ports into their implementations, and the rule finds the
+        // extension's handshake, which a deletion must not reach.
+        Assert.Contains("n8Tracks.Application.Retention.RetentionService", reached);
+        Assert.Contains("n8Tracks.Infrastructure.Persistence.GenerationStore", reached);
+        Assert.Contains("n8Tracks.Infrastructure.Retention.RetentionStore", reached);
+        Assert.Contains("n8Tracks.Application.Credentials.ExtensionHandshakeService", offenders);
+    }
+
+    /// <summary>
+    /// Every product type <paramref name="root"/> can reach through constructor parameters: a class's
+    /// own, and for an interface or abstract class, those of each of its implementations in the
+    /// Application and Infrastructure assemblies.
+    /// </summary>
+    private static HashSet<string> DependencyClosure(Type root)
+    {
+        var candidates = Application.GetTypes().Concat(Infrastructure.GetTypes()).Where(static type => type is { IsClass: true, IsAbstract: false }).ToList();
+        var seen = new HashSet<Type>();
+        var queue = new Queue<Type>([root]);
+        while (queue.TryDequeue(out var type))
+        {
+            if (!seen.Add(type))
+            {
+                continue;
+            }
+
+            var next = type.IsInterface || type.IsAbstract
+                ? candidates.Where(type.IsAssignableFrom)
+                : type.GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                    .SelectMany(static constructor => constructor.GetParameters())
+                    .SelectMany(static parameter => parameter.ParameterType.IsGenericType ? [parameter.ParameterType, .. parameter.ParameterType.GetGenericArguments()] : new[] { parameter.ParameterType });
+            foreach (var dependency in next)
+            {
+                if (dependency.Namespace?.StartsWith(ProductPrefix, StringComparison.Ordinal) == true)
+                {
+                    queue.Enqueue(dependency.IsGenericType ? dependency.GetGenericTypeDefinition() : dependency);
+                }
+            }
+        }
+
+        return [.. seen.Select(static type => OuterName(type.FullName!))];
+    }
+
+    /// <summary>A type's outermost declaring type, by full name (reflection nests with <c>+</c>, Cecil with <c>/</c>).</summary>
+    private static string OuterName(string fullName) => fullName.Split('+', '/')[0];
+
     [Theory]
     [InlineData("Program", true)]
     [InlineData("Program/<>c", true)]
