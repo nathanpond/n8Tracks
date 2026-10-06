@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from './client';
-import { isArtwork, type Artwork } from './artwork';
+import { isArtwork, type Artwork, type ArtworkCrop } from './artwork';
 import { patchWithRevision, writeWithRevision, type SaveResult } from './saves';
 
 const SONGS_PATH = 'api/v1/songs';
@@ -626,6 +626,8 @@ export interface SongEdit {
   release?: Partial<SongRelease>;
   /** An uploaded asset's ID to show as the Song's artwork, or null to remove it. */
   artworkAssetId?: string | null;
+  /** The artwork's square crop, in pixels of the original, or null for the centred square. */
+  artworkCrop?: ArtworkCrop | null;
 }
 
 /** Edits a Song, based on `song`'s revision; a stale revision comes back as a conflict. */

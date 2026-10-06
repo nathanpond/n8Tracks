@@ -24,6 +24,7 @@ import {
 } from '../api/songs';
 import { createTag, tagNameError, useTags, type Tag } from '../api/tags';
 import { ARTWORK_KEY, ArtworkPicker } from '../common/ArtworkPicker';
+import { ARTWORK_CROP_KEY, cropValue } from '../common/artworkField';
 import { TokenPicker } from '../common/TokenPicker';
 import {
   focusOnMount,
@@ -391,7 +392,12 @@ export function SongDetails({
         title={song.title}
         noun="Song"
         artwork={song.artwork}
-        save={(assetId) => saveFields({ [ARTWORK_KEY]: assetId })}
+        save={(edit) =>
+          saveFields({
+            ...(edit.assetId === undefined ? {} : { [ARTWORK_KEY]: edit.assetId }),
+            ...(edit.crop === undefined ? {} : { [ARTWORK_CROP_KEY]: cropValue(edit.crop) }),
+          })
+        }
       />
       <CreditsSection song={song} saveFields={saveFields} onSong={onSong} />
       <GenresSection song={song} saveFields={saveFields} onSong={onSong} />

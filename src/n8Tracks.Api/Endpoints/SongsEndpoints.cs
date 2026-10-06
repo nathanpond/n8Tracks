@@ -57,7 +57,7 @@ internal static class SongsEndpoints
 
         endpoints.MapPatch(SongPath, UpdateAsync)
             .WithName("UpdateSong")
-            .WithSummary("Edits a Song's title, concept, workflow state, notes, Genres, Tags, release details, or artwork (only the fields sent; genreIds and tagIds replace the Song's Genres and Tags; in release, only the members sent change, null clears one, and links replace the Song's; artworkAssetId is an uploaded asset's ID, or null to remove the artwork, and also needs artwork.write), given the revision read in If-Match. Replaced or removed artwork is retained for 30 days. An ISRC another Song has is allowed and answered with a duplicate_isrc warning.")
+            .WithSummary("Edits a Song's title, concept, workflow state, notes, Genres, Tags, release details, or artwork (only the fields sent; genreIds and tagIds replace the Song's Genres and Tags; in release, only the members sent change, null clears one, and links replace the Song's; artworkAssetId is an uploaded asset's ID, or null to remove the artwork; artworkCrop is {x, y, size} in pixels of the original, or null for the centred square, and is reset when the artwork is replaced without one; both also need artwork.write), given the revision read in If-Match. Replaced or removed artwork is retained for 30 days. An ISRC another Song has is allowed and answered with a duplicate_isrc warning.")
             .RequireScope(CredentialScopes.SongsWrite)
             .Produces<SongResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
@@ -221,8 +221,9 @@ internal static class SongsEndpoints
             IdList(request?.GenreIds, SongService.GenreIdsField, "Genre", typeErrors),
             IdList(request?.TagIds, SongService.TagIdsField, "Tag", typeErrors),
             Release(request?.Release, typeErrors),
-            Field(request?.ArtworkAssetId, SongService.ArtworkAssetIdField, typeErrors));
-        if (edit.ArtworkAssetId.IsSent && ScopeMiddleware.Lacking(context, CredentialScopes.ArtworkWrite) is { } lacking)
+            Field(request?.ArtworkAssetId, SongService.ArtworkAssetIdField, typeErrors),
+            ArtworkEndpoints.ReadCrop(request?.ArtworkCrop, SongService.ArtworkCropField, typeErrors));
+        if ((edit.ArtworkAssetId.IsSent || edit.ArtworkCrop.IsSent) && ScopeMiddleware.Lacking(context, CredentialScopes.ArtworkWrite) is { } lacking)
         {
             return lacking;
         }
@@ -480,7 +481,8 @@ internal sealed record SongCreditsRequest(JsonElement PrimaryArtistId, JsonEleme
 /// so each is read as raw JSON (a missing one is <see cref="JsonValueKind.Undefined"/>).
 /// <c>genreIds</c> and <c>tagIds</c> are the Song's whole new lists of Genre and Tag IDs;
 /// <c>release</c> is an object of the release details to change; <c>artworkAssetId</c> is the asset
-/// to show as its artwork, or null for none.
+/// to show as its artwork, or null for none; <c>artworkCrop</c> is its square crop
+/// (<c>{x, y, size}</c> in pixels of the original), or null for the centred square.
 /// </summary>
 internal sealed record UpdateSongRequest(
     JsonElement Title,
@@ -490,7 +492,8 @@ internal sealed record UpdateSongRequest(
     JsonElement GenreIds,
     JsonElement TagIds,
     JsonElement Release,
-    JsonElement ArtworkAssetId);
+    JsonElement ArtworkAssetId,
+    JsonElement ArtworkCrop);
 
 /// <summary>
 /// A Song as the API shows it. Times are UTC. <c>genres</c> and <c>tags</c> are alphabetical;

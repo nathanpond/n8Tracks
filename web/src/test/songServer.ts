@@ -308,18 +308,35 @@ export function testAssetId(n: number): string {
   return `01a20000-0000-7000-8000-${String(n).padStart(12, '0')}`;
 }
 
-/** Artwork of the asset `assetId`, as a Song carries it, with no crop. */
-export function testArtwork(assetId: string): Artwork {
+/** The dimensions the fake artwork store gives every upload unless told otherwise. */
+export const TEST_ARTWORK_SIZE = { width: 1200, height: 600 };
+
+/**
+ * Artwork of the asset `assetId`, as a Song carries it: 1,200 × 600 with no crop unless `change`
+ * says otherwise. A crop's square URLs name it, as the API's short hash does.
+ */
+export function testArtwork(
+  assetId: string,
+  change: Partial<Pick<Artwork, 'width' | 'height' | 'crop'>> = {},
+): Artwork {
   const original = `/api/v1/artwork/${assetId}`;
+  const crop = change.crop ?? null;
+  const square =
+    crop === null
+      ? original
+      : `${original}/crops/${String(crop.x)}-${String(crop.y)}-${String(crop.size)}`;
   return {
     assetId,
+    width: change.width ?? TEST_ARTWORK_SIZE.width,
+    height: change.height ?? TEST_ARTWORK_SIZE.height,
     urls: {
       original,
       '96': `${original}/96`,
       '320': `${original}/320`,
       '1024': `${original}/1024`,
     },
-    crop: null,
+    crop,
+    squareUrls: { '96': `${square}/96`, '320': `${square}/320`, '1024': `${square}/1024` },
   };
 }
 
@@ -371,6 +388,8 @@ export function songServer(
     uploads: [] as File[],
     /** When set, answers the next artwork upload (once) instead of the fake API. */
     nextUpload: undefined as (() => Response | Promise<Response>) | undefined,
+    /** The dimensions of each upload in turn (from the first); past the end, {@link TEST_ARTWORK_SIZE}. */
+    uploadSizes: [] as { width: number; height: number }[],
     /** When set, answers the next PATCH (once) instead of the fake API. */
     next: undefined as (() => Response | Promise<Response>) | undefined,
     /** Plays another tab: changes the Song and raises its revision. */
@@ -378,6 +397,9 @@ export function songServer(
       server.song = { ...server.song, ...change, revision: server.song.revision + 1 };
     },
   };
+
+  /** The dimensions of the `n`th upload, from 1. */
+  const sizeOfUpload = (n: number) => server.uploadSizes[n - 1] ?? TEST_ARTWORK_SIZE;
 
   const mock = stubFetch();
   mock.mockImplementation(async (input, init) => {
@@ -448,7 +470,8 @@ export function songServer(
         return nextUpload();
       }
       const id = testAssetId(server.uploads.length);
-      return jsonResponse(201, { id, urls: testArtwork(id).urls });
+      const { width, height, urls } = testArtwork(id, sizeOfUpload(server.uploads.length));
+      return jsonResponse(201, { id, width, height, urls });
     }
     if (path.endsWith('/api/v1/languages')) {
       return server.languages === undefined
@@ -742,7 +765,9 @@ export function songServer(
         updated.artwork = null;
       } else if (typeof assetId === 'string' && known(server.uploads.length).includes(assetId)) {
         updated.artwork =
-          assetId === server.song.artwork?.assetId ? server.song.artwork : testArtwork(assetId);
+          assetId === server.song.artwork?.assetId
+            ? server.song.artwork
+            : testArtwork(assetId, sizeOfUpload(known(server.uploads.length).indexOf(assetId) + 1));
       } else {
         return jsonResponse(422, {
           code: 'validation_failed',
@@ -754,6 +779,27 @@ export function songServer(
         });
       }
     }
+    if ('artworkCrop' in body) {
+      const crop = body.artworkCrop as Artwork['crop'];
+      const artwork = updated.artwork;
+      const fits =
+        crop === null ||
+        (artwork !== null &&
+          crop.size >= Math.min(64, artwork.width, artwork.height) &&
+          crop.x >= 0 &&
+          crop.y >= 0 &&
+          crop.x + crop.size <= artwork.width &&
+          crop.y + crop.size <= artwork.height);
+      if (!fits) {
+        return jsonResponse(422, {
+          code: 'validation_failed',
+          errors: { artworkCrop: ['The crop must lie inside the image.'] },
+        });
+      }
+      if (artwork !== null) {
+        updated.artwork = testArtwork(artwork.assetId, { ...artwork, crop });
+      }
+    }
     updated.warnings = warningsOf(updated, server.others);
     const changed =
       JSON.stringify(updated.release) !== JSON.stringify(server.song.release) ||
@@ -763,7 +809,8 @@ export function songServer(
       updated.notes !== server.song.notes ||
       JSON.stringify(updated.genres) !== JSON.stringify(server.song.genres) ||
       JSON.stringify(updated.tags) !== JSON.stringify(server.song.tags) ||
-      updated.artwork?.assetId !== server.song.artwork?.assetId;
+      updated.artwork?.assetId !== server.song.artwork?.assetId ||
+      JSON.stringify(updated.artwork?.crop) !== JSON.stringify(server.song.artwork?.crop);
     server.song = changed ? { ...updated, revision: server.song.revision + 1 } : server.song;
     return jsonResponse(200, server.song);
   });

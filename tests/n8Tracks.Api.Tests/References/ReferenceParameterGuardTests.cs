@@ -58,6 +58,7 @@ public sealed class ReferenceParameterGuardTests
         "DELETE /api/v1/versions/{reference}/snapshots/{snapshotId:guid}: snapshotId",
         "GET /api/v1/artwork/{assetId:guid}: assetId",
         "GET /api/v1/artwork/{assetId:guid}/{size}: assetId",
+        "GET /api/v1/artwork/{assetId:guid}/crops/{cropKey}/{size}: assetId",
     };
 
     /// <summary>

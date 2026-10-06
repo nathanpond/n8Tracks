@@ -44,6 +44,9 @@ public interface IManagedAssetStore
     /// </summary>
     Task WriteAsync(string path, ReadOnlyMemory<byte> content, CancellationToken cancellationToken);
 
+    /// <summary>The regular files (not links) directly in <paramref name="folder"/>, as paths relative to the managed-assets folder; none when it does not exist.</summary>
+    IReadOnlyList<string> Files(string folder);
+
     /// <summary>Removes <paramref name="folder"/> and then its parent when they are empty folders.</summary>
     void RemoveEmptyFolders(string folder);
 
@@ -61,6 +64,19 @@ public interface IArtworkImaging
     /// One decode runs at a time, so the decode memory cap holds for the whole server.
     /// </summary>
     Task<ArtworkDecoding> DecodeAsync(ReadOnlyMemory<byte> content, ArtworkFormat format, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Decodes the stored original <paramref name="content"/> as <see cref="DecodeAsync"/> does and
+    /// draws the square <paramref name="crop"/> of it (in pixels of the original, orientation applied)
+    /// at each of <paramref name="sizes"/>, as lossy WebP; null when it does not decode. The original
+    /// is only read.
+    /// </summary>
+    Task<IReadOnlyList<ArtworkThumbnail>?> CropAsync(
+        ReadOnlyMemory<byte> content,
+        ArtworkFormat format,
+        ArtworkCrop crop,
+        IReadOnlyList<int> sizes,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>What decoding an upload found.</summary>
@@ -111,6 +127,12 @@ public interface IArtworkAttachmentStore : IArtworkAttachments
 
     /// <summary>Stores a new attachment. The owner must have none (one per owner is a unique key).</summary>
     Task AddAsync(ArtworkAttachment attachment, CancellationToken cancellationToken);
+
+    /// <summary>Sets the crop of the attachment with <paramref name="id"/> (null for the centred square).</summary>
+    Task SetCropAsync(Guid id, ArtworkCrop? crop, CancellationToken cancellationToken);
+
+    /// <summary>The distinct crops the live attachments of <paramref name="assetId"/> set (the centred default left out).</summary>
+    Task<IReadOnlyList<ArtworkCrop>> CropsOfAsync(Guid assetId, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -139,6 +161,31 @@ public static class ArtworkPaths
     /// <summary>The <paramref name="size"/> thumbnail's path.</summary>
     public static string Thumbnail(string contentHash, int size) =>
         $"{Folder(contentHash)}/{size.ToString(CultureInfo.InvariantCulture)}.webp";
+
+    /// <summary>The prefix of every square thumbnail's file name made for a crop.</summary>
+    public const string CropPrefix = "crop-";
+
+    /// <summary>
+    /// The path of the <paramref name="size"/> square thumbnail of the crop whose
+    /// <see cref="ArtworkCropRules.Key"/> is <paramref name="cropKey"/>.
+    /// </summary>
+    public static string CropThumbnail(string contentHash, string cropKey, int size) =>
+        ArtworkCropRules.IsKey(cropKey)
+            ? $"{Folder(contentHash)}/{CropPrefix}{cropKey}-{size.ToString(CultureInfo.InvariantCulture)}.webp"
+            : throw new ArgumentException("A crop key is the start of a SHA-256 in lower-case hexadecimal.", nameof(cropKey));
+
+    /// <summary>Every square thumbnail of <paramref name="crop"/> on <paramref name="asset"/>.</summary>
+    public static IReadOnlyList<string> CropFiles(Asset asset, ArtworkCrop crop)
+    {
+        ArgumentNullException.ThrowIfNull(asset);
+
+        var key = ArtworkCropRules.Key(crop);
+        return [.. ArtworkCropRules.SizesFor(crop).Select(size => CropThumbnail(asset.ContentHash, key, size))];
+    }
+
+    /// <summary>Whether <paramref name="path"/> is a crop's square thumbnail (a file <see cref="CropThumbnail"/> names).</summary>
+    public static bool IsCropFile(string path) =>
+        ContentHashOf(path) is not null && path[(path.LastIndexOf('/') + 1)..].StartsWith(CropPrefix, StringComparison.Ordinal);
 
     /// <summary>Every file of <paramref name="asset"/>: the original, then each thumbnail.</summary>
     public static IReadOnlyList<string> Files(Asset asset)

@@ -22,8 +22,11 @@ public static class ArtworkOwnerTypes
 /// </summary>
 public sealed record ArtworkCrop(int X, int Y, int Size);
 
-/// <summary>An owner's artwork as the owner shows it: the asset, and the crop the owner set on it (null for the centred square).</summary>
-public sealed record AttachedArtwork(Guid AssetId, ArtworkCrop? Crop);
+/// <summary>
+/// An owner's artwork as the owner shows it: the asset, the crop the owner set on it (null for the
+/// centred square), and the original's dimensions with its orientation applied, which the crop is in.
+/// </summary>
+public sealed record AttachedArtwork(Guid AssetId, ArtworkCrop? Crop, int Width, int Height);
 
 /// <summary>
 /// One owner's artwork: the asset attached to it and the crop it set. An owner has at most one;
@@ -36,8 +39,4 @@ public sealed record ArtworkAttachment(
     Guid OwnerId,
     Guid AssetId,
     ArtworkCrop? Crop,
-    DateTimeOffset AttachedUtc)
-{
-    /// <summary>The artwork as the owner shows it.</summary>
-    public AttachedArtwork Artwork => new(AssetId, Crop);
-}
+    DateTimeOffset AttachedUtc);

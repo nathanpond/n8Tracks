@@ -153,6 +153,85 @@ public sealed class ArtworkService(
     }
 
     /// <summary>
+    /// Makes the square thumbnails of <paramref name="crop"/> on <paramref name="asset"/> from its
+    /// original (<see cref="ArtworkCropRules.SizesFor"/>), writing those not already there; the
+    /// original is only read. False when the original is missing or no longer decodes.
+    /// </summary>
+    internal async Task<bool> WriteCropAsync(Asset asset, ArtworkCrop crop, CancellationToken cancellationToken)
+    {
+        var key = ArtworkCropRules.Key(crop);
+        var sizes = ArtworkCropRules.SizesFor(crop);
+        if (sizes.All(size => storage.Exists(ArtworkPaths.CropThumbnail(asset.ContentHash, key, size))))
+        {
+            return true;
+        }
+
+        byte[] original;
+        var stream = storage.OpenRead(ArtworkPaths.Original(asset.ContentHash, asset.Format));
+        if (stream is null)
+        {
+            return false;
+        }
+
+        await using (stream.ConfigureAwait(false))
+        {
+            using var buffer = new MemoryStream();
+            await stream.CopyToAsync(buffer, cancellationToken).ConfigureAwait(false);
+            original = buffer.ToArray();
+        }
+
+        if (await imaging.CropAsync(original, asset.Format, crop, sizes, cancellationToken).ConfigureAwait(false) is not { } thumbnails)
+        {
+            return false;
+        }
+
+        foreach (var thumbnail in thumbnails)
+        {
+            var path = ArtworkPaths.CropThumbnail(asset.ContentHash, key, thumbnail.Size);
+            if (!storage.Exists(path))
+            {
+                await storage.WriteAsync(path, thumbnail.Content, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// The square thumbnail of <paramref name="crop"/> on the live <paramref name="asset"/> served for
+    /// <paramref name="size"/> (<see cref="ArtworkCropRules.ServedSize"/>), made again from the
+    /// original when it is missing; null when it cannot be. The caller has checked that a live
+    /// attachment sets the crop, and disposes the stream.
+    /// </summary>
+    internal async Task<ArtworkContent?> OpenCropAsync(Asset asset, ArtworkCrop crop, int size, CancellationToken cancellationToken)
+    {
+        var served = ArtworkCropRules.ServedSize(crop, size);
+        var key = ArtworkCropRules.Key(crop);
+        var path = ArtworkPaths.CropThumbnail(asset.ContentHash, key, served);
+        if (!storage.Exists(path) && !await WriteCropAsync(asset, crop, cancellationToken).ConfigureAwait(false))
+        {
+            return null;
+        }
+
+        return storage.OpenRead(path) is { } stream
+            ? new ArtworkContent(stream, ArtworkRules.MediaType(ArtworkFormat.Webp), $"{asset.ContentHash}-{key}-{served}")
+            : null;
+    }
+
+    /// <summary>
+    /// Removes the square thumbnails of <paramref name="crop"/> on <paramref name="asset"/>, which no
+    /// live attachment sets any more. Best effort: a file left behind is made again if the crop comes
+    /// back, and goes with the asset in the end.
+    /// </summary>
+    internal void ForgetCrop(Asset asset, ArtworkCrop crop)
+    {
+        foreach (var path in ArtworkPaths.CropFiles(asset, crop))
+        {
+            files.Delete(path, out _);
+        }
+    }
+
+    /// <summary>
     /// Whether <paramref name="asset"/> may be served and its files must be kept: a live record
     /// attaches it, or it was uploaded within <see cref="UnattachedLifetime"/>.
     /// </summary>
@@ -214,8 +293,10 @@ public sealed class ArtworkService(
             }
         }
 
-        // Files first: a failure leaves the row, and its files, for the next sweep to try again.
-        foreach (var path in paths)
+        // Files first: a failure leaves the row, and its files, for the next sweep to try again. The
+        // crops' square thumbnails go too; nothing retains them, since they can be made again.
+        var crops = storage.Files(ArtworkPaths.Folder(asset.ContentHash)).Where(ArtworkPaths.IsCropFile);
+        foreach (var path in paths.Concat(crops))
         {
             if (files.Delete(path, out _) == ManagedFileDeletion.Failed)
             {

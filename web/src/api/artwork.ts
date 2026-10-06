@@ -29,17 +29,36 @@ export interface ArtworkCrop {
   size: number;
 }
 
+/** Where the artwork is fetched as a square, at each thumbnail size. */
+export interface ArtworkSquareUrls {
+  '96': string;
+  '320': string;
+  '1024': string;
+}
+
 /** An owner's artwork, as a Song (and later an Album, Playlist, or Artist) carries it. */
 export interface Artwork {
   assetId: string;
+  /** The original's width in pixels, its orientation applied: what a crop is measured in. */
+  width: number;
+  /** The original's height in pixels, its orientation applied. */
+  height: number;
+  /** The whole image: the original, and thumbnails by their long side. */
   urls: ArtworkUrls;
   /** The crop the owner set, or null for the centred square. */
   crop: ArtworkCrop | null;
+  /**
+   * The artwork as a square: the crop's own square thumbnails (their URLs change with the crop),
+   * or, with no crop, the whole-image thumbnails, to be shown cut to their centred square.
+   */
+  squareUrls: ArtworkSquareUrls;
 }
 
 /** An uploaded image, as the upload answers it. */
 export interface UploadedArtwork {
   id: string;
+  width: number;
+  height: number;
   urls: ArtworkUrls;
 }
 
@@ -51,6 +70,15 @@ function isArtworkUrls(value: unknown): value is ArtworkUrls {
   return (
     isRecord(value) &&
     typeof value.original === 'string' &&
+    typeof value['96'] === 'string' &&
+    typeof value['320'] === 'string' &&
+    typeof value['1024'] === 'string'
+  );
+}
+
+function isArtworkSquareUrls(value: unknown): value is ArtworkSquareUrls {
+  return (
+    isRecord(value) &&
     typeof value['96'] === 'string' &&
     typeof value['320'] === 'string' &&
     typeof value['1024'] === 'string'
@@ -75,13 +103,22 @@ export function isArtwork(value: unknown): value is Artwork {
   return (
     isRecord(value) &&
     typeof value.assetId === 'string' &&
+    typeof value.width === 'number' &&
+    typeof value.height === 'number' &&
     isArtworkUrls(value.urls) &&
-    (value.crop === null || isArtworkCrop(value.crop))
+    (value.crop === null || isArtworkCrop(value.crop)) &&
+    isArtworkSquareUrls(value.squareUrls)
   );
 }
 
 function isUploadedArtwork(value: unknown): value is UploadedArtwork {
-  return isRecord(value) && typeof value.id === 'string' && isArtworkUrls(value.urls);
+  return (
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    typeof value.width === 'number' &&
+    typeof value.height === 'number' &&
+    isArtworkUrls(value.urls)
+  );
 }
 
 /** How an upload ended. A refusal carries the API's message, which says why. Never a rejection. */

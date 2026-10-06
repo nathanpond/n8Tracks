@@ -75,7 +75,9 @@ public readonly record struct SongEditField(bool IsSent, string? Value)
 /// the Song's whole new list of Genres, each the unread text of a Genre's ID; <paramref name="TagIds"/>
 /// likewise for its Tags. <paramref name="Release"/>, when sent, changes the release details it sends.
 /// <paramref name="ArtworkAssetId"/>, when sent, is the unread text of the asset to show as the
-/// Song's artwork, or null to remove it.
+/// Song's artwork, or null to remove it. <paramref name="ArtworkCrop"/>, when sent, is the square
+/// crop of that artwork (null for the centred square); artwork replaced without one sent gets the
+/// centred square.
 /// </summary>
 public sealed record SongEdit(
     SongEditField Title,
@@ -85,7 +87,8 @@ public sealed record SongEdit(
     IReadOnlyList<string?>? GenreIds = null,
     IReadOnlyList<string?>? TagIds = null,
     SongReleaseEdit? Release = null,
-    SongEditField ArtworkAssetId = default);
+    SongEditField ArtworkAssetId = default,
+    ArtworkCropEdit ArtworkCrop = default);
 
 /// <summary>A link as sent: its label (missing or null for none) and its URL.</summary>
 public sealed record SongLinkInput(string? Label, string? Url);
@@ -173,6 +176,7 @@ public sealed class SongService(
     public const string GenreIdsField = "genreIds";
     public const string TagIdsField = "tagIds";
     public const string ArtworkAssetIdField = ArtworkAttachmentService.AssetIdField;
+    public const string ArtworkCropField = ArtworkAttachmentService.CropField;
 
     /// <summary>The release details object, and the names its members' errors are keyed by (<c>release.isrc</c>).</summary>
     public const string ReleaseField = "release";
@@ -326,7 +330,8 @@ public sealed class SongService(
     /// cleared, and links sent replace the Song's; an ISRC another Song has is allowed (the answer
     /// names the others in <see cref="SongSummary.SameIsrc"/>). The artwork sent replaces the Song's
     /// (a live asset's ID; null removes it), and the artwork it had goes into retention
-    /// (<see cref="ArtworkAttachmentService"/>). A stale revision (lower or higher)
+    /// (<see cref="ArtworkAttachmentService"/>); a crop sent must fit the artwork it applies to
+    /// (<see cref="ArtworkCropRules"/>), and its square thumbnails are made in the same request. A stale revision (lower or higher)
     /// changes nothing and answers the Song as it is now. An edit that changes nothing once
     /// normalised is not written and answers the Song unchanged; any other moves its revision and
     /// last-updated time.
@@ -433,10 +438,24 @@ public sealed class SongService(
                     ? tagIds
                     : null;
                 var artworkChanges = edit.ArtworkAssetId.IsSent && artworkId != current.Artwork?.AssetId;
+                var croppedAsset = artworkChanges ? artworkId : current.Artwork?.AssetId;
+                if (edit.ArtworkCrop is { IsSent: true, Value: { } sentCrop }
+                    && (croppedAsset is { } cropped
+                        ? await artwork.CropErrorAsync(cropped, sentCrop, ct).ConfigureAwait(false)
+                        : ArtworkAttachmentService.NothingToCropMessage) is { } cropError)
+                {
+                    return new SongUpdateOutcome.Invalid(new Dictionary<string, string[]>(StringComparer.Ordinal) { [ArtworkCropField] = [cropError] });
+                }
+
+                var cropChanges = !artworkChanges
+                    && edit.ArtworkCrop.IsSent
+                    && current.Artwork is not null
+                    && edit.ArtworkCrop.Value != current.Artwork.Crop;
                 if (details == new SongDetails(current.Title, current.Concept, current.State.Id, current.Notes, current.Release)
                     && genresChange is null
                     && tagsChange is null
-                    && !artworkChanges)
+                    && !artworkChanges
+                    && !cropChanges)
                 {
                     return new SongUpdateOutcome.Updated(current);
                 }
@@ -460,7 +479,11 @@ public sealed class SongService(
 
                 if (artworkChanges)
                 {
-                    await artwork.ReplaceAsync(ArtworkOwnerTypes.Song, id, current.Shortcode, artworkId, ct).ConfigureAwait(false);
+                    await artwork.ReplaceAsync(ArtworkOwnerTypes.Song, id, current.Shortcode, artworkId, edit.ArtworkCrop.Value, ct).ConfigureAwait(false);
+                }
+                else if (cropChanges)
+                {
+                    await artwork.SetCropAsync(ArtworkOwnerTypes.Song, id, edit.ArtworkCrop.Value, ct).ConfigureAwait(false);
                 }
 
                 var updated = await songs.FindAsync(id, ct).ConfigureAwait(false)

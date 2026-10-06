@@ -34,7 +34,39 @@ internal sealed class SkiaArtworkImaging : IArtworkImaging, IDisposable
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            return Decode(content, format);
+            using var decoded = Decode(content, format, out var failure);
+            if (decoded is null)
+            {
+                return failure!;
+            }
+
+            var (width, height) = decoded.Full;
+            var thumbnails = ArtworkRules.SizesFor(width, height)
+                .Select(thumbnail => new ArtworkThumbnail(thumbnail, Thumbnail(decoded, ArtworkRules.ThumbnailDimensions(width, height, thumbnail))))
+                .ToList();
+            return new ArtworkDecoding.Decoded(width, height, thumbnails);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    public async Task<IReadOnlyList<ArtworkThumbnail>?> CropAsync(
+        ReadOnlyMemory<byte> content,
+        ArtworkFormat format,
+        ArtworkCrop crop,
+        IReadOnlyList<int> sizes,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(crop);
+        ArgumentNullException.ThrowIfNull(sizes);
+
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            using var decoded = Decode(content, format, out _);
+            return decoded is null ? null : [.. sizes.Select(size => new ArtworkThumbnail(size, Square(decoded, crop, size)))];
         }
         finally
         {
@@ -44,7 +76,11 @@ internal sealed class SkiaArtworkImaging : IArtworkImaging, IDisposable
 
     public void Dispose() => gate.Dispose();
 
-    private static ArtworkDecoding Decode(ReadOnlyMemory<byte> content, ArtworkFormat format)
+    /// <summary>
+    /// The first frame of <paramref name="content"/>, decoded within the bounds, or null with the
+    /// reason in <paramref name="failure"/>. The caller disposes it.
+    /// </summary>
+    private static DecodedImage? Decode(ReadOnlyMemory<byte> content, ArtworkFormat format, out ArtworkDecoding? failure)
     {
         using var data = SKData.CreateCopy(content.Span);
         using var codec = SKCodec.Create(data);
@@ -52,7 +88,8 @@ internal sealed class SkiaArtworkImaging : IArtworkImaging, IDisposable
         // The decoder must agree with the leading bytes: content that only starts like an image is not one.
         if (codec is null || !Formats.TryGetValue(codec.EncodedFormat, out var found) || found != format)
         {
-            return new ArtworkDecoding.Undecodable();
+            failure = new ArtworkDecoding.Undecodable();
+            return null;
         }
 
         var origin = codec.EncodedOrigin;
@@ -60,33 +97,42 @@ internal sealed class SkiaArtworkImaging : IArtworkImaging, IDisposable
         var (width, height) = Oriented(origin, encoded.Width, encoded.Height);
         if (!ArtworkRules.IsWithinMaximumSide(encoded.Width, encoded.Height))
         {
-            return encoded.Width > 0 && encoded.Height > 0 ? new ArtworkDecoding.DimensionsExceeded(width, height) : new ArtworkDecoding.Undecodable();
+            failure = encoded.Width > 0 && encoded.Height > 0 ? new ArtworkDecoding.DimensionsExceeded(width, height) : new ArtworkDecoding.Undecodable();
+            return null;
         }
 
         if (DecodeSize(codec, encoded.Width, encoded.Height) is not { } size)
         {
-            return new ArtworkDecoding.DimensionsExceeded(width, height);
+            failure = new ArtworkDecoding.DimensionsExceeded(width, height);
+            return null;
         }
 
         var target = new SKImageInfo(size.Width, size.Height, SKColorType.Rgba8888, SKAlphaType.Premul, SKColorSpace.CreateSrgb());
-        using var bitmap = new SKBitmap();
-        if (!bitmap.TryAllocPixels(target))
+        var bitmap = new SKBitmap();
+        try
         {
-            return new ArtworkDecoding.DimensionsExceeded(width, height);
-        }
+            if (!bitmap.TryAllocPixels(target))
+            {
+                failure = new ArtworkDecoding.DimensionsExceeded(width, height);
+                return null;
+            }
 
-        if (codec.GetPixels(target, bitmap.GetPixels(), new SKCodecOptions(0)) != SKCodecResult.Success)
+            if (codec.GetPixels(target, bitmap.GetPixels(), new SKCodecOptions(0)) != SKCodecResult.Success)
+            {
+                failure = new ArtworkDecoding.Undecodable();
+                return null;
+            }
+
+            bitmap.SetImmutable();
+            failure = null;
+            var decoded = new DecodedImage(bitmap, SKImage.FromBitmap(bitmap), origin, Oriented(origin, size.Width, size.Height), (width, height));
+            bitmap = null;
+            return decoded;
+        }
+        finally
         {
-            return new ArtworkDecoding.Undecodable();
+            bitmap?.Dispose();
         }
-
-        bitmap.SetImmutable();
-        using var image = SKImage.FromBitmap(bitmap);
-        var decoded = Oriented(origin, size.Width, size.Height);
-        var thumbnails = ArtworkRules.SizesFor(width, height)
-            .Select(thumbnail => new ArtworkThumbnail(thumbnail, Thumbnail(image, origin, decoded, ArtworkRules.ThumbnailDimensions(width, height, thumbnail))))
-            .ToList();
-        return new ArtworkDecoding.Decoded(width, height, thumbnails);
     }
 
     /// <summary>
@@ -114,17 +160,41 @@ internal sealed class SkiaArtworkImaging : IArtworkImaging, IDisposable
         return null;
     }
 
-    /// <summary>One thumbnail: the image scaled to <paramref name="target"/> with its orientation applied, as lossy WebP.</summary>
-    private static byte[] Thumbnail(SKImage image, SKEncodedOrigin origin, (int Width, int Height) oriented, (int Width, int Height) target)
+    /// <summary>One thumbnail: the whole image scaled to <paramref name="target"/> with its orientation applied, as lossy WebP.</summary>
+    private static byte[] Thumbnail(DecodedImage decoded, (int Width, int Height) target) =>
+        Draw(target, canvas => canvas.Scale((float)target.Width / decoded.Shown.Width, (float)target.Height / decoded.Shown.Height), decoded);
+
+    /// <summary>
+    /// One square thumbnail, <paramref name="size"/> pixels a side: the <paramref name="crop"/> of
+    /// the image (in pixels of the full-size original, orientation applied), as lossy WebP.
+    /// </summary>
+    private static byte[] Square(DecodedImage decoded, ArtworkCrop crop, int size) =>
+        Draw(
+            (size, size),
+            canvas =>
+            {
+                canvas.Scale((float)size / crop.Size);
+                canvas.Translate(-crop.X, -crop.Y);
+
+                // A very large original may have been decoded at a smaller scale: back to full-size pixels.
+                canvas.Scale((float)decoded.Full.Width / decoded.Shown.Width, (float)decoded.Full.Height / decoded.Shown.Height);
+            },
+            decoded);
+
+    /// <summary>
+    /// Draws the decoded image the right way up onto a <paramref name="target"/> surface, after
+    /// <paramref name="place"/> has set where its oriented pixels go, and encodes it as lossy WebP.
+    /// </summary>
+    private static byte[] Draw((int Width, int Height) target, Action<SKCanvas> place, DecodedImage decoded)
     {
         var info = new SKImageInfo(target.Width, target.Height, SKColorType.Rgba8888, SKAlphaType.Premul, SKColorSpace.CreateSrgb());
         using var surface = SKSurface.Create(info) ?? throw new InvalidOperationException("A thumbnail surface could not be created.");
         var canvas = surface.Canvas;
         canvas.Clear(SKColors.Transparent);
-        canvas.Scale((float)target.Width / oriented.Width, (float)target.Height / oriented.Height);
-        var orientation = OrientationMatrix(origin, oriented.Width, oriented.Height);
+        place(canvas);
+        var orientation = OrientationMatrix(decoded.Origin, decoded.Shown.Width, decoded.Shown.Height);
         canvas.Concat(in orientation);
-        canvas.DrawImage(image, 0, 0, Sampling, null);
+        canvas.DrawImage(decoded.Image, 0, 0, Sampling, null);
         canvas.Flush();
 
         using var snapshot = surface.Snapshot();
@@ -155,4 +225,18 @@ internal sealed class SkiaArtworkImaging : IArtworkImaging, IDisposable
         SKEncodedOrigin.LeftBottom => new SKMatrix(0, 1, 0, -1, 0, height, 0, 0, 1),
         _ => SKMatrix.Identity,
     };
+
+    /// <summary>
+    /// A decoded first frame: the pixels as stored (<see cref="Image"/>, over <see cref="Bitmap"/>),
+    /// the orientation to apply, the decoded size with it applied (<see cref="Shown"/>), and the
+    /// full-size original's (<see cref="Full"/>), larger when the decode was scaled down.
+    /// </summary>
+    private sealed record DecodedImage(SKBitmap Bitmap, SKImage Image, SKEncodedOrigin Origin, (int Width, int Height) Shown, (int Width, int Height) Full) : IDisposable
+    {
+        public void Dispose()
+        {
+            Image.Dispose();
+            Bitmap.Dispose();
+        }
+    }
 }

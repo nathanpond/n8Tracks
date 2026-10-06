@@ -12,6 +12,8 @@ import {
 } from '../api/songs';
 import { useSongVersions } from '../api/versions';
 import { ARTWORK_KEY } from '../common/ArtworkPicker';
+import { ARTWORK_CROP_KEY, cropOf, cropValue } from '../common/artworkField';
+import { cropText } from '../common/cropRules';
 import { ConflictValue } from '../common/ConflictDialog';
 import { useRevisionedSave, type SavedField } from '../common/useRevisionedSave';
 import { Notice } from '../components/Notice';
@@ -61,7 +63,7 @@ function BackToSongs() {
 
 /** A Song edit as the shared save helper holds it, as the API's PATCH takes it (credits aside). */
 function songEditOf(edit: Readonly<Record<string, FieldValue>>): SongEdit {
-  const { [GENRES_KEY]: genres, [TAGS_KEY]: tags, ...rest } = edit;
+  const { [GENRES_KEY]: genres, [TAGS_KEY]: tags, [ARTWORK_CROP_KEY]: crop, ...rest } = edit;
   const fields = Object.fromEntries(
     Object.entries(rest).filter(([key]) => key !== CREDITS_KEY && !isReleaseKey(key)),
   );
@@ -71,6 +73,7 @@ function songEditOf(edit: Readonly<Record<string, FieldValue>>): SongEdit {
     ...(genres === undefined ? {} : { genreIds: genresOf(genres).map((genre) => genre.id) }),
     ...(tags === undefined ? {} : { tagIds: tagsOf(tags).map((tag) => tag.id) }),
     ...(release === undefined ? {} : { release }),
+    ...(crop === undefined ? {} : { artworkCrop: cropOf(crop) }),
   };
 }
 
@@ -152,6 +155,15 @@ function LoadedSong({ loaded }: { loaded: Song }) {
         label: 'Artwork',
         read: (record) => record.artwork?.assetId ?? null,
         show: (value) => <ConflictValue value={value === null ? null : 'An uploaded image'} />,
+      },
+      {
+        key: ARTWORK_CROP_KEY,
+        label: 'Artwork crop',
+        read: (record) => cropValue(record.artwork?.crop ?? null),
+        show: (value) => {
+          const crop = cropOf(value);
+          return <ConflictValue value={crop === null ? 'Centred' : cropText(crop)} />;
+        },
       },
     ];
   }, [states]);

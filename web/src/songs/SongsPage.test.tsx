@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { NO_RELEASE, type Song, type SongPage } from '../api/songs';
 import { testArtist } from '../test/artistServer';
+import { testArtwork } from '../test/songServer';
 import { formatDateTime } from '../api/timeZone';
 import {
   healthyReport,
@@ -532,7 +533,7 @@ describe('Songs', () => {
     expect(within(row('n8-1')).getAllByRole('cell')[1]).toHaveTextContent(/^$/);
   });
 
-  it('shows each Song’s 96-pixel artwork beside its title, or a placeholder', async () => {
+  it('shows each Song’s 96-pixel artwork beside its title, as its crop, or a placeholder', async () => {
     const assetId = '01a20000-0000-7000-8000-000000000001';
     const original = `/api/v1/artwork/${assetId}`;
     backend({
@@ -540,19 +541,11 @@ describe('Songs', () => {
         jsonResponse(
           200,
           page([
-            song(2, {
+            song(3, {
               title: 'Night Drive',
-              artwork: {
-                assetId,
-                urls: {
-                  original,
-                  '96': `${original}/96`,
-                  '320': `${original}/320`,
-                  '1024': `${original}/1024`,
-                },
-                crop: null,
-              },
+              artwork: testArtwork(assetId, { crop: { x: 0, y: 0, size: 600 } }),
             }),
+            song(2, { title: 'Centred', artwork: testArtwork(assetId) }),
             song(1),
           ]),
         ),
@@ -561,13 +554,17 @@ describe('Songs', () => {
     renderApp('/songs');
 
     await screen.findByRole('table', { name: 'Songs' });
-    const titleCell = within(row('n8-2')).getAllByRole('cell')[0];
+    const titleCell = within(row('n8-3')).getAllByRole('cell')[0];
     if (titleCell === undefined) {
       throw new Error('No title cell.');
     }
     const image = within(titleCell).getByRole('img', { name: 'Artwork for Night Drive' });
-    expect(image).toHaveAttribute('src', `${original}/96`);
+    expect(image).toHaveAttribute('src', `${original}/crops/0-0-600/96`);
     expect(titleCell).toHaveTextContent(/^Night Drive$/);
+    expect(within(row('n8-2')).getByRole('img', { name: 'Artwork for Centred' })).toHaveAttribute(
+      'src',
+      `${original}/96`,
+    );
     expect(within(row('n8-1')).getAllByRole('img', { name: 'No artwork' })).toHaveLength(1);
   });
 

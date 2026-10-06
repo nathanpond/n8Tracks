@@ -5,9 +5,9 @@ import { artworkAlt, type Artwork } from '../api/artwork';
 export type ArtworkSize = '96' | '320' | '1024';
 
 /**
- * An owner's artwork as a square of `pixels` CSS pixels, from the `size` thumbnail, cropped to the
- * centre (a crop set on the artwork is applied by a later story). With no artwork, one neutral
- * placeholder, the same for every owner, named "No artwork".
+ * An owner's artwork as a square of `pixels` CSS pixels, from the `size` square thumbnail: the crop
+ * the owner set, or, with none, the whole image cut to its centred square. With no artwork, one
+ * neutral placeholder, the same for every owner, named "No artwork".
  */
 export function ArtworkImage({
   artwork,
@@ -66,7 +66,7 @@ export function ArtworkImage({
 
   return (
     <img
-      src={artwork.urls[size]}
+      src={artwork.squareUrls[size]}
       alt={artworkAlt(title)}
       data-artwork={artwork.assetId}
       width={pixels}

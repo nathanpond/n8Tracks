@@ -198,3 +198,174 @@ describe('a Song’s artwork', () => {
     expect(within(group).getByTestId('artwork-status')).toHaveTextContent('');
   });
 });
+
+describe('a Song’s artwork crop', () => {
+  const ASSET = testAssetId(1);
+  const SQUARE = `/api/v1/artwork/${ASSET}`;
+
+  /** A Song whose artwork (the fake store's first upload, 1,200 × 600) has `crop`. */
+  function cropped(crop: { x: number; y: number; size: number } | null) {
+    const { server } = songServer({ ...baseSong, artwork: testArtwork(ASSET, { crop }) });
+    server.uploads.push(png('first.png'));
+    return server;
+  }
+
+  async function openCrop(user: ReturnType<typeof userEvent.setup>, group: HTMLElement) {
+    await user.click(within(group).getByRole('button', { name: 'Crop artwork' }));
+    const dialog = await screen.findByRole('dialog', { name: `Crop the artwork for ${TITLE}` });
+    return { dialog, square: within(dialog).getByRole('application', { name: 'Crop selection' }) };
+  }
+
+  it('saves a crop moved with the keyboard, and shows the cropped square everywhere', async () => {
+    const user = userEvent.setup();
+    const server = cropped(null);
+    const { group } = await openArtwork(user);
+    expect(within(group).queryByRole('button', { name: 'Reset crop' })).toBeNull();
+    expect(within(group).getByRole('img', { name: ALT })).toHaveAttribute('src', `${SQUARE}/320`);
+
+    const { dialog, square } = await openCrop(user, group);
+    square.focus();
+    for (let press = 0; press < 5; press++) {
+      await user.keyboard('{Shift>}{ArrowLeft}{/Shift}');
+    }
+    expect(within(dialog).getByTestId('crop-position')).toHaveTextContent(
+      'Left 0 px, top 0 px, size 600 px.',
+    );
+    await user.click(within(dialog).getByRole('button', { name: 'Save crop' }));
+
+    await waitFor(() => {
+      expect(within(group).getByTestId('artwork-status')).toHaveTextContent('Crop saved.');
+    });
+    expect(server.edits).toEqual([
+      { ifMatch: '"1"', body: { artworkCrop: { x: 0, y: 0, size: 600 } } },
+    ]);
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: `Crop the artwork for ${TITLE}` })).toBeNull();
+    });
+    expect(within(group).getByRole('img', { name: ALT })).toHaveAttribute(
+      'src',
+      `${SQUARE}/crops/0-0-600/320`,
+    );
+    expect(within(header()).getByRole('img', { name: ALT })).toHaveAttribute(
+      'src',
+      `${SQUARE}/crops/0-0-600/320`,
+    );
+    expect(within(group).getByRole('button', { name: 'Reset crop' })).toBeEnabled();
+  });
+
+  it('opens on the saved crop, so it can be adjusted later', async () => {
+    const user = userEvent.setup();
+    const server = cropped({ x: 0, y: 0, size: 600 });
+    const { group } = await openArtwork(user);
+
+    const { dialog, square } = await openCrop(user, group);
+    expect(square).toHaveAttribute('data-crop', '0,0,600');
+    square.focus();
+    await user.keyboard('-');
+    await user.click(within(dialog).getByRole('button', { name: 'Save crop' }));
+
+    await waitFor(() => {
+      expect(server.edits).toEqual([
+        { ifMatch: '"1"', body: { artworkCrop: { x: 3, y: 3, size: 594 } } },
+      ]);
+    });
+  });
+
+  it('keeps the dialog open with the reason when the crop is refused', async () => {
+    const user = userEvent.setup();
+    const server = cropped(null);
+    server.next = () =>
+      jsonResponse(422, {
+        code: 'validation_failed',
+        errors: { artworkCrop: ['The crop must be at least 64 pixels on a side.'] },
+      });
+    const { group } = await openArtwork(user);
+
+    const { dialog } = await openCrop(user, group);
+    await user.click(within(dialog).getByRole('button', { name: 'Save crop' }));
+
+    expect(await within(dialog).findByTestId('crop-error')).toHaveTextContent(
+      'The crop must be at least 64 pixels on a side.',
+    );
+    expect(within(group).getByRole('img', { name: ALT })).toHaveAttribute('src', `${SQUARE}/320`);
+  });
+
+  it('resets the crop to the centre', async () => {
+    const user = userEvent.setup();
+    const server = cropped({ x: 0, y: 0, size: 600 });
+    const { group } = await openArtwork(user);
+
+    await user.click(within(group).getByRole('button', { name: 'Reset crop' }));
+
+    await waitFor(() => {
+      expect(within(group).getByTestId('artwork-status')).toHaveTextContent(
+        'Crop reset to the centre.',
+      );
+    });
+    expect(server.edits).toEqual([{ ifMatch: '"1"', body: { artworkCrop: null } }]);
+    expect(within(group).getByRole('img', { name: ALT })).toHaveAttribute('src', `${SQUARE}/320`);
+    expect(within(group).queryByRole('button', { name: 'Reset crop' })).toBeNull();
+  });
+
+  it('resets the crop when the image is replaced, unless Keep crop is ticked', async () => {
+    const user = userEvent.setup();
+    const server = cropped({ x: 0, y: 0, size: 600 });
+    const { group, container } = await openArtwork(user);
+    const keep = within(group).getByRole('checkbox', { name: /Keep crop/ });
+    expect(keep).not.toBeChecked();
+
+    await user.upload(fileInput(container), png('second.png'));
+
+    await waitFor(() => {
+      expect(within(group).getByTestId('artwork-status')).toHaveTextContent('Artwork replaced.');
+    });
+    expect(server.edits.at(-1)?.body).toEqual({ artworkAssetId: testAssetId(2) });
+    expect(within(group).queryByRole('checkbox', { name: /Keep crop/ })).toBeNull();
+  });
+
+  it('keeps the crop for the new image when Keep crop is ticked and it fits', async () => {
+    const user = userEvent.setup();
+    const server = cropped({ x: 0, y: 0, size: 600 });
+    server.uploadSizes = [
+      { width: 1200, height: 600 },
+      { width: 800, height: 700 },
+    ];
+    const { group, container } = await openArtwork(user);
+
+    await user.click(within(group).getByRole('checkbox', { name: /Keep crop/ }));
+    await user.upload(fileInput(container), png('second.png'));
+
+    await waitFor(() => {
+      expect(within(group).getByTestId('artwork-status')).toHaveTextContent(/^Artwork replaced\.$/);
+    });
+    expect(server.edits.at(-1)?.body).toEqual({
+      artworkAssetId: testAssetId(2),
+      artworkCrop: { x: 0, y: 0, size: 600 },
+    });
+    expect(within(group).getByRole('img', { name: ALT })).toHaveAttribute(
+      'src',
+      `/api/v1/artwork/${testAssetId(2)}/crops/0-0-600/320`,
+    );
+    expect(within(group).getByRole('checkbox', { name: /Keep crop/ })).not.toBeChecked();
+  });
+
+  it('drops a kept crop that does not fit the new image to the centred default', async () => {
+    const user = userEvent.setup();
+    const server = cropped({ x: 0, y: 0, size: 600 });
+    server.uploadSizes = [
+      { width: 1200, height: 600 },
+      { width: 500, height: 500 },
+    ];
+    const { group, container } = await openArtwork(user);
+
+    await user.click(within(group).getByRole('checkbox', { name: /Keep crop/ }));
+    await user.upload(fileInput(container), png('second.png'));
+
+    await waitFor(() => {
+      expect(within(group).getByTestId('artwork-status')).toHaveTextContent(
+        'Artwork replaced. The crop does not fit the new image, so it shows the centre.',
+      );
+    });
+    expect(server.edits.at(-1)?.body).toEqual({ artworkAssetId: testAssetId(2) });
+  });
+});

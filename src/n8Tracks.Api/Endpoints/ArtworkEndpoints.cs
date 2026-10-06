@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.WebUtilities;
@@ -23,6 +24,7 @@ internal static class ArtworkEndpoints
     public const string ArtworkPath = ApiProblem.VersionPrefix + "/artwork";
     public const string AssetPath = ArtworkPath + "/{assetId:guid}";
     public const string ThumbnailPath = AssetPath + "/{size}";
+    public const string CropThumbnailPath = AssetPath + "/crops/{cropKey}/{size}";
 
     public const string TooLargeCode = "artwork_too_large";
     public const string TypeNotSupportedCode = "artwork_type_not_supported";
@@ -73,8 +75,72 @@ internal static class ArtworkEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
+        endpoints.MapGet(CropThumbnailPath, CropThumbnailAsync)
+            .WithName("GetArtworkCropThumbnail")
+            .WithSummary("A square thumbnail of a crop an owner set on the asset (the crop key is in the owner's artwork squareUrls), 96, 320, or 1024 pixels a side, as WebP; for a size larger than the crop, the next smaller one. 404 when no live owner sets that crop on the asset, or as for the original.")
+            .RequireScope(CredentialScopes.CatalogRead)
+            .Produces(StatusCodes.Status200OK, contentType: "image/webp")
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
         return endpoints;
     }
+
+    /// <summary>
+    /// The crop field of an owner's edit as sent: missing is left alone; null is the centred square;
+    /// otherwise an object of whole numbers <c>x</c>, <c>y</c>, and <c>size</c> (or <c>width</c> and
+    /// <c>height</c>, which must then be equal, since a crop is square). Anything else is an error
+    /// keyed by <paramref name="name"/>. Whether it fits the image is the service's check.
+    /// </summary>
+    internal static ArtworkCropEdit ReadCrop(JsonElement? sent, string name, Dictionary<string, string[]> errors)
+    {
+        ArgumentNullException.ThrowIfNull(errors);
+
+        switch (sent?.ValueKind)
+        {
+            case null or JsonValueKind.Undefined:
+                return default;
+            case JsonValueKind.Null:
+                return ArtworkCropEdit.Of(null);
+            case JsonValueKind.Object:
+                break;
+            default:
+                errors[name] = [CropShapeMessage];
+                return default;
+        }
+
+        var crop = sent.Value;
+        int? Member(string member, out bool present)
+        {
+            present = crop.TryGetProperty(member, out var value) && value.ValueKind != JsonValueKind.Null;
+            return present && value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number) ? number : null;
+        }
+
+        var x = Member("x", out var hasX);
+        var y = Member("y", out var hasY);
+        var size = Member("size", out var hasSize);
+        var width = Member("width", out var hasWidth);
+        var height = Member("height", out var hasHeight);
+        if (!hasX || !hasY || x is null || y is null
+            || (hasSize && size is null) || (hasWidth && width is null) || (hasHeight && height is null)
+            || hasWidth != hasHeight || (!hasSize && !hasWidth))
+        {
+            errors[name] = [CropShapeMessage];
+            return default;
+        }
+
+        int[] sides = [.. new[] { size, width, height }.OfType<int>()];
+        if (sides.Distinct().Count() > 1)
+        {
+            errors[name] = ["A crop is square: its width and height must be the same."];
+            return default;
+        }
+
+        return ArtworkCropEdit.Of(new ArtworkCrop(x.Value, y.Value, sides[0]));
+    }
+
+    private const string CropShapeMessage = "Send the crop as whole numbers of pixels {x, y, size}, or null for the centred square.";
 
     /// <summary>
     /// Reads the first file part of the multipart body into memory, counted against the limit as it
@@ -193,14 +259,29 @@ internal static class ArtworkEndpoints
             ? await ServeAsync(artwork, assetId, parsed, context, cancellationToken)
             : NotFound(context);
 
+    /// <summary>200 with the crop's square thumbnail served for the size; 404 when no live owner sets that crop, or as for a thumbnail.</summary>
+    private static async Task<Results<FileStreamHttpResult, ProblemHttpResult>> CropThumbnailAsync(
+        Guid assetId,
+        string cropKey,
+        string size,
+        ArtworkAttachmentService attachments,
+        HttpContext context,
+        CancellationToken cancellationToken) =>
+        ArtworkRules.ParseSize(size) is { } parsed
+            ? Serve(await attachments.OpenCropAsync(assetId, cropKey, parsed, cancellationToken), context)
+            : NotFound(context);
+
     private static async Task<Results<FileStreamHttpResult, ProblemHttpResult>> ServeAsync(
         ArtworkService artwork,
         Guid assetId,
         int? size,
         HttpContext context,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken) =>
+        Serve(await artwork.OpenAsync(assetId, size, cancellationToken), context);
+
+    private static Results<FileStreamHttpResult, ProblemHttpResult> Serve(ArtworkContent? content, HttpContext context)
     {
-        if (await artwork.OpenAsync(assetId, size, cancellationToken) is not { } served)
+        if (content is not { } served)
         {
             SessionEndpoints.NoStore(context);
             return NotFound(context);
@@ -322,20 +403,45 @@ internal sealed record ArtworkResponse(
 }
 
 /// <summary>
-/// An owner's artwork as its answers show it: the asset (what <c>artworkAssetId</c> takes), where to
-/// fetch its original and each thumbnail size (as <see cref="ArtworkResponse"/>), and the square crop
-/// the owner set, or null for the centred square.
+/// An owner's artwork as its answers show it: the asset (what <c>artworkAssetId</c> takes), the
+/// original's dimensions with its orientation applied (which a crop is in), where to fetch its
+/// original and each thumbnail size of the whole image (as <see cref="ArtworkResponse"/>), the square
+/// crop the owner set (null for the centred square), and <c>squareUrls</c>, where to fetch it as a
+/// square at each size: the crop's own square thumbnails, whose URLs change with the crop, or, with
+/// no crop, the whole-image thumbnails, which are shown cut to their centred square.
 /// </summary>
-internal sealed record AttachedArtworkResponse(Guid AssetId, IReadOnlyDictionary<string, string> Urls, ArtworkCropResponse? Crop)
+internal sealed record AttachedArtworkResponse(
+    Guid AssetId,
+    int Width,
+    int Height,
+    IReadOnlyDictionary<string, string> Urls,
+    ArtworkCropResponse? Crop,
+    IReadOnlyDictionary<string, string> SquareUrls)
 {
     public static AttachedArtworkResponse From(AttachedArtwork artwork, PathString pathBase)
     {
         ArgumentNullException.ThrowIfNull(artwork);
 
+        var urls = ArtworkResponse.UrlsOf(artwork.AssetId, pathBase);
         return new(
             artwork.AssetId,
-            ArtworkResponse.UrlsOf(artwork.AssetId, pathBase),
-            artwork.Crop is { } crop ? new ArtworkCropResponse(crop.X, crop.Y, crop.Size) : null);
+            artwork.Width,
+            artwork.Height,
+            urls,
+            artwork.Crop is { } crop ? new ArtworkCropResponse(crop.X, crop.Y, crop.Size) : null,
+            artwork.Crop is { } cropped ? SquareUrlsOf(artwork.AssetId, cropped, pathBase) : ThumbnailsOf(urls));
+    }
+
+    private static Dictionary<string, string> ThumbnailsOf(IReadOnlyDictionary<string, string> urls) =>
+        urls.Where(static url => url.Key != ArtworkResponse.OriginalKey).ToDictionary(StringComparer.Ordinal);
+
+    private static Dictionary<string, string> SquareUrlsOf(Guid assetId, ArtworkCrop crop, PathString pathBase)
+    {
+        var folder = $"{pathBase}{ArtworkEndpoints.ArtworkPath}/{assetId}/crops/{ArtworkCropRules.Key(crop)}";
+        return ArtworkRules.ThumbnailSizes.ToDictionary(
+            static size => size.ToString(CultureInfo.InvariantCulture),
+            size => $"{folder}/{size.ToString(CultureInfo.InvariantCulture)}",
+            StringComparer.Ordinal);
     }
 }
 

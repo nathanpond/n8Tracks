@@ -82,6 +82,26 @@ internal sealed class ManagedAssetStore(ManagedFiles files, N8TracksOptions opti
         }
     }
 
+    public IReadOnlyList<string> Files(string folder)
+    {
+        if (files.Resolve(folder, out _) is not { } full || new DirectoryInfo(full) is not { Exists: true, LinkTarget: null } directory)
+        {
+            return [];
+        }
+
+        try
+        {
+            return [.. directory.EnumerateFiles()
+                .Where(static file => file.LinkTarget is null)
+                .Select(file => $"{folder.TrimEnd('/')}/{file.Name}")
+                .Order(StringComparer.Ordinal)];
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return [];
+        }
+    }
+
     public void RemoveEmptyFolders(string folder)
     {
         if (files.Resolve(folder, out _) is not { } full)

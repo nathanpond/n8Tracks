@@ -1,6 +1,7 @@
 import {
   Anchor,
   Button,
+  Checkbox,
   FileButton,
   Group,
   Modal,
@@ -15,8 +16,12 @@ import {
   UPLOAD_FAILED_MESSAGE,
   uploadArtwork,
   type Artwork,
+  type ArtworkCrop,
 } from '../api/artwork';
 import { ArtworkImage } from './ArtworkImage';
+import { CropDialog } from './CropDialog';
+import { ARTWORK_CROP_KEY, type ArtworkEdit } from './artworkField';
+import { keptCrop } from './cropRules';
 import { saveError } from './useInPlaceEdit';
 import type { SaveOutcome } from './useRevisionedSave';
 
@@ -27,12 +32,15 @@ export const ARTWORK_KEY = 'artworkAssetId';
 const SHOWN_PIXELS = 200;
 
 /**
- * An owner's artwork, chosen by uploading an image: upload one, replace it, or remove it (after a
- * confirmation). The image is uploaded first (n8Tracks judges it by its content, so a file that is
- * not really an image is refused with the reason, and nothing changes); then `save` attaches its
- * asset ID as an edit of the owner under its revision. Removing saves null. The artwork shows at
- * 320 pixels; activating it opens the 1,024-pixel image with a "View original" link.
- * Replaced or removed artwork is kept for 30 days in deleted items.
+ * An owner's artwork, chosen by uploading an image: upload one, replace it, crop it, or remove it
+ * (after a confirmation). The image is uploaded first (n8Tracks judges it by its content, so a file
+ * that is not really an image is refused with the reason, and nothing changes); then `save` attaches
+ * its asset ID as an edit of the owner under its revision. Removing saves null. "Crop artwork"
+ * positions a square crop ({@link CropDialog}) and "Reset crop" goes back to the centred square;
+ * the image itself is never changed. Replacing resets the crop, unless "Keep crop" is ticked and the
+ * crop fits the new image. The artwork shows at 320 pixels as its square; activating it opens the
+ * whole 1,024-pixel image with a "View original" link. Replaced or removed artwork is kept for 30
+ * days in deleted items.
  */
 export function ArtworkPicker({
   title,
@@ -45,8 +53,8 @@ export function ArtworkPicker({
   /** What the owner is, for the messages ("Song"). */
   noun: string;
   artwork: Artwork | null;
-  /** Saves the owner's `artworkAssetId` (null to remove it). */
-  save: (assetId: string | null) => Promise<SaveOutcome>;
+  /** Saves the owner's artwork: its `artworkAssetId` (null to remove it) and its `artworkCrop`, each when given. */
+  save: (edit: ArtworkEdit) => Promise<SaveOutcome>;
 }) {
   const headingId = useId();
   const reset = useRef<() => void>(null);
@@ -55,14 +63,40 @@ export function ArtworkPicker({
   const [status, setStatus] = useState('');
   const [enlarged, setEnlarged] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [cropping, setCropping] = useState(false);
+  const [cropError, setCropError] = useState<string | undefined>();
+  const [keepCrop, setKeepCrop] = useState(false);
 
   const finish = (outcome: SaveOutcome, done: string) => {
     if (outcome.kind === 'saved') {
       setStatus(done);
     } else {
       setStatus('');
-      setError(saveError(outcome, ARTWORK_KEY));
+      setError(saveError(outcome, ARTWORK_KEY) ?? saveError(outcome, ARTWORK_CROP_KEY));
     }
+  };
+
+  const saveCrop = async (crop: ArtworkCrop) => {
+    setCropError(undefined);
+    setBusy('saving');
+    const outcome = await save({ crop });
+    setBusy(undefined);
+    if (outcome.kind === 'saved') {
+      setCropping(false);
+      setStatus('Crop saved.');
+    } else if (outcome.kind === 'invalid' || outcome.kind === 'failed') {
+      setCropError(saveError(outcome, ARTWORK_CROP_KEY));
+    } else {
+      setCropping(false);
+    }
+  };
+
+  const resetCrop = async () => {
+    setError(undefined);
+    setBusy('saving');
+    const outcome = await save({ crop: null });
+    setBusy(undefined);
+    finish(outcome, 'Crop reset to the centre.');
   };
 
   const upload = async (file: File | null) => {
@@ -86,16 +120,30 @@ export function ArtworkPicker({
     }
     setBusy('saving');
     const replacing = artwork !== null;
-    const outcome = await save(uploaded.artwork.id);
+    const wanted = keepCrop ? (artwork?.crop ?? null) : null;
+    const kept = keptCrop(wanted, uploaded.artwork.width, uploaded.artwork.height);
+    const outcome = await save(
+      kept === null
+        ? { assetId: uploaded.artwork.id }
+        : { assetId: uploaded.artwork.id, crop: kept },
+    );
     setBusy(undefined);
-    finish(outcome, replacing ? 'Artwork replaced.' : 'Artwork saved.');
+    setKeepCrop(false);
+    finish(
+      outcome,
+      !replacing
+        ? 'Artwork saved.'
+        : wanted !== null && kept === null
+          ? 'Artwork replaced. The crop does not fit the new image, so it shows the centre.'
+          : 'Artwork replaced.',
+    );
   };
 
   const remove = async () => {
     setConfirming(false);
     setError(undefined);
     setBusy('saving');
-    const outcome = await save(null);
+    const outcome = await save({ assetId: null });
     setBusy(undefined);
     finish(outcome, 'Artwork removed.');
   };
@@ -144,6 +192,31 @@ export function ArtworkPicker({
             size="compact-sm"
             disabled={busy !== undefined}
             onClick={() => {
+              setCropError(undefined);
+              setCropping(true);
+            }}
+          >
+            Crop artwork
+          </Button>
+        )}
+        {artwork?.crop != null && (
+          <Button
+            variant="default"
+            size="compact-sm"
+            disabled={busy !== undefined}
+            onClick={() => {
+              void resetCrop();
+            }}
+          >
+            Reset crop
+          </Button>
+        )}
+        {artwork !== null && (
+          <Button
+            variant="default"
+            size="compact-sm"
+            disabled={busy !== undefined}
+            onClick={() => {
               setConfirming(true);
             }}
           >
@@ -151,6 +224,18 @@ export function ArtworkPicker({
           </Button>
         )}
       </Group>
+      {artwork?.crop != null && (
+        <Checkbox
+          size="xs"
+          label="Keep crop"
+          description="When replacing the image, keep this crop if it fits the new one."
+          checked={keepCrop}
+          disabled={busy !== undefined}
+          onChange={(event) => {
+            setKeepCrop(event.currentTarget.checked);
+          }}
+        />
+      )}
       <Text size="xs" c="var(--n8-color-secondary-text)">
         A JPEG, PNG, or WebP image of up to 25 MB.
       </Text>
@@ -162,6 +247,22 @@ export function ArtworkPicker({
       <Text size="sm" role="status" data-testid="artwork-status">
         {status}
       </Text>
+
+      {artwork !== null && (
+        <CropDialog
+          opened={cropping}
+          artwork={artwork}
+          title={title}
+          busy={busy === 'saving'}
+          error={cropError}
+          onClose={() => {
+            setCropping(false);
+          }}
+          onSave={(crop) => {
+            void saveCrop(crop);
+          }}
+        />
+      )}
 
       {artwork !== null && (
         <Modal

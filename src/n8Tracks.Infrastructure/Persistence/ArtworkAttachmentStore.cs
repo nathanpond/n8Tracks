@@ -37,6 +37,27 @@ internal sealed class ArtworkAttachmentStore(N8TracksDbContext context) : IArtwo
         context.Entry(record).State = EntityState.Detached;
     }
 
+    public async Task SetCropAsync(Guid id, ArtworkCrop? crop, CancellationToken cancellationToken) =>
+        await context.ArtworkAttachments
+            .Where(attachment => attachment.Id == id)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(attachment => attachment.CropX, crop == null ? null : crop.X)
+                    .SetProperty(attachment => attachment.CropY, crop == null ? null : crop.Y)
+                    .SetProperty(attachment => attachment.CropSize, crop == null ? null : crop.Size),
+                cancellationToken)
+            .ConfigureAwait(false);
+
+    public async Task<IReadOnlyList<ArtworkCrop>> CropsOfAsync(Guid assetId, CancellationToken cancellationToken)
+    {
+        var found = await context.ArtworkAttachments.AsNoTracking()
+            .Where(attachment => attachment.AssetId == assetId && attachment.CropSize != null)
+            .Select(attachment => new { attachment.CropX, attachment.CropY, attachment.CropSize })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return [.. found.Select(static crop => new ArtworkCrop(crop.CropX!.Value, crop.CropY!.Value, crop.CropSize!.Value)).Distinct()];
+    }
+
     /// <summary>The artwork of each of <paramref name="ownerIds"/> that has some, by owner ID.</summary>
     internal static async Task<Dictionary<Guid, AttachedArtwork>> ForOwnersAsync(
         N8TracksDbContext context,
@@ -47,9 +68,12 @@ internal sealed class ArtworkAttachmentStore(N8TracksDbContext context) : IArtwo
         var ids = ownerIds.ToList();
         var found = await context.ArtworkAttachments.AsNoTracking()
             .Where(attachment => attachment.OwnerType == ownerType && ids.Contains(attachment.OwnerId))
+            .Join(context.Assets, attachment => attachment.AssetId, asset => asset.Id, (attachment, asset) => new { Attachment = attachment, asset.Width, asset.Height })
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
-        return found.ToDictionary(static attachment => attachment.OwnerId, static attachment => ToAttachment(attachment).Artwork);
+        return found.ToDictionary(
+            static row => row.Attachment.OwnerId,
+            static row => new AttachedArtwork(row.Attachment.AssetId, ToAttachment(row.Attachment).Crop, row.Width, row.Height));
     }
 
     private static ArtworkAttachment ToAttachment(ArtworkAttachmentRecord record) => new(
