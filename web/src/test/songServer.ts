@@ -76,6 +76,8 @@ export const baseSong: Song = {
   release: NO_RELEASE,
   warnings: [],
   artwork: null,
+  hasSelectedGeneration: false,
+  selectedGeneration: null,
 };
 
 export const FOLK: Genre = {

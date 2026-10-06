@@ -1,4 +1,4 @@
-import { COMMENT_MAXIMUM_LENGTH, RATING_MAXIMUM } from '../api/generations';
+import { COMMENT_MAXIMUM_LENGTH, RATING_MAXIMUM, type Generation } from '../api/generations';
 
 /** What a comment's text box says about its length: the count, and the error when it is too long. */
 export function commentLength(draft: string): { counter: string; error: string | undefined } {
@@ -42,4 +42,14 @@ export function ratingForKey(key: string, value: number | null): number | null |
     default:
       return undefined;
   }
+}
+
+/** The label of the control that archives or reactivates a Generation. */
+export function stateActionLabel(generation: Generation): string {
+  return generation.state === 'archived' ? 'Reactivate' : 'Archive';
+}
+
+/** The label of the control that selects a Generation for the Song, or clears that. */
+export function selectionActionLabel(generation: Generation): string {
+  return generation.isSelected ? 'Clear the selection' : 'Select for the Song';
 }

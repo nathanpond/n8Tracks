@@ -81,6 +81,11 @@ public sealed class ReferenceParameterGuardTests
         // 409 revision_conflict: the Song was found, and a revision it is not at deletes nothing.
         ["DELETE /api/v1/songs/{reference}"] = static (c, song, _) => c.SendAsync(HttpMethod.Delete, $"songs/{song}", revision: 999),
 
+        // 409 revision_conflict: the Song and its Generation were found, and a revision it is not at selects nothing.
+        ["PUT /api/v1/songs/{reference}/selected-generation"] = static (c, song, _) =>
+            c.SendAsync(HttpMethod.Put, $"songs/{song}/selected-generation", $$"""{"generation":"{{c.GenerationId}}"}""", revision: 999),
+        ["DELETE /api/v1/songs/{reference}/selected-generation"] = static (c, song, _) => c.SendAsync(HttpMethod.Delete, $"songs/{song}/selected-generation", revision: 999),
+
         // 200: the Song is credited to no one already, so nothing changes.
         ["PUT /api/v1/songs/{reference}/credits"] = static async (c, song, _) =>
             await c.SendAsync(HttpMethod.Put, $"songs/{song}/credits", """{"primaryArtistId":null,"featuredArtistIds":[]}""", await c.SongRevisionAsync()),

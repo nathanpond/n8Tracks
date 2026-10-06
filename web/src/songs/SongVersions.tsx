@@ -14,6 +14,7 @@ import {
 } from '../api/versions';
 import type { EditorText } from '../editor/useSnapshots';
 import { GenerationPanel, type GenerationPanelContent } from '../generations/GenerationPanel';
+import { useGenerationChoices } from '../generations/useGenerationChoices';
 import { useRateGeneration, type RatingProblem } from '../generations/useRateGeneration';
 import { CreateVersionDialog } from './CreateVersionDialog';
 import { DeleteVersionDialog } from './DeleteVersionDialog';
@@ -152,6 +153,19 @@ export function SongVersions({
   const rate = (generation: Generation, rating: number | null) => {
     setRatingProblem(undefined);
     rateGeneration(generation, rating);
+  };
+  const choices = useGenerationChoices({
+    song,
+    onSong,
+    update: generations.update,
+    markSelected: generations.markSelected,
+    onProblem: setRatingProblem,
+  });
+  const generationActions = {
+    onSetState: choices.setState,
+    onSelect: choices.select,
+    onClearSelection: choices.clear,
+    busy: choices.busy,
   };
   const parameters = new URLSearchParams(location.search);
   const showArchivedVersions = parameters.get(SHOW_ARCHIVED_PARAMETER) === '1';
@@ -563,6 +577,7 @@ export function SongVersions({
         versionLink={linkTo}
         generationLink={generationLink}
         onRate={rate}
+        actions={generationActions}
       />
       <GenerationPanel
         opened={generationReference !== undefined}
@@ -570,6 +585,7 @@ export function SongVersions({
         onClose={closePanel}
         onRate={rate}
         update={generations.update}
+        actions={generationActions}
         problem={ratingProblem}
       />
     </Stack>

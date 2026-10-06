@@ -86,21 +86,27 @@ export function patchWithRevision<T>(
 /**
  * Sends `body` to `path` with `method`, based on `revision`, and reads the answer as
  * {@link patchWithRevision} does: for a command on a revisioned record that is not a PATCH of its
- * fields (restoring a snapshot), or a PUT replacing a whole setting.
+ * fields (restoring a snapshot), a PUT replacing a whole setting, or a DELETE of a field (no
+ * `body`) that answers the record.
  */
 export async function writeWithRevision<T>(
-  method: 'PATCH' | 'POST' | 'PUT',
+  method: 'PATCH' | 'POST' | 'PUT' | 'DELETE',
   path: string,
   revision: number,
-  body: Record<string, unknown>,
+  body: Record<string, unknown> | undefined,
   accept: (answer: unknown) => T | undefined,
 ): Promise<SaveResult<T>> {
   try {
-    const response = await apiFetch(path, {
-      method,
-      headers: { 'Content-Type': 'application/json', 'If-Match': ifMatch(revision) },
-      body: JSON.stringify(body),
-    });
+    const response = await apiFetch(
+      path,
+      body === undefined
+        ? { method, headers: { 'If-Match': ifMatch(revision) } }
+        : {
+            method,
+            headers: { 'Content-Type': 'application/json', 'If-Match': ifMatch(revision) },
+            body: JSON.stringify(body),
+          },
+    );
     let answer: unknown;
     try {
       answer = await response.json();

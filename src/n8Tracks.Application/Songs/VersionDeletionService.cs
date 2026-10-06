@@ -217,7 +217,11 @@ public sealed class VersionDeletionService(
             all.Count == 1);
     }
 
-    /// <summary>Inside the transaction: the Version and its Generations as roots (its history follows by cascade), labelled by its shortcode.</summary>
+    /// <summary>
+    /// Inside the transaction: the Version and its Generations as roots (its history follows by
+    /// cascade), labelled by its shortcode. When one of them is the Song's Selected Generation, the
+    /// selection is cleared and kept with the group (#120), so a restore sets it again.
+    /// </summary>
     private async Task<RetentionGroup> RetainAsync(VersionSummary version, CancellationToken cancellationToken)
     {
         var generations = await versions.GenerationIdsAsync(version.Id, cancellationToken).ConfigureAwait(false);
@@ -227,7 +231,8 @@ public sealed class VersionDeletionService(
                 Label(version.Shortcode),
                 version.Shortcode,
                 [new RetainedRoot(RetainedRecordTypes.Version, version.Id), .. generations.Select(static generation => new RetainedRoot(RetainedRecordTypes.Generation, generation))],
-                Files: []),
+                Files: [],
+                Referring: [RetainedRecordTypes.SelectedGeneration]),
             cancellationToken).ConfigureAwait(false);
     }
 }

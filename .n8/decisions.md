@@ -2561,3 +2561,41 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** In the web tests, `VersionsTable.test.tsx` waits for the Generation panel's opening transition, with `openedPanel()`, before it checks visibility.
   **Why:** With more content in the panel, `findByRole('dialog')` could return while the drawer was still at opacity 0. The test was timing-dependent, and no behaviour changed.
   **Issue:** #119
+- **Decision:** The Selected Generation is a nullable `songs.selected_generation_id` with a foreign key to `generations` (ON DELETE RESTRICT) and an index. Migration `AddSelectedGeneration` adds the column by a hand-written `ALTER TABLE songs ADD COLUMN ... CONSTRAINT fk_songs_generations_selected_generation_id REFERENCES generations (id) ON DELETE RESTRICT`; the generated `AddForeignKey` was replaced.
+  **Why:** The discretion lines call for a nullable column with restrict on delete and a service-level same-Song check. EF Core's SQLite `AddForeignKey` rebuilds `songs`, a table many others refer to, and splits the migration across transactions. SQLite accepts a REFERENCES column in `ADD COLUMN` when its default is NULL. `DatabaseStartupTests` now asserts the FK, the column, and the index.
+  **Issue:** #120
+- **Decision:** Retention of the circular reference (m4-plan risk note):
+  - **Song deletion:** no code change. The selected Generation is in the Song's own group, so the generic retain clears the in-group reference before removing the rows. Restore defers foreign keys and puts the selection back.
+  - **Version deletion:** passes `Referring: [selected-generation]`. This is a new reference type over `songs.selected_generation_id`, like #104's `album-artist`. When the deleted Version holds the selected Generation, the selection is cleared and remembered with the group. A restore sets it again when the Song has chosen none meanwhile, raising the Song's revision; otherwise it is left out with a note.
+  - **Shape:** `song` retention moves to shape 2 (upgrader `SongShape1To2`: no selection).
+  - **Tests:** round-trip tests for both paths and for "chosen another meanwhile"; the M3 deletion and restore suites re-run green.
+
+  **Why:** The plan's risk note says deletion clears the selection first and asks for a restore round-trip. The `Referring` mechanism does the clearing and remembers the value, so a restore brings the selection back rather than losing it. #123 (move) and #124 (delete a Generation) must resolve the selection themselves.
+  **Issue:** #120
+- **Decision:** Archive and activate go through `GenerationEvaluationService`, not `GenerationSelectionService`. `RateAsync` became `UpdateAsync(reference, GenerationEdit(Rating, State), revision)`, which returns `GenerationUpdateOutcome`, and the store's `TryRateAsync` became `TryUpdateAsync(id, rating, state, revision)`. `GenerationSelectionService` (`Application.Generations`) holds `SelectAsync` and `ClearAsync`.
+  **Why:** The issue's artifact lists archive and activate under the selection service. But the discretion line has the PATCH accept `state` and `rating` together, under one Generation revision. Doing both in one check-and-write means one service method. Both services are in the invariant-1 guard's exercisers.
+  **Issue:** #120
+- **Decision:** Song answers, list rows included, carry `hasSelectedGeneration` and `selectedGeneration {id, shortcode, state, remoteState}`. The discretion line names `{id, shortcode}`; the two states are added. The header uses them for the Archived, In Suno Trash, and Remote Missing badges without a second request.
+  **Why:** The header must show those badges, and the Song read is what it has. The extra fields only add to the contract.
+  **Issue:** #120
+- **Decision:** API details:
+  - **Order of checks in `PUT .../selected-generation`:** Song found (404, or `song_deleted`); `generation` named as text (422 `validation_failed` on `generation`); Generation found (404 `not_found`); Generation belongs to the Song (422 `generation_not_in_song`, with `generationId` and `shortcode`); then the Song's revision (409 with the Song as `current`).
+  - **Invalid state:** 422 on `state`, case-sensitive: only `active` or `archived`.
+  - **No-ops:** clearing when nothing is selected stores nothing, and so does setting a state the Generation already has. A stale revision is still a 409 in both cases.
+  - **Logging:** selection changes log only IDs.
+
+  **Why:** These follow the discretion lines. Other refusals come before the revision check, as in the other Song sub-resources.
+  **Issue:** #120
+- **Decision:** Web:
+  - A `useGenerationChoices` hook backs the Select/Clear and Archive/Reactivate controls in the Generation panel and in a new per-row actions menu ("Actions for <shortcode>").
+  - On a 409, a choice is sent again once with the current revision. The user's explicit choice does not depend on, for example, a title autosave in between.
+  - `useSongGenerations` gained `markSelected`.
+  - The header shows "Selected Generation: <shortcode link to its panel>" with badges, or "None".
+  - The Songs table gets a last column, "Selected", with a check mark ("Yes" or "No" for screen readers). It is last so existing cell indexes stay as they are.
+  - `writeWithRevision` accepts `DELETE` without a body.
+
+  **Why:** The AC asks for the panel or row, and for the header and Songs table indicators. The discretion line says a check mark. A menu keeps the row narrow.
+  **Issue:** #120
+- **Decision:** Carry 1 is done. `hasSelectedGeneration` is computed from `songs.selected_generation_id` in `AlbumTrackStore.ForAlbumsAsync` and `PlaylistStore.FindAsync`. `GenerationResponse.isSelected` comes from `GenerationRows`, which joins the Song's selection. Tests cover Albums (detail and list) and Playlists.
+  **Why:** This is the orchestrator's Carry 1 (m4-plan drift row).
+  **Issue:** #120

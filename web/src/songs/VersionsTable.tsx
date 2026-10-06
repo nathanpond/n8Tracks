@@ -27,7 +27,13 @@ import { formatDateTime, useConfiguredTimeZone } from '../api/timeZone';
 import { kindLabel, type Version } from '../api/versions';
 import { ShortcodeBadge } from '../common/ShortcodeBadge';
 import { Notice } from '../components/Notice';
-import { GenerationStateBadges, OpenInSuno, SunoCreated } from '../generations/GenerationParts';
+import {
+  GenerationActionsMenu,
+  GenerationStateBadges,
+  OpenInSuno,
+  SunoCreated,
+  type GenerationRowActions,
+} from '../generations/GenerationParts';
 import { StarRating } from '../generations/StarRating';
 import { compareNumbers } from './versionNesting';
 import { generationsByVersion, isGenerationListed, isListed } from './versionsTableRules';
@@ -44,6 +50,7 @@ function GenerationRows({
   linkTo,
   timeZone,
   onRate,
+  actions,
 }: {
   version: Version;
   generations: readonly Generation[];
@@ -52,6 +59,7 @@ function GenerationRows({
   linkTo: (generation: Generation) => string;
   timeZone: string;
   onRate: (generation: Generation, rating: number | null) => void;
+  actions: GenerationRowActions;
 }) {
   if (generations.length === 0) {
     return (
@@ -88,6 +96,9 @@ function GenerationRows({
             <Table.Th scope="col">State</Table.Th>
             <Table.Th scope="col">Created in Suno</Table.Th>
             <Table.Th scope="col">Suno</Table.Th>
+            <Table.Th scope="col">
+              <VisuallyHidden>Actions</VisuallyHidden>
+            </Table.Th>
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
@@ -140,6 +151,9 @@ function GenerationRows({
                 <Table.Td style={{ whiteSpace: 'nowrap' }}>
                   <OpenInSuno generation={generation} />
                 </Table.Td>
+                <Table.Td>
+                  <GenerationActionsMenu generation={generation} actions={actions} />
+                </Table.Td>
               </Table.Tr>
             );
           })}
@@ -159,7 +173,8 @@ function GenerationRows({
  * shows its Generations beneath it in ordinal order, where an archived Generation is listed only
  * while `showArchivedGenerations` is on (the Selected one always is). Each Generation row has its
  * shortcode with a one-click copy, its star rating (set here too, `onRate`; the Version's highest
- * rating follows at once), and its comment count; its title opens the Generation panel. `revealVersionId`
+ * rating follows at once), its comment count, and an actions menu that archives or reactivates it
+ * and selects it for the Song or clears that (`actions`); its title opens the Generation panel. `revealVersionId`
  * expands that Version's row (a link to one of its Generations); expansion is otherwise this page's.
  */
 export function VersionsTable({
@@ -176,6 +191,7 @@ export function VersionsTable({
   versionLink,
   generationLink,
   onRate,
+  actions,
 }: {
   versions: readonly Version[];
   generations: LoadState<Generation[]>;
@@ -190,6 +206,7 @@ export function VersionsTable({
   versionLink: (version: Version) => string;
   generationLink: (generation: Generation) => string;
   onRate: (generation: Generation, rating: number | null) => void;
+  actions: GenerationRowActions;
 }) {
   const timeZone = useConfiguredTimeZone();
   const [open, setOpen] = useState(true);
@@ -374,6 +391,7 @@ export function VersionsTable({
                                 linkTo={generationLink}
                                 timeZone={timeZone}
                                 onRate={onRate}
+                                actions={actions}
                               />
                             </Table.Td>
                           </Table.Tr>

@@ -39,6 +39,8 @@ const song: Song = {
   release: NO_RELEASE,
   warnings: [],
   artwork: null,
+  hasSelectedGeneration: false,
+  selectedGeneration: null,
 };
 
 /** The query string a request was made with, whatever form `fetch` was given it in. */

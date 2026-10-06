@@ -57,7 +57,8 @@ public sealed class DatabaseStartupTests : IDisposable
             migration => Assert.Matches("^[0-9]{14}_AddArtworkAttachments\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AddGenerationProviderData\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AddCredentialExtensionSightings\\|10\\.0\\.", migration),
-            migration => Assert.Matches("^[0-9]{14}_AddGenerationEvaluations\\|10\\.0\\.", migration));
+            migration => Assert.Matches("^[0-9]{14}_AddGenerationEvaluations\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddSelectedGeneration\\|10\\.0\\.", migration));
 
         // ISO 8601 UTC with milliseconds and Z, taken when the migration ran.
         var initialized = TestDatabase.SchemaInitializedUtc(directory.Path);
@@ -147,6 +148,15 @@ public sealed class DatabaseStartupTests : IDisposable
         Assert.Equal(
             ["generation_events|event_id|RESTRICT", "generations|generation_id|CASCADE"],
             TestDatabase.Rows(directory.Path, "SELECT \"table\", \"from\", on_delete FROM pragma_foreign_key_list('generation_event_links') ORDER BY \"table\";"));
+        Assert.Equal(
+            ["generations|selected_generation_id|RESTRICT", "versions|current_version_id|RESTRICT", "workflow_states|workflow_state_id|RESTRICT"],
+            TestDatabase.Rows(directory.Path, "SELECT \"table\", \"from\", on_delete FROM pragma_foreign_key_list('songs') ORDER BY \"table\";"));
+        Assert.Equal(
+            "selected_generation_id|TEXT|0|0",
+            TestDatabase.Rows(directory.Path, "SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('songs') WHERE name = 'selected_generation_id';").Single());
+        Assert.Contains(
+            "ix_songs_selected_generation_id",
+            TestDatabase.Rows(directory.Path, "SELECT name FROM pragma_index_list('songs');"));
         Assert.Equal(
             ["MigrationId", "ProductVersion"],
             TestDatabase.Rows(directory.Path, "SELECT name FROM pragma_table_info('__EFMigrationsHistory') ORDER BY cid;"));
@@ -245,7 +255,7 @@ public sealed class DatabaseStartupTests : IDisposable
 
         Assert.Equal(MigrationStatus.UpToDate, state.Status);
         Assert.Equal(TestDatabase.History(directory.Path)[^1].Split('|')[0], state.LastAppliedMigrationId);
-        Assert.EndsWith("_AddGenerationEvaluations", state.LastAppliedMigrationId, StringComparison.Ordinal);
+        Assert.EndsWith("_AddSelectedGeneration", state.LastAppliedMigrationId, StringComparison.Ordinal);
     }
 
     [Fact]

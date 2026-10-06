@@ -504,7 +504,9 @@ internal sealed record UpdateSongRequest(
 /// Songs, each read from this Song, by the type's name as seen from here, then the other Song's title;
 /// <c>release</c> is always there, with null for each member not set; <c>warnings</c> holds what is
 /// allowed but worth telling the user (<c>duplicate_isrc</c>, naming the other Songs); <c>artwork</c>
-/// is its own artwork, or null.
+/// is its own artwork, or null. <c>selectedGeneration</c> is its Selected Generation (#120:
+/// <c>{ id, shortcode, state, remoteState }</c>) or null, and <c>hasSelectedGeneration</c> says
+/// whether it has one, as Album and Playlist tracks say it.
 /// </summary>
 internal sealed record SongResponse(
     Guid Id,
@@ -526,7 +528,9 @@ internal sealed record SongResponse(
     SongRelationshipResponse[] Relationships,
     SongReleaseResponse Release,
     SongWarningResponse[] Warnings,
-    AttachedArtworkResponse? Artwork)
+    AttachedArtworkResponse? Artwork,
+    bool HasSelectedGeneration,
+    SelectedGenerationResponse? SelectedGeneration)
 {
     /// <summary>The Song as the API shows it; <paramref name="pathBase"/> starts its artwork's URLs.</summary>
     public static SongResponse From(SongSummary song, PathString pathBase)
@@ -566,9 +570,20 @@ internal sealed record SongResponse(
                         song.SameIsrc.Count == 1 ? "Another Song has this ISRC." : "Other Songs have this ISRC.",
                         [.. song.SameIsrc.Select(static other => new SongNamedResponse(other.Id, other.Shortcode, other.Title))]),
                 ],
-            song.Artwork is { } artwork ? AttachedArtworkResponse.From(artwork, pathBase) : null);
+            song.Artwork is { } artwork ? AttachedArtworkResponse.From(artwork, pathBase) : null,
+            song.SelectedGeneration is not null,
+            song.SelectedGeneration is { } selected
+                ? new SelectedGenerationResponse(selected.Id, selected.Shortcode, GenerationStates.NameOf(selected.State), GenerationStates.NameOf(selected.RemoteState))
+                : null);
     }
 }
+
+/// <summary>
+/// A Song's Selected Generation as the Song shows it: its ID, shortcode, <c>state</c>
+/// (<c>active</c> or <c>archived</c>), and <c>remoteState</c> (<c>present</c>, <c>trashed</c>, or
+/// <c>missing</c>).
+/// </summary>
+internal sealed record SelectedGenerationResponse(Guid Id, string Shortcode, string State, string RemoteState);
 
 /// <summary>
 /// A Song's release details: partial dates as entered, <c>explicit</c> (<c>explicit</c>,

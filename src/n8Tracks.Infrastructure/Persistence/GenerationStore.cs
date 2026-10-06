@@ -10,7 +10,7 @@ namespace n8Tracks.Infrastructure.Persistence;
 /// <c>generations</c> (read, and the rating), <c>provider_records</c>, <c>generation_events</c>,
 /// <c>generation_event_links</c>, and <c>generation_comments</c>. The Generation row itself is
 /// written only by <see cref="VersionStore.TryAttachGenerationAsync"/>, with the freeze; afterwards
-/// only its rating and revision are, by <see cref="TryRateAsync"/>.
+/// only its rating, state, and revision are, by <see cref="TryUpdateAsync"/>.
 /// </summary>
 internal sealed class GenerationStore(N8TracksDbContext context) : IGenerationStore
 {
@@ -121,15 +121,19 @@ internal sealed class GenerationStore(N8TracksDbContext context) : IGenerationSt
         }
     }
 
-    public async Task<bool> TryRateAsync(Guid id, int? rating, int revision, CancellationToken cancellationToken) =>
-        await context.Generations
+    public async Task<bool> TryUpdateAsync(Guid id, int? rating, GenerationState state, int revision, CancellationToken cancellationToken)
+    {
+        var stateName = GenerationStates.NameOf(state);
+        return await context.Generations
             .Where(generation => generation.Id == id && generation.Revision == revision)
             .ExecuteUpdateAsync(
                 setters => setters
                     .SetProperty(static generation => generation.Rating, rating)
+                    .SetProperty(static generation => generation.State, stateName)
                     .SetProperty(static generation => generation.Revision, static generation => generation.Revision + 1),
                 cancellationToken)
             .ConfigureAwait(false) == 1;
+    }
 
     public Task TouchSongAsync(Guid songId, DateTimeOffset updatedUtc, CancellationToken cancellationToken)
     {
@@ -191,7 +195,7 @@ internal static class GenerationRows
 {
     /// <summary>
     /// The Generations <paramref name="query"/> selects, each with its Song's shortcode number, its
-    /// Version's number, and its event link: by Version number in tree order, then ordinal.
+    /// Version's number, whether it is its Song's Selected Generation, and its event link: by Version number in tree order, then ordinal.
     /// </summary>
     public static async Task<IReadOnlyList<GenerationSummary>> SummariesAsync(
         N8TracksDbContext context,
@@ -200,7 +204,7 @@ internal static class GenerationRows
     {
         var rows = await query.AsNoTracking()
             .Join(context.Versions, generation => generation.VersionId, version => version.Id, (generation, version) => new { generation, version.Number, version.NumberSortKey })
-            .Join(context.Songs, row => row.generation.SongId, song => song.Id, (row, song) => new { row.generation, row.Number, row.NumberSortKey, song.ShortcodeNumber })
+            .Join(context.Songs, row => row.generation.SongId, song => song.Id, (row, song) => new { row.generation, row.Number, row.NumberSortKey, song.ShortcodeNumber, song.SelectedGenerationId })
             .GroupJoin(context.GenerationEventLinks, row => row.generation.Id, link => link.GenerationId, (row, links) => new { row, links })
             .SelectMany(
                 static joined => joined.links.DefaultIfEmpty(),
@@ -210,6 +214,7 @@ internal static class GenerationRows
                     joined.row.Number,
                     joined.row.NumberSortKey,
                     joined.row.ShortcodeNumber,
+                    IsSelected = joined.row.SelectedGenerationId == joined.row.generation.Id,
                     EventId = link == null ? (Guid?)null : link.EventId,
                 })
             .OrderBy(static row => row.NumberSortKey)
@@ -230,6 +235,7 @@ internal static class GenerationRows
         return [.. rows.Select(row => new GenerationSummary(ToDomain(row.generation) with { EventId = row.EventId }, row.ShortcodeNumber, row.Number)
         {
             Comments = [.. comments[row.generation.Id]],
+            IsSelected = row.IsSelected,
         })];
     }
 

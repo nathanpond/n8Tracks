@@ -55,6 +55,7 @@ public static class DependencyInjection
         services.AddScoped<EditorRevisionService>();
         services.AddScoped<GenerationService>();
         services.AddScoped<GenerationEvaluationService>();
+        services.AddScoped<GenerationSelectionService>();
         services.AddScoped<WorkflowStateService>();
         services.AddScoped<ReferenceResolver>();
         services.AddSingleton<BackupStartLock>();

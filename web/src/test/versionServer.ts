@@ -210,6 +210,18 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     generationWrites: [] as GenerationWrite[],
     /** When set, answers the next rating or comment write (once) instead of the fake API. */
     nextGenerationWrite: undefined as (() => Response | Promise<Response>) | undefined,
+    /** Every Selected Generation write received (PUT to choose, DELETE to clear), in order. */
+    selectionWrites: [] as {
+      method: string;
+      ifMatch: string | null;
+      body: Record<string, unknown>;
+    }[],
+    /** When set, answers the next Selected Generation write (once) instead of the fake API. */
+    nextSelectionWrite: undefined as (() => Response | Promise<Response>) | undefined,
+    /** Plays another client editing the Song: its revision goes up. */
+    touchSongElsewhere() {
+      server.song = { ...server.song, revision: server.song.revision + 1 };
+    },
     /** Plays another client rating the Generation `id`: its rating changes and its revision goes up. */
     rateElsewhere(id: string, rating: number | null) {
       server.generations = server.generations.map((generation) =>
@@ -658,8 +670,20 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
         if (ifMatch !== `"${String(generation.revision)}"`) {
           return jsonResponse(409, { code: 'revision_conflict', current: generation });
         }
-        const rating = body.rating;
-        if (rating === undefined || rating === generation.rating) {
+        const rating = body.rating === undefined ? generation.rating : body.rating;
+        const state =
+          body.state === undefined
+            ? generation.state
+            : body.state === 'active' || body.state === 'archived'
+              ? body.state
+              : undefined;
+        if (state === undefined) {
+          return jsonResponse(422, {
+            code: 'validation_failed',
+            errors: { state: ['Send active or archived.'] },
+          });
+        }
+        if (rating === generation.rating && state === generation.state) {
           return jsonResponse(200, generation);
         }
         if (
@@ -671,9 +695,13 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
             errors: { rating: ['1 to 5 stars, or null.'] },
           });
         }
-        const rated = { ...generation, rating, revision: generation.revision + 1 };
-        store(rated);
-        return jsonResponse(200, rated);
+        const changed = { ...generation, rating, state, revision: generation.revision + 1 };
+        store(changed);
+        const chosen = server.song.selectedGeneration;
+        if (chosen?.id === changed.id) {
+          server.song = { ...server.song, selectedGeneration: { ...chosen, state } };
+        }
+        return jsonResponse(200, changed);
       }
       if (isComments && commentId === undefined && method === 'POST') {
         const text = textOf(body.text);
@@ -744,6 +772,55 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
           left.ordinal - right.ordinal,
       );
       return jsonResponse(200, { items });
+    }
+
+    const selection = /\/api\/v1\/songs\/([^/]+)\/selected-generation$/.exec(path);
+    if (selection && (method === 'PUT' || method === 'DELETE')) {
+      const ifMatch = new Headers(init?.headers).get('If-Match');
+      const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as Record<
+        string,
+        unknown
+      >;
+      server.selectionWrites.push({ method, ifMatch, body });
+      const nextSelectionWrite = server.nextSelectionWrite;
+      if (nextSelectionWrite) {
+        server.nextSelectionWrite = undefined;
+        return nextSelectionWrite();
+      }
+      if (ifMatch !== `"${String(server.song.revision)}"`) {
+        return jsonResponse(409, { code: 'revision_conflict', current: server.song });
+      }
+      const chosen =
+        method === 'DELETE'
+          ? null
+          : server.generations.find(
+              (candidate) =>
+                candidate.id === body.generation || candidate.shortcode === body.generation,
+            );
+      if (chosen === undefined) {
+        return jsonResponse(404, { code: 'not_found' });
+      }
+      if ((server.song.selectedGeneration?.id ?? null) !== (chosen?.id ?? null)) {
+        server.song = {
+          ...server.song,
+          hasSelectedGeneration: chosen !== null,
+          selectedGeneration:
+            chosen === null
+              ? null
+              : {
+                  id: chosen.id,
+                  shortcode: chosen.shortcode,
+                  state: chosen.state,
+                  remoteState: chosen.remoteState,
+                },
+          revision: server.song.revision + 1,
+        };
+        server.generations = server.generations.map((generation) => ({
+          ...generation,
+          isSelected: generation.id === chosen?.id,
+        }));
+      }
+      return jsonResponse(200, server.song);
     }
 
     if (path.endsWith('/api/v1/songs') && method === 'GET') {

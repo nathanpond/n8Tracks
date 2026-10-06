@@ -222,6 +222,22 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
         return true;
     }
 
+    public async Task<bool> TrySelectGenerationAsync(Guid id, Guid? generationId, int revision, DateTimeOffset updatedUtc, CancellationToken cancellationToken)
+    {
+        var updated = UtcText.From(updatedUtc);
+
+        // One conditional statement: the revision check and the write cannot be split by another writer.
+        return await context.Songs
+            .Where(song => song.Id == id && song.Revision == revision)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(static song => song.SelectedGenerationId, generationId)
+                    .SetProperty(static song => song.UpdatedUtc, updated)
+                    .SetProperty(static song => song.Revision, static song => song.Revision + 1),
+                cancellationToken)
+            .ConfigureAwait(false) == 1;
+    }
+
     /// <summary>
     /// The Songs whose title contains <paramref name="search"/>, ignoring case (compared as the title
     /// sort key is), or whose shortcode <c>n8-&lt;n&gt;</c> starts with it, ignoring case.
@@ -309,6 +325,12 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
                 .ToListAsync(cancellationToken)
                 .ConfigureAwait(false))
             .ToLookup(static link => link.SongId);
+        var selectedIds = records.Select(static song => song.SelectedGenerationId).OfType<Guid>().ToList();
+        var selected = await context.Generations.AsNoTracking()
+            .Where(generation => selectedIds.Contains(generation.Id))
+            .Join(context.Versions, static generation => generation.VersionId, static version => version.Id, static (generation, version) => new { generation.Id, generation.Ordinal, generation.State, generation.RemoteState, version.Number })
+            .ToDictionaryAsync(static generation => generation.Id, cancellationToken)
+            .ConfigureAwait(false);
 
         // Retention does not exist yet: the Song deletion story must leave Songs in retention out here.
         var isrcs = records.Where(static song => song.Isrc is not null).Select(static song => song.Isrc!).Distinct(StringComparer.Ordinal).ToList();
@@ -359,7 +381,14 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
                 song.Isrc is { } isrc
                     ? [.. sameIsrc[isrc].Where(other => other.Id != song.Id).Select(static other => new RelatedSong(other.Id, Shortcodes.ForSong(other.ShortcodeNumber), other.Title))]
                     : [],
-                artwork.GetValueOrDefault(song.Id));
+                artwork.GetValueOrDefault(song.Id),
+                song.SelectedGenerationId is { } selectedId && selected.TryGetValue(selectedId, out var chosen)
+                    ? new SelectedGenerationSummary(
+                        chosen.Id,
+                        Shortcodes.ForGeneration(song.ShortcodeNumber, chosen.Number, chosen.Ordinal),
+                        GenerationStates.StateOf(chosen.State),
+                        GenerationStates.RemoteStateOf(chosen.RemoteState))
+                    : null);
         })];
     }
 }

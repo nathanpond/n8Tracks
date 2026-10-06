@@ -56,11 +56,11 @@ public interface IGenerationStore
     Task LinkAsync(Guid eventId, IReadOnlyCollection<Guid> generationIds, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Sets the rating of the Generation with <paramref name="id"/> to <paramref name="rating"/> and
+    /// Sets the rating and the user-facing state of the Generation with <paramref name="id"/> and
     /// raises its revision by one if it is still at <paramref name="revision"/>, in one statement,
     /// touching no other column; false when it is not (or is gone). Only inside a transaction.
     /// </summary>
-    Task<bool> TryRateAsync(Guid id, int? rating, int revision, CancellationToken cancellationToken);
+    Task<bool> TryUpdateAsync(Guid id, int? rating, GenerationState state, int revision, CancellationToken cancellationToken);
 
     /// <summary>Sets the updated time of the Song with <paramref name="songId"/>, leaving its revision alone.</summary>
     Task TouchSongAsync(Guid songId, DateTimeOffset updatedUtc, CancellationToken cancellationToken);

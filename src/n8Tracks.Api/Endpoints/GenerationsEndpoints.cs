@@ -18,9 +18,10 @@ namespace n8Tracks.Api.Endpoints;
 /// provider-record endpoint's, and none says anything about Generation Events. Every answer is
 /// <c>no-store</c>. Generations are created by the import and observed-Create stories through
 /// <see cref="GenerationService.AttachAsync"/>; their refusals map to problems with <see cref="AttachRefusal"/>.
-/// The user's judgement (<c>generations.evaluate</c>, #119): the rating, set under the Generation's
-/// revision in <c>If-Match</c>, and comments, each written under its own revision
-/// (<see cref="GenerationEvaluationService"/>). Every Generation answer carries both.
+/// The user's judgement (<c>generations.evaluate</c>, #119): the rating and (#120) the state, set
+/// under the Generation's revision in <c>If-Match</c>, and comments, each written under its own
+/// revision (<see cref="GenerationEvaluationService"/>). Every Generation answer carries them. The
+/// Song's Selected Generation is set on the Song (<see cref="SongSelectionEndpoints"/>).
 /// </summary>
 internal static class GenerationsEndpoints
 {
@@ -75,9 +76,9 @@ internal static class GenerationsEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
-        endpoints.MapPatch(GenerationPath, RateAsync)
-            .WithName("RateGeneration")
-            .WithSummary("Sets (1 to 5), changes, or clears (null) a Generation's rating, given its revision in If-Match; a missing rating leaves it as it is. Raises the Generation's revision when it changes.")
+        endpoints.MapPatch(GenerationPath, UpdateAsync)
+            .WithName("UpdateGeneration")
+            .WithSummary("Sets (1 to 5), changes, or clears (null) a Generation's rating, and archives or reactivates it (state: active or archived), given its revision in If-Match; a missing field leaves it as it is. Raises the Generation's revision when either changes.")
             .RequireScope(CredentialScopes.GenerationsEvaluate)
             .Produces<GenerationResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
@@ -221,11 +222,12 @@ internal static class GenerationsEndpoints
     /// <summary>
     /// 200 with the Generation as it is now, its revision as the ETag; 404 when there is no such
     /// Generation; 409 <c>revision_conflict</c> with <c>current</c> (the Generation with its comments);
-    /// 422 when the rating is not a whole number from 1 to 5 or null.
+    /// 422 when the rating is not a whole number from 1 to 5 or null, or the state is not
+    /// <c>active</c> or <c>archived</c>.
     /// </summary>
-    private static async Task<Results<Ok<GenerationResponse>, ProblemHttpResult>> RateAsync(
+    private static async Task<Results<Ok<GenerationResponse>, ProblemHttpResult>> UpdateAsync(
         CatalogReference reference,
-        RateGenerationRequest? request,
+        UpdateGenerationRequest? request,
         GenerationEvaluationService evaluations,
         HttpContext context,
         ILoggerFactory loggers,
@@ -239,42 +241,63 @@ internal static class GenerationsEndpoints
             return problem;
         }
 
-        GenerationRatingEdit edit;
+        var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        var rating = GenerationRatingEdit.Unsent;
         switch (request?.Rating)
         {
             case null or { ValueKind: JsonValueKind.Undefined }:
-                edit = GenerationRatingEdit.Unsent;
                 break;
             case { ValueKind: JsonValueKind.Null }:
-                edit = GenerationRatingEdit.Of(null);
+                rating = GenerationRatingEdit.Of(null);
                 break;
             case { ValueKind: JsonValueKind.Number } number when number.TryGetInt32(out var stars):
-                edit = GenerationRatingEdit.Of(stars);
+                rating = GenerationRatingEdit.Of(stars);
                 break;
             default:
-                return ApiProblem.ValidationFailed(
-                    context,
-                    new Dictionary<string, string[]>(StringComparer.Ordinal) { [GenerationEvaluationService.RatingField] = ["Send a whole number of stars from 1 to 5, or null for none."] });
+                errors[GenerationEvaluationService.RatingField] = ["Send a whole number of stars from 1 to 5, or null for none."];
+                break;
         }
 
-        switch (await evaluations.RateAsync(reference, edit, revision!.Value, cancellationToken))
+        GenerationState? state = null;
+        switch (request?.State)
         {
-            case GenerationRateOutcome.Rated rated:
-                if (rated.Generation.Generation.Revision != revision)
+            case null or { ValueKind: JsonValueKind.Undefined }:
+                break;
+            case { ValueKind: JsonValueKind.String } text when text.GetString() is "active" or "archived":
+                state = GenerationStates.StateOf(text.GetString()!);
+                break;
+            default:
+                errors[GenerationEvaluationService.StateField] = ["Send active or archived."];
+                break;
+        }
+
+        if (errors.Count > 0)
+        {
+            return ApiProblem.ValidationFailed(context, errors);
+        }
+
+        switch (await evaluations.UpdateAsync(reference, new GenerationEdit(rating, state), revision!.Value, cancellationToken))
+        {
+            case GenerationUpdateOutcome.Updated updated:
+                if (updated.Generation.Generation.Revision != revision)
                 {
-                    Log(loggers).LogInformation("Generation rated: {GenerationId} ({Rating})", rated.Generation.Generation.Id, rated.Generation.Generation.Rating);
+                    Log(loggers).LogInformation(
+                        "Generation updated: {GenerationId} ({Rating}, {State})",
+                        updated.Generation.Generation.Id,
+                        updated.Generation.Generation.Rating,
+                        GenerationStates.NameOf(updated.Generation.Generation.State));
                 }
 
-                Revisions.SetETag(context, rated.Generation.Generation.Revision);
-                return TypedResults.Ok(GenerationResponse.From(rated.Generation));
-            case GenerationRateOutcome.Conflict conflict:
+                Revisions.SetETag(context, updated.Generation.Generation.Revision);
+                return TypedResults.Ok(GenerationResponse.From(updated.Generation));
+            case GenerationUpdateOutcome.Conflict conflict:
                 return Revisions.Conflict(context, GenerationResponse.From(conflict.Current));
-            case GenerationRateOutcome.Invalid invalid:
+            case GenerationUpdateOutcome.Invalid invalid:
                 return ApiProblem.ValidationFailed(context, invalid.Errors);
-            case GenerationRateOutcome.NotFound:
+            case GenerationUpdateOutcome.NotFound:
                 return NoSuchGeneration(context);
             default:
-                throw new InvalidOperationException("Unknown rating outcome.");
+                throw new InvalidOperationException("Unknown Generation update outcome.");
         }
     }
 
@@ -409,8 +432,11 @@ internal static class GenerationsEndpoints
         ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "There is no such Generation.");
 }
 
-/// <summary>A rating edit: <c>rating</c>, 1 to 5 or null, read as raw JSON so a missing field and a null differ.</summary>
-internal sealed record RateGenerationRequest(JsonElement Rating);
+/// <summary>
+/// An edit of a Generation: <c>rating</c>, 1 to 5 or null, and <c>state</c>, <c>active</c> or
+/// <c>archived</c>, each read as raw JSON so a missing field and a null differ.
+/// </summary>
+internal sealed record UpdateGenerationRequest(JsonElement Rating, JsonElement State);
 
 /// <summary>A comment's text, read as raw JSON so a wrong type is a field error.</summary>
 internal sealed record GenerationCommentRequest(JsonElement Text);
@@ -437,7 +463,8 @@ internal sealed record GenerationOwnerResponse(Guid Id, string Shortcode);
 /// Suno data; <c>sunoUrl</c> is Suno's page for the clip. <c>providerStatus</c> is Suno's status as
 /// reported (<c>submitted</c>, <c>streaming</c>, <c>complete</c>, <c>error</c>, or another value Suno
 /// sent); <c>state</c> is <c>active</c> or <c>archived</c>; <c>remoteState</c> is <c>present</c>,
-/// <c>trashed</c>, or <c>missing</c>. <c>styleTags</c> is Suno's own style description of the clip
+/// <c>trashed</c>, or <c>missing</c>. <c>isSelected</c> says whether it is its Song's Selected
+/// Generation (#120). <c>styleTags</c> is Suno's own style description of the clip
 /// (<c>metadata.tags</c>), not the Version's styles. <c>rating</c> (1 to 5, or null) and
 /// <c>comments</c> (oldest first) are the user's own. Times are UTC. Never the raw clip.
 /// </summary>
@@ -505,9 +532,7 @@ internal sealed record GenerationResponse(
             clip?.ImageUrl,
             clip?.WorkspaceId,
             clip?.BatchIndex,
-
-            // The Selected Generation arrives with the selection story; until then none is selected.
-            false,
+            summary.IsSelected,
             generation.Rating,
             [.. summary.Comments.Select(GenerationCommentResponse.From)],
             generation.CreatedUtc.UtcDateTime,

@@ -317,6 +317,7 @@ public sealed class Program
             app.MapWorkflowStates();
             app.MapVersions();
             app.MapGenerations();
+            app.MapSongSelection();
             app.MapResolve();
             app.MapSuno();
             app.MapBackups();

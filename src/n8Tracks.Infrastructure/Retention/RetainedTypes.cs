@@ -175,11 +175,14 @@ internal static class RetainedTypes
     /// <summary>
     /// A Song, deleted with its Versions, Generations, and everything of its own (#102). Its shortcode
     /// number is never given out again (the sequence only goes up). Restored into the workflow state
-    /// it was in, or into the first visible one when that state was deleted meanwhile.
+    /// it was in, or into the first visible one when that state was deleted meanwhile. Shape 2 (#120)
+    /// added its Selected Generation, which is one of its own Generations, so it goes and comes back
+    /// with the group; an earlier record restores with none.
     /// </summary>
-    public static readonly RetainedType Song = new(RetainedRecordTypes.Song, "songs", "Song", ShapeVersion: 1)
+    public static readonly RetainedType Song = new(RetainedRecordTypes.Song, "songs", "Song", ShapeVersion: 2)
     {
         PrepareRestoreAsync = static (row, cancellationToken) => SongRestore.KeepStateAsync(row, cancellationToken),
+        Upgraders = new Dictionary<int, Func<JsonObject, JsonObject>> { [1] = SongShape1To2 }.ToFrozenDictionary(),
     };
 
     /// <summary>
@@ -315,13 +318,25 @@ internal static class RetainedTypes
         AfterRestoreAsync = static (row, cancellationToken) => SongRestore.TouchAsync(row, "albums", "id", cancellationToken),
     };
 
+    /// <summary>
+    /// The Selected Generation of a Song whose selected Generation was deleted with its Version (#120):
+    /// a reference, so the Song stays and only its <c>selected_generation_id</c> is cleared and
+    /// remembered. Restored with the Generation where the Song still exists and has chosen none
+    /// meanwhile, raising its revision.
+    /// </summary>
+    public static readonly RetainedType SelectedGeneration = new(RetainedRecordTypes.SelectedGeneration, "songs", "Selected Generation", ShapeVersion: 1)
+    {
+        ReferenceColumns = ["selected_generation_id"],
+        AfterRestoreAsync = static (row, cancellationToken) => SongRestore.TouchAsync(row, "songs", "id", cancellationToken),
+    };
+
     /// <summary>Every built-in type.</summary>
     public static IReadOnlyList<RetainedType> BuiltIn { get; } =
     [
         EditorSnapshot, ArtworkAttachment, Version, Generation, ProviderRecord, GenerationEventLink, GenerationComment,
         Song, UsedVersionNumber, SongLink, SongGenre, SongTag, SongCredit, AlbumTrack, PlaylistEntry, SongRelationship,
         Album, AlbumLink, Playlist,
-        Artist, ArtistAlias, ArtistLink, AlbumArtist,
+        Artist, ArtistAlias, ArtistLink, AlbumArtist, SelectedGeneration,
     ];
 
     /// <summary>
@@ -342,6 +357,15 @@ internal static class RetainedTypes
             document[column] = null;
         }
 
+        return document;
+    }
+
+    /// <summary>A Song retained before #120 (shape 1) as shape 2: with no Selected Generation.</summary>
+    internal static JsonObject SongShape1To2(JsonObject document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+
+        document["selected_generation_id"] = null;
         return document;
     }
 

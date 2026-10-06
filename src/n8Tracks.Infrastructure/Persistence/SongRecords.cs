@@ -69,6 +69,13 @@ public sealed class SongRecord
 
     /// <summary>A language code from the bundled list, or null.</summary>
     public string? Language { get; set; }
+
+    /// <summary>
+    /// The Song's Selected Generation (#120): one of its own Generations, from any Version, or null
+    /// when it has none. A foreign key with restrict on delete; that it is the Song's own is the
+    /// service's check. Whatever deletes or moves a Generation resolves the selection first.
+    /// </summary>
+    public Guid? SelectedGenerationId { get; set; }
 }
 
 /// <summary>One row of <c>song_links</c>: an external link of a Song, at its place in the Song's list.</summary>

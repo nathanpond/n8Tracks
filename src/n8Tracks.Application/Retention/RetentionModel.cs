@@ -78,6 +78,12 @@ public static class RetainedRecordTypes
     /// with its credits removed: a reference, not a row; the Album itself stays.
     /// </summary>
     public const string AlbumArtist = "album-artist";
+
+    /// <summary>
+    /// A Song's Selected Generation (<c>songs.selected_generation_id</c>, #120), cleared when that
+    /// Generation is deleted without its Song (with its Version): a reference, not a row; the Song stays.
+    /// </summary>
+    public const string SelectedGeneration = "selected-generation";
 }
 
 /// <summary>A record a deletion names: the root of what goes into retention with it.</summary>

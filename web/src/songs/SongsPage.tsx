@@ -13,6 +13,7 @@ import {
   Text,
   Title,
   UnstyledButton,
+  VisuallyHidden,
 } from '@mantine/core';
 import { useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
@@ -298,6 +299,16 @@ function SongRow({ song, timeZone, from }: { song: Song; timeZone: string; from:
       <Table.Td style={{ whiteSpace: 'nowrap' }}>
         <RelativeTime utc={song.updatedAt} timeZone={timeZone} />
       </Table.Td>
+      <Table.Td ta="center" data-testid="song-selected">
+        {song.hasSelectedGeneration ? (
+          <>
+            <span aria-hidden="true">✓</span>
+            <VisuallyHidden>Yes</VisuallyHidden>
+          </>
+        ) : (
+          <VisuallyHidden>No</VisuallyHidden>
+        )}
+      </Table.Td>
     </Table.Tr>
   );
 }
@@ -501,6 +512,9 @@ export function SongsPage() {
                   </Table.Th>
                   <Table.Th scope="col">Tags</Table.Th>
                   <SortHeader label="Updated" sort="updated" query={query} onSort={sortBy} />
+                  <Table.Th scope="col" ta="center">
+                    Selected
+                  </Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>

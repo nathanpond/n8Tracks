@@ -28,6 +28,7 @@ namespace n8Tracks.Application.Songs;
 /// <param name="Release">Its release details; <see cref="SongRelease.None"/> when it has none.</param>
 /// <param name="SameIsrc">The other Songs with its ISRC, by title (ignoring case); empty when it has none or no other Song shares it.</param>
 /// <param name="Artwork">Its own artwork (the asset and the crop it set), or null when it has none.</param>
+/// <param name="SelectedGeneration">Its Selected Generation (#120), with that Generation's states; null when it has none.</param>
 public sealed record SongSummary(
     Guid Id,
     long ShortcodeNumber,
@@ -48,10 +49,17 @@ public sealed record SongSummary(
     IReadOnlyList<SongRelation> Relationships,
     SongRelease Release,
     IReadOnlyList<RelatedSong> SameIsrc,
-    AttachedArtwork? Artwork)
+    AttachedArtwork? Artwork,
+    SelectedGenerationSummary? SelectedGeneration)
 {
     public string Shortcode => Shortcodes.ForSong(ShortcodeNumber);
 }
+
+/// <summary>
+/// A Song's Selected Generation as the Song shows it: the Generation, its shortcode, and its states,
+/// so the Song can say when its chosen output is archived, in Suno's Trash, or missing from Suno.
+/// </summary>
+public sealed record SelectedGenerationSummary(Guid Id, string Shortcode, GenerationState State, GenerationRemoteState RemoteState);
 
 /// <summary>A Song's workflow state, as a Song shows it.</summary>
 public sealed record SongStateSummary(Guid Id, string Name, string Colour);
@@ -142,6 +150,14 @@ public interface ISongStore
     /// transaction, so the links go with the rest.
     /// </summary>
     Task<bool> TryUpdateAsync(Guid id, SongDetails details, int revision, DateTimeOffset updatedUtc, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Sets the Song's Selected Generation to <paramref name="generationId"/> (null clears it) if the
+    /// Song is at <paramref name="revision"/>, raising the revision by one and setting its updated time,
+    /// in one statement that touches no other column. False when the Song is gone or at another
+    /// revision. The caller has checked that the Generation is the Song's own.
+    /// </summary>
+    Task<bool> TrySelectGenerationAsync(Guid id, Guid? generationId, int revision, DateTimeOffset updatedUtc, CancellationToken cancellationToken);
 }
 
 /// <summary>A workflow state and how many Songs are in it.</summary>
@@ -255,6 +271,9 @@ public sealed record GenerationSummary(Generation Generation, long SongShortcode
 {
     /// <summary>The user's comments on it, oldest first (created time, then ID); none when it has none.</summary>
     public IReadOnlyList<GenerationComment> Comments { get; init; } = [];
+
+    /// <summary>Whether it is its Song's Selected Generation (#120).</summary>
+    public bool IsSelected { get; init; }
 
     public string Shortcode => Shortcodes.ForGeneration(SongShortcodeNumber, VersionNumber, Generation.Ordinal);
 

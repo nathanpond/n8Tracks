@@ -180,6 +180,33 @@ export interface Song {
   warnings: SongWarning[];
   /** Its own artwork, or null when it has none. */
   artwork: Artwork | null;
+  /** Whether it has a Selected Generation. */
+  hasSelectedGeneration: boolean;
+  /** Its Selected Generation, the Song's chosen output, with that Generation's states; null when it has none. */
+  selectedGeneration: SelectedGeneration | null;
+}
+
+/**
+ * A Song's Selected Generation as the Song shows it: the Generation, its shortcode, its own state
+ * (`active` or `archived`), and whether Suno still lists the clip (`present`, `trashed`, `missing`).
+ */
+export interface SelectedGeneration {
+  id: string;
+  shortcode: string;
+  state: 'active' | 'archived';
+  remoteState: 'present' | 'trashed' | 'missing';
+}
+
+function isSelectedGeneration(value: unknown): value is SelectedGeneration {
+  return (
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    typeof value.shortcode === 'string' &&
+    (value.state === 'active' || value.state === 'archived') &&
+    (value.remoteState === 'present' ||
+      value.remoteState === 'trashed' ||
+      value.remoteState === 'missing')
+  );
 }
 
 export interface SongPage {
@@ -327,7 +354,9 @@ export function isSong(value: unknown): value is Song {
     isSongRelease(value.release) &&
     Array.isArray(value.warnings) &&
     value.warnings.every(isSongWarning) &&
-    (value.artwork === null || isArtwork(value.artwork))
+    (value.artwork === null || isArtwork(value.artwork)) &&
+    typeof value.hasSelectedGeneration === 'boolean' &&
+    (value.selectedGeneration === null || isSelectedGeneration(value.selectedGeneration))
   );
 }
 

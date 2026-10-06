@@ -1,11 +1,17 @@
-import { Anchor, Divider, Drawer, Group, Loader, Stack, Text } from '@mantine/core';
+import { Anchor, Button, Divider, Drawer, Group, Loader, Stack, Text } from '@mantine/core';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 import { generationDuration, ratingText, reportedModel, type Generation } from '../api/generations';
 import { formatDateTime, useConfiguredTimeZone } from '../api/timeZone';
 import { ShortcodeBadge } from '../common/ShortcodeBadge';
 import { GenerationComments, type UpdateGeneration } from './GenerationComments';
-import { GenerationStateBadges, OpenInSuno, SunoCreated } from './GenerationParts';
+import { selectionActionLabel, stateActionLabel } from './evaluationRules';
+import {
+  GenerationStateBadges,
+  OpenInSuno,
+  SunoCreated,
+  type GenerationRowActions,
+} from './GenerationParts';
 import { StarRating } from './StarRating';
 
 /** What the panel shows: a Generation, one still loading, or one that cannot be found. */
@@ -35,12 +41,14 @@ function Details({
   versionNumber,
   onRate,
   update,
+  actions,
 }: {
   generation: Generation;
   versionLink: string;
   versionNumber: string;
   onRate: (generation: Generation, rating: number | null) => void;
   update: UpdateGeneration;
+  actions: GenerationRowActions;
 }) {
   const timeZone = useConfiguredTimeZone();
   return (
@@ -68,7 +76,43 @@ function Details({
           </Group>
         </Detail>
         <Detail label="State">
-          <GenerationStateBadges generation={generation} />
+          <Group gap="sm" wrap="wrap">
+            <GenerationStateBadges generation={generation} />
+            <Button
+              variant="default"
+              size="compact-sm"
+              disabled={actions.busy}
+              onClick={() => {
+                actions.onSetState(
+                  generation,
+                  generation.state === 'archived' ? 'active' : 'archived',
+                );
+              }}
+            >
+              {stateActionLabel(generation)}
+            </Button>
+          </Group>
+        </Detail>
+        <Detail label="Song’s Selected Generation">
+          <Group gap="sm" wrap="wrap">
+            <span data-testid="generation-panel-selection">
+              {generation.isSelected ? 'This is the Song’s chosen output.' : 'Not selected.'}
+            </span>
+            <Button
+              variant="default"
+              size="compact-sm"
+              disabled={actions.busy}
+              onClick={() => {
+                if (generation.isSelected) {
+                  actions.onClearSelection();
+                } else {
+                  actions.onSelect(generation);
+                }
+              }}
+            >
+              {selectionActionLabel(generation)}
+            </Button>
+          </Group>
         </Detail>
         <Detail label="Created in Suno">
           <SunoCreated generation={generation} timeZone={timeZone} />
@@ -93,9 +137,10 @@ function Details({
  * (`/songs/<song>/generations/<shortcode>`): its shortcode with a one-click copy, what Suno reported
  * (title, length or "Generating", model, when Suno made it), the user's star rating (set, changed,
  * or cleared here, `onRate`), its state with the Song's Selected marker, Suno's page for it, and the
- * user's comments (`update` keeps the Song's one cached copy in step). `problem` says why a rating
- * was not saved. The archive, select, artwork,
- * move, and delete controls arrive with their own stories. A reference that names no Generation of
+ * user's comments (`update` keeps the Song's one cached copy in step), and (#120, `actions`) its
+ * Archive or Reactivate control and the control that makes it the Song's Selected Generation or
+ * clears that. `problem` says why a rating or a choice was not saved. The artwork, move, and delete
+ * controls arrive with their own stories. A reference that names no Generation of
  * this Song says so. Closes with Escape or its close control.
  */
 export function GenerationPanel({
@@ -104,6 +149,7 @@ export function GenerationPanel({
   onClose,
   onRate,
   update,
+  actions,
   problem,
 }: {
   opened: boolean;
@@ -111,6 +157,7 @@ export function GenerationPanel({
   onClose: () => void;
   onRate: (generation: Generation, rating: number | null) => void;
   update: UpdateGeneration;
+  actions: GenerationRowActions;
   problem?: string | undefined;
 }) {
   const title =
@@ -153,6 +200,7 @@ export function GenerationPanel({
           versionNumber={content.versionNumber}
           onRate={onRate}
           update={update}
+          actions={actions}
         />
       )}
     </Drawer>

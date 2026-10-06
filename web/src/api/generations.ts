@@ -5,10 +5,11 @@ import {
   ifMatch,
   isErrorMap,
   patchWithRevision,
+  writeWithRevision,
   type FailureReason,
   type SaveResult,
 } from './saves';
-import { body, isRecord, type LoadState } from './songs';
+import { body, isRecord, isSong, type LoadState, type Song } from './songs';
 
 const SONGS_PATH = 'api/v1/songs';
 const GENERATIONS_PATH = 'api/v1/generations';
@@ -247,6 +248,48 @@ export function rateGeneration(
   return patchWithRevision(generationPath(reference), revision, { rating }, generationOf);
 }
 
+/**
+ * Archives (`archived`) or reactivates (`active`) a Generation, based on the Generation's
+ * `revision`; its Version's own state is not touched. A stale revision is a conflict with the
+ * Generation as it is now.
+ */
+export function setGenerationState(
+  reference: string,
+  state: GenerationState,
+  revision: number,
+): Promise<SaveResult<Generation>> {
+  return patchWithRevision(generationPath(reference), revision, { state }, generationOf);
+}
+
+function selectedGenerationPath(song: string): string {
+  return `${SONGS_PATH}/${encodeURIComponent(song)}/selected-generation`;
+}
+
+/**
+ * Makes `generation` (its ID or shortcode) the Song's Selected Generation, replacing any other,
+ * based on the Song's `revision`: the Song as it is now, or a conflict with it.
+ */
+export function selectGeneration(
+  song: string,
+  generation: string,
+  revision: number,
+): Promise<SaveResult<Song>> {
+  return writeWithRevision(
+    'PUT',
+    selectedGenerationPath(song),
+    revision,
+    { generation },
+    (answer) => (isSong(answer) ? answer : undefined),
+  );
+}
+
+/** Leaves the Song with no Selected Generation, based on its `revision`. */
+export function clearSelectedGeneration(song: string, revision: number): Promise<SaveResult<Song>> {
+  return writeWithRevision('DELETE', selectedGenerationPath(song), revision, undefined, (answer) =>
+    isSong(answer) ? answer : undefined,
+  );
+}
+
 /** Adds a comment to a Generation: the new comment, or why it was not added. */
 export async function addComment(
   generation: string,
@@ -338,12 +381,14 @@ function songGenerationsPath(reference: string): string {
  * order and then ordinal, as one request. While any of them is still being made in Suno the list is
  * read again every {@link GENERATING_REFRESH_MS}; a read again that fails keeps the list already
  * shown. `reload` reads it again now; `update` changes one Generation in the list in place (after a
- * rating or comment write), so every view of it agrees.
+ * rating, state, or comment write), so every view of it agrees; `markSelected` marks the Song's
+ * Selected Generation (null for none) and unmarks every other.
  */
 export function useSongGenerations(reference: string): {
   state: LoadState<Generation[]>;
   reload: () => void;
   update: (id: string, change: (generation: Generation) => Generation) => void;
+  markSelected: (id: string | null) => void;
 } {
   const [loaded, setLoaded] = useState<{ reference: string; state: LoadState<Generation[]> }>({
     reference,
@@ -430,5 +475,23 @@ export function useSongGenerations(reference: string): {
     );
   }, []);
 
-  return { state, reload, update };
+  const markSelected = useCallback((id: string | null) => {
+    setLoaded((previous) =>
+      previous.state.phase === 'ready'
+        ? {
+            ...previous,
+            state: {
+              phase: 'ready',
+              data: previous.state.data.map((generation) =>
+                generation.isSelected === (generation.id === id)
+                  ? generation
+                  : { ...generation, isSelected: generation.id === id },
+              ),
+            },
+          }
+        : previous,
+    );
+  }, []);
+
+  return { state, reload, update, markSelected };
 }

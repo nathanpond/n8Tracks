@@ -346,6 +346,14 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                 .WithMany()
                 .HasForeignKey(record => record.CurrentVersionId)
                 .OnDelete(DeleteBehavior.Restrict);
+
+            // The Selected Generation (#120): a Generation names its Song and the Song may name one of
+            // its Generations back, so the reference is nullable and never cascades; deleting or moving
+            // a Generation clears it first (retention clears it within a group and puts it back on restore).
+            song.HasOne<GenerationRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.SelectedGenerationId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<SongLinkRecord>(link =>
