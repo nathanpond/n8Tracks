@@ -173,7 +173,7 @@ internal sealed class AlbumStore(N8TracksDbContext context) : IAlbumStore
         }
     }
 
-    /// <summary>Each record with its links, Album Artist, and the other Albums sharing its UPC/EAN, in the records' order.</summary>
+    /// <summary>Each record with its links, Album Artist, the other Albums sharing its UPC/EAN, and its tracks, in the records' order.</summary>
     private async Task<List<AlbumDetails>> DetailsAsync(List<AlbumRecord> records, CancellationToken cancellationToken)
     {
         var ids = records.Select(static record => record.Id).ToList();
@@ -202,6 +202,7 @@ internal sealed class AlbumStore(N8TracksDbContext context) : IAlbumStore
                 .ToListAsync(cancellationToken)
                 .ConfigureAwait(false);
         var byUpc = sameUpc.ToLookup(static album => album.UpcKey!, StringComparer.Ordinal);
+        var tracks = await AlbumTrackStore.ForAlbumsAsync(context, ids, cancellationToken).ConfigureAwait(false);
 
         return [.. records.Select(record => new AlbumDetails(
             new Album(
@@ -212,12 +213,13 @@ internal sealed class AlbumStore(N8TracksDbContext context) : IAlbumStore
                 new AlbumRelease(record.ReleaseDate, record.OriginalReleaseDate, record.Upc, record.Copyright, record.Publishing),
                 [.. links[record.Id].OrderBy(static link => link.Position).Select(static link => new AlbumLink(link.Label, link.Url))]),
             record.AlbumArtistId is { } artistId && artists.TryGetValue(artistId, out var artistName) ? new AlbumNamed(artistId, artistName) : null,
-            SongCount: 0,
+            tracks.GetValueOrDefault(record.Id)?.Count ?? 0,
             UtcText.Parse(record.CreatedUtc),
             UtcText.Parse(record.UpdatedUtc),
             record.Revision,
             record.UpcKey is { } key
                 ? [.. byUpc[key].Where(other => other.Id != record.Id).Select(static other => new AlbumNamed(other.Id, other.Title))]
-                : []))];
+                : [],
+            tracks.GetValueOrDefault(record.Id) ?? []))];
     }
 }

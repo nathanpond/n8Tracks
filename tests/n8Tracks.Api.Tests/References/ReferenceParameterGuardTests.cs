@@ -46,6 +46,9 @@ public sealed class ReferenceParameterGuardTests
         "POST /api/v1/playlists/{id:guid}/songs: id",
         "DELETE /api/v1/playlists/{id:guid}/songs/{reference}: id",
         "PUT /api/v1/playlists/{id:guid}/songs: id",
+        "POST /api/v1/albums/{id:guid}/tracks: id",
+        "DELETE /api/v1/albums/{id:guid}/tracks/{reference}: id",
+        "PUT /api/v1/albums/{id:guid}/tracks: id",
         "GET /api/v1/versions/{reference}/snapshots/{snapshotId:guid}: snapshotId",
         "POST /api/v1/versions/{reference}/snapshots/{snapshotId:guid}/restore: snapshotId",
     };
@@ -88,6 +91,10 @@ public sealed class ReferenceParameterGuardTests
         // 200: the Song is not on the Playlist, so nothing changes.
         ["DELETE /api/v1/playlists/{id:guid}/songs/{reference}"] = static async (c, song, _) =>
             await c.SendAsync(HttpMethod.Delete, $"playlists/{c.PlaylistId}/songs/{song}", revision: await c.PlaylistRevisionAsync()),
+
+        // 200: the Song is not on the Album, so nothing changes.
+        ["DELETE /api/v1/albums/{id:guid}/tracks/{reference}"] = static async (c, song, _) =>
+            await c.SendAsync(HttpMethod.Delete, $"albums/{c.AlbumId}/tracks/{song}", revision: await c.AlbumRevisionAsync()),
     };
 
     [Fact]
@@ -139,6 +146,12 @@ public sealed class ReferenceParameterGuardTests
         {
             Assert.Equal(HttpStatusCode.Created, playlist.StatusCode);
             context.PlaylistId = (await SetupApi.JsonAsync(playlist)).GetProperty("id").GetString()!;
+        }
+
+        using (var album = await context.SendAsync(HttpMethod.Post, "albums", """{"title":"Referenced"}"""))
+        {
+            Assert.Equal(HttpStatusCode.Created, album.StatusCode);
+            context.AlbumId = (await SetupApi.JsonAsync(album)).GetProperty("id").GetString()!;
         }
 
         // Every endpoint that binds a reference has a call here, and every call is to such an endpoint.
@@ -255,6 +268,8 @@ public sealed class ReferenceParameterGuardTests
 
         public string PlaylistId { get; set; } = string.Empty;
 
+        public string AlbumId { get; set; } = string.Empty;
+
         public async Task<HttpResponseMessage> SendAsync(HttpMethod method, string path, string? json = null, int? revision = null)
         {
             using var request = new HttpRequestMessage(method, new Uri("/api/v1/" + path, UriKind.Relative));
@@ -277,6 +292,8 @@ public sealed class ReferenceParameterGuardTests
         public Task<int> VersionRevisionAsync() => RevisionAsync($"versions/{versionId}");
 
         public Task<int> PlaylistRevisionAsync() => RevisionAsync($"playlists/{PlaylistId}");
+
+        public Task<int> AlbumRevisionAsync() => RevisionAsync($"albums/{AlbumId}");
 
         private async Task<int> RevisionAsync(string path)
         {

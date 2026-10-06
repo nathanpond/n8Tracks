@@ -9,8 +9,9 @@ namespace n8Tracks.Api.Endpoints;
 
 /// <summary>
 /// Albums: a page of them, sorted by title, release date, or Album Artist, and optionally only one
-/// Artist's; one Album (<c>catalog.read</c>); creating one from a title and editing one under its
-/// revision in <c>If-Match</c> (<c>collections.write</c>). A UPC/EAN another Album has is allowed and
+/// Artist's; one Album with its tracks (<c>catalog.read</c>); creating one from a title and editing
+/// one under its revision in <c>If-Match</c> (<c>collections.write</c>). Its tracks are managed by
+/// <see cref="AlbumTracksEndpoints"/>. A UPC/EAN another Album has is allowed and
 /// answered with a <c>duplicate_upc</c> entry in <c>warnings</c>. Every answer is <c>no-store</c>.
 /// </summary>
 internal static class AlbumsEndpoints
@@ -35,7 +36,7 @@ internal static class AlbumsEndpoints
 
         endpoints.MapGet(AlbumPath, GetAsync)
             .WithName("GetAlbum")
-            .WithSummary("One Album, with its Album Artist, release details, links, Song count, warnings, and revision (also the ETag).")
+            .WithSummary("One Album, with its Album Artist, release details, links, Song count, warnings, tracks (by disc and track number), and revision (also the ETag).")
             .RequireScope(CredentialScopes.CatalogRead)
             .Produces<AlbumResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
@@ -263,13 +264,13 @@ internal static class AlbumsEndpoints
         }
     }
 
-    private static Ok<AlbumResponse> Answer(HttpContext context, AlbumDetails album)
+    internal static Ok<AlbumResponse> Answer(HttpContext context, AlbumDetails album)
     {
         Revisions.SetETag(context, album.Revision);
         return TypedResults.Ok(AlbumResponse.From(album));
     }
 
-    private static ProblemHttpResult NoSuchAlbum(HttpContext context) =>
+    internal static ProblemHttpResult NoSuchAlbum(HttpContext context) =>
         ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "There is no such Album.");
 
     /// <summary>The problem for every outcome but a save.</summary>
@@ -317,7 +318,8 @@ internal sealed record AlbumResponse(
     DateTime CreatedAt,
     DateTime UpdatedAt,
     int Revision,
-    AlbumWarningResponse[] Warnings)
+    AlbumWarningResponse[] Warnings,
+    AlbumTrackResponse[] Tracks)
 {
     public static AlbumResponse From(AlbumDetails details)
     {
@@ -350,9 +352,43 @@ internal sealed record AlbumResponse(
             details.CreatedAt.UtcDateTime,
             details.UpdatedAt.UtcDateTime,
             details.Revision,
-            warnings);
+            warnings,
+            [.. details.Tracks.Select(AlbumTrackResponse.From)]);
     }
 }
+
+/// <summary>
+/// A track: the Song (its ID, shortcode, title, primary Artist, and workflow state), its disc and
+/// track number, and whether the Song has a Selected Generation (a track without one is incomplete).
+/// </summary>
+internal sealed record AlbumTrackResponse(
+    Guid SongId,
+    string Shortcode,
+    string Title,
+    AlbumNamedResponse? PrimaryArtist,
+    AlbumTrackStateResponse State,
+    int Disc,
+    int Track,
+    bool HasSelectedGeneration)
+{
+    public static AlbumTrackResponse From(AlbumTrack track)
+    {
+        ArgumentNullException.ThrowIfNull(track);
+
+        return new(
+            track.SongId,
+            track.Shortcode,
+            track.Title,
+            track.PrimaryArtist is { } artist ? new AlbumNamedResponse(artist.Id, artist.Name) : null,
+            new AlbumTrackStateResponse(track.State.Id, track.State.Name, track.State.Colour),
+            track.Disc,
+            track.Track,
+            track.HasSelectedGeneration);
+    }
+}
+
+/// <summary>A workflow state as an Album's track shows it.</summary>
+internal sealed record AlbumTrackStateResponse(Guid Id, string Name, string Colour);
 
 /// <summary>An Artist named in an answer: its ID and display name.</summary>
 internal sealed record AlbumNamedResponse(Guid Id, string Name);

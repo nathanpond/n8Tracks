@@ -293,6 +293,7 @@ public sealed class Program
             app.MapTags();
             app.MapArtists();
             app.MapAlbums();
+            app.MapAlbumTracks();
             app.MapPlaylists();
             app.MapWorkflowStates();
             app.MapVersions();

@@ -58,3 +58,17 @@ public sealed class AlbumLinkRecord
     /// <summary>An absolute http or https URL, up to 2,000 characters.</summary>
     public required string Url { get; set; }
 }
+
+/// <summary>One row of <c>album_songs</c>: a Song on an Album, as a track with its disc and track number.</summary>
+public sealed class AlbumSongRecord
+{
+    public required Guid AlbumId { get; set; }
+
+    public required Guid SongId { get; set; }
+
+    /// <summary>1 to 999; an Album's discs are numbered without gaps.</summary>
+    public required int Disc { get; set; }
+
+    /// <summary>1 to 999, unique on the disc; gaps are allowed.</summary>
+    public required int Track { get; set; }
+}

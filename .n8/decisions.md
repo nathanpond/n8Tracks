@@ -2046,3 +2046,28 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
   - Song rows reorder by HTML drag-and-drop, or by "Move <title> up/down" with focus kept. Each add, remove, and reorder saves at once. On `revision_conflict`/`order_mismatch`, the Playlist is replaced with `current` and a "Not changed" notice is shown. A duplicate shows "<title> is on this Playlist already."
   **Why:** These are the discretion lines. Drag-and-drop follows the Workflow page's pattern, with no new dependency.
   **Issue:** #90
+- **Decision:** One migration `AddAlbumTracks` adds `album_songs` (`album_id`, `song_id`, `disc`, `track`). The PK `(album_id, song_id)` keeps a Song on an Album once. A unique `(album_id, disc, track)` stops two tracks on a disc sharing a number. CHECKs hold disc and track to 1–999. Both FKs cascade, as `playlist_songs` does. Every change rewrites the Album's rows as a whole, under a conditional bump of the Album's revision and `updated_utc`, and never writes a `songs` row. The numbering rules are pure functions in `Domain/Catalog/AlbumTrackRules` (`NextPlace`, `CloseDiscGaps`, `Renumber`, `Without`, `FindClash`). `AlbumTrackService` sits over the new `IAlbumTrackStore` and reads the Album through `IAlbumStore.FindAsync`.
+  **Why:** The discretion lines name the table and its columns and say there is no position column. Rewriting the list as a whole avoids clashing with the unique index halfway through a renumber. Song revision and updated time stay unchanged (AC 5), and a test checks this.
+  **Issue:** #91
+- **Decision:** API:
+  - Add is `POST /albums/{id}/tracks {songId}`, where `songId` is an ID or a shortcode. Remove is `DELETE /albums/{id}/tracks/{reference}`, not `{songId}`: the reference guard requires a Song in a route to bind `CatalogReference`, as the Playlist DELETE does. The full list is `PUT /albums/{id}/tracks {tracks:[{songId,disc,track}]}`. All three need `collections.write`, none is session-only, and each uses and raises the Album's revision.
+  - Refusals: 409 `song_already_on_album`; 409 `track_number_taken`, whose title names the holder ("Track 1 on disc 1 is held by First (n8-1).") and which carries `heldBy`; 409 `disc_full` past track 999 on the last disc; 409 `order_mismatch` (the Playlists code) for a list that is not exactly the members. Each carries `current`. Numbers outside 1–999, non-integers, or missing fields are 422 on `tracks`. An unknown Song on add is 422 `songId`. On remove, an unknown Song is 404, and a Song that is not on the Album is 200 with no change.
+  - The holder of a clashing number is the entry that held it before the request. When neither did, it is the earlier one in the list.
+  **Why:** These are the discretion lines. The DELETE route follows #90's precedent and the guard. Reusing `order_mismatch` keeps one code for "the list must name exactly the members".
+  **Issue:** #91
+- **Decision:** The server applies a PUT as sent, except that it closes disc gaps. It does not renumber a disc a track left during a PUT. The client renumbers before sending: drag, Move up/down, Move to disc, and Renumber. Removal renumbers on the server, because DELETE carries no list.
+  **Why:** The discretion line makes the PUT the explicit full list. If the server renumbered, it would override numbers an API client typed on purpose. AC 12 holds for the UI and for DELETE, and both the component and API tests check it.
+  **Issue:** #91
+- **Decision:** Tracks are embedded in every Album answer, including list rows, as `tracks[{songId, shortcode, title, primaryArtist, state, disc, track, hasSelectedGeneration}]`. `songCount` is now the number of tracks. `AlbumDetails` has a trailing `Tracks`. `hasSelectedGeneration` is always false until M4 and is set in `AlbumTrackStore.ForAlbumsAsync`. Song answers embed `albums[{id,title,disc,track}]`, ordered by Album title (`SongSummary` has a trailing `Albums`; the web `Song` requires `albums`, and fixtures use `albums: []`).
+  **Why:** The discretion line says tracks are embedded in `GET /albums/{id}`. PATCH and the conflict `current` use the same response, so the Album page never loses its tracks. Putting them in list rows too keeps the single Album shape #89 chose. The Song membership shape is the discretion line's.
+  **Issue:** #91
+- **Decision:** Web:
+  - `albums/TrackList.tsx` sits below the Album's fields and shows one ordered list per disc (named "Disc N"), in track-number order.
+  - Each row has: a track-number field (saved on blur or Enter; 1–999 is checked before sending); the shortcode link, title, primary Artist, and state; an "Incomplete: no Selected Generation" badge; Move up/Move down; a "Move to disc" menu offering the other discs and "New disc N+1" (hidden when the track is alone on the last disc); and Remove.
+  - Drag-and-drop works only within a disc.
+  - "Renumber" is disabled while every disc is already 1, 2, 3….
+  - The pure reordering helpers are in `albums/trackOrder.ts`.
+  - On `revision_conflict`/`order_mismatch` the Album is replaced with `current` and a notice is shown. A refused typed number restores the field and shows the API's message, which names the holder.
+  - The Song Details panel gains an "Albums" section before "Playlists": "<Album link>, disc D, track T".
+  **Why:** These are the discretion lines: Move up/Move down for the keyboard, drag within a disc, and the shared Song search with the disabled state computed in the client. Showing a disc heading even for a single disc makes "disc 1" visible as the Demo needs.
+  **Issue:** #91

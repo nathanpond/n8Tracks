@@ -59,6 +59,7 @@ public static class DependencyInjection
         services.AddScoped<ITagStore, TagStore>();
         services.AddScoped<IArtistStore, ArtistStore>();
         services.AddScoped<IAlbumStore, AlbumStore>();
+        services.AddScoped<IAlbumTrackStore, AlbumTrackStore>();
         services.AddScoped<IPlaylistStore, PlaylistStore>();
         services.AddScoped<ISongCreditStore, SongCreditStore>();
         services.AddScoped<ICatalogSettingsStore, CatalogSettingsStore>();

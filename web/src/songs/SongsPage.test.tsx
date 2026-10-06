@@ -50,6 +50,7 @@ function song(number: number, overrides: Partial<Song> = {}): Song {
     tags: [],
     credits: { primary: null, featured: [] },
     playlists: [],
+    albums: [],
     ...overrides,
   };
 }

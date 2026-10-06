@@ -77,6 +77,8 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
 
     public DbSet<AlbumLinkRecord> AlbumLinks => Set<AlbumLinkRecord>();
 
+    public DbSet<AlbumSongRecord> AlbumSongs => Set<AlbumSongRecord>();
+
     public DbSet<PlaylistRecord> Playlists => Set<PlaylistRecord>();
 
     public DbSet<PlaylistSongRecord> PlaylistSongs => Set<PlaylistSongRecord>();
@@ -457,6 +459,34 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
             link.HasOne<AlbumRecord>()
                 .WithMany()
                 .HasForeignKey(record => record.AlbumId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<AlbumSongRecord>(track =>
+        {
+            track.ToTable("album_songs", static table =>
+            {
+                table.HasCheckConstraint("ck_album_songs_disc", "disc BETWEEN 1 AND 999");
+                table.HasCheckConstraint("ck_album_songs_track", "track BETWEEN 1 AND 999");
+            });
+
+            // A Song is on an Album at most once, and two tracks on one disc never share a number.
+            // The order is disc, then track number: there is no separate position.
+            track.HasKey(record => new { record.AlbumId, record.SongId });
+            track.HasIndex(record => new { record.AlbumId, record.Disc, record.Track }).IsUnique();
+
+            // A Song's Albums are listed on its Details panel.
+            track.HasIndex(record => record.SongId);
+
+            // An Album's tracks go with it, and so do a Song's: a track is only membership, never
+            // part of the Song (the deletion stories decide about retention).
+            track.HasOne<AlbumRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.AlbumId)
+                .OnDelete(DeleteBehavior.Cascade);
+            track.HasOne<SongRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.SongId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 

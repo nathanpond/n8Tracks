@@ -402,7 +402,8 @@ internal sealed record UpdateSongRequest(JsonElement Title, JsonElement Concept,
 /// <summary>
 /// A Song as the API shows it. Times are UTC. <c>genres</c> and <c>tags</c> are alphabetical;
 /// <c>credits</c> holds the primary Artist (or null) and the featured Artists in the user's order;
-/// <c>playlists</c> are the Playlists it is on, by title.
+/// <c>playlists</c> are the Playlists it is on, by title; <c>albums</c> are the Albums it is on, by
+/// title, each with the Song's disc and track.
 /// </summary>
 internal sealed record SongResponse(
     Guid Id,
@@ -419,7 +420,8 @@ internal sealed record SongResponse(
     SongGenreResponse[] Genres,
     SongTagResponse[] Tags,
     SongCreditsResponse Credits,
-    SongPlaylistResponse[] Playlists)
+    SongPlaylistResponse[] Playlists,
+    SongAlbumResponse[] Albums)
 {
     public static SongResponse From(SongSummary song)
     {
@@ -444,12 +446,16 @@ internal sealed record SongResponse(
             [.. song.Genres.Select(SongGenreResponse.From)],
             [.. song.Tags.Select(SongTagResponse.From)],
             SongCreditsResponse.From(song.Credits),
-            [.. song.Playlists.Select(static playlist => new SongPlaylistResponse(playlist.Id, playlist.Title))]);
+            [.. song.Playlists.Select(static playlist => new SongPlaylistResponse(playlist.Id, playlist.Title))],
+            [.. song.Albums.Select(static album => new SongAlbumResponse(album.AlbumId, album.Title, album.Disc, album.Track))]);
     }
 }
 
 /// <summary>A Playlist as a Song shows it: its ID and title.</summary>
 internal sealed record SongPlaylistResponse(Guid Id, string Title);
+
+/// <summary>An Album as a Song shows it: its ID and title, and the Song's disc and track on it.</summary>
+internal sealed record SongAlbumResponse(Guid Id, string Title, int Disc, int Track);
 
 /// <summary>A Song's credits: the primary Artist, or null, and the featured Artists in order.</summary>
 internal sealed record SongCreditsResponse(SongArtistResponse? Primary, SongArtistResponse[] Featured)

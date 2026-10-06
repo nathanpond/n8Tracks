@@ -6,9 +6,9 @@ namespace n8Tracks.Application.Catalog;
 public sealed record AlbumNamed(Guid Id, string Name);
 
 /// <summary>
-/// An Album as it is read: the record, its Album Artist's name, how many Songs it holds (0 until the
-/// track story adds tracks), when it was created and last changed, its revision, and the other
-/// Albums with the same UPC/EAN (<see cref="AlbumRules.UpcKey"/>), by title.
+/// An Album as it is read: the record, its Album Artist's name, how many Songs it holds, when it was
+/// created and last changed, its revision, the other Albums with the same UPC/EAN
+/// (<see cref="AlbumRules.UpcKey"/>), by title, and its tracks in order (disc, then track number).
 /// </summary>
 public sealed record AlbumDetails(
     Album Album,
@@ -17,7 +17,29 @@ public sealed record AlbumDetails(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     int Revision,
-    IReadOnlyList<AlbumNamed> SameUpc);
+    IReadOnlyList<AlbumNamed> SameUpc,
+    IReadOnlyList<AlbumTrack> Tracks);
+
+/// <summary>A Song on an Album, as the Album page shows it: the Song and its disc and track number.</summary>
+/// <param name="SongId">The Song's ID.</param>
+/// <param name="Shortcode">Its shortcode, <c>n8-&lt;n&gt;</c>.</param>
+/// <param name="Title">Its title.</param>
+/// <param name="PrimaryArtist">Its primary Artist, or null.</param>
+/// <param name="State">Its workflow state.</param>
+/// <param name="Disc">The disc it is on, from 1.</param>
+/// <param name="Track">Its track number on that disc, from 1.</param>
+/// <param name="HasSelectedGeneration">
+/// Whether it has a Selected Generation. Always false until Generations can be selected (M4); a
+/// track without one is marked incomplete.
+/// </param>
+public sealed record AlbumTrack(Guid SongId, string Shortcode, string Title, AlbumNamed? PrimaryArtist, AlbumTrackState State, int Disc, int Track, bool HasSelectedGeneration)
+{
+    /// <summary>Its place on the Album.</summary>
+    public AlbumTrackPlace Place => new(SongId, Disc, Track);
+}
+
+/// <summary>A workflow state as an Album's track shows it.</summary>
+public sealed record AlbumTrackState(Guid Id, string Name, string Colour);
 
 /// <summary>A page of Albums, in the order asked for.</summary>
 public sealed record AlbumPage(IReadOnlyList<AlbumDetails> Items, int Page, int PageSize, int Total);

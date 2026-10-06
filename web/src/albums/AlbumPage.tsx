@@ -43,6 +43,7 @@ import {
   rightsError,
   upcError,
 } from './albumRules';
+import { TrackList } from './TrackList';
 
 const FAILED_MESSAGE =
   'n8Tracks did not answer as expected. Check that it is running and try again.';
@@ -533,6 +534,8 @@ function LoadedAlbum({ initial }: { initial: Album }) {
         <LinksField key={jsonValue(album.links)} album={album} save={saveField} />
       </Stack>
 
+      <TrackList album={album} onAlbum={setAlbum} />
+
       {dialog}
     </Stack>
   );
@@ -541,7 +544,8 @@ function LoadedAlbum({ initial }: { initial: Album }) {
 /**
  * An Album's page (`/albums/<id>`): its title, Album Artist, description, release details, and
  * links, each saved on its own under the Album's revision. A UPC/EAN another Album has is kept and
- * warned about while it applies. Tracks arrive with the track story.
+ * warned about while it applies. Its tracks are arranged by disc and track number (TrackList), each
+ * change also under the Album's revision.
  */
 export function AlbumPage() {
   const { id = '' } = useParams();

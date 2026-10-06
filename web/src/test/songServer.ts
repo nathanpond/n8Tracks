@@ -58,6 +58,7 @@ export const baseSong: Song = {
   tags: [],
   credits: { primary: null, featured: [] },
   playlists: [],
+  albums: [],
 };
 
 export const FOLK: Genre = {

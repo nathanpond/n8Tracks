@@ -266,6 +266,39 @@ describe('the Details panel', () => {
     );
   });
 
+  it('lists the Albums the Song is on, with its disc and track, each linking to the Album', async () => {
+    const user = userEvent.setup();
+    songServer({
+      ...baseSong,
+      albums: [
+        { id: '01a1b000-0000-7000-8000-000000000101', title: 'Anthology', disc: 2, track: 7 },
+        { id: '01a1b000-0000-7000-8000-000000000102', title: 'Pack EP', disc: 1, track: 2 },
+      ],
+    });
+    await openDetails(user);
+
+    const section = screen.getByRole('group', { name: 'Albums' });
+    expect(
+      within(section)
+        .getAllByRole('listitem')
+        .map((item) => item.textContent),
+    ).toEqual(['Anthology, disc 2, track 7', 'Pack EP, disc 1, track 2']);
+    expect(within(section).getByRole('link', { name: 'Pack EP' })).toHaveAttribute(
+      'href',
+      '/albums/01a1b000-0000-7000-8000-000000000102',
+    );
+  });
+
+  it('says when the Song is on no Album', async () => {
+    const user = userEvent.setup();
+    songServer();
+    await openDetails(user);
+
+    expect(
+      within(screen.getByRole('group', { name: 'Albums' })).getByText('Not on any Album.'),
+    ).toBeVisible();
+  });
+
   it('says when the Song is on no Playlist', async () => {
     const user = userEvent.setup();
     songServer();

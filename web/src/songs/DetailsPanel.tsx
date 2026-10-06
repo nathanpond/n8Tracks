@@ -345,7 +345,34 @@ function PlaylistsSection({ song }: { song: Song }) {
   );
 }
 
-/** What the Details panel holds for a Song: its credits, Genres, Tags, notes, and Playlists. Later stories add sections. */
+/** The Albums the Song is on, by title, each linking to the Album, with the Song's disc and track. Tracks are added on the Album's page. */
+function AlbumsSection({ song }: { song: Song }) {
+  return (
+    <Stack gap={4} role="group" aria-labelledby="song-albums">
+      <Text fw={500} size="sm" id="song-albums">
+        Albums
+      </Text>
+      {song.albums.length === 0 ? (
+        <Text size="sm" c="var(--n8-color-secondary-text)">
+          Not on any Album.
+        </Text>
+      ) : (
+        <List size="sm" data-testid="song-albums">
+          {song.albums.map((album) => (
+            <List.Item key={album.id} data-album-id={album.id}>
+              <Anchor component={Link} to={`/albums/${album.id}`} underline="always">
+                {album.title}
+              </Anchor>
+              , disc {album.disc}, track {album.track}
+            </List.Item>
+          ))}
+        </List>
+      )}
+    </Stack>
+  );
+}
+
+/** What the Details panel holds for a Song: its credits, Genres, Tags, notes, Albums, and Playlists. Later stories add sections. */
 export function SongDetails({
   song,
   saveFields,
@@ -361,6 +388,7 @@ export function SongDetails({
       <GenresSection song={song} saveFields={saveFields} onSong={onSong} />
       <TagsSection song={song} saveFields={saveFields} onSong={onSong} />
       <NotesSection song={song} save={(key, value) => saveFields({ [key]: value })} />
+      <AlbumsSection song={song} />
       <PlaylistsSection song={song} />
     </Stack>
   );

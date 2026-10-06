@@ -72,6 +72,14 @@ export interface SongPlaylist {
   title: string;
 }
 
+/** An Album as a Song names it: its ID and title, and the Song's disc and track on it. */
+export interface SongAlbum {
+  id: string;
+  title: string;
+  disc: number;
+  track: number;
+}
+
 /** A Song as the API answers it. Times are UTC ISO 8601. */
 export interface Song {
   id: string;
@@ -95,6 +103,8 @@ export interface Song {
   credits: SongCredits;
   /** The Playlists it is on, by title. */
   playlists: SongPlaylist[];
+  /** The Albums it is on, by title, with its disc and track on each. */
+  albums: SongAlbum[];
 }
 
 export interface SongPage {
@@ -184,6 +194,15 @@ export function isSong(value: unknown): value is Song {
     value.playlists.every(
       (playlist) =>
         isRecord(playlist) && typeof playlist.id === 'string' && typeof playlist.title === 'string',
+    ) &&
+    Array.isArray(value.albums) &&
+    value.albums.every(
+      (album) =>
+        isRecord(album) &&
+        typeof album.id === 'string' &&
+        typeof album.title === 'string' &&
+        typeof album.disc === 'number' &&
+        typeof album.track === 'number',
     )
   );
 }

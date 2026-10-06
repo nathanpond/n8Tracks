@@ -1,5 +1,5 @@
 import { apiFetch } from './client';
-import { patchWithRevision, type SaveResult } from './saves';
+import { ifMatch, patchWithRevision, type SaveResult } from './saves';
 import { body, isErrorMap, isRecord, useResource } from './songs';
 
 const ALBUMS_PATH = 'api/v1/albums';
@@ -9,6 +9,9 @@ export const ALBUM_TITLE_MAXIMUM_LENGTH = 300;
 export const ALBUM_DESCRIPTION_MAXIMUM_LENGTH = 10_000;
 export const ALBUM_RIGHTS_MAXIMUM_LENGTH = 500;
 export const ALBUM_LINK_MAXIMUM_COUNT = 20;
+
+/** The highest disc and track number; numbers start at 1. */
+export const ALBUM_TRACK_MAXIMUM_NUMBER = 999;
 
 /** The page size the list is asked for: the API's default. */
 export const ALBUMS_PAGE_SIZE = 50;
@@ -26,6 +29,19 @@ export interface AlbumWarning {
   field: string;
   message: string;
   albums: { id: string; title: string }[];
+}
+
+/** A Song on an Album, as a track with its disc and track number. */
+export interface AlbumTrack {
+  songId: string;
+  shortcode: string;
+  title: string;
+  primaryArtist: { id: string; name: string } | null;
+  state: { id: string; name: string; colour: string };
+  disc: number;
+  track: number;
+  /** False marks the track incomplete. */
+  hasSelectedGeneration: boolean;
 }
 
 /** An Album as the API answers it. Dates are partial dates as entered; times are UTC ISO 8601. */
@@ -47,6 +63,8 @@ export interface Album {
   updatedAt: string;
   revision: number;
   warnings: AlbumWarning[];
+  /** Its tracks, by disc and then track number. */
+  tracks: AlbumTrack[];
 }
 
 export interface AlbumPage {
@@ -88,6 +106,23 @@ function isAlbumWarning(value: unknown): value is AlbumWarning {
   );
 }
 
+function isAlbumTrack(value: unknown): value is AlbumTrack {
+  return (
+    isRecord(value) &&
+    typeof value.songId === 'string' &&
+    typeof value.shortcode === 'string' &&
+    typeof value.title === 'string' &&
+    (value.primaryArtist === null || isNamed(value.primaryArtist, 'name')) &&
+    isRecord(value.state) &&
+    typeof value.state.id === 'string' &&
+    typeof value.state.name === 'string' &&
+    typeof value.state.colour === 'string' &&
+    typeof value.disc === 'number' &&
+    typeof value.track === 'number' &&
+    typeof value.hasSelectedGeneration === 'boolean'
+  );
+}
+
 export function isAlbum(value: unknown): value is Album {
   return (
     isRecord(value) &&
@@ -107,7 +142,9 @@ export function isAlbum(value: unknown): value is Album {
     typeof value.updatedAt === 'string' &&
     typeof value.revision === 'number' &&
     Array.isArray(value.warnings) &&
-    value.warnings.every(isAlbumWarning)
+    value.warnings.every(isAlbumWarning) &&
+    Array.isArray(value.tracks) &&
+    value.tracks.every(isAlbumTrack)
   );
 }
 
@@ -222,4 +259,115 @@ export function updateAlbum(
     { ...edit },
     acceptAlbum,
   );
+}
+
+/** A track's place, as the full-list PUT sends it. */
+export interface AlbumTrackPlace {
+  songId: string;
+  disc: number;
+  track: number;
+}
+
+/**
+ * How a change to an Album's tracks ended. Never a rejection. Every refusal but `not-found` and
+ * `failed` carries the Album as it is now: `conflict` (it changed elsewhere, or the list no longer
+ * matches its Songs), `duplicate` (the Song is on it already), `disc-full` (the last disc has track
+ * 999), `taken` (two tracks on a disc would share a number; `message` names the one holding it).
+ */
+export type AlbumTracksResult =
+  | { kind: 'saved'; album: Album }
+  | { kind: 'conflict'; current: Album }
+  | { kind: 'duplicate'; current: Album }
+  | { kind: 'disc-full'; current: Album; message: string }
+  | { kind: 'taken'; current: Album; message: string }
+  | { kind: 'invalid'; message: string }
+  | { kind: 'not-found' }
+  | { kind: 'failed' };
+
+const TRACK_REFUSALS: Record<string, 'conflict' | 'duplicate' | 'disc-full' | 'taken'> = {
+  revision_conflict: 'conflict',
+  order_mismatch: 'conflict',
+  song_already_on_album: 'duplicate',
+  disc_full: 'disc-full',
+  track_number_taken: 'taken',
+};
+
+async function changeTracks(
+  method: 'POST' | 'PUT' | 'DELETE',
+  path: string,
+  revision: number,
+  payload?: Record<string, unknown>,
+): Promise<AlbumTracksResult> {
+  try {
+    const headers: Record<string, string> = { 'If-Match': ifMatch(revision) };
+    if (payload !== undefined) {
+      headers['Content-Type'] = 'application/json';
+    }
+    const response = await apiFetch(path, {
+      method,
+      headers,
+      ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
+    });
+    const answer = await body(response);
+    if (response.ok) {
+      return isAlbum(answer) ? { kind: 'saved', album: answer } : { kind: 'failed' };
+    }
+    if (response.status === 409 && isRecord(answer) && typeof answer.code === 'string') {
+      const kind = TRACK_REFUSALS[answer.code];
+      if (kind !== undefined && isAlbum(answer.current)) {
+        const message = typeof answer.title === 'string' ? answer.title : '';
+        return kind === 'disc-full' || kind === 'taken'
+          ? { kind, current: answer.current, message }
+          : { kind, current: answer.current };
+      }
+    }
+    if (
+      response.status === 422 &&
+      isRecord(answer) &&
+      answer.code === 'validation_failed' &&
+      isErrorMap(answer.errors)
+    ) {
+      return { kind: 'invalid', message: Object.values(answer.errors).flat()[0] ?? '' };
+    }
+    return response.status === 404 ? { kind: 'not-found' } : { kind: 'failed' };
+  } catch {
+    return { kind: 'failed' };
+  }
+}
+
+const tracksPath = (album: Pick<Album, 'id'>) =>
+  `${ALBUMS_PATH}/${encodeURIComponent(album.id)}/tracks`;
+
+/** Adds a Song at the end of the Album's last disc, based on `album`'s revision. */
+export function addAlbumTrack(
+  album: Pick<Album, 'id' | 'revision'>,
+  songId: string,
+): Promise<AlbumTracksResult> {
+  return changeTracks('POST', tracksPath(album), album.revision, { songId });
+}
+
+/** Takes a Song off the Album, based on `album`'s revision; the API renumbers the rest of its disc. */
+export function removeAlbumTrack(
+  album: Pick<Album, 'id' | 'revision'>,
+  songId: string,
+): Promise<AlbumTracksResult> {
+  return changeTracks(
+    'DELETE',
+    `${tracksPath(album)}/${encodeURIComponent(songId)}`,
+    album.revision,
+  );
+}
+
+/** Makes `tracks` (every Song on the Album, once) the Album's tracks, based on its revision. */
+export function setAlbumTracks(
+  album: Pick<Album, 'id' | 'revision'>,
+  tracks: readonly AlbumTrackPlace[],
+): Promise<AlbumTracksResult> {
+  return changeTracks('PUT', tracksPath(album), album.revision, {
+    tracks: tracks.map((track) => ({
+      songId: track.songId,
+      disc: track.disc,
+      track: track.track,
+    })),
+  });
 }

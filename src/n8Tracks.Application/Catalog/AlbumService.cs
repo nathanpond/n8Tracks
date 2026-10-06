@@ -191,7 +191,7 @@ public sealed class AlbumService(IAlbumStore albums, IExclusiveTransaction trans
             async ct =>
             {
                 await albums.AddAsync(album, now, ct).ConfigureAwait(false);
-                return new AlbumOutcome.Saved(new AlbumDetails(album, null, 0, now, now, 1, []), Changed: true);
+                return new AlbumOutcome.Saved(new AlbumDetails(album, null, 0, now, now, 1, [], []), Changed: true);
             },
             cancellationToken).ConfigureAwait(false);
     }
