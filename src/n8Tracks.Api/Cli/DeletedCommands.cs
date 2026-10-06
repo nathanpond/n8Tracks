@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using n8Tracks.Api.Configuration;
 using n8Tracks.Api.DependencyInjection;
@@ -36,10 +37,25 @@ internal static class DeletedCommands
     /// <summary>What the listing prints when nothing was deleted within the retention period.</summary>
     public const string NothingDeleted = "Nothing deleted in the last 30 days.";
 
+    /// <summary>
+    /// The line after a refusal. It is a line of its own, because a refusal can end in a command to
+    /// run, which should be copied without it.
+    /// </summary>
+    private const string NothingChanged = "Nothing was changed.";
+
     private const string ListUsage = "Usage: n8tracks list-deleted [--all] [--json]";
     private const string RestoreUsage = "Usage: n8tracks restore-deleted <shortcode or group ID> [--json]";
 
-    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
+    /// <summary>
+    /// The <c>--json</c> output. It goes to a terminal or a pipe, never into a web page, so it uses the
+    /// relaxed encoder: a '+' in an offset and letters outside ASCII print as themselves rather than
+    /// as <c>\u</c> escapes, while quotes, backslashes, and control characters are still escaped.
+    /// </summary>
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
+    {
+        WriteIndented = true,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
 
     /// <summary>Whether the app binary was asked for <c>list-deleted</c>: it is the first argument.</summary>
     public static bool IsListRequested(string[] args)
@@ -141,11 +157,13 @@ internal static class DeletedCommands
                     return 0;
 
                 case DeletedItemRestoreOutcome.NotFound notFound:
-                    error.WriteLine(OneLine(notFound.Message) + " Nothing was changed.");
+                    error.WriteLine(OneLine(notFound.Message));
+                    error.WriteLine(NothingChanged);
                     return 1;
 
                 case DeletedItemRestoreOutcome.Refused refused:
-                    error.WriteLine(OneLine(refused.Message) + " Nothing was changed.");
+                    error.WriteLine(OneLine(refused.Message));
+                    error.WriteLine(NothingChanged);
                     return 1;
 
                 default:

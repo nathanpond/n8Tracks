@@ -323,6 +323,38 @@ describe('Settings → Tags', () => {
     expect(status()).toHaveTextContent('runing merged into running.');
   });
 
+  it('offers the merge when the API says the name is taken although the list did not show it', async () => {
+    const server = tagServer();
+    const user = userEvent.setup();
+    await openPage();
+    // Another tab renamed summer to "Night time" after this page loaded.
+    server.tags = server.tags.map((tag) =>
+      tag.id === SUMMER.id ? { ...tag, name: 'Night time', revision: 3 } : tag,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Edit Night' }));
+    const edit = await dialogNamed('Edit Night');
+    const input = within(edit).getByRole('textbox', { name: 'Name' });
+    await user.clear(input);
+    await user.type(input, 'night TIME');
+    await user.click(within(edit).getByRole('button', { name: 'Save' }));
+
+    // The list did not predict it, so the rename was sent and refused.
+    await waitFor(() => {
+      expect(server.writes).toEqual([
+        { method: 'PATCH', path: `tags/${NIGHT.id}`, ifMatch: '"1"', body: { name: 'night TIME' } },
+      ]);
+    });
+    expect(
+      await within(edit).findByRole('button', { name: 'Merge into Night time' }),
+    ).toBeVisible();
+    expect(names()).toContain('Night');
+
+    await user.click(within(edit).getByRole('button', { name: 'Merge into Night time' }));
+    const merge = await dialogNamed('Merge Night');
+    expect(within(merge).getByRole('combobox', { name: 'Merge into' })).toHaveValue(SUMMER.id);
+  });
+
   it('merges selected Tags into another after stating how many Songs change', async () => {
     const server = tagServer();
     server.songsWithAny = 3;

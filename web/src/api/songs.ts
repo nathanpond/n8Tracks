@@ -536,6 +536,9 @@ export function useSongsTitled(title: string, excludeId: string) {
     title,
     excludeId,
     pageSize: String(SAME_TITLE_LIMIT),
+    // Sent rather than left to the list's default, which could change.
+    sort: 'updated',
+    direction: 'desc',
   });
   return useResource(`${SONGS_PATH}?${parameters.toString()}`, acceptSongPage);
 }

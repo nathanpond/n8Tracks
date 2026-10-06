@@ -7,6 +7,9 @@ using n8Tracks.Api.Tests.Setup;
 using n8Tracks.Api.Tests.Songs;
 using n8Tracks.Application.Credentials;
 using n8Tracks.Domain.Catalog;
+using SkiaSharp;
+using static n8Tracks.Api.Tests.Assets.ArtworkApi;
+using static n8Tracks.Api.Tests.Retention.RetentionApi;
 
 namespace n8Tracks.Api.Tests.Catalog;
 
@@ -215,6 +218,13 @@ public sealed class RelationshipEndpointTests
         using var client = await SessionApi.SignedInClientAsync(factory);
         var type = (await CreateTypeAsync(client, "Sequel to", "Has sequel")).GetProperty("id").GetString()!;
         var (a, b) = (await SongApi.CreateAsync(client, "Song A"), await SongApi.CreateAsync(client, "Song B"));
+
+        // A has a Generation and its own artwork; B has neither.
+        await SongApi.AttachGenerationAsync(factory, a.GetProperty("currentVersion").GetProperty("shortcode").GetString()!);
+        var asset = await StoreAsync(client, Assets.ArtworkImages.Halves(SKEncodedImageFormat.Png, 400, 200));
+        a = await SongApi.EditAsync(client, Id(a), (await SongAsync(client, Id(a))).GetProperty("revision").GetInt32(), $$"""{"artworkAssetId":"{{IdOf(asset)}}"}""");
+        var shared = (string[])["versions", "generations", "artwork_attachments", "assets"];
+        var rowsBefore = shared.ToDictionary(static table => table, table => Dump(factory, table), StringComparer.Ordinal);
         clock.Advance(TimeSpan.FromMinutes(5));
 
         using var response = await SongApi.SendJsonAsync(
@@ -251,6 +261,22 @@ public sealed class RelationshipEndpointTests
         // Stored the way the forward name reads, and no Version, Generation, or Song row is shared.
         Assert.Equal($"{Id(a)}|{Id(b)}".ToUpperInvariant(), TestDatabase.Scalar(factory.DataPath, "SELECT upper(from_song_id) || '|' || upper(to_song_id) FROM song_relationships;"));
         Assert.Equal("2", TestDatabase.Scalar(factory.DataPath, "SELECT count(DISTINCT song_id) FROM versions;"));
+
+        // Nor are Generations or artwork (#307): their rows are as they were, all of them still A's, and
+        // B has no artwork and an unfrozen Version.
+        foreach (var table in shared)
+        {
+            Assert.Equal(rowsBefore[table], Dump(factory, table));
+        }
+
+        Assert.Equal(
+            Id(a).ToUpperInvariant(),
+            TestDatabase.Scalar(factory.DataPath, "SELECT group_concat(DISTINCT upper(v.song_id)) FROM generations g JOIN versions v ON v.id = g.version_id;"));
+        Assert.Equal($"song|{Id(a)}".ToUpperInvariant(), TestDatabase.Scalar(factory.DataPath, "SELECT upper(group_concat(owner_type || '|' || owner_id)) FROM artwork_attachments;"));
+        Assert.Equal(a.GetProperty("artwork").ToString(), songA.GetProperty("artwork").ToString());
+        Assert.Equal(JsonValueKind.Null, songB.GetProperty("artwork").ValueKind);
+        var versionsOfB = await SetupApi.JsonAsync(await client.GetAsync(new Uri($"/api/v1/songs/{Id(b)}/versions", UriKind.Relative)));
+        Assert.False(Assert.Single(versionsOfB.GetProperty("items").EnumerateArray()).GetProperty("isFrozen").GetBoolean());
 
         // Related from C in the reverse direction (C "Has sequel" A), A reads it forward, after B by title.
         var c = await SongApi.CreateAsync(client, "Song C");

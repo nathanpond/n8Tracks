@@ -72,8 +72,8 @@ const upcKey = (upc: string) => (upc.length === 12 ? `0${upc}` : upc);
  * the revision, checking the UPC/EAN and the Album Artist (422). The Artists answer the picker's
  * search and create. Tracks: POST adds a Song at the end of the last disc (409
  * `song_already_on_album`), DELETE renumbers the rest of its disc, and PUT replaces the list (409
- * `order_mismatch` or `track_number_taken`), each under the revision with `current`; `GET
- * /api/v1/songs?q=` searches `songs`. `server.next` answers the next write some other way;
+ * `order_mismatch` or `track_number_taken`), each under the revision with `current`; a PUT with a
+ * number outside 1 to 999 is 422, as the API answers it; `GET /api/v1/songs?q=` searches `songs`. `server.next` answers the next write some other way;
  * `server.changeElsewhere` plays another client. Artwork uploads and the PATCH's artwork fields
  * follow {@link artworkFake} (`server.artwork`). DELETE of an Album under its revision answers 204
  * and records it in `server.deleted`.
@@ -189,6 +189,14 @@ export function albumServer(albums: Album[] = [], artists: Artist[] = [], songs:
       );
     }
     const sent = Array.isArray(write.body.tracks) ? (write.body.tracks as AlbumTrackPlace[]) : [];
+    // As the API: numbers outside 1 to 999 are refused before anything else is checked.
+    if (
+      sent.some((place) => [place.disc, place.track].some((number) => number < 1 || number > 999))
+    ) {
+      return problem(422, 'validation_failed', {
+        errors: { tracks: ['Disc and track numbers are whole numbers from 1 to 999.'] },
+      });
+    }
     const ids = sent.map((place) => place.songId);
     if (
       ids.length !== places.length ||

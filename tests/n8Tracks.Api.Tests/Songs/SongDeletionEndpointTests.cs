@@ -364,6 +364,33 @@ public sealed class SongDeletionEndpointTests
     }
 
     [Fact]
+    public async Task SongsAreDeletedOneAtATimeAndTheCollectionCannotBeDeleted()
+    {
+        // #102 AC8: delete is offered on the Song page only, so there is no bulk delete on the collection.
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var first = await SongApi.CreateAsync(client, "First");
+        var second = await SongApi.CreateAsync(client, "Second");
+        var revision = first.GetProperty("revision").GetInt32();
+        var ids = $$"""{"ids":["{{first.GetProperty("id").GetGuid()}}","{{second.GetProperty("id").GetGuid()}}"],"confirmTitle":"First"}""";
+
+        foreach (var (path, body) in ((string, string?)[])[
+            ("/api/v1/songs", null),
+            ("/api/v1/songs", ids),
+            ("/api/v1/songs?shortcode=n8-1&shortcode=n8-2", null),
+            ("/api/v1/songs/", ids)])
+        {
+            using var refused = await SendAsync(client, HttpMethod.Delete, path, revision, body);
+            Assert.True(
+                refused.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed,
+                $"DELETE {path}: {(int)refused.StatusCode} {await refused.Content.ReadAsStringAsync()}");
+        }
+
+        Assert.Equal(["n8-1", "n8-2"], SongApi.Shortcodes(await SongApi.ListAsync(client)).Order(StringComparer.Ordinal));
+        Assert.Equal("0", TestDatabase.Scalar(factory.DataPath, "SELECT count(*) FROM retention_groups;"));
+    }
+
+    [Fact]
     public async Task RestoringTheGroupPutsEverythingBackWithMembershipsAtTheEnd()
     {
         var clock = new TestClock();
