@@ -86,6 +86,19 @@ export interface ResponseFor {
 
 export type Response<T extends Request> = ResponseFor[T['type']];
 
+/**
+ * A message the extension's own pages send to the Suno content script in a tab
+ * (`chrome.tabs.sendMessage`): the toolbar popup opens or closes the panel with it.
+ */
+export interface TabMessage {
+  type: 'toggle-panel';
+}
+
+/** Whether `value` is a message for the Suno content script. */
+export function isTabMessage(value: unknown): value is TabMessage {
+  return isRecord(value) && value.type === 'toggle-panel';
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

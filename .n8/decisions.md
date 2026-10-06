@@ -2974,3 +2974,44 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** A staged cover image is uploaded through `ArtworkService.UploadAsync`, which validates it like any artwork, and is held on the record as `artwork_asset_id`. `SunoExportStore` is registered as an `IArtworkAttachments`, so the sweep keeps the asset while a staged record holds it. Once the export's rows are gone, the sweep removes the image. A second image replaces the first. The answer is `{sunoId, artwork}`.
   **Why:** This is AC 9: "held with the export, and changes nothing in the catalog". Using the attachment port that already exists means no new sweep rule is needed.
   **Issue:** #131
+- **Decision:** The panel opens from the toolbar popup. On a suno.com tab, while the extension is connected, the popup shows "Show the panel on Suno". The button sends `{type:'toggle-panel'}` to the tab with `chrome.tabs.sendMessage` and then closes the popup. If the tab has no content script yet, because it was opened before pairing, the popup first injects `suno.js` with `chrome.scripting.executeScript`.
+  **Why:** The discretion says "opened from the extension's toolbar button". The manifest has `default_popup`, so `action.onClicked` never fires. Removing the popup would lose the connection view that #128 built. `tabs` and `scripting` are already allowed (D4), so no permission is added.
+  **Issue:** #132
+- **Decision:** The Suno content script `suno.js` is registered for `https://suno.com/*` at `document_idle`. It is registered beside the relay, under the ID `n8tracks-suno`, when the extension connects. It is checked again on every handshake, which re-registers a missing script, and unregistered on disconnect. Like the relay, it is a separate classic IIFE build in `scripts/lib/build.ts`.
+  **Why:** D4 allows registered content scripts, and the manifest still declares none. Registering at pairing matches how the relay works. The script only reads the page until a workflow runs.
+  **Issue:** #132
+- **Decision:** The panel is an open shadow root on its own `<n8tracks-panel>` host, which carries `data-n8tracks-panel`. `find` never looks inside a host with that attribute.
+  **Why:** An open root lets the unit-level axe checks reach the panel. A closed root would hide it from them. The host attribute keeps the panel's own controls, such as its "Close" button, out of the adapter's searches, so they can never make a Suno control ambiguous or be clicked by a workflow. A test proves this against the Download dialog snapshot.
+  **Issue:** #132
+- **Decision:** The DOM-access ban is ESLint's built-in `no-restricted-syntax`. It is set to error for `src/adapter/**`, `src/content/suno*.ts`, and `src/panel/**`. It forbids calling query methods (`querySelector`, `getElementById`, `getElementsBy*`, `closest`, and others), `.click()`, and `dispatchEvent`, in both dotted and bracket form. A second block turns the rule off for `src/adapter/primitives.ts` and `src/**/*.test.ts`, with a rationale comment.
+  **Why:** The suppression guard allows `ignores:` only for build output, so the exemption has to be a rule set to `off`, which needs a rationale. The panel stays inside the ban: it keeps references to the elements it created and needs none of these calls. `test/dom-access-lint.test.ts` lints sample code as five in-scope files, expecting every finding, and as three exempt files, expecting none. `scripts/check-canaries.sh` passed after the change (19 passed).
+  **Issue:** #132
+- **Decision:** The panel lists the registered workflows in three groups: "Suno page", "Library sync", and "Generate on Suno". A group with no registered workflow is left out, so this version shows only "Suno page › Recognise the Suno page". Fill and sync workflows are test-only stand-ins until their stories register real ones.
+  **Why:** The discretion says the list is whatever is registered and that this story registers only the recognition check. AC 6 is proven by a component test that renders sync and generate parts in every state. The Demo step 2 test uses stand-ins on the Advanced snapshot.
+  **Issue:** #132
+- **Decision:** The recognition workflow needs Suno's navigation Library link (`role=link`, `data-testid="navbar-library-tab"`). Its fixtures are `library-list`, `library-trash`, and `workspace-selector`.
+  **Why:** The Suno logo appears twice on every page, so `find` would rightly call it ambiguous. The Library link appears once, in the three snapshots that are whole pages. The other snapshots are regions without navigation, and there the check correctly reports "not working".
+  **Issue:** #132
+- **Decision:** `Target` is `{role, name?, testId?, within?, description}`. `within` may be another Target or a bare `{testId, description}` region. `description` is the plain-words "expected …" text. For example, Suno's Styles box has no accessible name (placeholder only), so it is `{role:'textbox', within:{testId:'create-form-styles-wrapper'}}`, described as "a text box labelled Styles".
+  **Why:** The discretion prefers role and label, then a stable test attribute, and never a class name. The TS-003 Styles box can be reached only through its wrapper's test attribute. Keeping the report text on the target makes every stop name what was expected in the same words as the Demo.
+  **Issue:** #132
+- **Decision:** These runner details were not specified, so I chose them:
+  - `verify` is polled like `expect`, every 100 ms up to the step timeout. React updates after an event, so a single read-back would fail spuriously.
+  - A failure of a check after polling has kind `check`, and a hung `act` has kind `timeout`. Both name the step.
+  - `pageMayBeChanged` is true once any `act` has run.
+  - The run's `Page` is bound to an `AbortSignal` that is aborted at the first failure and at the end. After that, set, choose, and click throw `StoppedError`, so an `act` still running after a timeout cannot change the page.
+  - An exception's message is never copied into the report (invariant 6). A `PrimitiveError` reports its own plain words.
+  **Why:** AC 3 says the run stops and changes nothing further on the page. The abort makes that structural, and a test proves it: a late click is refused and records no mutations.
+  **Issue:** #132
+- **Decision:** `set` handles text boxes and textareas with the prototype's native setter (`Reflect.set` with the element as receiver), followed by `input` and `change` events. It handles a slider through its range input if it has one. Otherwise it presses ArrowRight or ArrowLeft and stops when a key changes nothing or would pass the value. It never sends Enter. A contenteditable region, such as Suno's Lexical lyrics editor, is refused as "to take a typed value". #146 must add a primitive for it.
+  **Why:** This follows the discretion on React inputs and sliders. Suno's sliders in TS-003 are `role=slider` divs with no input. Lexical needs `beforeinput` handling, and no story before #146 fills lyrics.
+  **Issue:** #132
+- **Decision:** `ADAPTER_VERSION` stays 1.
+  **Why:** No adapter shipped before this story. Version 1 is the first one that has selectors, and nothing has reported another number. Later stories raise it whenever they change a selector or step.
+  **Issue:** #132
+- **Decision:** The field-map parity test lives in `extension/test/field-map.test.ts`. It reads `docs/suno-adapter-field-map.md` with node `fs`. It compares entry, field, and `how`, and fails on a missing, extra, or repeated entry and on a wrong `N entries.` line.
+  **Why:** The `src/` tests are typed without node, and the document is outside the vite root. A change to one `how` in a copy of the document makes the test fail, as the plan requires.
+  **Issue:** #132
+- **Decision:** `SUNO_ORIGIN_PATTERN` moved to `src/adapter/addresses.ts`. `src/address.ts` re-exports it, so existing imports still work.
+  **Why:** AC 1 says every Suno address pattern is inside the adapter.
+  **Issue:** #132

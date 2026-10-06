@@ -24,6 +24,8 @@ const CONNECTED: ConnectedState = {
   ],
 };
 
+const NOT_PAIRED: ConnectionState = { status: 'not-paired' };
+
 function text(id: string): string {
   return document.getElementById(id)?.textContent ?? '';
 }
@@ -36,6 +38,9 @@ function button(id: string): HTMLButtonElement {
   return document.getElementById(id) as HTMLButtonElement;
 }
 
+/** The active tab the popup sees: a Suno tab unless a test says otherwise. */
+let activeTab: { id: number; url: string } | null = null;
+
 /** Starts the popup over a fake service worker that answers `states` in turn (the last repeats). */
 async function open(...states: ConnectionState[]) {
   const answers = [...states];
@@ -47,18 +52,24 @@ async function open(...states: ConnectionState[]) {
   };
   const requestPermissions = vi.fn(() => Promise.resolve(true));
   const openOptions = vi.fn();
+  const togglePanel = vi.fn(() => Promise.resolve());
+  const closePopup = vi.fn();
   await startPopup(document, {
     manifest: { name: 'n8Tracks', version: '0.1.0' },
     send,
     requestPermissions,
     openOptions,
+    activeTab: () => Promise.resolve(activeTab),
+    togglePanel,
+    closePopup,
   });
-  return { sent, requestPermissions, openOptions };
+  return { sent, requestPermissions, openOptions, togglePanel, closePopup };
 }
 
 describe('the popup', () => {
   beforeEach(() => {
     loadPage(popupHtml);
+    activeTab = null;
   });
 
   it('shows Connected to the address with the credential name and each feature', async () => {
@@ -150,5 +161,37 @@ describe('the popup', () => {
     for (const element of document.querySelectorAll('button')) {
       expect(element.type).toBe('button');
     }
+  });
+
+  it('shows the Suno adapter version beside the extension version', async () => {
+    await open({ status: 'not-paired' });
+
+    expect(text('version')).toBe('v0.1.0');
+    expect(text('adapter')).toBe('Suno adapter 1');
+  });
+
+  it('offers the panel on a Suno tab while connected, and opens it there', async () => {
+    activeTab = { id: 7, url: 'https://suno.com/create' };
+    const { togglePanel, closePopup } = await open(CONNECTED);
+
+    expect(hidden('show-panel')).toBe(false);
+    await expectNoAxeViolations(document);
+    button('show-panel').click();
+
+    expect(togglePanel).toHaveBeenCalledWith(7);
+    await vi.waitFor(() => {
+      expect(closePopup).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it.each([
+    ['another site', { id: 3, url: 'https://n8tracks.example.com/songs' }, CONNECTED],
+    ['no tab', null, CONNECTED],
+    ['a Suno tab while not connected', { id: 4, url: 'https://suno.com/me' }, NOT_PAIRED],
+  ])('does not offer the panel on %s', async (_, tab, state) => {
+    activeTab = tab;
+    await open(state);
+
+    expect(hidden('show-panel')).toBe(true);
   });
 });

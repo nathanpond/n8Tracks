@@ -24,6 +24,9 @@ export const serviceWorkerOutput = 'service-worker.js';
 /** The relay content script, which the service worker registers by this path (`RELAY_FILE`). */
 export const relayOutput = 'relay.js';
 
+/** The Suno content script (adapter and panel), registered by this path (`SUNO_FILE`). */
+export const sunoOutput = 'suno.js';
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

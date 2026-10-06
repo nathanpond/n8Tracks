@@ -1,4 +1,5 @@
 import { pairingOrigins, parseAddress, type N8TracksAddress } from '../address.ts';
+import { SUNO_ORIGIN_PATTERN } from '../adapter/addresses.ts';
 import { compatibilityOf } from '../compatibility.ts';
 import type {
   ConnectFailure,
@@ -52,6 +53,12 @@ export const NOTICE_KEY = 'notice';
 /** The relay's registration ID and its built file. */
 export const RELAY_ID = 'n8tracks-relay';
 export const RELAY_FILE = 'relay.js';
+
+/** The Suno content script's (adapter and panel) registration ID and its built file. */
+export const SUNO_SCRIPT_ID = 'n8tracks-suno';
+export const SUNO_FILE = 'suno.js';
+
+const SCRIPT_IDS = [RELAY_ID, SUNO_SCRIPT_ID];
 
 /** A handshake is reused for this long, except by the check before a sync or a generation. */
 export const HANDSHAKE_CACHE_MS = 60_000;
@@ -120,8 +127,8 @@ const FAILURE_MESSAGES: Record<Exclude<ConnectFailure, 'invalid-address'>, strin
 /**
  * The pairing with n8Tracks, held by the service worker. It stores only the address and the token
  * (in `chrome.storage.local`, never synced), checks the token with a handshake before saving it,
- * caches the handshake for a minute, registers the relay on the paired origin, and forgets the
- * token the first time n8Tracks refuses it.
+ * caches the handshake for a minute, registers the relay on the paired origin and the Suno
+ * content script on suno.com, and forgets the token the first time n8Tracks refuses it.
  */
 export class Connection {
   private readonly browser: BrowserApis;
@@ -185,7 +192,7 @@ export class Connection {
       case 'ok': {
         const state = this.connected(pairing.address, result.handshake);
         this.cached = { address: pairing.address, at: this.now(), state };
-        await this.ensureRelay(address.value);
+        await this.ensureScripts(address.value);
         return state;
       }
       case 'rejected':
@@ -200,9 +207,9 @@ export class Connection {
   /**
    * Pairs with the n8Tracks at `addressText` using `token`. The options page has already asked
    * the browser for the two host permissions; this checks they were given, checks the token with
-   * a handshake, and only then saves the pairing and registers the relay. Replacing a pairing with
-   * another origin gives back the old origin's permission. Nothing is saved on any failure, and a
-   * permission given for a new origin that failed is given back.
+   * a handshake, and only then saves the pairing and registers the content scripts. Replacing a
+   * pairing with another origin gives back the old origin's permission. Nothing is saved on any
+   * failure, and a permission given for a new origin that failed is given back.
    */
   async connect(addressText: string, token: string): Promise<ConnectResult> {
     const parsed = parseAddress(addressText);
@@ -244,25 +251,28 @@ export class Connection {
     }
 
     if (previousPattern !== undefined && previousPattern !== address.pattern) {
-      await this.unregisterRelay();
+      await this.unregisterScripts();
       await this.browser.permissions.remove({ origins: [previousPattern] });
     }
     const pairing: StoredPairing = { address: address.address, token: trimmedToken };
     await this.browser.storage.set({ [PAIRING_KEY]: pairing });
     await this.browser.storage.remove([NOTICE_KEY]);
-    await this.registerRelay(address);
+    await this.registerScripts(address);
 
     const state = this.connected(address.address, result.handshake);
     this.cached = { address: address.address, at: this.now(), state };
     return { ok: true, state };
   }
 
-  /** Forgets the pairing and the token, unregisters the relay, and gives back the n8Tracks permission. */
+  /**
+   * Forgets the pairing and the token, unregisters the relay and the Suno content script, and
+   * gives back the n8Tracks permission.
+   */
   async disconnect(): Promise<ConnectionState> {
     const pairing = await this.pairing();
     await this.browser.storage.remove([PAIRING_KEY, NOTICE_KEY]);
     this.cached = null;
-    await this.unregisterRelay();
+    await this.unregisterScripts();
     const address = pairing === null ? null : parseAddress(pairing.address);
     if (address?.ok === true) {
       await this.browser.permissions.remove({ origins: [address.value.pattern] });
@@ -270,7 +280,7 @@ export class Connection {
     return { status: 'not-paired' };
   }
 
-  /** When the service worker starts: makes sure the relay is registered, then re-runs the handshake. */
+  /** When the service worker starts: re-runs the handshake, which makes sure the content scripts are registered. */
   async start(): Promise<ConnectionState> {
     return this.state(true);
   }
@@ -329,39 +339,56 @@ export class Connection {
     return storedPairing((await this.browser.storage.get([PAIRING_KEY]))[PAIRING_KEY]);
   }
 
-  private relayScript(address: N8TracksAddress): chrome.scripting.RegisteredContentScript {
-    return {
-      id: RELAY_ID,
-      matches: [address.pattern],
-      js: [RELAY_FILE],
-      runAt: 'document_start',
-      allFrames: false,
-      persistAcrossSessions: true,
-    };
+  /** The relay on the paired n8Tracks origin, and the adapter and panel on suno.com. */
+  private contentScripts(address: N8TracksAddress): chrome.scripting.RegisteredContentScript[] {
+    return [
+      {
+        id: RELAY_ID,
+        matches: [address.pattern],
+        js: [RELAY_FILE],
+        runAt: 'document_start',
+        allFrames: false,
+        persistAcrossSessions: true,
+      },
+      {
+        id: SUNO_SCRIPT_ID,
+        matches: [SUNO_ORIGIN_PATTERN],
+        js: [SUNO_FILE],
+        runAt: 'document_idle',
+        allFrames: false,
+        persistAcrossSessions: true,
+      },
+    ];
   }
 
-  private async registerRelay(address: N8TracksAddress): Promise<void> {
-    await this.unregisterRelay();
-    await this.browser.scripting.registerContentScripts([this.relayScript(address)]);
+  private async registerScripts(address: N8TracksAddress): Promise<void> {
+    await this.unregisterScripts();
+    await this.browser.scripting.registerContentScripts(this.contentScripts(address));
   }
 
-  /** Registers the relay again when it is missing or registered for another origin. */
-  private async ensureRelay(address: N8TracksAddress): Promise<void> {
+  /** Registers the scripts again when one is missing or registered for another origin. */
+  private async ensureScripts(address: N8TracksAddress): Promise<void> {
     const registered = await this.browser.scripting.getRegisteredContentScripts({
-      ids: [RELAY_ID],
+      ids: SCRIPT_IDS,
     });
-    const matches = registered[0]?.matches ?? [];
-    if (registered.length !== 1 || matches.length !== 1 || matches[0] !== address.pattern) {
-      await this.registerRelay(address);
+    const intact = this.contentScripts(address).every((script) => {
+      const found = registered.find((item) => item.id === script.id);
+      const matches = found?.matches ?? [];
+      return matches.length === 1 && matches[0] === script.matches?.[0];
+    });
+    if (registered.length !== SCRIPT_IDS.length || !intact) {
+      await this.registerScripts(address);
     }
   }
 
-  private async unregisterRelay(): Promise<void> {
+  private async unregisterScripts(): Promise<void> {
     const registered = await this.browser.scripting.getRegisteredContentScripts({
-      ids: [RELAY_ID],
+      ids: SCRIPT_IDS,
     });
     if (registered.length > 0) {
-      await this.browser.scripting.unregisterContentScripts({ ids: [RELAY_ID] });
+      await this.browser.scripting.unregisterContentScripts({
+        ids: registered.map((script) => script.id),
+      });
     }
   }
 }

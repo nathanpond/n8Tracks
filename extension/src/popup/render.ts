@@ -1,3 +1,4 @@
+import { ADAPTER_VERSION } from '../adapter/version.ts';
 import type { ConnectionState } from '../messages.ts';
 import {
   NOT_CONNECTED_TEXT,
@@ -11,10 +12,19 @@ import { displayVersion, versionLabel, type ManifestIdentity } from '../version-
 
 export const notConnectedText = NOT_CONNECTED_TEXT;
 
-/** Fills the popup with the extension's name and version; the connection reads as not connected until known. */
+/** How the adapter's version is shown in the popup and the panel. */
+export function adapterLabel(version: number = ADAPTER_VERSION): string {
+  return `Suno adapter ${String(version)}`;
+}
+
+/**
+ * Fills the popup with the extension's name, its version, and the Suno adapter's version; the
+ * connection reads as not connected until known.
+ */
 export function renderPopup(popup: Document, manifest: ManifestIdentity): void {
   element(popup, 'name').textContent = manifest.name;
   element(popup, 'version').textContent = versionLabel(displayVersion(manifest));
+  element(popup, 'adapter').textContent = adapterLabel();
   element(popup, 'connection').textContent = notConnectedText;
 }
 

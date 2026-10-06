@@ -1,5 +1,7 @@
-/** The only Suno site the extension asks for. */
-export const SUNO_ORIGIN_PATTERN = 'https://suno.com/*';
+import { SUNO_ORIGIN_PATTERN } from './adapter/addresses.ts';
+
+/** The only Suno site the extension asks for; the pattern itself lives in the adapter. */
+export { SUNO_ORIGIN_PATTERN };
 
 /** An n8Tracks address the user entered, normalised. */
 export interface N8TracksAddress {

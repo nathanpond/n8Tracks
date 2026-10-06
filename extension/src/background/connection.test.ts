@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fakeBrowser, jsonResponse } from '../testing/fakeBrowser.ts';
 import type { Fetch } from './apiClient.ts';
-import { Connection, DisconnectedError, HANDSHAKE_CACHE_MS, RELAY_ID } from './connection.ts';
+import {
+  Connection,
+  DisconnectedError,
+  HANDSHAKE_CACHE_MS,
+  RELAY_ID,
+  SUNO_SCRIPT_ID,
+} from './connection.ts';
 
 const SUNO = 'https://suno.com/*';
 const ADDRESS = 'https://n8tracks.example.com/base/';
@@ -52,7 +58,7 @@ async function paired() {
 }
 
 describe('connecting', () => {
-  it('checks the token, then stores only the address and the token and registers the relay', async () => {
+  it('checks the token, then stores only the address and the token and registers the content scripts', async () => {
     const { connection, stored, scripts, fetchImpl } = setup();
 
     const result = await connection.connect(ADDRESS, `  ${TOKEN} `);
@@ -94,6 +100,14 @@ describe('connecting', () => {
         matches: [PATTERN],
         js: ['relay.js'],
         runAt: 'document_start',
+        allFrames: false,
+        persistAcrossSessions: true,
+      },
+      {
+        id: SUNO_SCRIPT_ID,
+        matches: [SUNO],
+        js: ['suno.js'],
+        runAt: 'document_idle',
         allFrames: false,
         persistAcrossSessions: true,
       },
@@ -320,6 +334,16 @@ describe('the state', () => {
     await context.connection.start();
 
     expect(context.scripts.get(RELAY_ID)?.matches).toEqual([PATTERN]);
+    expect(context.scripts.get(SUNO_SCRIPT_ID)?.matches).toEqual([SUNO]);
+  });
+
+  it('registers the Suno content script again when only it is missing', async () => {
+    const context = await paired();
+    context.scripts.delete(SUNO_SCRIPT_ID);
+
+    await context.connection.state(true);
+
+    expect([...context.scripts.keys()].toSorted()).toEqual([RELAY_ID, SUNO_SCRIPT_ID].toSorted());
   });
 
   it('never carries the token', async () => {

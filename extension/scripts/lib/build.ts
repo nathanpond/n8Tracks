@@ -6,6 +6,7 @@ import {
   referencedFiles,
   relayOutput,
   serviceWorkerOutput,
+  sunoOutput,
   transformManifest,
   validateManifest,
   type Manifest,
@@ -83,24 +84,31 @@ export async function buildExtension(): Promise<ProductVersion> {
     },
   });
 
-  // The relay is a content script, which runs as a classic script: one file, no imports, so it
-  // is built on its own. The service worker registers it by this name for the paired origin.
-  await build({
-    configFile: false,
-    root: join(extensionRoot, 'src'),
-    publicDir: false,
-    logLevel: 'warn',
-    build: {
-      outDir: distDirectory,
-      emptyOutDir: false,
-      rolldownOptions: {
-        input: { relay: join(extensionRoot, 'src/content/relay-main.ts') },
-        output: { format: 'iife', entryFileNames: relayOutput },
+  // Content scripts run as classic scripts: one file each, no imports, so each is built on its
+  // own. The service worker registers the relay for the paired origin and the Suno script for
+  // suno.com by these names.
+  const contentScripts: Record<string, string> = {
+    [relayOutput]: 'src/content/relay-main.ts',
+    [sunoOutput]: 'src/content/suno-main.ts',
+  };
+  for (const [output, entry] of Object.entries(contentScripts)) {
+    await build({
+      configFile: false,
+      root: join(extensionRoot, 'src'),
+      publicDir: false,
+      logLevel: 'warn',
+      build: {
+        outDir: distDirectory,
+        emptyOutDir: false,
+        rolldownOptions: {
+          input: { [output.replace(/\.js$/, '')]: join(extensionRoot, entry) },
+          output: { format: 'iife', entryFileNames: output },
+        },
       },
-    },
-  });
-  if (!existsSync(join(distDirectory, relayOutput))) {
-    throw new Error(`The build did not make ${relayOutput}.`);
+    });
+    if (!existsSync(join(distDirectory, output))) {
+      throw new Error(`The build did not make ${output}.`);
+    }
   }
 
   const source = readJson(join(extensionRoot, 'manifest.json')) as Manifest;

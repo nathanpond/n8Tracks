@@ -1,0 +1,350 @@
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it } from 'vitest';
+import { fakeClock, loadSnapshot } from '../testing/snapshots.ts';
+import {
+  findProblem,
+  nameOf,
+  Page,
+  PANEL_HOST_ATTRIBUTE,
+  PrimitiveError,
+  StoppedError,
+  type FindResult,
+  type Found,
+  type Target,
+} from './primitives.ts';
+
+const ADVANCED = 'create-songs-advanced-more-options';
+
+const STYLES: Target = {
+  role: 'textbox',
+  within: { testId: 'create-form-styles-wrapper', description: 'the Styles section' },
+  description: 'a text box labelled Styles',
+};
+const WEIRDNESS: Target = {
+  role: 'slider',
+  name: 'Weirdness',
+  description: 'the Weirdness slider',
+};
+
+function found(result: FindResult): Found {
+  if (result.kind !== 'found') {
+    throw new Error(`Expected to find it: ${findProblem(result)}`);
+  }
+  return result.found;
+}
+
+/** Every event of these types that reaches the document, in order. */
+function recordEvents(...types: string[]): string[] {
+  const seen: string[] = [];
+  for (const type of types) {
+    document.addEventListener(type, (event) => seen.push(event.type), { capture: true });
+  }
+  return seen;
+}
+
+afterEach(() => {
+  document.body.innerHTML = '';
+});
+
+describe('find', () => {
+  it('finds a control by role and accessible name in the Advanced snapshot', () => {
+    const page = loadSnapshot(ADVANCED);
+
+    const slider = found(page.find(WEIRDNESS));
+
+    expect(page.read(slider)).toMatchObject({ value: '70', enabled: true });
+  });
+
+  it('finds the Styles box by role inside its test attribute', () => {
+    const page = loadSnapshot(ADVANCED);
+
+    const styles = found(page.find(STYLES));
+
+    expect(page.read(styles).value).toBe('<redacted 20 chars>');
+  });
+
+  it('finds tabs by the name their text gives them', () => {
+    const page = loadSnapshot(ADVANCED);
+
+    const tabs = found(
+      page.find({ role: 'tablist', name: 'What to create', description: 'the create tabs' }),
+    );
+    const speech = found(page.find({ role: 'tab', name: 'Speech', description: 'the Speech tab' }));
+
+    expect(page.read(tabs).text).toContain('Songs');
+    expect(page.read(speech).selected).toBe(false);
+  });
+
+  it('reports a missing element in the words of its target', () => {
+    const page = loadSnapshot(ADVANCED);
+
+    const result = page.find({ role: 'textbox', name: 'Nope', description: 'a Nope box' });
+
+    expect(result).toEqual({
+      kind: 'not_found',
+      missing: { role: 'textbox', name: 'Nope', description: 'a Nope box' },
+    });
+  });
+
+  it('fails as ambiguous on two matches instead of choosing the first', () => {
+    const page = loadSnapshot(ADVANCED);
+    const target: Target = {
+      role: 'button',
+      name: 'View saved style prompts',
+      description: 'the saved style prompts button',
+    };
+
+    const result = page.find(target);
+
+    expect(result).toEqual({ kind: 'ambiguous', target, count: 2 });
+    expect(findProblem(result as Exclude<FindResult, { kind: 'found' }>)).toBe(
+      'the saved style prompts button (found 2, so none was chosen)',
+    );
+  });
+
+  it('fails when the region it must look inside is missing, naming the region', () => {
+    const page = loadSnapshot('create-songs-simple');
+
+    const result = page.find(STYLES);
+
+    expect(result.kind).toBe('not_found');
+    expect(findProblem(result as Exclude<FindResult, { kind: 'found' }>)).toBe(
+      'the Styles section',
+    );
+  });
+
+  it('ignores hidden elements', () => {
+    const page = loadSnapshot(ADVANCED);
+    const slider = found(page.find(WEIRDNESS));
+    const element = document.querySelector('[aria-label="Weirdness"]');
+
+    element?.parentElement?.setAttribute('style', 'display: none');
+    expect(page.find(WEIRDNESS).kind).toBe('not_found');
+    element?.parentElement?.removeAttribute('style');
+    element?.parentElement?.setAttribute('aria-hidden', 'true');
+    expect(page.find(WEIRDNESS).kind).toBe('not_found');
+    element?.parentElement?.removeAttribute('aria-hidden');
+    element?.closest('div[aria-hidden="false"]')?.setAttribute('hidden', '');
+    expect(page.find(WEIRDNESS).kind).toBe('not_found');
+    expect(slider.target).toBe(WEIRDNESS);
+  });
+
+  it('looks inside open shadow roots', () => {
+    document.body.innerHTML = '<div id="host"></div>';
+    const root = document.getElementById('host')?.attachShadow({ mode: 'open' });
+    if (root === undefined) {
+      throw new Error('no host');
+    }
+    root.innerHTML = '<button type="button">Inside</button>';
+    const page = new Page(document);
+
+    expect(
+      page.find({ role: 'button', name: 'Inside', description: 'the inside button' }).kind,
+    ).toBe('found');
+  });
+
+  it("never finds the extension's own panel, so a Close there cannot make Suno's ambiguous", () => {
+    const page = loadSnapshot('download-dialog');
+    const before = page.find({ role: 'button', name: 'Close', description: 'Close' });
+    const host = document.createElement('n8tracks-panel');
+    host.setAttribute(PANEL_HOST_ATTRIBUTE, '');
+    host.attachShadow({ mode: 'open' }).innerHTML = '<button type="button">Close</button>';
+    host.append(document.createElement('button'));
+    document.body.append(host);
+
+    const after = page.find({ role: 'button', name: 'Close', description: 'Close' });
+
+    expect(after.kind).toBe(before.kind);
+  });
+});
+
+describe('accessible names', () => {
+  it('reads aria-labelledby, a label element, aria-label, content, title, and placeholder', () => {
+    document.body.innerHTML = `
+      <span id="a">From</span><span id="b">elsewhere</span>
+      <input id="one" aria-labelledby="a b" />
+      <label for="two">Labelled</label><input id="two" />
+      <button id="three" aria-label="By label">ignored</button>
+      <button id="four">By <svg aria-label="its"></svg> <span aria-hidden="true">x</span>content</button>
+      <button id="five" title="By title"></button>
+      <textarea id="six" placeholder="By placeholder"></textarea>`;
+
+    const names = ['one', 'two', 'three', 'four', 'five', 'six'].map((id) => {
+      const element = document.getElementById(id);
+      return element === null ? null : nameOf(element);
+    });
+
+    expect(names).toEqual([
+      'From elsewhere',
+      'Labelled',
+      'By label',
+      'By its content',
+      'By title',
+      'By placeholder',
+    ]);
+  });
+});
+
+describe('set', () => {
+  it('sets a text box with the native setter and an input event, and reads it back', () => {
+    const page = loadSnapshot(ADVANCED);
+    const events = recordEvents('input', 'change', 'keydown');
+    const styles = found(page.find(STYLES));
+
+    page.set(styles, 'dark synthwave');
+
+    expect(page.read(styles).value).toBe('dark synthwave');
+    expect(events).toEqual(['input', 'change']);
+  });
+
+  it('moves a slider without an input by arrow keys, never Enter, until it reads the value', () => {
+    const page = loadSnapshot(ADVANCED);
+    const element = document.querySelector('[aria-label="Weirdness"]');
+    const keys: string[] = [];
+    element?.addEventListener('keydown', (event) => {
+      const key = (event as KeyboardEvent).key;
+      keys.push(key);
+      const now = Number(element.getAttribute('aria-valuenow'));
+      element.setAttribute('aria-valuenow', String(key === 'ArrowRight' ? now + 1 : now - 1));
+    });
+    const slider = found(page.find(WEIRDNESS));
+
+    page.set(slider, 73);
+
+    expect(page.read(slider).value).toBe('73');
+    expect(keys).toEqual(['ArrowRight', 'ArrowRight', 'ArrowRight']);
+  });
+
+  it('leaves a slider that ignores keys as it was, for the read-back to report', () => {
+    const page = loadSnapshot(ADVANCED);
+    const slider = found(page.find(WEIRDNESS));
+
+    page.set(slider, 40);
+
+    expect(page.read(slider).value).toBe('70');
+  });
+
+  it('sets a slider through its range input when it has one', () => {
+    document.body.innerHTML =
+      '<div role="slider" aria-label="Level" aria-valuenow="1"><input type="range" min="0" max="10" value="1" /></div>';
+    const page = new Page(document);
+    const events = recordEvents('input');
+    const slider = found(page.find({ role: 'slider', name: 'Level', description: 'Level' }));
+
+    page.set(slider, 6);
+
+    expect(document.querySelector('input')?.value).toBe('6');
+    expect(events).toEqual(['input']);
+  });
+
+  it('refuses a disabled control, an element that left the page, and anything after the run stopped', () => {
+    const page = loadSnapshot(ADVANCED);
+    const styles = found(page.find(STYLES));
+    const textarea = document.querySelector('[data-testid="create-form-styles-wrapper"] textarea');
+
+    textarea?.setAttribute('disabled', '');
+    expect(() => {
+      page.set(styles, 'x');
+    }).toThrow(PrimitiveError);
+    textarea?.removeAttribute('disabled');
+
+    const stopped = new AbortController();
+    stopped.abort();
+    expect(() => {
+      page.withSignal(stopped.signal).set(styles, 'x');
+    }).toThrow(StoppedError);
+
+    textarea?.remove();
+    expect(() => {
+      page.set(styles, 'x');
+    }).toThrow('a text box labelled Styles to be still on the page');
+  });
+
+  it('refuses to type into something that is not a text box or slider', () => {
+    const page = loadSnapshot(ADVANCED);
+    const tab = found(page.find({ role: 'tab', name: 'Speech', description: 'the Speech tab' }));
+
+    expect(() => {
+      page.set(tab, 'x');
+    }).toThrow('the Speech tab to take a typed value');
+  });
+});
+
+describe('choose and click', () => {
+  it('chooses a tab inside the tab list by clicking it, with the pointer events first', () => {
+    const page = loadSnapshot(ADVANCED);
+    const events = recordEvents('pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click');
+    const clicked: (string | null)[] = [];
+    document.addEventListener('click', (event) => {
+      clicked.push((event.target as Element).textContent);
+    });
+    const tabs = found(
+      page.find({ role: 'tablist', name: 'What to create', description: 'the create tabs' }),
+    );
+
+    page.choose(tabs, 'Speech');
+
+    expect(events).toEqual(['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']);
+    expect(clicked).toEqual(['Speech']);
+  });
+
+  it('refuses an option the element does not offer, clicking nothing', () => {
+    const page = loadSnapshot(ADVANCED);
+    const events = recordEvents('click');
+    const tabs = found(
+      page.find({ role: 'tablist', name: 'What to create', description: 'the create tabs' }),
+    );
+
+    expect(() => {
+      page.choose(tabs, 'Videos');
+    }).toThrow('the create tabs to offer "Videos"');
+    expect(events).toEqual([]);
+  });
+
+  it('chooses an option of a select by its text', () => {
+    document.body.innerHTML =
+      '<label for="s">Key</label><select id="s"><option value="a">A</option><option value="b">B</option></select>';
+    const page = new Page(document);
+    const select = found(page.find({ role: 'combobox', name: 'Key', description: 'the Key' }));
+
+    page.choose(select, 'B');
+
+    expect(page.read(select).value).toBe('b');
+  });
+
+  it('clicks a found button once', () => {
+    const page = loadSnapshot(ADVANCED);
+    const events = recordEvents('click');
+    const button = found(
+      page.find({ role: 'button', name: 'Clear styles', description: 'Clear styles' }),
+    );
+
+    page.click(button);
+
+    expect(events).toEqual(['click']);
+  });
+});
+
+describe('wait', () => {
+  it('reads every 100 ms until the condition holds', async () => {
+    const clock = fakeClock();
+    const page = loadSnapshot(ADVANCED, undefined, clock);
+    let reads = 0;
+
+    const held = await page.wait(() => {
+      reads += 1;
+      return reads === 3;
+    }, 1000);
+
+    expect(held).toBe(true);
+    expect(clock.slept).toEqual([100, 100]);
+  });
+
+  it('gives up at the timeout', async () => {
+    const clock = fakeClock();
+    const page = loadSnapshot(ADVANCED, undefined, clock);
+
+    expect(await page.wait(() => false, 250)).toBe(false);
+    expect(clock.slept).toEqual([100, 100, 50]);
+  });
+});

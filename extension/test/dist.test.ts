@@ -5,6 +5,7 @@ import { distDirectory, extensionRoot, productVersion } from '../scripts/lib/bui
 import {
   referencedFiles,
   relayOutput,
+  sunoOutput,
   validateManifest,
   type Manifest,
 } from '../scripts/lib/manifest.ts';
@@ -102,13 +103,16 @@ describe('the built popup', () => {
   });
 });
 
-describe('the built relay', () => {
-  const relay = readFileSync(join(distDirectory, relayOutput), 'utf8');
+describe('the built content scripts', () => {
+  it.each([
+    [relayOutput, 'n8tracks-extension'],
+    [sunoOutput, 'n8tracks-panel'],
+  ])('%s is one classic script, as a registered content script must be', (file, marker) => {
+    const script = readFileSync(join(distDirectory, file), 'utf8');
 
-  it('is one classic script, as a registered content script must be', () => {
-    expect(relay).not.toMatch(/^\s*import[\s{*]/m);
-    expect(relay).not.toMatch(/^\s*export\s/m);
-    expect(relay).toContain('n8tracks-extension');
+    expect(script).not.toMatch(/^\s*import[\s{*]/m);
+    expect(script).not.toMatch(/^\s*export\s/m);
+    expect(script).toContain(marker);
   });
 });
 
