@@ -9,9 +9,14 @@ namespace n8Tracks.Domain.Songs;
 /// provider record, which is never part of this record.
 /// </summary>
 /// <param name="Id">A UUIDv7.</param>
-/// <param name="VersionId">The Version it was made from; never changes.</param>
-/// <param name="SongId">That Version's Song; never changes.</param>
-/// <param name="Ordinal">Its place within the Version, from 1; never changes and never reused within the Version.</param>
+/// <param name="VersionId">
+/// The Version that holds it: the one it was made from, until it is moved (#123, #141). A move is the
+/// one change of it, of <paramref name="SongId"/>, and of <paramref name="Ordinal"/>
+/// (<see cref="SongVersion.ReceiveGeneration"/>): it leaves a permanent <see cref="ShortcodeAlias"/>
+/// for the old shortcode, and the database refuses any other change.
+/// </param>
+/// <param name="SongId">That Version's Song; changes only with a move.</param>
+/// <param name="Ordinal">Its place within the Version, from 1; changes only with a move, and an ordinal is never reused within a Version.</param>
 /// <param name="CreatedUtc">When it was attached.</param>
 public sealed record Generation(Guid Id, Guid VersionId, Guid SongId, int Ordinal, DateTimeOffset CreatedUtc)
 {

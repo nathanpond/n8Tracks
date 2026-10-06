@@ -344,6 +344,70 @@ export async function pickGenerationArtwork(
   }
 }
 
+/**
+ * What the Song a Selected Generation leaves selects instead (#123): another of its Generations (ID
+ * or shortcode), or a workflow state (its ID) to move the Song to, left with no Selected Generation.
+ */
+export type SelectionChoice =
+  { replacementGeneration: string } | { workflowState: string } | Record<string, never>;
+
+/** How creating a new Song from a Generation ended. */
+export type MoveToNewSongResult =
+  | { kind: 'moved'; song: Song; generation: Generation; alias: string }
+  | { kind: 'conflict'; current: Generation }
+  | { kind: 'invalid'; errors: Record<string, string[]> }
+  /** The Generation is its Song's Selected Generation: say what that Song selects instead. */
+  | { kind: 'choice-required' }
+  | { kind: 'failed'; reason: FailureReason };
+
+/**
+ * Moves `generation` (never a copy) into a new Song titled `title`, whose Version 1 holds a copy of
+ * its Version's creation inputs, based on the Generation's `revision` (#123). Its old shortcode keeps
+ * finding it. When it is its Song's Selected Generation, `choice` says what that Song selects instead.
+ */
+export async function moveGenerationToNewSong(
+  generation: Generation,
+  title: string,
+  choice: SelectionChoice,
+): Promise<MoveToNewSongResult> {
+  try {
+    const response = await apiFetch(`${generationPath(generation.id)}/move-to-new-song`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'If-Match': ifMatch(generation.revision) },
+      body: JSON.stringify({ title, ...choice }),
+    });
+    const answer = await body(response);
+    if (response.ok) {
+      const moved = isRecord(answer) ? generationOf(answer.generation) : undefined;
+      return isRecord(answer) &&
+        isSong(answer.song) &&
+        moved !== undefined &&
+        typeof answer.alias === 'string'
+        ? { kind: 'moved', song: answer.song, generation: moved, alias: answer.alias }
+        : { kind: 'failed', reason: 'server' };
+    }
+    if (response.status === 409 && isRecord(answer) && answer.code === 'revision_conflict') {
+      const current = generationOf(answer.current);
+      return current === undefined
+        ? { kind: 'failed', reason: 'server' }
+        : { kind: 'conflict', current };
+    }
+    if (
+      response.status === 422 &&
+      isRecord(answer) &&
+      answer.code === 'selection_choice_required'
+    ) {
+      return { kind: 'choice-required' };
+    }
+    if (response.status === 422 && isRecord(answer) && isErrorMap(answer.errors)) {
+      return { kind: 'invalid', errors: answer.errors };
+    }
+    return { kind: 'failed', reason: failureOf(response.status, answer) };
+  } catch {
+    return { kind: 'failed', reason: 'unreachable' };
+  }
+}
+
 /** Leaves the Song with no Selected Generation, based on its `revision`. */
 export function clearSelectedGeneration(song: string, revision: number): Promise<SaveResult<Song>> {
   return writeWithRevision('DELETE', selectedGenerationPath(song), revision, undefined, (answer) =>

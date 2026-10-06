@@ -45,7 +45,9 @@ namespace n8Tracks.Api.Tests.Invariants;
 /// every shape upgrader. Generations (#117) are a catalog namespace of their own: attaching one from a
 /// raw clip, the one way a Generation is made, is exercised here, and so are rating it, commenting
 /// on it (#119), archiving it, choosing or clearing the Song's Selected Generation (#120), and
-/// giving it an image and picking that image as the Song's artwork (#121, <c>Application.Artwork</c>). A Version's lineage (#122:
+/// giving it an image and picking that image as the Song's artwork (#121, <c>Application.Artwork</c>),
+/// and moving it into a new Song (#123), which copies its Version's inputs into the new Version 1 and
+/// leaves the old Version's byte-identical. A Version's lineage (#122:
 /// its sources, Inspiration, Voice, and file inputs) is a creation input like its options: the
 /// entity's <see cref="SongVersion.Lineage"/>, the columns of each lineage table (each with its own
 /// insert, update, and delete freeze triggers), every lineage key of <c>inputs</c> in every edit, and
@@ -323,6 +325,7 @@ public sealed class VersionImmutabilityGuardTests
             [nameof(SongVersion.EnsureMutable)] = "the check itself",
             [nameof(SongVersion.WithAnnotations)] = "copies the inputs as they are",
             [nameof(SongVersion.AttachGeneration)] = "copies the inputs as they are, and freezes",
+            [nameof(SongVersion.ReceiveGeneration)] = "copies the inputs as they are, and freezes (a moved Generation, #123)",
             [nameof(SongVersion.Deconstruct)] = "reads only",
             [nameof(SongVersion.Equals)] = "reads only",
             [nameof(SongVersion.GetHashCode)] = "reads only",
@@ -680,6 +683,23 @@ public sealed class VersionImmutabilityGuardTests
         }),
         ["POST /api/v1/generations/{reference}/comments"] = new(static async target => await target.CommentAsync()),
 
+        // Creating a new Song from a Generation (#123): a fresh Generation of the frozen Version moves
+        // into a new Song whose Version 1 is a copy; the Version it leaves keeps its inputs. The inputs
+        // sent alongside are not read.
+        ["POST /api/v1/generations/{reference}/move-to-new-song"] = new(async target =>
+        {
+            var leaving = await SongApi.AttachGenerationAsync(target.Factory, target.VersionId.ToString());
+            using var response = await SendAsync(
+                target.Client,
+                HttpMethod.Post,
+                new Uri($"/api/v1/generations/{leaving.Shortcode}/move-to-new-song", UriKind.Relative),
+                SongApi.Quoted(leaving.Generation.Revision),
+                await target.InputsJsonAsync("""{"title":"Moved by the guard",""", "}"));
+            Assert.True(response.StatusCode == HttpStatusCode.Created, await response.Content.ReadAsStringAsync());
+            var moved = (await SetupApi.JsonAsync(response)).GetProperty("version").GetProperty("id").GetGuid();
+            Assert.Equal(Stored(target.Factory, target.VersionId), Stored(target.Factory, moved));
+        }),
+
         // The Song's Selected Generation (#120): the inputs sent alongside are not read.
         ["PUT /api/v1/songs/{reference}/selected-generation"] = new(async target =>
         {
@@ -893,6 +913,16 @@ public sealed class VersionImmutabilityGuardTests
             Assert.IsType<GenerationSelectionOutcome.Selected>(await InScopeAsync<GenerationSelectionService, GenerationSelectionOutcome>(target, service =>
                 service.ClearAsync(CatalogReference.Parse(target.SongShortcode), revision, default)));
         }),
+        // Moving a Generation into a new Song (#123): the Version it leaves keeps its inputs, and the
+        // new Version 1 holds the same ones.
+        ["GenerationMoveService.MoveToNewSongAsync(CatalogReference, GenerationMoveRequest, Int32, CancellationToken)"] = new(static async target =>
+        {
+            var leaving = await SongApi.AttachGenerationAsync(target.Factory, target.VersionShortcode);
+            var outcome = Assert.IsType<GenerationMoveOutcome.Moved>(await InScopeAsync<GenerationMoveService, GenerationMoveOutcome>(target, service =>
+                service.MoveToNewSongAsync(CatalogReference.Parse(leaving.Shortcode), new GenerationMoveRequest("Moved by the guard", SelectionChoice.None), leaving.Generation.Revision, default)));
+            Assert.Equal(Stored(target.Factory, target.VersionId), Stored(target.Factory, outcome.Version.Id));
+        }),
+
         // A Generation's image and its use as the Song's artwork (#121): never a creation input.
         ["GenerationArtworkService.UploadAsync(CatalogReference, ReadOnlyMemory`1, Boolean, CancellationToken)"] = new(static async target =>
         {

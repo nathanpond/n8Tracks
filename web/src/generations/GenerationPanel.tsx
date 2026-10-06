@@ -141,6 +141,20 @@ function Details({
       <div>
         <OpenInSuno generation={generation} />
       </div>
+      {actions.onMoveToNewSong !== undefined && (
+        <div>
+          <Button
+            variant="default"
+            size="compact-sm"
+            disabled={actions.busy}
+            onClick={() => {
+              actions.onMoveToNewSong?.(generation);
+            }}
+          >
+            Create new Song from Generation
+          </Button>
+        </div>
+      )}
       <Divider />
       <GenerationComments generation={generation} update={update} />
     </Stack>
@@ -155,8 +169,10 @@ function Details({
  * user's comments (`update` keeps the Song's one cached copy in step), and (#120, `actions`) its
  * Archive or Reactivate control and the control that makes it the Song's Selected Generation or
  * clears that, and (#121) its cover image, shown whole. `problem` says why a rating or a choice was
- * not saved. The move and delete controls arrive with their own stories. A reference that names no Generation of
- * this Song says so. Closes with Escape or its close control.
+ * not saved. "Create new Song from Generation" (#123) opens through `actions`; `movedFrom` (the old
+ * shortcode it was opened by) says the Generation moved. The delete control arrives with its own
+ * story. A reference that names no Generation of this Song says so. Closes with Escape or its close
+ * control.
  */
 export function GenerationPanel({
   opened,
@@ -166,6 +182,7 @@ export function GenerationPanel({
   update,
   actions,
   problem,
+  movedFrom,
 }: {
   opened: boolean;
   content: GenerationPanelContent;
@@ -174,6 +191,7 @@ export function GenerationPanel({
   update: UpdateGeneration;
   actions: GenerationRowActions;
   problem?: string | undefined;
+  movedFrom?: string | undefined;
 }) {
   const title =
     content.kind === 'found'
@@ -203,6 +221,13 @@ export function GenerationPanel({
           shortcode may be mistyped.
         </Text>
       )}
+      {content.kind === 'found' &&
+        movedFrom !== undefined &&
+        movedFrom !== content.generation.shortcode && (
+          <Text role="status" size="sm" mb="sm" data-testid="generation-moved">
+            {movedFrom} moved: this Generation is now {content.generation.shortcode}.
+          </Text>
+        )}
       {content.kind === 'found' && problem !== undefined && (
         <Text role="alert" size="sm" c="var(--mantine-color-error)" mb="sm">
           {problem}

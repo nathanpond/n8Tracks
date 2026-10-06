@@ -12,8 +12,9 @@ namespace n8Tracks.Infrastructure.Persistence;
 /// <c>generations</c> (read, and the rating), <c>provider_records</c>, <c>generation_events</c>,
 /// <c>generation_event_links</c>, and <c>generation_comments</c>. The Generation row itself is
 /// written only by <see cref="VersionStore.TryAttachGenerationAsync"/>, with the freeze; afterwards
-/// only its rating, state, and revision are, by <see cref="TryUpdateAsync"/>, and its cover image, by
-/// <see cref="SetArtworkAsync"/>.
+/// only its rating, state, and revision are, by <see cref="TryUpdateAsync"/>, its cover image, by
+/// <see cref="SetArtworkAsync"/>, and its place (Version, Song, ordinal) and revision by a move,
+/// <see cref="VersionStore.TryMoveGenerationAsync"/> (#123).
 /// </summary>
 internal sealed class GenerationStore(N8TracksDbContext context) : IGenerationStore, IArtworkAttachments
 {

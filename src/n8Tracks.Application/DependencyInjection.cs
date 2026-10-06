@@ -57,6 +57,7 @@ public static class DependencyInjection
         services.AddScoped<GenerationService>();
         services.AddScoped<GenerationEvaluationService>();
         services.AddScoped<GenerationSelectionService>();
+        services.AddScoped<GenerationMoveService>();
         services.AddScoped<GenerationArtworkService>();
         services.AddScoped<WorkflowStateService>();
         services.AddScoped<ReferenceResolver>();

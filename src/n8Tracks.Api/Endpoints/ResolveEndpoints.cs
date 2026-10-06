@@ -23,7 +23,7 @@ internal static class ResolveEndpoints
 
         endpoints.MapGet(ResolvePath, ResolveAsync)
             .WithName("ResolveReference")
-            .WithSummary("What a stable ID or a shortcode (n8-12, n8-12-v1.1, n8-12-v1.1-g3; any letter case) names: its type, ID, canonical shortcode, and status.")
+            .WithSummary("What a stable ID or a shortcode (n8-12, n8-12-v1.1, n8-12-v1.1-g3; any letter case) names: its type, ID, canonical shortcode, and status (moved, with canonicalShortcode, for a moved Generation's old shortcode).")
             .RequireScope(CredentialScopes.CatalogRead)
             .Produces<ResolveResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
@@ -59,7 +59,9 @@ internal static class ResolveEndpoints
 /// What a reference names. <c>entityType</c> is <c>song</c>, <c>version</c>, or <c>generation</c>;
 /// <c>status</c> is <c>active</c>, <c>deleted</c> (within its 30-day retention: a deleted Song with
 /// its Versions and Generations, or a Version deleted on its own), or, for a Version or a Generation, <c>archived</c>; <c>song</c> is there for a
-/// Version or a Generation, and <c>version</c> for a Generation only.
+/// Version or a Generation, and <c>version</c> for a Generation only. A Generation's old shortcode,
+/// from before it moved (#123), answers <c>moved</c> with the Generation where it is now: its
+/// <c>shortcode</c> and <c>canonicalShortcode</c> are the shortcode it has now.
 /// </summary>
 internal sealed record ResolveResponse(
     string EntityType,
@@ -67,7 +69,8 @@ internal sealed record ResolveResponse(
     string Shortcode,
     string Status,
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] ResolveSongResponse? Song,
-    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] ResolveVersionResponse? Version = null)
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] ResolveVersionResponse? Version = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? CanonicalShortcode = null)
 {
     public static ResolveResponse From(ResolvedReference resolved)
     {
@@ -79,7 +82,8 @@ internal sealed record ResolveResponse(
             resolved.Shortcode,
             resolved.Status,
             resolved.Song is { } song ? new ResolveSongResponse(song.Id, song.Shortcode) : null,
-            resolved.Version is { } version ? new ResolveVersionResponse(version.Id, version.Shortcode) : null);
+            resolved.Version is { } version ? new ResolveVersionResponse(version.Id, version.Shortcode) : null,
+            resolved.CanonicalShortcode);
     }
 }
 

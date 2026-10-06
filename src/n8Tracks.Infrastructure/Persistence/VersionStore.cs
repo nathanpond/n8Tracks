@@ -344,6 +344,74 @@ internal sealed class VersionStore(N8TracksDbContext context, TimeProvider time)
         return true;
     }
 
+    public async Task<bool> TryMoveGenerationAsync(
+        SongVersion target,
+        Generation moved,
+        int targetRevision,
+        int generationRevision,
+        ShortcodeAlias alias,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentNullException.ThrowIfNull(moved);
+        ArgumentNullException.ThrowIfNull(alias);
+
+        // The old shortcode first: the database moves a Generation only once its alias is recorded.
+        var row = new ShortcodeAliasRecord { Alias = alias.Alias, GenerationId = alias.GenerationId, CreatedUtc = UtcText.From(alias.CreatedUtc) };
+        context.ShortcodeAliases.Add(row);
+        await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        context.Entry(row).State = EntityState.Detached;
+
+        // The target's freeze and nothing else, as attaching writes it: its inputs are not written.
+        var id = target.Id;
+        var ordinal = target.LastGenerationOrdinal;
+        var updated = UtcText.From(target.UpdatedUtc);
+        var newRevision = target.Revision;
+        var frozen = await context.Versions
+            .Where(record => record.Id == id && record.Revision == targetRevision)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(record => record.IsFrozen, true)
+                    .SetProperty(record => record.LastGenerationOrdinal, ordinal)
+                    .SetProperty(record => record.UpdatedUtc, updated)
+                    .SetProperty(record => record.Revision, newRevision),
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (frozen != 1)
+        {
+            return false;
+        }
+
+        // Where the Generation is, and its revision: its rating, state, comments, image, Suno data,
+        // provider record, and event link are its own and go with it untouched.
+        var generationId = moved.Id;
+        var versionId = moved.VersionId;
+        var songId = moved.SongId;
+        var newOrdinal = moved.Ordinal;
+        var generationRevisionAfter = moved.Revision;
+        return await context.Generations
+            .Where(record => record.Id == generationId && record.Revision == generationRevision)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(record => record.VersionId, versionId)
+                    .SetProperty(record => record.SongId, songId)
+                    .SetProperty(record => record.Ordinal, newOrdinal)
+                    .SetProperty(record => record.Revision, generationRevisionAfter),
+                cancellationToken)
+            .ConfigureAwait(false) == 1;
+    }
+
+    public async Task<ShortcodeAlias?> FindAliasAsync(string alias, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(alias);
+
+        var key = ShortcodeAlias.Normalise(alias);
+        var row = await context.ShortcodeAliases.AsNoTracking()
+            .SingleOrDefaultAsync(record => record.Alias == key, cancellationToken)
+            .ConfigureAwait(false);
+        return row is null ? null : new ShortcodeAlias(row.Alias, row.GenerationId, UtcText.Parse(row.CreatedUtc));
+    }
+
     public async Task<GenerationSummary?> FindGenerationAsync(Guid id, CancellationToken cancellationToken) =>
         (await GenerationRows.SummariesAsync(context, context.Generations.Where(generation => generation.Id == id), cancellationToken).ConfigureAwait(false))
             .SingleOrDefault();

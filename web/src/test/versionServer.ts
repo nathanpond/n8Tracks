@@ -219,6 +219,12 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     }[],
     /** When set, answers the next Selected Generation write (once) instead of the fake API. */
     nextSelectionWrite: undefined as (() => Response | Promise<Response>) | undefined,
+    /** Every "Create new Song from Generation" request (#123), in order: its Generation, If-Match, and body. */
+    moves: [] as { reference: string; ifMatch: string | null; body: Record<string, unknown> }[],
+    /** When set, answers the next move (once) instead of the fake API. */
+    nextMove: undefined as (() => Response | Promise<Response>) | undefined,
+    /** Old shortcodes of moved Generations (#123), each with the Song and shortcode it has now: they resolve as `moved`. */
+    moved: new Map<string, { song: string; shortcode: string }>(),
     /** Plays another client editing the Song: its revision goes up. */
     touchSongElsewhere() {
       server.song = { ...server.song, revision: server.song.revision + 1 };
@@ -437,6 +443,18 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
   const answerResolve = (reference: string) => {
     const key = reference.toLowerCase();
     const song = server.song;
+    const moved = server.moved.get(key);
+    if (moved !== undefined) {
+      return jsonResponse(200, {
+        entityType: 'generation',
+        id: '0199b1a0-6000-7000-9000-0000000000ff',
+        shortcode: moved.shortcode,
+        status: 'moved',
+        canonicalShortcode: moved.shortcode,
+        song: { id: '0199b1a0-1000-7000-9000-0000000000ff', shortcode: moved.song },
+        version: { id: '0199b1a0-2000-7000-9000-0000000000ff', shortcode: `${moved.song}-v1` },
+      });
+    }
     const generation = /^(.+)-g([1-9][0-9]*)$/.exec(key);
     const generated = server.versions.find((candidate) => candidate.shortcode === generation?.[1]);
     if (generation && generated) {
@@ -625,6 +643,70 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
       };
       server.versions = server.versions.map((other) => (other.id === version.id ? changed : other));
       return jsonResponse(200, changed);
+    }
+
+    const move = /\/api\/v1\/generations\/([^/]+)\/move-to-new-song$/.exec(path);
+    if (move && method === 'POST') {
+      const reference = decodeURIComponent(move[1] ?? '').toLowerCase();
+      const ifMatch = new Headers(init?.headers).get('If-Match');
+      const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as Record<
+        string,
+        unknown
+      >;
+      server.moves.push({ reference, ifMatch, body });
+      const nextMove = server.nextMove;
+      if (nextMove) {
+        server.nextMove = undefined;
+        return nextMove();
+      }
+      const generation = server.generations.find(
+        (candidate) =>
+          candidate.id.toLowerCase() === reference ||
+          candidate.shortcode.toLowerCase() === reference,
+      );
+      if (generation === undefined) {
+        return jsonResponse(404, { code: 'not_found' });
+      }
+      if (ifMatch !== `"${String(generation.revision)}"`) {
+        return jsonResponse(409, { code: 'revision_conflict', current: generation });
+      }
+      const title = typeof body.title === 'string' ? body.title.trim() : '';
+      if (title === '') {
+        return jsonResponse(422, {
+          code: 'validation_failed',
+          errors: { title: ['Enter a title.'] },
+        });
+      }
+      const choice = body.replacementGeneration ?? body.workflowState;
+      if (generation.isSelected && choice === undefined) {
+        return jsonResponse(422, { code: 'selection_choice_required' });
+      }
+      const newSong = {
+        ...baseSong,
+        id: '0199b1a0-1000-7000-9000-0000000000ff',
+        shortcode: 'n8-8',
+        title,
+      };
+      const moved = {
+        ...generation,
+        shortcode: 'n8-8-v1-g1',
+        ordinal: 1,
+        song: { id: newSong.id, shortcode: newSong.shortcode },
+        version: { id: '0199b1a0-2000-7000-9000-0000000000ff', shortcode: 'n8-8-v1' },
+        isSelected: true,
+        revision: generation.revision + 1,
+      };
+      server.generations = server.generations.filter((other) => other.id !== generation.id);
+      server.moved.set(generation.shortcode, {
+        song: newSong.shortcode,
+        shortcode: moved.shortcode,
+      });
+      return jsonResponse(201, {
+        song: newSong,
+        version: { id: moved.version.id, shortcode: moved.version.shortcode },
+        generation: moved,
+        alias: generation.shortcode,
+      });
     }
 
     const generationWrite = /\/api\/v1\/generations\/([^/]+)(?:\/comments(?:\/([^/]+))?)?$/.exec(

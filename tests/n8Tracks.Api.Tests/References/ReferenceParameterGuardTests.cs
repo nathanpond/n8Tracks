@@ -134,6 +134,8 @@ public sealed class ReferenceParameterGuardTests
 
         // 409 revision_conflict: the Generation (or its comment) was found, and a revision it is not at changes nothing.
         ["PATCH /api/v1/generations/{reference}"] = static (c, _, version) => c.SendAsync(HttpMethod.Patch, $"generations/{c.GenerationOf(version)}", """{"rating":4}""", revision: 999),
+        ["POST /api/v1/generations/{reference}/move-to-new-song"] = static (c, _, version) =>
+            c.SendAsync(HttpMethod.Post, $"generations/{c.GenerationOf(version)}/move-to-new-song", """{"title":"Moved"}""", revision: 999),
         ["PATCH /api/v1/generations/{reference}/comments/{commentId:guid}"] = static (c, _, version) =>
             c.SendAsync(HttpMethod.Patch, $"generations/{c.GenerationOf(version)}/comments/{c.CommentId}", """{"text":"Changed"}""", revision: 999),
         ["DELETE /api/v1/generations/{reference}/comments/{commentId:guid}"] = static (c, _, version) =>

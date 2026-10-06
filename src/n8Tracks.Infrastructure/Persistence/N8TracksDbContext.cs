@@ -27,8 +27,15 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
     /// <summary>The trigger that refuses changing a frozen Version's lyrics, styles, kind, model, or options, or unfreezing it.</summary>
     public const string VersionFrozenTrigger = "tr_versions_frozen_inputs_never_change";
 
-    /// <summary>The trigger that refuses any change to a Generation's Version, Song, or ordinal.</summary>
-    public const string GenerationFixedTrigger = "tr_generations_identity_never_changes";
+    /// <summary>
+    /// The trigger that refuses any change to a Generation's Version, Song, or ordinal but a move
+    /// (#123): to the newest ordinal of another, frozen Version of the Song it names, once its old
+    /// shortcode is recorded as its alias, and never to a shortcode that is another's alias.
+    /// </summary>
+    public const string GenerationMoveTrigger = "tr_generations_move_only_leaving_an_alias";
+
+    /// <summary>The trigger that refuses a new Generation (or a restored one) at a shortcode that is another Generation's alias.</summary>
+    public const string GenerationAliasReservedTrigger = "tr_generations_aliases_stay_reserved";
 
     /// <summary>The trigger that refuses changing an external reference's Suno ID or kind, which frozen sources are compared by.</summary>
     public const string ExternalReferenceFixedTrigger = "tr_external_suno_references_identity_never_changes";
@@ -82,6 +89,8 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
     public DbSet<GenerationEventLinkRecord> GenerationEventLinks => Set<GenerationEventLinkRecord>();
 
     public DbSet<ExternalSunoReferenceRecord> ExternalSunoReferences => Set<ExternalSunoReferenceRecord>();
+
+    public DbSet<ShortcodeAliasRecord> ShortcodeAliases => Set<ShortcodeAliasRecord>();
 
     public DbSet<VersionSourceRecord> VersionSources => Set<VersionSourceRecord>();
 
@@ -452,7 +461,8 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                 table.HasCheckConstraint("ck_generations_revision", "revision >= 1");
                 table.HasCheckConstraint("ck_generations_suno_id", "suno_id IS NULL OR length(suno_id) > 0");
                 table.HasCheckConstraint("ck_generations_rating", "rating IS NULL OR rating BETWEEN 1 AND 5");
-                table.HasTrigger(GenerationFixedTrigger);
+                table.HasTrigger(GenerationMoveTrigger);
+                table.HasTrigger(GenerationAliasReservedTrigger);
             });
             generation.HasKey(record => record.Id);
             generation.HasIndex(record => new { record.VersionId, record.Ordinal }).IsUnique();
@@ -482,6 +492,18 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                 .WithMany()
                 .HasForeignKey(record => record.ArtworkAssetId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // A moved Generation's old shortcodes (#123): kept for good, in lower case. No foreign key to
+        // the Generation, so an alias outlives its deletion and stays reserved after its purge.
+        modelBuilder.Entity<ShortcodeAliasRecord>(alias =>
+        {
+            alias.ToTable("shortcode_aliases", static table =>
+            {
+                table.HasCheckConstraint("ck_shortcode_aliases_alias", "length(alias) > 0 AND alias = lower(alias)");
+            });
+            alias.HasKey(record => record.Alias);
+            alias.HasIndex(record => record.GenerationId);
         });
 
         modelBuilder.Entity<ExternalSunoReferenceRecord>(reference =>

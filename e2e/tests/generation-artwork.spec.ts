@@ -40,6 +40,16 @@ async function expectLoaded(image: Locator): Promise<void> {
     .toBeGreaterThan(0);
 }
 
+/** Opens Version 1's Generations in the Versions table unless they are open already. */
+async function openVersionOne(page: Page): Promise<void> {
+  const chevron = page
+    .getByRole('region', { name: 'Versions and Generations' })
+    .getByRole('button', { name: 'Generations of Version 1' });
+  if ((await chevron.getAttribute('aria-expanded')) !== 'true') {
+    await chevron.click();
+  }
+}
+
 /** Opens the Song page's Details panel unless it is open already (its state is remembered); its artwork group. */
 async function openDetails(page: Page): Promise<Locator> {
   const details = page.getByRole('button', { name: 'Details', exact: true });
@@ -130,12 +140,7 @@ test.describe('a Generation’s cover image as the Song’s artwork', () => {
     await expectAccessibleInLightAndDark(page);
 
     // The Generation's row shows its image (its Version is open already when the panel was).
-    const chevron = page
-      .getByRole('region', { name: 'Versions and Generations' })
-      .getByRole('button', { name: 'Generations of Version 1' });
-    if ((await chevron.getAttribute('aria-expanded')) !== 'true') {
-      await chevron.click();
-    }
+    await openVersionOne(page);
     await expectLoaded(
       page
         .locator(`tr[data-generation="${first}"]`)

@@ -14,6 +14,11 @@ export interface ResolvedReference {
   song?: { id: string; shortcode: string };
   /** The Version a Generation belongs to; absent otherwise. */
   version?: { id: string; shortcode: string };
+  /**
+   * For a moved Generation's old shortcode (`status: 'moved'`, #123), the shortcode it has now (the
+   * same as `shortcode`); absent otherwise.
+   */
+  canonicalShortcode?: string;
 }
 
 function isNamed(value: unknown): boolean {
@@ -33,7 +38,8 @@ function isResolvedReference(value: unknown): value is ResolvedReference {
     typeof value.shortcode === 'string' &&
     typeof value.status === 'string' &&
     isNamed(value.song) &&
-    isNamed(value.version)
+    isNamed(value.version) &&
+    (value.canonicalShortcode === undefined || typeof value.canonicalShortcode === 'string')
   );
 }
 
@@ -61,6 +67,27 @@ export async function resolveReference(
   } catch {
     return { kind: 'failed' };
   }
+}
+
+/** Router state a page opened from a moved Generation's old shortcode carries (#123). */
+export interface MovedFromState {
+  movedFrom: string;
+}
+
+/** Whether `state` (a location's) says the page was opened from a moved Generation's old shortcode. */
+export function movedFromOf(state: unknown): string | undefined {
+  return isRecord(state) && typeof state.movedFrom === 'string' ? state.movedFrom : undefined;
+}
+
+/**
+ * Router state for opening what `reference` resolved to: for a moved Generation's old shortcode,
+ * that shortcode, so the page can say it moved; otherwise none.
+ */
+export function stateFor(
+  resolved: ResolvedReference,
+  reference: string,
+): MovedFromState | undefined {
+  return resolved.status === 'moved' ? { movedFrom: reference.trim().toLowerCase() } : undefined;
 }
 
 /**

@@ -303,17 +303,22 @@ public sealed class GenerationService(
             cancellationToken);
     }
 
-    /// <summary>The ID a Generation reference names: an ID as it is (the caller's lookup decides), a Generation shortcode looked up.</summary>
+    /// <summary>
+    /// The ID a Generation reference names: an ID as it is (the caller's lookup decides), a Generation
+    /// shortcode looked up where it is now or, failing that, as the alias a move left (#123), so an old
+    /// shortcode still finds the Generation wherever it has gone.
+    /// </summary>
     private async Task<Guid?> GenerationIdAsync(CatalogReference reference, CancellationToken cancellationToken) =>
         reference.Kind switch
         {
             ReferenceKind.Id => reference.Id,
             ReferenceKind.Generation => await versions.FindGenerationIdByShortcodeAsync(
-                    reference.SongShortcodeNumber,
-                    reference.VersionNumber!.ToString(),
-                    reference.GenerationOrdinal,
-                    cancellationToken)
-                .ConfigureAwait(false),
+                        reference.SongShortcodeNumber,
+                        reference.VersionNumber!.ToString(),
+                        reference.GenerationOrdinal,
+                        cancellationToken)
+                    .ConfigureAwait(false)
+                ?? (await versions.FindAliasAsync(reference.Text, cancellationToken).ConfigureAwait(false))?.GenerationId,
             _ => null,
         };
 }

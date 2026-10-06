@@ -156,6 +156,29 @@ public sealed record SongVersion(
         return (frozen, generation);
     }
 
+    /// <summary>
+    /// Receives a Generation moved from another Version (#123, #141): it takes this Version's next
+    /// ordinal (one more than the last ever given, so never one given before) and this Version's Song,
+    /// and its revision goes up by one; everything else about it (rating, state, Suno data) stays.
+    /// Returns it with this Version frozen, its revision up by one and its updated time
+    /// <paramref name="now"/>. Changes no input, like <see cref="AttachGeneration"/>. A Generation
+    /// already in this Version cannot be received.
+    /// </summary>
+    public (SongVersion Version, Generation Generation) ReceiveGeneration(Generation generation, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(generation);
+        if (generation.VersionId == Id)
+        {
+            throw new ArgumentException("The Generation is already this Version's.", nameof(generation));
+        }
+
+        var ordinal = checked(LastGenerationOrdinal + 1);
+        var moved = generation with { VersionId = Id, SongId = SongId, Ordinal = ordinal, Revision = checked(generation.Revision + 1) };
+        var frozen = Copy(Name, Notes, Visibility, Lyrics, Styles, Inputs, Lineage, checked(Revision + 1), now, isFrozen: true, ordinal);
+
+        return (frozen, moved);
+    }
+
     private SongVersion Copy(
         string? name,
         string? notes,

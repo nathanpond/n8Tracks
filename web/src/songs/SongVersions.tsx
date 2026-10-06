@@ -2,7 +2,7 @@ import { Anchor, Button, Grid, Group, Paper, Stack, Text, Title } from '@mantine
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router';
 import { isNamedBy, useSongGenerations, type Generation } from '../api/generations';
-import { resolveReference } from '../api/references';
+import { movedFromOf, pageFor, resolveReference, stateFor } from '../api/references';
 import { readSong, type Song } from '../api/songs';
 import {
   readSongVersions,
@@ -14,6 +14,7 @@ import {
 } from '../api/versions';
 import type { EditorText } from '../editor/useSnapshots';
 import { GenerationPanel, type GenerationPanelContent } from '../generations/GenerationPanel';
+import { MoveToNewSongDialog } from '../generations/MoveToNewSongDialog';
 import { useGenerationChoices } from '../generations/useGenerationChoices';
 import { useRateGeneration, type RatingProblem } from '../generations/useRateGeneration';
 import { CreateVersionDialog } from './CreateVersionDialog';
@@ -161,10 +162,13 @@ export function SongVersions({
     markSelected: generations.markSelected,
     onProblem: setRatingProblem,
   });
+  /** The Generation "Create new Song from Generation" is open for (#123). */
+  const [moving, setMoving] = useState<Generation | undefined>();
   const generationActions = {
     onSetState: choices.setState,
     onSelect: choices.select,
     onClearSelection: choices.clear,
+    onMoveToNewSong: setMoving,
     busy: choices.busy,
   };
   const parameters = new URLSearchParams(location.search);
@@ -279,6 +283,31 @@ export function SongVersions({
           : linkTo(generationVersion),
     };
   })();
+
+  // A Generation's old address, from before it moved to another Song (#123), opens it where it is
+  // now, saying so: its old shortcode resolves as moved.
+  const missingGeneration = panelContent.kind === 'not-found' ? panelContent.reference : undefined;
+  useEffect(() => {
+    if (missingGeneration === undefined) {
+      return undefined;
+    }
+    const controller = new AbortController();
+    void resolveReference(missingGeneration, controller.signal).then((result) => {
+      if (
+        !controller.signal.aborted &&
+        result.kind === 'found' &&
+        result.resolved.status === 'moved'
+      ) {
+        void navigate(pageFor(result.resolved), {
+          replace: true,
+          state: stateFor(result.resolved, missingGeneration),
+        });
+      }
+    });
+    return () => {
+      controller.abort();
+    };
+  }, [missingGeneration, navigate]);
 
   /** The panel closes onto the Generation's Version, which the editor already shows. */
   const closePanel = () => {
@@ -587,6 +616,29 @@ export function SongVersions({
         update={generations.update}
         actions={generationActions}
         problem={ratingProblem}
+        movedFrom={movedFromOf(location.state)}
+      />
+      <MoveToNewSongDialog
+        generation={moving}
+        song={song}
+        others={
+          generations.state.phase === 'ready' && moving !== undefined
+            ? generations.state.data.filter((generation) => generation.id !== moving.id)
+            : []
+        }
+        onClose={() => {
+          setMoving(undefined);
+        }}
+        onMoved={(result) => {
+          setMoving(undefined);
+          // The new Song opens with the Generation's panel, which says where it came from.
+          void navigate(
+            `/songs/${result.song.shortcode}/generations/${result.generation.shortcode}`,
+            {
+              state: { movedFrom: result.alias },
+            },
+          );
+        }}
       />
     </Stack>
   );

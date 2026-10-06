@@ -71,6 +71,8 @@ export interface GenerationRowActions {
   onSetState: (generation: Generation, state: 'active' | 'archived') => void;
   onSelect: (generation: Generation) => void;
   onClearSelection: () => void;
+  /** Opens "Create new Song from Generation" (#123); the control is left out without it. */
+  onMoveToNewSong?: (generation: Generation) => void;
   busy: boolean;
 }
 

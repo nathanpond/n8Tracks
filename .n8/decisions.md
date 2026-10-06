@@ -2702,3 +2702,64 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** #122 lands as one commit, not four (model, triggers, guard, API) as the M4 plan's risk note suggested.
   **Why:** None of the four compiles or passes on its own. The entity's new `Lineage` parameter changes every construction site and the store. The guard's `inputs` key check fails until the API returns the lineage keys. The retained-shape and startup tests fail until the migration exists. Splitting would leave intermediate commits with a red gate on a shared milestone branch.
   **Issue:** #122
+- **Decision:** D2, applied. A new migration, `AddShortcodeAliases` (`20261006220000`), adds `shortcode_aliases` (alias PK, lower case by CHECK; `generation_id` with no FK, so an alias outlives deletion and purge; `created_utc`). It drops `tr_generations_identity_never_changes` and adds two triggers:
+  - `tr_generations_move_only_leaving_an_alias`: a change of a Generation's Version, Song or ordinal is refused unless all of these hold. It goes to another Version. That Version is frozen and belongs to the Song named. The new ordinal equals that Version's `last_generation_ordinal`, so it was just given and an ordinal is never reused. The old shortcode is recorded as this Generation's alias. The new place is not another Generation's alias.
+  - `tr_generations_aliases_stay_reserved`, on insert: no Generation, a restored one included, may take a shortcode that is another Generation's alias.
+
+  `DatabaseStartupTests`, the `Generation.cs` doc and the `GenerationStore` doc are updated.
+  **Why:** This is the orchestrator's D2: forbid unsafe identity changes and allow only the move path. Checking the alias inside the trigger makes "a move leaves an alias" a database rule, not just a service rule. Comparing against the newest ordinal enforces "never reused" without a separate table.
+  **Issue:** #123
+- **Decision:** One shared move path. `SongVersion.ReceiveGeneration` (domain) gives the next ordinal, freezes the Version and raises both revisions. `IVersionStore.TryMoveGenerationAsync` writes the alias, the target's freeze and the Generation's place in one call. `GenerationMoveService.MoveWithinAsync` is internal and #141 reuses it. Its only public method is `MoveToNewSongAsync`. It refuses to move a Generation that is still selected out of its Song.
+  **Why:** This follows the M4 plan's risk note for #123/#141: one move service. Internal keeps the guard's public surface to the one user path. #141 calls it inside its commit transaction with a child Version it creates.
+  **Issue:** #123
+- **Decision:** The selection choice is shared with #124 and lives in `GenerationSelectionService`:
+  - Public record `SelectionChoice(ReplacementGeneration, WorkflowState)`.
+  - Internal `CheckChoiceAsync` and `ApplyChoiceAsync`.
+  - Constants `selection_choice_required`, `replacementGeneration` and `workflowState`.
+
+  The rules:
+  - The replacement may be any other Generation of the Song, whatever its state.
+  - Sending both choices is a 422 under `replacementGeneration`.
+  - A choice sent for a Generation that is not selected is a 422 under the field sent.
+  - A workflow state clears the selection, then sets the state. Each write raises the Song's revision.
+
+  `GenerationSelectionService` now also takes `IWorkflowStateStore`.
+  **Why:** The story says the choice is made "exactly as when deleting it" and the refusal code is "shared with the deletion story". #124 can call the same two internal methods.
+  **Issue:** #123
+- **Decision:** The moved Generation always becomes the new Song's Selected Generation, not only when it was the old Song's.
+  **Why:** AC 6 requires this when it was selected. The discretion says "the new Song … shows the moved Generation's" artwork, and a Song shows a Generation's image only through its Selected Generation. It is also the Song's only Generation.
+  **Issue:** #123
+- **Decision:** A move raises the Generation's revision by one. Rating, state, comments, image, Suno data, provider record and event link do not change. If-Match carries the Generation's revision, and the 201 sets the ETag to the new revision.
+  **Why:** Another client holding the old revision should get a conflict and not act on the old place. The AC lists what must stay unchanged, and the revision is not on that list.
+  **Issue:** #123
+- **Decision:** The new Version 1 is written through `Song.Create`, then a direct `SongVersion` copy. The copy takes the source's name, lyrics, styles, inputs (kind and modes included) and lineage. Its notes are "Created from Version <source shortcode> when Generation <old shortcode> moved to this Song." This text is how "the new Version records the source Version it came from"; no new column was added. The lineage is written with `ReplaceLineageAsync` before the move freezes the Version. The source Version's lineage stays as it is, and the lineage tables' freeze triggers allow inserts only while the parent is unfrozen. No automatic Song relationships are made from the copied lineage. The only one recorded is Derived From, new Song to old.
+  **Why:** The discretion says "its notes say which Version it came from". A column would be a schema change the story does not name. Relationships from a copied lineage would duplicate the original Song's own.
+  **Issue:** #123
+- **Decision:** "The original Song's Suno workspace" is not copied: Songs have no workspace field yet (#129 adds workspaces). The new Song starts in the first visible workflow state, with no primary Artist, Genres, Tags, memberships or artwork.
+  **Why:** There is nothing to copy today. #129 should copy `workspace` in `GenerationMoveService.MoveToNewSongAsync` when it adds the field.
+  **Issue:** #123
+- **Decision:** Resolution:
+  - An alias resolves with `status: "moved"`, `shortcode` and `canonicalShortcode` set to where the Generation is now, and the Song and Version where it is now.
+  - Every Generation lookup by shortcode (`GenerationService.FindAsync`, used by every `/generations/{reference}` endpoint) falls back to the alias. An alias of a deleted Generation resolves as its ID would (deleted).
+  - A purged alias (`generation_id` null) names nothing, so it is a 404.
+
+  Web: the Go to box, `/go/` and an old Generation URL (`/songs/<old>/generations/<old shortcode>`, which resolves and redirects) open the Generation where it is now. The panel then says "<old> moved: this Generation is now <new>." The router state is `{movedFrom}`.
+  **Why:** The key link and the must-have say "an old shortcode pasted anywhere still finds the Generation".
+  **Issue:** #123
+- **Decision:** The endpoint is `POST /api/v1/generations/{reference}/move-to-new-song`, `SessionOnly()`. The session-only count is now 47. Answers:
+  - 201 with `{song, version, generation, alias}`, with `Location` set to the new Song.
+  - 404 when the Generation is not found.
+  - 409 `revision_conflict`, with `current` set to the Generation.
+  - 428 or 400 when the revision is missing or invalid.
+  - 422 `validation_failed` for the title or the choice.
+  - 422 `selection_choice_required`, with `generationId` and `shortcode`.
+
+  Guards: the invariant 1 guard has an API exerciser and a service exerciser. Each moves a fresh Generation off the frozen target, then asserts that the target's stored inputs are byte-identical and that the new Version's stored inputs equal them. `ReceiveGeneration` is classified as "copies the inputs as they are, and freezes". The scope guard and `ReferenceParameterGuardTests.Calls` are extended.
+  **Why:** The route and the session-only requirement are in the story and its AC. Invariant 1 requires every new write path to be listed in the guard.
+  **Issue:** #123
+- **Decision:** The atomicity test swaps `IVersionStore` for a `DispatchProxy` that throws at `TryMoveGenerationAsync`, after the new Song, Version 1, lineage, relationship and selection choice have been written. It asserts that the whole-database fingerprint (`RestoreApi.Fingerprint`) is unchanged, and that the next Song still takes the next shortcode number.
+  **Why:** The story's test plan says to force a failure after the Song is created and assert that nothing changed. A proxy needs no production test hook.
+  **Issue:** #123
+- **Decision:** Rule 3: `e2e/tests/generation-artwork.spec.ts` (#121) had a `playwright/no-conditional-in-test` warning, so `npm run lint` failed in `e2e/` on the branch. The conditional chevron click now sits in a helper, `openVersionOne`, which is the same pattern as its `openDetails`.
+  **Why:** The gate must pass. This is a one-line move with no change in behaviour.
+  **Issue:** #123

@@ -319,6 +319,7 @@ public sealed class Program
             app.MapGenerations();
             app.MapSongSelection();
             app.MapGenerationArtwork();
+            app.MapGenerationMoves();
             app.MapResolve();
             app.MapSuno();
             app.MapBackups();

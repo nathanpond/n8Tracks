@@ -432,6 +432,27 @@ public interface IVersionStore
     /// </summary>
     Task<bool> TryAttachGenerationAsync(SongVersion version, Generation generation, int revision, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Inside the caller's transaction, moves a Generation (#123, #141): records
+    /// <paramref name="alias"/> (its old shortcode), stores <paramref name="target"/>'s freeze (its
+    /// frozen flag, last Generation ordinal, revision, and updated time, nothing else) if the target
+    /// Version is still at <paramref name="targetRevision"/>, and stores <paramref name="moved"/>'s
+    /// Version, Song, ordinal, and revision if the Generation is still at
+    /// <paramref name="generationRevision"/>, touching none of its other columns. False when either is
+    /// gone or at another revision; the caller's transaction then rolls back what was written. The
+    /// database refuses a move that leaves no alias, reuses an ordinal, or lands on another's alias.
+    /// </summary>
+    Task<bool> TryMoveGenerationAsync(
+        SongVersion target,
+        Generation moved,
+        int targetRevision,
+        int generationRevision,
+        ShortcodeAlias alias,
+        CancellationToken cancellationToken);
+
+    /// <summary>The alias <paramref name="alias"/> (a shortcode, in any case) of a moved Generation; null when it is no alias.</summary>
+    Task<ShortcodeAlias?> FindAliasAsync(string alias, CancellationToken cancellationToken);
+
     /// <summary>The Generation with <paramref name="id"/>; null when there is none.</summary>
     Task<GenerationSummary?> FindGenerationAsync(Guid id, CancellationToken cancellationToken);
 
