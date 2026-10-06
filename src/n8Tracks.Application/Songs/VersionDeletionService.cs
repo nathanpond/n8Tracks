@@ -77,6 +77,7 @@ public sealed class VersionDeletionService(
     VersionDefaultsService defaults,
     ISongStore songs,
     GenerationArtworkService generationArtwork,
+    TombstoneService tombstones,
     IExclusiveTransaction transaction,
     TimeProvider time)
 {
@@ -223,15 +224,19 @@ public sealed class VersionDeletionService(
     /// Inside the transaction: the Version and its Generations as roots (its history follows by
     /// cascade), labelled by its shortcode, with the files of the Generations' images (#121), which
     /// the group keeps. When one of them is the Song's Selected Generation, the selection is cleared
-    /// and kept with the group (#120), so a restore sets it again.
+    /// and kept with the group (#120), so a restore sets it again. Each Generation with a Suno ID gets
+    /// a provider tombstone (#130), which a restore removes.
     /// </summary>
     private async Task<RetentionGroup> RetainAsync(VersionSummary version, CancellationToken cancellationToken)
     {
         var generations = await versions.GenerationIdsAsync(version.Id, cancellationToken).ConfigureAwait(false);
         var files = await generationArtwork.RetainedFilesAsync(generations, cancellationToken).ConfigureAwait(false);
 
-        // Sources of other Versions that point at these Generations keep their Suno IDs (#122).
-        await versions.RewriteSourcesOfDeletedGenerationsAsync(generations, [version.Id], time.GetUtcNow(), cancellationToken).ConfigureAwait(false);
+        // Sources of other Versions that point at these Generations keep their Suno IDs (#122), and
+        // each Generation with a Suno ID gets a provider tombstone (#130).
+        var now = time.GetUtcNow();
+        await versions.RewriteSourcesOfDeletedGenerationsAsync(generations, [version.Id], now, cancellationToken).ConfigureAwait(false);
+        await tombstones.RecordForAsync(generations, now, cancellationToken).ConfigureAwait(false);
         return await retention.RetainWithinAsync(
             new RetentionRequest(
                 RetainedRecordTypes.Version,

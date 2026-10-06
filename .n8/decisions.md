@@ -2903,3 +2903,27 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
   The bite tests are "mapping removed" and "mapped to a field that does not store it".
   **Why:** This is AC 7. The checker still knows nothing of how n8Tracks stores the association.
   **Issue:** #129
+- **Decision:** Provider tombstones are stored in a new table, `provider_tombstones`, created by migration `AddProviderTombstones` (`20261006235000`).
+  - Columns: `suno_id` (the PK, `length > 0` as on `generations.suno_id`), `kind` (`clip` only), `deleted_utc`, and `title` (nullable).
+  - The table has no foreign key, so the retention prune never reaches it.
+  - The domain record is `Domain/Suno/ProviderTombstone.cs` (`ProviderTombstoneKind.Clip`). The service is `Application/Suno/TombstoneService.cs`, with `IProviderTombstoneStore`.
+  - The service's public method is the check, `FindAsync(sunoId)`. `RecordForAsync(generationIds, deletedUtc)` and `RemoveAsync(sunoId)` are internal and run inside the caller's transaction.
+  - The service takes no catalog type, so it stays outside the invariant-1 guard's catalog namespaces.
+  **Why:** The new table is the one #124's and #130's discretion name. Keying by Suno ID alone makes a tombstone independent of the retention group, so it outlives the prune.
+  **Issue:** #130
+- **Decision:** A tombstone is recorded inside each deletion's transaction, after the sources are rewritten and just before `RetainWithinAsync`, using the deletion's own time. This happens in `GenerationDeletionService.DeleteAsync`, in `VersionDeletionService.RetainAsync` (both the plain path and the path that creates a blank Version), and in `SongDeletionService.DeleteAsync`. The Suno IDs and titles are read from the live `generations` rows of the IDs being retained, so a Generation without a Suno ID writes nothing. Recording an existing Suno ID again replaces that tombstone.
+  **Why:** This is where #124 left the hook. The deletion is then atomic: either the group and the tombstone both exist, or neither does.
+  **Issue:** #130
+- **Decision:** Removal on restore is an `AfterRestoreAsync` on `RetainedTypes.Generation`. It deletes the tombstone for each restored row's `suno_id`, through `ProviderTombstoneStore.RemoveAsync(context, …)`. I did not put it in `DeletedItemsService.RestoreWithinAsync`.
+  **Why:** Every restore path removes the tombstones of exactly the Generations that came back, and nothing else. That includes the container command and `RetentionService.RestoreAsync`, which #140's Reimport-through-retention uses. A refused restore rolls the removal back with everything else. Generations deleted earlier in groups of their own are not in the group, so their tombstones stay. This follows the existing restore-rule pattern (`EditorSnapshot` prunes through `EditorRevisionStore(row.Context)`).
+  **Issue:** #130
+- **Decision:** `GenerationAttachOptions` gains a trailing `bool Reimport = false`.
+  - Without it, `GenerationService.AttachAsync` returns `GenerationAttachOutcome.SunoIdTombstoned(ProviderTombstone)` for a tombstoned Suno ID. The code is `GenerationService.SunoIdTombstonedCode = "suno_id_tombstoned"`, and `GenerationsEndpoints.AttachRefusal` answers it as 409 with `sunoId` and `deletedAt`.
+  - With it, the clip attaches and its tombstone is removed in the same transaction.
+  - The check runs after the `suno_id_exists` check, so a live Generation wins.
+  - The `seed-generation` command reports the refusal and never reimports.
+  **Why:** This is the key link in #130 ("refuses a tombstoned Suno ID with `suno_id_tombstoned` unless the reimport option is set"), and invariant 3 needs it. The precedence (live first) matches #131's classifier rule. No attach endpoint exists yet, so the 409 is unit-tested through `AttachRefusal`.
+  **Issue:** #130
+- **Decision:** `GenerationServiceTests.TheSunoIdIsUniqueAmongLiveGenerationsOnly` (#117) now attaches the deleted Version's Suno ID again only with `Reimport: true`. First it asserts that the plain attach is refused with `SunoIdTombstoned`.
+  **Why:** The test assumed a retained Generation's Suno ID could simply be attached again. #130 deliberately changes that (invariant 3). The test's own comment had deferred reimport to "the deletion story", which is this one.
+  **Issue:** #130

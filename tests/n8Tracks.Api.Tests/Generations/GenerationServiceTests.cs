@@ -111,9 +111,11 @@ public sealed class GenerationServiceTests
             ["generation", "provider-record"],
             TestDatabase.Rows(factory.DataPath, "SELECT record_type FROM retention_records WHERE record_type IN ('generation', 'provider-record') ORDER BY position;"));
 
-        // A retained Generation does not hold its Suno ID: it can be attached again (reimporting the
-        // original is the deletion story's).
-        var again = await SongApi.AttachGenerationAsync(factory, "n8-1-v2", Clips.Minimal("retained-clip"));
+        // A retained Generation does not hold its Suno ID, but its deletion tombstoned it (#130): it is
+        // attached again only when the user chooses Reimport.
+        Assert.IsType<GenerationAttachOutcome.SunoIdTombstoned>(await SongApi.AttachAsync(factory, "n8-1-v2", Clips.Minimal("retained-clip")));
+        var again = Assert.IsType<GenerationAttachOutcome.Attached>(
+            await SongApi.AttachAsync(factory, "n8-1-v2", Clips.Minimal("retained-clip"), new GenerationAttachOptions(Reimport: true))).Generation;
         Assert.Equal("retained-clip", again.Generation.SunoId);
 
         // Restoring the deleted Version while the Suno ID is live clashes, and changes nothing.

@@ -3,6 +3,7 @@ using n8Tracks.Application.Auth;
 using n8Tracks.Application.References;
 using n8Tracks.Application.Retention;
 using n8Tracks.Application.Songs;
+using n8Tracks.Application.Suno;
 
 namespace n8Tracks.Application.Generations;
 
@@ -77,7 +78,9 @@ public abstract record GenerationDeleteOutcome
 /// keeps; the Song's own artwork, even when it is a copy of this image, is untouched. Its Version
 /// stays frozen and keeps its last ordinal, so neither the ordinal nor the shortcode is given out
 /// again. Sources of other Versions that pointed at it keep pointing at its Suno ID, as an external
-/// reference labelled Deleted (#122); no frozen Version's sources are changed otherwise.
+/// reference labelled Deleted (#122); no frozen Version's sources are changed otherwise. When it has a
+/// Suno ID, a provider tombstone is recorded in the same transaction (<see cref="TombstoneService"/>,
+/// #130), so no import brings the clip back unless the user chooses Reimport; a restore removes it.
 /// <para>
 /// When it is its Song's Selected Generation, the user says first what the Song selects instead
 /// (<see cref="SelectionChoice"/>, shared with the move of #123): another of its Generations, which
@@ -95,6 +98,7 @@ public sealed class GenerationDeletionService(
     GenerationSelectionService selection,
     IGenerationStore generationRows,
     GenerationArtworkService artwork,
+    TombstoneService tombstones,
     RetentionService retention,
     IExclusiveTransaction transaction,
     TimeProvider time)
@@ -175,8 +179,10 @@ public sealed class GenerationDeletionService(
                 var ids = new[] { generation.Generation.Id };
                 var files = await artwork.RetainedFilesAsync(ids, ct).ConfigureAwait(false);
 
-                // Sources of other Versions that point at it keep its Suno ID (#122).
+                // Sources of other Versions that point at it keep its Suno ID (#122), and a sync never
+                // brings it back unasked (#130).
                 await versions.RewriteSourcesOfDeletedGenerationsAsync(ids, [], now, ct).ConfigureAwait(false);
+                await tombstones.RecordForAsync(ids, now, ct).ConfigureAwait(false);
                 var group = await retention.RetainWithinAsync(
                     new RetentionRequest(
                         RetainedRecordTypes.Generation,

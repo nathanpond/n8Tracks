@@ -268,6 +268,16 @@ public sealed class GenerationEndpointTests
         Assert.Equal("n8-7-v1.1-g2", exists.ProblemDetails.Extensions["shortcode"]);
         Assert.Equal(existing.Generation.Id, exists.ProblemDetails.Extensions["generationId"]);
 
+        // #130: a clip deleted from n8Tracks names its Suno ID and when it was deleted.
+        var deletedUtc = new DateTimeOffset(2026, 10, 6, 12, 0, 0, TimeSpan.Zero);
+        var tombstoned = GenerationsEndpoints.AttachRefusal(
+            context,
+            new GenerationAttachOutcome.SunoIdTombstoned(new n8Tracks.Domain.Suno.ProviderTombstone("clip-gone", n8Tracks.Domain.Suno.ProviderTombstoneKind.Clip, deletedUtc, "Gone")));
+        Assert.Equal(StatusCodes.Status409Conflict, tombstoned.StatusCode);
+        Assert.Equal(GenerationService.SunoIdTombstonedCode, tombstoned.ProblemDetails.Extensions["code"]);
+        Assert.Equal("clip-gone", tombstoned.ProblemDetails.Extensions["sunoId"]);
+        Assert.Equal(deletedUtc.UtcDateTime, tombstoned.ProblemDetails.Extensions["deletedAt"]);
+
         var invalid = GenerationsEndpoints.AttachRefusal(context, new GenerationAttachOutcome.InvalidClip("The clip has no Suno ID."));
         Assert.Equal(StatusCodes.Status422UnprocessableEntity, invalid.StatusCode);
         Assert.Equal(GenerationService.InvalidClipCode, invalid.ProblemDetails.Extensions["code"]);

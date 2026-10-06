@@ -139,12 +139,17 @@ public sealed class SeedGenerationCommandTests
             Assert.Equal(raw, await record.Content.ReadAsStringAsync());
         }
 
-        // The same clip again, an invalid clip, and a file that is not there: refused, nothing changed.
+        // The same clip again, an invalid clip, a clip deleted from n8Tracks (#130), and a file that
+        // is not there: refused, nothing changed.
         var invalid = Path.Combine(files.Path, "invalid.json");
         await File.WriteAllTextAsync(invalid, """{"title":"no id"}""");
+        var deleted = Path.Combine(files.Path, "deleted.json");
+        await File.WriteAllTextAsync(deleted, Generations.Clips.Minimal("clip-deleted"));
+        TestDatabase.Execute(factory.DataPath, "INSERT INTO provider_tombstones (suno_id, kind, deleted_utc, title) VALUES ('clip-deleted', 'clip', '2026-10-06T00:00:00.000Z', NULL);");
         foreach (var (file, message) in new[]
         {
             (clip, "suno_id_exists: Generation n8-1-v1-g1 already holds that Suno ID"),
+            (deleted, "suno_id_tombstoned: a Generation with that Suno ID was deleted from n8Tracks"),
             (invalid, "invalid_clip: The clip has no Suno ID"),
             (Path.Combine(files.Path, "missing.json"), "The clip file cannot be read"),
         })

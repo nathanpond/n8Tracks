@@ -161,12 +161,17 @@ internal static class RetainedTypes
     /// with none. Shape 3 (#119) added its rating; an earlier record restores unrated. Shape 4 (#121)
     /// added its image, whose files the deleting group lists; an earlier record restores with none,
     /// and one whose asset is gone all the same restores without it, with a note. Its provider
-    /// record, event link, and comments go with it, as their own types.
+    /// record, event link, and comments go with it, as their own types. Once it is back, the provider
+    /// tombstone its deletion recorded (#130) is removed, whatever ran the restore (the container
+    /// command, or a Reimport), so a sync sees its clip as linked again; nothing else's tombstone is touched.
     /// </summary>
     public static readonly RetainedType Generation = new(RetainedRecordTypes.Generation, "generations", "Generation", ShapeVersion: 4)
     {
         Upgraders = new Dictionary<int, Func<JsonObject, JsonObject>> { [1] = GenerationShape1To2, [2] = GenerationShape2To3, [3] = GenerationShape3To4 }.ToFrozenDictionary(),
         PrepareRestoreAsync = static (row, cancellationToken) => KeepArtworkIfStoredAsync(row, cancellationToken),
+        AfterRestoreAsync = static (row, cancellationToken) => row.Values.GetValueOrDefault("suno_id") is string sunoId
+            ? ProviderTombstoneStore.RemoveAsync(row.Context, sunoId, cancellationToken)
+            : Task.CompletedTask,
     };
 
     /// <summary>

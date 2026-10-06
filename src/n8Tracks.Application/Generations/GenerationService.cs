@@ -3,13 +3,19 @@ using n8Tracks.Application.References;
 using n8Tracks.Application.Songs;
 using n8Tracks.Application.Suno;
 using n8Tracks.Domain.Songs;
+using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Application.Generations;
 
 /// <summary>What else an attach does.</summary>
 /// <param name="EventId">The Generation Event the new Generation came from, which must exist; none when null.</param>
 /// <param name="ExportId">The Suno export the clip arrived in, kept on its provider record; none when null.</param>
-public sealed record GenerationAttachOptions(Guid? EventId = null, Guid? ExportId = null);
+/// <param name="Reimport">
+/// The user explicitly chose Reimport for this clip (#130, #140): a clip whose Generation was deleted
+/// from n8Tracks (it has a provider tombstone) is attached afresh and its tombstone removed. Without it
+/// such a clip is refused (<see cref="GenerationAttachOutcome.SunoIdTombstoned"/>).
+/// </param>
+public sealed record GenerationAttachOptions(Guid? EventId = null, Guid? ExportId = null, bool Reimport = false);
 
 /// <summary>How attaching a Generation ended. Only <see cref="Attached"/> stored anything.</summary>
 public abstract record GenerationAttachOutcome
@@ -29,6 +35,12 @@ public abstract record GenerationAttachOutcome
 
     /// <summary>A live Generation already holds the clip's Suno ID (<see cref="GenerationService.SunoIdExistsCode"/>).</summary>
     public sealed record SunoIdExists(GenerationSummary Existing) : GenerationAttachOutcome;
+
+    /// <summary>
+    /// A Generation holding the clip's Suno ID was deleted from n8Tracks (<see cref="GenerationService.SunoIdTombstonedCode"/>),
+    /// and the user did not choose Reimport for it (<see cref="GenerationAttachOptions.Reimport"/>).
+    /// </summary>
+    public sealed record SunoIdTombstoned(ProviderTombstone Tombstone) : GenerationAttachOutcome;
 
     /// <summary>The options name a Generation Event that does not exist.</summary>
     public sealed record EventNotFound : GenerationAttachOutcome;
@@ -105,6 +117,7 @@ public sealed class GenerationService(
     IVersionStore versions,
     IGenerationStore generations,
     ISongStore songs,
+    TombstoneService tombstones,
     IExclusiveTransaction transaction,
     TimeProvider time)
 {
@@ -114,12 +127,18 @@ public sealed class GenerationService(
     /// <summary>The problem code (409) for a Suno ID a live Generation already holds; the answer names its shortcode.</summary>
     public const string SunoIdExistsCode = "suno_id_exists";
 
+    /// <summary>The problem code (409) for a Suno ID whose Generation was deleted from n8Tracks, attached without Reimport (#130).</summary>
+    public const string SunoIdTombstonedCode = "suno_id_tombstoned";
+
     /// <summary>
     /// Attaches a new Generation to the Version a reference (ID or shortcode) names, archived or not,
     /// raising the Version's revision by one and freezing it. With <paramref name="rawClip"/> (the text
     /// of one clip object as Suno returned it) the Generation keeps the clip's normalized fields and,
     /// as its provider record, the text itself; a clip that is not valid, or whose Suno ID a live
-    /// Generation holds, is refused and nothing is stored. Without one, the Generation has no Suno data.
+    /// Generation holds, is refused and nothing is stored. So is a clip whose Generation was deleted
+    /// from n8Tracks (it has a provider tombstone, #130), unless <see cref="GenerationAttachOptions.Reimport"/>
+    /// is set, when it is attached afresh and the tombstone removed in the same transaction. Without a
+    /// clip, the Generation has no Suno data.
     /// </summary>
     public async Task<GenerationAttachOutcome> AttachAsync(
         string? versionReference,
@@ -157,6 +176,13 @@ public sealed class GenerationService(
                     return new GenerationAttachOutcome.SunoIdExists(existing);
                 }
 
+                // A clip the user deleted stays deleted unless they chose Reimport for it (invariant 3).
+                var tombstone = clip is null ? null : await tombstones.FindAsync(clip.Fields.SunoId, ct).ConfigureAwait(false);
+                if (tombstone is not null && !options.Reimport)
+                {
+                    return new GenerationAttachOutcome.SunoIdTombstoned(tombstone);
+                }
+
                 if (options.EventId is { } eventId && !await generations.EventExistsAsync(eventId, ct).ConfigureAwait(false))
                 {
                     return new GenerationAttachOutcome.EventNotFound();
@@ -187,6 +213,11 @@ public sealed class GenerationService(
                 if (options.EventId is { } linked)
                 {
                     await generations.LinkAsync(linked, [generation.Id], ct).ConfigureAwait(false);
+                }
+
+                if (tombstone is not null)
+                {
+                    await tombstones.RemoveAsync(tombstone.SunoId, ct).ConfigureAwait(false);
                 }
 
                 var stored = await generations.FindAsync(generation.Id, ct).ConfigureAwait(false)

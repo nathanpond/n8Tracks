@@ -98,6 +98,8 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
 
     public DbSet<SunoWorkspaceRecord> SunoWorkspaces => Set<SunoWorkspaceRecord>();
 
+    public DbSet<ProviderTombstoneRecord> ProviderTombstones => Set<ProviderTombstoneRecord>();
+
     public DbSet<VersionSourceRecord> VersionSources => Set<VersionSourceRecord>();
 
     public DbSet<VersionInspirationPlaylistRecord> VersionInspirationPlaylists => Set<VersionInspirationPlaylistRecord>();
@@ -536,6 +538,18 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                 table.HasCheckConstraint("ck_suno_workspaces_state", "state IN ('available', 'unavailable')");
             });
             workspace.HasKey(record => record.SunoId);
+        });
+
+        // Provider tombstones (#130): keyed by Suno ID alone, with no foreign key, so they outlive the
+        // retention prune of the Generations they stand for.
+        modelBuilder.Entity<ProviderTombstoneRecord>(tombstone =>
+        {
+            tombstone.ToTable("provider_tombstones", static table =>
+            {
+                table.HasCheckConstraint("ck_provider_tombstones_suno_id", "length(suno_id) > 0");
+                table.HasCheckConstraint("ck_provider_tombstones_kind", $"kind IN ('{ProviderTombstoneRecord.ClipKind}')");
+            });
+            tombstone.HasKey(record => record.SunoId);
         });
 
         modelBuilder.Entity<SunoPersonaRecord>(persona =>

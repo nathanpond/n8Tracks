@@ -23,7 +23,8 @@ namespace n8Tracks.Api.Cli;
 /// creates the database or applies a migration. Each run adds another Generation, archived Versions
 /// included. On success it writes the new Generation's shortcode, and nothing else, to standard
 /// output; messages go to standard error. Exit code 0 on success, 1 for every refusal (an unknown
-/// shortcode, an unreadable file, an invalid clip, and a Suno ID a live Generation holds included).
+/// shortcode, an unreadable file, an invalid clip, a Suno ID a live Generation holds, and one whose
+/// Generation was deleted (#130) included).
 /// </para>
 /// </summary>
 internal static class SeedGenerationCommand
@@ -168,6 +169,10 @@ internal static class SeedGenerationCommand
 
             case GenerationAttachOutcome.SunoIdExists exists:
                 error.WriteLine($"{GenerationService.SunoIdExistsCode}: Generation {exists.Existing.Shortcode} already holds that Suno ID. Nothing was changed.");
+                return 1;
+
+            case GenerationAttachOutcome.SunoIdTombstoned:
+                error.WriteLine($"{GenerationService.SunoIdTombstonedCode}: a Generation with that Suno ID was deleted from n8Tracks, and seeding never reimports it. Nothing was changed.");
                 return 1;
 
             case GenerationAttachOutcome.IncompleteSources incomplete:

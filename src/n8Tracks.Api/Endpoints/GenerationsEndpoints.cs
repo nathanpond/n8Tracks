@@ -129,8 +129,10 @@ internal static class GenerationsEndpoints
 
     /// <summary>
     /// The problem an attach that stored nothing answers: 404 <c>not_found</c> (no such Version or
-    /// Generation Event), 422 <c>invalid_clip</c> with the reason, or 409 <c>suno_id_exists</c> naming
-    /// the live Generation that holds the Suno ID (<c>generationId</c>, <c>shortcode</c>).
+    /// Generation Event), 422 <c>invalid_clip</c> with the reason, 409 <c>suno_id_exists</c> naming
+    /// the live Generation that holds the Suno ID (<c>generationId</c>, <c>shortcode</c>), or 409
+    /// <c>suno_id_tombstoned</c> for a clip deleted from n8Tracks and not reimported (<c>sunoId</c>,
+    /// <c>deletedAt</c>; #130).
     /// </summary>
     public static ProblemHttpResult AttachRefusal(HttpContext context, GenerationAttachOutcome outcome) => outcome switch
     {
@@ -143,6 +145,12 @@ internal static class GenerationsEndpoints
             GenerationService.SunoIdExistsCode,
             $"Generation {exists.Existing.Shortcode} already holds this Suno clip.",
             [new("generationId", exists.Existing.Generation.Id), new("shortcode", exists.Existing.Shortcode)]),
+        GenerationAttachOutcome.SunoIdTombstoned tombstoned => ApiProblem.For(
+            context,
+            StatusCodes.Status409Conflict,
+            GenerationService.SunoIdTombstonedCode,
+            "This Suno clip was deleted from n8Tracks. It comes back only if you choose Reimport for it.",
+            [new("sunoId", tombstoned.Tombstone.SunoId), new("deletedAt", tombstoned.Tombstone.DeletedUtc.UtcDateTime)]),
         GenerationAttachOutcome.IncompleteSources incomplete => ApiProblem.ValidationFailed(
             context,
             incomplete.Errors.GroupBy(static error => error.Field).ToDictionary(static field => field.Key, static field => field.Select(static error => error.Message).ToArray(), StringComparer.Ordinal),
