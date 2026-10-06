@@ -22,6 +22,8 @@ import {
   type ArtistQuery,
 } from '../api/artists';
 import { ArtworkImage } from '../common/ArtworkImage';
+import { useDeletedCollection } from '../common/collectionDeletion';
+import { DeletedCollectionNotice } from '../common/DeleteCollection';
 import { Notice } from '../components/Notice';
 import { NewArtistDialog } from './NewArtistDialog';
 
@@ -72,6 +74,7 @@ export function ArtistsPage() {
   const query = artistQueryFrom(searchParams);
   const { state, reload } = useArtists(query);
   const [creating, setCreating] = useState(false);
+  const [deleted, dismissDeleted] = useDeletedCollection();
   const from: FromArtists = { artistsSearch: location.search };
 
   const show = (next: ArtistQuery, replace = false) => {
@@ -92,6 +95,10 @@ export function ArtistsPage() {
         <Title order={2}>Artists</Title>
         {!empty && <Button onClick={openNew}>New Artist</Button>}
       </Group>
+
+      {deleted !== undefined && (
+        <DeletedCollectionNotice deleted={deleted} onDismiss={dismissDeleted} />
+      )}
 
       {!empty && (
         <TextInput

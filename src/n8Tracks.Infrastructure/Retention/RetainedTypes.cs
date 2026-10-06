@@ -61,6 +61,16 @@ internal sealed record RetainedType(string RecordType, string Table, string Noun
     /// row of this type: lets a live-side rule apply its own trimming (the 50-entry history cap).
     /// </summary>
     public Func<RestoredRow, CancellationToken, Task>? AfterRestoreAsync { get; init; }
+
+    /// <summary>
+    /// Set for a reference type: its records are not rows of <see cref="Table"/> but the value of
+    /// these nullable columns (a foreign key that does not cascade) on a live row that stays. A
+    /// deletion that names the type in <see cref="RetentionRequest.Referring"/> clears them on each
+    /// live row referring to what it deletes and keeps the row's key with the value; a restore sets
+    /// them back where that row still exists and they are still empty, and notes it otherwise. A
+    /// reference document holds only the key columns and these.
+    /// </summary>
+    public IReadOnlyList<string>? ReferenceColumns { get; init; }
 }
 
 /// <summary>
@@ -164,8 +174,22 @@ internal static class RetainedTypes
     /// <summary>A deleted Song's Tag; left out of a restore when the Tag was deleted meanwhile.</summary>
     public static readonly RetainedType SongTag = new(RetainedRecordTypes.SongTag, "song_tags", "Tag assignment", ShapeVersion: 1) { Optional = true };
 
-    /// <summary>A deleted Song's credit; left out of a restore when the Artist was deleted meanwhile.</summary>
-    public static readonly RetainedType SongCredit = new(RetainedRecordTypes.SongCredit, "song_artist_credits", "Artist credit", ShapeVersion: 1) { Optional = true };
+    /// <summary>
+    /// A Song's credit, deleted with the Song or removed with its Artist (#104). With the Song: left
+    /// out of a restore when the Artist was deleted meanwhile. With the Artist: put back in its role
+    /// and place while the Song still exists and has room there (<see cref="ArtistRestore"/>), raising
+    /// the Song's revision; left out, with a note, otherwise.
+    /// </summary>
+    public static readonly RetainedType SongCredit = new(RetainedRecordTypes.SongCredit, "song_artist_credits", "Artist credit", ShapeVersion: 1)
+    {
+        Optional = true,
+        PrepareRestoreAsync = static (row, cancellationToken) => row.InGroup("songs", row.TextOf("song_id"))
+            ? Task.FromResult(RestorePreparation.With(row.Values))
+            : ArtistRestore.KeepCreditPlaceAsync(row, cancellationToken),
+        AfterRestoreAsync = static (row, cancellationToken) => row.InGroup("songs", row.TextOf("song_id"))
+            ? Task.CompletedTask
+            : SongRestore.TouchAsync(row, "songs", "song_id", cancellationToken),
+    };
 
     /// <summary>
     /// A Song's place on an Album, deleted with the Song or with the Album. With the Song: restored at
@@ -241,12 +265,37 @@ internal static class RetainedTypes
     /// </summary>
     public static readonly RetainedType Playlist = new(RetainedRecordTypes.Playlist, "playlists", "Playlist", ShapeVersion: 1);
 
+    /// <summary>
+    /// An Artist, deleted with its aliases, links, and own artwork (#104), and with its credits when
+    /// they were removed rather than reassigned. A live Artist with the same name is no clash: names
+    /// are not unique. The default-Artist setting is not part of it, so a restore leaves it as it is.
+    /// </summary>
+    public static readonly RetainedType Artist = new(RetainedRecordTypes.Artist, "artists", "Artist", ShapeVersion: 1);
+
+    /// <summary>An alias of a deleted Artist.</summary>
+    public static readonly RetainedType ArtistAlias = new(RetainedRecordTypes.ArtistAlias, "artist_aliases", "Artist alias", ShapeVersion: 1);
+
+    /// <summary>A link of a deleted Artist.</summary>
+    public static readonly RetainedType ArtistLink = new(RetainedRecordTypes.ArtistLink, "artist_links", "Artist link", ShapeVersion: 1);
+
+    /// <summary>
+    /// The Album Artist of an Album whose Album Artist was deleted with its credits removed (#104): a
+    /// reference, so the Album stays and only its <c>album_artist_id</c> is cleared and remembered.
+    /// Restored where the Album still exists and has no Album Artist, raising its revision.
+    /// </summary>
+    public static readonly RetainedType AlbumArtist = new(RetainedRecordTypes.AlbumArtist, "albums", "Album Artist", ShapeVersion: 1)
+    {
+        ReferenceColumns = ["album_artist_id"],
+        AfterRestoreAsync = static (row, cancellationToken) => SongRestore.TouchAsync(row, "albums", "id", cancellationToken),
+    };
+
     /// <summary>Every built-in type.</summary>
     public static IReadOnlyList<RetainedType> BuiltIn { get; } =
     [
         EditorSnapshot, ArtworkAttachment, Version, Generation,
         Song, UsedVersionNumber, SongLink, SongGenre, SongTag, SongCredit, AlbumTrack, PlaylistEntry, SongRelationship,
         Album, AlbumLink, Playlist,
+        Artist, ArtistAlias, ArtistLink, AlbumArtist,
     ];
 }
 
@@ -255,6 +304,7 @@ internal sealed class RetainedTypeRegistry
 {
     private readonly FrozenDictionary<string, RetainedType> byRecordType;
     private readonly FrozenDictionary<string, RetainedType> byTable;
+    private readonly IReadOnlyList<RetainedType> references;
 
     public RetainedTypeRegistry(IEnumerable<RetainedType> types)
     {
@@ -276,7 +326,8 @@ internal sealed class RetainedTypeRegistry
         }
 
         byRecordType = all.ToFrozenDictionary(static type => type.RecordType, StringComparer.Ordinal);
-        byTable = all.ToFrozenDictionary(static type => type.Table, StringComparer.Ordinal);
+        byTable = all.Where(static type => type.ReferenceColumns is null).ToFrozenDictionary(static type => type.Table, StringComparer.Ordinal);
+        references = [.. all.Where(static type => type.ReferenceColumns is not null)];
         All = all;
     }
 
@@ -284,7 +335,12 @@ internal sealed class RetainedTypeRegistry
 
     public RetainedType? ByRecordType(string recordType) => byRecordType.GetValueOrDefault(recordType);
 
+    /// <summary>The row type of <paramref name="table"/> (never a reference type), or null.</summary>
     public RetainedType? ByTable(string table) => byTable.GetValueOrDefault(table);
+
+    /// <summary>The reference type over <paramref name="columns"/> of <paramref name="table"/>, or null.</summary>
+    public RetainedType? ReferenceFor(string table, IReadOnlyList<string> columns) =>
+        references.FirstOrDefault(type => type.Table == table && type.ReferenceColumns!.SequenceEqual(columns, StringComparer.Ordinal));
 }
 
 /// <summary>A column of a live table, as SQLite describes it.</summary>

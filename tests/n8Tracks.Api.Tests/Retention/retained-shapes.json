@@ -15,5 +15,9 @@
   "song-relationship": { "shapeVersion": 1, "hash": "d4922af63b7dfa62507749ecf4e279ca8861be70f78a2e84811f8a6dcbd53bf5" },
   "album": { "shapeVersion": 1, "hash": "174ca1515c26d8bba5a162092b293b120f24a2067e3f0cd84a19047933975a45" },
   "album-link": { "shapeVersion": 1, "hash": "2d75467bd2fe53b5cbaa48015add387e8a702068470ca1489ace54ffee6b163f" },
-  "playlist": { "shapeVersion": 1, "hash": "ec5502887865cb99940d1ac05ad8b8091c79417c8c41be99e2fa6212d9dfe1cc" }
+  "playlist": { "shapeVersion": 1, "hash": "ec5502887865cb99940d1ac05ad8b8091c79417c8c41be99e2fa6212d9dfe1cc" },
+  "artist": { "shapeVersion": 1, "hash": "3d72e88264816470a7d4c39825533744ded483d7135ee116f29b507d5fa62ee8" },
+  "artist-alias": { "shapeVersion": 1, "hash": "366dc9805a8a34dd7fdd0e198f8809f34e806c0b6d71d54ba989e246958944d9" },
+  "artist-link": { "shapeVersion": 1, "hash": "91f74a0f12c8c81742b64a319594ce9f99c4c3b6cfd63d2fac605973cc3f981b" },
+  "album-artist": { "shapeVersion": 1, "hash": "454e9b58847f63b41d6d2789e92c8564233583e1ce1e98ad5c30b559195af719" }
 }

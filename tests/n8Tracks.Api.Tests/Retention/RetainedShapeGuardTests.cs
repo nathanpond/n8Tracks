@@ -169,7 +169,7 @@ public sealed class RetainedShapeGuardTests
             var shapes = new List<(RetainedType, string)>();
             foreach (var type in types)
             {
-                shapes.Add((type, RetainedShapes.Hash(await store.ColumnsAsync(type.Table, CancellationToken.None))));
+                shapes.Add((type, RetainedShapes.Hash(await store.ShapeColumnsAsync(type, CancellationToken.None))));
             }
 
             return shapes;

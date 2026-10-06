@@ -296,3 +296,74 @@ export async function readArtist(id: string): Promise<Artist | undefined> {
     return undefined;
   }
 }
+
+/** What happens to a deleted Artist's credits: reassigned to another Artist, removed, or (for an Artist nothing credits) nothing. */
+export type ArtistCreditChoice =
+  { kind: 'reassign'; to: { id: string; name: string } } | { kind: 'remove' } | { kind: 'none' };
+
+/**
+ * How deleting an Artist ended: `deleted`; `conflict` when it changed since it was read (with the
+ * Artist as it is now); `in-use` when Songs or Albums credit it and no choice was sent (with the
+ * Artist now, its counts included, and whether it is the default Artist); `invalid` when the
+ * choice was refused (the Artist chosen to take the credits is gone), with the message; `gone`
+ * when it is no longer there; `failed` otherwise. Nothing was deleted unless the kind is `deleted`.
+ */
+export type DeleteArtistResult =
+  | { kind: 'deleted' }
+  | { kind: 'conflict'; current: Artist }
+  | { kind: 'in-use'; current: Artist; isDefaultArtist: boolean }
+  | { kind: 'invalid'; message: string }
+  | { kind: 'gone' }
+  | { kind: 'failed' };
+
+/** The deletion's query string for `choice`. */
+export function artistDeletionParameters(choice: ArtistCreditChoice): string {
+  switch (choice.kind) {
+    case 'reassign':
+      return `?reassignTo=${encodeURIComponent(choice.to.id)}`;
+    case 'remove':
+      return '?removeCredits=true';
+    case 'none':
+      return '';
+  }
+}
+
+/**
+ * Deletes an Artist, based on `artist`'s revision, with its credits reassigned or removed as
+ * `choice` says. No Song or Album is deleted.
+ */
+export async function deleteArtist(
+  artist: Pick<Artist, 'id' | 'revision'>,
+  choice: ArtistCreditChoice,
+): Promise<DeleteArtistResult> {
+  try {
+    const response = await apiFetch(
+      `${ARTISTS_PATH}/${encodeURIComponent(artist.id)}${artistDeletionParameters(choice)}`,
+      { method: 'DELETE', headers: { 'If-Match': ifMatch(artist.revision) } },
+    );
+    if (response.status === 204) {
+      return { kind: 'deleted' };
+    }
+    const answer = await body(response);
+    if (response.status === 409 && isRecord(answer) && isArtist(answer.current)) {
+      if (answer.code === 'revision_conflict') {
+        return { kind: 'conflict', current: answer.current };
+      }
+      if (answer.code === 'artist_in_use' && typeof answer.isDefaultArtist === 'boolean') {
+        return { kind: 'in-use', current: answer.current, isDefaultArtist: answer.isDefaultArtist };
+      }
+    }
+    if (
+      response.status === 422 &&
+      isRecord(answer) &&
+      answer.code === 'validation_failed' &&
+      isErrorMap(answer.errors)
+    ) {
+      const messages = Object.values(answer.errors).flat();
+      return { kind: 'invalid', message: messages.join(' ') };
+    }
+    return response.status === 404 ? { kind: 'gone' } : { kind: 'failed' };
+  } catch {
+    return { kind: 'failed' };
+  }
+}

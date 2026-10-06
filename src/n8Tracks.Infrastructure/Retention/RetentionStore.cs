@@ -42,7 +42,9 @@ internal sealed class RetentionStore(N8TracksDbContext context, RetainedTypeRegi
         RequireTransaction();
 
         var collected = new List<LiveRow>();
+        var references = new List<LiveRow>();
         var seen = new HashSet<(string Table, string Key)>();
+        var referring = new HashSet<string>(request.Referring ?? [], StringComparer.Ordinal);
         foreach (var root in request.Roots)
         {
             var type = types.ByRecordType(root.RecordType) ?? throw new InvalidOperationException($"'{root.RecordType}' is not a retained record type.");
@@ -86,7 +88,24 @@ internal sealed class RetentionStore(N8TracksDbContext context, RetainedTypeRegi
                     if (!string.Equals(foreignKey.OnDelete, "CASCADE", StringComparison.OrdinalIgnoreCase))
                     {
                         // Restrict, set null, or no action: the deletion has to deal with these rows
-                        // itself, or name them as roots; nothing here changes a row it does not retain.
+                        // itself, name them as roots, or name their type as going with it (Referring);
+                        // nothing here changes a row it neither retains nor remembers.
+                        if (dependentType is not null && referring.Contains(dependentType.RecordType))
+                        {
+                            foreach (var dependent in dependents)
+                            {
+                                await AddAsync(dependentType, dependent, collected, seen, cancellationToken).ConfigureAwait(false);
+                            }
+
+                            continue;
+                        }
+
+                        if (types.ReferenceFor(table, foreignKey.From) is { } reference && referring.Contains(reference.RecordType))
+                        {
+                            await AddReferencesAsync(reference, dependents, references, seen, cancellationToken).ConfigureAwait(false);
+                            continue;
+                        }
+
                         if (dependentType is null || !await AllCollectedAsync(dependentType, dependents, seen, cancellationToken).ConfigureAwait(false))
                         {
                             throw new InvalidOperationException(
@@ -121,7 +140,8 @@ internal sealed class RetentionStore(N8TracksDbContext context, RetainedTypeRegi
             Files = JsonSerializer.Serialize(request.Files.Distinct(StringComparer.Ordinal).ToArray()),
         };
         context.RetentionGroups.Add(group);
-        var records = collected.Select((row, position) => new RetentionRecordRecord
+        // References come after every row, so a restore sets them once what they name is back.
+        var records = collected.Concat(references).Select((row, position) => new RetentionRecordRecord
         {
             GroupId = id,
             Position = position,
@@ -162,6 +182,15 @@ internal sealed class RetentionStore(N8TracksDbContext context, RetainedTypeRegi
                     row.Key.Select(column => row.Values[column]).ToArray(),
                     cancellationToken).ConfigureAwait(false);
             }
+        }
+
+        // Live rows that refer to what goes stay, without the reference; the documents above hold it.
+        foreach (var reference in references)
+        {
+            await ExecuteAsync(
+                $"UPDATE {Quote(reference.Type.Table)} SET {string.Join(", ", reference.Type.ReferenceColumns!.Select(static column => $"{Quote(column)} = NULL"))} WHERE {Where(reference.Key, 0)};",
+                reference.Key.Select(column => reference.Values[column]).ToArray(),
+                cancellationToken).ConfigureAwait(false);
         }
 
         // Children first, so no row is removed by a cascade before it is removed on purpose.
@@ -274,7 +303,12 @@ internal sealed class RetentionStore(N8TracksDbContext context, RetainedTypeRegi
         {
             var row = await UpgradeAsync(record, cancellationToken).ConfigureAwait(false);
             rows.Add(row);
-            keys.Add((row.Type.Table, row.OriginalId));
+
+            // A reference is not a row of the group: its live row stays where it is.
+            if (row.Type.ReferenceColumns is null)
+            {
+                keys.Add((row.Type.Table, row.OriginalId));
+            }
         }
 
         // Up front, before anything is written: every parent there (live, or earlier in the group and
@@ -284,6 +318,16 @@ internal sealed class RetentionStore(N8TracksDbContext context, RetainedTypeRegi
         for (var index = 0; index < rows.Count; index++)
         {
             var row = rows[index];
+            if (row.Type.ReferenceColumns is not null)
+            {
+                if (await ReferenceLeftOutAsync(row, rows, skipped, cancellationToken).ConfigureAwait(false) is { } reason)
+                {
+                    skipped.Add(row);
+                    notes.Add($"{Indefinite(row.Type.Noun)} was not restored: {reason}");
+                }
+
+                continue;
+            }
 
             // A type may restore a row with other values than it was retained with (a membership
             // goes to the end of its Album), or leave it out, saying why.
@@ -293,7 +337,7 @@ internal sealed class RetentionStore(N8TracksDbContext context, RetainedTypeRegi
                 if (prepared.Values is null)
                 {
                     skipped.Add(row);
-                    notes.Add($"A {row.Type.Noun} was not restored: {prepared.Note}");
+                    notes.Add($"{Indefinite(row.Type.Noun)} was not restored: {prepared.Note}");
                     continue;
                 }
 
@@ -313,7 +357,7 @@ internal sealed class RetentionStore(N8TracksDbContext context, RetainedTypeRegi
                 }
 
                 skipped.Add(row);
-                notes.Add($"A {row.Type.Noun} was not restored: the {missing} it belongs to no longer exists.");
+                notes.Add($"{Indefinite(row.Type.Noun)} was not restored: the {missing} it belongs to no longer exists.");
                 continue;
             }
 
@@ -342,6 +386,16 @@ internal sealed class RetentionStore(N8TracksDbContext context, RetainedTypeRegi
         var restored = new List<LiveRow>();
         foreach (var row in rows.Where(row => !skipped.Contains(row)))
         {
+            if (row.Type.ReferenceColumns is { } referenceColumns)
+            {
+                await ExecuteAsync(
+                    $"UPDATE {Quote(row.Type.Table)} SET {string.Join(", ", referenceColumns.Select((column, index) => $"{Quote(column)} = $p{row.Key.Count + index}"))} WHERE {Where(row.Key, 0)};",
+                    [.. row.Key.Select(column => row.Values[column]), .. referenceColumns.Select(column => row.Values[column])],
+                    cancellationToken).ConfigureAwait(false);
+                restored.Add(row);
+                continue;
+            }
+
             var values = new Dictionary<string, object?>(row.Values, StringComparer.Ordinal);
             if (values.TryGetValue(RevisionColumn, out var revision) && revision is long number)
             {
@@ -474,6 +528,91 @@ internal sealed class RetentionStore(N8TracksDbContext context, RetainedTypeRegi
         return columns[table] = read;
     }
 
+    /// <summary>
+    /// The columns a document of <paramref name="type"/> holds, as the database has them now: every
+    /// column of its table, or for a reference type only the key's and the reference's (what the
+    /// retained-shape guard hashes).
+    /// </summary>
+    public async Task<IReadOnlyList<TableColumn>> ShapeColumnsAsync(RetainedType type, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+
+        var all = await ColumnsAsync(type.Table, cancellationToken).ConfigureAwait(false);
+        if (type.ReferenceColumns is not { } referenceColumns)
+        {
+            return all;
+        }
+
+        var shape = all.Where(column => column.KeyPosition > 0 || referenceColumns.Contains(column.Name, StringComparer.Ordinal)).ToList();
+        if (shape.Count(column => referenceColumns.Contains(column.Name, StringComparer.Ordinal)) != referenceColumns.Count
+            || shape.Any(column => column.NotNull && referenceColumns.Contains(column.Name, StringComparer.Ordinal)))
+        {
+            throw new InvalidOperationException($"The reference type '{type.RecordType}' names columns {type.Table} does not have as nullable columns.");
+        }
+
+        return shape;
+    }
+
+    /// <summary>
+    /// Remembers, as references of <paramref name="type"/>, the key and reference of each of
+    /// <paramref name="rows"/> that is not itself going (a row the group retains needs no reference).
+    /// </summary>
+    private async Task AddReferencesAsync(RetainedType type, List<Dictionary<string, object?>> rows, List<LiveRow> references, HashSet<(string Table, string Key)> seen, CancellationToken cancellationToken)
+    {
+        var shape = await ShapeColumnsAsync(type, cancellationToken).ConfigureAwait(false);
+        var key = await KeyColumnsAsync(type.Table, cancellationToken).ConfigureAwait(false);
+        foreach (var row in rows)
+        {
+            var originalId = OriginalIdOf(key, row);
+            if (seen.Contains((type.Table, originalId)) || references.Any(reference => reference.Type == type && reference.OriginalId == originalId))
+            {
+                continue;
+            }
+
+            var values = shape.ToDictionary(static column => column.Name, column => row[column.Name], StringComparer.Ordinal);
+            references.Add(new LiveRow(type, values, key, originalId));
+        }
+    }
+
+    /// <summary>
+    /// Why a remembered reference cannot be set again, or null when it can: its live row must still
+    /// exist with the reference empty, and what it names must be live or restored with it.
+    /// </summary>
+    private async Task<string?> ReferenceLeftOutAsync(LiveRow reference, List<LiveRow> group, HashSet<LiveRow> skipped, CancellationToken cancellationToken)
+    {
+        var referenceColumns = reference.Type.ReferenceColumns!;
+        var live = await SelectAsync(reference.Type.Table, reference.Key, [.. reference.Key.Select(column => reference.Values[column])], cancellationToken).ConfigureAwait(false);
+        if (live.Count == 0)
+        {
+            return $"the {Noun(reference.Type.Table)} it belongs to no longer exists.";
+        }
+
+        if (referenceColumns.Any(column => live[0][column] is not null))
+        {
+            return $"the {Noun(reference.Type.Table)} has another one now.";
+        }
+
+        foreach (var foreignKey in (await ForeignKeysAsync(reference.Type.Table, cancellationToken).ConfigureAwait(false))
+            .Where(key => key.From.SequenceEqual(referenceColumns, StringComparer.Ordinal)))
+        {
+            var values = referenceColumns.Select(column => reference.Values[column]).ToArray();
+            if (values.Any(static value => value is null)
+                || group.Any(other => !skipped.Contains(other) && other.Type.ReferenceColumns is null && Refers(foreignKey, values, other))
+                || (await SelectAsync(foreignKey.Table, foreignKey.To, values, cancellationToken).ConfigureAwait(false)).Count > 0)
+            {
+                continue;
+            }
+
+            return $"the {Noun(foreignKey.Table)} it names no longer exists.";
+        }
+
+        return null;
+    }
+
+    /// <summary>"A" or "An" before <paramref name="noun"/>, as messages start: "An Artist credit", "A used Version number".</summary>
+    private static string Indefinite(string noun) =>
+        noun.Length > 0 && "AEIOaeio".Contains(noun[0], StringComparison.Ordinal) ? $"An {noun}" : $"A {noun}";
+
     private async Task AddAsync(RetainedType type, Dictionary<string, object?> values, List<LiveRow> collected, HashSet<(string Table, string Key)> seen, CancellationToken cancellationToken)
     {
         var key = await KeyColumnsAsync(type.Table, cancellationToken).ConfigureAwait(false);
@@ -506,7 +645,7 @@ internal sealed class RetentionStore(N8TracksDbContext context, RetainedTypeRegi
             document = type.Upgraders[version](document);
         }
 
-        var current = await ColumnsAsync(type.Table, cancellationToken).ConfigureAwait(false);
+        var current = await ShapeColumnsAsync(type, cancellationToken).ConfigureAwait(false);
         var names = document.Select(static property => property.Key).Order(StringComparer.Ordinal);
         if (!names.SequenceEqual(current.Select(static column => column.Name).Order(StringComparer.Ordinal), StringComparer.Ordinal))
         {
@@ -530,7 +669,7 @@ internal sealed class RetentionStore(N8TracksDbContext context, RetainedTypeRegi
                 continue;
             }
 
-            var inGroup = group.Any(other => !ReferenceEquals(other, row) && !skipped.Contains(other) && Refers(foreignKey, values, other));
+            var inGroup = group.Any(other => !ReferenceEquals(other, row) && !skipped.Contains(other) && other.Type.ReferenceColumns is null && Refers(foreignKey, values, other));
             if (inGroup || (await SelectAsync(foreignKey.Table, foreignKey.To, values, cancellationToken).ConfigureAwait(false)).Count > 0)
             {
                 continue;

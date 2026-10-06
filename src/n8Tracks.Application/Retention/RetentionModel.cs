@@ -54,6 +54,21 @@ public static class RetainedRecordTypes
 
     /// <summary>A Playlist (<c>playlists</c>), deleted with its entries and artwork; never its Songs.</summary>
     public const string Playlist = "playlist";
+
+    /// <summary>An Artist (<c>artists</c>), deleted with its aliases, links, and artwork, and with its credits when they are removed.</summary>
+    public const string Artist = "artist";
+
+    /// <summary>An alias of an Artist (<c>artist_aliases</c>), deleted with its Artist.</summary>
+    public const string ArtistAlias = "artist-alias";
+
+    /// <summary>A link of an Artist (<c>artist_links</c>), deleted with its Artist.</summary>
+    public const string ArtistLink = "artist-link";
+
+    /// <summary>
+    /// An Album's Album Artist (<c>albums.album_artist_id</c>), cleared when that Artist is deleted
+    /// with its credits removed: a reference, not a row; the Album itself stays.
+    /// </summary>
+    public const string AlbumArtist = "album-artist";
 }
 
 /// <summary>A record a deletion names: the root of what goes into retention with it.</summary>
@@ -73,12 +88,20 @@ public sealed record RetainedRoot(string RecordType, Guid Id);
 /// Managed files the group owns, relative to the managed-assets folder; they stay where they are until
 /// the group is pruned. Empty for none.
 /// </param>
+/// <param name="Referring">
+/// Record types (of <see cref="RetainedRecordTypes"/>) whose live rows refer to a record being
+/// deleted through a key that does not cascade, and which go into the group with it rather than
+/// refusing the deletion: rows of a row type (an Artist's credits) are retained and removed; a
+/// reference type (an Album's Album Artist) is cleared on the live row, which stays, and is
+/// remembered so a restore can set it again. Null or empty for none: such rows then refuse the deletion.
+/// </param>
 public sealed record RetentionRequest(
     string Kind,
     string Label,
     string? Shortcode,
     IReadOnlyList<RetainedRoot> Roots,
-    IReadOnlyList<string> Files);
+    IReadOnlyList<string> Files,
+    IReadOnlyList<string>? Referring = null);
 
 /// <summary>One record kept in a group, without its document (which is never shown or logged).</summary>
 /// <param name="RecordType">One of <see cref="RetainedRecordTypes"/>.</param>

@@ -52,6 +52,11 @@ function problem(status: number, code: string, extra: Record<string, unknown> = 
  * `GET /api/v1/songs?artist=<id>` (those crediting that Artist, by title), and `server.albums` those
  * it answers for `GET /api/v1/albums?artist=<id>` (those whose Album Artist it is, by title).
  * Artwork uploads and the PATCH's artwork fields follow {@link artworkFake} (`server.artwork`).
+ * `GET /api/v1/settings/catalog` answers `server.catalog` (no default Artist unless set). DELETE of
+ * an Artist under its revision answers as the API does: 422 for both choices or an unknown
+ * `reassignTo`, 409 `artist_in_use` for a credited Artist (by its `songCount` and `albumCount`) with
+ * neither, otherwise 204, recording `{id, query}` in `server.deleted` and clearing a default that
+ * was it.
  */
 export function artistServer(artists: Artist[] = [], songs: Song[] = [], albums: Album[] = []) {
   const server = {
@@ -62,6 +67,9 @@ export function artistServer(artists: Artist[] = [], songs: Song[] = [], albums:
     writes: [] as ArtistWrite[],
     queries: [] as string[],
     pageSize: 50,
+    catalog: { revision: 1, defaultArtist: null as { id: string; name: string } | null },
+    /** The Artists deleted, in order, each with the query string it was deleted with. */
+    deleted: [] as { id: string; query: string }[],
     next: undefined as (() => Response) | undefined,
     changeElsewhere(id: string, change: Partial<Artist>) {
       server.artists = server.artists.map((artist) =>
@@ -134,6 +142,9 @@ export function artistServer(artists: Artist[] = [], songs: Song[] = [], albums:
     if (path.endsWith('/api/v1/artwork')) {
       return Promise.resolve(server.artwork.upload(init));
     }
+    if (path.endsWith('/api/v1/settings/catalog') && method === 'GET') {
+      return Promise.resolve(jsonResponse(200, server.catalog));
+    }
     if (!path.includes('/api/v1/artists')) {
       return Promise.resolve(problem(404, 'not_found'));
     }
@@ -199,6 +210,38 @@ export function artistServer(artists: Artist[] = [], songs: Song[] = [], albums:
     const write = server.writes[server.writes.length - 1];
     if (write?.ifMatch !== `"${String(current.revision)}"`) {
       return Promise.resolve(problem(409, 'revision_conflict', { current }));
+    }
+    if (method === 'DELETE') {
+      const reassignTo = url.searchParams.get('reassignTo');
+      const remove = url.searchParams.get('removeCredits') === 'true';
+      if (
+        (reassignTo !== null && remove) ||
+        (reassignTo !== null &&
+          (reassignTo === current.id || !server.artists.some((artist) => artist.id === reassignTo)))
+      ) {
+        return Promise.resolve(
+          problem(422, 'validation_failed', {
+            errors: { reassignTo: ['The Artist chosen to take the credits no longer exists.'] },
+          }),
+        );
+      }
+      const isDefaultArtist = server.catalog.defaultArtist?.id === current.id;
+      if (current.songCount + current.albumCount > 0 && reassignTo === null && !remove) {
+        return Promise.resolve(
+          problem(409, 'artist_in_use', {
+            songCount: current.songCount,
+            albumCount: current.albumCount,
+            isDefaultArtist,
+            current,
+          }),
+        );
+      }
+      server.artists = server.artists.filter((artist) => artist.id !== current.id);
+      server.deleted.push({ id: current.id, query: url.search });
+      if (isDefaultArtist) {
+        server.catalog = { revision: server.catalog.revision + 1, defaultArtist: null };
+      }
+      return Promise.resolve(new Response(null, { status: 204 }));
     }
     const edit = write.body as Partial<Artist> & { confirmDuplicate?: boolean };
     const artwork = server.artwork.apply(current.artwork, write.body);

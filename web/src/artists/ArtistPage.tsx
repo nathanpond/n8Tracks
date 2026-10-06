@@ -13,7 +13,7 @@ import {
   Title,
 } from '@mantine/core';
 import { useCallback, useRef, useState, type SyntheticEvent } from 'react';
-import { Link, useLocation, useParams } from 'react-router';
+import { Link, useLocation, useNavigate, useParams } from 'react-router';
 import {
   ARTIST_ALIAS_MAXIMUM_COUNT,
   ARTIST_LINK_MAXIMUM_COUNT,
@@ -32,6 +32,7 @@ import { formatAlbumDate, shownDate } from '../albums/albumRules';
 import { songListParameters, useSongs, type SongQuery } from '../api/songs';
 import { ArtworkPicker } from '../common/ArtworkPicker';
 import { artworkFields, artworkPatchOf, artworkValues } from '../common/artworkField';
+import type { DeletedCollectionState } from '../common/collectionDeletion';
 import { useRevisionedSave, type SavedField } from '../common/useRevisionedSave';
 import { Notice } from '../components/Notice';
 import {
@@ -41,6 +42,8 @@ import {
   linkErrors,
   normaliseArtistName,
 } from './artistRules';
+import { deletionNote } from './artistDeletion';
+import { DeleteArtistDialog } from './DeleteArtistDialog';
 import { DuplicateArtistDialog } from './DuplicateMatches';
 import { move } from '../common/listMove';
 import { RowControls } from '../common/RowControls';
@@ -57,10 +60,15 @@ function isFromArtists(value: unknown): value is { artistsSearch: string } {
   );
 }
 
+/** The Artists list's view this page was opened from, when it was opened from one. */
+function useArtistsSearch(): string {
+  const location: { state: unknown } = useLocation();
+  return isFromArtists(location.state) ? location.state.artistsSearch : '';
+}
+
 /** Back to the Artists list, in the view this page was opened from when it was opened from one. */
 function BackToArtists() {
-  const location: { state: unknown } = useLocation();
-  const search = isFromArtists(location.state) ? location.state.artistsSearch : '';
+  const search = useArtistsSearch();
   return (
     <Anchor component={Link} to={`/artists${search}`} size="sm">
       ← Artists
@@ -349,6 +357,9 @@ function LoadedArtist({ initial }: { initial: Artist }) {
     matches: ArtistMatch[];
     resolve: (confirmed: boolean) => void;
   } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const artistsSearch = useArtistsSearch();
+  const navigate = useNavigate();
   const declined = useRef(false);
   const latest = useRef(initial);
   const takeRecord = useCallback((next: Artist) => {
@@ -440,7 +451,20 @@ function LoadedArtist({ initial }: { initial: Artist }) {
   return (
     <Stack gap="lg">
       <BackToArtists />
-      <Title order={2}>{artist.name}</Title>
+      <Group justify="space-between" align="flex-start" wrap="nowrap" gap="sm">
+        <Title order={2} style={{ overflowWrap: 'anywhere' }}>
+          {artist.name}
+        </Title>
+        <Button
+          variant="default"
+          size="compact-sm"
+          onClick={() => {
+            setDeleting(true);
+          }}
+        >
+          Delete Artist
+        </Button>
+      </Group>
 
       <ArtworkPicker
         title={artist.name}
@@ -665,6 +689,20 @@ function LoadedArtist({ initial }: { initial: Artist }) {
         }}
       />
       {dialog}
+      <DeleteArtistDialog
+        artist={artist}
+        opened={deleting}
+        onClose={() => {
+          setDeleting(false);
+        }}
+        onCurrent={takeRecord}
+        onDeleted={(choice) => {
+          const state: DeletedCollectionState = {
+            deletedCollection: { noun: 'Artist', title: artist.name, note: deletionNote(choice) },
+          };
+          void navigate(`/artists${artistsSearch}`, { state });
+        }}
+      />
     </Stack>
   );
 }
@@ -673,7 +711,9 @@ function LoadedArtist({ initial }: { initial: Artist }) {
  * An Artist's page (`/artists/<id>`): its own artwork (never borrowed from its Songs), saved as
  * soon as it is chosen, and its name, aliases, notes, and links, edited in one form; both are saved
  * under the Artist's revision. A new name or alias another Artist has asks for confirmation.
- * Below are the Songs credited to it, with the role, and the Albums it is Album Artist of.
+ * Below are the Songs credited to it, with the role, and the Albums it is Album Artist of. "Delete
+ * Artist" deletes it after asking where its credits go (DeleteArtistDialog); the Artists list then
+ * opens with a notice naming it.
  */
 export function ArtistPage() {
   const { id = '' } = useParams();

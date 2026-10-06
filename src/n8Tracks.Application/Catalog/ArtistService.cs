@@ -1,6 +1,7 @@
 using System.Globalization;
 using n8Tracks.Application.Assets;
 using n8Tracks.Application.Auth;
+using n8Tracks.Application.Retention;
 using n8Tracks.Domain.Assets;
 using n8Tracks.Domain.Catalog;
 
@@ -69,6 +70,45 @@ public abstract record ArtistOutcome
 }
 
 /// <summary>
+/// What happens to a deleted Artist's credits, as sent: reassigned to the Artist
+/// <see cref="ReassignTo"/> (an ID, as text), removed (<see cref="RemoveCredits"/>), or, with
+/// neither, nothing, which only an Artist nothing credits may have.
+/// </summary>
+public sealed record ArtistCreditChoice(string? ReassignTo, bool RemoveCredits);
+
+/// <summary>How deleting an Artist ended.</summary>
+public abstract record ArtistDeleteOutcome
+{
+    private ArtistDeleteOutcome()
+    {
+    }
+
+    /// <summary>
+    /// The Artist, its aliases, links, and artwork, and its credits when they were removed, are in
+    /// <paramref name="Group"/>. <paramref name="SongCount"/> Songs and <paramref name="AlbumCount"/>
+    /// Albums credited it; <paramref name="ReassignedTo"/> is the Artist they went to, or null when
+    /// they were removed; <paramref name="DefaultCleared"/> says whether it was the default Artist.
+    /// </summary>
+    public sealed record Deleted(RetentionGroup Group, int SongCount, int AlbumCount, Guid? ReassignedTo, bool DefaultCleared) : ArtistDeleteOutcome;
+
+    /// <summary>There is no such Artist. Nothing was changed.</summary>
+    public sealed record NotFound : ArtistDeleteOutcome;
+
+    /// <summary>The Artist is at another revision than the one sent. Nothing was changed. <paramref name="Current"/> is the Artist now.</summary>
+    public sealed record Conflict(ArtistDetails Current) : ArtistDeleteOutcome;
+
+    /// <summary>
+    /// Songs or Albums credit the Artist and the request chose neither to reassign nor to remove
+    /// their credits. Nothing was changed. <paramref name="Current"/> holds the counts;
+    /// <paramref name="IsDefaultArtist"/> says whether new Songs are credited to it.
+    /// </summary>
+    public sealed record InUse(ArtistDetails Current, bool IsDefaultArtist) : ArtistDeleteOutcome;
+
+    /// <summary>The choice is wrong (both, or a target that is not another Artist). Nothing was changed.</summary>
+    public sealed record Invalid(IReadOnlyDictionary<string, string[]> Errors) : ArtistDeleteOutcome;
+}
+
+/// <summary>
 /// Artists: reusable records of who made the music, each with a display name, aliases, notes, and
 /// external links. Names are not unique: creating an Artist, or changing one's name or aliases, so
 /// that it has a name or alias another Artist already has (ignoring case) is
@@ -76,10 +116,22 @@ public abstract record ArtistOutcome
 /// names and aliases the Artist did not already have are checked, so an edit that changes neither
 /// never asks again. An edit is made under the Artist's revision, and a stale revision is reported
 /// before a duplicate. Its artwork is its own, never borrowed from its Songs, and is edited under
-/// its revision like the rest.
+/// its revision like the rest. Deleting an Artist (#104) never deletes a Song or an Album: their
+/// credits go to another Artist or are removed, as the user chooses.
 /// </summary>
-public sealed class ArtistService(IArtistStore artists, ArtworkAttachmentService artwork, IExclusiveTransaction transaction, TimeProvider time)
+public sealed class ArtistService(
+    IArtistStore artists,
+    ArtworkAttachmentService artwork,
+    ICatalogSettingsStore settings,
+    RetentionService retention,
+    IExclusiveTransaction transaction,
+    TimeProvider time)
 {
+    /// <summary>The deletion's query parameters, which its errors are keyed by.</summary>
+    public const string ReassignToParameter = "reassignTo";
+
+    public const string RemoveCreditsParameter = "removeCredits";
+
     /// <summary>The field names validation errors are keyed by, as the API spells them.</summary>
     public const string NameField = "name";
 
@@ -261,6 +313,103 @@ public sealed class ArtistService(IArtistStore artists, ArtworkAttachmentService
             },
             cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// Deletes the Artist <paramref name="id"/> if it is still at <paramref name="revision"/>, in one
+    /// transaction. Its credits on Songs and as Album Artist are reassigned to another Artist
+    /// (<see cref="ArtistDeletionRules.Reassigned"/>: a Song already crediting it keeps one credit) or
+    /// removed, as <paramref name="choice"/> says; with neither, an Artist anything credits is
+    /// <see cref="ArtistDeleteOutcome.InUse"/>. Every Song and Album whose credits change has its
+    /// revision raised. The default Artist for new Songs is cleared when it is this one. The Artist,
+    /// its aliases, links, and own artwork go into retention as one group, labelled
+    /// "Artist &lt;name&gt;", with removed credits and Album Artists, so a restore puts those back
+    /// where there is still room; reassigned credits stay with the Artist they went to, and the
+    /// default-Artist setting is not part of the group.
+    /// </summary>
+    public async Task<ArtistDeleteOutcome> DeleteAsync(Guid id, int revision, ArtistCreditChoice choice, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(choice);
+
+        Guid? target = null;
+        if (choice.ReassignTo is not null && choice.RemoveCredits)
+        {
+            return InvalidChoice(ReassignToParameter, "Either reassign the credits or remove them, not both.");
+        }
+
+        if (choice.ReassignTo is not null)
+        {
+            if (!Guid.TryParseExact(choice.ReassignTo, "D", out var parsed))
+            {
+                return InvalidChoice(ReassignToParameter, "Send the ID of the Artist to reassign the credits to.");
+            }
+
+            if (parsed == id)
+            {
+                return InvalidChoice(ReassignToParameter, "Choose another Artist to reassign the credits to.");
+            }
+
+            target = parsed;
+        }
+
+        return await transaction.RunAsync<ArtistDeleteOutcome>(
+            async ct =>
+            {
+                if (await artists.FindAsync(id, ct).ConfigureAwait(false) is not { } current)
+                {
+                    return new ArtistDeleteOutcome.NotFound();
+                }
+
+                if (current.Revision != revision)
+                {
+                    return new ArtistDeleteOutcome.Conflict(current);
+                }
+
+                if (target is { } targetId && await artists.FindAsync(targetId, ct).ConfigureAwait(false) is null)
+                {
+                    return InvalidChoice(ReassignToParameter, "The Artist chosen to take the credits no longer exists. Choose again.");
+                }
+
+                var stored = await settings.FindAsync(ct).ConfigureAwait(false);
+                var isDefault = stored?.DefaultArtistId == id;
+                var credited = await artists.CreditedAsync(id, ct).ConfigureAwait(false);
+                if (credited.Any && target is null && !choice.RemoveCredits)
+                {
+                    return new ArtistDeleteOutcome.InUse(current, isDefault);
+                }
+
+                if (target is { } to)
+                {
+                    await artists.ReassignCreditsAsync(id, to, ct).ConfigureAwait(false);
+                }
+
+                var (artworkRoot, files) = await artwork.RetentionOfAsync(ArtworkOwnerTypes.Artist, id, ct).ConfigureAwait(false);
+                List<RetainedRoot> roots = [new(RetainedRecordTypes.Artist, id)];
+                if (artworkRoot is not null)
+                {
+                    roots.Add(artworkRoot);
+                }
+
+                // Removed credits and Album Artists go with the Artist, so a restore can put them back.
+                IReadOnlyList<string> referring = target is null ? [RetainedRecordTypes.SongCredit, RetainedRecordTypes.AlbumArtist] : [];
+                var group = await retention.RetainWithinAsync(
+                    new RetentionRequest(RetainedRecordTypes.Artist, Label(current.Artist.Name), Shortcode: null, roots, files, referring),
+                    ct).ConfigureAwait(false);
+                await artists.TouchCreditedAsync(credited.SongIds, credited.AlbumIds, group.DeletedUtc, ct).ConfigureAwait(false);
+                if (isDefault)
+                {
+                    await settings.WriteAsync(new StoredCatalogSettings(stored!.Revision + 1, DefaultArtistId: null), ct).ConfigureAwait(false);
+                }
+
+                return new ArtistDeleteOutcome.Deleted(group, credited.SongIds.Count, credited.AlbumIds.Count, target, isDefault);
+            },
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>How the recovery listing names a deleted Artist: "Artist Name".</summary>
+    internal static string Label(string name) => $"Artist {name}";
+
+    private static ArtistDeleteOutcome.Invalid InvalidChoice(string parameter, string message) =>
+        new(new Dictionary<string, string[]>(StringComparer.Ordinal) { [parameter] = [message] });
 
     /// <summary>The name keys of an Artist's display name and aliases, each once.</summary>
     private static HashSet<string> Keys(Artist artist) =>

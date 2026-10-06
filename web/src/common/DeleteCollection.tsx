@@ -11,7 +11,7 @@ const FAILED_MESSAGE =
   'Not deleted: n8Tracks did not answer as expected. Check that it is running and try again.';
 
 /** What else goes with the record, by noun. */
-const TAKEN_WITH: Record<CollectionNoun, string> = {
+const TAKEN_WITH: Record<Exclude<CollectionNoun, 'Artist'>, string> = {
   Album: 'Its track order, links, and artwork are deleted with it.',
   Playlist: 'Its order and artwork are deleted with it.',
 };
@@ -32,7 +32,7 @@ export function DeleteCollectionDialog<T extends { title: string; songCount: num
   onCurrent,
   onDeleted,
 }: {
-  noun: CollectionNoun;
+  noun: Exclude<CollectionNoun, 'Artist'>;
   record: T;
   opened: boolean;
   onClose: () => void;
@@ -115,7 +115,7 @@ export function DeleteCollectionDialog<T extends { title: string; songCount: num
   );
 }
 
-/** The dismissible notice naming the Album or Playlist just deleted. */
+/** The dismissible notice naming the Album, Playlist, or Artist just deleted. */
 export function DeletedCollectionNotice({
   deleted,
   onDismiss,
@@ -127,7 +127,8 @@ export function DeletedCollectionNotice({
     <Paper p="sm" withBorder data-testid="collection-deleted-notice">
       <Group justify="space-between" wrap="nowrap" gap="sm">
         <Text role="status" style={{ overflowWrap: 'anywhere' }}>
-          Deleted the {deleted.noun} “{deleted.title}”. Its Songs were not deleted.
+          Deleted the {deleted.noun} “{deleted.title}”.{' '}
+          {deleted.note ?? 'Its Songs were not deleted.'}
         </Text>
         <CloseButton aria-label="Dismiss" onClick={onDismiss} />
       </Group>

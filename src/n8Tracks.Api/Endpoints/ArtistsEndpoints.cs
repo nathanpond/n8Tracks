@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Mvc;
 using n8Tracks.Api.Auth;
 using n8Tracks.Api.Problems;
 using n8Tracks.Application.Catalog;
@@ -14,7 +15,9 @@ namespace n8Tracks.Api.Endpoints;
 /// revision in <c>If-Match</c> (<c>collections.write</c>, and <c>artwork.write</c> too when the edit
 /// changes its artwork). A name or alias another Artist already
 /// has is 409 <c>duplicate_artist_name</c>, listing the matches, unless the body carries
-/// <c>confirmDuplicate: true</c>. Every answer is <c>no-store</c>.
+/// <c>confirmDuplicate: true</c>. Deleting one (#104) is from the web UI only (session), under its
+/// revision, with its credits reassigned to another Artist or removed; no Song or Album is deleted.
+/// Every answer is <c>no-store</c>.
 /// </summary>
 internal static class ArtistsEndpoints
 {
@@ -22,6 +25,8 @@ internal static class ArtistsEndpoints
     public const string ArtistPath = ArtistsPath + "/{id:guid}";
 
     public const string DuplicateNameCode = "duplicate_artist_name";
+
+    public const string InUseCode = "artist_in_use";
 
     private const string ConfirmDuplicateField = "confirmDuplicate";
 
@@ -62,6 +67,19 @@ internal static class ArtistsEndpoints
             .WithSummary("Edits an Artist (only the fields sent; aliases and links as whole lists; artworkAssetId is an uploaded asset's ID, or null to remove the Artist's own artwork, and artworkCrop is {x, y, size} or null for the centred square, both also needing artwork.write), given its revision in If-Match. A new name or alias another Artist has is 409 duplicate_artist_name unless confirmDuplicate is true. Replaced or removed artwork is retained for 30 days.")
             .RequireScope(CredentialScopes.CollectionsWrite)
             .Produces<ArtistResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        endpoints.MapDelete(ArtistPath, DeleteAsync)
+            .WithName("DeleteArtist")
+            .WithSummary("Deletes an Artist with its aliases, links, and own artwork, given its revision in If-Match. Its credits on Songs and as Album Artist go to another Artist (reassignTo=<id>; a Song already crediting that Artist keeps one credit, in the more senior role) or are removed (removeCredits=true); an Artist with credits and neither is 409 artist_in_use with the counts. No Song or Album is deleted. A default Artist for new Songs that is this one is cleared. Retained for 30 days. Web UI only (session).")
+            .SessionOnly()
+            .Produces(StatusCodes.Status204NoContent)
             .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
@@ -202,6 +220,92 @@ internal static class ArtistsEndpoints
         }
 
         return Refusal(context, outcome);
+    }
+
+    /// <summary>
+    /// 204 once the Artist is in retention; 404 when there is no such Artist; 409
+    /// <c>revision_conflict</c> with <c>current</c> on a stale revision; 409 <c>artist_in_use</c> with
+    /// <c>songCount</c>, <c>albumCount</c>, <c>isDefaultArtist</c>, and <c>current</c> when Songs or
+    /// Albums credit it and neither <c>reassignTo</c> nor <c>removeCredits=true</c> was sent; 422 when
+    /// both were, or <c>reassignTo</c> is not another Artist's ID, or <c>removeCredits</c> is not true
+    /// or false; 428/400 on a missing or malformed <c>If-Match</c>. Nothing is changed unless the answer is 204.
+    /// </summary>
+    private static async Task<Results<NoContent, ProblemHttpResult>> DeleteAsync(
+        Guid id,
+        [FromQuery] string? reassignTo,
+        [FromQuery] string? removeCredits,
+        ArtistService artists,
+        HttpContext context,
+        ILoggerFactory loggers,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        var (revision, problem) = Revisions.Read(context);
+        if (problem is not null)
+        {
+            return problem;
+        }
+
+        var query = context.Request.Query;
+        if (query[ArtistService.ReassignToParameter].Count > 1 || query[ArtistService.RemoveCreditsParameter].Count > 1)
+        {
+            return ApiProblem.For(context, StatusCodes.Status400BadRequest, ApiProblem.InvalidRequestCode, "reassignTo and removeCredits may each be given once.");
+        }
+
+        bool remove;
+        switch (removeCredits)
+        {
+            case null or "false":
+                remove = false;
+                break;
+            case "true":
+                remove = true;
+                break;
+            default:
+                return ApiProblem.ValidationFailed(context, new Dictionary<string, string[]>(StringComparer.Ordinal) { [ArtistService.RemoveCreditsParameter] = ["Send true or false."] });
+        }
+
+        var outcome = await artists.DeleteAsync(id, revision!.Value, new ArtistCreditChoice(reassignTo, remove), cancellationToken);
+        switch (outcome)
+        {
+            case ArtistDeleteOutcome.Deleted deleted:
+                loggers.CreateLogger(typeof(ArtistsEndpoints)).LogInformation(
+                    "Artist deleted: {ArtistId} into retention group {RetentionGroupId} with {RetainedRecordCount} records; credits on {SongCount} Songs and {AlbumCount} Albums {CreditOutcome}; default Artist cleared: {DefaultCleared}",
+                    id,
+                    deleted.Group.Id,
+                    deleted.Group.Records.Count,
+                    deleted.SongCount,
+                    deleted.AlbumCount,
+                    deleted.ReassignedTo is null ? "removed" : "reassigned",
+                    deleted.DefaultCleared);
+                return TypedResults.NoContent();
+
+            case ArtistDeleteOutcome.Conflict conflict:
+                return Revisions.Conflict(context, ArtistResponse.From(conflict.Current, context.Request.PathBase));
+
+            case ArtistDeleteOutcome.InUse inUse:
+                return ApiProblem.For(
+                    context,
+                    StatusCodes.Status409Conflict,
+                    InUseCode,
+                    "Songs or Albums credit this Artist. Reassign their credits to another Artist (reassignTo) or remove them (removeCredits=true) to delete it.",
+                    [
+                        new("songCount", inUse.Current.SongCount),
+                        new("albumCount", inUse.Current.AlbumCount),
+                        new("isDefaultArtist", inUse.IsDefaultArtist),
+                        new("current", ArtistResponse.From(inUse.Current, context.Request.PathBase)),
+                    ]);
+
+            case ArtistDeleteOutcome.Invalid invalid:
+                return ApiProblem.ValidationFailed(context, invalid.Errors);
+
+            case ArtistDeleteOutcome.NotFound:
+                return NoSuchArtist(context);
+
+            default:
+                throw new InvalidOperationException("Unknown Artist deletion outcome.");
+        }
     }
 
     /// <summary>A text field: null when not sent (or null); a type error recorded otherwise.</summary>

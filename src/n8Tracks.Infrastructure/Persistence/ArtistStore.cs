@@ -124,6 +124,85 @@ internal sealed class ArtistStore(N8TracksDbContext context) : IArtistStore
         return true;
     }
 
+    public async Task<ArtistCredited> CreditedAsync(Guid id, CancellationToken cancellationToken)
+    {
+        var songIds = await context.SongCredits.AsNoTracking()
+            .Where(credit => credit.ArtistId == id)
+            .Select(static credit => credit.SongId)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var albumIds = await context.Albums.AsNoTracking()
+            .Where(album => album.AlbumArtistId == id)
+            .Select(static album => album.Id)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return new ArtistCredited(songIds, albumIds);
+    }
+
+    public async Task ReassignCreditsAsync(Guid from, Guid to, CancellationToken cancellationToken)
+    {
+        var moving = await context.SongCredits.AsNoTracking()
+            .Where(credit => credit.ArtistId == from)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var songIds = moving.Select(static credit => credit.SongId).ToList();
+        var existing = await context.SongCredits.AsNoTracking()
+            .Where(credit => credit.ArtistId == to && songIds.Contains(credit.SongId))
+            .ToDictionaryAsync(static credit => credit.SongId, cancellationToken)
+            .ConfigureAwait(false);
+
+        // Both Artists' rows on those Songs go first, so the role and place each Song keeps are free
+        // (one primary, featured places unique) when the target's row is written again.
+        await context.SongCredits.Where(credit => credit.ArtistId == from).ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
+        await context.SongCredits.Where(credit => credit.ArtistId == to && songIds.Contains(credit.SongId)).ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
+        var rows = moving.Select(credit =>
+        {
+            var place = ArtistDeletionRules.Reassigned(
+                new CreditPlace(credit.Role, credit.Position),
+                existing.TryGetValue(credit.SongId, out var target) ? new CreditPlace(target.Role, target.Position) : null);
+            return new SongCreditRecord { SongId = credit.SongId, ArtistId = to, Role = place.Role, Position = place.Position };
+        }).ToList();
+        if (rows.Count > 0)
+        {
+            context.SongCredits.AddRange(rows);
+            await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            foreach (var row in rows)
+            {
+                context.Entry(row).State = EntityState.Detached;
+            }
+        }
+
+        await context.Albums
+            .Where(album => album.AlbumArtistId == from)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(album => album.AlbumArtistId, (Guid?)to), cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task TouchCreditedAsync(IReadOnlyCollection<Guid> songIds, IReadOnlyCollection<Guid> albumIds, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(songIds);
+        ArgumentNullException.ThrowIfNull(albumIds);
+
+        var updated = UtcText.From(now);
+        var songs = songIds.Distinct().ToList();
+        var albums = albumIds.Distinct().ToList();
+        if (songs.Count > 0)
+        {
+            await context.Songs
+                .Where(song => songs.Contains(song.Id))
+                .ExecuteUpdateAsync(setters => setters.SetProperty(song => song.UpdatedUtc, updated).SetProperty(song => song.Revision, song => song.Revision + 1), cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        if (albums.Count > 0)
+        {
+            await context.Albums
+                .Where(album => albums.Contains(album.Id))
+                .ExecuteUpdateAsync(setters => setters.SetProperty(album => album.UpdatedUtc, updated).SetProperty(album => album.Revision, album => album.Revision + 1), cancellationToken)
+                .ConfigureAwait(false);
+        }
+    }
+
     /// <summary>Adds the rows of an Artist's aliases and links to the context, unsaved.</summary>
     private List<object> AddLists(Artist artist)
     {

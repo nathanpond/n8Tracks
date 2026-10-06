@@ -524,6 +524,7 @@ public sealed class VersionImmutabilityGuardTests
         ["DELETE /api/v1/tags/{id:guid}"] = "removes Songs' Tag assignments (song_tags and the Songs' revisions), never a Version",
         ["POST /api/v1/artists"] = "adds an Artist record (artists, artist_aliases, artist_links); no Song or Version is touched",
         ["PATCH /api/v1/artists/{id:guid}"] = "edits an Artist record's name, aliases, notes, and links; no Song or Version is touched",
+        ["DELETE /api/v1/artists/{id:guid}"] = "retains an Artist with its aliases, links, and artwork; its Song credits (song_artist_credits) and Album Artists are reassigned or removed, raising those Songs' and Albums' revisions, never a Version",
         ["POST /api/v1/albums"] = "adds an Album record (albums) from a title; no Song or Version is touched",
         ["PATCH /api/v1/albums/{id:guid}"] = "edits an Album record's title, Album Artist, release details, and links; no Song or Version is touched",
         ["POST /api/v1/relationship-types"] = "adds a relationship type (song_relationship_types); no Song or Version is touched",

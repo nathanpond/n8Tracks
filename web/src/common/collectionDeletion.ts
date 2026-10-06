@@ -1,12 +1,19 @@
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 
-/** What can be deleted this way: a collection of Songs, never the Songs themselves. */
-export type CollectionNoun = 'Album' | 'Playlist';
+/**
+ * What can be deleted this way: a collection of Songs, or an Artist credited on them, never the
+ * Songs themselves.
+ */
+export type CollectionNoun = 'Album' | 'Playlist' | 'Artist';
 
-/** What the list page is handed after a deletion, as router state, to tell the user. */
+/**
+ * What the list page is handed after a deletion, as router state, to tell the user: the noun, the
+ * title (an Artist's name), and, when given, what became of the rest (otherwise "Its Songs were
+ * not deleted.").
+ */
 export interface DeletedCollectionState {
-  deletedCollection: { noun: CollectionNoun; title: string };
+  deletedCollection: { noun: CollectionNoun; title: string; note?: string };
 }
 
 function isDeletedCollectionState(value: unknown): value is DeletedCollectionState {
@@ -18,9 +25,10 @@ function isDeletedCollectionState(value: unknown): value is DeletedCollectionSta
     typeof deleted === 'object' &&
     deleted !== null &&
     'noun' in deleted &&
-    (deleted.noun === 'Album' || deleted.noun === 'Playlist') &&
+    (deleted.noun === 'Album' || deleted.noun === 'Playlist' || deleted.noun === 'Artist') &&
     'title' in deleted &&
-    typeof deleted.title === 'string'
+    typeof deleted.title === 'string' &&
+    (!('note' in deleted) || deleted.note === undefined || typeof deleted.note === 'string')
   );
 }
 
