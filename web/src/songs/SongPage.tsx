@@ -11,6 +11,7 @@ import {
   type SongEdit,
 } from '../api/songs';
 import { useSongVersions } from '../api/versions';
+import { ARTWORK_KEY } from '../common/ArtworkPicker';
 import { ConflictValue } from '../common/ConflictDialog';
 import { useRevisionedSave, type SavedField } from '../common/useRevisionedSave';
 import { Notice } from '../components/Notice';
@@ -146,6 +147,12 @@ function LoadedSong({ loaded }: { loaded: Song }) {
       },
       { key: 'notes', label: 'Notes', read: (record) => record.notes, show: showText },
       ...RELEASE_FIELDS,
+      {
+        key: ARTWORK_KEY,
+        label: 'Artwork',
+        read: (record) => record.artwork?.assetId ?? null,
+        show: (value) => <ConflictValue value={value === null ? null : 'An uploaded image'} />,
+      },
     ];
   }, [states]);
 

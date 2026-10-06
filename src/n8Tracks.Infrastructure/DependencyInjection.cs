@@ -102,6 +102,9 @@ public static class DependencyInjection
         services.AddSingleton<ManagedFiles>();
         services.AddSingleton<IManagedFiles>(static provider => provider.GetRequiredService<ManagedFiles>());
         services.AddScoped<IAssetStore, AssetStore>();
+        services.AddScoped<ArtworkAttachmentStore>();
+        services.AddScoped<IArtworkAttachmentStore>(static provider => provider.GetRequiredService<ArtworkAttachmentStore>());
+        services.AddScoped<IArtworkAttachments>(static provider => provider.GetRequiredService<ArtworkAttachmentStore>());
         services.AddSingleton<IManagedAssetStore, ManagedAssetStore>();
         services.AddSingleton<IArtworkImaging, SkiaArtworkImaging>();
         services.AddJobHandler<RetentionPruneJobHandler>(RetentionPruneTask.JobType);

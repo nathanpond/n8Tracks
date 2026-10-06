@@ -71,8 +71,15 @@ internal static class RetainedTypes
             new EditorRevisionStore(row.Context).PruneAsync(row.GuidOf("version_id"), EditorRevisionService.MaximumKept, cancellationToken),
     };
 
+    /// <summary>
+    /// An owner's artwork that was replaced or removed: the owner, the asset, and the crop. Its group
+    /// lists the asset's files, so they stay at least until the group is pruned. Restoring it while
+    /// the owner has other artwork clashes on the one-per-owner key.
+    /// </summary>
+    public static readonly RetainedType ArtworkAttachment = new(RetainedRecordTypes.ArtworkAttachment, "artwork_attachments", "artwork", ShapeVersion: 1);
+
     /// <summary>Every built-in type.</summary>
-    public static IReadOnlyList<RetainedType> BuiltIn { get; } = [EditorSnapshot];
+    public static IReadOnlyList<RetainedType> BuiltIn { get; } = [EditorSnapshot, ArtworkAttachment];
 }
 
 /// <summary>The registered retained types, checked once when the first is needed.</summary>

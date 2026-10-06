@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using n8Tracks.Application.Songs;
+using n8Tracks.Domain.Assets;
 using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
 
@@ -250,7 +251,7 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
     /// <summary>
     /// The summaries of <paramref name="records"/>, in their order, with their states, current
     /// Versions, Version counts, Genres, Tags, credits, Playlists, Albums, relationships, release
-    /// links, and the other Songs sharing their ISRC.
+    /// links, the other Songs sharing their ISRC, and their artwork.
     /// </summary>
     private async Task<List<SongSummary>> SummariesAsync(List<SongRecord> records, CancellationToken cancellationToken)
     {
@@ -302,6 +303,7 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
         var playlists = await PlaylistStore.ForSongsAsync(context, songIds, cancellationToken).ConfigureAwait(false);
         var albums = await AlbumTrackStore.ForSongsAsync(context, songIds, cancellationToken).ConfigureAwait(false);
         var relationships = await RelationshipStore.ForSongsAsync(context, songIds, cancellationToken).ConfigureAwait(false);
+        var artwork = await ArtworkAttachmentStore.ForOwnersAsync(context, ArtworkOwnerTypes.Song, songIds, cancellationToken).ConfigureAwait(false);
         var links = (await context.SongLinks.AsNoTracking()
                 .Where(link => songIds.Contains(link.SongId))
                 .ToListAsync(cancellationToken)
@@ -356,7 +358,8 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
                     [.. links[song.Id].OrderBy(static link => link.Position).Select(static link => new SongLink(link.Label, link.Url))]),
                 song.Isrc is { } isrc
                     ? [.. sameIsrc[isrc].Where(other => other.Id != song.Id).Select(static other => new RelatedSong(other.Id, Shortcodes.ForSong(other.ShortcodeNumber), other.Title))]
-                    : []);
+                    : [],
+                artwork.GetValueOrDefault(song.Id));
         })];
     }
 }

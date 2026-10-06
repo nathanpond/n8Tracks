@@ -272,7 +272,7 @@ internal static class RelationshipsEndpoints
                 Revisions.SetETag(context, changed.Song.Revision);
                 return TypedResults.Created(
                     $"{context.Request.PathBase}{SongsEndpoints.SongsPath}/{songId}/relationships/{changed.RelationshipId}",
-                    SongResponse.From(changed.Song));
+                    SongResponse.From(changed.Song, context.Request.PathBase));
 
             case RelationshipOutcome.Exists exists:
                 return ApiProblem.For(
@@ -280,7 +280,7 @@ internal static class RelationshipsEndpoints
                     StatusCodes.Status409Conflict,
                     ExistsCode,
                     "These Songs are already related under this type.",
-                    [new("current", SongResponse.From(exists.Current))]);
+                    [new("current", SongResponse.From(exists.Current, context.Request.PathBase))]);
 
             case RelationshipOutcome.Invalid invalid:
                 return ApiProblem.ValidationFailed(context, invalid.Errors);
@@ -315,7 +315,7 @@ internal static class RelationshipsEndpoints
             case RelationshipOutcome.Changed changed:
                 Log(loggers).LogInformation("Song relationship removed: {RelationshipId} from {SongId}", id, songId);
                 Revisions.SetETag(context, changed.Song.Revision);
-                return TypedResults.Ok(SongResponse.From(changed.Song));
+                return TypedResults.Ok(SongResponse.From(changed.Song, context.Request.PathBase));
 
             case RelationshipOutcome.NotFound:
                 return ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "This Song has no such relationship.");

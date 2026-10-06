@@ -61,6 +61,7 @@ public static class DependencyInjection
         services.AddScoped<RetentionService>();
         services.AddDailyTask<RetentionPruneTask>();
         services.AddScoped<ArtworkService>();
+        services.AddScoped<ArtworkAttachmentService>();
         services.AddScoped<ILiveFileReferences, ArtworkFileReferences>();
         services.AddSingleton<ArtworkSweepSchedule>();
         services.AddDailyTask<ArtworkSweepTask>();

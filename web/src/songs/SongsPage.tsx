@@ -33,6 +33,7 @@ import {
 import { useTags, type Tag } from '../api/tags';
 import { useConfiguredTimeZone } from '../api/timeZone';
 import { statesForFilter } from '../api/workflow';
+import { ArtworkImage } from '../common/ArtworkImage';
 import { Notice } from '../components/Notice';
 import { ArtistFilter } from './ArtistFilter';
 import { NewSongDialog } from './NewSongDialog';
@@ -235,9 +236,12 @@ function SongRow({ song, timeZone, from }: { song: Song; timeZone: string; from:
         {song.shortcode}
       </Table.Th>
       <Table.Td>
-        <Anchor component={Link} to={`/songs/${song.shortcode}`} state={from}>
-          {song.title}
-        </Anchor>
+        <Group gap="sm" wrap="nowrap">
+          <ArtworkImage artwork={song.artwork} title={song.title} size="96" pixels={40} />
+          <Anchor component={Link} to={`/songs/${song.shortcode}`} state={from}>
+            {song.title}
+          </Anchor>
+        </Group>
       </Table.Td>
       <Table.Td style={{ maxWidth: 200 }}>{song.credits.primary?.name}</Table.Td>
       <Table.Td style={{ maxWidth: 260 }}>

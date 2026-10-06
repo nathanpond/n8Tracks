@@ -1,9 +1,11 @@
 using System.Globalization;
 using System.Text.Json;
+using n8Tracks.Application.Assets;
 using n8Tracks.Application.Auth;
 using n8Tracks.Application.Catalog;
 using n8Tracks.Application.References;
 using n8Tracks.Application.Suno;
+using n8Tracks.Domain.Assets;
 using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
 
@@ -72,6 +74,8 @@ public readonly record struct SongEditField(bool IsSent, string? Value)
 /// the unread text of a workflow state's ID. <paramref name="GenreIds"/>, when sent (not null), is
 /// the Song's whole new list of Genres, each the unread text of a Genre's ID; <paramref name="TagIds"/>
 /// likewise for its Tags. <paramref name="Release"/>, when sent, changes the release details it sends.
+/// <paramref name="ArtworkAssetId"/>, when sent, is the unread text of the asset to show as the
+/// Song's artwork, or null to remove it.
 /// </summary>
 public sealed record SongEdit(
     SongEditField Title,
@@ -80,7 +84,8 @@ public sealed record SongEdit(
     SongEditField Notes = default,
     IReadOnlyList<string?>? GenreIds = null,
     IReadOnlyList<string?>? TagIds = null,
-    SongReleaseEdit? Release = null);
+    SongReleaseEdit? Release = null,
+    SongEditField ArtworkAssetId = default);
 
 /// <summary>A link as sent: its label (missing or null for none) and its URL.</summary>
 public sealed record SongLinkInput(string? Label, string? Url);
@@ -156,6 +161,7 @@ public sealed class SongService(
     GenreService genres,
     TagService tags,
     SongCreditService credits,
+    ArtworkAttachmentService artwork,
     IExclusiveTransaction transaction,
     TimeProvider time)
 {
@@ -166,6 +172,7 @@ public sealed class SongService(
     public const string NotesField = "notes";
     public const string GenreIdsField = "genreIds";
     public const string TagIdsField = "tagIds";
+    public const string ArtworkAssetIdField = ArtworkAttachmentService.AssetIdField;
 
     /// <summary>The release details object, and the names its members' errors are keyed by (<c>release.isrc</c>).</summary>
     public const string ReleaseField = "release";
@@ -310,14 +317,16 @@ public sealed class SongService(
     }
 
     /// <summary>
-    /// Edits a Song's title, concept, workflow state, notes, Genres, Tags, or release details, given
+    /// Edits a Song's title, concept, workflow state, notes, Genres, Tags, release details, or artwork, given
     /// the revision the caller read. Only the fields sent change: the title follows the creation rule,
     /// a null or blank concept or notes clears them, the state may be any state, hidden ones included,
     /// so a Song can move from any state to any other, and the Genres or Tags sent replace the Song's
     /// (each must be a Genre or Tag; one taken off stays in the list). Release members follow
     /// <see cref="SongReleaseRules"/> (errors keyed <c>release.&lt;member&gt;</c>), a null one is
     /// cleared, and links sent replace the Song's; an ISRC another Song has is allowed (the answer
-    /// names the others in <see cref="SongSummary.SameIsrc"/>). A stale revision (lower or higher)
+    /// names the others in <see cref="SongSummary.SameIsrc"/>). The artwork sent replaces the Song's
+    /// (a live asset's ID; null removes it), and the artwork it had goes into retention
+    /// (<see cref="ArtworkAttachmentService"/>). A stale revision (lower or higher)
     /// changes nothing and answers the Song as it is now. An edit that changes nothing once
     /// normalised is not written and answers the Song unchanged; any other moves its revision and
     /// last-updated time.
@@ -376,6 +385,18 @@ public sealed class SongService(
                     tagIds = ids;
                 }
 
+                Guid? artworkId = null;
+                if (edit.ArtworkAssetId.IsSent)
+                {
+                    var (assetId, artworkError) = await artwork.ReadAssetAsync(edit.ArtworkAssetId.Value, ct).ConfigureAwait(false);
+                    if (artworkError is not null)
+                    {
+                        errors[ArtworkAssetIdField] = [artworkError];
+                    }
+
+                    artworkId = assetId;
+                }
+
                 var stateId = Guid.Empty;
                 if (edit.StateId.IsSent
                     && (!Guid.TryParseExact(edit.StateId.Value, "D", out stateId)
@@ -411,7 +432,11 @@ public sealed class SongService(
                 var tagsChange = tagIds is not null && !tagIds.ToHashSet().SetEquals(current.Tags.Select(static tag => tag.Id))
                     ? tagIds
                     : null;
-                if (details == new SongDetails(current.Title, current.Concept, current.State.Id, current.Notes, current.Release) && genresChange is null && tagsChange is null)
+                var artworkChanges = edit.ArtworkAssetId.IsSent && artworkId != current.Artwork?.AssetId;
+                if (details == new SongDetails(current.Title, current.Concept, current.State.Id, current.Notes, current.Release)
+                    && genresChange is null
+                    && tagsChange is null
+                    && !artworkChanges)
                 {
                     return new SongUpdateOutcome.Updated(current);
                 }
@@ -431,6 +456,11 @@ public sealed class SongService(
                 if (tagsChange is not null)
                 {
                     await tags.ReplaceSongTagsAsync(id, tagsChange, ct).ConfigureAwait(false);
+                }
+
+                if (artworkChanges)
+                {
+                    await artwork.ReplaceAsync(ArtworkOwnerTypes.Song, id, current.Shortcode, artworkId, ct).ConfigureAwait(false);
                 }
 
                 var updated = await songs.FindAsync(id, ct).ConfigureAwait(false)

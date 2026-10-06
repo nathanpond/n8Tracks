@@ -474,7 +474,7 @@ internal static class VersionsEndpoints
         {
             case SetCurrentOutcome.Updated updated:
                 Revisions.SetETag(context, updated.Song.Revision);
-                return TypedResults.Ok(SongResponse.From(updated.Song));
+                return TypedResults.Ok(SongResponse.From(updated.Song, context.Request.PathBase));
 
             case SetCurrentOutcome.SongNotFound:
                 return SongsEndpoints.NoSuchSong(context);

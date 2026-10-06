@@ -296,13 +296,6 @@ internal sealed record ArtworkResponse(
     {
         ArgumentNullException.ThrowIfNull(asset);
 
-        var original = $"{pathBase}{ArtworkEndpoints.ArtworkPath}/{asset.Id}";
-        var urls = new Dictionary<string, string>(StringComparer.Ordinal) { [OriginalKey] = original };
-        foreach (var size in ArtworkRules.ThumbnailSizes)
-        {
-            urls[size.ToString(CultureInfo.InvariantCulture)] = $"{original}/{size.ToString(CultureInfo.InvariantCulture)}";
-        }
-
         return new(
             asset.Id,
             ArtworkRules.MediaType(asset.Format),
@@ -310,7 +303,41 @@ internal sealed record ArtworkResponse(
             asset.Width,
             asset.Height,
             asset.ThumbnailSizes,
-            urls,
+            UrlsOf(asset.Id, pathBase),
             asset.UploadedUtc.UtcDateTime);
     }
+
+    /// <summary>Where to fetch the asset's original (<c>original</c>) and each thumbnail size (<c>"96"</c>, …), each starting with <paramref name="pathBase"/>.</summary>
+    public static IReadOnlyDictionary<string, string> UrlsOf(Guid assetId, PathString pathBase)
+    {
+        var original = $"{pathBase}{ArtworkEndpoints.ArtworkPath}/{assetId}";
+        var urls = new Dictionary<string, string>(StringComparer.Ordinal) { [OriginalKey] = original };
+        foreach (var size in ArtworkRules.ThumbnailSizes)
+        {
+            urls[size.ToString(CultureInfo.InvariantCulture)] = $"{original}/{size.ToString(CultureInfo.InvariantCulture)}";
+        }
+
+        return urls;
+    }
 }
+
+/// <summary>
+/// An owner's artwork as its answers show it: the asset (what <c>artworkAssetId</c> takes), where to
+/// fetch its original and each thumbnail size (as <see cref="ArtworkResponse"/>), and the square crop
+/// the owner set, or null for the centred square.
+/// </summary>
+internal sealed record AttachedArtworkResponse(Guid AssetId, IReadOnlyDictionary<string, string> Urls, ArtworkCropResponse? Crop)
+{
+    public static AttachedArtworkResponse From(AttachedArtwork artwork, PathString pathBase)
+    {
+        ArgumentNullException.ThrowIfNull(artwork);
+
+        return new(
+            artwork.AssetId,
+            ArtworkResponse.UrlsOf(artwork.AssetId, pathBase),
+            artwork.Crop is { } crop ? new ArtworkCropResponse(crop.X, crop.Y, crop.Size) : null);
+    }
+}
+
+/// <summary>A square crop in pixels of the original, its orientation applied: the left and top edges and the side.</summary>
+internal sealed record ArtworkCropResponse(int X, int Y, int Size);

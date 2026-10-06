@@ -54,6 +54,7 @@ function song(number: number, overrides: Partial<Song> = {}): Song {
     relationships: [],
     release: NO_RELEASE,
     warnings: [],
+    artwork: null,
     ...overrides,
   };
 }
@@ -529,6 +530,45 @@ describe('Songs', () => {
     await screen.findByRole('table', { name: 'Songs' });
     expect(within(row('n8-2')).getAllByRole('cell')[1]).toHaveTextContent(/^n8$/);
     expect(within(row('n8-1')).getAllByRole('cell')[1]).toHaveTextContent(/^$/);
+  });
+
+  it('shows each Song’s 96-pixel artwork beside its title, or a placeholder', async () => {
+    const assetId = '01a20000-0000-7000-8000-000000000001';
+    const original = `/api/v1/artwork/${assetId}`;
+    backend({
+      list: () =>
+        jsonResponse(
+          200,
+          page([
+            song(2, {
+              title: 'Night Drive',
+              artwork: {
+                assetId,
+                urls: {
+                  original,
+                  '96': `${original}/96`,
+                  '320': `${original}/320`,
+                  '1024': `${original}/1024`,
+                },
+                crop: null,
+              },
+            }),
+            song(1),
+          ]),
+        ),
+    });
+
+    renderApp('/songs');
+
+    await screen.findByRole('table', { name: 'Songs' });
+    const titleCell = within(row('n8-2')).getAllByRole('cell')[0];
+    if (titleCell === undefined) {
+      throw new Error('No title cell.');
+    }
+    const image = within(titleCell).getByRole('img', { name: 'Artwork for Night Drive' });
+    expect(image).toHaveAttribute('src', `${original}/96`);
+    expect(titleCell).toHaveTextContent(/^Night Drive$/);
+    expect(within(row('n8-1')).getAllByRole('img', { name: 'No artwork' })).toHaveLength(1);
   });
 
   it('filters by any of several Artists, primary or featured, or by no Artist', async () => {

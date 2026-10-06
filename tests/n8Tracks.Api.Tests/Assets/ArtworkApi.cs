@@ -22,7 +22,7 @@ internal static class ArtworkApi
 
     /// <summary>
     /// A host on <paramref name="clock"/> (the real clock when null), with <paramref name="attachments"/>
-    /// as the one source of attachments, and the retention tests' test artwork type registered.
+    /// as a source of attachments beside the real table (#98), and the retention tests' test artwork type registered.
     /// </summary>
     public static N8TracksApiFactory Host(TimeProvider? clock = null, TestAttachments? attachments = null) =>
         new()

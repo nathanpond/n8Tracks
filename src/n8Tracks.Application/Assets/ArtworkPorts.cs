@@ -100,6 +100,20 @@ public interface IArtworkAttachments
 }
 
 /// <summary>
+/// The <c>artwork_attachments</c> table: which asset each owner (a Song; later an Album, Playlist,
+/// or Artist) shows as its artwork, at most one per owner. It is the production
+/// <see cref="IArtworkAttachments"/>: an asset any row names is attached.
+/// </summary>
+public interface IArtworkAttachmentStore : IArtworkAttachments
+{
+    /// <summary>The owner's attachment, or null when it has no artwork.</summary>
+    Task<ArtworkAttachment?> FindAsync(string ownerType, Guid ownerId, CancellationToken cancellationToken);
+
+    /// <summary>Stores a new attachment. The owner must have none (one per owner is a unique key).</summary>
+    Task AddAsync(ArtworkAttachment attachment, CancellationToken cancellationToken);
+}
+
+/// <summary>
 /// Where an asset's files are, relative to the managed-assets folder: a folder named by the content
 /// hash (under a two-character fan-out folder), holding <c>original.&lt;ext&gt;</c>, the bytes as
 /// uploaded, and <c>&lt;size&gt;.webp</c> for each thumbnail.

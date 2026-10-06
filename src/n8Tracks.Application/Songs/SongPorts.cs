@@ -1,3 +1,4 @@
+using n8Tracks.Domain.Assets;
 using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
 
@@ -26,6 +27,7 @@ namespace n8Tracks.Application.Songs;
 /// </param>
 /// <param name="Release">Its release details; <see cref="SongRelease.None"/> when it has none.</param>
 /// <param name="SameIsrc">The other Songs with its ISRC, by title (ignoring case); empty when it has none or no other Song shares it.</param>
+/// <param name="Artwork">Its own artwork (the asset and the crop it set), or null when it has none.</param>
 public sealed record SongSummary(
     Guid Id,
     long ShortcodeNumber,
@@ -45,7 +47,8 @@ public sealed record SongSummary(
     IReadOnlyList<AlbumMembership> Albums,
     IReadOnlyList<SongRelation> Relationships,
     SongRelease Release,
-    IReadOnlyList<RelatedSong> SameIsrc)
+    IReadOnlyList<RelatedSong> SameIsrc,
+    AttachedArtwork? Artwork)
 {
     public string Shortcode => Shortcodes.ForSong(ShortcodeNumber);
 }

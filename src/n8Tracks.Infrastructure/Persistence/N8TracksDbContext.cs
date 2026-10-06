@@ -98,6 +98,8 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
 
     public DbSet<AssetRecord> Assets => Set<AssetRecord>();
 
+    public DbSet<ArtworkAttachmentRecord> ArtworkAttachments => Set<ArtworkAttachmentRecord>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         ArgumentNullException.ThrowIfNull(configurationBuilder);
@@ -173,8 +175,10 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
     }
 
     /// <summary>
-    /// Managed artwork: one row per distinct image. Nothing refers to an asset by foreign key yet; the
-    /// stories that attach artwork add the attachments.
+    /// Managed artwork: one row per distinct image, and the attachments that make an asset an
+    /// owner's artwork, one per owner. An attachment refers to its asset by a RESTRICT foreign key, so
+    /// an attached asset's row is never removed; its owner is named by type and ID (no foreign key, so
+    /// one table serves every owner type).
     /// </summary>
     private static void OnAssetsCreating(ModelBuilder modelBuilder)
     {
@@ -190,6 +194,24 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
             asset.HasKey(record => record.Id);
             asset.HasIndex(record => record.ContentHash).IsUnique();
             asset.HasIndex(record => record.UploadedUtc);
+        });
+
+        modelBuilder.Entity<ArtworkAttachmentRecord>(attachment =>
+        {
+            attachment.ToTable("artwork_attachments", static table =>
+            {
+                table.HasCheckConstraint("ck_artwork_attachments_owner_type", "owner_type IN ('song', 'album', 'playlist', 'artist')");
+                table.HasCheckConstraint(
+                    "ck_artwork_attachments_crop",
+                    "(crop_x IS NULL AND crop_y IS NULL AND crop_size IS NULL) OR (crop_x IS NOT NULL AND crop_y IS NOT NULL AND crop_size IS NOT NULL AND crop_x >= 0 AND crop_y >= 0 AND crop_size > 0)");
+            });
+            attachment.HasKey(record => record.Id);
+            attachment.HasIndex(record => new { record.OwnerType, record.OwnerId }).IsUnique();
+            attachment.HasIndex(record => record.AssetId);
+            attachment.HasOne<AssetRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.AssetId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
     }
 

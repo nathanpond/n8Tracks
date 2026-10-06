@@ -23,6 +23,7 @@ import {
   type SongTag,
 } from '../api/songs';
 import { createTag, tagNameError, useTags, type Tag } from '../api/tags';
+import { ARTWORK_KEY, ArtworkPicker } from '../common/ArtworkPicker';
 import { TokenPicker } from '../common/TokenPicker';
 import {
   focusOnMount,
@@ -374,7 +375,7 @@ function AlbumsSection({ song }: { song: Song }) {
   );
 }
 
-/** What the Details panel holds for a Song: its credits, Genres, Tags, notes, release details, related Songs, Albums, and Playlists. Later stories add sections. */
+/** What the Details panel holds for a Song: its artwork, credits, Genres, Tags, notes, release details, related Songs, Albums, and Playlists. Later stories add sections. */
 export function SongDetails({
   song,
   saveFields,
@@ -386,6 +387,12 @@ export function SongDetails({
 }) {
   return (
     <Stack gap="lg">
+      <ArtworkPicker
+        title={song.title}
+        noun="Song"
+        artwork={song.artwork}
+        save={(assetId) => saveFields({ [ARTWORK_KEY]: assetId })}
+      />
       <CreditsSection song={song} saveFields={saveFields} onSong={onSong} />
       <GenresSection song={song} saveFields={saveFields} onSong={onSong} />
       <TagsSection song={song} saveFields={saveFields} onSong={onSong} />

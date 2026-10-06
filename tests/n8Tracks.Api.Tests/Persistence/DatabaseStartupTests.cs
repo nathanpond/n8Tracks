@@ -52,7 +52,8 @@ public sealed class DatabaseStartupTests : IDisposable
             migration => Assert.Matches("^[0-9]{14}_AddSongRelease\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AddSongTitleKey\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AddRetention\\|10\\.0\\.", migration),
-            migration => Assert.Matches("^[0-9]{14}_AddAssets\\|10\\.0\\.", migration));
+            migration => Assert.Matches("^[0-9]{14}_AddAssets\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddArtworkAttachments\\|10\\.0\\.", migration));
 
         // ISO 8601 UTC with milliseconds and Z, taken when the migration ran.
         var initialized = TestDatabase.SchemaInitializedUtc(directory.Path);
@@ -71,7 +72,7 @@ public sealed class DatabaseStartupTests : IDisposable
         Start();
 
         Assert.Equal(
-            ["__EFMigrationsHistory", "administrators", "album_links", "album_songs", "albums", "app_metadata", "artist_aliases", "artist_links", "artists", "assets", "credentials", "editor_revisions", "generations", "genres", "jobs", "pending_file_deletions", "playlist_songs", "playlists", "retention_groups", "retention_records", "sessions", "settings", "shortcode_sequence", "song_artist_credits", "song_genres", "song_links", "song_relationship_types", "song_relationships", "song_tags", "songs", "suno_models", "tags", "used_version_numbers", "versions", "workflow_states"],
+            ["__EFMigrationsHistory", "administrators", "album_links", "album_songs", "albums", "app_metadata", "artist_aliases", "artist_links", "artists", "artwork_attachments", "assets", "credentials", "editor_revisions", "generations", "genres", "jobs", "pending_file_deletions", "playlist_songs", "playlists", "retention_groups", "retention_records", "sessions", "settings", "shortcode_sequence", "song_artist_credits", "song_genres", "song_links", "song_relationship_types", "song_relationships", "song_tags", "songs", "suno_models", "tags", "used_version_numbers", "versions", "workflow_states"],
             TestDatabase.Rows(
                 directory.Path,
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> '__EFMigrationsLock' ORDER BY name;"));
@@ -186,7 +187,7 @@ public sealed class DatabaseStartupTests : IDisposable
 
         Assert.Equal(MigrationStatus.UpToDate, state.Status);
         Assert.Equal(TestDatabase.History(directory.Path)[^1].Split('|')[0], state.LastAppliedMigrationId);
-        Assert.EndsWith("_AddAssets", state.LastAppliedMigrationId, StringComparison.Ordinal);
+        Assert.EndsWith("_AddArtworkAttachments", state.LastAppliedMigrationId, StringComparison.Ordinal);
     }
 
     [Fact]

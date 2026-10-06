@@ -57,7 +57,7 @@ internal static class SongsEndpoints
 
         endpoints.MapPatch(SongPath, UpdateAsync)
             .WithName("UpdateSong")
-            .WithSummary("Edits a Song's title, concept, workflow state, notes, Genres, Tags, or release details (only the fields sent; genreIds and tagIds replace the Song's Genres and Tags; in release, only the members sent change, null clears one, and links replace the Song's), given the revision read in If-Match. An ISRC another Song has is allowed and answered with a duplicate_isrc warning.")
+            .WithSummary("Edits a Song's title, concept, workflow state, notes, Genres, Tags, release details, or artwork (only the fields sent; genreIds and tagIds replace the Song's Genres and Tags; in release, only the members sent change, null clears one, and links replace the Song's; artworkAssetId is an uploaded asset's ID, or null to remove the artwork, and also needs artwork.write), given the revision read in If-Match. Replaced or removed artwork is retained for 30 days. An ISRC another Song has is allowed and answered with a duplicate_isrc warning.")
             .RequireScope(CredentialScopes.SongsWrite)
             .Produces<SongResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
@@ -124,7 +124,7 @@ internal static class SongsEndpoints
                     created.Song.Id,
                     created.Song.Shortcode);
                 Revisions.SetETag(context, created.Song.Revision);
-                return TypedResults.Created($"{context.Request.PathBase}{SongsPath}/{created.Song.Id}", SongResponse.From(created.Song));
+                return TypedResults.Created($"{context.Request.PathBase}{SongsPath}/{created.Song.Id}", SongResponse.From(created.Song, context.Request.PathBase));
 
             case SongOutcome.Invalid invalid:
                 return ApiProblem.ValidationFailed(context, invalid.Errors);
@@ -166,7 +166,7 @@ internal static class SongsEndpoints
 
         return await songs.ListAsync(request, cancellationToken) switch
         {
-            SongListOutcome.Listed listed => TypedResults.Ok(SongListResponse.From(listed.Page)),
+            SongListOutcome.Listed listed => TypedResults.Ok(SongListResponse.From(listed.Page, context.Request.PathBase)),
             SongListOutcome.Invalid invalid => ApiProblem.For(context, StatusCodes.Status400BadRequest, ApiProblem.InvalidRequestCode, invalid.Message),
             _ => throw new InvalidOperationException("Unknown list outcome."),
         };
@@ -187,7 +187,7 @@ internal static class SongsEndpoints
         }
 
         Revisions.SetETag(context, song.Revision);
-        return TypedResults.Ok(SongResponse.From(song));
+        return TypedResults.Ok(SongResponse.From(song, context.Request.PathBase));
     }
 
     /// <summary>
@@ -220,7 +220,13 @@ internal static class SongsEndpoints
             Field(request?.Notes, SongService.NotesField, typeErrors),
             IdList(request?.GenreIds, SongService.GenreIdsField, "Genre", typeErrors),
             IdList(request?.TagIds, SongService.TagIdsField, "Tag", typeErrors),
-            Release(request?.Release, typeErrors));
+            Release(request?.Release, typeErrors),
+            Field(request?.ArtworkAssetId, SongService.ArtworkAssetIdField, typeErrors));
+        if (edit.ArtworkAssetId.IsSent && ScopeMiddleware.Lacking(context, CredentialScopes.ArtworkWrite) is { } lacking)
+        {
+            return lacking;
+        }
+
         if (typeErrors.Count > 0)
         {
             return ApiProblem.ValidationFailed(context, typeErrors);
@@ -243,10 +249,10 @@ internal static class SongsEndpoints
                 }
 
                 Revisions.SetETag(context, updated.Song.Revision);
-                return TypedResults.Ok(SongResponse.From(updated.Song));
+                return TypedResults.Ok(SongResponse.From(updated.Song, context.Request.PathBase));
 
             case SongUpdateOutcome.Conflict conflict:
-                return Revisions.Conflict(context, SongResponse.From(conflict.Current));
+                return Revisions.Conflict(context, SongResponse.From(conflict.Current, context.Request.PathBase));
 
             case SongUpdateOutcome.Invalid invalid:
                 return ApiProblem.ValidationFailed(context, invalid.Errors);
@@ -318,10 +324,10 @@ internal static class SongsEndpoints
                 }
 
                 Revisions.SetETag(context, updated.Song.Revision);
-                return TypedResults.Ok(SongResponse.From(updated.Song));
+                return TypedResults.Ok(SongResponse.From(updated.Song, context.Request.PathBase));
 
             case SongCreditOutcome.Conflict conflict:
-                return Revisions.Conflict(context, SongResponse.From(conflict.Current));
+                return Revisions.Conflict(context, SongResponse.From(conflict.Current, context.Request.PathBase));
 
             case SongCreditOutcome.Invalid invalid:
                 return ApiProblem.ValidationFailed(context, invalid.Errors);
@@ -473,9 +479,18 @@ internal sealed record SongCreditsRequest(JsonElement PrimaryArtistId, JsonEleme
 /// An edit: any of the fields, each left alone when missing. A missing field and a null one differ,
 /// so each is read as raw JSON (a missing one is <see cref="JsonValueKind.Undefined"/>).
 /// <c>genreIds</c> and <c>tagIds</c> are the Song's whole new lists of Genre and Tag IDs;
-/// <c>release</c> is an object of the release details to change.
+/// <c>release</c> is an object of the release details to change; <c>artworkAssetId</c> is the asset
+/// to show as its artwork, or null for none.
 /// </summary>
-internal sealed record UpdateSongRequest(JsonElement Title, JsonElement Concept, JsonElement StateId, JsonElement Notes, JsonElement GenreIds, JsonElement TagIds, JsonElement Release);
+internal sealed record UpdateSongRequest(
+    JsonElement Title,
+    JsonElement Concept,
+    JsonElement StateId,
+    JsonElement Notes,
+    JsonElement GenreIds,
+    JsonElement TagIds,
+    JsonElement Release,
+    JsonElement ArtworkAssetId);
 
 /// <summary>
 /// A Song as the API shows it. Times are UTC. <c>genres</c> and <c>tags</c> are alphabetical;
@@ -484,7 +499,8 @@ internal sealed record UpdateSongRequest(JsonElement Title, JsonElement Concept,
 /// title, each with the Song's disc and track; <c>relationships</c> are its relationships to other
 /// Songs, each read from this Song, by the type's name as seen from here, then the other Song's title;
 /// <c>release</c> is always there, with null for each member not set; <c>warnings</c> holds what is
-/// allowed but worth telling the user (<c>duplicate_isrc</c>, naming the other Songs).
+/// allowed but worth telling the user (<c>duplicate_isrc</c>, naming the other Songs); <c>artwork</c>
+/// is its own artwork, or null.
 /// </summary>
 internal sealed record SongResponse(
     Guid Id,
@@ -505,9 +521,11 @@ internal sealed record SongResponse(
     SongAlbumResponse[] Albums,
     SongRelationshipResponse[] Relationships,
     SongReleaseResponse Release,
-    SongWarningResponse[] Warnings)
+    SongWarningResponse[] Warnings,
+    AttachedArtworkResponse? Artwork)
 {
-    public static SongResponse From(SongSummary song)
+    /// <summary>The Song as the API shows it; <paramref name="pathBase"/> starts its artwork's URLs.</summary>
+    public static SongResponse From(SongSummary song, PathString pathBase)
     {
         ArgumentNullException.ThrowIfNull(song);
 
@@ -543,7 +561,8 @@ internal sealed record SongResponse(
                         SongService.IsrcField,
                         song.SameIsrc.Count == 1 ? "Another Song has this ISRC." : "Other Songs have this ISRC.",
                         [.. song.SameIsrc.Select(static other => new SongNamedResponse(other.Id, other.Shortcode, other.Title))]),
-                ]);
+                ],
+            song.Artwork is { } artwork ? AttachedArtworkResponse.From(artwork, pathBase) : null);
     }
 }
 
@@ -637,11 +656,11 @@ internal sealed record CurrentVersionResponse(Guid Id, string Number, string Sho
 /// <summary>A page of Songs.</summary>
 internal sealed record SongListResponse(SongResponse[] Items, int Page, int PageSize, int Total)
 {
-    public static SongListResponse From(SongPage page)
+    public static SongListResponse From(SongPage page, PathString pathBase)
     {
         ArgumentNullException.ThrowIfNull(page);
 
-        return new([.. page.Items.Select(SongResponse.From)], page.Page, page.PageSize, page.Total);
+        return new([.. page.Items.Select(song => SongResponse.From(song, pathBase))], page.Page, page.PageSize, page.Total);
     }
 }
 

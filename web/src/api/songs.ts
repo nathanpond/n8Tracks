@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from './client';
+import { isArtwork, type Artwork } from './artwork';
 import { patchWithRevision, writeWithRevision, type SaveResult } from './saves';
 
 const SONGS_PATH = 'api/v1/songs';
@@ -177,6 +178,8 @@ export interface Song {
   release: SongRelease;
   /** What is allowed but worth telling the user, such as an ISRC another Song has. */
   warnings: SongWarning[];
+  /** Its own artwork, or null when it has none. */
+  artwork: Artwork | null;
 }
 
 export interface SongPage {
@@ -323,7 +326,8 @@ export function isSong(value: unknown): value is Song {
     value.relationships.every(isSongRelationship) &&
     isSongRelease(value.release) &&
     Array.isArray(value.warnings) &&
-    value.warnings.every(isSongWarning)
+    value.warnings.every(isSongWarning) &&
+    (value.artwork === null || isArtwork(value.artwork))
   );
 }
 
@@ -620,6 +624,8 @@ export interface SongEdit {
   genreIds?: string[];
   tagIds?: string[];
   release?: Partial<SongRelease>;
+  /** An uploaded asset's ID to show as the Song's artwork, or null to remove it. */
+  artworkAssetId?: string | null;
 }
 
 /** Edits a Song, based on `song`'s revision; a stale revision comes back as a conflict. */

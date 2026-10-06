@@ -1,3 +1,4 @@
+import type { Artwork } from '../api/artwork';
 import type { Artist } from '../api/artists';
 import type { CatalogSettings } from '../api/catalogSettings';
 import type { Genre } from '../api/genres';
@@ -73,6 +74,7 @@ export const baseSong: Song = {
   relationships: [],
   release: NO_RELEASE,
   warnings: [],
+  artwork: null,
 };
 
 export const FOLK: Genre = {
@@ -301,6 +303,26 @@ export interface ReceivedRelationship {
   body: Record<string, unknown> | undefined;
 }
 
+/** The ID the fake artwork store gives its `n`th upload, from 1. */
+export function testAssetId(n: number): string {
+  return `01a20000-0000-7000-8000-${String(n).padStart(12, '0')}`;
+}
+
+/** Artwork of the asset `assetId`, as a Song carries it, with no crop. */
+export function testArtwork(assetId: string): Artwork {
+  const original = `/api/v1/artwork/${assetId}`;
+  return {
+    assetId,
+    urls: {
+      original,
+      '96': `${original}/96`,
+      '320': `${original}/320`,
+      '1024': `${original}/1024`,
+    },
+    crop: null,
+  };
+}
+
 /** One PATCH the fake server received: the revision it named and the edit it sent. */
 export interface ReceivedEdit {
   ifMatch: string | null;
@@ -345,6 +367,10 @@ export function songServer(
     /** Every name POSTed to the Genre list, in order. */
     created: [] as string[],
     edits: [] as ReceivedEdit[],
+    /** Every file POSTed to the artwork store, in order. */
+    uploads: [] as File[],
+    /** When set, answers the next artwork upload (once) instead of the fake API. */
+    nextUpload: undefined as (() => Response | Promise<Response>) | undefined,
     /** When set, answers the next PATCH (once) instead of the fake API. */
     next: undefined as (() => Response | Promise<Response>) | undefined,
     /** Plays another tab: changes the Song and raises its revision. */
@@ -410,6 +436,19 @@ export function songServer(
       });
       server.artists.push(artist);
       return jsonResponse(201, artist);
+    }
+    if (path.endsWith('/api/v1/artwork')) {
+      const file = init?.body instanceof FormData ? init.body.get('file') : null;
+      if (file instanceof File) {
+        server.uploads.push(file);
+      }
+      const nextUpload = server.nextUpload;
+      if (nextUpload) {
+        server.nextUpload = undefined;
+        return nextUpload();
+      }
+      const id = testAssetId(server.uploads.length);
+      return jsonResponse(201, { id, urls: testArtwork(id).urls });
     }
     if (path.endsWith('/api/v1/languages')) {
       return server.languages === undefined
@@ -695,6 +734,26 @@ export function songServer(
       }
       updated.release = next.release;
     }
+    if ('artworkAssetId' in body) {
+      const assetId = body.artworkAssetId;
+      const known = (count: number) =>
+        Array.from({ length: count }, (_, index) => testAssetId(index + 1));
+      if (assetId === null) {
+        updated.artwork = null;
+      } else if (typeof assetId === 'string' && known(server.uploads.length).includes(assetId)) {
+        updated.artwork =
+          assetId === server.song.artwork?.assetId ? server.song.artwork : testArtwork(assetId);
+      } else {
+        return jsonResponse(422, {
+          code: 'validation_failed',
+          errors: {
+            artworkAssetId: [
+              'There is no such artwork, or it was removed. Upload the image again.',
+            ],
+          },
+        });
+      }
+    }
     updated.warnings = warningsOf(updated, server.others);
     const changed =
       JSON.stringify(updated.release) !== JSON.stringify(server.song.release) ||
@@ -703,7 +762,8 @@ export function songServer(
       updated.state.id !== server.song.state.id ||
       updated.notes !== server.song.notes ||
       JSON.stringify(updated.genres) !== JSON.stringify(server.song.genres) ||
-      JSON.stringify(updated.tags) !== JSON.stringify(server.song.tags);
+      JSON.stringify(updated.tags) !== JSON.stringify(server.song.tags) ||
+      updated.artwork?.assetId !== server.song.artwork?.assetId;
     server.song = changed ? { ...updated, revision: server.song.revision + 1 } : server.song;
     return jsonResponse(200, server.song);
   });

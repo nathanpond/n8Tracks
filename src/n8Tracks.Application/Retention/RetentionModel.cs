@@ -9,6 +9,9 @@ public static class RetainedRecordTypes
 {
     /// <summary>An entry in a Version's editing history (<c>editor_revisions</c>).</summary>
     public const string EditorSnapshot = "editor-snapshot";
+
+    /// <summary>An owner's artwork, replaced or removed (<c>artwork_attachments</c>).</summary>
+    public const string ArtworkAttachment = "artwork-attachment";
 }
 
 /// <summary>A record a deletion names: the root of what goes into retention with it.</summary>
