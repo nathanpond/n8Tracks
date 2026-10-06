@@ -48,11 +48,14 @@ internal static class InputValues
         return JsonSerializer.Serialize("changed " + Guid.NewGuid().ToString("N")[..8]);
     }
 
-    /// <summary><paramref name="inputs"/> (a Version's <c>inputs</c>) with every option changed, as a JSON object.</summary>
+    /// <summary>
+    /// <paramref name="inputs"/> (a Version's <c>inputs</c>) with every option changed, as a JSON
+    /// object; the lineage keys (#122) are left out (<see cref="LineageValues"/> changes those).
+    /// </summary>
     public static JsonObject EveryOptionChanged(JsonElement inputs)
     {
         var changed = new JsonObject();
-        foreach (var option in inputs.EnumerateObject())
+        foreach (var option in inputs.EnumerateObject().Where(static option => !VersionLineageInputs.IsLineageKey(option.Name)))
         {
             changed[option.Name] = JsonNode.Parse(ChangedJson(option.Name, option.Value));
         }

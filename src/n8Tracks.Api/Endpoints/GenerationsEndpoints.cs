@@ -143,6 +143,10 @@ internal static class GenerationsEndpoints
             GenerationService.SunoIdExistsCode,
             $"Generation {exists.Existing.Shortcode} already holds this Suno clip.",
             [new("generationId", exists.Existing.Generation.Id), new("shortcode", exists.Existing.Shortcode)]),
+        GenerationAttachOutcome.IncompleteSources incomplete => ApiProblem.ValidationFailed(
+            context,
+            incomplete.Errors.GroupBy(static error => error.Field).ToDictionary(static field => field.Key, static field => field.Select(static error => error.Message).ToArray(), StringComparer.Ordinal),
+            incomplete.Errors.GroupBy(static error => error.Field).ToDictionary(static field => field.Key, static field => field.Select(static error => error.Rule).ToArray(), StringComparer.Ordinal)),
         _ => throw new ArgumentException("Not a refusal: the Generation was attached.", nameof(outcome)),
     };
 

@@ -98,11 +98,25 @@ export interface VersionDetail extends Version {
   inputs: VersionOptions;
 }
 
+/**
+ * The keys of `inputs` that hold a Version's lineage (#122: its sources, Inspiration, Voice, and
+ * file inputs) rather than a Suno option. They are not options: the options editor and the conflict
+ * view leave them out, and the sources editor (#125) reads them.
+ */
+export const LINEAGE_KEYS: readonly string[] = ['sources', 'inspiration', 'voice', 'fileInputs'];
+
+/** Whether a key of `inputs` is one of the lineage keys rather than a Suno option. */
+export function isLineageKey(key: string): boolean {
+  return LINEAGE_KEYS.includes(key);
+}
+
 function isOptions(value: unknown): value is VersionOptions {
   return (
     isRecord(value) &&
-    Object.values(value).every(
-      (option) => option === null || ['string', 'number', 'boolean'].includes(typeof option),
+    Object.entries(value).every(([key, option]) =>
+      isLineageKey(key)
+        ? option === null || typeof option === 'object'
+        : option === null || ['string', 'number', 'boolean'].includes(typeof option),
     )
   );
 }

@@ -49,6 +49,21 @@ internal static class ApiProblem
             [new("errors", errors)]);
 
     /// <summary>
+    /// As <see cref="ValidationFailed(HttpContext, IReadOnlyDictionary{string, string[]})"/>, with
+    /// <c>rules</c> when there are any: the codes of the rules broken, keyed by the same field names
+    /// (a Version's sources and file inputs, #122).
+    /// </summary>
+    public static ProblemHttpResult ValidationFailed(HttpContext context, IReadOnlyDictionary<string, string[]> errors, IReadOnlyDictionary<string, string[]>? rules) =>
+        rules is not { Count: > 0 }
+            ? ValidationFailed(context, errors)
+            : For(
+                context,
+                StatusCodes.Status422UnprocessableEntity,
+                ValidationFailedCode,
+                "The request has invalid fields.",
+                [new("errors", errors), new("rules", rules)]);
+
+    /// <summary>
     /// Maps a 404 Problem Details for every <c>/api/v1</c> route nothing else matched, whatever the
     /// method, so an unknown API path never falls through to the frontend or an empty body.
     /// </summary>

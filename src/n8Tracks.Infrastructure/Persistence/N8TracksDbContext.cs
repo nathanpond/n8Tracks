@@ -30,6 +30,19 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
     /// <summary>The trigger that refuses any change to a Generation's Version, Song, or ordinal.</summary>
     public const string GenerationFixedTrigger = "tr_generations_identity_never_changes";
 
+    /// <summary>The trigger that refuses changing an external reference's Suno ID or kind, which frozen sources are compared by.</summary>
+    public const string ExternalReferenceFixedTrigger = "tr_external_suno_references_identity_never_changes";
+
+    /// <summary>
+    /// The tables holding a Version's lineage (#122), each with insert, update, and delete triggers
+    /// that refuse any change while the Version is frozen (<see cref="LineageFrozenTriggers"/>).
+    /// </summary>
+    public static IReadOnlyList<string> LineageTables { get; } = ["version_sources", "version_inspiration_playlists", "version_voices", "version_file_inputs"];
+
+    /// <summary>The names of the three freeze triggers of a lineage table: insert, update, delete.</summary>
+    public static IReadOnlyList<string> LineageFrozenTriggers(string table) =>
+        [$"tr_{table}_frozen_insert", $"tr_{table}_frozen_update", $"tr_{table}_frozen_delete"];
+
     public DbSet<AppMetadataEntry> AppMetadata => Set<AppMetadataEntry>();
 
     public DbSet<AdministratorRecord> Administrators => Set<AdministratorRecord>();
@@ -67,6 +80,16 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
     public DbSet<GenerationCommentRecord> GenerationComments => Set<GenerationCommentRecord>();
 
     public DbSet<GenerationEventLinkRecord> GenerationEventLinks => Set<GenerationEventLinkRecord>();
+
+    public DbSet<ExternalSunoReferenceRecord> ExternalSunoReferences => Set<ExternalSunoReferenceRecord>();
+
+    public DbSet<VersionSourceRecord> VersionSources => Set<VersionSourceRecord>();
+
+    public DbSet<VersionInspirationPlaylistRecord> VersionInspirationPlaylists => Set<VersionInspirationPlaylistRecord>();
+
+    public DbSet<VersionVoiceRecord> VersionVoices => Set<VersionVoiceRecord>();
+
+    public DbSet<VersionFileInputRecord> VersionFileInputs => Set<VersionFileInputRecord>();
 
     public DbSet<GenreRecord> Genres => Set<GenreRecord>();
 
@@ -459,6 +482,119 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                 .WithMany()
                 .HasForeignKey(record => record.ArtworkAssetId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<ExternalSunoReferenceRecord>(reference =>
+        {
+            reference.ToTable("external_suno_references", static table =>
+            {
+                table.HasCheckConstraint(
+                    "ck_external_suno_references_kind",
+                    $"kind IN ('{ExternalSunoReferenceRecord.ClipKind}', '{ExternalSunoReferenceRecord.PlaylistKind}', '{ExternalSunoReferenceRecord.PersonaKind}')");
+                table.HasCheckConstraint("ck_external_suno_references_suno_id", "length(suno_id) BETWEEN 1 AND 100");
+                table.HasTrigger(ExternalReferenceFixedTrigger);
+            });
+            reference.HasKey(record => record.Id);
+            reference.HasIndex(record => new { record.SunoId, record.Kind }).IsUnique();
+        });
+
+        // A Version's lineage (#122): each table cascades from the Version, so the Version's deletion
+        // retains it with the Version, and each has freeze triggers (see LineageTables).
+        modelBuilder.Entity<VersionSourceRecord>(source =>
+        {
+            source.ToTable("version_sources", static table =>
+            {
+                table.HasCheckConstraint(
+                    "ck_version_sources_group",
+                    $"source_group IN ('{VersionSourceRecord.AudioGroup}', '{VersionSourceRecord.InspirationGroup}')");
+                table.HasCheckConstraint("ck_version_sources_position", "position >= 0");
+                table.HasCheckConstraint(
+                    "ck_version_sources_one_target",
+                    "(generation_id IS NOT NULL) + (song_id IS NOT NULL) + (external_reference_id IS NOT NULL) = 1");
+                table.HasCheckConstraint("ck_version_sources_continue_at", "continue_at_hundredths IS NULL OR continue_at_hundredths >= 0");
+                table.HasCheckConstraint("ck_version_sources_secondary_ids", "secondary_ids IS NULL OR (json_valid(secondary_ids) AND json_type(secondary_ids) = 'object')");
+                foreach (var trigger in LineageFrozenTriggers("version_sources"))
+                {
+                    table.HasTrigger(trigger);
+                }
+            });
+            source.HasKey(record => record.Id);
+            source.HasIndex(record => new { record.VersionId, record.SourceGroup, record.Position }).IsUnique();
+            source.HasIndex(record => record.GenerationId);
+            source.HasIndex(record => record.SongId);
+            source.HasIndex(record => record.ExternalReferenceId);
+            source.HasIndex(record => record.TypeId);
+            source.HasOne<VersionRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.VersionId)
+                .OnDelete(DeleteBehavior.Cascade);
+            source.HasOne<RelationshipTypeRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.TypeId)
+                .OnDelete(DeleteBehavior.Restrict);
+            source.HasOne<ExternalSunoReferenceRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.ExternalReferenceId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<VersionInspirationPlaylistRecord>(playlist =>
+        {
+            playlist.ToTable("version_inspiration_playlists", static table =>
+            {
+                table.HasCheckConstraint("ck_version_inspiration_playlists_id", "length(suno_playlist_id) BETWEEN 1 AND 100");
+                table.HasCheckConstraint("ck_version_inspiration_playlists_name", "length(name) <= 200");
+                table.HasCheckConstraint(
+                    "ck_version_inspiration_playlists_clip_ids",
+                    "json_valid(clip_ids) AND json_type(clip_ids) = 'array' AND json_array_length(clip_ids) <= 500");
+                foreach (var trigger in LineageFrozenTriggers("version_inspiration_playlists"))
+                {
+                    table.HasTrigger(trigger);
+                }
+            });
+            playlist.HasKey(record => record.VersionId);
+            playlist.HasOne<VersionRecord>()
+                .WithOne()
+                .HasForeignKey<VersionInspirationPlaylistRecord>(record => record.VersionId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<VersionVoiceRecord>(voice =>
+        {
+            voice.ToTable("version_voices", static table =>
+            {
+                table.HasCheckConstraint("ck_version_voices_persona_id", "length(persona_id) BETWEEN 1 AND 100");
+                table.HasCheckConstraint("ck_version_voices_name", "length(name) <= 200");
+                foreach (var trigger in LineageFrozenTriggers("version_voices"))
+                {
+                    table.HasTrigger(trigger);
+                }
+            });
+            voice.HasKey(record => record.VersionId);
+            voice.HasOne<VersionRecord>()
+                .WithOne()
+                .HasForeignKey<VersionVoiceRecord>(record => record.VersionId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<VersionFileInputRecord>(file =>
+        {
+            file.ToTable("version_file_inputs", static table =>
+            {
+                table.HasCheckConstraint(
+                    "ck_version_file_inputs_kind",
+                    $"kind IN ('{VersionFileInputRecord.AudioKind}', '{VersionFileInputRecord.ImageKind}', '{VersionFileInputRecord.VideoKind}')");
+                table.HasCheckConstraint("ck_version_file_inputs_description", "length(description) BETWEEN 1 AND 500");
+                foreach (var trigger in LineageFrozenTriggers("version_file_inputs"))
+                {
+                    table.HasTrigger(trigger);
+                }
+            });
+            file.HasKey(record => new { record.VersionId, record.Kind });
+            file.HasOne<VersionRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.VersionId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<ProviderRecordRecord>(record =>

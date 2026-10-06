@@ -1,5 +1,6 @@
 using n8Tracks.Application.Songs;
 using n8Tracks.Application.Suno;
+using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
 
 namespace n8Tracks.Api.Tests.Songs;
@@ -25,7 +26,13 @@ public sealed class VersionRulesTests
             VersionInputRules.Defaults(CreateFieldInventory.Embedded, "Run") with { Kind = VersionKind.Speech, SongMode = CreationMode.Simple, SimplePrompt = "fast", Weirdness = 10 },
             Created,
             Created,
-            Revision: 4);
+            Revision: 4,
+            new VersionLineage(
+                [new VersionSource(SystemRelationshipTypes.Cover.Id, SunoActions.Cover, VersionSourceTarget.OfExternal("clip-1"))],
+                [],
+                null,
+                new VersionVoice("persona-1", "Persona"),
+                []));
         var id = Guid.CreateVersion7();
 
         var version = VersionRules.CreateFrom(source, id, VersionNumber.Parse("1.1"), "  Guitar experimentation ", Now);
@@ -41,6 +48,11 @@ public sealed class VersionRulesTests
 
         // Every option is copied, the ones that do not apply to the kind and mode included.
         Assert.Equal(source.Inputs, version.Inputs);
+
+        // Its sources (#122) are creation inputs too: the same targets, in the same order.
+        Assert.Equal(source.Lineage, version.Lineage);
+        Assert.Single(version.Lineage.AudioSources);
+        Assert.False(version.IsFrozen);
         Assert.Equal(Now, version.CreatedUtc);
         Assert.Equal(Now, version.UpdatedUtc);
         Assert.Equal(1, version.Revision);

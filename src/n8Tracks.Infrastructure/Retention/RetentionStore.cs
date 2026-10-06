@@ -193,10 +193,11 @@ internal sealed class RetentionStore(N8TracksDbContext context, RetainedTypeRegi
                 cancellationToken).ConfigureAwait(false);
         }
 
-        // Children first, so no row is removed by a cascade before it is removed on purpose.
-        for (var index = collected.Count - 1; index >= 0; index--)
+        // Children first, so no row is removed by a cascade before it is removed on purpose; but a row
+        // frozen with its parent goes after it (its triggers refuse it while the parent is there),
+        // removed by the parent's cascade, its document already kept above.
+        foreach (var row in Enumerable.Reverse(collected).OrderBy(static row => row.Type.FrozenWithParent))
         {
-            var row = collected[index];
             await ExecuteAsync(
                 $"DELETE FROM {Quote(row.Type.Table)} WHERE {Where(row.Key, 0)};",
                 row.Key.Select(column => row.Values[column]).ToArray(),
@@ -385,8 +386,10 @@ internal sealed class RetentionStore(N8TracksDbContext context, RetainedTypeRegi
             }
         }
 
+        // A row frozen with its parent goes back before it (its triggers refuse it once the parent is
+        // there); the foreign keys are deferred, so the parent may follow.
         var restored = new List<LiveRow>();
-        foreach (var row in rows.Where(row => !skipped.Contains(row)))
+        foreach (var row in rows.Where(row => !skipped.Contains(row)).OrderBy(static row => !row.Type.FrozenWithParent))
         {
             if (row.Type.ReferenceColumns is { } referenceColumns)
             {

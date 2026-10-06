@@ -45,16 +45,50 @@ namespace n8Tracks.Api.Tests.Invariants;
 /// every shape upgrader. Generations (#117) are a catalog namespace of their own: attaching one from a
 /// raw clip, the one way a Generation is made, is exercised here, and so are rating it, commenting
 /// on it (#119), archiving it, choosing or clearing the Song's Selected Generation (#120), and
-/// giving it an image and picking that image as the Song's artwork (#121, <c>Application.Artwork</c>). The rest of import (M4) and the MCP
-/// gateway (M7) are not covered yet: those stories extend this test.
+/// giving it an image and picking that image as the Song's artwork (#121, <c>Application.Artwork</c>). A Version's lineage (#122:
+/// its sources, Inspiration, Voice, and file inputs) is a creation input like its options: the
+/// entity's <see cref="SongVersion.Lineage"/>, the columns of each lineage table (each with its own
+/// insert, update, and delete freeze triggers), every lineage key of <c>inputs</c> in every edit, and
+/// the stored comparison, which reads each source's identity (its Suno ID when it has one, else its
+/// Generation's or Song's ID), type, action, group, order, position, and secondary identifiers. The
+/// rest of import (M4) and the MCP gateway (M7) are not covered yet: those stories extend this test.
 /// </summary>
 public sealed class VersionImmutabilityGuardTests
 {
     /// <summary>
-    /// Frozen once a Generation is attached: the lyrics, the styles, and the Suno options (each key of
-    /// <see cref="VersionInputs"/> in turn, below). Lineage sources join this list when they are added.
+    /// Frozen once a Generation is attached: the lyrics, the styles, the Suno options (each key of
+    /// <see cref="VersionInputs"/> in turn, below), and the lineage (#122: each of its parts in turn).
     /// </summary>
-    private static readonly string[] CreationInputs = [nameof(SongVersion.Lyrics), nameof(SongVersion.Styles), nameof(SongVersion.Inputs)];
+    private static readonly string[] CreationInputs = [nameof(SongVersion.Lyrics), nameof(SongVersion.Styles), nameof(SongVersion.Inputs), nameof(SongVersion.Lineage)];
+
+    /// <summary>
+    /// Each lineage table's columns (#122): the ones that tie a row to its Version, and the rest, every
+    /// one a creation input. A new column must be classified here, and a new table that refers to
+    /// <c>versions</c> must be a lineage table or say why it holds no input (<see cref="TablesReferringToVersionsWithNoInput"/>).
+    /// </summary>
+    private static readonly Dictionary<string, (string[] System, string[] Inputs)> LineageColumns = new(StringComparer.Ordinal)
+    {
+        ["version_sources"] = (
+            ["id", "version_id"],
+            ["source_group", "position", "type_id", "suno_action", "generation_id", "song_id", "external_reference_id", "continue_at_hundredths", "secondary_ids"]),
+        ["version_inspiration_playlists"] = (["version_id"], ["suno_playlist_id", "name", "clip_ids"]),
+        ["version_voices"] = (["version_id"], ["persona_id", "name"]),
+        ["version_file_inputs"] = (["version_id"], ["kind", "description"]),
+    };
+
+    /// <summary>Tables with a foreign key to <c>versions</c> that hold no creation input, and why.</summary>
+    private static readonly Dictionary<string, string> TablesReferringToVersionsWithNoInput = new(StringComparer.Ordinal)
+    {
+        ["songs"] = "its current Version: which Version the user works from, never an input",
+        ["editor_revisions"] = "the editing history: snapshots of text, restored only through the Version's own write",
+        ["generations"] = "what the Version produced, never what it was made from",
+    };
+
+    /// <summary>
+    /// The columns of a source a rewrite may change on a frozen Version: a deleted Generation's ID
+    /// becomes the external reference with the same Suno ID, which is the source's identity either way.
+    /// </summary>
+    private static readonly string[] RewrittenSourceColumns = ["generation_id", "external_reference_id"];
 
     /// <summary>The same, column by column: the options are stored as the kind, the model, and one JSON document.</summary>
     private static readonly string[] CreationInputColumns =
@@ -142,6 +176,105 @@ public sealed class VersionImmutabilityGuardTests
     }
 
     /// <summary>
+    /// Every column of each lineage table (#122) is classified, every table that refers to
+    /// <c>versions</c> is a lineage table or holds no input, and each lineage table has its three freeze
+    /// triggers, the source table's update trigger comparing every input but the rewritten pointer.
+    /// </summary>
+    [Fact]
+    public async Task EveryLineageTableIsClassifiedAndFrozenByItsOwnTriggers()
+    {
+        using var factory = new N8TracksApiFactory();
+        using (var client = factory.CreateClient())
+        using (var health = await client.GetAsync(new Uri("/health", UriKind.Relative)))
+        {
+            Assert.Equal(HttpStatusCode.OK, health.StatusCode);
+        }
+
+        Assert.Equal(LineageColumns.Keys.Order(StringComparer.Ordinal), N8TracksDbContext.LineageTables.Order(StringComparer.Ordinal));
+        var referring = TestDatabase.Rows(
+            factory.DataPath,
+            "SELECT DISTINCT m.name FROM sqlite_master AS m, pragma_foreign_key_list(m.name) AS f WHERE m.type = 'table' AND f.\"table\" = 'versions' ORDER BY m.name;");
+        Assert.Equal(
+            referring,
+            [.. LineageColumns.Keys.Concat(TablesReferringToVersionsWithNoInput.Keys).Order(StringComparer.Ordinal)]);
+
+        foreach (var (table, (system, inputs)) in LineageColumns)
+        {
+            var columns = TestDatabase.Rows(factory.DataPath, $"SELECT name FROM pragma_table_info('{table}') ORDER BY name;");
+            Assert.Equal(system.Concat(inputs).Order(StringComparer.Ordinal), columns);
+            Assert.Empty(system.Intersect(inputs, StringComparer.Ordinal));
+
+            foreach (var name in N8TracksDbContext.LineageFrozenTriggers(table))
+            {
+                var sql = TestDatabase.Scalar(factory.DataPath, $"SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = '{name}' AND tbl_name = '{table}';");
+                Assert.Contains("is_frozen = 1", sql, StringComparison.Ordinal);
+                Assert.Contains("RAISE(ABORT", sql, StringComparison.Ordinal);
+            }
+        }
+
+        var update = TestDatabase.Scalar(factory.DataPath, "SELECT sql FROM sqlite_master WHERE name = 'tr_version_sources_frozen_update';");
+        foreach (var column in LineageColumns["version_sources"].Inputs.Concat(LineageColumns["version_sources"].System).Except(RewrittenSourceColumns, StringComparer.Ordinal))
+        {
+            Assert.Contains($"NEW.{column} IS OLD.{column}", update, StringComparison.Ordinal);
+        }
+
+        Assert.Contains("(SELECT suno_id FROM generations WHERE id = OLD.generation_id)", update, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The database's own layer (#122, D8): on a frozen Version, every insert, update, and delete of a
+    /// lineage row is refused, whatever writes it; the complement passes on a mutable one.
+    /// </summary>
+    [Fact]
+    public async Task TheDatabaseRefusesEveryChangeToAFrozenVersionsLineage()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var frozen = await TargetAsync(factory, client, "Database lineage guard", frozen: true);
+        var mutable = await TargetAsync(factory, client, "Database lineage mutable", frozen: false);
+        var reference = TestDatabase.Scalar(factory.DataPath, "SELECT id FROM external_suno_references LIMIT 1;");
+
+        string[] Writes(Guid versionId)
+        {
+            var id = versionId.ToString().ToUpperInvariant();
+            var type = SystemRelationshipTypes.SampleThisSong.Id.ToString().ToUpperInvariant();
+            return
+            [
+                $"INSERT INTO version_sources (id, version_id, source_group, position, type_id, suno_action, external_reference_id) VALUES ('{Guid.NewGuid().ToString().ToUpperInvariant()}', '{id}', 'inspiration', 0, '{type}', 'sample', '{reference}');",
+                $"UPDATE version_sources SET position = position + 10 WHERE version_id = '{id}';",
+                $"DELETE FROM version_sources WHERE version_id = '{id}' AND source_group = 'audio';",
+                $"UPDATE version_inspiration_playlists SET name = 'changed' WHERE version_id = '{id}';",
+                $"DELETE FROM version_inspiration_playlists WHERE version_id = '{id}';",
+                $"UPDATE version_voices SET persona_id = 'changed' WHERE version_id = '{id}';",
+                $"DELETE FROM version_voices WHERE version_id = '{id}';",
+                $"INSERT INTO version_voices (version_id, persona_id, name) VALUES ('{id}', 'another', '');",
+                $"UPDATE version_file_inputs SET description = 'changed' WHERE version_id = '{id}';",
+                $"DELETE FROM version_file_inputs WHERE version_id = '{id}' AND kind = 'video';",
+                $"INSERT INTO version_file_inputs (version_id, kind, description) VALUES ('{id}', 'audio', 'added');",
+                $"INSERT INTO version_inspiration_playlists (version_id, suno_playlist_id, name, clip_ids) VALUES ('{id}', 'another', '', '[]');",
+            ];
+        }
+
+        foreach (var write in Writes(frozen.VersionId))
+        {
+            var before = Stored(factory, frozen.VersionId);
+            var refused = Assert.Throws<Microsoft.Data.Sqlite.SqliteException>(() => TestDatabase.Execute(factory.DataPath, write));
+            Assert.Contains("never change", refused.Message, StringComparison.Ordinal);
+            Assert.True(before == Stored(factory, frozen.VersionId), write);
+        }
+
+        // Complement: the same writes on a mutable Version go through (the insert of a second
+        // playlist or Voice after the delete, as each holds one).
+        foreach (var write in Writes(mutable.VersionId))
+        {
+            TestDatabase.Execute(factory.DataPath, write);
+        }
+
+        // An external reference's Suno ID is what a frozen source is compared by: it never changes.
+        Assert.Throws<Microsoft.Data.Sqlite.SqliteException>(() => TestDatabase.Execute(factory.DataPath, $"UPDATE external_suno_references SET suno_id = 'changed' WHERE id = '{reference}';"));
+    }
+
+    /// <summary>
     /// Every key of the options document is one the writes below change in turn: the entity's
     /// properties, the rules' keys, and the API's <c>inputs</c> agree, so a new option cannot be left out.
     /// </summary>
@@ -156,7 +289,7 @@ public sealed class VersionImmutabilityGuardTests
         using var client = await SessionApi.SignedInClientAsync(factory);
         var target = await TargetAsync(factory, client, "Options guard", frozen: false);
         var inputs = (await target.ReadAsync()).GetProperty("inputs");
-        Assert.Equal(properties, inputs.EnumerateObject().Select(static option => option.Name));
+        Assert.Equal(properties.Concat(VersionLineageInputs.Keys), inputs.EnumerateObject().Select(static option => option.Name));
     }
 
     [Fact]
@@ -164,7 +297,7 @@ public sealed class VersionImmutabilityGuardTests
     {
         var mutable = new SongVersion(
             Guid.CreateVersion7(), Guid.CreateVersion7(), "1", "Name", "Notes", VersionVisibility.Active, "Lyrics", "Styles",
-            InputValues.Defaults(), DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch, Revision: 1);
+            InputValues.Defaults(), DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch, Revision: 1, LineageValues.Held);
         var frozen = mutable.AttachGeneration(Guid.CreateVersion7(), DateTimeOffset.UnixEpoch).Version;
 
         // Each public method of the entity: how it would change an input, or why it cannot. Every
@@ -177,6 +310,12 @@ public sealed class VersionImmutabilityGuardTests
         foreach (var key in VersionInputRules.Keys)
         {
             changesInputs[$"{nameof(SongVersion.WithInputs)} (inputs.{key})"] = version => version.WithInputs(version.Lyrics, version.Styles, InputValues.WithChanged(version.Inputs, key));
+        }
+
+        changesInputs[nameof(SongVersion.WithLineage)] = static version => version.WithLineage(VersionLineage.None);
+        foreach (var (part, change) in LineageValues.EachPartChanged)
+        {
+            changesInputs[$"{nameof(SongVersion.WithLineage)} ({part})"] = version => version.WithLineage(change(version.Lineage));
         }
 
         var changesNoInput = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -201,7 +340,7 @@ public sealed class VersionImmutabilityGuardTests
         {
             Assert.Throws<VersionFrozenException>(() => change(frozen));
             var changed = change(mutable);
-            Assert.NotEqual((mutable.Lyrics, mutable.Styles, mutable.Inputs), (changed.Lyrics, changed.Styles, changed.Inputs));
+            Assert.NotEqual((mutable.Lyrics, mutable.Styles, mutable.Inputs, mutable.Lineage), (changed.Lyrics, changed.Styles, changed.Inputs, changed.Lineage));
         }
     }
 
@@ -289,7 +428,8 @@ public sealed class VersionImmutabilityGuardTests
     {
         ["POST /api/v1/songs"] = new(async target =>
         {
-            using var response = await SongApi.SendJsonAsync(target.Client, HttpMethod.Post, SongApi.Songs, await target.InputsJsonAsync("""{"title":"Another Song",""", "}"));
+            // A new Song's options may be sent; a lineage may not (a new Version 1 has none).
+            using var response = await SongApi.SendJsonAsync(target.Client, HttpMethod.Post, SongApi.Songs, await target.InputsJsonAsync("""{"title":"Another Song",""", "}", withLineage: false));
             Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         }),
         ["PATCH /api/v1/songs/{reference}"] = new(async target =>
@@ -374,6 +514,8 @@ public sealed class VersionImmutabilityGuardTests
                 var bodies = TextInputs.Select(input => (Func<Task<string>>)(() => Task.FromResult($$"""{"{{Camel(input)}}":"{{Changed}} {{input}} {{Guid.NewGuid()}}"}""")))
                     .Concat(VersionInputRules.Keys.Select(key => (Func<Task<string>>)(async () =>
                         $$$"""{"inputs":{"{{{key}}}":{{{InputValues.ChangedJson(key, (await target.ReadAsync()).GetProperty("inputs").GetProperty(key))}}}}}""")))
+                    .Concat(VersionLineageInputs.Keys.Select(key => (Func<Task<string>>)(async () =>
+                        new JsonObject { ["inputs"] = LineageValues.Changed(key, (await target.ReadAsync()).GetProperty("inputs")) }.ToJsonString())))
                     .Append(() => target.InputsJsonAsync("{", "}"))
                     .Append(() => target.InputsJsonAsync("""{"name":"Renamed","notes":"Noted",""", "}"));
                 foreach (var (body, index) in bodies.Select(static (body, index) => (body, index)))
@@ -968,13 +1110,15 @@ public sealed class VersionImmutabilityGuardTests
             {
                 [key] = JsonNode.Parse(InputValues.ChangedJson(key, inputs.GetProperty(key))),
             })))));
+        edits.AddRange(VersionLineageInputs.Keys.Select(key => (Func<JsonElement, VersionEdit>)(inputs =>
+            new VersionEdit(SongEditField.Unsent, SongEditField.Unsent, null, SongEditField.Unsent, SongEditField.Unsent, Options(LineageValues.Changed(key, inputs))))));
         edits.Add(static inputs => new VersionEdit(
             SongEditField.Of("Renamed"),
             SongEditField.Of("Noted"),
             true,
             SongEditField.Of(Changed + Guid.NewGuid()),
             SongEditField.Of(Changed + Guid.NewGuid()),
-            Options(InputValues.EveryOptionChanged(inputs))));
+            Options(EveryInputChanged(inputs))));
         foreach (var editFor in edits)
         {
             var read = await target.ReadAsync();
@@ -1026,6 +1170,12 @@ public sealed class VersionImmutabilityGuardTests
         using (var written = await SendAsync(client, HttpMethod.Patch, new Uri($"/api/v1/versions/{id}", UriKind.Relative), "\"1\"", """{"lyrics":"[Verse]\nKept","styles":"kept"}"""))
         {
             Assert.Equal(HttpStatusCode.OK, written.StatusCode);
+        }
+
+        // Every part of a lineage (#122), so the frozen Version has rows in each lineage table.
+        using (var written = await SendAsync(client, HttpMethod.Patch, new Uri($"/api/v1/versions/{id}", UriKind.Relative), "\"2\"", $$"""{"inputs":{{LineageValues.InitialInputsJson(title.Replace(' ', '-'))}}}"""))
+        {
+            Assert.True(written.StatusCode == HttpStatusCode.OK, await written.Content.ReadAsStringAsync());
         }
 
         var snapshots = new List<Guid>();
@@ -1098,18 +1248,54 @@ public sealed class VersionImmutabilityGuardTests
     /// The body fields for every creation input, with changed values (every option in <c>inputs</c>,
     /// changed from <paramref name="inputs"/>), between <paramref name="prefix"/> and <paramref name="suffix"/>.
     /// </summary>
-    private static string InputsJson(string prefix, string suffix, JsonElement inputs) =>
+    private static string InputsJson(string prefix, string suffix, JsonElement inputs, bool withLineage) =>
         prefix + string.Join(',', TextInputs.Select(input => $$"""
             "{{Camel(input)}}":"{{Changed}} {{input}} {{Guid.NewGuid()}}"
-            """)) + ",\"inputs\":" + InputValues.EveryOptionChanged(inputs).ToJsonString() + suffix;
+            """)) + ",\"inputs\":" + (withLineage ? EveryInputChanged(inputs) : InputValues.EveryOptionChanged(inputs)).ToJsonString() + suffix;
+
+    /// <summary>Every option changed, and every lineage key changed to suit the options as changed (#122).</summary>
+    private static JsonObject EveryInputChanged(JsonElement inputs)
+    {
+        var options = InputValues.EveryOptionChanged(inputs);
+        foreach (var (key, value) in LineageValues.EveryPartChanged(options).ToList())
+        {
+            options[key] = value?.DeepClone();
+        }
+
+        return options;
+    }
 
     private static string Camel(string name) => char.ToLowerInvariant(name[0]) + name[1..];
 
-    /// <summary>The Version's creation inputs exactly as stored, each column hex-encoded, so the comparison is byte for byte.</summary>
-    private static string Stored(N8TracksApiFactory factory, Guid id) =>
-        TestDatabase.Scalar(
+    /// <summary>
+    /// The Version's creation inputs exactly as stored, each column hex-encoded, so the comparison is
+    /// byte for byte, followed by its lineage (#122): each source in its group and order, by its
+    /// identity (its Suno ID when it has one, through its Generation or its external reference; else
+    /// its Generation's or Song's ID), type, action, position, and secondary identifiers; then the
+    /// playlist, the Voice, and the file inputs, every column.
+    /// </summary>
+    internal static string Stored(N8TracksApiFactory factory, Guid id)
+    {
+        var version = id.ToString().ToUpperInvariant();
+        return TestDatabase.Scalar(
             factory.DataPath,
-            $"SELECT {string.Join(" || '|' || ", CreationInputColumns.Select(static input => $"hex({Snake(input)})"))} FROM versions WHERE id = '{id.ToString().ToUpperInvariant()}';");
+            $"""
+            SELECT {string.Join(" || '|' || ", CreationInputColumns.Select(static input => $"hex({Snake(input)})"))}
+                || '|sources:' || COALESCE((SELECT group_concat(line, ';') FROM (
+                    SELECT hex(s.source_group || ',' || s.position || ',' || s.type_id || ',' || COALESCE(s.suno_action, '-') || ',' ||
+                        CASE
+                            WHEN s.generation_id IS NOT NULL THEN COALESCE((SELECT g.suno_id FROM generations AS g WHERE g.id = s.generation_id), s.generation_id)
+                            WHEN s.external_reference_id IS NOT NULL THEN (SELECT e.suno_id FROM external_suno_references AS e WHERE e.id = s.external_reference_id)
+                            ELSE s.song_id
+                        END || ',' || COALESCE(s.continue_at_hundredths, '-') || ',' || COALESCE(s.secondary_ids, '-')) AS line
+                    FROM version_sources AS s WHERE s.version_id = '{version}' ORDER BY s.source_group, s.position)), '')
+                || '|playlist:' || COALESCE((SELECT hex(suno_playlist_id || ',' || name || ',' || clip_ids) FROM version_inspiration_playlists WHERE version_id = '{version}'), '')
+                || '|voice:' || COALESCE((SELECT hex(persona_id || ',' || name) FROM version_voices WHERE version_id = '{version}'), '')
+                || '|files:' || COALESCE((SELECT group_concat(line, ';') FROM (
+                    SELECT hex(kind || ',' || description) AS line FROM version_file_inputs WHERE version_id = '{version}' ORDER BY kind)), '')
+            FROM versions WHERE id = '{version}';
+            """);
+    }
 
     private static string Snake(string name) =>
         string.Concat(name.Select(static (letter, index) => char.IsUpper(letter) ? (index > 0 ? "_" : string.Empty) + char.ToLowerInvariant(letter) : letter.ToString()));
@@ -1238,8 +1424,8 @@ public sealed class VersionImmutabilityGuardTests
 
         public async Task<string> IfMatchAsync() => SongApi.Quoted((await ReadAsync()).GetProperty("revision").GetInt32());
 
-        /// <summary>Body fields changing every creation input of the Version as it is now (<see cref="InputsJson"/>).</summary>
-        public async Task<string> InputsJsonAsync(string prefix, string suffix) => InputsJson(prefix, suffix, (await ReadAsync()).GetProperty("inputs"));
+        /// <summary>Body fields changing every creation input of the Version as it is now (<see cref="InputsJson"/>), its lineage included unless told not to.</summary>
+        public async Task<string> InputsJsonAsync(string prefix, string suffix, bool withLineage = true) => InputsJson(prefix, suffix, (await ReadAsync()).GetProperty("inputs"), withLineage);
 
         /// <summary>A write of inputs (<paramref name="what"/>): 409 <c>version_frozen</c> on a frozen Version, 200 on a mutable one.</summary>
         public async Task ExpectInputsWriteAsync(HttpResponseMessage response, string what)

@@ -6,7 +6,9 @@ using n8Tracks.Api.Problems;
 using n8Tracks.Api.Tests.Auth;
 using n8Tracks.Api.Tests.Setup;
 using n8Tracks.Api.Tests.Songs;
+using n8Tracks.Application.Songs;
 using n8Tracks.Application.Suno;
+using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Api.Tests.Inventory;
@@ -19,13 +21,29 @@ namespace n8Tracks.Api.Tests.Inventory;
 /// milestone are left out only by name, in the list below, which is itself asserted; a new field
 /// of any type that is not on it fails. The check reads the inventory and the API alone, so it
 /// knows nothing of how n8Tracks stores an option: an option's API name is the inventory key in
-/// camelCase, apart from the two renamed below.
+/// camelCase, apart from the two renamed below. The reference and file fields (#122) are not options
+/// but parts of a Version's lineage: each is stored under the lineage key the declared mapping
+/// (<see cref="VersionLineageInputs.InventoryFields"/>) names, and checked by round-tripping a value of
+/// that field and refusing a wrong one there.
 /// </summary>
 public sealed class InventoryCoverageTests
 {
-    /// <summary>Reference and file inputs, whose mechanics belong to M4 (spike TS-002).</summary>
-    private static readonly string[] DeferredToM4 =
-        ["simple_add_playlist", "simple_add_image", "simple_add_video", "audio", "voice", "inspiration", "workspace"];
+    /// <summary>The workspace a result is saved to: owned by the workspace story (#129), not a Version's input.</summary>
+    private static readonly string[] Excluded = ["workspace"];
+
+    /// <summary>
+    /// For each reference or file field, a value of it as its lineage key takes one (sent in Simple mode
+    /// when the field is Simple-only), what reading it back must contain, and a value its rules refuse.
+    /// </summary>
+    private static readonly Dictionary<string, (string Accepted, string ReadBack, string Refused)> LineageSamples = new(StringComparer.Ordinal)
+    {
+        ["audio"] = ($$$"""[{"typeId":"{{{SystemRelationshipTypes.Cover.Id}}}","external":{"sunoId":"coverage-audio"}}]""", "coverage-audio", $$$"""[{"typeId":"{{{SystemRelationshipTypes.Cover.Id}}}"}]"""),
+        ["inspiration"] = ("""{"sources":[{"external":{"sunoId":"coverage-inspo"}}]}""", "coverage-inspo", """{"sources":[{"external":{"sunoId":"a"}},{"external":{"sunoId":"b"}},{"external":{"sunoId":"c"}},{"external":{"sunoId":"d"}},{"external":{"sunoId":"e"}}]}"""),
+        ["simple_add_playlist"] = ("""{"playlist":{"sunoPlaylistId":"coverage-playlist","name":"Coverage","clipIds":["one"]}}""", "coverage-playlist", """{"playlist":{"sunoPlaylistId":"has space"}}"""),
+        ["voice"] = ("""{"personaId":"coverage-persona","name":"Coverage"}""", "coverage-persona", """[{"personaId":"a"},{"personaId":"b"}]"""),
+        ["simple_add_image"] = ("""[{"kind":"image","description":"coverage image"}]""", "coverage image", $$$"""[{"kind":"image","description":"{{{new string('x', 501)}}}"}]"""),
+        ["simple_add_video"] = ("""[{"kind":"video","description":"coverage video"}]""", "coverage video", """[{"kind":"video","description":" "}]"""),
+    };
 
     /// <summary>
     /// The Simple form's "add a section" fields, a two-value choice in the inventory (write new or use
@@ -56,27 +74,47 @@ public sealed class InventoryCoverageTests
     private static readonly string[] ModelKeys = ["model", "sounds_model"];
 
     [Fact]
-    public void TheExclusionListNamesOnlyFieldsTheInventoryHasAndDeferred()
+    public void TheExclusionListNamesOnlyTheWorkspaceAndEveryReferenceFieldIsMapped()
     {
         var inventory = CreateFieldInventory.Embedded;
 
+        Assert.Equal(["workspace"], Excluded);
+        Assert.Equal(CreateField.ReferenceType, inventory.Get("workspace").Type);
+
+        // The six reference and file fields #111 left out are each stored by a part of the lineage (#122).
         Assert.Equal(
-            ["simple_add_playlist", "simple_add_image", "simple_add_video", "audio", "voice", "inspiration", "workspace"],
-            DeferredToM4);
-        Assert.All(DeferredToM4, key => Assert.Contains(
+            ["audio", "inspiration", "simple_add_image", "simple_add_playlist", "simple_add_video", "voice"],
+            VersionLineageInputs.InventoryFields.Keys.Order(StringComparer.Ordinal));
+        Assert.All(VersionLineageInputs.InventoryFields.Keys, key => Assert.Contains(
             inventory.Get(key).Type,
             new[] { CreateField.ReferenceType, CreateField.FileType }));
-
-        // Every Speech and Sounds field is stored (#113): nothing outside the M4 list is left out.
-        Assert.All(DeferredToM4, key => Assert.Equal("songs", inventory.Get(key).Tab));
+        Assert.All(VersionLineageInputs.InventoryFields.Values, value => Assert.Contains(value, VersionLineageInputs.Keys));
+        Assert.Equal(VersionLineageInputs.InventoryFields.Keys.Order(StringComparer.Ordinal), LineageSamples.Keys.Order(StringComparer.Ordinal));
     }
 
     [Fact]
     public async Task EveryInventoryFieldIsStoredRoundTrippedAndBoundedAsTheInventorySays()
     {
-        var problems = await CheckAsync(CreateFieldInventory.Embedded, DeferredToM4);
+        var problems = await CheckAsync(CreateFieldInventory.Embedded, Excluded, VersionLineageInputs.InventoryFields);
 
         Assert.True(problems.Count == 0, string.Join(Environment.NewLine, problems));
+    }
+
+    /// <summary>It bites: a reference or file field whose mapping is taken away fails, since no option stores it.</summary>
+    [Theory]
+    [InlineData("audio")]
+    [InlineData("voice")]
+    [InlineData("inspiration")]
+    [InlineData("simple_add_playlist")]
+    [InlineData("simple_add_image")]
+    [InlineData("simple_add_video")]
+    public async Task AFieldWhoseMappingIsDeletedFailsTheCheck(string key)
+    {
+        var mapping = VersionLineageInputs.InventoryFields.Where(pair => pair.Key != key).ToDictionary(StringComparer.Ordinal);
+
+        var problems = await CheckAsync(CreateFieldInventory.Embedded, Excluded, mapping);
+
+        Assert.Contains(problems, problem => problem.StartsWith(key + ":", StringComparison.Ordinal));
     }
 
     /// <summary>It bites: a field the inventory gains, of any type, fails until n8Tracks stores it.</summary>
@@ -90,20 +128,18 @@ public sealed class InventoryCoverageTests
         copy["fields"]!.AsArray().Add(JsonNode.Parse(field));
         var key = JsonNode.Parse(field)!["key"]!.GetValue<string>();
 
-        var problems = await CheckAsync(CreateFieldInventory.Parse(copy.ToJsonString()), DeferredToM4);
+        var problems = await CheckAsync(CreateFieldInventory.Parse(copy.ToJsonString()), Excluded, VersionLineageInputs.InventoryFields);
 
         Assert.Contains(problems, problem => problem.StartsWith(key + ":", StringComparison.Ordinal));
     }
 
-    /// <summary>It bites: a key taken off the exclusion list fails, since nothing stores it yet.</summary>
-    [Theory]
-    [InlineData("audio")]
-    [InlineData("simple_add_image")]
-    public async Task AKeyTakenOffAnExclusionListFailsTheCheck(string key)
+    /// <summary>It bites: the workspace taken off the exclusion list fails, since nothing stores it yet.</summary>
+    [Fact]
+    public async Task AKeyTakenOffTheExclusionListFailsTheCheck()
     {
-        var excluded = DeferredToM4.Where(excludedKey => excludedKey != key).ToArray();
+        const string key = "workspace";
 
-        var problems = await CheckAsync(CreateFieldInventory.Embedded, excluded);
+        var problems = await CheckAsync(CreateFieldInventory.Embedded, [], VersionLineageInputs.InventoryFields);
 
         Assert.Contains(problems, problem => problem.StartsWith(key + ":", StringComparison.Ordinal));
     }
@@ -127,7 +163,7 @@ public sealed class InventoryCoverageTests
         var copy = JsonNode.Parse(CreateFieldInventory.Embedded.Json)!;
         copy["fields"]!.AsArray().Single(field => field!["key"]!.GetValue<string>() == key)![property] = JsonNode.Parse(value);
 
-        var problems = await CheckAsync(CreateFieldInventory.Parse(copy.ToJsonString()), DeferredToM4);
+        var problems = await CheckAsync(CreateFieldInventory.Parse(copy.ToJsonString()), Excluded, VersionLineageInputs.InventoryFields);
 
         Assert.Contains(problems, problem => problem.StartsWith(key + ":", StringComparison.Ordinal));
     }
@@ -136,7 +172,7 @@ public sealed class InventoryCoverageTests
     /// Every way <paramref name="inventory"/> and the API disagree, each line starting with the field's
     /// key, or with the API's name for an option no field describes.
     /// </summary>
-    private static async Task<List<string>> CheckAsync(CreateFieldInventory inventory, IReadOnlyCollection<string> excluded)
+    private static async Task<List<string>> CheckAsync(CreateFieldInventory inventory, IReadOnlyCollection<string> excluded, IReadOnlyDictionary<string, string> lineage)
     {
         using var factory = SongApi.Host();
         using var client = await SessionApi.SignedInClientAsync(factory);
@@ -145,21 +181,95 @@ public sealed class InventoryCoverageTests
         foreach (var field in inventory.Fields.Where(field => !excluded.Contains(field.Key, StringComparer.Ordinal)))
         {
             var version = new CoveredVersion(client, (await SongApi.CreateAsync(client, SongTitle)).GetProperty("currentVersion").GetProperty("id").GetGuid());
-            await new FieldCheck(field, version, problems).RunAsync();
+            if (lineage.TryGetValue(field.Key, out var lineageKey))
+            {
+                await CheckLineageAsync(field, lineageKey, version, problems);
+            }
+            else
+            {
+                await new FieldCheck(field, version, problems).RunAsync();
+            }
         }
 
-        // The other way round: every stored option is a field of the inventory, or one that chooses the form.
+        // The other way round: every stored option is a field of the inventory, or one that chooses the
+        // form, and every lineage key stores a field of the mapping.
         var any = new CoveredVersion(client, (await SongApi.CreateAsync(client, SongTitle)).GetProperty("currentVersion").GetProperty("id").GetGuid());
         var names = inventory.Fields.Select(static field => ApiName(field.Key)).ToHashSet(StringComparer.Ordinal);
         foreach (var option in (await any.ReadAsync()).GetProperty("inputs").EnumerateObject())
         {
-            if (!names.Contains(option.Name) && !FormChoosers.Contains(option.Name, StringComparer.Ordinal))
+            if (!names.Contains(option.Name) && !FormChoosers.Contains(option.Name, StringComparer.Ordinal) && !lineage.Values.Contains(option.Name, StringComparer.Ordinal))
             {
                 problems.Add($"{option.Name}: stored, but no inventory field describes it.");
             }
         }
 
         return problems;
+    }
+
+    /// <summary>
+    /// A reference or file field stored by a part of the lineage: the part is read back under its key
+    /// of <c>inputs</c>, a value of the field is stored and read back, and a wrong one is refused with
+    /// a field error under that key and a rule named, changing nothing. A field the inventory offers in
+    /// Simple mode only is sent in Simple mode.
+    /// </summary>
+    private static async Task CheckLineageAsync(CreateField field, string lineageKey, CoveredVersion version, List<string> problems)
+    {
+        void Fail(string problem) => problems.Add($"{field.Key}: {problem}");
+
+        if (!(await version.ReadAsync()).GetProperty("inputs").TryGetProperty(lineageKey, out _))
+        {
+            Fail($"no option is stored (expected inputs.{lineageKey}).");
+            return;
+        }
+
+        if (!LineageSamples.TryGetValue(field.Key, out var sample))
+        {
+            Fail("no sample value: add one to the lineage samples.");
+            return;
+        }
+
+        if (field.Modes.SequenceEqual(["simple"]))
+        {
+            using var simple = await version.PatchAsync("""{"inputs":{"songMode":"simple"}}""");
+            Assert.Equal(HttpStatusCode.OK, simple.StatusCode);
+        }
+
+        using (var accepted = await version.PatchAsync($$$"""{"inputs":{"{{{lineageKey}}}":{{{sample.Accepted}}}}}"""))
+        {
+            if (accepted.StatusCode != HttpStatusCode.OK)
+            {
+                Fail($"{sample.Accepted} is refused ({(int)accepted.StatusCode}: {await accepted.Content.ReadAsStringAsync()}).");
+                return;
+            }
+        }
+
+        var stored = (await version.ReadAsync()).GetProperty("inputs").GetProperty(lineageKey).GetRawText();
+        if (!stored.Contains(sample.ReadBack, StringComparison.Ordinal))
+        {
+            Fail($"{sample.Accepted} is not read back ({stored}).");
+        }
+
+        var before = (await version.ReadAsync()).GetRawText();
+        using var refused = await version.PatchAsync($$$"""{"inputs":{"{{{lineageKey}}}":{{{sample.Refused}}}}}""");
+        if (refused.StatusCode != HttpStatusCode.UnprocessableEntity)
+        {
+            Fail($"{sample.Refused} is not refused ({(int)refused.StatusCode}).");
+            return;
+        }
+
+        var problem = await SetupApi.ProblemAsync(refused, HttpStatusCode.UnprocessableEntity, ApiProblem.ValidationFailedCode);
+        var prefix = "inputs." + lineageKey;
+        if (!problem.GetProperty("errors").EnumerateObject().Any(error => error.Name.StartsWith(prefix, StringComparison.Ordinal))
+            || !problem.TryGetProperty("rules", out var rules)
+            || !rules.EnumerateObject().Any(rule => rule.Name.StartsWith(prefix, StringComparison.Ordinal)))
+        {
+            Fail($"{sample.Refused} is refused without a rule named under {prefix} ({problem.GetRawText()}).");
+        }
+
+        if ((await version.ReadAsync()).GetRawText() != before)
+        {
+            Fail($"{sample.Refused} was refused but changed the Version.");
+        }
     }
 
     /// <summary>The one conversion from an inventory key to the API's name for its option: camelCase, apart from the renamed sections.</summary>

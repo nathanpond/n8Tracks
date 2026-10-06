@@ -6,6 +6,8 @@ using n8Tracks.Api.Tests.Persistence;
 using n8Tracks.Api.Tests.Setup;
 using n8Tracks.Application.Credentials;
 
+using n8Tracks.Application.Songs;
+
 namespace n8Tracks.Api.Tests.Songs;
 
 /// <summary>
@@ -35,7 +37,7 @@ public sealed class VersionOptionsEndpointTests
         var inputs = version.GetProperty("inputs");
 
         Assert.Equal(
-            """{"kind":"song","songMode":"advanced","speechMode":"advanced","model":"v6","simplePrompt":"","simpleLyricsAdded":false,"simpleStylesAdded":false,"excludeStyles":"","vocalGender":null,"durationMode":"auto","durationSeconds":180,"maxMode":false,"weirdness":50,"styleInfluence":50,"variety":"normal","personalize":false,"title":"TITLE","speechPrompt":"","speechScript":"","speechTone":"","speechVocalGender":null,"speechBackgroundMusic":true,"speechVariety":"normal","soundsModel":"v6","soundDescription":"","soundType":"one_shot","soundBpm":null,"soundKey":"any","soundScale":null}"""
+            """{"kind":"song","songMode":"advanced","speechMode":"advanced","model":"v6","simplePrompt":"","simpleLyricsAdded":false,"simpleStylesAdded":false,"excludeStyles":"","vocalGender":null,"durationMode":"auto","durationSeconds":180,"maxMode":false,"weirdness":50,"styleInfluence":50,"variety":"normal","personalize":false,"title":"TITLE","speechPrompt":"","speechScript":"","speechTone":"","speechVocalGender":null,"speechBackgroundMusic":true,"speechVariety":"normal","soundsModel":"v6","soundDescription":"","soundType":"one_shot","soundBpm":null,"soundKey":"any","soundScale":null,"sources":[],"inspiration":null,"voice":null,"fileInputs":[]}"""
                 .Replace("TITLE", title[..100], StringComparison.Ordinal),
             inputs.GetRawText());
         Assert.Equal(100, inputs.GetProperty("title").GetString()!.Length);
@@ -115,7 +117,7 @@ public sealed class VersionOptionsEndpointTests
         // Back to an Advanced Song: nothing was cleared by switching.
         var back = await EditAsync(client, id, """{"inputs":{"kind":"song","songMode":"advanced"}}""");
         Assert.Equal(
-            """{"kind":"song","songMode":"advanced","speechMode":"simple","model":"v6-mini","simplePrompt":"A fast song\nabout running","simpleLyricsAdded":true,"simpleStylesAdded":true,"excludeStyles":"","vocalGender":"female","durationMode":"custom","durationSeconds":120,"maxMode":false,"weirdness":80,"styleInfluence":50,"variety":"high","personalize":false,"title":"Switching","speechPrompt":"","speechScript":"","speechTone":"","speechVocalGender":null,"speechBackgroundMusic":true,"speechVariety":"normal","soundsModel":"v6","soundDescription":"","soundType":"one_shot","soundBpm":null,"soundKey":"any","soundScale":null}""",
+            """{"kind":"song","songMode":"advanced","speechMode":"simple","model":"v6-mini","simplePrompt":"A fast song\nabout running","simpleLyricsAdded":true,"simpleStylesAdded":true,"excludeStyles":"","vocalGender":"female","durationMode":"custom","durationSeconds":120,"maxMode":false,"weirdness":80,"styleInfluence":50,"variety":"high","personalize":false,"title":"Switching","speechPrompt":"","speechScript":"","speechTone":"","speechVocalGender":null,"speechBackgroundMusic":true,"speechVariety":"normal","soundsModel":"v6","soundDescription":"","soundType":"one_shot","soundBpm":null,"soundKey":"any","soundScale":null,"sources":[],"inspiration":null,"voice":null,"fileInputs":[]}""",
             back.GetProperty("inputs").GetRawText());
         Assert.Equal("[Verse]\nRun", back.GetProperty("lyrics").GetString());
 
@@ -265,7 +267,8 @@ public sealed class VersionOptionsEndpointTests
         await SongApi.AttachGenerationAsync(factory, frozen.ToString());
         var stored = TestDatabase.Scalar(factory.DataPath, $"SELECT kind || '|' || coalesce(model, '') || '|' || inputs FROM versions WHERE id = '{frozen.ToString().ToUpperInvariant()}';");
 
-        foreach (var option in (await GetAsync(client, frozen)).GetProperty("inputs").EnumerateObject())
+        // Each option (the lineage keys, #122, have their own tests in VersionSourcesEndpointTests).
+        foreach (var option in (await GetAsync(client, frozen)).GetProperty("inputs").EnumerateObject().Where(static option => !VersionLineageInputs.IsLineageKey(option.Name)))
         {
             var json = $$$"""{"name":"Renamed","inputs":{"{{{option.Name}}}":{{{Inventory.InputValues.ChangedJson(option.Name, option.Value)}}}}}""";
 

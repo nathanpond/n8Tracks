@@ -72,6 +72,14 @@ internal sealed record RetainedType(string RecordType, string Table, string Noun
     /// reference document holds only the key columns and these.
     /// </summary>
     public IReadOnlyList<string>? ReferenceColumns { get; init; }
+
+    /// <summary>
+    /// Set for a table frozen with its parent row (a Version's lineage, #122), whose freeze triggers
+    /// refuse any insert or delete while the parent is frozen and present: its rows are removed by the
+    /// parent's cascade, after the parent, and inserted again before the parent, while the restore's
+    /// foreign keys are deferred. Its documents are retained like any other.
+    /// </summary>
+    public bool FrozenWithParent { get; init; }
 }
 
 /// <summary>
@@ -160,6 +168,23 @@ internal static class RetainedTypes
         Upgraders = new Dictionary<int, Func<JsonObject, JsonObject>> { [1] = GenerationShape1To2, [2] = GenerationShape2To3, [3] = GenerationShape3To4 }.ToFrozenDictionary(),
         PrepareRestoreAsync = static (row, cancellationToken) => KeepArtworkIfStoredAsync(row, cancellationToken),
     };
+
+    /// <summary>
+    /// A source of a Version (#122), deleted and restored with its Version, which it cascades from. It
+    /// names its relationship type and any external reference by foreign key (neither is ever deleted
+    /// while used), and its Generation or Song by ID only, so it comes back however they have changed.
+    /// </summary>
+    public static readonly RetainedType VersionSource = new(RetainedRecordTypes.VersionSource, "version_sources", "Version source", ShapeVersion: 1) { FrozenWithParent = true };
+
+    /// <summary>A Version's Inspiration playlist (#122), deleted and restored with its Version.</summary>
+    public static readonly RetainedType VersionInspirationPlaylist =
+        new(RetainedRecordTypes.VersionInspirationPlaylist, "version_inspiration_playlists", "Inspiration playlist", ShapeVersion: 1) { FrozenWithParent = true };
+
+    /// <summary>A Version's Voice (#122), deleted and restored with its Version.</summary>
+    public static readonly RetainedType VersionVoice = new(RetainedRecordTypes.VersionVoice, "version_voices", "Voice", ShapeVersion: 1) { FrozenWithParent = true };
+
+    /// <summary>A Version's file input (#122), deleted and restored with its Version.</summary>
+    public static readonly RetainedType VersionFileInput = new(RetainedRecordTypes.VersionFileInput, "version_file_inputs", "file input", ShapeVersion: 1) { FrozenWithParent = true };
 
     /// <summary>A comment on a Generation, deleted (and restored) with its Generation, which it cascades from.</summary>
     public static readonly RetainedType GenerationComment = new(RetainedRecordTypes.GenerationComment, "generation_comments", "Generation comment", ShapeVersion: 1);
@@ -337,7 +362,8 @@ internal static class RetainedTypes
     /// <summary>Every built-in type.</summary>
     public static IReadOnlyList<RetainedType> BuiltIn { get; } =
     [
-        EditorSnapshot, ArtworkAttachment, Version, Generation, ProviderRecord, GenerationEventLink, GenerationComment,
+        EditorSnapshot, ArtworkAttachment, Version, VersionSource, VersionInspirationPlaylist, VersionVoice, VersionFileInput,
+        Generation, ProviderRecord, GenerationEventLink, GenerationComment,
         Song, UsedVersionNumber, SongLink, SongGenre, SongTag, SongCredit, AlbumTrack, PlaylistEntry, SongRelationship,
         Album, AlbumLink, Playlist,
         Artist, ArtistAlias, ArtistLink, AlbumArtist, SelectedGeneration,

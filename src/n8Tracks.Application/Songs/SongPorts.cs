@@ -1,6 +1,7 @@
 using n8Tracks.Domain.Assets;
 using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
+using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Application.Songs;
 
@@ -259,7 +260,45 @@ public sealed record VersionAnnotations(string? Name, string? Notes, bool Archiv
 /// <param name="Lyrics">As stored; empty when there are none.</param>
 /// <param name="Styles">As stored; empty when there are none.</param>
 /// <param name="Inputs">Its kind, modes, and every Suno option.</param>
-public sealed record VersionDetail(VersionSummary Summary, string Lyrics, string Styles, VersionInputs Inputs);
+/// <param name="Lineage">Its sources, Inspiration, Voice, and file inputs, with what each source points at.</param>
+public sealed record VersionDetail(VersionSummary Summary, string Lyrics, string Styles, VersionInputs Inputs, VersionLineageView Lineage);
+
+/// <summary>
+/// A Version's lineage as it is read: the lineage itself, and for each source (audio, then
+/// Inspiration, in order) what its target is now.
+/// </summary>
+public sealed record VersionLineageView(VersionLineage Lineage, IReadOnlyList<SourceTargetView> AudioTargets, IReadOnlyList<SourceTargetView> InspirationTargets)
+{
+    /// <summary>A Version with no lineage.</summary>
+    public static VersionLineageView None { get; } = new(VersionLineage.None, [], []);
+}
+
+/// <summary>
+/// What a source's target is now. A Generation or Song that is no longer in the catalog (deleted, or
+/// in retention) is <paramref name="Missing"/>, and the source still names it by ID; a deleted
+/// Generation that had a Suno ID has become an external reference labelled "Deleted" instead.
+/// </summary>
+/// <param name="GenerationShortcode">The target Generation's shortcode, followed wherever it has moved; null when it is not a Generation or is missing.</param>
+/// <param name="GenerationSongId">The target Generation's Song now.</param>
+/// <param name="SongShortcode">The target Song's shortcode (for a Song target), or the Generation's Song's.</param>
+/// <param name="SongTitle">The target Song's title, or the Generation's Song's.</param>
+/// <param name="External">The external reference, for a Suno clip target.</param>
+/// <param name="Missing">Whether a Generation or Song target is no longer in the catalog.</param>
+public sealed record SourceTargetView(
+    string? GenerationShortcode,
+    Guid? GenerationSongId,
+    string? SongShortcode,
+    string? SongTitle,
+    ExternalSunoReference? External,
+    bool Missing);
+
+/// <summary>What checking a source needs about a target Generation: where it is, its Suno ID, and its length.</summary>
+/// <param name="Id">The Generation.</param>
+/// <param name="VersionId">Its Version now.</param>
+/// <param name="SongId">Its Song now.</param>
+/// <param name="SunoId">Its Suno ID; null without Suno data.</param>
+/// <param name="DurationSeconds">Its length, when Suno reported one.</param>
+public sealed record SourceGenerationFacts(Guid Id, Guid VersionId, Guid SongId, string? SunoId, double? DurationSeconds);
 
 /// <summary>
 /// A Version's lyrics and styles, as they are to be stored: valid, line endings as <c>\n</c>,
@@ -351,6 +390,38 @@ public interface IVersionStore
         VersionInputs inputs,
         int revision,
         DateTimeOffset updatedUtc,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Inside the caller's transaction, right after <see cref="TryUpdateInputsAsync"/> stored the
+    /// Version's other inputs: replaces its lineage with <paramref name="lineage"/>, the parts that
+    /// changed only. The caller decides, through <see cref="SongVersion.WithLineage"/>, whether it may
+    /// change; the database refuses any change to a frozen Version's lineage regardless. Every
+    /// external Suno ID it names must have been stored (<see cref="EnsureExternalReferencesAsync"/>).
+    /// </summary>
+    Task ReplaceLineageAsync(Guid id, VersionLineage lineage, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Stores an external reference for each of <paramref name="references"/> whose Suno ID and kind
+    /// no stored one has, as given; one already stored is left as it is (it is shared).
+    /// </summary>
+    Task EnsureExternalReferencesAsync(IReadOnlyCollection<ExternalSunoReference> references, CancellationToken cancellationToken);
+
+    /// <summary>What checking a source needs about the Generation with <paramref name="id"/>; null when there is none.</summary>
+    Task<SourceGenerationFacts?> FindSourceGenerationAsync(Guid id, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Inside the caller's transaction, before Generations are deleted: every source of a Version not
+    /// in <paramref name="versionsGoing"/> that points at one of <paramref name="generationIds"/> with a
+    /// Suno ID is pointed instead at the external reference for that Suno ID (stored if need be, with
+    /// the Generation's Suno title, labelled "Deleted"). The system rewrite of a pointer, not of an
+    /// input: the source's identity is its Suno ID either way, which the database checks. A source of a
+    /// Generation without a Suno ID keeps its ID and reads as missing.
+    /// </summary>
+    Task RewriteSourcesOfDeletedGenerationsAsync(
+        IReadOnlyCollection<Guid> generationIds,
+        IReadOnlyCollection<Guid> versionsGoing,
+        DateTimeOffset now,
         CancellationToken cancellationToken);
 
     /// <summary>

@@ -2661,3 +2661,44 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
   - `testArtwork` now returns a `SongArtwork` (`source: 'own'` by default). `testGeneration` gives `artwork: null`.
   **Why:** A defaulted image is not the Song's own, so it cannot be cropped or removed. Treating it as the Song's own field would make the conflict check see changes nobody made.
   **Issue:** #121
+- **Decision:** D8, as applied in #122. Each lineage table (`version_sources`, `version_inspiration_playlists`, `version_voices`, `version_file_inputs`) has its own `BEFORE INSERT`, `BEFORE UPDATE` and `BEFORE DELETE` freeze trigger. Each one refuses a change while its Version row exists with `is_frozen = 1`. On `version_sources`, the update trigger lets exactly one change through: the system rewrite of a deleted Generation's pointer into the external reference with the same Suno ID, with every other column unchanged. `external_suno_references` gets a trigger that refuses changing a Suno ID or kind.
+  **Why:** This keeps #69's three layers (entity `WithLineage` → `EnsureMutable`, the store writing only after the guarded `versions` update, and the database) for the new tables. The rewrite is the discretion's "system rewrite of the pointer, not of the input": the source's identity is its Suno ID either way.
+  **Issue:** #122
+- **Decision:** Retention gains `RetainedType.FrozenWithParent`, set on the four lineage types. When their Version is deleted, these rows are removed after the Version, by its cascade, instead of before it. On restore they are inserted before the Version, while the restore's foreign keys are deferred.
+  **Why:** A frozen Version's lineage triggers refuse any insert or delete while the Version row is present. Ordering around the parent lets Version and Song deletion and restore keep the lineage without any bypass in the triggers. The guard's retention exerciser compares the restored lineage byte for byte.
+  **Issue:** #122
+- **Decision:** A source names its target Generation or Song by ID with no foreign key. When Generations are deleted (Version or Song deletion now; #124 later), `IVersionStore.RewriteSourcesOfDeletedGenerationsAsync` runs first. It repoints each source in another Version whose Generation has a Suno ID to the shared external reference for that ID, labelled "Deleted" and carrying the Suno title. A source whose Generation has no Suno ID keeps the Generation's ID and reads as `missing: true`, and so does a Song target that was deleted.
+  **Why:** The discretion makes a source outlive its target: a moved Generation is followed, and a deleted one becomes an external reference. A Generation without a Suno ID has nothing to rewrite to, so its ID stays as the frozen identity. That is the identity rule the discretion gives the guard: the Suno ID when there is one, otherwise the Generation ID.
+  **Issue:** #122
+- **Decision:** API shape:
+  - `inputs` gains `sources`, `inspiration` (`{sources:[…]}` or `{playlist:{sunoPlaylistId,name,clipIds}}` or null), `voice` (`{personaId,name}` or null) and `fileInputs` (`[{kind,description}]`).
+  - A source has `typeId`, exactly one of `generation`, `song` or `external`, `continueAtSeconds` and `secondaryIds`.
+  - On write, `generation` and `song` take an ID or shortcode, as text or as an object with `id`. On read they are objects with `shortcode`, `title` and `missing`, and the read also gives `sunoAction`. Read-only fields are ignored when sent back, so a read can be sent back as it is (no change, no revision).
+  - Inspiration sources take no type: it is always Use as Inspiration. File inputs are sorted by kind.
+  - A rule violation is a 422 `validation_failed` with a new `rules` member (`field → [rule code]`) beside `errors`.
+  **Why:** The AC says sources round-trip in `inputs` and a rule violation is "a field error naming the rule". A separate `rules` member keeps `errors` messages-only, as every other 422 has it.
+  **Issue:** #122
+- **Decision:** Write-time rule checks report only the rules that read a part the edit sent. The cross-part rules (Inspiration with Cover, audio file with an audio action) are also reported when `sources` is sent. An image or video on a Song that is not in Simple mode is refused on write. Individual Inspiration sources are not refused in Simple mode; they are only left out of `effectiveInputs`.
+  **Why:** "Changing kind or mode never refuses." So a part kept as it is (say, an image left over after switching to Advanced) must not block an edit of another part. The test plan names only image or video on an Advanced-mode Song as a refusal; individual Inspiration in Simple mode is named only as omitted from `effectiveInputs`.
+  **Issue:** #122
+- **Decision:** `GenerationService.AttachAsync` refuses an incomplete lineage with the new outcome `GenerationAttachOutcome.IncompleteSources`: a Mashup without two sources, an Extend without its position, or a position past the source's known length. Only the rules a complete check adds are applied, not the write-time ones. `GenerationsEndpoints.AttachRefusal` maps it to 422 with `rules`; `seed-generation` prints the rule codes.
+  **Why:** The discretion puts the complete-set rules at attach and at Generate on Suno. Applying the write rules again would let a later change of mode block an attach, against "changing kind or mode never refuses".
+  **Issue:** #122
+- **Decision:** The general Remix type is allowed only through `LineageOrigin.Import`: any number of Remix sources, never together with an audio action. The PATCH is `LineageOrigin.Edit` and refuses Remix with `source_type_import_only`. No public import method was added. #140 calls the domain rules with `Import` when it writes imported lineage.
+  **Why:** "They cannot be chosen in the editor and are never automated", and there is no import path yet. A public service method now would widen the guard with no caller.
+  **Issue:** #122
+- **Decision:** A user relationship type is refused as a source type with `source_type_not_mapped` when its `SunoAction` is null, which is true of every user type until #126 adds the mapping. `version_sources.type_id` references `song_relationship_types` with RESTRICT. Automatic Song relationships are created only for the parts an edit sent (`sources` and/or `inspiration`), under the source's type (Inspiration uses Use as Inspiration), with the Version's Song as "from", and only when the two Songs are not already related under that type either way round. Create New Version From copies the lineage but makes no relationships.
+  **Why:** These follow the discretion lines. Relating only on a sent part means editing the Voice cannot bring back a relationship the user removed. Copies stay in the same Song, so a relationship would point at itself.
+  **Issue:** #122
+- **Decision:** Inventory coverage: the exclusion list is now `["workspace"]`, owned by #129. The six reference and file fields map to lineage keys through `VersionLineageInputs.InventoryFields` (`audio`→`sources`, `inspiration` and `simple_add_playlist`→`inspiration`, `voice`→`voice`, `simple_add_image` and `simple_add_video`→`fileInputs`). The coverage test round-trips a value of each field and refuses a wrong one with a named rule. Deleting any mapping fails the test, which a six-case theory proves.
+  **Why:** The AC requires a declared mapping that the coverage test reads, and requires the test to fail when one mapping is deleted.
+  **Issue:** #122
+- **Decision:** Web: `api/versions.ts` gains `LINEAGE_KEYS` and `isLineageKey`. `isVersionDetail` accepts lineage keys holding objects, arrays or null, and `VersionDetails` leaves them out of option keys and the conflict list. No editor UI was added; that is #125.
+  **Why:** Without this the web reader would reject every Version answer, since `isOptions` required scalar values. #125 owns the sources editor.
+  **Issue:** #122
+- **Decision:** No e2e spec was added (Demo: none, agent-verifiable). The existing e2e suite was rerun against an image built from this change.
+  **Why:** The story has no UI and no Demo walk. API integration tests cover the behaviour.
+  **Issue:** #122
+- **Decision:** #122 lands as one commit, not four (model, triggers, guard, API) as the M4 plan's risk note suggested.
+  **Why:** None of the four compiles or passes on its own. The entity's new `Lineage` parameter changes every construction site and the store. The guard's `inputs` key check fails until the API returns the lineage keys. The retained-shape and startup tests fail until the migration exists. Splitting would leave intermediate commits with a red gate on a shared milestone branch.
+  **Issue:** #122

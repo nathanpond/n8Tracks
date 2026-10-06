@@ -1,10 +1,11 @@
 using Microsoft.EntityFrameworkCore;
 using n8Tracks.Application.Songs;
 using n8Tracks.Domain.Songs;
+using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Infrastructure.Persistence;
 
-internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
+internal sealed class VersionStore(N8TracksDbContext context, TimeProvider time) : IVersionStore
 {
     public async Task<VersionNumberingFacts?> FindNumberingAsync(Guid id, CancellationToken cancellationToken)
     {
@@ -49,6 +50,7 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
                 UtcText.Parse(record.CreatedUtc),
                 UtcText.Parse(record.UpdatedUtc),
                 record.Revision,
+                await VersionLineageRows.ReadAsync(context, id, cancellationToken).ConfigureAwait(false),
                 record.IsFrozen,
                 record.LastGenerationOrdinal);
     }
@@ -87,9 +89,18 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
             .SingleOrDefaultAsync(cancellationToken)
             .ConfigureAwait(false);
 
-        return inputs is null
-            ? null
-            : new VersionDetail(summary, inputs.Lyrics, inputs.Styles, VersionInputsColumns.Read(inputs.Kind, inputs.Model, inputs.Inputs));
+        if (inputs is null)
+        {
+            return null;
+        }
+
+        var lineage = await VersionLineageRows.ReadAsync(context, id, cancellationToken).ConfigureAwait(false);
+        return new VersionDetail(
+            summary,
+            inputs.Lyrics,
+            inputs.Styles,
+            VersionInputsColumns.Read(inputs.Kind, inputs.Model, inputs.Inputs),
+            await VersionLineageRows.ViewAsync(context, lineage, cancellationToken).ConfigureAwait(false));
     }
 
     public async Task<IReadOnlyList<VersionSummary>> ListAsync(Guid songId, CancellationToken cancellationToken)
@@ -149,6 +160,9 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
         context.Versions.Add(record);
         await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         context.Entry(record).State = EntityState.Detached;
+
+        // A Version created from another holds a copy of its lineage, naming the same targets.
+        await VersionLineageRows.WriteAsync(context, version.Id, VersionLineage.None, version.Lineage, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>The row a new Version is stored as.</summary>
@@ -262,6 +276,38 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
             .ConfigureAwait(false);
 
         return count == 1;
+    }
+
+    public async Task ReplaceLineageAsync(Guid id, VersionLineage lineage, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(lineage);
+
+        var held = await VersionLineageRows.ReadAsync(context, id, cancellationToken).ConfigureAwait(false);
+        await VersionLineageRows.WriteAsync(context, id, held, lineage, cancellationToken).ConfigureAwait(false);
+    }
+
+    public Task EnsureExternalReferencesAsync(IReadOnlyCollection<ExternalSunoReference> references, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(references);
+        return VersionLineageRows.EnsureReferencesAsync(context, references, time.GetUtcNow(), cancellationToken);
+    }
+
+    public async Task<SourceGenerationFacts?> FindSourceGenerationAsync(Guid id, CancellationToken cancellationToken) =>
+        await context.Generations.AsNoTracking()
+            .Where(generation => generation.Id == id)
+            .Select(static generation => new SourceGenerationFacts(generation.Id, generation.VersionId, generation.SongId, generation.SunoId, generation.DurationSeconds))
+            .SingleOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+    public Task RewriteSourcesOfDeletedGenerationsAsync(
+        IReadOnlyCollection<Guid> generationIds,
+        IReadOnlyCollection<Guid> versionsGoing,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(generationIds);
+        ArgumentNullException.ThrowIfNull(versionsGoing);
+        return VersionLineageRows.RewriteDeletedGenerationsAsync(context, generationIds, versionsGoing, now, cancellationToken);
     }
 
     public async Task<bool> TryAttachGenerationAsync(SongVersion version, Generation generation, int revision, CancellationToken cancellationToken)

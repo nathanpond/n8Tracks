@@ -77,7 +77,8 @@ public sealed record Song(
             inputs,
             now,
             now,
-            Revision: 1);
+            Revision: 1,
+            VersionLineage.None);
 
         return (song, version);
     }

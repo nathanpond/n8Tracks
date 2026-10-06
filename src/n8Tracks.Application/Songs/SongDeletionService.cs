@@ -139,6 +139,8 @@ public sealed class SongDeletionService(
                     roots.Add(artworkRoot);
                 }
 
+                // Sources of other Songs' Versions that point at these Generations keep their Suno IDs (#122).
+                await versions.RewriteSourcesOfDeletedGenerationsAsync(generations, [.. all.Select(static version => version.Id)], time.GetUtcNow(), ct).ConfigureAwait(false);
                 var group = await retention.RetainWithinAsync(
                     new RetentionRequest(RetainedRecordTypes.Song, Label(song.Shortcode, song.Title), song.Shortcode, roots, files),
                     ct).ConfigureAwait(false);

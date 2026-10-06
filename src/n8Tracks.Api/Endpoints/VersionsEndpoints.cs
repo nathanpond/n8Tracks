@@ -681,7 +681,7 @@ internal static class VersionsEndpoints
                 return Revisions.Conflict(context, VersionDetailResponse.From(conflict.Current));
 
             case VersionUpdateOutcome.Invalid invalid:
-                return ApiProblem.ValidationFailed(context, invalid.Errors);
+                return ApiProblem.ValidationFailed(context, invalid.Errors, invalid.Rules);
 
             case VersionUpdateOutcome.NotFound:
                 return await MissingVersionAsync(context, reference, deletions, cancellationToken);
@@ -926,9 +926,9 @@ internal sealed record VersionResponse(
 /// <summary>
 /// One Version with its creation inputs: everything <see cref="VersionResponse"/> has, plus its
 /// lyrics and styles exactly as stored (empty strings when there are none), <c>inputs</c> (its kind,
-/// modes, and every Suno option, applicable or not), and the read-only <c>effectiveInputs</c> (the
-/// ones that apply to its kind and mode, lyrics and styles included when they do: what is sent to
-/// Suno). Times are UTC.
+/// modes, every Suno option, applicable or not, and its lineage: <c>sources</c>, <c>inspiration</c>,
+/// <c>voice</c>, and <c>fileInputs</c>, #122), and the read-only <c>effectiveInputs</c> (the ones that
+/// apply to its kind and mode, lyrics and styles included when they do: what is sent to Suno). Times are UTC.
 /// </summary>
 internal sealed record VersionDetailResponse(
     Guid Id,
@@ -970,8 +970,22 @@ internal sealed record VersionDetailResponse(
             summary.Kind,
             version.Lyrics,
             version.Styles,
-            VersionInputRules.ToJson(version.Inputs),
-            VersionInputRules.Effective(CreateFieldInventory.Embedded, version.Inputs, version.Lyrics, version.Styles));
+            With(VersionInputRules.ToJson(version.Inputs), VersionLineageInputs.ToJson(version.Lineage)),
+            With(
+                VersionInputRules.Effective(CreateFieldInventory.Embedded, version.Inputs, version.Lyrics, version.Styles),
+                VersionLineageInputs.Effective(version.Lineage, version.Inputs)));
+    }
+
+    /// <summary><paramref name="options"/> followed by the lineage keys in <paramref name="lineage"/>.</summary>
+    private static JsonObject With(JsonObject options, JsonObject lineage)
+    {
+        foreach (var (key, value) in lineage.ToList())
+        {
+            lineage.Remove(key);
+            options[key] = value;
+        }
+
+        return options;
     }
 }
 

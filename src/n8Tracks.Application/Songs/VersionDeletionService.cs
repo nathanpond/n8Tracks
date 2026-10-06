@@ -229,6 +229,9 @@ public sealed class VersionDeletionService(
     {
         var generations = await versions.GenerationIdsAsync(version.Id, cancellationToken).ConfigureAwait(false);
         var files = await generationArtwork.RetainedFilesAsync(generations, cancellationToken).ConfigureAwait(false);
+
+        // Sources of other Versions that point at these Generations keep their Suno IDs (#122).
+        await versions.RewriteSourcesOfDeletedGenerationsAsync(generations, [version.Id], time.GetUtcNow(), cancellationToken).ConfigureAwait(false);
         return await retention.RetainWithinAsync(
             new RetentionRequest(
                 RetainedRecordTypes.Version,

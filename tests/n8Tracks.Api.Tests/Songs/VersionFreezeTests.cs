@@ -121,12 +121,12 @@ public sealed class VersionFreezeTests
         // next one is never a reused one, and a recorded ordinal means frozen whatever the flag says.
         var reread = new SongVersion(
             twice.Id, twice.SongId, twice.Number, twice.Name, twice.Notes, twice.Visibility, twice.Lyrics, twice.Styles,
-            twice.Inputs, twice.CreatedUtc, twice.UpdatedUtc, twice.Revision, IsFrozen: false, LastGenerationOrdinal: 2);
+            twice.Inputs, twice.CreatedUtc, twice.UpdatedUtc, twice.Revision, twice.Lineage, IsFrozen: false, LastGenerationOrdinal: 2);
         Assert.True(reread.IsFrozen);
         Assert.Equal(3, reread.AttachGeneration(Guid.CreateVersion7(), Now).Generation.Ordinal);
         Assert.Throws<ArgumentOutOfRangeException>(() => new SongVersion(
             twice.Id, twice.SongId, twice.Number, null, null, VersionVisibility.Active, string.Empty, string.Empty,
-            twice.Inputs, Created, Created, 1, LastGenerationOrdinal: -1));
+            twice.Inputs, Created, Created, 1, VersionLineage.None, LastGenerationOrdinal: -1));
     }
 
     [Fact]
@@ -200,7 +200,8 @@ public sealed class VersionFreezeTests
             VersionInputRules.Defaults(CreateFieldInventory.Embedded, "Run") with { Weirdness = 70, VocalGender = "female" },
             Created,
             Created,
-            Revision: 3);
+            Revision: 3,
+            VersionLineage.None);
 
     private static SongVersion Frozen() => Mutable().AttachGeneration(Guid.CreateVersion7(), Now).Version;
 }

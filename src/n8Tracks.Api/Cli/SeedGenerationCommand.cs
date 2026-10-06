@@ -170,6 +170,10 @@ internal static class SeedGenerationCommand
                 error.WriteLine($"{GenerationService.SunoIdExistsCode}: Generation {exists.Existing.Shortcode} already holds that Suno ID. Nothing was changed.");
                 return 1;
 
+            case GenerationAttachOutcome.IncompleteSources incomplete:
+                error.WriteLine($"The Version's sources are not complete ({string.Join(", ", incomplete.Errors.Select(static problem => problem.Rule))}). Nothing was changed.");
+                return 1;
+
             default:
                 throw new InvalidOperationException("Unknown attach outcome.");
         }

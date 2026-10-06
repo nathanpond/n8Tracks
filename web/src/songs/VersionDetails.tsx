@@ -17,6 +17,7 @@ import type { FailureReason, FieldValue } from '../api/saves';
 import { restoreSnapshot, type Snapshot } from '../api/snapshots';
 import { useConfiguredTimeZone } from '../api/timeZone';
 import {
+  isLineageKey,
   isVersionDetail,
   KIND_OPTION,
   OPTION_EDIT_PREFIX,
@@ -84,9 +85,11 @@ function draftsOf(version: VersionDetail): Drafts {
   };
 }
 
-/** Every option key either side holds. */
+/** Every option key either side holds: the lineage keys (#122) are not options. */
 function optionKeys(...sides: VersionOptions[]): string[] {
-  return [...new Set(sides.flatMap((side) => Object.keys(side)))];
+  return [...new Set(sides.flatMap((side) => Object.keys(side)))].filter(
+    (key) => !isLineageKey(key),
+  );
 }
 
 /** Each editable field: how its stored value is read, and how a draft of it is saved. */
@@ -477,7 +480,7 @@ function LoadedVersionDetails({
     setDraftsState(next);
   }, []);
 
-  const optionNames = Object.keys(loaded.inputs).join(',');
+  const optionNames = optionKeys(loaded.inputs).join(',');
   const fields = useMemo((): SavedField<VersionDetail>[] => {
     const show = (value: FieldValue) => <ConflictValue value={value} />;
     // An option is compared by its JSON and shown as the page writes its value.

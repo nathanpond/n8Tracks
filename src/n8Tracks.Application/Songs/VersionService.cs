@@ -1,8 +1,11 @@
 using System.Text.Json;
 using n8Tracks.Application.Auth;
+using n8Tracks.Application.Catalog;
 using n8Tracks.Application.References;
 using n8Tracks.Application.Suno;
+using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
+using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Application.Songs;
 
@@ -124,8 +127,11 @@ public abstract record VersionUpdateOutcome
     /// <summary>The Version is at another revision than the one the edit was based on. Nothing was changed.</summary>
     public sealed record Conflict(VersionDetail Current) : VersionUpdateOutcome;
 
-    /// <summary>A field is wrong. Nothing was changed. The errors are keyed by field name.</summary>
-    public sealed record Invalid(IReadOnlyDictionary<string, string[]> Errors) : VersionUpdateOutcome;
+    /// <summary>
+    /// A field is wrong. Nothing was changed. The errors are keyed by field name; <paramref name="Rules"/>
+    /// names, under the same keys, the lineage rules (#122) a source or file input breaks.
+    /// </summary>
+    public sealed record Invalid(IReadOnlyDictionary<string, string[]> Errors, IReadOnlyDictionary<string, string[]>? Rules = null) : VersionUpdateOutcome;
 
     /// <summary>There is no Version with that ID.</summary>
     public sealed record NotFound : VersionUpdateOutcome;
@@ -163,6 +169,7 @@ public sealed class VersionService(
     ISongStore songs,
     IEditorRevisionStore revisions,
     ISunoModelList models,
+    IRelationshipStore relationships,
     IExclusiveTransaction transaction,
     TimeProvider time)
 {
@@ -359,9 +366,17 @@ public sealed class VersionService(
     {
         ArgumentNullException.ThrowIfNull(edit);
 
-        var sentInputs = edit.Inputs ?? new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+        // The lineage keys of inputs (#122) are read on their own; the rest are Suno options.
+        var sentInputs = (edit.Inputs ?? new Dictionary<string, JsonElement>(StringComparer.Ordinal))
+            .Where(static pair => !VersionLineageInputs.IsLineageKey(pair.Key))
+            .ToDictionary(static pair => pair.Key, static pair => pair.Value, StringComparer.Ordinal);
+        var sentLineage = (edit.Inputs ?? new Dictionary<string, JsonElement>(StringComparer.Ordinal))
+            .Where(static pair => VersionLineageInputs.IsLineageKey(pair.Key))
+            .ToDictionary(static pair => pair.Key, static pair => pair.Value, StringComparer.Ordinal);
 
         var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        var rules = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        var lineageEdit = VersionLineageInputs.Parse(sentLineage, errors, rules);
         if (edit.Name.IsSent && VersionRules.NameErrors(edit.Name.Value) is { Length: > 0 } nameErrors)
         {
             errors[NameField] = nameErrors;
@@ -393,7 +408,7 @@ public sealed class VersionService(
 
         if (errors.Count > 0)
         {
-            return new VersionUpdateOutcome.Invalid(errors);
+            return new VersionUpdateOutcome.Invalid(errors, rules.Count > 0 ? rules : null);
         }
 
         return await transaction.RunAsync<VersionUpdateOutcome>(
@@ -432,8 +447,24 @@ public sealed class VersionService(
                     }
                 }
 
+                // The lineage sent, looked up and checked against the rules for the kind and mode the
+                // edit leaves the Version in; parts not sent are kept as they are.
+                var lineage = current.Lineage.Lineage;
+                var resolved = LineageResolution.Unchanged;
+                if (lineageEdit.IsSent)
+                {
+                    resolved = await ResolveLineageAsync(lineageEdit, current, inputs, ct).ConfigureAwait(false);
+                    if (resolved.Errors.Count > 0)
+                    {
+                        return new VersionUpdateOutcome.Invalid(resolved.Errors, resolved.Rules);
+                    }
+
+                    lineage = resolved.Lineage!;
+                }
+
                 var textChange = text != held;
-                var inputsChange = textChange || inputs != current.Inputs;
+                var lineageChange = lineage != current.Lineage.Lineage;
+                var inputsChange = textChange || inputs != current.Inputs || lineageChange;
                 if (!inputsChange && annotations == new VersionAnnotations(summary.Name, summary.Notes, summary.Archived))
                 {
                     return new VersionUpdateOutcome.Updated(current);
@@ -447,12 +478,17 @@ public sealed class VersionService(
                     Func<CancellationToken, Task>? keepReplaced = source == VersionEditSource.Credential && textChange
                         ? token => EditorRevisionService.KeepAsync(revisions, id, held, now, now, token)
                         : null;
-                    switch (await StoreAsync(current, annotations, text, inputs, keepReplaced, now, ct).ConfigureAwait(false))
+                    switch (await StoreAsync(current, annotations, text, inputs, lineage, resolved.Externals, keepReplaced, now, ct).ConfigureAwait(false))
                     {
                         case InputsWrite.Frozen:
                             return new VersionUpdateOutcome.Frozen(current);
                         case InputsWrite.Stale:
                             return await StaleAsync(id, ct).ConfigureAwait(false);
+                    }
+
+                    if (lineageChange)
+                    {
+                        await RelateSourcesAsync(summary.SongId, lineageEdit, lineage, resolved.Generations, now, ct).ConfigureAwait(false);
                     }
                 }
                 else if (!await versions.TryUpdateAnnotationsAsync(id, annotations, revision, now, ct).ConfigureAwait(false))
@@ -482,21 +518,25 @@ public sealed class VersionService(
         ArgumentNullException.ThrowIfNull(current);
 
         var summary = current.Summary;
-        return StoreAsync(current, new VersionAnnotations(summary.Name, summary.Notes, summary.Archived), text, current.Inputs, beforeWrite, now, cancellationToken);
+        return StoreAsync(current, new VersionAnnotations(summary.Name, summary.Notes, summary.Archived), text, current.Inputs, current.Lineage.Lineage, [], beforeWrite, now, cancellationToken);
     }
 
     /// <summary>
     /// The one place a Version's creation inputs change after it is created, together with whatever
     /// annotations the same edit changes; restoring a snapshot comes through here too. Whether they may
-    /// still change is the entity's rule (<see cref="SongVersion.WithInputs"/>, which refuses a frozen
-    /// Version), applied to the Version as stored before anything is written, and so before
-    /// <paramref name="beforeWrite"/> runs (a snapshot of the text being replaced).
+    /// still change is the entity's rule (<see cref="SongVersion.WithInputs"/> and
+    /// <see cref="SongVersion.WithLineage"/>, which refuse a frozen Version), applied to the Version as
+    /// stored before anything is written, and so before <paramref name="beforeWrite"/> runs (a snapshot
+    /// of the text being replaced). A changed lineage is written after the Version's row, with the
+    /// external references it names (<paramref name="externals"/>) stored first.
     /// </summary>
     private async Task<InputsWrite> StoreAsync(
         VersionDetail current,
         VersionAnnotations annotations,
         VersionText text,
         VersionInputs inputs,
+        VersionLineage lineage,
+        IReadOnlyCollection<ExternalSunoReference> externals,
         Func<CancellationToken, Task>? beforeWrite,
         DateTimeOffset now,
         CancellationToken cancellationToken)
@@ -513,7 +553,8 @@ public sealed class VersionService(
         {
             changed = version
                 .WithAnnotations(annotations.Name, annotations.Notes, annotations.Archived ? VersionVisibility.Archived : VersionVisibility.Active)
-                .WithInputs(text.Lyrics, text.Styles, inputs);
+                .WithInputs(text.Lyrics, text.Styles, inputs)
+                .WithLineage(lineage);
         }
         catch (VersionFrozenException)
         {
@@ -533,7 +574,235 @@ public sealed class VersionService(
             summary.Revision,
             now,
             cancellationToken).ConfigureAwait(false);
-        return stored ? InputsWrite.Stored : InputsWrite.Stale;
+        if (!stored)
+        {
+            return InputsWrite.Stale;
+        }
+
+        if (changed.Lineage != version.Lineage)
+        {
+            await versions.EnsureExternalReferencesAsync(externals, cancellationToken).ConfigureAwait(false);
+            await versions.ReplaceLineageAsync(summary.Id, changed.Lineage, cancellationToken).ConfigureAwait(false);
+        }
+
+        return InputsWrite.Stored;
+    }
+
+    /// <summary>
+    /// The lineage an edit leaves a Version with: each part sent, looked up (a source's type, and the
+    /// Generation or Song it names), in place of the one held, and every rule checked for the kind and
+    /// mode the edit leaves the Version in. A rule is reported only when a part it reads was sent, so
+    /// a part kept as it is never refuses an edit of another (changing the kind or mode never refuses).
+    /// </summary>
+    private async Task<LineageResolution> ResolveLineageAsync(LineageEdit edit, VersionDetail current, VersionInputs inputs, CancellationToken cancellationToken)
+    {
+        var held = current.Lineage.Lineage;
+        var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        var rules = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        var generations = new Dictionary<Guid, SourceGenerationFacts>();
+        var externals = new List<ExternalSunoReference>();
+
+        var audio = edit.SourcesSent
+            ? await ResolveSourcesAsync(edit.Sources, VersionSourceGroup.Audio, held.AudioSources, current.Summary, generations, externals, errors, rules, cancellationToken).ConfigureAwait(false)
+            : held.AudioSources;
+        var inspiration = edit.InspirationSent
+            ? await ResolveSourcesAsync(edit.InspirationSources, VersionSourceGroup.Inspiration, held.InspirationSources, current.Summary, generations, externals, errors, rules, cancellationToken).ConfigureAwait(false)
+            : held.InspirationSources;
+        var lineage = new VersionLineage(
+            audio,
+            inspiration,
+            edit.InspirationSent ? edit.Playlist : held.Playlist,
+            edit.VoiceSent ? edit.Voice : held.Voice,
+            edit.FileInputsSent ? edit.FileInputs : held.FileInputs);
+
+        var broken = VersionLineageRules.Errors(
+            lineage,
+            inputs.Kind,
+            inputs.SongMode,
+            LineageCheck.Write,
+            LineageOrigin.Edit,
+            target => target.GenerationId is { } id && generations.TryGetValue(id, out var facts) ? facts.DurationSeconds : null);
+        foreach (var error in broken.Where(error => Reads(error, edit)))
+        {
+            errors.TryAdd(error.Field, [error.Message]);
+            rules.TryAdd(error.Field, [error.Rule]);
+        }
+
+        return new LineageResolution(errors.Count == 0 ? lineage : null, externals, generations, errors, rules);
+    }
+
+    /// <summary>Whether <paramref name="error"/> is about a part the edit sent (cross-part rules read both of theirs).</summary>
+    private static bool Reads(LineageError error, LineageEdit edit)
+    {
+        bool Under(string field) => error.Field.StartsWith(field, StringComparison.Ordinal);
+        return (edit.SourcesSent && Under(VersionLineageRules.SourcesField))
+            || (edit.InspirationSent && Under(VersionLineageRules.InspirationField))
+            || (edit.VoiceSent && Under(VersionLineageRules.VoiceField))
+            || (edit.FileInputsSent && Under(VersionLineageRules.FileInputsField))
+            || (edit.SourcesSent && error.Rule is VersionLineageRules.InspirationWithCover or VersionLineageRules.AudioSlotTaken);
+    }
+
+    /// <summary>
+    /// Each source sent, looked up: an audio source's type must exist and stand for a Suno action (a
+    /// user type with none is refused), an Inspiration source is of the Use as Inspiration type, and a
+    /// Generation or Song must exist; a Generation of the Version itself is refused. A Generation or
+    /// Song no longer in the catalog that the group already names by that ID is kept as it is (a
+    /// source outlives its target), so a read sent back is no change. Errors are added under the
+    /// source's field, and a source with one is left out.
+    /// </summary>
+    private async Task<IReadOnlyList<VersionSource>> ResolveSourcesAsync(
+        IReadOnlyList<SourceRequest> requests,
+        VersionSourceGroup group,
+        IReadOnlyList<VersionSource> held,
+        VersionSummary version,
+        Dictionary<Guid, SourceGenerationFacts> generations,
+        List<ExternalSunoReference> externals,
+        Dictionary<string, string[]> errors,
+        Dictionary<string, string[]> rules,
+        CancellationToken cancellationToken)
+    {
+        void Refuse(string field, string rule, string message)
+        {
+            errors.TryAdd(field, [message]);
+            rules.TryAdd(field, [rule]);
+        }
+
+        var resolved = new List<VersionSource>();
+        foreach (var request in requests)
+        {
+            Guid typeId;
+            string? action;
+            if (group == VersionSourceGroup.Inspiration)
+            {
+                typeId = SystemRelationshipTypes.UseAsInspiration.Id;
+                action = SystemRelationshipTypes.UseAsInspiration.SunoAction;
+            }
+            else if (await relationships.FindTypeAsync(request.TypeId!.Value, cancellationToken).ConfigureAwait(false) is not { } type)
+            {
+                Refuse(request.Field + ".typeId", VersionLineageRules.SourceTypeUnknown, "There is no relationship type with that ID.");
+                continue;
+            }
+            else if (!type.Type.IsSystem && type.Type.SunoAction is null)
+            {
+                Refuse(request.Field + ".typeId", VersionLineageRules.SourceTypeNotMapped, $"'{type.Type.Name}' is not mapped to a Suno action, so it cannot be a source's type.");
+                continue;
+            }
+            else
+            {
+                typeId = type.Type.Id;
+                action = type.Type.SunoAction;
+            }
+
+            VersionSourceTarget target;
+            if (request.Generation is { } generationReference)
+            {
+                var generationId = await GenerationIdAsync(CatalogReference.Parse(generationReference), cancellationToken).ConfigureAwait(false);
+                if (generationId is { } missing
+                    && held.Any(source => source.Target.GenerationId == missing)
+                    && await versions.FindSourceGenerationAsync(missing, cancellationToken).ConfigureAwait(false) is null)
+                {
+                    target = VersionSourceTarget.OfGeneration(missing);
+                }
+                else if (generationId is null
+                    || await versions.FindSourceGenerationAsync(generationId.Value, cancellationToken).ConfigureAwait(false) is not { } facts)
+                {
+                    Refuse(request.Field + ".generation", VersionLineageRules.SourceNotFound, "There is no such Generation.");
+                    continue;
+                }
+                else if (facts.VersionId == version.Id)
+                {
+                    Refuse(request.Field + ".generation", VersionLineageRules.SourceIsOwnGeneration, "A Version cannot be made from its own Generation; create a new Version from it instead.");
+                    continue;
+                }
+                else
+                {
+                    generations[facts.Id] = facts;
+                    target = VersionSourceTarget.OfGeneration(facts.Id);
+                }
+            }
+            else if (request.Song is { } songReference)
+            {
+                var songReferenceParsed = CatalogReference.Parse(songReference);
+                if (await SongService.FindAsync(songs, songReference, cancellationToken).ConfigureAwait(false) is { } song)
+                {
+                    target = VersionSourceTarget.OfSong(song.Id);
+                }
+                else if (songReferenceParsed.Kind == ReferenceKind.Id && held.Any(source => source.Target.SongId == songReferenceParsed.Id))
+                {
+                    target = VersionSourceTarget.OfSong(songReferenceParsed.Id);
+                }
+                else
+                {
+                    Refuse(request.Field + ".song", VersionLineageRules.SourceNotFound, "There is no such Song.");
+                    continue;
+                }
+            }
+            else
+            {
+                var external = request.External!;
+                externals.Add(external);
+                target = VersionSourceTarget.OfExternal(external.SunoId);
+            }
+
+            resolved.Add(new VersionSource(typeId, action, target, request.ContinueAtSeconds, request.SecondaryIds));
+        }
+
+        return resolved;
+    }
+
+    /// <summary>
+    /// For each source of a part the edit sent that points at another Song (through its Generation or
+    /// directly), relates the Version's Song to it under the source's type, unless the two are related
+    /// under that type already (either way round). Removing a source never removes a relationship.
+    /// </summary>
+    private async Task RelateSourcesAsync(
+        Guid songId,
+        LineageEdit edit,
+        VersionLineage lineage,
+        IReadOnlyDictionary<Guid, SourceGenerationFacts> generations,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        IEnumerable<VersionSource> sent = [.. edit.SourcesSent ? lineage.AudioSources : [], .. edit.InspirationSent ? lineage.InspirationSources : []];
+        foreach (var source in sent)
+        {
+            var other = source.Target.GenerationId is { } generationId && generations.TryGetValue(generationId, out var facts)
+                ? facts.SongId
+                : source.Target.SongId;
+            if (other is not { } otherSongId
+                || otherSongId == songId
+                || await relationships.ExistsAsync(source.TypeId, songId, otherSongId, cancellationToken).ConfigureAwait(false))
+            {
+                continue;
+            }
+
+            await relationships.AddAsync(new StoredRelationship(Guid.CreateVersion7(now), source.TypeId, songId, otherSongId), now, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>The Generation a reference (its ID or shortcode) names, if any; whether it exists is the caller's to check.</summary>
+    private async Task<Guid?> GenerationIdAsync(CatalogReference reference, CancellationToken cancellationToken) =>
+        reference.Kind switch
+        {
+            ReferenceKind.Id => reference.Id,
+            ReferenceKind.Generation => await versions.FindGenerationIdByShortcodeAsync(
+                    reference.SongShortcodeNumber,
+                    reference.VersionNumber!.ToString(),
+                    reference.GenerationOrdinal,
+                    cancellationToken)
+                .ConfigureAwait(false),
+            _ => null,
+        };
+
+    /// <summary>A lineage an edit sent, looked up: the lineage when valid, what it needs stored and read, and what is wrong.</summary>
+    private sealed record LineageResolution(
+        VersionLineage? Lineage,
+        IReadOnlyCollection<ExternalSunoReference> Externals,
+        IReadOnlyDictionary<Guid, SourceGenerationFacts> Generations,
+        Dictionary<string, string[]> Errors,
+        Dictionary<string, string[]> Rules)
+    {
+        public static LineageResolution Unchanged { get; } = new(null, [], new Dictionary<Guid, SourceGenerationFacts>(), [], []);
     }
 
     /// <summary>After a write matched nothing: the Version as it is now, as a conflict, or not found.</summary>

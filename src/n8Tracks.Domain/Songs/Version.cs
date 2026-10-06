@@ -4,8 +4,8 @@ namespace n8Tracks.Domain.Songs;
 /// One Version of a Song: a set of inputs intended for, or used in, generation. (Named so it does not
 /// collide with <see cref="System.Version"/>.)
 /// <para>
-/// Its creation inputs (<see cref="Lyrics"/>, <see cref="Styles"/>, and every Suno option in
-/// <see cref="Inputs"/>) are frozen once a Generation
+/// Its creation inputs (<see cref="Lyrics"/>, <see cref="Styles"/>, every Suno option in
+/// <see cref="Inputs"/>, and its sources and file inputs in <see cref="Lineage"/>) are frozen once a Generation
 /// is attached (<see cref="IsFrozen"/>), and stay frozen for good: the inputs that produced a
 /// Generation can always be trusted to be what they were. No property has a setter, so a copy with
 /// other values comes only from the methods below, and every one that changes an input goes through
@@ -24,6 +24,7 @@ namespace n8Tracks.Domain.Songs;
 /// <param name="CreatedUtc">When it was created.</param>
 /// <param name="UpdatedUtc">When it last changed.</param>
 /// <param name="Revision">Starts at 1 and goes up by one on each edit, and when a Generation is attached.</param>
+/// <param name="Lineage">Its sources, Inspiration, Voice, and file inputs (#122). Creation inputs.</param>
 /// <param name="IsFrozen">Whether a Generation has ever been attached: set by the first and never cleared.</param>
 /// <param name="LastGenerationOrdinal">
 /// The ordinal of the last Generation attached, 0 when none has been: the next one is one more, so an
@@ -42,6 +43,7 @@ public sealed record SongVersion(
     DateTimeOffset CreatedUtc,
     DateTimeOffset UpdatedUtc,
     int Revision,
+    VersionLineage Lineage,
     bool IsFrozen = false,
     int LastGenerationOrdinal = 0)
 {
@@ -69,6 +71,8 @@ public sealed record SongVersion(
     public DateTimeOffset UpdatedUtc { get; } = UpdatedUtc;
 
     public int Revision { get; } = Revision;
+
+    public VersionLineage Lineage { get; } = Lineage ?? throw new ArgumentNullException(nameof(Lineage));
 
     public bool IsFrozen { get; } = IsFrozen || LastGenerationOrdinal > 0;
 
@@ -109,7 +113,26 @@ public sealed record SongVersion(
         }
 
         EnsureMutable();
-        return Copy(Name, Notes, Visibility, lyrics, styles, inputs, Revision, UpdatedUtc, IsFrozen, LastGenerationOrdinal);
+        return Copy(Name, Notes, Visibility, lyrics, styles, inputs, Lineage, Revision, UpdatedUtc, IsFrozen, LastGenerationOrdinal);
+    }
+
+    /// <summary>
+    /// This Version with <paramref name="lineage"/> as its sources, Inspiration, Voice, and file
+    /// inputs, already checked against <see cref="VersionLineageRules"/>. A lineage equal to the one it
+    /// holds is no change, and allowed even when frozen; any other change of a frozen Version throws
+    /// <see cref="VersionFrozenException"/>. The only way a Version's lineage changes after it is created.
+    /// </summary>
+    public SongVersion WithLineage(VersionLineage lineage)
+    {
+        ArgumentNullException.ThrowIfNull(lineage);
+
+        if (lineage == Lineage)
+        {
+            return this;
+        }
+
+        EnsureMutable();
+        return Copy(Name, Notes, Visibility, Lyrics, Styles, Inputs, lineage, Revision, UpdatedUtc, IsFrozen, LastGenerationOrdinal);
     }
 
     /// <summary>
@@ -117,7 +140,7 @@ public sealed record SongVersion(
     /// whether or not it is frozen, since none of them is a creation input.
     /// </summary>
     public SongVersion WithAnnotations(string? name, string? notes, VersionVisibility visibility) =>
-        Copy(name, notes, visibility, Lyrics, Styles, Inputs, Revision, UpdatedUtc, IsFrozen, LastGenerationOrdinal);
+        Copy(name, notes, visibility, Lyrics, Styles, Inputs, Lineage, Revision, UpdatedUtc, IsFrozen, LastGenerationOrdinal);
 
     /// <summary>
     /// Attaches a new Generation, with the next ordinal (one more than the last ever given, from 1),
@@ -128,7 +151,7 @@ public sealed record SongVersion(
     {
         var ordinal = checked(LastGenerationOrdinal + 1);
         var generation = new Generation(generationId, Id, SongId, ordinal, now);
-        var frozen = Copy(Name, Notes, Visibility, Lyrics, Styles, Inputs, checked(Revision + 1), now, isFrozen: true, ordinal);
+        var frozen = Copy(Name, Notes, Visibility, Lyrics, Styles, Inputs, Lineage, checked(Revision + 1), now, isFrozen: true, ordinal);
 
         return (frozen, generation);
     }
@@ -140,11 +163,12 @@ public sealed record SongVersion(
         string lyrics,
         string styles,
         VersionInputs inputs,
+        VersionLineage lineage,
         int revision,
         DateTimeOffset updatedUtc,
         bool isFrozen,
         int lastGenerationOrdinal) =>
-        new(Id, SongId, Number, name, notes, visibility, lyrics, styles, inputs, CreatedUtc, updatedUtc, revision, isFrozen, lastGenerationOrdinal);
+        new(Id, SongId, Number, name, notes, visibility, lyrics, styles, inputs, CreatedUtc, updatedUtc, revision, lineage, isFrozen, lastGenerationOrdinal);
 }
 
 /// <summary>Whether a Version is shown by default. Archiving changes nothing else about it.</summary>
@@ -180,7 +204,7 @@ public sealed class VersionFrozenException : InvalidOperationException
 
     /// <summary>What a refusal says, wherever it is shown.</summary>
     public const string DefaultMessage =
-        "A Generation is attached to this Version, so its lyrics, styles, and Suno options can no longer change. Create a new Version from it to change them.";
+        "A Generation is attached to this Version, so its lyrics, styles, Suno options, and sources can no longer change. Create a new Version from it to change them.";
 
     /// <summary>The frozen Version.</summary>
     public Guid VersionId { get; }

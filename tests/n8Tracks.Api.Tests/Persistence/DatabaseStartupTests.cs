@@ -59,7 +59,8 @@ public sealed class DatabaseStartupTests : IDisposable
             migration => Assert.Matches("^[0-9]{14}_AddCredentialExtensionSightings\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AddGenerationEvaluations\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AddSelectedGeneration\\|10\\.0\\.", migration),
-            migration => Assert.Matches("^[0-9]{14}_AddGenerationArtwork\\|10\\.0\\.", migration));
+            migration => Assert.Matches("^[0-9]{14}_AddGenerationArtwork\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddVersionLineage\\|10\\.0\\.", migration));
 
         // ISO 8601 UTC with milliseconds and Z, taken when the migration ran.
         var initialized = TestDatabase.SchemaInitializedUtc(directory.Path);
@@ -78,7 +79,7 @@ public sealed class DatabaseStartupTests : IDisposable
         Start();
 
         Assert.Equal(
-            ["__EFMigrationsHistory", "administrators", "album_links", "album_songs", "albums", "app_metadata", "artist_aliases", "artist_links", "artists", "artwork_attachments", "assets", "credentials", "editor_revisions", "generation_comments", "generation_event_links", "generation_events", "generations", "genres", "jobs", "pending_file_deletions", "playlist_songs", "playlists", "provider_records", "retention_groups", "retention_records", "sessions", "settings", "shortcode_sequence", "song_artist_credits", "song_genres", "song_links", "song_relationship_types", "song_relationships", "song_tags", "songs", "suno_models", "tags", "used_version_numbers", "versions", "workflow_states"],
+            ["__EFMigrationsHistory", "administrators", "album_links", "album_songs", "albums", "app_metadata", "artist_aliases", "artist_links", "artists", "artwork_attachments", "assets", "credentials", "editor_revisions", "external_suno_references", "generation_comments", "generation_event_links", "generation_events", "generations", "genres", "jobs", "pending_file_deletions", "playlist_songs", "playlists", "provider_records", "retention_groups", "retention_records", "sessions", "settings", "shortcode_sequence", "song_artist_credits", "song_genres", "song_links", "song_relationship_types", "song_relationships", "song_tags", "songs", "suno_models", "tags", "used_version_numbers", "version_file_inputs", "version_inspiration_playlists", "version_sources", "version_voices", "versions", "workflow_states"],
             TestDatabase.Rows(
                 directory.Path,
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> '__EFMigrationsLock' ORDER BY name;"));
@@ -115,6 +116,31 @@ public sealed class DatabaseStartupTests : IDisposable
         Assert.Equal(
             ["tr_generations_identity_never_changes"],
             TestDatabase.Rows(directory.Path, "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'generations' ORDER BY name;"));
+
+        // A Version's lineage (#122): each table cascades from its Version and has three freeze triggers.
+        foreach (var table in N8TracksDbContext.LineageTables)
+        {
+            Assert.Equal(
+                N8TracksDbContext.LineageFrozenTriggers(table).Order(StringComparer.Ordinal),
+                TestDatabase.Rows(directory.Path, $"SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = '{table}' ORDER BY name;"));
+            Assert.Contains("versions|version_id|CASCADE", TestDatabase.Rows(directory.Path, $"SELECT \"table\", \"from\", on_delete FROM pragma_foreign_key_list('{table}');"));
+        }
+
+        Assert.Equal(
+            [
+                "id|TEXT|1|1", "version_id|TEXT|1|0", "source_group|TEXT|1|0", "position|INTEGER|1|0", "type_id|TEXT|1|0", "suno_action|TEXT|0|0",
+                "generation_id|TEXT|0|0", "song_id|TEXT|0|0", "external_reference_id|TEXT|0|0", "continue_at_hundredths|INTEGER|0|0", "secondary_ids|TEXT|0|0",
+            ],
+            TestDatabase.Rows(directory.Path, "SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('version_sources') ORDER BY cid;"));
+
+        // A source's Generation and Song are named by ID only, so it outlives them; its type and
+        // external reference are never deleted while it names them.
+        Assert.Equal(
+            ["external_suno_references|external_reference_id|RESTRICT", "song_relationship_types|type_id|RESTRICT", "versions|version_id|CASCADE"],
+            TestDatabase.Rows(directory.Path, "SELECT \"table\", \"from\", on_delete FROM pragma_foreign_key_list('version_sources') ORDER BY \"table\";"));
+        Assert.Equal(
+            ["tr_external_suno_references_identity_never_changes"],
+            TestDatabase.Rows(directory.Path, "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'external_suno_references' ORDER BY name;"));
         Assert.Equal(
             [
                 "id|TEXT|1|1", "version_id|TEXT|1|0", "song_id|TEXT|1|0", "ordinal|INTEGER|1|0", "created_utc|TEXT|1|0",
@@ -259,7 +285,7 @@ public sealed class DatabaseStartupTests : IDisposable
 
         Assert.Equal(MigrationStatus.UpToDate, state.Status);
         Assert.Equal(TestDatabase.History(directory.Path)[^1].Split('|')[0], state.LastAppliedMigrationId);
-        Assert.EndsWith("_AddGenerationArtwork", state.LastAppliedMigrationId, StringComparison.Ordinal);
+        Assert.EndsWith("_AddVersionLineage", state.LastAppliedMigrationId, StringComparison.Ordinal);
     }
 
     [Fact]

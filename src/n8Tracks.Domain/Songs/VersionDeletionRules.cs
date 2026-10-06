@@ -99,6 +99,7 @@ public static class VersionDeletionRules
             inputs,
             now,
             now,
-            Revision: 1);
+            Revision: 1,
+            VersionLineage.None);
     }
 }

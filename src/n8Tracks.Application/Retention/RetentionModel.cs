@@ -28,6 +28,18 @@ public static class RetainedRecordTypes
     /// <summary>A Generation's link to its Generation Event (<c>generation_event_links</c>), deleted with its Generation; the event stays.</summary>
     public const string GenerationEventLink = "generation-event-link";
 
+    /// <summary>A source of a Version (<c>version_sources</c>), deleted with its Version (#122).</summary>
+    public const string VersionSource = "version-source";
+
+    /// <summary>A Version's Inspiration playlist (<c>version_inspiration_playlists</c>), deleted with its Version.</summary>
+    public const string VersionInspirationPlaylist = "version-inspiration-playlist";
+
+    /// <summary>A Version's Voice (<c>version_voices</c>), deleted with its Version.</summary>
+    public const string VersionVoice = "version-voice";
+
+    /// <summary>A Version's file input (<c>version_file_inputs</c>), deleted with its Version.</summary>
+    public const string VersionFileInput = "version-file-input";
+
     /// <summary>A Song (<c>songs</c>), deleted with everything that is its own.</summary>
     public const string Song = "song";
 

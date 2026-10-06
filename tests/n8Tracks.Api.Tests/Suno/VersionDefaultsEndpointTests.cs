@@ -53,7 +53,7 @@ public sealed class VersionDefaultsEndpointTests
         var inputs = await InputsAsync(client, await SongApi.CreateAsync(client, "Plain"));
         Assert.Equal(
             Without(VersionInputRules.ToJson(InputValues.Defaults("Plain")).ToJsonString(), "model", "soundsModel"),
-            Without(inputs.GetRawText(), "model", "soundsModel"));
+            Without(LineageValues.OptionsOf(inputs).GetRawText(), "model", "soundsModel"));
         Assert.Equal("v6", inputs.GetProperty("model").GetString());
     }
 

@@ -32,6 +32,12 @@ public abstract record GenerationAttachOutcome
 
     /// <summary>The options name a Generation Event that does not exist.</summary>
     public sealed record EventNotFound : GenerationAttachOutcome;
+
+    /// <summary>
+    /// The Version's sources are not a complete set yet (#122): a Mashup with one source, an Extend
+    /// without its position (or one past its source's end). Nothing was stored.
+    /// </summary>
+    public sealed record IncompleteSources(IReadOnlyList<LineageError> Errors) : GenerationAttachOutcome;
 }
 
 /// <summary>A Generation's provider record, or why there is none to answer.</summary>
@@ -156,6 +162,11 @@ public sealed class GenerationService(
                     return new GenerationAttachOutcome.EventNotFound();
                 }
 
+                if (await IncompleteSourcesAsync(version, ct).ConfigureAwait(false) is { Count: > 0 } incomplete)
+                {
+                    return new GenerationAttachOutcome.IncompleteSources(incomplete);
+                }
+
                 var now = time.GetUtcNow();
                 var (frozen, attached) = version.AttachGeneration(Guid.CreateVersion7(now), now);
                 var generation = attached with { Clip = clip?.Fields };
@@ -183,6 +194,29 @@ public sealed class GenerationService(
                 return new GenerationAttachOutcome.Attached(stored);
             },
             cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The rules a complete set of sources must meet that the Version's lineage does not (#122): only
+    /// those that writing it did not already check (Mashup's two sources, Extend's position and the
+    /// source's length), since the rest held when it was written, and a later change of kind or mode
+    /// never refuses.
+    /// </summary>
+    private async Task<IReadOnlyList<LineageError>> IncompleteSourcesAsync(SongVersion version, CancellationToken cancellationToken)
+    {
+        var durations = new Dictionary<Guid, double?>();
+        foreach (var source in version.Lineage.AudioSources)
+        {
+            if (source.Target.GenerationId is { } id)
+            {
+                durations[id] = (await versions.FindSourceGenerationAsync(id, cancellationToken).ConfigureAwait(false))?.DurationSeconds;
+            }
+        }
+
+        double? DurationOf(VersionSourceTarget target) => target.GenerationId is { } id ? durations.GetValueOrDefault(id) : null;
+        var written = VersionLineageRules.Errors(version.Lineage, version.Inputs.Kind, version.Inputs.SongMode, LineageCheck.Write, LineageOrigin.Import, DurationOf);
+        return [.. VersionLineageRules.Errors(version.Lineage, version.Inputs.Kind, version.Inputs.SongMode, LineageCheck.Complete, LineageOrigin.Import, DurationOf)
+            .Where(error => !written.Contains(error) || error.Rule == VersionLineageRules.ContinueAtBeyondSource)];
     }
 
     /// <summary>The Generation a reference (its ID or its shortcode) names; null when it names no live one.</summary>
