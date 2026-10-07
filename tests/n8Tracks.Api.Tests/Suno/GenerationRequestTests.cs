@@ -694,12 +694,14 @@ public sealed class GenerationRequestTests
 
     /// <summary>
     /// #340, with the verifier's probe values: a text entry's <c>expected</c> or <c>found</c> sent as
-    /// plain text, however short, is refused, and so is a note quoting the Version's own text (here its
-    /// styles, and a file note); nothing is stored and the request does not move. Complement: the same
-    /// entries as the extension sends them, hashed and with the adapter's words, are stored.
+    /// plain text, however short, is refused, and so is a note that is not one line (a pasted block of
+    /// the Version's lyrics, or a line break, tab, or separator in it) or is too long (#379: a note's
+    /// words carry no Version text by the extension's construction, so only its shape is checked here);
+    /// nothing is stored and the request does not move. Complement: the same entries as the extension
+    /// sends them, hashed and with the adapter's words, are stored.
     /// </summary>
     [Fact]
-    public async Task ATextEntryInPlainTextOrANoteQuotingTheVersionIsRefusedAndNothingIsStored()
+    public async Task ATextEntryInPlainTextOrANoteThatIsNotOneLineIsRefusedAndNothingIsStored()
     {
         using var factory = SongApi.Host();
         using var client = await SessionApi.SignedInClientAsync(factory);
@@ -716,9 +718,11 @@ public sealed class GenerationRequestTests
             """[{"key":"songs.advanced.lyrics","outcome":"set","expected":"la"}]""",
             """[{"key":"songs.advanced.exclude_styles","outcome":"failed","expected":null,"found":"metal"}]""",
             """[{"key":"songs.advanced.title","outcome":"unavailable","expected":"Probe 146"}]""",
-            """[{"key":"songs.advanced.styles","outcome":"manual","note":"PROBE-SECRET-NOTE my private prompt text"}]""",
-            """[{"key":"songs.advanced.audio","outcome":"manual","note":"Attach the audio file by hand (The Hummed Demo Take)."}]""",
-            """[{"key":"songs.advanced.model","outcome":"set","note":"second line"}]""",
+            """[{"key":"songs.advanced.lyrics","outcome":"manual","note":"PROBE-SECRET-LYRIC line one\nsecond line"}]""",
+            """[{"key":"songs.advanced.styles","outcome":"manual","note":"Check the styles:\r\nmy private prompt text"}]""",
+            """[{"key":"songs.advanced.styles","outcome":"manual","note":"PROBE-SECRET-NOTE\tmy private prompt text"}]""",
+            """[{"key":"songs.advanced.lyrics","outcome":"manual","note":"PROBE-SECRET-LYRIC line one\u2028second line"}]""",
+            "[{\"key\":\"songs.advanced.model\",\"outcome\":\"set\",\"note\":\"" + new string('n', GenerationVerification.MaximumTextLength + 1) + "\"}]",
         })
         {
             using var refused = await ReportAsync(client, extension, id, Report(Head, entries));
@@ -745,6 +749,71 @@ public sealed class GenerationRequestTests
         var verification = (await CurrentAsync(client, versionId)).GetProperty("verification").GetRawText();
         Assert.DoesNotContain("PROBE-SECRET", verification, StringComparison.Ordinal);
         Assert.Equal(3, JsonDocument.Parse(verification).RootElement.GetProperty("entries").GetArrayLength());
+    }
+
+    /// <summary>
+    /// The extension's own notes, as it sends them for an advanced Song (#379): fixed text that names
+    /// things such as Duration, the workspace step, and the Key picker.
+    /// </summary>
+    private const string OwnNotes = """
+        [{"key":"songs.simple.workspace","outcome":"set","note":"Selected by the workspace step."},
+         {"key":"songs.advanced.duration_seconds","outcome":"not_applicable","note":"Duration is Auto, so no length is set."},
+         {"key":"songs.advanced.duration_mode","outcome":"manual","expected":"auto","note":"Set Duration to Auto by hand: the extension cannot read Suno’s Duration mode yet."},
+         {"key":"songs.advanced.audio","outcome":"manual","note":"Attach the file by hand: the Version’s file note says which."},
+         {"key":"sounds.single.sound_key","outcome":"manual","expected":"any","note":"Choose the key in Suno’s Key picker, then press Apply: the extension cannot use the Key picker yet."}]
+        """;
+
+    /// <summary>
+    /// #379: the extension's own notes are stored whatever the Song is called, here a word of a note,
+    /// which a check of the notes against the Version's text refused (422, and Generate on Suno stopped).
+    /// </summary>
+    [Theory]
+    [InlineData("Duration")]
+    [InlineData("Selected")]
+    [InlineData("workspace")]
+    public async Task TheExtensionsOwnNotesAreStoredWhateverTheSongIsCalled(string title)
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var versionId = VersionId(await SongApi.CreateAsync(client, title));
+
+        await AssertOwnNotesStoredAsync(factory, client, versionId);
+    }
+
+    /// <summary>
+    /// #379: the extension's own notes are stored whatever the Version's text entries and file note say,
+    /// here whole phrases of the notes as lines of the lyrics, the styles, and a file note.
+    /// </summary>
+    [Fact]
+    public async Task TheExtensionsOwnNotesAreStoredWhateverTheVersionsTextSays()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var versionId = VersionId(await SongApi.CreateAsync(client, "Ordinary song"));
+        await EditAsync(client, versionId, """{"lyrics":"first line\nSelected by the workspace step\nthe extension cannot use the Key picker yet","styles":"Duration is Auto","inputs":{"fileInputs":[{"kind":"audio","description":"the Version’s file note says which"}]}}""");
+
+        await AssertOwnNotesStoredAsync(factory, client, versionId);
+    }
+
+    /// <summary>Claims a request for the Version, reports <see cref="OwnNotes"/>, and reads them back as stored.</summary>
+    private static async Task AssertOwnNotesStoredAsync(N8TracksApiFactory factory, HttpClient client, Guid versionId)
+    {
+        var extension = await CredentialApi.CreateTokenAsync(factory, CredentialScopes.SunoGenerate);
+        var id = (await CreateAsync(client, versionId)).GetProperty("id").GetGuid();
+        await ClaimAsync(client, extension, id, HttpStatusCode.OK);
+        const string Head = "\"adapterVersion\":5,\"mode\":\"advanced\",\"checkedAt\":\"2026-10-07T12:00:00Z\"";
+
+        using (var stored = await ReportAsync(client, extension, id, Report(Head, OwnNotes)))
+        {
+            Assert.True(stored.StatusCode == HttpStatusCode.OK, await stored.Content.ReadAsStringAsync());
+        }
+
+        var notes = (await CurrentAsync(client, versionId)).GetProperty("verification").GetProperty("entries").EnumerateArray()
+            .Select(static entry => entry.GetProperty("note").GetString())
+            .ToList();
+        Assert.Equal(
+            ["Selected by the workspace step.", "Duration is Auto, so no length is set.", "Set Duration to Auto by hand: the extension cannot read Suno’s Duration mode yet.", "Attach the file by hand: the Version’s file note says which.", "Choose the key in Suno’s Key picker, then press Apply: the extension cannot use the Key picker yet."],
+            notes);
     }
 
     /// <summary>A waiting report carrying a summary with <paramref name="head"/> and <paramref name="entries"/>.</summary>

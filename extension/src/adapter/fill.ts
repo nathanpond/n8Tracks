@@ -64,12 +64,17 @@ export interface EntryResult {
   found?: FormValue;
   /** Text values are compared after normalising, and sent to n8Tracks as length and hash only. */
   text?: boolean;
-  /** Plain words for the user: why, or what to do by hand. */
+  /**
+   * Plain words for the user: why, or what to do by hand. Without `reportNote`, n8Tracks stores it
+   * too, so it is then text written in the source (#379).
+   */
   note?: string;
   /**
    * The note as n8Tracks stores it when `note` quotes the Version's own text (a source's title, a
-   * file note, a Voice or playlist name): the same words naming those generically. n8Tracks keeps
-   * only the adapter's words and refuses a note that carries the Version's text (#340).
+   * file note, a Voice or playlist name): the same words naming those generically (#340). It is text
+   * written in the source, with only the adapter's own constants in it, so it carries none of the
+   * Version's text by construction; `test/verification-note-source.test.ts` checks every note that
+   * can reach n8Tracks (#379), and n8Tracks checks only that a note is one line.
    */
   reportNote?: string;
 }
@@ -694,10 +699,14 @@ function compared(
   return result;
 }
 
-function unavailable(filler: Filler, wanted: FormValue, shownAs: Shown | string): EntryResult {
+function unavailable(
+  filler: Filler,
+  wanted: FormValue,
+  shownAs: Shown | { unavailable: string },
+): EntryResult {
   const note =
-    typeof shownAs === 'string'
-      ? shownAs
+    'unavailable' in shownAs
+      ? shownAs.unavailable
       : shownAs.kind === 'disabled'
         ? `Suno shows ${filler.control} disabled (it may need a paid plan).`
         : `Suno’s form does not show ${filler.control}.`;
@@ -727,7 +736,7 @@ export async function fillEntry(page: Page, filler: Filler, job: FormJob): Promi
     try {
       const written = filler.write(page, wanted.value);
       if (written !== undefined) {
-        return unavailable(filler, wanted.value, written.unavailable);
+        return unavailable(filler, wanted.value, written);
       }
     } catch (error) {
       rethrowStops(error);

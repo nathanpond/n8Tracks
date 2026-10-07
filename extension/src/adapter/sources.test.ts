@@ -206,6 +206,17 @@ describe('the summary lines of the source entries (#148)', () => {
     });
   });
 
+  it('names an action it does not know in the panel only, never in the note n8Tracks stores (#379)', () => {
+    const job = form({ sources: [source({ sunoAction: 'my_remix', title: 'Night Drive' })] });
+
+    expect(sourceEntryResult('songs.advanced.audio', job)).toEqual({
+      key: 'songs.advanced.audio',
+      outcome: 'manual',
+      note: 'Load “Night Drive” as my_remix by hand: the extension does not know that action.',
+      reportNote: 'Load the source by hand: the extension does not know its Suno action.',
+    });
+  });
+
   it('lists a playlist, a Song-level source, and an audio file note as to do by hand', () => {
     const simple = form({
       mode: 'simple',

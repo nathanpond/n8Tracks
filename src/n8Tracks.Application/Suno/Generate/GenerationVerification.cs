@@ -12,8 +12,11 @@ namespace n8Tracks.Application.Suno.Generate;
 /// <c>unsupported</c>). Text values (lyrics, styles, prompts, titles: <see cref="TextKeys"/>) arrive
 /// only as <c>{ length, sha256 }</c>, never as text, and a plain value for one is refused (#340);
 /// anything else is a number, a boolean, a short choice such as a model label, or null. A note is the
-/// adapter's own words: one that carries the Version's text is refused (<see cref="NotesCarryingText"/>).
-/// A later report replaces the stored summary.
+/// adapter's own words, text written in the extension's source (its source guard,
+/// <c>extension/test/verification-note-source.test.ts</c>, #379), so it carries no Version text by
+/// construction; here it is only held to that shape: one line of at most
+/// <see cref="MaximumTextLength"/> characters (<see cref="IsNote"/>). A later report replaces the
+/// stored summary.
 /// </summary>
 public static partial class GenerationVerification
 {
@@ -55,12 +58,6 @@ public static partial class GenerationVerification
         "speech.advanced.speech_tone",
         "sounds.single.sound_description",
     };
-
-    /// <summary>
-    /// The shortest line of the Version's text a note is checked for: shorter ones (a one-word title)
-    /// are too likely to be words the adapter uses itself.
-    /// </summary>
-    public const int ShortestCheckedText = 8;
 
     private static readonly HashSet<string> TopLevel = new(StringComparer.Ordinal) { "adapterVersion", "mode", "checkedAt", "entries" };
 
@@ -171,9 +168,9 @@ public static partial class GenerationVerification
         }
 
         var note = entry["note"];
-        if (note is not null && (Text(note) is not { } noteText || noteText.Length > MaximumTextLength))
+        if (note is not null && (Text(note) is not { } noteText || !IsNote(noteText)))
         {
-            problems.Add($"{where}: note is text of at most {MaximumTextLength} characters.");
+            problems.Add($"{where}: note is one line of the extension's own words, at most {MaximumTextLength} characters.");
         }
 
         var result = new JsonObject { ["key"] = key, ["outcome"] = outcome };
@@ -204,74 +201,19 @@ public static partial class GenerationVerification
     }
 
     /// <summary>
-    /// The entries of <paramref name="summary"/> (as <see cref="Read"/> rebuilt it) whose note carries a
-    /// line of the Version's own text as <paramref name="snapshotJson"/> (the request's snapshot) holds
-    /// it: a text entry's value, or a title, description, or name (a source, a file note, a Voice, a
-    /// playlist, the Song). The adapter's notes name such things generically, so a note that quotes
-    /// one is user text sent where only the adapter's words belong.
+    /// Whether <paramref name="note"/> has a note's shape: one line of at most
+    /// <see cref="MaximumTextLength"/> characters, with no line break, tab, or other control or
+    /// separator character. The extension's notes are one line written in its source, so a pasted
+    /// block of lyrics, styles, or a prompt is refused from any client. Which words a note holds is
+    /// not checked: any match against the Version's text also refuses the adapter's own words when
+    /// that text shares a phrase with them (#379).
     /// </summary>
-    public static IReadOnlyList<string> NotesCarryingText(JsonObject summary, string snapshotJson)
+    public static bool IsNote(string note)
     {
-        ArgumentNullException.ThrowIfNull(summary);
-
-        var texts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (JsonNode.Parse(snapshotJson) is { } snapshot)
-        {
-            CollectText(snapshot, texts);
-        }
-
-        var problems = new List<string>();
-        if (texts.Count == 0 || summary["entries"] is not JsonArray entries)
-        {
-            return problems;
-        }
-
-        for (var index = 0; index < entries.Count; index++)
-        {
-            if (Text(entries[index]?["note"]) is { } note && texts.Any(text => note.Contains(text, StringComparison.OrdinalIgnoreCase)))
-            {
-                problems.Add($"entries[{index.ToString(CultureInfo.InvariantCulture)}]: note is the extension's own words, never the Version's text.");
-            }
-        }
-
-        return problems;
-    }
-
-    /// <summary>Every line, long enough to check, of the user's text in a snapshot.</summary>
-    private static void CollectText(JsonNode node, HashSet<string> texts)
-    {
-        switch (node)
-        {
-            case JsonObject item:
-                foreach (var (name, value) in item)
-                {
-                    var isText = name is "title" or "description" or "name"
-                        || (name == "value" && Text(item["key"]) is { } key && TextKeys.Contains(key));
-                    if (isText && Text(value) is { } text)
-                    {
-                        foreach (var line in text.Split('\n'))
-                        {
-                            if (line.Trim() is { Length: >= ShortestCheckedText } kept)
-                            {
-                                texts.Add(kept);
-                            }
-                        }
-                    }
-                    else if (value is not null)
-                    {
-                        CollectText(value, texts);
-                    }
-                }
-
-                break;
-            case JsonArray list:
-                foreach (var value in list.OfType<JsonNode>())
-                {
-                    CollectText(value, texts);
-                }
-
-                break;
-        }
+        ArgumentNullException.ThrowIfNull(note);
+        return note.Length <= MaximumTextLength
+            && !note.Any(static character => char.GetUnicodeCategory(character) is UnicodeCategory.Control
+                or UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator);
     }
 
     /// <summary>Whether <paramref name="value"/> is null or text as its length and hash.</summary>

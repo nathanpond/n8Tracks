@@ -269,14 +269,8 @@ public sealed class GenerationRequestService(
         var reported = GenerationRequestRules.Moved(request, progress.State, Blank(progress.Step), Blank(progress.Message), time.GetUtcNow());
         if (progress.Verification is not null)
         {
-            // A note is the adapter's own words, never the Version's text (#340); nothing is stored then.
-            var summary = GenerationVerification.Read(progress.Verification, out _)!;
-            if (GenerationVerification.NotesCarryingText(summary, request.SnapshotJson) is { Count: > 0 } carrying)
-            {
-                return new GenerationRequestChangeOutcome.Invalid(new Dictionary<string, string[]>(StringComparer.Ordinal) { [VerificationField] = [.. carrying] });
-            }
-
             // Each summary replaces the last: Check again re-reads the form (#146).
+            var summary = GenerationVerification.Read(progress.Verification, out _)!;
             reported = reported with { VerificationJson = summary.ToJsonString() };
         }
 
