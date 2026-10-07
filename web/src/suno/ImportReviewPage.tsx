@@ -769,6 +769,12 @@ function SummaryNumbers({ summary, testId }: { summary: ImportSummary; testId?: 
           Trash, reactivate what was restored, mark what is missing; nothing is deleted).
         </Text>
       )}
+      {(summary.statusChanges ?? 0) > 0 && (
+        <Text data-testid={testId === undefined ? 'summary-statuses' : undefined}>
+          Update Suno’s status of {countText(summary.statusChanges ?? 0, 'Generation')} whose clip
+          Suno finished since (their status only, whatever their choice).
+        </Text>
+      )}
     </Stack>
   );
 }

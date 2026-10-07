@@ -124,7 +124,8 @@ public sealed class ChangeResolutionService(ISunoExportStore exports, ISunoClipL
 /// (<see cref="RememberedChoiceRules"/>), so the next sync with the same data shows the clip as Already
 /// linked; the hash is cleared once nothing it covers differs. The Generation's rating, comments, state, artwork (save an accepted image,
 /// given through <see cref="GenerationArtworkService"/>), event link, and selection are never
-/// part of it. Skip, the default of both classes, never reaches here: it changes nothing (invariant 3).
+/// part of it, and neither is its status, which follows Suno apart from any choice (<see cref="SunoStatusService"/>,
+/// #314). Skip, the default of both classes, never reaches here: it changes nothing (invariant 3).
 /// </summary>
 internal sealed class ChangeResolutionWriter(
     ISunoClipLookup lookup,

@@ -53,6 +53,7 @@ public static class DependencyInjection
         services.AddScoped<ImportReviewService>();
         services.AddScoped<IgnoreListService>();
         services.AddScoped<RemoteStateService>();
+        services.AddScoped<SunoStatusService>();
         services.AddScoped<GenerationRequestService>();
         services.AddScoped<ObservedCreateService>();
         services.AddScoped<ProvisionalCompletionService>();

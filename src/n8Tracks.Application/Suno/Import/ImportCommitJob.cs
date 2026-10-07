@@ -226,7 +226,9 @@ public sealed class ImportCommitService(
 /// the clip is attached afresh with the Reimport flag. Either way its tombstone goes.
 /// </para>
 /// <para>
-/// After the targets: a Generation Event for each group with two or more clips attached, the Suno
+/// After the targets and the Changed and Conflict choices (#141): Suno's final status of each clip it
+/// finished since, for a Generation whose status is not final yet, whatever the record's choice (#314,
+/// <see cref="SunoStatusService"/>), and the Suno state changes left to apply (#142). Then a Generation Event for each group with two or more clips attached, the Suno
 /// playlists and personas the imported clips touch (#153, for the Sources pickers), then each staged
 /// cover image given to its Generation (<see cref="GenerationArtworkService"/>; a missing image fails
 /// nothing). The result lists every record's outcome and is kept with the job. Nothing about a
@@ -397,6 +399,11 @@ internal sealed class ImportCommitJob(
             Progress();
         }
 
+        // Suno's final status of a clip it finished since (#314): written to a Generation whose status is not
+        // final yet, whatever the record's choice, and nothing else of it.
+        var statuses = await InScopeAsync<SunoStatusService, IReadOnlyList<FinishedStatusApplied>>(
+            status => status.ApplyAsync(export.Id, cancellationToken)).ConfigureAwait(false);
+
         // Following Suno (#142): the remote-state rows, worked out again now (after the targets and the
         // resolutions above, so each applies to its Generation as it then is), each applied unless set to Skip.
         var remoteStates = await InScopeAsync<RemoteStateService, IReadOnlyList<RemoteStateApplied>>(
@@ -440,7 +447,8 @@ internal sealed class ImportCommitJob(
                 row.SunoId,
                 RemoteStateRules.NameOf(row.Kind),
                 row.Applied ? ImportCommitOutcomes.Applied : ImportCommitOutcomes.Skipped,
-                new CommittedRemoteGeneration(row.GenerationId, row.Shortcode)))]);
+                new CommittedRemoteGeneration(row.GenerationId, row.Shortcode)))],
+            [.. statuses.Select(static row => new CommittedStatus(row.SunoId, row.Status, new CommittedRemoteGeneration(row.GenerationId, row.Shortcode)))]);
     }
 
     /// <summary>
@@ -1120,9 +1128,12 @@ internal sealed class CreatedCounts
 
 /// <summary>
 /// The commit job's result, kept with the job: every record's outcome, what was created, the Songs to link
-/// to, and each remote-state row (#142), applied or skipped.
+/// to, each remote-state row (#142), applied or skipped, and each Generation that took Suno's final status (#314).
 /// </summary>
-internal sealed record CommitResult(Guid ExportId, IReadOnlyList<CommittedRecord> Records, CreatedCounts Created, IReadOnlyList<SongLink> Songs, IReadOnlyList<CommittedRemoteState> RemoteStates);
+internal sealed record CommitResult(Guid ExportId, IReadOnlyList<CommittedRecord> Records, CreatedCounts Created, IReadOnlyList<SongLink> Songs, IReadOnlyList<CommittedRemoteState> RemoteStates, IReadOnlyList<CommittedStatus> Statuses);
+
+/// <summary>A Generation that took Suno's final status of its clip (#314): the clip, the status (<c>complete</c> or <c>error</c>), and the Generation.</summary>
+internal sealed record CommittedStatus(string SunoId, string Status, CommittedRemoteGeneration Generation);
 
 /// <summary>One remote-state row in the result: its clip, its change (<c>trashed</c>, <c>restored</c>, <c>missing</c>), <c>applied</c> or <c>skipped</c>, and its Generation.</summary>
 internal sealed record CommittedRemoteState(string SunoId, string Change, string Outcome, CommittedRemoteGeneration Generation);

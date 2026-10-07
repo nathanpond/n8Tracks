@@ -380,6 +380,45 @@ describe('the import review page', () => {
     );
   });
 
+  it('counts the Generations Suno finished since, which alone are something to confirm (#314)', async () => {
+    const server = importServer([testRecord('a'), testRecord('held', { class: 'linked' })]);
+    server.statusChanges = 2;
+    await openReview();
+
+    expect(screen.getByTestId('summary-statuses')).toHaveTextContent(
+      'Update Suno’s status of 2 Generations whose clip Suno finished since (their status only, whatever their choice).',
+    );
+    const confirm = screen.getByRole('button', { name: 'Confirm import' });
+    expect(confirm).toBeEnabled();
+    expect(confirm).toHaveAccessibleDescription(/You are asked once more first/);
+  });
+
+  it('shows no status line when Suno finished nothing since', async () => {
+    importServer(everyClass());
+    await openReview();
+
+    expect(screen.getByTestId('summary-creates')).toBeVisible();
+    expect(screen.queryByTestId('summary-statuses')).toBeNull();
+  });
+
+  it('says which Generations took Suno’s final status at the commit (#314)', async () => {
+    const server = importServer([], { state: 'committed', jobId: COMMIT_JOB_ID });
+    server.finishCommit(
+      testCommitResult({
+        statuses: [
+          { sunoId: 'a', status: 'complete', generation: { id: 'g', shortcode: 'n8-7-v1-g1' } },
+          { sunoId: 'b', status: 'complete', generation: { id: 'h', shortcode: 'n8-7-v1-g2' } },
+          { sunoId: 'c', status: 'error', generation: { id: 'i', shortcode: 'n8-7-v1-g3' } },
+        ],
+      }),
+    );
+    renderApp(PAGE);
+
+    expect(await screen.findByTestId('commit-statuses')).toHaveTextContent(
+      'Updated Suno’s status: 2 Generations finished in Suno; 1 Generation failed in Suno.',
+    );
+  });
+
   it('offers a reload when the import changed elsewhere, and drops the unsaved choice', async () => {
     const server = importServer(everyClass());
     const user = userEvent.setup();

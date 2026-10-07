@@ -3,7 +3,13 @@ import { Link } from 'react-router';
 import { useCommitJob, type CommitJob, type SunoImport } from '../api/sunoImports';
 import { remoteResultText } from '../api/sunoRemoteStates';
 import { Notice } from '../components/Notice';
-import { commitReasonText, createdText, outcomesText, stateText } from './importReviewRules';
+import {
+  commitReasonText,
+  createdText,
+  outcomesText,
+  stateText,
+  statusResultText,
+} from './importReviewRules';
 
 /**
  * An import being confirmed or confirmed (#140): while the commit job runs, its progress (the page may
@@ -80,6 +86,9 @@ export function ImportCommitView({
       <Text data-testid="commit-outcomes">{outcomesText(result.records)}</Text>
       {result.remoteStates !== undefined && result.remoteStates.length > 0 && (
         <Text data-testid="commit-remote-states">{remoteResultText(result.remoteStates)}</Text>
+      )}
+      {result.statuses !== undefined && result.statuses.length > 0 && (
+        <Text data-testid="commit-statuses">{statusResultText(result.statuses)}</Text>
       )}
       {result.songs.length > 0 && (
         <Stack gap={4} component="section" aria-labelledby="commit-songs-title">

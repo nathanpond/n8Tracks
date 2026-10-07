@@ -109,6 +109,15 @@ public interface IGenerationStore
     Task<bool> TryCompleteClipAsync(Guid generationId, ClipFields finished, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Sets the status of the Generation with <paramref name="generationId"/>, holding the clip
+    /// <paramref name="sunoId"/>, to Suno's final <paramref name="status"/> at a confirmed sync (#314),
+    /// touching no other column: not its other clip columns, rating, state, archiver, revision, remembered
+    /// hashes, or raw clip. Only while its stored status is not final; false, with nothing written,
+    /// otherwise. Only inside a transaction.
+    /// </summary>
+    Task<bool> TryFinishStatusAsync(Guid generationId, string sunoId, string status, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Sets the remembered declined change of the Generation with <paramref name="generationId"/> (#141: the
     /// hash of Suno's values the user left declined, or null when nothing is), touching no other column:
     /// not its clip columns, rating, state, or revision. Only inside a transaction.

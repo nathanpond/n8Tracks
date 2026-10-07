@@ -15,8 +15,9 @@ namespace n8Tracks.Infrastructure.Persistence;
 /// only its rating, state, and revision are, by <see cref="TryUpdateAsync"/>, its cover image, by
 /// <see cref="SetArtworkAsync"/>, and its place (Version, Song, ordinal) and revision by a move,
 /// <see cref="VersionStore.TryMoveGenerationAsync"/> (#123). Its clip columns change only by an import
-/// review's accepted fields (<see cref="RefreshClipFieldsAsync"/>, #141) and, once, by the completion of
-/// a Generation an observed Create made (<see cref="TryCompleteClipAsync"/>, #154).
+/// review's accepted fields (<see cref="RefreshClipFieldsAsync"/>, #141), once, by the completion of
+/// a Generation an observed Create made (<see cref="TryCompleteClipAsync"/>, #154), and its status alone,
+/// once, from not final to Suno's final status at a confirmed sync (<see cref="TryFinishStatusAsync"/>, #314).
 /// </summary>
 internal sealed class GenerationStore(N8TracksDbContext context) : IGenerationStore, IArtworkAttachments
 {
@@ -86,6 +87,24 @@ internal sealed class GenerationStore(N8TracksDbContext context) : IGenerationSt
                     .SetProperty(static generation => generation.WorkspaceId, finished.WorkspaceId)
                     .SetProperty(static generation => generation.BatchIndex, finished.BatchIndex),
                 cancellationToken)
+            .ConfigureAwait(false);
+        return written == 1;
+    }
+
+    public async Task<bool> TryFinishStatusAsync(Guid generationId, string sunoId, string status, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(sunoId);
+        if (!ProvisionalCompletionRules.IsFinal(status))
+        {
+            throw new ArgumentException($"'{status}' is not a final status.", nameof(status));
+        }
+
+        var written = await context.Generations
+            .Where(generation => generation.Id == generationId
+                && generation.SunoId == sunoId
+                && (generation.ProviderStatus == null
+                    || (generation.ProviderStatus != ProvisionalCompletionRules.Complete && generation.ProviderStatus != ProvisionalCompletionRules.Error)))
+            .ExecuteUpdateAsync(setters => setters.SetProperty(static generation => generation.ProviderStatus, status), cancellationToken)
             .ConfigureAwait(false);
         return written == 1;
     }

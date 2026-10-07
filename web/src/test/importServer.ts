@@ -274,6 +274,8 @@ export function importServer(records: ImportRecord[], exported: Partial<SunoImpo
     playlists: [] as { id: string; name: string | null; count: number }[],
     /** The Suno state changes (#142) and each change of them received. */
     remoteStates: [] as RemoteStateRow[],
+    /** Generations confirming gives Suno's final status (#314). */
+    statusChanges: 0,
     remotePatches: [] as ReceivedPatch[],
     current: undefined as { waiting: SunoImport | null; last: SunoImport | null } | undefined,
     /** The If-Match of each commit request. */
@@ -349,7 +351,8 @@ export function importServer(records: ImportRecord[], exported: Partial<SunoImpo
         imports.length === 0 &&
         newlyIgnored === 0 &&
         resolved === 0 &&
-        server.remoteStates.every((row) => !row.apply),
+        server.remoteStates.every((row) => !row.apply) &&
+        server.statusChanges === 0,
       nextKey: 'new:90',
       workspaces: server.workspaces.map((workspace) => ({
         ...workspace,
@@ -360,6 +363,7 @@ export function importServer(records: ImportRecord[], exported: Partial<SunoImpo
       revision: server.export.revision,
       remoteChanges: server.remoteStates.filter((row) => row.apply).length,
       remoteChangesTotal: server.remoteStates.length,
+      statusChanges: server.statusChanges,
     };
   };
 

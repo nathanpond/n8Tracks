@@ -14,6 +14,7 @@ import {
   outcomesText,
   reasonText,
   reasonsText,
+  statusResultText,
   targetText,
 } from './importReviewRules';
 
@@ -102,6 +103,15 @@ describe('the result of a confirmed import (#140)', () => {
     );
     expect(createdText({ songs: 0, versions: 0, generations: 0 })).toBe(
       'Created 0 Songs, 0 Versions, and 0 Generations.',
+    );
+  });
+
+  it('says which Generations took Suno’s final status (#314), leaving out a kind none had', () => {
+    expect(statusResultText([{ status: 'complete' }])).toBe(
+      'Updated Suno’s status: 1 Generation finished in Suno.',
+    );
+    expect(statusResultText([{ status: 'error' }, { status: 'error' }])).toBe(
+      'Updated Suno’s status: 2 Generations failed in Suno.',
     );
   });
 

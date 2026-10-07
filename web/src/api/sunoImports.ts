@@ -235,6 +235,8 @@ export interface ImportSummary {
   /** How many Suno state changes (#142) confirming applies, of how many the review lists. */
   remoteChanges?: number;
   remoteChangesTotal?: number;
+  /** How many Generations confirming gives Suno's final status of a clip it finished since (#314). */
+  statusChanges?: number;
 }
 
 /** The filters of the review: class, workspace, playlist (Suno IDs), and text in the title. */
@@ -693,6 +695,15 @@ export interface CommitResult {
   songs: CommittedSong[];
   /** The Suno state changes (#142), applied or skipped. */
   remoteStates?: CommittedRemoteState[];
+  /** The Generations that took Suno's final status of their clip (#314). */
+  statuses?: CommittedStatus[];
+}
+
+/** A Generation that took Suno's final status of its clip at the commit (#314). */
+export interface CommittedStatus {
+  sunoId: string;
+  status: 'complete' | 'error';
+  generation: { id: string; shortcode: string };
 }
 
 /** The commit job as `GET /api/v1/jobs/{id}` answers it, the fields the page reads. */

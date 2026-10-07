@@ -144,7 +144,7 @@ internal static class SunoExportsEndpoints
 
         endpoints.MapGet(SummaryPath, SummaryAsync)
             .WithName("GetSunoExportSummary")
-            .WithSummary("What confirming the export would do as its choices stand (#139): songs, versions (a new Song's Version 1 included), and generations to create, reimports among them, ignored (Don't copy, and records on the ignore list already that are not imported), and skipped (Skip this time); valid, and invalid choices by Suno ID with their reasons (at most 1,000 listed, invalidCount all), each checked again against the catalog as it is now; remoteChanges, how many Suno state changes (#142) confirming applies, of remoteChangesTotal; nothingToDo when no record is imported or newly put on the ignore list and no Suno state change is applied; nextKey, a temporary key no choice uses; the workspaces and playlists the records are in (id, name, count); and libraryExcluded, the kinds of clip Suno's library filters left out. With the export's revision as ETag.")
+            .WithSummary("What confirming the export would do as its choices stand (#139): songs, versions (a new Song's Version 1 included), and generations to create, reimports among them, ignored (Don't copy, and records on the ignore list already that are not imported), and skipped (Skip this time); valid, and invalid choices by Suno ID with their reasons (at most 1,000 listed, invalidCount all), each checked again against the catalog as it is now; remoteChanges, how many Suno state changes (#142) confirming applies, of remoteChangesTotal; statusChanges, how many Generations confirming gives Suno's final status (complete or error) of a clip Suno finished since, whatever the records' choices (#314); nothingToDo when no record is imported or newly put on the ignore list and no Suno state change or final status is applied; nextKey, a temporary key no choice uses; the workspaces and playlists the records are in (id, name, count); and libraryExcluded, the kinds of clip Suno's library filters left out. With the export's revision as ETag.")
             .SessionOnly()
             .Produces<SunoExportSummaryResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
@@ -166,7 +166,7 @@ internal static class SunoExportsEndpoints
 
         endpoints.MapPost(CommitPath, CommitAsync)
             .WithName("CommitSunoExport")
-            .WithSummary("Confirms a ready export (#140), with If-Match on its revision and no body: it becomes committing and a background job (jobId; follow it at GET /api/v1/jobs/{id}) applies the choices saved on it: new Songs, new Versions with the clips' inputs, Generations attached to the chosen Versions, workspaces of new Songs, and staged artwork; Skip and Don't copy store nothing. Each target is created whole or not at all; one that fails is reported in the job's result ({ records: [{ sunoId, outcome: created | linked | skipped | ignored | failed, reason?, generation? }], created: { songs, versions, generations }, songs, remoteStates: [{ sunoId, change, outcome: applied | skipped, generation }] }) and undoes nothing else. Suno state changes (#142) left to apply are applied to their Generations as they then are. The export then becomes committed, whatever failed. 202 with the export. 409 export_not_ready unless ready, import_in_progress while it or another export is being committed, export_committed once committed (an export is committed once), revision_conflict when its choices changed since. Session-only: a token gets 403 session_required.")
+            .WithSummary("Confirms a ready export (#140), with If-Match on its revision and no body: it becomes committing and a background job (jobId; follow it at GET /api/v1/jobs/{id}) applies the choices saved on it: new Songs, new Versions with the clips' inputs, Generations attached to the chosen Versions, workspaces of new Songs, and staged artwork; Skip and Don't copy store nothing. Each target is created whole or not at all; one that fails is reported in the job's result ({ records: [{ sunoId, outcome: created | linked | skipped | ignored | failed, reason?, generation? }], created: { songs, versions, generations }, songs, remoteStates: [{ sunoId, change, outcome: applied | skipped, generation }], statuses: [{ sunoId, status, generation }] }) and undoes nothing else. Suno state changes (#142) left to apply are applied to their Generations as they then are, and a Generation whose status is not final takes Suno's final status (complete or error) of its clip, whatever the record's choice, and nothing else of it (#314). The export then becomes committed, whatever failed. 202 with the export. 409 export_not_ready unless ready, import_in_progress while it or another export is being committed, export_committed once committed (an export is committed once), revision_conflict when its choices changed since. Session-only: a token gets 403 session_required.")
             .SessionOnly()
             .Produces<SunoExportResponse>(StatusCodes.Status202Accepted)
             .ProducesProblem(StatusCodes.Status400BadRequest)
@@ -1037,7 +1037,8 @@ internal sealed record SunoExportSummaryResponse(
     int Revision,
     int Resolved,
     int RemoteChanges,
-    int RemoteChangesTotal)
+    int RemoteChangesTotal,
+    int StatusChanges)
 {
     public static SunoExportSummaryResponse From(ImportReviewSummary summary)
     {
@@ -1062,7 +1063,8 @@ internal sealed record SunoExportSummaryResponse(
             summary.Export.Export.Revision,
             summary.Resolved,
             summary.RemoteChanges,
-            summary.RemoteChangesTotal);
+            summary.RemoteChangesTotal,
+            summary.StatusChanges);
     }
 }
 

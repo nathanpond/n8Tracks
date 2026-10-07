@@ -4,10 +4,13 @@ namespace n8Tracks.Domain.Suno;
 /// When a Generation that an observed Create made (#149) may be filled in once Suno finishes its clip
 /// (#154): the one change to a Generation's provider fields that no import review confirms (invariant 3).
 /// Suno's statuses for a clip are <c>submitted</c>, <c>streaming</c>, <c>complete</c>, and <c>error</c>
-/// (TS-001); the last two are final. n8Tracks writes a Generation's status only when it is attached and
-/// by this completion, never by an import's refresh, so a Generation whose stored status is not final has
-/// never been complete in n8Tracks, unless an import review has decided about its data since (its raw
-/// clip replaced from an export, or a change declined or a conflict kept), which the store checks too.
+/// (TS-001); the last two are final. n8Tracks writes a Generation's status only when it is attached, by
+/// this completion, and at a confirmed sync (#314), which only ever moves a status that is not final to
+/// Suno's final one by this same rule (<see cref="MayComplete"/>), never by an import review's refresh. So
+/// a Generation whose stored status is not final has never been complete in n8Tracks, unless an import
+/// review has decided about its data since (its raw clip replaced from an export, or a change declined or a
+/// conflict kept), which the store checks too; and once a sync has given it a final status, the completion
+/// no longer applies to it.
 /// </summary>
 public static class ProvisionalCompletionRules
 {

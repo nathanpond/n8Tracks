@@ -94,6 +94,20 @@ export function createdText(created: {
   return `Created ${countText(created.songs, 'Song')}, ${countText(created.versions, 'Version')}, and ${countText(created.generations, 'Generation')}.`;
 }
 
+/**
+ * The Generations a commit gave Suno's final status of their clip (#314), in plain words: those Suno
+ * finished, and those that ended in error (shown as Failed).
+ */
+export function statusResultText(rows: readonly { status: string }[]): string {
+  const failed = rows.filter((row) => row.status === 'error').length;
+  const finished = rows.length - failed;
+  const parts = [
+    ...(finished > 0 ? [`${countText(finished, 'Generation')} finished in Suno`] : []),
+    ...(failed > 0 ? [`${countText(failed, 'Generation')} failed in Suno`] : []),
+  ];
+  return `Updated Suno’s status: ${parts.join('; ')}.`;
+}
+
 /** How many records ended each way, in plain words, leaving out the outcomes none had. */
 export function outcomesText(records: readonly { outcome: string }[]): string {
   const labels: [string, string][] = [
