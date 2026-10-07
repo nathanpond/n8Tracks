@@ -114,6 +114,27 @@ describe('validateManifest', () => {
       { externally_connectable: { matches: ['https://suno.com/*'] } },
       'externally_connectable',
     ],
+    [
+      'resources open to every page',
+      { web_accessible_resources: [{ resources: ['relay.js'], matches: ['<all_urls>'] }] },
+      'web_accessible_resources',
+    ],
+    [
+      'a looser content security policy',
+      { content_security_policy: { extension_pages: "script-src 'self' 'unsafe-eval'" } },
+      'content_security_policy',
+    ],
+    [
+      'network request rules',
+      { declarative_net_request: { rule_resources: [] } },
+      'declarative_net_request',
+    ],
+    [
+      'a replaced browser page',
+      { chrome_url_overrides: { newtab: 'new.html' } },
+      'chrome_url_overrides',
+    ],
+    ['an unknown key', { side_panel: { default_path: 'panel.html' } }, 'side_panel'],
     ['Manifest V2', { manifest_version: 2 }, 'manifest_version'],
     ['another name', { name: 'Something else' }, 'name'],
     ['the placeholder version', { version: '0.0.0' }, 'version'],

@@ -17,6 +17,25 @@ export const allowedOptionalHosts: readonly string[] = [
   'https://*/*',
   'http://*/*',
 ];
+/**
+ * Every top-level key the manifest may have. Any other key (host_permissions, content_scripts,
+ * web_accessible_resources, content_security_policy, declarative_net_request, externally_connectable,
+ * chrome_url_overrides, ...) can widen what the extension reaches or how it runs, so it fails
+ * validation until it is added here on purpose (#322).
+ */
+export const allowedManifestKeys: readonly string[] = [
+  'manifest_version',
+  'name',
+  'version',
+  'version_name',
+  'description',
+  'icons',
+  'action',
+  'background',
+  'permissions',
+  'optional_host_permissions',
+  'options_ui',
+];
 export const iconSizes: readonly string[] = ['16', '48', '128'];
 
 const serviceWorkerSource = 'src/background/service-worker.ts';
@@ -164,14 +183,9 @@ export function validateManifest(manifest: unknown): string[] {
       `optional_host_permissions must be exactly ${JSON.stringify(allowedOptionalHosts)}.`,
     );
   }
-  for (const forbidden of [
-    'host_permissions',
-    'optional_permissions',
-    'content_scripts',
-    'externally_connectable',
-  ]) {
-    if (forbidden in manifest) {
-      problems.push(`${forbidden} must be absent.`);
+  for (const key of Object.keys(manifest)) {
+    if (!allowedManifestKeys.includes(key)) {
+      problems.push(`${key} must be absent.`);
     }
   }
 
