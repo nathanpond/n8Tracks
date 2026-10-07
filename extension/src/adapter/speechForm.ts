@@ -63,16 +63,21 @@ const ADVANCED: Region = {
   description: 'the Advanced section of the Speech form',
 };
 
-function beside(text: string, description: string): Region {
+/** The region around the label `text`; both descriptions are written at the call (#344). */
+function beside(text: string, labelDescription: string, description: string): Region {
   const label: TextAnchor = {
     text,
     within: ADVANCED,
-    description: `the ${text} label in the Speech form's Advanced section`,
+    description: labelDescription,
   };
   return { around: label, levels: 2, description };
 }
 
-const VOCAL_GENDER = beside('Vocal Gender', "the Speech form's Vocal Gender choice");
+const VOCAL_GENDER = beside(
+  'Vocal Gender',
+  "the Vocal Gender label in the Speech form's Advanced section",
+  "the Speech form's Vocal Gender choice",
+);
 
 export const SPEECH_VOCAL_MALE: Target = {
   role: 'button',
@@ -88,7 +93,11 @@ export const SPEECH_VOCAL_FEMALE: Target = {
   description: "the Speech form's Vocal Gender Female button",
 };
 
-const BACKGROUND_MUSIC = beside('Background music', "the Speech form's Background music switch");
+const BACKGROUND_MUSIC = beside(
+  'Background music',
+  "the Background music label in the Speech form's Advanced section",
+  "the Speech form's Background music switch",
+);
 
 export const BACKGROUND_MUSIC_OFF: Target = {
   role: 'button',

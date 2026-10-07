@@ -62,6 +62,12 @@ export interface Workflow<C extends StepContext = StepContext> {
   startsOn: PagePattern;
   /** What it needs from the page it starts on: the self-check reads these, and clicks nothing. */
   needs: readonly Probe[];
+  /**
+   * The ID of the workflow that sets up the page state its needs describe (#328): the mode tab it
+   * switched to, the question its press raised. The self-check shows it as waiting for that step,
+   * not as not working, when its needs do not hold yet; it must be registered before this one.
+   */
+  after?: string;
   steps: readonly Step<C>[];
   /** The TS-003 page snapshots (`page.<name>.html`) it is built on and tested against. */
   fixtures: readonly string[];
@@ -118,11 +124,11 @@ export function present(page: Page, target: Target): Check {
 }
 
 /** Runs a check, turning an exception into a failed check rather than a crash of the run. */
-function safely(check: () => Check, what: string): Check {
+function safely(check: () => Check, readableDescription: string): Check {
   try {
     return check();
   } catch (error) {
-    return expected(error instanceof PrimitiveError ? error.expected : `${what} to be readable`);
+    return expected(error instanceof PrimitiveError ? error.expected : readableDescription);
   }
 }
 
@@ -192,7 +198,7 @@ export async function runWorkflow<C extends StepContext>(
       const timeoutMs = step.timeoutMs ?? DEFAULT_STEP_TIMEOUT_MS;
 
       const before = await poll(
-        () => safely(() => step.expect(context), 'the page'),
+        () => safely(() => step.expect(context), 'the page to be readable'),
         timeoutMs,
         clock,
         pollMs,
@@ -255,7 +261,7 @@ export async function runWorkflow<C extends StepContext>(
       record(step.name, 'act', 'ok');
 
       const after = await poll(
-        () => safely(() => step.verify(context), 'the result on the page'),
+        () => safely(() => step.verify(context), 'the result on the page to be readable'),
         timeoutMs,
         clock,
         pollMs,

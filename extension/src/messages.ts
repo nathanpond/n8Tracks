@@ -129,10 +129,12 @@ export interface GenerateJob {
 
 /**
  * Loading a source spans page loads (#148): the tab goes to the source clip's page (`opening`),
- * chooses the action there (`chosen`), and Suno opens the Create form with the source.
+ * chooses the action there (`chosen`), and Suno opens the Create form with the source. While the
+ * clip's page is not captured (#341), the user loads it by hand (`byHand`): the tab waits, and the
+ * next Create form it sees is checked for the source.
  */
 export interface SourcePhase {
-  phase: 'opening' | 'chosen';
+  phase: 'opening' | 'chosen' | 'byHand';
   /** The source clip's Suno ID. */
   sunoId: string;
 }
@@ -402,7 +404,7 @@ const GENERATE_STATES: readonly string[] = [
 export function isSourcePhase(value: unknown): value is SourcePhase {
   return (
     isRecord(value) &&
-    (value.phase === 'opening' || value.phase === 'chosen') &&
+    (value.phase === 'opening' || value.phase === 'chosen' || value.phase === 'byHand') &&
     typeof value.sunoId === 'string' &&
     value.sunoId !== ''
   );

@@ -138,7 +138,14 @@ export const NOT_EXPECTED =
 export const LEFT_CREATE =
   'You left Suno’s Create page, so the extension stopped watching for Creates.';
 export const SAME_NAME =
-  "Suno has more than one workspace with the name of the Song's workspace, so the extension cannot tell which row is the Song's. Rename one of them in Suno, then try again.";
+  "Suno has more than one workspace with the name of the Song's workspace, so the extension cannot tell which row is the Song's, and Suno did not show the Song's workspace in time. Select it in Suno's workspace list or rename one of them in Suno, then try again.";
+
+/**
+ * How long the tab waits for the user to select the Song's workspace by hand when Suno lists
+ * another of the same name (#335): the rows carry no ID, so neither is pressed, and the selection is
+ * accepted by the ID the library pane then asks for.
+ */
+export const SAME_NAME_WAIT_MS = 120_000;
 
 /** The source's page in Suno did not show the clip's menu (#148). */
 export function couldNotOpen(name: string, problem: string): string {
@@ -148,6 +155,14 @@ export function couldNotOpen(name: string, problem: string): string {
 /** The action is missing from the clip's menu, or disabled there (#148). */
 export function actionUnavailable(name: string, action: string): string {
   return `Suno does not offer ${action} for the source ${name} (the menu item is missing or disabled; it may need a plan you lack). Nothing on the form was changed beyond its mode.`;
+}
+
+/**
+ * The clip's page is not captured (#341), so the user loads the source: what the panel and n8Tracks
+ * say. The extension checks the source on the form afterwards, before filling anything else.
+ */
+export function loadByHandFirst(name: string, menu: string, item: string): string {
+  return `The extension cannot open the source’s page in Suno yet, so load ${name} by hand: open it in Suno, then More options › ${menu} › ${item}. Back on the Create form, press Continue: the extension checks the source before filling anything else.`;
 }
 
 /** After the action, Suno did not show the Create form (#148). */
@@ -490,13 +505,26 @@ export class SunoGenerate {
     if (!(await this.begin(GENERATE_STEPS.select))) {
       return;
     }
-    // A workspace of the same name and another ID is never selected in its place.
-    if (namedLike(listed, workspace.name).length > 1) {
-      await this.stop(SAME_NAME);
+    // The library pane already shows it (the page loaded with it selected): nothing to press. This
+    // is by ID, so it holds even when another workspace has the same name (#335).
+    if ((await this.shownWorkspace()) === workspace.id) {
+      await this.selected(workspace);
       return;
     }
-    // The library pane already shows it (the page loaded with it selected): nothing to press.
-    if ((await this.shownWorkspace()) === workspace.id) {
+    // A workspace of the same name and another ID is never selected in its place: neither row is
+    // pressed. The user selects the Song's own in Suno, and it is accepted by its ID.
+    if (namedLike(listed, workspace.name).length > 1) {
+      this.options.show({ kind: 'select', name: workspace.name });
+      const byHand = this.watch(
+        'library-feed',
+        (message) => workspaceOfFeed(message) === workspace.id,
+        SAME_NAME_WAIT_MS,
+      );
+      await byHand.done;
+      if (byHand.seen === null) {
+        await this.stop(SAME_NAME);
+        return;
+      }
       await this.selected(workspace);
       return;
     }
@@ -568,7 +596,12 @@ export class SunoGenerate {
       return;
     }
     if (workflows.loadsSources && plan.load !== null) {
-      await this.openSource(plan.load);
+      // The clip's page is not captured (#341): unless the route is, the user loads the source.
+      if (plan.load.route.automated) {
+        await this.openSource(plan.load);
+      } else {
+        await this.loadByHand(form, plan.load);
+      }
       return;
     }
     await this.fillRest(form, workspace, null);
@@ -610,6 +643,21 @@ export class SunoGenerate {
     this.options.page.go(sunoSongAddress(load.sunoId));
   }
 
+  /**
+   * The user loads the source by hand (#341): the phase is kept for the page loads the action takes,
+   * the panel asks for it, and after Continue the source is checked on the form.
+   */
+  private async loadByHand(form: FormJob, load: LoadedSource): Promise<void> {
+    if (!(await this.keepSource({ phase: 'byHand', sunoId: load.sunoId }))) {
+      return;
+    }
+    const message = loadByHandFirst(sourceName(load.source), load.route.menu, load.route.item);
+    if (!(await this.askByHand(message))) {
+      return;
+    }
+    await this.afterAction(form, load);
+  }
+
   /** A page load while a source is being loaded: carries on where the last load left off. */
   private async resumeSource(form: FormJob, phase: SourcePhase): Promise<void> {
     const { page } = this.options;
@@ -622,7 +670,25 @@ export class SunoGenerate {
       );
       return;
     }
+    if (phase.phase === 'byHand') {
+      // Back on the Create form after the user's action: the source is checked. Anywhere else the
+      // tab waits for the user to finish (the clip's own page is where they choose the action).
+      if (sunoPageOf(page.address()) === 'create') {
+        await this.afterAction(form, load);
+      } else {
+        this.options.show({ kind: 'working', step: STEP_TEXT[GENERATE_STEPS.byHand] });
+      }
+      return;
+    }
     if (phase.phase === 'opening') {
+      // Only an automated route goes on from the clip's page (#341): it is not captured otherwise.
+      if (!load.route.automated) {
+        this.step = GENERATE_STEPS.source;
+        await this.stop(
+          'The extension cannot use the source’s page in Suno yet. Start again from n8Tracks and load the source by hand when asked.',
+        );
+        return;
+      }
       if (songOfAddress(page.address()) === phase.sunoId) {
         await this.chooseAction(form, load);
         return;
@@ -698,12 +764,13 @@ export class SunoGenerate {
     const name = sourceName(load.source);
     let loaded: EntryResult;
     if (load.route.label === null) {
-      // Reuse Prompt copies the source's inputs and leaves no source to see (Discretion).
+      // Reuse Prompt copies the source's inputs and leaves no source on the form to see, so which
+      // clip's inputs were copied is not checked (#342): it is reported as to check by hand.
       loaded = {
         key: load.source.key,
-        outcome: 'set',
-        note: `${load.route.item} copied the inputs of ${name} into the form; the Version’s own values were filled over them.`,
-        reportNote: `${load.route.item} copied the inputs of the source into the form; the Version’s own values were filled over them.`,
+        outcome: 'manual',
+        note: `Not verified: ${load.route.item} leaves no source on the form to check, so the extension cannot tell whose inputs were copied. Check that it was used on ${name}; the Version’s own values were filled over its inputs.`,
+        reportNote: `Not verified: ${load.route.item} leaves no source on the form to check, so the extension cannot tell whose inputs were copied. Check that it was used on the source; the Version’s own values were filled over its inputs.`,
       };
     } else {
       const verify = form.mode === 'simple' ? verifySourceSimple : verifySourceAdvanced;
@@ -741,6 +808,14 @@ export class SunoGenerate {
    */
   private async byHand(load: LoadedSource, why: string): Promise<boolean> {
     const message = `The source on Suno’s form is not the Version’s (${why}). Load ${sourceName(load.source)} with ${load.route.menu} › ${load.route.item}, then press Continue.`;
+    return (await this.askByHand(message)) && this.begin(GENERATE_STEPS.verifySource, 'filling');
+  }
+
+  /**
+   * Asks the user to load the source by hand (reported, so n8Tracks shows why) and waits for the
+   * panel's Continue; false when the request has ended.
+   */
+  private async askByHand(message: string): Promise<boolean> {
     this.step = GENERATE_STEPS.byHand;
     const answer = reply(
       await this.options
@@ -755,7 +830,7 @@ export class SunoGenerate {
       this.waitingSource = resolve;
       this.options.show({ kind: 'source', message });
     });
-    return this.begin(GENERATE_STEPS.verifySource, 'filling');
+    return true;
   }
 
   /** Keeps the source phase for the next page load; false (and stopped) when it could not be. */
