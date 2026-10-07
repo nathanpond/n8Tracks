@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http.HttpResults;
 using n8Tracks.Api.Auth;
 using n8Tracks.Api.Problems;
@@ -49,7 +50,7 @@ internal static class MediaEndpoints
 
         endpoints.MapGet(AudioFilesPath, ListAsync)
             .WithName("ListAudioFiles")
-            .WithSummary("Cataloged audio files in path order, up to 200 at a time, filtered by reported status, association, and whether the header was readable.")
+            .WithSummary("Cataloged audio files, up to 200 at a time (100 with suggestions), filtered by reported status, association, whether the header was readable, and text in the name or folder; sorted by path, name, folder, or first seen; with include=suggestions, each unassociated file carries up to three suggested Songs and the evidence for each.")
             .RequireScope(CredentialScopes.CatalogRead)
             .Produces<AudioFileListResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
@@ -96,7 +97,7 @@ internal static class MediaEndpoints
         return TypedResults.Ok(MediaStatusResponse.From(status, options.MediaPath));
     }
 
-    /// <summary>200 with a page; 422 <c>validation_failed</c> for a malformed or unknown query value, or a limit over 200.</summary>
+    /// <summary>200 with a page; 422 <c>validation_failed</c> for a malformed or unknown query value, a limit over 200 (over 100 with suggestions), or a search over 200 characters.</summary>
     private static async Task<Results<Ok<AudioFileListResponse>, ProblemHttpResult>> ListAsync(
         AudioFileService files,
         HttpContext context,
@@ -151,15 +152,77 @@ internal static class MediaEndpoints
             }
         }
 
+        var sort = AudioFileSort.Path;
+        if (Single(query, "sort", errors) is { } sortText)
+        {
+            switch (sortText)
+            {
+                case "path":
+                    break;
+                case "name":
+                    sort = AudioFileSort.Name;
+                    break;
+                case "folder":
+                    sort = AudioFileSort.Folder;
+                    break;
+                case "firstSeen":
+                    sort = AudioFileSort.FirstSeen;
+                    break;
+                default:
+                    errors["sort"] = ["Use path, name, folder, or firstSeen."];
+                    break;
+            }
+        }
+
+        // First seen reads newest first unless asked otherwise; the other orders ascend.
+        var descending = sort == AudioFileSort.FirstSeen;
+        if (Single(query, "direction", errors) is { } directionText)
+        {
+            switch (directionText)
+            {
+                case "asc":
+                    descending = false;
+                    break;
+                case "desc":
+                    descending = true;
+                    break;
+                default:
+                    errors["direction"] = ["Use asc or desc."];
+                    break;
+            }
+        }
+
+        var search = Single(query, "q", errors);
+        if (search is not null && search.Trim().Length > AudioFileService.MaximumSearchLength)
+        {
+            errors["q"] = [string.Create(CultureInfo.InvariantCulture, $"Use at most {AudioFileService.MaximumSearchLength} characters.")];
+        }
+
+        var suggestions = false;
+        if (Single(query, "include", errors) is { } includeText)
+        {
+            if (includeText == "suggestions")
+            {
+                suggestions = true;
+            }
+            else
+            {
+                errors["include"] = ["Use suggestions."];
+            }
+        }
+
+        var maximum = suggestions ? AudioFileService.MaximumSuggestedLimit : AudioFileService.MaximumLimit;
         var offset = Number(query, "offset", 0, 0, int.MaxValue, errors);
-        var limit = Number(query, "limit", AudioFileService.MaximumLimit, 1, AudioFileService.MaximumLimit, errors);
+        var limit = Number(query, "limit", maximum, 1, maximum, errors);
 
         if (errors.Count > 0)
         {
             return ApiProblem.ValidationFailed(context, errors);
         }
 
-        var page = await files.ListAsync(new AudioFileListRequest(status, association, readable, offset, limit), cancellationToken);
+        var page = await files.ListAsync(
+            new AudioFileListRequest(status, association, readable, offset, limit, sort, descending, search, suggestions),
+            cancellationToken);
         return TypedResults.Ok(new AudioFileListResponse(page.Items.Select(AudioFileResponse.From).ToArray(), page.Total, offset, limit));
     }
 
@@ -347,6 +410,8 @@ internal sealed record AudioFileListResponse(AudioFileResponse[] Items, int Tota
 /// <c>unassociated_by_user</c>, <c>song_deleted</c>) or null. <c>revision</c> rises with every change
 /// of the association. <c>status</c> is the reported status (#207): <c>unavailable</c> while the media
 /// folder cannot be read, otherwise <c>storedStatus</c> (<c>available</c> or <c>missing</c>).
+/// <c>suggestions</c> (#209) is there only when the list was asked to include them: up to three, best
+/// first, and empty for an associated file or when nothing is credible.
 /// </summary>
 internal sealed record AudioFileResponse(
     Guid Id,
@@ -367,7 +432,8 @@ internal sealed record AudioFileResponse(
     AudioFileLinkResponse? Generation,
     string? AssociationOrigin,
     string? UnmatchedReason,
-    int Revision)
+    int Revision,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] MatchSuggestionResponse[]? Suggestions = null)
 {
     public static AudioFileResponse From(ReportedAudioFile reported)
     {
@@ -393,9 +459,69 @@ internal sealed record AudioFileResponse(
             file.Link?.Generation is { } generation ? new AudioFileLinkResponse(generation.Id, generation.Shortcode) : null,
             file.Link is { } origin ? AudioFileAssociations.Text(origin.Origin) : null,
             file.UnmatchedReason is { } reason ? AudioFileAssociations.Text(reason) : null,
-            file.Revision);
+            file.Revision,
+            reported.Suggestions?.Select(MatchSuggestionResponse.From).ToArray());
     }
 }
+
+/// <summary>
+/// A suggested Song for an unmatched file (#209): the Song, the Generation the evidence points at (or
+/// null), the score, and every reason that fired, as codes the page words. A suggestion is never an
+/// association.
+/// </summary>
+internal sealed record MatchSuggestionResponse(
+    MatchSongResponse Song,
+    MatchGenerationResponse? Generation,
+    int Score,
+    MatchReasonResponse[] Reasons)
+{
+    public static MatchSuggestionResponse From(MatchSuggestion suggestion)
+    {
+        ArgumentNullException.ThrowIfNull(suggestion);
+
+        return new(
+            new MatchSongResponse(suggestion.Song.Id, suggestion.Song.Shortcode, suggestion.Song.Title),
+            MatchGenerationResponse.From(suggestion.Generation),
+            suggestion.Score,
+            [.. suggestion.Reasons.Select(static reason => new MatchReasonResponse(
+                MatchReasonTexts.Text(reason.Code),
+                MatchGenerationResponse.From(reason.Generation),
+                reason.Folder,
+                reason.Artist,
+                reason.ArtistSource is { } source ? MatchReasonTexts.Text(source) : null,
+                reason.DifferenceSeconds))]);
+    }
+}
+
+/// <summary>A suggested Song: its ID, shortcode, and title.</summary>
+internal sealed record MatchSongResponse(Guid Id, string Shortcode, string Title);
+
+/// <summary>A suggested Generation: its ID, shortcode, Suno title, and duration, when it has them.</summary>
+internal sealed record MatchGenerationResponse(Guid Id, string Shortcode, string? SunoTitle, decimal? DurationSeconds)
+{
+    public static MatchGenerationResponse? From(MatchCandidateGeneration? generation) =>
+        generation is null
+            ? null
+            : new(
+                generation.Id,
+                generation.Shortcode,
+                generation.SunoTitle,
+                generation.Duration is { } duration ? Math.Round((decimal)duration.TotalMilliseconds / 1000m, 3) : null);
+}
+
+/// <summary>
+/// One reason: <c>code</c> (<c>title_equals_file_name</c>, <c>embedded_title_equals_title</c>,
+/// <c>generation_title_equals_file_name</c>, <c>title_in_file_name</c>, <c>folder_equals_title</c>,
+/// <c>artist_present</c>, <c>duration_close</c>) and what it names; the fields that do not apply are
+/// left out.
+/// </summary>
+internal sealed record MatchReasonResponse(
+    string Code,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] MatchGenerationResponse? Generation,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Folder,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Artist,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ArtistSource,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] decimal? DifferenceSeconds);
 
 /// <summary>The Song or Generation an audio file is associated with.</summary>
 internal sealed record AudioFileLinkResponse(Guid Id, string Shortcode);

@@ -13,6 +13,7 @@ import {
 } from '@mantine/core';
 import { useCallback, useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
+import { UNMATCHED_PATH } from '../api/audioFiles';
 import {
   isActive,
   startScan,
@@ -94,15 +95,36 @@ function FolderSection({ status, timeZone }: { status: MediaStatus; timeZone: st
   );
 }
 
-/** One row of a two-column count table. */
-function CountRow({ label, value, testId }: { label: string; value: number; testId: string }) {
+/** One row of a two-column count table; the count is a link when `to` names where the files are listed. */
+function CountRow({
+  label,
+  value,
+  testId,
+  to,
+}: {
+  label: string;
+  value: number;
+  testId: string;
+  to?: string;
+}) {
   return (
     <Table.Tr>
       <Table.Th scope="row" fw={400}>
         {label}
       </Table.Th>
       <Table.Td ta="right" data-testid={testId}>
-        {countText(value)}
+        {to === undefined ? (
+          countText(value)
+        ) : (
+          <Anchor
+            component={Link}
+            to={to}
+            underline="always"
+            aria-label={`${countText(value)} unmatched: open Unmatched Files`}
+          >
+            {countText(value)}
+          </Anchor>
+        )}
       </Table.Td>
     </Table.Tr>
   );
@@ -122,7 +144,12 @@ function FilesSection({ status }: { status: MediaStatus }) {
           <CountRow label="Available" value={counts.available} testId="files-available" />
           <CountRow label="Missing" value={counts.missing} testId="files-missing" />
           <CountRow label="Associated" value={counts.associated} testId="files-associated" />
-          <CountRow label="Unmatched" value={counts.unmatched} testId="files-unmatched" />
+          <CountRow
+            label="Unmatched"
+            value={counts.unmatched}
+            testId="files-unmatched"
+            to={UNMATCHED_PATH}
+          />
         </Table.Tbody>
       </Table>
     </Section>

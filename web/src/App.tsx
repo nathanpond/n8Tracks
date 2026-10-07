@@ -7,6 +7,7 @@ import { ArtistPage } from './artists/ArtistPage';
 import { ArtistsPage } from './artists/ArtistsPage';
 import { MaintenanceGate } from './maintenance/MaintenanceGate';
 import { MediaPage } from './media/MediaPage';
+import { UnmatchedFilesPage } from './media/UnmatchedFilesPage';
 import { PlaylistPage } from './playlists/PlaylistPage';
 import { PlaylistsPage } from './playlists/PlaylistsPage';
 import { AccountPage } from './settings/AccountPage';
@@ -64,6 +65,7 @@ export function App() {
                 <Route path="suno/ignored" element={<IgnoredItemsPage />} />
                 <Route path="suno/imports/:id" element={<ImportReviewPage />} />
                 <Route path="library/media" element={<MediaPage />} />
+                <Route path="library/unmatched" element={<UnmatchedFilesPage />} />
                 <Route path="go/:reference" element={<GoPage />} />
                 <Route path="settings" element={<Navigate to="/settings/account" replace />} />
                 <Route path="settings/account" element={<AccountPage />} />

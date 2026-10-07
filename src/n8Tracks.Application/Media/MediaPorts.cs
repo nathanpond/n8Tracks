@@ -176,9 +176,32 @@ public abstract record AudioFileWrite
 /// <param name="Status">Only files of this stored status, or null for all.</param>
 /// <param name="Association">Which files by association.</param>
 /// <param name="MetadataReadable">Only files whose header was (or was not) readable, or null for all.</param>
-/// <param name="Offset">How many to skip, in path order.</param>
+/// <param name="Offset">How many to skip, in the order asked for.</param>
 /// <param name="Limit">How many to return at most.</param>
-public sealed record AudioFileQuery(AudioFileStatus? Status, AudioFileAssociation Association, bool? MetadataReadable, int Offset, int Limit);
+/// <param name="Sort">The order (#209): path by default.</param>
+/// <param name="Descending">Whether the order is reversed.</param>
+/// <param name="Search">Only files whose name or folder holds this text (any letter case), or null for all.</param>
+public sealed record AudioFileQuery(
+    AudioFileStatus? Status,
+    AudioFileAssociation Association,
+    bool? MetadataReadable,
+    int Offset,
+    int Limit,
+    AudioFileSort Sort = AudioFileSort.Path,
+    bool Descending = false,
+    string? Search = null);
+
+/// <summary>
+/// The orders of the audio file list (#209): by path (ordinal), by file name, by folder (then file
+/// name), or by when the file was first seen. Every order ends with the path, so pages never overlap.
+/// </summary>
+public enum AudioFileSort
+{
+    Path,
+    Name,
+    Folder,
+    FirstSeen,
+}
 
 /// <summary>The association filter (#206): every file, only those associated with a Song, or only those with none.</summary>
 public enum AudioFileAssociation
@@ -212,12 +235,28 @@ public sealed record AudioFilePage(IReadOnlyList<AudioFile> Items, int Total);
 /// <param name="Status">Only files that report this status, or null for all.</param>
 /// <param name="Association">Which files by association.</param>
 /// <param name="MetadataReadable">Only files whose header was (or was not) readable, or null for all.</param>
-/// <param name="Offset">How many to skip, in path order.</param>
+/// <param name="Offset">How many to skip, in the order asked for.</param>
 /// <param name="Limit">How many to return at most.</param>
-public sealed record AudioFileListRequest(AudioFileReportedStatus? Status, AudioFileAssociation Association, bool? MetadataReadable, int Offset, int Limit);
+/// <param name="Sort">The order (#209).</param>
+/// <param name="Descending">Whether the order is reversed.</param>
+/// <param name="Search">Only files whose name or folder holds this text, or null for all.</param>
+/// <param name="WithSuggestions">Whether each file of the page gets its suggestions (#209); then the limit is at most <see cref="AudioFileService.MaximumSuggestedLimit"/>.</param>
+public sealed record AudioFileListRequest(
+    AudioFileReportedStatus? Status,
+    AudioFileAssociation Association,
+    bool? MetadataReadable,
+    int Offset,
+    int Limit,
+    AudioFileSort Sort = AudioFileSort.Path,
+    bool Descending = false,
+    string? Search = null,
+    bool WithSuggestions = false);
 
-/// <summary>An audio file and the status it reports now (#207).</summary>
-public sealed record ReportedAudioFile(AudioFile File, AudioFileReportedStatus Status);
+/// <summary>
+/// An audio file and the status it reports now (#207); <see cref="Suggestions"/> is null unless they
+/// were asked for (#209), and then empty when nothing is credible.
+/// </summary>
+public sealed record ReportedAudioFile(AudioFile File, AudioFileReportedStatus Status, IReadOnlyList<MatchSuggestion>? Suggestions = null);
 
 /// <summary>One page of the audio file list, as reported.</summary>
 public sealed record ReportedAudioFilePage(IReadOnlyList<ReportedAudioFile> Items, int Total);
@@ -237,7 +276,7 @@ public interface IAudioFileStore
     /// </summary>
     Task<int> MarkMissingAsync(IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken);
 
-    /// <summary>One page of files, in path order (ordinal), and how many match in all.</summary>
+    /// <summary>One page of files, in the order asked for, and how many match in all.</summary>
     Task<AudioFilePage> ListAsync(AudioFileQuery query, CancellationToken cancellationToken);
 
     /// <summary>The file with <paramref name="id"/>, or null.</summary>
@@ -285,6 +324,17 @@ public interface IAudioFileStore
     /// each one's revision. Returns how many changed.
     /// </summary>
     Task<int> UnassociateAsync(IReadOnlyCollection<Guid> generationIds, IReadOnlyCollection<Guid> songIds, CancellationToken cancellationToken);
+}
+
+/// <summary>Where the suggestions for unmatched files read their candidates (#209). Reads only.</summary>
+public interface IMatchCandidateStore
+{
+    /// <summary>
+    /// Every Song not in the Archived workflow state, with its title, when it was last updated, its
+    /// credited Artists' names (in credit order), and its Generations (archived ones included) with
+    /// their Suno titles and durations.
+    /// </summary>
+    Task<IReadOnlyList<MatchCandidateSong>> SongsAsync(CancellationToken cancellationToken);
 }
 
 /// <summary>Where the last scan's summary is kept (outside the jobs table, which is pruned).</summary>

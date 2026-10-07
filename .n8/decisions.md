@@ -4226,3 +4226,24 @@ Story #217 (built in parallel; merged into the milestone branch):
 - **Decision:** Logging is done in the endpoint, not in the service, because Application services take no `ILogger`; the media code logs through ports. The "could not be opened" Warning carries `audioFileId` only, never the exception, whose message holds the absolute path (invariant 6). The access log line already holds only the URL, which carries the ID.
   **Why:** invariant 6. Tests assert that the log holds neither the file name, the folder name, nor the mount root.
   **Issue:** #217
+
+Story #209:
+
+- **Decision:** Unmatched Files reads the existing `GET /api/v1/audio-files` with new query parameters, not a new route: `sort=path|name|folder|firstSeen` (default `path`, so existing callers are unchanged), `direction=asc|desc` (first seen defaults to newest first, the others to ascending), `q` (trimmed, at most 200 characters, matched case-insensitively for ASCII letters against the relative path, which is the folder plus the name), and `include=suggestions`. With suggestions the limit is at most 100 (default 100), and over that is 422 keyed `limit`. Every order ends with the path, so pages never overlap. `suggestions` appears only when asked for, and is `[]` for an associated file.
+  **Why:** The plan's key link names this endpoint with `include=suggestions`, and the discretion pages at 100. The `sort`/`direction`/`q` names follow the Songs and Ignored-items lists.
+  **Issue:** #209
+- **Decision:** `Application/Media/MatchSuggester` is a pure static scorer that follows every discretion line. Title signals: stem = title 100, embedded title 90, Generation Suno title = stem 80 (that Generation), title in the stem as whole words 60, folder = title 40. Artist +20, duration within 2 s +10. A title under 4 characters needs a second signal for a contained or folder match. The closest Generation is suggested, and an exact tie suggests none. Ties go to the most recently updated Song, then the newest by UUIDv7. The API answers reason codes with parameters (`generation`, `folder`, `artist`, `artistSource`, `differenceSeconds`), and the page writes the sentences.
+  **Why:** The scoring and evidence shape are given by the discretion. The extra UUIDv7 tie-break makes equal timestamps deterministic.
+  **Issue:** #209
+- **Decision:** The stem is compared in two forms, with and without a leading track number (`01 `, `03 - `). Either may equal the title. Suno ID tokens (with or without `suno-` and brackets), the extension, and a trailing ` (n)` are always dropped. Apostrophes are deleted; other punctuation, `_` and `-` become spaces.
+  **Why:** Dropping the number alone would stop "7 Rings.mp3" from equalling "7 Rings". Deleting apostrophes keeps "Don't" equal to "Dont".
+  **Issue:** #209
+- **Decision:** "Archived Songs" are Songs in the default Archived workflow state (`DefaultWorkflowStates.Archived`, by its fixed ID). Songs have no other archive flag. Archived Generations of a live Song stay candidates. A "credited Artist" is any credit, of any role. Aliases are not compared.
+  **Why:** The PRD's only Song-level "Archived" is the workflow state. Narrowing Generations or roles further was not asked for.
+  **Issue:** #209
+- **Decision:** Candidates come from a new read-only port `IMatchCandidateStore` (`Infrastructure/Persistence/MatchCandidateStore`): three reads per request, made only when the page holds an unassociated file. The types carry IDs, shortcodes and text only, so `Application.Media` stays outside the invariant 1 guard's catalog namespaces. A deleted Generation is never a candidate, because deletion removes its row. The API test proves this.
+  **Why:** The discretion says "loaded once per request and scored in memory". Keeping catalog types out of the signatures avoids widening the invariant 1 guard.
+  **Issue:** #209
+- **Decision:** The page (`/library/unmatched`) is a table with the File (row header, plus the unmatched reason sentence), Folder ("Top level" at the root), Format, Duration (`m:ss`, "Unknown"), Size, Status (a filled "Missing"/"Unavailable" badge), First seen, and Suggested Songs (an ordered list linking `/go/<shortcode>` for the Song and Generation, with a bulleted list of reasons). Sort is one "Sort by" select of six order/direction pairs. Search, sort and page are kept in the address. It has no hide or dismiss control. The Media page's Unmatched count is a link named "N unmatched: open Unmatched Files".
+  **Why:** The AC lists the columns and orders, and #208's note asks for the link and the sidebar entry. The #210 Associate action will go in the row.
+  **Issue:** #209

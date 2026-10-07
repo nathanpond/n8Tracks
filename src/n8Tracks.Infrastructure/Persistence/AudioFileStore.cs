@@ -142,14 +142,55 @@ internal sealed class AudioFileStore(N8TracksDbContext context) : IAudioFileStor
             rows = rows.Where(row => row.MetadataReadable == readable);
         }
 
+        // The path is the folder and the name, so text in either is text in the path; SQLite's lower()
+        // folds ASCII letters only, so the text is folded the same way.
+        if (query.Search is { Length: > 0 } search)
+        {
+            var folded = AsciiLower(search);
+            rows = rows.Where(row => row.Path.ToLower().Contains(folded));
+        }
+
         var total = await rows.CountAsync(cancellationToken).ConfigureAwait(false);
-        var page = await rows.OrderBy(static row => row.Path)
+        var page = await Ordered(rows, query.Sort, query.Descending)
             .Skip(query.Offset)
             .Take(query.Limit)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
         return new AudioFilePage(await FilesOfAsync(page, cancellationToken).ConfigureAwait(false), total);
     }
+
+    /// <summary>
+    /// <paramref name="rows"/> in the order asked for (#209), each ending with the path so a page never
+    /// repeats or skips a file. The folder is the path without its file name; names are compared
+    /// ordinally, as SQLite's BINARY collation does.
+    /// </summary>
+    private static IQueryable<AudioFileRecord> Ordered(IQueryable<AudioFileRecord> rows, AudioFileSort sort, bool descending) => (sort, descending) switch
+    {
+        (AudioFileSort.Name, false) => rows.OrderBy(static row => row.FileName).ThenBy(static row => row.Path),
+        (AudioFileSort.Name, true) => rows.OrderByDescending(static row => row.FileName).ThenByDescending(static row => row.Path),
+        (AudioFileSort.Folder, false) => rows
+            .OrderBy(static row => row.Path.Substring(0, row.Path.Length - row.FileName.Length))
+            .ThenBy(static row => row.FileName)
+            .ThenBy(static row => row.Path),
+        (AudioFileSort.Folder, true) => rows
+            .OrderByDescending(static row => row.Path.Substring(0, row.Path.Length - row.FileName.Length))
+            .ThenByDescending(static row => row.FileName)
+            .ThenByDescending(static row => row.Path),
+        (AudioFileSort.FirstSeen, false) => rows.OrderBy(static row => row.FirstSeenUtc).ThenBy(static row => row.Path),
+        (AudioFileSort.FirstSeen, true) => rows.OrderByDescending(static row => row.FirstSeenUtc).ThenByDescending(static row => row.Path),
+        (_, false) => rows.OrderBy(static row => row.Path),
+        (_, true) => rows.OrderByDescending(static row => row.Path),
+    };
+
+    private static string AsciiLower(string text) =>
+        string.Create(text.Length, text, static (span, source) =>
+        {
+            for (var index = 0; index < source.Length; index++)
+            {
+                var character = source[index];
+                span[index] = character is >= 'A' and <= 'Z' ? (char)(character + ('a' - 'A')) : character;
+            }
+        });
 
     public async Task<AudioFile?> FindAsync(Guid id, CancellationToken cancellationToken)
     {

@@ -169,6 +169,12 @@ describe('Library → Media', () => {
       'Skipped',
       'Unreadable',
     ]);
+    expect(
+      within(fileCount('unmatched')).getByRole('link', {
+        name: '2 unmatched: open Unmatched Files',
+      }),
+    ).toHaveAttribute('href', '/library/unmatched');
+    expect(within(fileCount('missing')).queryByRole('link')).not.toBeInTheDocument();
     expect(screen.getByTestId('scan-count-seen')).toHaveTextContent('3');
     expect(screen.getByTestId('scan-count-skipped')).toHaveTextContent('1');
     expect(screen.queryByTestId('scan-failed')).not.toBeInTheDocument();
