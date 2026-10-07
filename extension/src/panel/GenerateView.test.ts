@@ -102,6 +102,19 @@ describe('Generate on Suno in the panel', () => {
     await expectNoAxeViolations(document);
   });
 
+  it('asks the user to select the Song’s workspace when Suno has two of its name, offering no button (#335)', async () => {
+    const { generate, buttons } = view();
+
+    generate.show({ kind: 'select', name: 'Night Drive' });
+
+    expect(generate.element.querySelector('[role="alert"]')?.textContent).toBe(
+      'Suno has more than one workspace named “Night Drive”. Select the Song’s one in Suno’s workspace list.',
+    );
+    expect(generate.element.textContent).toContain('which it checks by ID');
+    expect(buttons()).toEqual([]);
+    await expectNoAxeViolations(document);
+  });
+
   it('says what the user’s Create came to, or that its clips were not recorded (#149)', async () => {
     const { generate, buttons } = view();
 

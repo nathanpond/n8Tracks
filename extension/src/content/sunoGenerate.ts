@@ -138,7 +138,14 @@ export const NOT_EXPECTED =
 export const LEFT_CREATE =
   'You left Suno’s Create page, so the extension stopped watching for Creates.';
 export const SAME_NAME =
-  "Suno has more than one workspace with the name of the Song's workspace, so the extension cannot tell which row is the Song's. Rename one of them in Suno, then try again.";
+  "Suno has more than one workspace with the name of the Song's workspace, so the extension cannot tell which row is the Song's, and Suno did not show the Song's workspace in time. Select it in Suno's workspace list or rename one of them in Suno, then try again.";
+
+/**
+ * How long the tab waits for the user to select the Song's workspace by hand when Suno lists
+ * another of the same name (#335): the rows carry no ID, so neither is pressed, and the selection is
+ * accepted by the ID the library pane then asks for.
+ */
+export const SAME_NAME_WAIT_MS = 120_000;
 
 /** The source's page in Suno did not show the clip's menu (#148). */
 export function couldNotOpen(name: string, problem: string): string {
@@ -490,13 +497,26 @@ export class SunoGenerate {
     if (!(await this.begin(GENERATE_STEPS.select))) {
       return;
     }
-    // A workspace of the same name and another ID is never selected in its place.
-    if (namedLike(listed, workspace.name).length > 1) {
-      await this.stop(SAME_NAME);
+    // The library pane already shows it (the page loaded with it selected): nothing to press. This
+    // is by ID, so it holds even when another workspace has the same name (#335).
+    if ((await this.shownWorkspace()) === workspace.id) {
+      await this.selected(workspace);
       return;
     }
-    // The library pane already shows it (the page loaded with it selected): nothing to press.
-    if ((await this.shownWorkspace()) === workspace.id) {
+    // A workspace of the same name and another ID is never selected in its place: neither row is
+    // pressed. The user selects the Song's own in Suno, and it is accepted by its ID.
+    if (namedLike(listed, workspace.name).length > 1) {
+      this.options.show({ kind: 'select', name: workspace.name });
+      const byHand = this.watch(
+        'library-feed',
+        (message) => workspaceOfFeed(message) === workspace.id,
+        SAME_NAME_WAIT_MS,
+      );
+      await byHand.done;
+      if (byHand.seen === null) {
+        await this.stop(SAME_NAME);
+        return;
+      }
       await this.selected(workspace);
       return;
     }
