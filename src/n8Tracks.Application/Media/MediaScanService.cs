@@ -55,6 +55,23 @@ public sealed class MediaScanService(
     public Task<MediaScanSummary?> LastScanAsync(CancellationToken cancellationToken) => summaries.FindAsync(cancellationToken);
 
     /// <summary>
+    /// Whether the media folder's root can be listed now, within the listing limit: what a scan
+    /// needs first. The scheduler (#204) queues nothing while it cannot.
+    /// </summary>
+    public async Task<bool> IsFolderAvailableAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            _ = await ListAsync(string.Empty, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Runs one scan and writes its summary, whether it succeeds or not. A mount that is absent, or
     /// whose root cannot be listed at the start or at the end of the walk, fails the scan with
     /// <see cref="MediaFolderUnavailableException"/> before any record is written. A scan that fails
@@ -69,9 +86,12 @@ public sealed class MediaScanService(
         var started = time.GetUtcNow();
         var watch = time.GetTimestamp();
         var tally = new Tally();
+        MediaScanSummary? previous = null;
         try
         {
+            previous = await summaries.FindAsync(cancellationToken).ConfigureAwait(false);
             var counts = await ScanAsync(started, tally, report, cancellationToken).ConfigureAwait(false);
+            await ForgetAsync(previous, jobId).ConfigureAwait(false);
             await summaries.WriteAsync(
                 new MediaScanSummary(jobId, trigger, MediaScanOutcome.Succeeded, started, time.GetUtcNow(), counts, null),
                 CancellationToken.None).ConfigureAwait(false);
@@ -88,7 +108,21 @@ public sealed class MediaScanService(
             await summaries.WriteAsync(
                 new MediaScanSummary(jobId, trigger, MediaScanOutcome.Failed, started, time.GetUtcNow(), tally.Counts(), error),
                 CancellationToken.None).ConfigureAwait(false);
+            await ForgetAsync(previous, jobId).ConfigureAwait(false);
             throw;
+        }
+    }
+
+    /// <summary>
+    /// When this scan finishes, deletes the job of the scan before it if that was a startup or
+    /// scheduled scan that found nothing (#204), so unattended scans do not crowd the jobs list. Its
+    /// summary is already replaced by this scan's, or is about to be.
+    /// </summary>
+    private async Task ForgetAsync(MediaScanSummary? previous, Guid jobId)
+    {
+        if (previous is not null && previous.JobId != jobId && MediaScanScheduleRules.IsForgettable(previous))
+        {
+            _ = await jobs.DeleteFinishedAsync(previous.JobId, CancellationToken.None).ConfigureAwait(false);
         }
     }
 

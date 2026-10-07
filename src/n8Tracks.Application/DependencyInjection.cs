@@ -97,6 +97,8 @@ public static class DependencyInjection
         services.AddScoped<MediaScanService>();
         services.AddScoped<AudioFileService>();
         services.AddJobHandler<MediaScanJobHandler>(MediaScanService.JobType);
+        services.AddSingleton<MediaScanStartup>();
+        services.AddScoped<MediaScanScheduleService>();
         services.AddScoped<RetentionService>();
         services.AddScoped<DeletedItemsService>();
         services.AddDailyTask<RetentionPruneTask>();

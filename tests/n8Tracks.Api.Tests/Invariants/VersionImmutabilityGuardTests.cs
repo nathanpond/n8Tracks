@@ -969,6 +969,7 @@ public sealed class VersionImmutabilityGuardTests
         ["PUT /api/v1/settings/backup-schedule"] = "the backup schedule: one settings row",
         ["PUT /api/v1/settings/version-defaults"] = "the defaults for new Versions: one settings row, applied only when a Song is created",
         ["PUT /api/v1/settings/catalog"] = "the default Artist: one settings row, applied only as a new Song's credit",
+        ["PUT /api/v1/settings/media-scan"] = "the media scan schedule (#204): one settings row; the scans it leads to write only audio_files and media.lastScan",
         ["POST /api/v1/restores/validate"] = "reads a backup archive into a temporary folder; changes no row",
         ["POST /api/v1/restores/uploads"] = "writes an uploaded archive to a temporary file and reads it; changes no row",
         ["POST /api/v1/artwork"] = "stores an uploaded image as an asset (assets and its files); attaching it is the owner's own edit, and no Version is touched",
