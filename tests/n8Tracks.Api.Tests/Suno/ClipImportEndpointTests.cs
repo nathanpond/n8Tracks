@@ -14,7 +14,7 @@ using n8Tracks.Infrastructure.Retention;
 namespace n8Tracks.Api.Tests.Suno;
 
 /// <summary>
-/// A clip's mapped inputs in the catalog (#135): an imported Version keeps out-of-range values whole
+/// A clip's mapped inputs in the catalog (#135, #136 for Speech and Sounds): an imported Version keeps out-of-range values whole
 /// and marked, and is frozen like any other once it has a Generation; a sync review classes a linked
 /// clip <c>conflict</c> when its inputs differ from its Version's; and a model Suno reports that is not
 /// on the list is added only by a commit, never by classifying.
@@ -124,6 +124,57 @@ public sealed class ClipImportEndpointTests
         Assert.Equal("conflict", records[SunoExportApi.IdOf(changedSlider)].GetProperty("class").GetString());
         Assert.Equal("changed", records[SunoExportApi.IdOf(changedTags)].GetProperty("class").GetString());
         Assert.Equal("conflict", records[SunoExportApi.IdOf(onBlank)].GetProperty("class").GetString());
+    }
+
+    /// <summary>
+    /// Speech and Sounds in the catalog (#136): an imported Speech and Sound Version hold their kind and
+    /// their own options through the store, with their not-returned marks; a sync review classes each
+    /// clip <c>linked</c> on its own Version, and <c>conflict</c> on a Version of another kind (here a
+    /// Song Version made in n8Tracks).
+    /// </summary>
+    [Fact]
+    public async Task ASpeechAndASoundArriveAsWhatTheyAreAndConflictWithAnotherKind()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var token = await SunoWorkspaceApi.ExtensionTokenAsync(factory);
+        var song = (await SongApi.CreateAsync(client, "Speech and Sound")).GetProperty("id").GetGuid();
+        var speech = SunoExportApi.FixtureClips("feed-v3.speech-advanced.response.json");
+        var sound = SunoExportApi.FixtureClips("feed-v3.sounds.response.json");
+
+        await ImportedVersions.AddAsync(factory, song, "2", speech[0]);
+        await SongApi.AttachGenerationAsync(factory, "n8-1-v2", speech[0].ToJsonString());
+        await ImportedVersions.AddAsync(factory, song, "3", sound[0]);
+        await SongApi.AttachGenerationAsync(factory, "n8-1-v3", sound[0].ToJsonString());
+        await SongApi.AttachGenerationAsync(factory, "n8-1-v1", sound[1].ToJsonString());
+
+        var speechVersion = await GetAsync(client, "n8-1-v2");
+        var speechInputs = speechVersion.GetProperty("inputs");
+        Assert.Equal("speech", speechInputs.GetProperty("kind").GetString());
+        Assert.Equal("advanced", speechInputs.GetProperty("speechMode").GetString());
+        Assert.Equal("high", speechInputs.GetProperty("speechVariety").GetString());
+        Assert.Equal(speech[0]["metadata"]!["prompt"]!.GetValue<string>(), speechInputs.GetProperty("speechScript").GetString());
+        Assert.Equal(["speechTone", "speechVocalGender", "speechBackgroundMusic"], Strings(speechVersion.GetProperty("imported").GetProperty("notReturned")));
+
+        var soundVersion = await GetAsync(client, "n8-1-v3");
+        var soundInputs = soundVersion.GetProperty("inputs");
+        Assert.Equal("sound", soundInputs.GetProperty("kind").GetString());
+        Assert.Equal("loop", soundInputs.GetProperty("soundType").GetString());
+        Assert.Equal(120, soundInputs.GetProperty("soundBpm").GetInt32());
+        Assert.Equal("A", soundInputs.GetProperty("soundKey").GetString());
+        Assert.Equal("minor", soundInputs.GetProperty("soundScale").GetString());
+        Assert.Equal(["soundsModel"], Strings(soundVersion.GetProperty("imported").GetProperty("notReturned")));
+
+        var (id, _) = await SunoExportApi.UploadAsync(
+            client,
+            token,
+            SunoExportApi.Header(),
+            SunoExportApi.Part(1, [speech[0], sound[0], sound[1]]));
+
+        var records = await SunoExportApi.RecordsByIdAsync(client, id);
+        Assert.Equal("linked", records[SunoExportApi.IdOf(speech[0])].GetProperty("class").GetString());
+        Assert.Equal("linked", records[SunoExportApi.IdOf(sound[0])].GetProperty("class").GetString());
+        Assert.Equal("conflict", records[SunoExportApi.IdOf(sound[1])].GetProperty("class").GetString());
     }
 
     /// <summary>

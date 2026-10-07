@@ -158,6 +158,12 @@ public static class SunoExportRules
     /// <summary>A flag on a record: it was in both the library list and the Trash list (and is treated as trashed).</summary>
     public const string AlsoInLibraryFlag = "alsoInLibrary";
 
+    /// <summary>
+    /// A flag on a record: its kind markers conflict or are unrecognised, so it is taken as a Song and the
+    /// review shows it for the user's attention (#136). It does not block Confirm; the kind cannot be changed there.
+    /// </summary>
+    public const string UnknownKindFlag = "unknown_kind";
+
     /// <summary>The fields "changed" compares, as the records endpoint names them.</summary>
     public static readonly IReadOnlyList<string> ComparedFields =
         ["title", "tags", "duration", "modelVersion", "modelName", "minimumBpm", "maximumBpm", "averageBpm", "key", "imageUrl"];

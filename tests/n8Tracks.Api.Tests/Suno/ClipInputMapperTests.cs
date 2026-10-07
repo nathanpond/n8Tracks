@@ -19,6 +19,21 @@ public sealed class ClipInputMapperTests
     private const string Advanced = "feed-v3.songs-advanced.response.json";
     private const string Simple = "feed-v3.songs-simple.response.json";
 
+    private const string LineageStory = "#137";
+    private const string CommitStory = "#140";
+
+    /// <summary>The reference and file fields the mapper leaves to other stories, by owner (#136's discretion).</summary>
+    private static readonly Dictionary<string, string> ElsewhereOwners = new(StringComparer.Ordinal)
+    {
+        ["simple_add_playlist"] = LineageStory,
+        ["simple_add_image"] = LineageStory,
+        ["simple_add_video"] = LineageStory,
+        ["audio"] = LineageStory,
+        ["voice"] = LineageStory,
+        ["inspiration"] = LineageStory,
+        ["workspace"] = CommitStory,
+    };
+
     /// <summary>The Songs options the story lists, by inventory key: each is read, or marked not returned.</summary>
     private static readonly string[] SongsOptions =
     [
@@ -110,11 +125,13 @@ public sealed class ClipInputMapperTests
         Assert.Equal(CreationMode.Advanced, Map(clip).Inputs.SongMode);
     }
 
-    /// <summary>Every Songs option the story lists is read, or marked not returned, and nothing else is read.</summary>
+    /// <summary>Every Songs option the story lists is read, or marked not returned, and no option of another tab is.</summary>
     [Fact]
     public void EverySongsOptionIsReadOrMarkedNotReturned()
     {
-        Assert.Equal(SongsOptions.Order(StringComparer.Ordinal), ClipInputMapper.ReadKeys.Order(StringComparer.Ordinal));
+        Assert.Equal(
+            SongsOptions.Order(StringComparer.Ordinal),
+            ClipInputMapper.ReadKeys.Where(static key => CreateFieldInventory.Embedded.Get(key).Tab == ClipInputMapper.SongsTab).Order(StringComparer.Ordinal));
 
         var mapped = Map(FixtureClip(Advanced));
         var names = SongsOptions.Select(static key => key is "lyrics" or "styles" ? key : ApiName(key)).ToList();
@@ -273,16 +290,59 @@ public sealed class ClipInputMapperTests
     }
 
     /// <summary>
-    /// The coverage test: every Songs field of the inventory has a feed mapping or a <c>notReturned</c>
-    /// entry, and every mapped one is read by the mapper (or by the lineage or commit story).
+    /// The coverage test (#135, all tabs since #136): every field of the inventory, on every tab, has a
+    /// feed mapping or a <c>notReturned</c> entry, and every mapped one is read by the mapper or owned by
+    /// the lineage or commit story. All 35 keys are accounted for: 28 value fields the mapper reads and 7
+    /// reference and file fields, each against its owner.
     /// </summary>
     [Fact]
-    public void TheImportFieldMapCoversEverySongsField()
+    public void TheImportFieldMapCoversEveryFieldOnEveryTab()
     {
-        Assert.Empty(ClipInputMapper.CoverageGaps(ImportFieldMap.Embedded, CreateFieldInventory.Embedded, ClipInputMapper.ReadKeys));
+        var inventory = CreateFieldInventory.Embedded;
+        Assert.Equal(["songs", "speech", "sounds"], inventory.Fields.Select(static field => field.Tab).Distinct());
+        Assert.Empty(ClipInputMapper.CoverageGaps(ImportFieldMap.Embedded, inventory, ClipInputMapper.ReadKeys));
 
-        // The fields left to others are references and files, not options a Version holds.
-        Assert.All(ClipInputMapper.ReadElsewhere, key => Assert.Contains(CreateFieldInventory.Embedded.Get(key).Type, new[] { CreateField.ReferenceType, CreateField.FileType }));
+        Assert.Equal(35, inventory.Fields.Count);
+        Assert.Equal(28, ClipInputMapper.ReadKeys.Count);
+        Assert.Equal(
+            inventory.Fields.Select(static field => field.Key).Order(StringComparer.Ordinal),
+            ClipInputMapper.ReadKeys.Concat(ClipInputMapper.ReadElsewhere).Order(StringComparer.Ordinal));
+        Assert.Empty(ClipInputMapper.ReadKeys.Intersect(ClipInputMapper.ReadElsewhere));
+        Assert.All(
+            inventory.Fields.Where(static field => field.Tab != ClipInputMapper.SongsTab),
+            static field => Assert.Contains(field.Key, ClipInputMapper.ReadKeys));
+
+        // The fields left to others are references and files, not options a Version holds, each with its owner.
+        Assert.Equal(
+            ElsewhereOwners.Keys.Order(StringComparer.Ordinal),
+            ClipInputMapper.ReadElsewhere.Order(StringComparer.Ordinal));
+        Assert.Equal(6, ElsewhereOwners.Values.Count(static owner => owner == LineageStory));
+        Assert.Single(ElsewhereOwners.Values, static owner => owner == CommitStory);
+        Assert.All(ClipInputMapper.ReadElsewhere, key => Assert.Contains(inventory.Get(key).Type, new[] { CreateField.ReferenceType, CreateField.FileType }));
+    }
+
+    /// <summary>It bites on the other tabs too: a made-up Sounds field in a copy of the inventory fails it.</summary>
+    [Fact]
+    public void TheCoverageTestFailsOnAMadeUpSoundsField()
+    {
+        var inventory = JsonNode.Parse(CreateFieldInventory.Embedded.Json)!;
+        var fields = inventory["fields"]!.AsArray();
+        var madeUp = fields.Single(static field => field!["key"]!.GetValue<string>() == "sound_bpm")!.DeepClone();
+        madeUp["key"] = "sound_swing";
+        madeUp["label"] = "Swing";
+        fields.Add(madeUp);
+        var withMadeUp = CreateFieldInventory.Parse(inventory.ToJsonString());
+
+        Assert.Equal(
+            ["'sound_swing' has no entry in the import field map."],
+            ClipInputMapper.CoverageGaps(ImportFieldMap.Embedded, withMadeUp, ClipInputMapper.ReadKeys));
+
+        // And a Speech option whose mapping goes missing fails it, as a Songs option does.
+        var map = JsonNode.Parse(File.ReadAllText(MapPath()))!;
+        map["fields"]!["speech_script"]!["paths"]!["feed"] = null;
+        Assert.Equal(
+            ["'speech_script' has neither a feed path nor a notReturned entry."],
+            ClipInputMapper.CoverageGaps(ImportFieldMap.Parse(map.ToJsonString()), CreateFieldInventory.Embedded, ClipInputMapper.ReadKeys));
     }
 
     /// <summary>It bites: a field with its mapping removed fails it, and so does a mapped field the mapper does not read.</summary>

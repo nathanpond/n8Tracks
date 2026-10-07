@@ -251,7 +251,7 @@ public static class ExportReader
             switch (ClipReader.Read(clip.GetRawText()))
             {
                 case ClipReading.Read read:
-                    staged.Add(new StagedClip(read.Fields.SunoId, read.Raw, trashed, read.Fields));
+                    staged.Add(new StagedClip(read.Fields.SunoId, read.Raw, trashed, read.Fields, UnknownKind: !ClipInputMapper.KindOf(clip).Determined));
                     break;
                 case ClipReading.Invalid invalid:
                     errors[field] = [invalid.Reason];

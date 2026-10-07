@@ -229,6 +229,48 @@ public sealed class SunoExportEndpointTests
         Assert.Equal(["second-try"], (await SunoExportApi.RecordsByIdAsync(client, replaced)).Keys);
     }
 
+    /// <summary>
+    /// A clip whose kind cannot be told (#136: its markers conflict or are unrecognised) is staged with the
+    /// <c>unknown_kind</c> flag for the review's attention; a Speech, a Sound, and a Song are not. The flag
+    /// follows the copy a repeated record keeps: a later, readable copy clears it, and the record stays
+    /// flagged as repeated. It is a mark on the staged record only, and does not stop classification.
+    /// </summary>
+    [Fact]
+    public async Task AClipOfUnknownKindIsFlaggedForAttention()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var token = await SunoWorkspaceApi.ExtensionTokenAsync(factory);
+        var speech = SunoExportApi.FixtureClips("feed-v3.speech-advanced.response.json")[0];
+        var sound = SunoExportApi.FixtureClips("feed-v3.sounds.response.json")[0];
+        var song = SunoExportApi.LibraryClips()[0];
+        var conflicting = SunoExportApi.FixtureClips("feed-v3.sounds.response.json")[1];
+        conflicting["metadata"]!["is_speech"] = true;
+        var unrecognised = JsonNode.Parse(Clips.Minimal("unrecognised-marker"))!;
+        unrecognised["metadata"] = new JsonObject { ["is_speech"] = "yes" };
+        var mended = JsonNode.Parse(Clips.Minimal("mended-later"))!;
+        var unreadable = mended.DeepClone();
+        unreadable["metadata"] = new JsonObject { ["task"] = 7 };
+
+        var (exportId, export) = await SunoExportApi.UploadAsync(
+            client,
+            token,
+            SunoExportApi.Header(),
+            SunoExportApi.Part(1, [speech, sound, song, conflicting, unrecognised, unreadable, mended]));
+
+        Assert.Equal("ready", export.GetProperty("state").GetString());
+        var records = await SunoExportApi.RecordsByIdAsync(client, exportId);
+        string[] Flags(string id) => [.. records[id].GetProperty("flags").EnumerateArray().Select(static flag => flag.GetString()!)];
+
+        Assert.Empty(Flags(SunoExportApi.IdOf(speech)));
+        Assert.Empty(Flags(SunoExportApi.IdOf(sound)));
+        Assert.Empty(Flags(SunoExportApi.IdOf(song)));
+        Assert.Equal(["unknown_kind"], Flags(SunoExportApi.IdOf(conflicting)));
+        Assert.Equal(["unknown_kind"], Flags("unrecognised-marker"));
+        Assert.Equal(["repeated"], Flags("mended-later"));
+        Assert.All(records.Values, static record => Assert.Equal("new", record.GetProperty("class").GetString()));
+    }
+
     /// <summary>The records list filters by class, workspace, and playlist, pages, and sorts newest in Suno first, then by Suno ID.</summary>
     [Fact]
     public async Task RecordsAreFilteredPagedAndNewestFirst()
