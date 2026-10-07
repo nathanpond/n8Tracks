@@ -762,7 +762,12 @@ describe('Generate on Suno in the Suno tab: the user’s Create (#149)', () => {
 
     try {
       await tab.generate.resume();
-      await until(() => tab.types().filter((type) => type === 'generate-observed').length === 2);
+      // The second answer is shown once n8Tracks replies, not when it is sent.
+      await until(
+        () =>
+          tab.types().filter((type) => type === 'generate-observed').length === 2 &&
+          tab.last()?.kind === 'recorded',
+      );
     } finally {
       standIn.stop();
     }
