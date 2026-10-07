@@ -443,3 +443,84 @@ describe('the forbidden-control check (invariant 4)', () => {
     expect(page.refusal()).toBeNull();
   });
 });
+
+describe('scrollToEnd and go (the library reader, #134)', () => {
+  function byId(id: string): HTMLElement {
+    const element = document.getElementById(id);
+    if (element === null) {
+      throw new Error(`No element #${id}`);
+    }
+    return element;
+  }
+
+  /** Gives an element a scrolling box jsdom does not lay out. */
+  function scrolling(element: HTMLElement, height: number, overflow = 'auto'): HTMLElement {
+    Object.defineProperty(element, 'scrollHeight', { value: height, configurable: true });
+    Object.defineProperty(element, 'clientHeight', { value: 100, configurable: true });
+    element.style.overflowY = overflow;
+    return element;
+  }
+
+  it('scrolls every region that scrolls its own content to its end, pressing nothing', () => {
+    document.body.innerHTML = `
+      <div id="list"><div role="rowgroup"></div></div>
+      <div id="short"></div>
+      <div id="clipped"></div>
+      <div ${PANEL_HOST_ATTRIBUTE}><div id="panel-list"></div></div>`;
+    const list = scrolling(byId('list'), 5000);
+    const short = scrolling(byId('short'), 50);
+    const clipped = scrolling(byId('clipped'), 5000, 'hidden');
+    const panelList = scrolling(byId('panel-list'), 5000);
+    const events = recordEvents('click', 'pointerdown', 'keydown', 'mousedown');
+
+    new Page(document).scrollToEnd();
+
+    expect(list.scrollTop).toBe(5000);
+    expect(short.scrollTop).toBe(0);
+    expect(clipped.scrollTop).toBe(0);
+    expect(panelList.scrollTop).toBe(0);
+    expect(events).toEqual([]);
+  });
+
+  it('loads a Suno page by address, and nothing else', () => {
+    const visited: string[] = [];
+    const page = new Page(document, { navigate: (address) => visited.push(address) });
+
+    page.go(new URL('https://suno.com/me/trash'));
+    expect(() => {
+      page.go(new URL('https://example.com/me'));
+    }).toThrow(PrimitiveError);
+    expect(() => {
+      page.go(new URL('http://suno.com/me'));
+    }).toThrow('an address on suno.com');
+
+    expect(visited).toEqual(['https://suno.com/me/trash']);
+  });
+
+  it('neither scrolls nor navigates once its run has stopped', () => {
+    const visited: string[] = [];
+    const controller = new AbortController();
+    const page = new Page(document, { navigate: (address) => visited.push(address) }).withSignal(
+      controller.signal,
+    );
+    controller.abort();
+
+    expect(() => {
+      page.scrollToEnd();
+    }).toThrow(StoppedError);
+    expect(() => {
+      page.go(new URL('https://suno.com/me'));
+    }).toThrow(StoppedError);
+    expect(visited).toEqual([]);
+  });
+
+  it('finds lists by role: a list element and an ARIA rowgroup', () => {
+    document.body.innerHTML = '<ul aria-label="8 songs"><li>a</li></ul><div role="rowgroup"></div>';
+    const page = new Page(document);
+
+    expect(page.find({ role: 'list', name: /^\d+ songs$/, description: 'songs' }).kind).toBe(
+      'found',
+    );
+    expect(page.find({ role: 'rowgroup', description: 'rows' }).kind).toBe('found');
+  });
+});

@@ -28,8 +28,9 @@ export default defineConfig([
   {
     // The adapter story: only adapter/primitives.ts touches Suno's page. The Suno content script,
     // the adapter, and the panel may not query, click, or dispatch events; the panel works inside
-    // its own shadow root through references it created, so it needs none of these.
-    files: ['src/adapter/**/*.ts', 'src/content/suno*.ts', 'src/panel/**/*.ts'],
+    // its own shadow root through references it created, so it needs none of these. The page
+    // observer (src/page/, #134) runs in Suno's own page and only wraps fetch.
+    files: ['src/adapter/**/*.ts', 'src/content/suno*.ts', 'src/panel/**/*.ts', 'src/page/**/*.ts'],
     rules: {
       'no-restricted-syntax': [
         'error',

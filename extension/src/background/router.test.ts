@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { fakeBrowser } from '../testing/fakeBrowser.ts';
 import { Connection } from './connection.ts';
 import { route } from './router.ts';
+import type { SyncCoordinator } from './sync.ts';
 
 const ID = 'abcdefghijklmnopabcdefghijklmnop';
 const PAGE = { id: ID, url: `chrome-extension://${ID}/options/options.html` };
@@ -54,5 +55,32 @@ describe('the service worker router', () => {
       error: 'unknown_type',
       message: 'The extension does not handle "export".',
     });
+  });
+
+  it('passes a sync message from the Suno content script to the sync, with its tab', async () => {
+    const handled: [unknown, number][] = [];
+    const sync = {
+      handle: (message: unknown, tabId: number) => {
+        handled.push([message, tabId]);
+        return Promise.resolve({ session: null });
+      },
+    } as unknown as SyncCoordinator;
+    const suno = { id: ID, url: 'https://suno.com/me', tab: { id: 9 } };
+
+    expect(await route(connection(), { type: 'sync-resume' }, suno, ID, sync)).toEqual({
+      session: null,
+    });
+    expect(handled).toEqual([[{ type: 'sync-resume' }, 9]]);
+
+    // Not from the relay on n8Tracks, an extension page, or a sender without a tab.
+    for (const sender of [CONTENT_SCRIPT, PAGE, { id: ID, url: 'https://suno.com/me' }]) {
+      expect(await route(connection(), { type: 'sync-resume' }, sender, ID, sync)).toHaveProperty(
+        'refused',
+      );
+    }
+    expect(
+      await route(connection(), { type: 'sync-begin', scope: { kind: 'all' } }, suno, ID, sync),
+    ).toHaveProperty('refused');
+    expect(handled).toHaveLength(1);
   });
 });

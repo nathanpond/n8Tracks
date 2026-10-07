@@ -1,3 +1,4 @@
+import { isSunoAddress } from './addresses.ts';
 import { poll, POLL_MS, realClock, type Clock } from './clock.ts';
 import {
   classify,
@@ -30,6 +31,7 @@ export type Role =
   | 'heading'
   | 'img'
   | 'link'
+  | 'list'
   | 'listbox'
   | 'menu'
   | 'menuitem'
@@ -38,6 +40,7 @@ export type Role =
   | 'option'
   | 'radio'
   | 'radiogroup'
+  | 'rowgroup'
   | 'slider'
   | 'spinbutton'
   | 'status'
@@ -182,6 +185,9 @@ export function roleOf(element: Element): string | null {
       return 'dialog';
     case 'img':
       return 'img';
+    case 'ul':
+    case 'ol':
+      return 'list';
     case 'input': {
       const type = (element.getAttribute('type') ?? 'text').toLowerCase();
       return INPUT_ROLES[type] ?? (type === 'hidden' ? null : 'textbox');
@@ -528,6 +534,18 @@ export interface PageOptions {
   signal?: AbortSignal;
   /** The page's address; the document's own unless a test stands in for it. */
   address?: () => string;
+  /** Loads another address in the tab; the document's own navigation unless a test stands in. */
+  navigate?: (address: string) => void;
+}
+
+/** Whether the element scrolls its own content (a list pane), rather than the page. */
+function scrollsItself(element: Element): boolean {
+  if (element.scrollHeight <= element.clientHeight) {
+    return false;
+  }
+  const view = element.ownerDocument.defaultView;
+  const overflow = view === null ? '' : view.getComputedStyle(element).overflowY;
+  return ['auto', 'scroll', 'overlay'].includes(overflow);
 }
 
 function viewOf(element: Element): Window & typeof globalThis {
@@ -652,6 +670,7 @@ export class Page {
   private readonly clock: Clock;
   private readonly signal: AbortSignal | undefined;
   private readonly location: () => string;
+  private readonly navigation: (address: string) => void;
   /** The press the matcher refused on this handle, after which it changes nothing more. */
   private refused: ForbiddenControlError | null = null;
 
@@ -660,11 +679,21 @@ export class Page {
     this.clock = options.clock ?? realClock;
     this.signal = options.signal;
     this.location = options.address ?? (() => document.location.href);
+    this.navigation =
+      options.navigate ??
+      ((address) => {
+        document.location.assign(address);
+      });
   }
 
   /** The same page for one run: once `signal` is aborted, nothing more changes on the page. */
   withSignal(signal: AbortSignal): Page {
-    return new Page(this.document, { clock: this.clock, signal, address: this.location });
+    return new Page(this.document, {
+      clock: this.clock,
+      signal,
+      address: this.location,
+      navigate: this.navigation,
+    });
   }
 
   /** The page's address. */
@@ -782,6 +811,41 @@ export class Page {
     this.press(element, found.target.description, 'create-workspace');
   }
 
+  /**
+   * Scrolls the page, and every region of it that scrolls its own content, to the end, as a user
+   * scrolling a list to its bottom does, so that Suno asks for the list's next page (TS-003: the
+   * Library, Trash, and workspace lists load more on scroll). It presses nothing and sends no
+   * event: the browser reports the scroll to the page itself. The extension's panel is left alone.
+   */
+  scrollToEnd(): void {
+    this.ensureRunning();
+    // Some documents (jsdom among them) have no scrolling element.
+    const root = this.document.scrollingElement as Element | null | undefined;
+    const scrolling = [
+      ...(root === null || root === undefined ? [] : [root]),
+      ...elementsUnder(this.document).filter(
+        (element) => scrollsItself(element) && !isHidden(element),
+      ),
+    ];
+    for (const element of new Set(scrolling)) {
+      element.scrollTop = element.scrollHeight;
+    }
+  }
+
+  /**
+   * Loads a Suno page by its address, as typing it would: the adapter reaches pages by address,
+   * never by pressing a link or a button (the forbidden-control matcher's own rule). Only a
+   * suno.com address is accepted. The content script is replaced with the page, so nothing of a
+   * run survives it except what the service worker holds.
+   */
+  go(address: URL): void {
+    this.ensureRunning();
+    if (!isSunoAddress(address)) {
+      throw new PrimitiveError('an address on suno.com');
+    }
+    this.navigation(address.href);
+  }
+
   /** The refusal that stopped this handle, if the matcher refused a press on it. */
   refusal(): ForbiddenControlError | null {
     return this.refused;
@@ -793,13 +857,18 @@ export class Page {
     return result.ok;
   }
 
-  private changeable(found: Found): Element {
+  /** Throws when this handle has stopped: refused a press, or its run is over. */
+  private ensureRunning(): void {
     if (this.refused !== null) {
       throw this.refused;
     }
     if (this.signal?.aborted === true) {
       throw new StoppedError();
     }
+  }
+
+  private changeable(found: Found): Element {
+    this.ensureRunning();
     const element = elementOf(found);
     if (!element.isConnected || isHidden(element)) {
       throw new PrimitiveError(`${found.target.description} to be still on the page`);

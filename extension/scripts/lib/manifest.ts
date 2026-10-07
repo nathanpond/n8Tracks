@@ -27,6 +27,9 @@ export const relayOutput = 'relay.js';
 /** The Suno content script (adapter and panel), registered by this path (`SUNO_FILE`). */
 export const sunoOutput = 'suno.js';
 
+/** The page observer, run in Suno's own page and registered by this path (`OBSERVER_FILE`). */
+export const observerOutput = 'observe.js';
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

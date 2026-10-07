@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'vite';
 import {
+  observerOutput,
   referencedFiles,
   relayOutput,
   serviceWorkerOutput,
@@ -85,11 +86,12 @@ export async function buildExtension(): Promise<ProductVersion> {
   });
 
   // Content scripts run as classic scripts: one file each, no imports, so each is built on its
-  // own. The service worker registers the relay for the paired origin and the Suno script for
-  // suno.com by these names.
+  // own. The service worker registers the relay for the paired origin, and the Suno script and
+  // the page observer for suno.com, by these names.
   const contentScripts: Record<string, string> = {
     [relayOutput]: 'src/content/relay-main.ts',
     [sunoOutput]: 'src/content/suno-main.ts',
+    [observerOutput]: 'src/page/observe-main.ts',
   };
   for (const [output, entry] of Object.entries(contentScripts)) {
     await build({

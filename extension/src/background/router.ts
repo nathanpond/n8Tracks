@@ -1,11 +1,20 @@
-import { isRequest, type RelayReply, type Request, type ResponseFor } from '../messages.ts';
+import { isSunoAddress } from '../adapter/addresses.ts';
+import {
+  isRequest,
+  isSyncRequest,
+  SYNC_TYPES,
+  type RelayReply,
+  type Request,
+  type ResponseFor,
+} from '../messages.ts';
 import type { Connection } from './connection.ts';
+import type { SyncCoordinator } from './sync.ts';
 
 /** Who sent a message, as `chrome.runtime.onMessage` reports it. */
 export interface Sender {
   id?: string | undefined;
   url?: string | undefined;
-  tab?: unknown;
+  tab?: { id?: number | undefined } | undefined;
 }
 
 /** Why a message got no answer: it is not one of ours, or its sender may not send it. */
@@ -25,8 +34,20 @@ function isExtensionPage(sender: Sender, extensionId: string): boolean {
   );
 }
 
-/** Messages a content script (the relay on the n8Tracks page, the panel on Suno) may send. */
-const CONTENT_SCRIPT_TYPES: readonly Request['type'][] = ['state', 'relay'];
+/** Whether the sender is a content script on a suno.com page (not the relay on n8Tracks). */
+function onSuno(sender: Sender): boolean {
+  try {
+    return sender.url !== undefined && isSunoAddress(new URL(sender.url));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Messages a content script (the relay on the n8Tracks page, the panel on Suno) may send. The sync
+ * messages are for the Suno content script's own tab only.
+ */
+const CONTENT_SCRIPT_TYPES: readonly Request['type'][] = ['state', 'relay', ...SYNC_TYPES];
 
 /**
  * Answers one message. Only the extension's own pages may connect or disconnect; a content script
@@ -37,12 +58,20 @@ export async function route(
   message: unknown,
   sender: Sender,
   extensionId: string,
+  sync?: SyncCoordinator,
 ): Promise<ResponseFor[Request['type']] | Refusal> {
   if (sender.id !== extensionId || !isRequest(message)) {
     return { refused: 'not a request this extension answers' };
   }
   if (!isExtensionPage(sender, extensionId) && !CONTENT_SCRIPT_TYPES.includes(message.type)) {
     return { refused: `${message.type} is only for the extension's own pages` };
+  }
+  if (isSyncRequest(message)) {
+    const tabId = sender.tab?.id;
+    if (tabId === undefined || sync === undefined || !onSuno(sender)) {
+      return { refused: `${message.type} is only for the Suno content script in a tab` };
+    }
+    return sync.handle(message, tabId);
   }
   switch (message.type) {
     case 'state':

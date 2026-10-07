@@ -70,18 +70,97 @@ export interface RelayReply {
   message: string;
 }
 
+/** What a sync reads (#134): the whole library, chosen workspaces, or chosen playlists. */
+export type SyncScope =
+  | { kind: 'library' }
+  | { kind: 'workspaces'; ids: string[] }
+  | { kind: 'playlists'; playlists: { id: string; name: string }[] };
+
+/** One list a sync reads, each on its own Suno page. */
+export type SyncLeg =
+  | { list: 'workspaces' }
+  | { list: 'library' }
+  | { list: 'playlist'; id: string; name: string }
+  | { list: 'trash' };
+
+/** What a sync has read so far, as the panel shows it. */
+export interface SyncCounts {
+  clips: number;
+  trashed: number;
+  workspaces: number;
+  playlists: number;
+}
+
+/**
+ * What a sync carries from one Suno page to the next. The reader reads one list per page load;
+ * the service worker holds this in between, in session storage, so a restarted service worker
+ * still has it. Holds Suno records only as the raw workspace list, until the export is created.
+ */
+export interface SyncProgress {
+  /** The leg to read next, an index into `legs`. */
+  leg: number;
+  /** How many times this leg's page has been opened again after no first page came. */
+  attempt: number;
+  /** Parts uploaded before this leg; a leg read again reuses its numbers, replacing its parts. */
+  partNumber: number;
+  /** Counts as of the start of this leg. */
+  counts: SyncCounts;
+  /** The workspace list as Suno returned it, until the export is created. */
+  workspaces: unknown[];
+}
+
+export interface SyncSession extends SyncProgress {
+  tabId: number;
+  scope: SyncScope;
+  legs: SyncLeg[];
+  /** The export in n8Tracks, once created. */
+  exportId: string | null;
+  /** Milliseconds since the epoch of the last change. */
+  updatedAt: number;
+}
+
+/** A sync step's answer: done, or why not, in plain words for the panel. */
+export type SyncReply<T extends object = object> =
+  ({ ok: true } & T) | { ok: false; message: string };
+
+/** One part of an export (`docs/suno-integration.md`, Export format). */
+export interface ExportPart {
+  partNumber: number;
+  clips: unknown[];
+  trashedClips: unknown[];
+  playlists: { id: string; name: string; clipIds: string[] }[];
+}
+
 /** The messages the service worker answers, by type, with the answer each gets. */
 export type Request =
   | { type: 'state'; fresh?: boolean }
   | { type: 'connect'; address: string; token: string }
   | { type: 'disconnect' }
-  | { type: 'relay'; message: PageMessage };
+  | { type: 'relay'; message: PageMessage }
+  | { type: 'sync-preview' }
+  | { type: 'sync-begin'; scope: SyncScope }
+  | { type: 'sync-resume' }
+  | { type: 'sync-save'; progress: SyncProgress }
+  | { type: 'sync-create'; header: Record<string, unknown> }
+  | { type: 'sync-part'; part: ExportPart }
+  | { type: 'sync-complete' }
+  | { type: 'sync-discard' };
 
 export interface ResponseFor {
   state: ConnectionState;
   connect: ConnectResult;
   disconnect: ConnectionState;
   relay: RelayReply;
+  /** Whether an export of this extension's is waiting for review, which the new one replaces. */
+  'sync-preview': { replacesReady: boolean };
+  'sync-begin': SyncReply<{ session: SyncSession }>;
+  /** The sync this tab is running, if any. */
+  'sync-resume': { session: SyncSession | null };
+  'sync-save': SyncReply;
+  'sync-create': SyncReply<{ exportId: string }>;
+  'sync-part': SyncReply;
+  'sync-complete': SyncReply<{ reviewUrl: string }>;
+  'sync-discard': SyncReply;
 }
 
 export type Response<T extends Request> = ResponseFor[T['type']];
@@ -99,8 +178,86 @@ export function isTabMessage(value: unknown): value is TabMessage {
   return isRecord(value) && value.type === 'toggle-panel';
 }
 
+/** The sync messages, which only the Suno content script sends, each for its own tab. */
+export const SYNC_TYPES = [
+  'sync-preview',
+  'sync-begin',
+  'sync-resume',
+  'sync-save',
+  'sync-create',
+  'sync-part',
+  'sync-complete',
+  'sync-discard',
+] as const satisfies readonly Request['type'][];
+
+export type SyncRequest = Extract<Request, { type: (typeof SYNC_TYPES)[number] }>;
+
+/** Whether `request` is one of the sync messages. */
+export function isSyncRequest(request: Request): request is SyncRequest {
+  return (SYNC_TYPES as readonly string[]).includes(request.type);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isTextList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string' && item !== '');
+}
+
+function isCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0;
+}
+
+function isSyncScope(value: unknown): value is SyncScope {
+  if (!isRecord(value)) {
+    return false;
+  }
+  switch (value.kind) {
+    case 'library':
+      return true;
+    case 'workspaces':
+      return isTextList(value.ids) && value.ids.length > 0;
+    case 'playlists':
+      return (
+        Array.isArray(value.playlists) &&
+        value.playlists.length > 0 &&
+        value.playlists.every(
+          (playlist) =>
+            isRecord(playlist) &&
+            typeof playlist.id === 'string' &&
+            playlist.id !== '' &&
+            typeof playlist.name === 'string',
+        )
+      );
+    default:
+      return false;
+  }
+}
+
+function isSyncProgress(value: unknown): value is SyncProgress {
+  return (
+    isRecord(value) &&
+    isCount(value.leg) &&
+    isCount(value.attempt) &&
+    isCount(value.partNumber) &&
+    isRecord(value.counts) &&
+    ['clips', 'trashed', 'workspaces', 'playlists'].every((key) =>
+      isCount((value.counts as Record<string, unknown>)[key]),
+    ) &&
+    Array.isArray(value.workspaces)
+  );
+}
+
+function isExportPart(value: unknown): value is ExportPart {
+  return (
+    isRecord(value) &&
+    isCount(value.partNumber) &&
+    value.partNumber > 0 &&
+    Array.isArray(value.clips) &&
+    Array.isArray(value.trashedClips) &&
+    Array.isArray(value.playlists)
+  );
 }
 
 /** Whether `value` is a message from the n8Tracks web app. */
@@ -127,6 +284,19 @@ export function isRequest(value: unknown): value is Request {
       return true;
     case 'relay':
       return isPageMessage(value.message);
+    case 'sync-preview':
+    case 'sync-resume':
+    case 'sync-complete':
+    case 'sync-discard':
+      return true;
+    case 'sync-begin':
+      return isSyncScope(value.scope);
+    case 'sync-save':
+      return isSyncProgress(value.progress);
+    case 'sync-create':
+      return isRecord(value.header);
+    case 'sync-part':
+      return isExportPart(value.part);
     default:
       return false;
   }

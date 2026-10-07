@@ -33,6 +33,8 @@ import {
  */
 const RUN_RECIPES: Readonly<Record<string, RunRecipe>> = {
   'recognise-suno': { values: {} },
+  // Scrolls the list on screen; it presses nothing on any snapshot.
+  'load-more': { values: {} },
 };
 
 /** Every workflow module under `src/adapter/workflows/`, except the list itself. */
@@ -78,13 +80,21 @@ describe('invariant 4: the extension never presses a forbidden control on Suno',
         'src/background/apiClient.ts',
         'src/content/suno.ts',
         'src/panel/panel.ts',
+        'src/page/observe.ts',
+        'src/background/sync.ts',
       ]),
     );
     expect(report.pageContext).toEqual(
       expect.arrayContaining([
         'src/adapter/workflows/recognise.ts',
+        'src/adapter/workflows/loadMore.ts',
+        'src/adapter/libraryReader.ts',
         'src/content/suno-main.ts',
+        'src/content/sunoSync.ts',
+        'src/page/observe.ts',
+        'src/page/observe-main.ts',
         'src/panel/panel.ts',
+        'src/panel/SyncView.ts',
         'src/ui/connectionView.ts',
       ]),
     );
@@ -384,7 +394,13 @@ describe('the guard bites', () => {
       ),
     ).toEqual(['../../src/adapter/workflows/empty.ts exports no workflow']);
     expect(
-      registryProblems(WORKFLOW_MODULES, [{ ...registered, fixtures: [] }], RUN_RECIPES).at(-1),
-    ).toMatch(/names no page snapshot/);
+      registryProblems(
+        WORKFLOW_MODULES,
+        ADAPTER_WORKFLOWS.map((workflow) =>
+          workflow === registered ? { ...registered, fixtures: [] } : workflow,
+        ),
+        RUN_RECIPES,
+      ),
+    ).toEqual(expect.arrayContaining([expect.stringMatching(/names no page snapshot/)]));
   });
 });

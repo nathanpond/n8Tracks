@@ -58,7 +58,15 @@ export const RELAY_FILE = 'relay.js';
 export const SUNO_SCRIPT_ID = 'n8tracks-suno';
 export const SUNO_FILE = 'suno.js';
 
-const SCRIPT_IDS = [RELAY_ID, SUNO_SCRIPT_ID];
+/**
+ * The page observer's registration ID and its built file: it runs in Suno's own page (the MAIN
+ * world) from `document_start`, wrapping the page's `fetch` to pass copies of list responses to
+ * the Suno content script (#134).
+ */
+export const OBSERVER_ID = 'n8tracks-observer';
+export const OBSERVER_FILE = 'observe.js';
+
+const SCRIPT_IDS = [RELAY_ID, SUNO_SCRIPT_ID, OBSERVER_ID];
 
 /** A handshake is reused for this long, except by the check before a sync or a generation. */
 export const HANDSHAKE_CACHE_MS = 60_000;
@@ -339,7 +347,7 @@ export class Connection {
     return storedPairing((await this.browser.storage.get([PAIRING_KEY]))[PAIRING_KEY]);
   }
 
-  /** The relay on the paired n8Tracks origin, and the adapter and panel on suno.com. */
+  /** The relay on the paired n8Tracks origin; the adapter, panel, and page observer on suno.com. */
   private contentScripts(address: N8TracksAddress): chrome.scripting.RegisteredContentScript[] {
     return [
       {
@@ -355,6 +363,15 @@ export class Connection {
         matches: [SUNO_ORIGIN_PATTERN],
         js: [SUNO_FILE],
         runAt: 'document_idle',
+        allFrames: false,
+        persistAcrossSessions: true,
+      },
+      {
+        id: OBSERVER_ID,
+        matches: [SUNO_ORIGIN_PATTERN],
+        js: [OBSERVER_FILE],
+        runAt: 'document_start',
+        world: 'MAIN',
         allFrames: false,
         persistAcrossSessions: true,
       },

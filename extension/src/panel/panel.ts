@@ -21,6 +21,8 @@ export interface PanelOptions {
    * and checks the page again. Nothing is pressed for the user.
    */
   onTryAgain: (workflowId: string) => void;
+  /** Sync to n8Tracks (#134), shown under the features when given. */
+  sync?: HTMLElement;
 }
 
 /** The panel's groups, in order, and their headings. */
@@ -119,6 +121,7 @@ export class Panel {
       this.detail,
       this.warning,
       this.features,
+      ...(options.sync === undefined ? [] : [options.sync]),
       workflowsHeading,
       this.workflowList,
       check,

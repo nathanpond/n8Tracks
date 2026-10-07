@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { ANY_SUNO_PAGE, isSunoAddress, sunoPage, sunoPageOf } from './addresses.ts';
+import {
+  ANY_SUNO_PAGE,
+  isSunoAddress,
+  sunoListAddress,
+  sunoPage,
+  sunoPageOf,
+  sunoPages,
+} from './addresses.ts';
 
 describe('Suno addresses', () => {
   it.each([
@@ -7,6 +14,7 @@ describe('Suno addresses', () => {
     ['https://suno.com/create/?wid=x', 'create'],
     ['https://suno.com/me', 'library'],
     ['https://suno.com/me/trash', 'trash'],
+    ['https://suno.com/me/workspaces', 'workspaces'],
     ['https://suno.com/playlist/00000000-0000-4000-8000-000000000101', 'playlist'],
     ['https://suno.com/song/00000000-0000-4000-8000-000000000101', 'other'],
     ['https://suno.com/', 'other'],
@@ -29,5 +37,21 @@ describe('Suno addresses', () => {
     expect(sunoPage('create').description).toBe('the Create page');
     expect(sunoPage('create').matches(new URL('https://suno.com/me'))).toBe(false);
     expect(ANY_SUNO_PAGE.description).toBe('any suno.com page');
+  });
+
+  it('builds the address of each list the library reader opens, on suno.com only', () => {
+    expect(sunoListAddress({ page: 'library' }).href).toBe('https://suno.com/me');
+    expect(sunoListAddress({ page: 'trash' }).href).toBe('https://suno.com/me/trash');
+    expect(sunoListAddress({ page: 'workspaces' }).href).toBe('https://suno.com/me/workspaces');
+    const playlist = sunoListAddress({ page: 'playlist', id: '../a b' });
+    expect(playlist.href).toBe('https://suno.com/playlist/..%2Fa%20b');
+    expect(sunoPageOf(playlist)).toBe('playlist');
+  });
+
+  it('matches any of several kinds of page', () => {
+    const lists = sunoPages('library', 'trash');
+    expect(lists.description).toBe('the Library, the Library trash');
+    expect(lists.matches(new URL('https://suno.com/me/trash'))).toBe(true);
+    expect(lists.matches(new URL('https://suno.com/create'))).toBe(false);
   });
 });

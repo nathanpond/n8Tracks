@@ -153,7 +153,7 @@ describe('the Recognise the Suno page workflow', () => {
   it.each(recogniseSuno.fixtures)('is ready on the %s snapshot', (name) => {
     const page = loadSnapshot(name, 'https://suno.com/me');
 
-    expect(new WorkflowRegistry(ADAPTER_WORKFLOWS).check(page)).toEqual([
+    expect(new WorkflowRegistry([recogniseSuno]).check(page)).toEqual([
       {
         id: 'recognise-suno',
         title: 'Recognise the Suno page',
@@ -216,8 +216,11 @@ describe('the registry', () => {
     expect(registry.all().map((workflow) => workflow.id)).toEqual(['test-library-sync']);
   });
 
-  it('registers only the recognition check in this version', () => {
-    expect(ADAPTER_WORKFLOWS.map((workflow) => workflow.id)).toEqual(['recognise-suno']);
+  it("registers the recognition check and the library reader's load-more in this version", () => {
+    expect(ADAPTER_WORKFLOWS.map((workflow) => workflow.id)).toEqual([
+      'recognise-suno',
+      'load-more',
+    ]);
     expect(recogniseSuno.startsOn).toBe(ANY_SUNO_PAGE);
   });
 });

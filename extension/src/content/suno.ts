@@ -1,9 +1,13 @@
+import type { Clock } from '../adapter/clock.ts';
+import { ObservationFeed, type FeedWindow } from '../adapter/observations.ts';
 import { ADAPTER_VERSION } from '../adapter/version.ts';
 import { Page } from '../adapter/primitives.ts';
 import { AdapterSession, WorkflowRegistry } from '../adapter/registry.ts';
 import { ADAPTER_WORKFLOWS } from '../adapter/workflows/index.ts';
 import type { ConnectionState, Request } from '../messages.ts';
 import { Panel } from '../panel/panel.ts';
+import { SyncView } from '../panel/SyncView.ts';
+import { SunoSync } from './sunoSync.ts';
 
 export interface SunoContentOptions {
   document: Document;
@@ -15,11 +19,21 @@ export interface SunoContentOptions {
   watchMs?: number;
   /** The page's address; the document's own unless a test stands in for it. */
   address?: () => string;
+  /** Loads another Suno address in the tab; the document's own navigation unless a test stands in. */
+  navigate?: (address: string) => void;
+  /** Where the page observer's messages arrive; the document's window unless a test stands in. */
+  window?: FeedWindow;
+  clock?: Clock;
 }
 
 export interface SunoContent {
   session: AdapterSession;
   panel: Panel;
+  sync: SunoSync;
+  syncView: SyncView;
+  observations: ObservationFeed;
+  /** The resume check of this page load: whether this tab is in a sync, and if so its leg. */
+  resumed: Promise<void>;
   /** Opens the panel if closed, closes it if open; opening runs the self-check. */
   toggle(): Promise<void>;
   /** Reads the connection and runs the self-check again, if the panel is open. */
@@ -35,12 +49,30 @@ function isConnectionState(value: unknown): value is ConnectionState {
  * The Suno content script: the adapter session for this tab and the panel. The panel opens from
  * the toolbar (a `toggle-panel` message); opening it runs the self-check, which only reads the
  * page, and so does every navigation while it is open. A failure is kept in memory only.
+ *
+ * It also takes the page observer's messages, and asks once per page load whether this tab is in
+ * a sync the user started (#134); if it is, it reads that sync's leg with the panel open.
  */
 export function startSunoContent(options: SunoContentOptions): SunoContent {
   const { document: page, send } = options;
   const registry = options.registry ?? new WorkflowRegistry(ADAPTER_WORKFLOWS);
   const location = options.address ?? (() => page.location.href);
-  const session = new AdapterSession(registry, new Page(page, { address: location }));
+  const sunoPage = new Page(page, {
+    address: location,
+    ...(options.navigate === undefined ? {} : { navigate: options.navigate }),
+    ...(options.clock === undefined ? {} : { clock: options.clock }),
+  });
+  const session = new AdapterSession(registry, sunoPage);
+  const view = options.window ?? page.defaultView;
+  const observations = new ObservationFeed(
+    view ?? {
+      origin: '',
+      postMessage: () => undefined,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    },
+    options.clock,
+  );
   const watchMs = options.watchMs ?? 1000;
   let watcher: ReturnType<typeof setInterval> | undefined;
   let address = location();
@@ -58,8 +90,36 @@ export function startSunoContent(options: SunoContentOptions): SunoContent {
     } catch {
       // The service worker did not answer: the panel reads as not connected.
     }
+    const feature =
+      connection.status === 'connected'
+        ? connection.features.find((item) => item.feature === 'sync')
+        : undefined;
+    syncView.setAvailable(
+      feature?.available === true,
+      connection.status !== 'connected'
+        ? 'Connect the extension to n8Tracks to sync.'
+        : (feature?.reason ?? 'This credential lacks suno.sync'),
+    );
     panel.render({ connection, workflows: session.statuses() });
   };
+
+  // Set below: the view's buttons call the sync, and the sync shows its states in the view.
+  let sync: SunoSync | null = null;
+  const syncView = new SyncView(page, {
+    choices: () => ({
+      workspaces: observations.listedWorkspaces(),
+      playlists: observations.listedPlaylists(),
+    }),
+    preview: (scope) => {
+      void sync?.preview(scope);
+    },
+    start: (scope) => {
+      void sync?.start(scope);
+    },
+    cancel: () => {
+      void sync?.cancel();
+    },
+  });
 
   const panel = new Panel(page, {
     versions: { extension: options.extensionVersion, adapter: ADAPTER_VERSION },
@@ -70,7 +130,26 @@ export function startSunoContent(options: SunoContentOptions): SunoContent {
       session.forget(workflowId);
       void refresh();
     },
+    sync: syncView.element,
   });
+
+  sync = new SunoSync({
+    page: sunoPage,
+    session,
+    observations,
+    send,
+    show: (state) => {
+      syncView.show(state);
+      if (!panel.isOpen) {
+        panel.open();
+        watch();
+        void refresh();
+      }
+    },
+    versions: { extension: options.extensionVersion, adapter: ADAPTER_VERSION },
+    ...(options.clock === undefined ? {} : { clock: options.clock }),
+  });
+  observations.start();
 
   const watch = () => {
     clearInterval(watcher);
@@ -87,9 +166,16 @@ export function startSunoContent(options: SunoContentOptions): SunoContent {
     }, watchMs);
   };
 
+  // Never starts a sync: only reads on if this tab's sync, started by the user, is under way.
+  const resumed = sync.resume();
+
   return {
     session,
     panel,
+    sync,
+    syncView,
+    observations,
+    resumed,
     toggle: async () => {
       if (panel.isOpen) {
         panel.close();
@@ -103,6 +189,7 @@ export function startSunoContent(options: SunoContentOptions): SunoContent {
     refresh,
     stop: () => {
       clearInterval(watcher);
+      observations.stop();
       panel.remove();
     },
   };

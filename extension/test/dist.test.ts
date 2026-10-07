@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { distDirectory, extensionRoot, productVersion } from '../scripts/lib/build.ts';
 import {
+  observerOutput,
   referencedFiles,
   relayOutput,
   sunoOutput,
@@ -107,6 +108,7 @@ describe('the built content scripts', () => {
   it.each([
     [relayOutput, 'n8tracks-extension'],
     [sunoOutput, 'n8tracks-panel'],
+    [observerOutput, 'n8tracks-observer'],
   ])('%s is one classic script, as a registered content script must be', (file, marker) => {
     const script = readFileSync(join(distDirectory, file), 'utf8');
 

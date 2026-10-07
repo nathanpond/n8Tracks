@@ -5,6 +5,7 @@ import {
   Connection,
   DisconnectedError,
   HANDSHAKE_CACHE_MS,
+  OBSERVER_ID,
   RELAY_ID,
   SUNO_SCRIPT_ID,
 } from './connection.ts';
@@ -108,6 +109,16 @@ describe('connecting', () => {
         matches: [SUNO],
         js: ['suno.js'],
         runAt: 'document_idle',
+        allFrames: false,
+        persistAcrossSessions: true,
+      },
+      {
+        // The page observer runs in Suno's own page, before Suno's code first calls fetch.
+        id: OBSERVER_ID,
+        matches: [SUNO],
+        js: ['observe.js'],
+        runAt: 'document_start',
+        world: 'MAIN',
         allFrames: false,
         persistAcrossSessions: true,
       },
@@ -343,7 +354,19 @@ describe('the state', () => {
 
     await context.connection.state(true);
 
-    expect([...context.scripts.keys()].toSorted()).toEqual([RELAY_ID, SUNO_SCRIPT_ID].toSorted());
+    expect([...context.scripts.keys()].toSorted()).toEqual(
+      [RELAY_ID, SUNO_SCRIPT_ID, OBSERVER_ID].toSorted(),
+    );
+  });
+
+  it('registers the page observer again when only it is missing', async () => {
+    const context = await paired();
+    context.scripts.delete(OBSERVER_ID);
+
+    await context.connection.state(true);
+
+    expect(context.scripts.get(OBSERVER_ID)).toMatchObject({ matches: [SUNO], world: 'MAIN' });
+    expect(context.scripts.size).toBe(3);
   });
 
   it('never carries the token', async () => {

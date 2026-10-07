@@ -55,13 +55,16 @@ afterEach(() => {
 });
 
 describe('the Suno content script', () => {
-  it('adds the panel closed, and asks nothing until it is opened', () => {
+  it('adds the panel closed, and asks nothing until it is opened but whether its tab is in a sync', async () => {
     const { content: started, sent } = start({ current: 'https://suno.com/me' }, () =>
       Promise.resolve(CONNECTED),
     );
+    await started.resumed;
 
     expect(started.panel.isOpen).toBe(false);
-    expect(sent).toEqual([]);
+    // The one question of every page load (#134): it starts nothing, and an answer of no sync
+    // leaves the panel closed.
+    expect(sent).toEqual([{ type: 'sync-resume' }]);
   });
 
   it('opens from the toolbar with the connection, the version warning, and the self-check', async () => {
@@ -74,7 +77,7 @@ describe('the Suno content script', () => {
     await started.toggle();
 
     expect(started.panel.isOpen).toBe(true);
-    expect(sent).toEqual([{ type: 'state' }]);
+    expect(sent).toEqual([{ type: 'sync-resume' }, { type: 'state' }]);
     expect(text('.connection')).toBe('Connected to https://n8tracks.example.com');
     expect(text('.warning')).toBe(
       'Extension 0.1.0 is older than n8Tracks 0.2.0: update the extension.',
@@ -107,7 +110,7 @@ describe('the Suno content script', () => {
     document.body.querySelector('[data-testid="navbar-library-tab"]')?.remove();
     await vi.advanceTimersByTimeAsync(60);
 
-    expect(sent).toHaveLength(2);
+    expect(sent).toHaveLength(3);
     expect(text('[data-workflow="recognise-suno"]')).toBe(
       "Recognise the Suno page: Not working: Recognise the Suno page: step 'navigation' expected Suno's navigation, with its Library link",
     );
@@ -115,7 +118,7 @@ describe('the Suno content script', () => {
     await started.toggle();
     address.current = 'https://suno.com/me';
     await vi.advanceTimersByTimeAsync(200);
-    expect(sent).toHaveLength(2);
+    expect(sent).toHaveLength(3);
   });
 
   it('shows a refused press as stopped, and Try again checks the page afresh', async () => {

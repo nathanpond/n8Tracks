@@ -32,6 +32,8 @@ describe("the rule that keeps Suno's page to the primitives", () => {
     'src/content/suno.ts',
     'src/content/suno-main.ts',
     'src/panel/panel.ts',
+    'src/panel/SyncView.ts',
+    'src/page/observe.ts',
   ])('forbids querying, clicking, and dispatching events in %s', async (path) => {
     expect(await findings(path)).toEqual([
       "Only adapter/primitives.ts reads Suno's page: use the find primitive.",
