@@ -226,9 +226,10 @@ public sealed class ImportCommitService(
 /// the clip is attached afresh with the Reimport flag. Either way its tombstone goes.
 /// </para>
 /// <para>
-/// After the targets: a Generation Event for each group with two or more clips attached, then each
-/// staged cover image given to its Generation (<see cref="GenerationArtworkService"/>; a missing image
-/// fails nothing). The result lists every record's outcome and is kept with the job. Nothing about a
+/// After the targets: a Generation Event for each group with two or more clips attached, the Suno
+/// playlists and personas the imported clips touch (#153, for the Sources pickers), then each staged
+/// cover image given to its Generation (<see cref="GenerationArtworkService"/>; a missing image fails
+/// nothing). The result lists every record's outcome and is kept with the job. Nothing about a
 /// clip's content is logged or kept in the result (invariant 6).
 /// </para>
 /// </summary>
@@ -403,6 +404,7 @@ internal sealed class ImportCommitJob(
 
         await IgnoreAsync(export, plan, results, cancellationToken).ConfigureAwait(false);
         await RecordEventsAsync(attached, cancellationToken).ConfigureAwait(false);
+        await RecordLibraryAsync(export, attached, cancellationToken).ConfigureAwait(false);
 
         foreach (var (clip, generationId) in attached)
         {
@@ -483,6 +485,32 @@ internal sealed class ImportCommitJob(
                     new GenerationEventRequest(null, GenerationEventSource.Inferred, GenerationEventConfidence.Medium, members.Count, occurred, [.. members.Select(static item => item.GenerationId)]),
                     cancellationToken)).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// The Suno playlists and personas the clips attached touch, recorded for the Sources pickers (#153;
+    /// <see cref="SunoReadModels"/>): nothing when none was attached.
+    /// </summary>
+    private async Task RecordLibraryAsync(SunoExport export, List<(CommitClip Clip, Guid GenerationId)> attached, CancellationToken cancellationToken)
+    {
+        if (attached.Count == 0)
+        {
+            return;
+        }
+
+        var imported = new List<(string SunoId, VersionLineage Lineage)>(attached.Count);
+        foreach (var (clip, _) in attached)
+        {
+            using var document = JsonDocument.Parse(clip.Record.RawJson);
+            imported.Add((clip.SunoId, LineageReader.Read(document.RootElement).Lineage));
+        }
+
+        var sightings = SunoReadModels.Of(await SunoReadModels.ListedAsync(store, export, cancellationToken).ConfigureAwait(false), imported);
+        await InScopeAsync<SunoLibraryService, bool>(async library =>
+        {
+            await library.RecordAsync(sightings, time.GetUtcNow(), cancellationToken).ConfigureAwait(false);
+            return true;
+        }).ConfigureAwait(false);
     }
 
     private async Task<TResult> InScopeAsync<TService, TResult>(Func<TService, Task<TResult>> call)

@@ -888,7 +888,8 @@ internal sealed record SunoExportRecordListResponse(IReadOnlyList<SunoExportReco
 /// proposal and the user's choice (JSON, null until later stories fill them), flags on how it arrived
 /// (<c>repeated</c>, <c>alsoInLibrary</c>), the compared fields that differ for a changed record, the
 /// Generation holding the Suno ID (and, as <c>generation</c>, its shortcode and Song's shortcode, for a link),
-/// whether an image is staged for it, and (#139) the choice's target named for the review.
+/// whether an image is staged for it, (#139) the choice's target named for the review, and (#153) what
+/// its clip was made from (<c>lineage</c>, null when it names nothing).
 /// </summary>
 internal sealed record SunoExportRecordResponse(
     string SunoId,
@@ -906,7 +907,8 @@ internal sealed record SunoExportRecordResponse(
     Guid? GenerationId,
     bool HasArtwork,
     ImportTargetView? Target,
-    ImportGenerationView? Generation)
+    ImportGenerationView? Generation,
+    SunoExportLineageResponse? Lineage)
 {
     public static SunoExportRecordResponse From(ReviewedRecord reviewed)
     {
@@ -929,10 +931,11 @@ internal sealed record SunoExportRecordResponse(
             record.GenerationId,
             record.ArtworkAssetId is not null,
             reviewed.Target,
-            reviewed.Generation);
+            reviewed.Generation,
+            reviewed.Lineage is { } lineage ? SunoExportLineageResponse.From(lineage) : null);
     }
 
-    private static JsonElement? Json(string? text)
+    internal static JsonElement? Json(string? text)
     {
         if (text is null)
         {
@@ -943,6 +946,67 @@ internal sealed record SunoExportRecordResponse(
         return document.RootElement.Clone();
     }
 }
+
+/// <summary>
+/// What a record's clip was made from (#153): its sources, in order (audio, then Inspiration), each with
+/// where the clip it names is (<c>generation</c>, <c>export</c>, or <c>not_imported</c>); its
+/// Inspiration playlist; and its Voice.
+/// </summary>
+internal sealed record SunoExportLineageResponse(
+    IReadOnlyList<SunoExportLineageSourceResponse> Sources,
+    SunoExportLineagePlaylistResponse? Playlist,
+    SunoExportLineageVoiceResponse? Voice)
+{
+    public static SunoExportLineageResponse From(ImportLineageView view)
+    {
+        ArgumentNullException.ThrowIfNull(view);
+
+        return new(
+            [.. view.Sources.Select(static source => new SunoExportLineageSourceResponse(
+                source.Group,
+                source.TypeId,
+                source.TypeName,
+                source.SunoAction,
+                source.SunoId,
+                source.Title,
+                source.ContinueAtSeconds,
+                source.Place,
+                source.Generation,
+                source.Record is { } record
+                    ? new SunoExportLineageRecordResponse(
+                        record.SunoId,
+                        record.Title,
+                        record.WorkspaceId,
+                        record.Class is { } recordClass ? SunoExportRules.NameOf(recordClass) : null,
+                        SunoExportRecordResponse.Json(record.ChoiceJson),
+                        SunoExportRecordResponse.Json(record.ProposalJson))
+                    : null))],
+            view.Playlist is { } playlist ? new SunoExportLineagePlaylistResponse(playlist.SunoPlaylistId, playlist.Name, playlist.ClipIds.Count) : null,
+            view.Voice is { } voice ? new SunoExportLineageVoiceResponse(voice.PersonaId, voice.Name) : null);
+    }
+}
+
+/// <summary>One source of a record's lineage: group, type, the Suno clip, its title, Extend's position, where the clip is, and its Generation or record here.</summary>
+internal sealed record SunoExportLineageSourceResponse(
+    string Group,
+    Guid TypeId,
+    string TypeName,
+    string? SunoAction,
+    string SunoId,
+    string Title,
+    decimal? ContinueAtSeconds,
+    string Place,
+    ImportGenerationView? Generation,
+    SunoExportLineageRecordResponse? Record);
+
+/// <summary>The record of this export a source names: its Suno ID, title, workspace, class, and current choice and proposal.</summary>
+internal sealed record SunoExportLineageRecordResponse(string SunoId, string? Title, string? WorkspaceId, string? Class, JsonElement? Choice, JsonElement? Proposal);
+
+/// <summary>An Inspiration playlist: its Suno ID, its name (blank when the export does not name it), and how many clips it held.</summary>
+internal sealed record SunoExportLineagePlaylistResponse(string SunoPlaylistId, string Name, int ClipCount);
+
+/// <summary>A Voice: the persona's Suno ID and name (blank when the clip does not name it).</summary>
+internal sealed record SunoExportLineageVoiceResponse(string PersonaId, string Name);
 
 /// <summary>The record a staged image belongs to, and the image as the artwork store holds it.</summary>
 internal sealed record SunoExportArtworkResponse(string SunoId, ArtworkResponse Artwork);

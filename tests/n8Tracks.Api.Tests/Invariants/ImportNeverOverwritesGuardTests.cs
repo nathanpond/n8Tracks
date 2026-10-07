@@ -149,6 +149,60 @@ public sealed class ImportNeverOverwritesGuardTests
     }
 
     /// <summary>
+    /// The Suno playlists and personas the Sources pickers offer (#153) change only with what a commit
+    /// imports: a commit that imports nothing (every record Skip or Don't copy) changes neither; one that
+    /// imports a clip adds its Voice and the listed playlists that hold it, and touches no other row of
+    /// either table, a stored persona the clip names included only in its last-seen time and name.
+    /// </summary>
+    [Fact]
+    public async Task ThePlaylistsAndPersonasChangeOnlyWithTheClipsImported()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var token = await SunoWorkspaceApi.ExtensionTokenAsync(factory);
+        TestDatabase.Execute(factory.DataPath, """
+            INSERT INTO suno_playlists (suno_id, name, clip_ids, last_seen_utc) VALUES ('pl-other', 'Untouched', '["x"]', '2026-09-01T00:00:00.000Z');
+            INSERT INTO suno_personas (suno_id, name, last_seen_utc) VALUES ('pe-other', 'Untouched', '2026-09-01T00:00:00.000Z');
+            """);
+
+        JsonNode Voiced(string id, int hour, string personaId)
+        {
+            var clip = ProposalApi.Clip(id, null, ProposalApi.At.AddHours(hour), 0, id + " words");
+            clip["metadata"]!["persona_id"] = personaId;
+            clip["persona"] = new JsonObject { ["id"] = personaId, ["name"] = personaId + " name" };
+            return clip;
+        }
+
+        var header = SunoExportApi.Header(playlists:
+        [
+            SunoExportApi.Playlist("pl-imported", "Imported", "wanted-1"),
+            SunoExportApi.Playlist("pl-skipped", "Skipped", "skip-1", "dont-1"),
+            SunoExportApi.Playlist("pl-other", "Renamed elsewhere", "skip-1"),
+        ]);
+        JsonNode[] clips = [Voiced("wanted-1", 0, "pe-wanted"), Voiced("skip-1", 1, "pe-skip"), Voiced("dont-1", 2, "pe-other")];
+
+        // Nothing imported: neither table changes.
+        var (nothing, _) = await SunoExportApi.UploadAsync(client, token, header, SunoExportApi.Part(1, clips));
+        await ProposalApi.ChangedAsync(client, nothing, 1, ProposalApi.Change(new JsonObject { ["action"] = "skip" }, "wanted-1", "skip-1"));
+        await ProposalApi.ChangedAsync(client, nothing, 2, ProposalApi.Change(new JsonObject { ["action"] = "ignore" }, "dont-1"));
+        var before = Rows(factory.DataPath);
+        await ImportCommitApi.CommitAsync(client, nothing);
+        Assert.DoesNotContain(Differences(before, Rows(factory.DataPath)), static change => change.Table is "suno_playlists" or "suno_personas");
+
+        // One clip imported: its Voice and the listed playlist holding it, and nothing else.
+        var (one, _) = await SunoExportApi.UploadAsync(client, token, header, SunoExportApi.Part(1, clips));
+        await ProposalApi.ChangedAsync(client, one, 1, ProposalApi.Change(new JsonObject { ["action"] = "skip" }, "skip-1", "dont-1"));
+        before = Rows(factory.DataPath);
+        await ImportCommitApi.CommitAsync(client, one);
+        Assert.Equal(
+            ["suno_personas A pe-wanted", "suno_playlists A pl-imported"],
+            Differences(before, Rows(factory.DataPath))
+                .Where(static change => change.Table is "suno_playlists" or "suno_personas")
+                .Select(static change => $"{change.Table} {change.Kind} {change.Key}")
+                .Order(StringComparer.Ordinal));
+    }
+
+    /// <summary>
     /// The guard bites: with the commit made to retitle an existing Generation that no choice names (as
     /// an import must never do), the same run reports that row as unexplained.
     /// </summary>

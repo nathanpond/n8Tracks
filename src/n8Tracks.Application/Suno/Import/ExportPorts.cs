@@ -171,6 +171,9 @@ public interface ISunoExportStore
     /// <summary>A page of the export's staged records, newest in Suno first, then by Suno ID.</summary>
     Task<StagedRecordPage> ListAsync(Guid exportId, StagedRecordQuery query, CancellationToken cancellationToken);
 
+    /// <summary>The export's staged records among <paramref name="sunoIds"/>, by Suno ID (ordinal); an ID not staged is left out (#153).</summary>
+    Task<IReadOnlyList<StagedRecord>> RecordsNamedAsync(Guid exportId, IReadOnlyCollection<string> sunoIds, CancellationToken cancellationToken);
+
     /// <summary>
     /// The Suno IDs of the records matching <paramref name="filter"/>'s filters (its page is ignored) whose
     /// class is one of <paramref name="classes"/>, by Suno ID (#139: a change of choices by filter).

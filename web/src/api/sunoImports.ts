@@ -158,6 +158,42 @@ export interface ImportRecord {
   generationId: string | null;
   target: NamedTarget | null;
   generation: { id: string; shortcode: string; songShortcode: string } | null;
+  /** What its clip was made from (#153); null (or absent, in an older answer) when it names nothing. */
+  lineage?: ImportLineage | null;
+}
+
+/** Where the clip a lineage source names is (#153): a Generation, a record of this export, or neither. */
+export type LineagePlace = 'generation' | 'export' | 'not_imported';
+
+/** The record of this export a lineage source names, with its current choice and proposal. */
+export interface ImportLineageRecord {
+  sunoId: string;
+  title: string | null;
+  workspaceId: string | null;
+  class: RecordClass | null;
+  choice: ImportChoice | null;
+  proposal: { choice: ImportChoice } | null;
+}
+
+/** One source of a record's lineage (#153), audio or Inspiration, with where its clip is. */
+export interface ImportLineageSource {
+  group: 'audio' | 'inspiration';
+  typeId: string;
+  typeName: string;
+  sunoAction: string | null;
+  sunoId: string;
+  title: string;
+  continueAtSeconds: number | null;
+  place: LineagePlace;
+  generation: { id: string; shortcode: string; songShortcode: string } | null;
+  record: ImportLineageRecord | null;
+}
+
+/** What a record's clip was made from (#153): its sources, Inspiration playlist, and Voice. */
+export interface ImportLineage {
+  sources: ImportLineageSource[];
+  playlist: { sunoPlaylistId: string; name: string; clipCount: number } | null;
+  voice: { personaId: string; name: string } | null;
 }
 
 export interface ImportRecordPage {
@@ -291,6 +327,49 @@ function isChoice(value: unknown): value is ImportChoice {
   );
 }
 
+const LINEAGE_PLACES: readonly string[] = ['generation', 'export', 'not_imported'];
+
+function isLineageSource(value: unknown): value is ImportLineageSource {
+  return (
+    isRecord(value) &&
+    (value.group === 'audio' || value.group === 'inspiration') &&
+    typeof value.typeId === 'string' &&
+    typeof value.typeName === 'string' &&
+    isNullableString(value.sunoAction) &&
+    typeof value.sunoId === 'string' &&
+    typeof value.title === 'string' &&
+    (value.continueAtSeconds === null || typeof value.continueAtSeconds === 'number') &&
+    typeof value.place === 'string' &&
+    LINEAGE_PLACES.includes(value.place) &&
+    (value.generation === null ||
+      (isRecord(value.generation) &&
+        typeof value.generation.shortcode === 'string' &&
+        typeof value.generation.songShortcode === 'string')) &&
+    (value.record === null ||
+      (isRecord(value.record) &&
+        typeof value.record.sunoId === 'string' &&
+        isNullableString(value.record.title) &&
+        (value.record.choice === null || isChoice(value.record.choice))))
+  );
+}
+
+function isLineage(value: unknown): value is ImportLineage {
+  return (
+    isRecord(value) &&
+    Array.isArray(value.sources) &&
+    value.sources.every(isLineageSource) &&
+    (value.playlist === null ||
+      (isRecord(value.playlist) &&
+        typeof value.playlist.sunoPlaylistId === 'string' &&
+        typeof value.playlist.name === 'string' &&
+        typeof value.playlist.clipCount === 'number')) &&
+    (value.voice === null ||
+      (isRecord(value.voice) &&
+        typeof value.voice.personaId === 'string' &&
+        typeof value.voice.name === 'string'))
+  );
+}
+
 export function isImportRecord(value: unknown): value is ImportRecord {
   return (
     isRecord(value) &&
@@ -308,7 +387,8 @@ export function isImportRecord(value: unknown): value is ImportRecord {
     (value.generation === null ||
       (isRecord(value.generation) &&
         typeof value.generation.shortcode === 'string' &&
-        typeof value.generation.songShortcode === 'string'))
+        typeof value.generation.songShortcode === 'string')) &&
+    (value.lineage === undefined || value.lineage === null || isLineage(value.lineage))
   );
 }
 

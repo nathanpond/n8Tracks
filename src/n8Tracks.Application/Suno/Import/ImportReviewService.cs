@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using n8Tracks.Application.Songs;
+using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
 using n8Tracks.Domain.Suno;
 
@@ -49,11 +50,58 @@ public sealed record ImportSongView(Guid? Id, string? Key, string? Shortcode, st
 /// </summary>
 public sealed record ImportTargetView(string Kind, string? Key, ImportSongView Song, ImportTargetVersion? Version, ImportTargetVersion? Parent, string? Number);
 
-/// <summary>The Generation holding a record's Suno ID, as the review links to it: its ID and shortcode, and its Song's shortcode.</summary>
-public sealed record ImportGenerationView(Guid Id, string Shortcode, string SongShortcode);
+/// <summary>
+/// The Generation holding a record's Suno ID, as the review links to it: its ID and shortcode, and its
+/// Song's shortcode; and (#153, for a lineage source) its Suno title.
+/// </summary>
+public sealed record ImportGenerationView(Guid Id, string Shortcode, string SongShortcode, string? Title = null);
 
-/// <summary>A staged record with its choice's target and its Generation resolved for the review.</summary>
-public sealed record ReviewedRecord(StagedRecord Record, ImportTargetView? Target, ImportGenerationView? Generation);
+/// <summary>Where a source of a record's lineage is, as the review says it (#153).</summary>
+public static class ImportLineagePlaces
+{
+    /// <summary>It is a Generation in n8Tracks.</summary>
+    public const string Generation = "generation";
+
+    /// <summary>It is a record of this export, not a Generation yet: the user may include it in the import.</summary>
+    public const string Export = "export";
+
+    /// <summary>It is neither: it stays a Not imported reference.</summary>
+    public const string NotImported = "not_imported";
+}
+
+/// <summary>
+/// The record of this export a lineage source names (#153): its Suno ID, title, workspace, class, and
+/// current choice and proposal (JSON), so the review can tell whether it is being imported and include it.
+/// </summary>
+public sealed record ImportLineageRecord(string SunoId, string? Title, string? WorkspaceId, SunoRecordClass? Class, string? ChoiceJson, string? ProposalJson);
+
+/// <summary>
+/// One source of a record's lineage as the review shows it (#153): its group (<c>audio</c> or
+/// <c>inspiration</c>), its relationship type (ID, name, and Suno action), the Suno clip it names, its
+/// title, Extend's position, and where the clip is (<see cref="ImportLineagePlaces"/>), with its
+/// Generation or its record in this export.
+/// </summary>
+public sealed record ImportLineageSource(
+    string Group,
+    Guid TypeId,
+    string TypeName,
+    string? SunoAction,
+    string SunoId,
+    string Title,
+    decimal? ContinueAtSeconds,
+    string Place,
+    ImportGenerationView? Generation,
+    ImportLineageRecord? Record);
+
+/// <summary>
+/// What a staged record was made from, as the review shows it beside its title (#153; read by
+/// <see cref="LineageReader"/>): its sources in order, its Inspiration playlist (named from the export's
+/// list when it is there), and its Voice. Null on a record whose clip names none of these.
+/// </summary>
+public sealed record ImportLineageView(IReadOnlyList<ImportLineageSource> Sources, InspirationPlaylist? Playlist, VersionVoice? Voice);
+
+/// <summary>A staged record with its choice's target and its Generation resolved for the review, and (#153) its lineage.</summary>
+public sealed record ReviewedRecord(StagedRecord Record, ImportTargetView? Target, ImportGenerationView? Generation, ImportLineageView? Lineage = null);
 
 /// <summary>A page of reviewed records.</summary>
 public sealed record ReviewedRecordPage(IReadOnlyList<ReviewedRecord> Items, int Page, int PageSize, int Total);
@@ -117,6 +165,7 @@ public sealed class ImportReviewService(
         }
 
         var names = new Names(songs, versions);
+        var lineages = await LineagesAsync(exportId, page.Items, cancellationToken).ConfigureAwait(false);
         var items = new List<ReviewedRecord>(page.Items.Count);
         foreach (var record in page.Items)
         {
@@ -127,7 +176,7 @@ public sealed class ImportReviewService(
                 && await versions.FindGenerationAsync(generationId, cancellationToken).ConfigureAwait(false) is { } found
                 ? new ImportGenerationView(found.Generation.Id, found.Shortcode, Shortcodes.ForSong(found.SongShortcodeNumber))
                 : null;
-            items.Add(new ReviewedRecord(record, target, generation));
+            items.Add(new ReviewedRecord(record, target, generation, lineages.GetValueOrDefault(record.SunoId)));
         }
 
         return new ReviewedRecordPage(items, page.Page, page.PageSize, page.Total);
@@ -233,6 +282,103 @@ public sealed class ImportReviewService(
     }
 
     private static string? Named(string? name) => string.IsNullOrWhiteSpace(name) ? null : name;
+
+    /// <summary>
+    /// The lineage of each of <paramref name="records"/> whose clip names a source, an Inspiration
+    /// playlist, or a Voice (#153): each source found as a live Generation, else as a record of this
+    /// export, else Not imported. The export's playlist list is read only when a clip names a playlist.
+    /// </summary>
+    private async Task<Dictionary<string, ImportLineageView>> LineagesAsync(Guid exportId, IReadOnlyList<StagedRecord> records, CancellationToken cancellationToken)
+    {
+        var views = new Dictionary<string, ImportLineageView>(StringComparer.Ordinal);
+        if (records.Count == 0)
+        {
+            return views;
+        }
+
+        var read = new List<(string SunoId, ImportedLineage Lineage)>();
+        foreach (var classified in await exports.ClassifiedRecordsAsync(exportId, [.. records.Select(static record => record.SunoId)], cancellationToken).ConfigureAwait(false))
+        {
+            using var document = JsonDocument.Parse(classified.RawJson);
+            var lineage = LineageReader.Read(document.RootElement);
+            if (lineage.Lineage.AudioSources.Count > 0 || lineage.Lineage.InspirationSources.Count > 0 || lineage.Lineage.Playlist is not null || lineage.Lineage.Voice is not null)
+            {
+                read.Add((classified.SunoId, lineage));
+            }
+        }
+
+        if (read.Count == 0)
+        {
+            return views;
+        }
+
+        var sourceIds = read
+            .SelectMany(static item => item.Lineage.Lineage.AudioSources.Concat(item.Lineage.Lineage.InspirationSources))
+            .Select(static source => source.Target.ExternalSunoId)
+            .OfType<string>()
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var generations = new Dictionary<string, ImportGenerationView>(StringComparer.Ordinal);
+        foreach (var sunoId in sourceIds)
+        {
+            if (await versions.FindSourceGenerationBySunoIdAsync(sunoId, cancellationToken).ConfigureAwait(false) is { } facts
+                && await versions.FindGenerationAsync(facts.Id, cancellationToken).ConfigureAwait(false) is { } found)
+            {
+                generations[sunoId] = new ImportGenerationView(found.Generation.Id, found.Shortcode, Shortcodes.ForSong(found.SongShortcodeNumber), found.Generation.Clip?.Title);
+            }
+        }
+
+        var staged = (await exports.RecordsNamedAsync(exportId, [.. sourceIds.Where(id => !generations.ContainsKey(id))], cancellationToken).ConfigureAwait(false))
+            .ToDictionary(static record => record.SunoId, StringComparer.Ordinal);
+
+        var playlistNames = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (read.Any(static item => item.Lineage.Lineage.Playlist is not null)
+            && await exports.FindAsync(exportId, cancellationToken).ConfigureAwait(false) is { } export)
+        {
+            foreach (var playlist in await SunoReadModels.ListedAsync(exports, export, cancellationToken).ConfigureAwait(false))
+            {
+                if (!string.IsNullOrWhiteSpace(playlist.Name))
+                {
+                    playlistNames[playlist.Id] = playlist.Name.Trim();
+                }
+            }
+        }
+
+        foreach (var (sunoId, imported) in read)
+        {
+            var titles = imported.References.ToDictionary(static reference => reference.SunoId, static reference => reference.Title, StringComparer.Ordinal);
+            ImportLineageSource View(string group, VersionSource source)
+            {
+                var id = source.Target.ExternalSunoId!;
+                var type = SystemRelationshipTypes.All.FirstOrDefault(candidate => candidate.Id == source.TypeId);
+                var generation = generations.GetValueOrDefault(id);
+                var record = generation is null ? staged.GetValueOrDefault(id) : null;
+                var title = generation?.Title ?? record?.Title ?? titles.GetValueOrDefault(id) ?? id;
+                return new ImportLineageSource(
+                    group,
+                    source.TypeId,
+                    type?.Name ?? string.Empty,
+                    type?.SunoAction,
+                    id,
+                    title,
+                    source.ContinueAtSeconds,
+                    generation is not null ? ImportLineagePlaces.Generation : record is not null ? ImportLineagePlaces.Export : ImportLineagePlaces.NotImported,
+                    generation,
+                    record is null ? null : new ImportLineageRecord(record.SunoId, record.Title, record.WorkspaceId, record.Class, record.ChoiceJson, record.ProposalJson));
+            }
+
+            var lineage = imported.Lineage;
+            var playlist = lineage.Playlist is { } used && playlistNames.TryGetValue(used.SunoPlaylistId, out var name)
+                ? used with { Name = name }
+                : lineage.Playlist;
+            views[sunoId] = new ImportLineageView(
+                [.. lineage.AudioSources.Select(source => View("audio", source)), .. lineage.InspirationSources.Select(source => View("inspiration", source))],
+                playlist,
+                lineage.Voice);
+        }
+
+        return views;
+    }
 
     /// <summary>Names the Songs and Versions a page of choices points at, each read once.</summary>
     private sealed class Names(ISongStore songs, IVersionStore versions)

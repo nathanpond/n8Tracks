@@ -241,6 +241,8 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     playlists: [] as SunoPlaylist[],
     /** The Suno personas seen in imported clips (#125). */
     personas: [] as SunoPersona[],
+    /** The Not imported sources put on the ignore list (#153), by Suno ID, in order. */
+    ignoredSources: [] as string[],
     /** Other Songs the search finds (#125's source picker), besides the Song itself. */
     otherSongs: [] as Song[],
     /** The Generations of {@link otherSongs}, each naming its Song. */
@@ -659,6 +661,17 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     }
     if (path.endsWith('/api/v1/suno/personas')) {
       return jsonResponse(200, { items: server.personas });
+    }
+    if (path.endsWith('/api/v1/suno/ignored') && method === 'POST') {
+      const sent = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as {
+        sunoId?: string;
+      };
+      const sunoId = sent.sunoId ?? '';
+      const added = !server.ignoredSources.includes(sunoId);
+      if (added) {
+        server.ignoredSources.push(sunoId);
+      }
+      return jsonResponse(200, { sunoId, added });
     }
     const resolve = /\/api\/v1\/resolve\/([^/]+)$/.exec(path);
     if (resolve) {
