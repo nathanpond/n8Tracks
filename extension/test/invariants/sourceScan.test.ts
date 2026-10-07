@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   EXTENSION_ROOT,
   NETWORK_EXEMPTIONS,
@@ -8,6 +8,11 @@ import {
   type ScanFinding,
   type ScanReport,
 } from './sourceScan.ts';
+
+// Each scan builds a TypeScript program over the whole extension with the compiler API, which is
+// slow: up to about 2 s a test here and over 5 s on a GitHub runner, past vitest's default 5 s
+// (#378). The limit is about three times that CI time.
+vi.setConfig({ testTimeout: 20_000 });
 
 /** A fixture file under `test/invariants/fixtures/`. */
 function fixture(name: string): string {
