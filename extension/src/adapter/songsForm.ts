@@ -48,19 +48,14 @@ export const ADVANCED_TAB: Target = {
 
 /**
  * The model menu button beside the mode tabs; its name is the chosen model's label ("v6-mini").
- * The snapshots show it closed only, so the menu it opens is known only by `aria-haspopup`.
+ * The snapshots show it closed only, so the model entries are blocked on a capture (#339) and
+ * nothing presses it; there is no target for the menu it opens until a snapshot shows it.
  */
 export const MODEL_BUTTON: Target = {
   role: 'button',
   popup: 'menu',
   within: { around: MODE_TABS, levels: 3, description: 'the top of the Create form' },
   description: 'the model button beside the Simple and Advanced tabs',
-};
-
-/** The menu the model button opens (role from its `aria-haspopup`; no snapshot shows it open). */
-export const MODEL_MENU: Target = {
-  role: 'menu',
-  description: "Suno's model menu",
 };
 
 /** Simple mode's "+" button in the prompt box, which opens the Add menu. */

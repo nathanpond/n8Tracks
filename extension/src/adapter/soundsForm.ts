@@ -26,7 +26,10 @@ const CREDITS: Target = {
   description: 'the credits button at the top of the Create form',
 };
 
-/** The model button beside the credits (Sounds has no mode tabs); its name is the model's label. */
+/**
+ * The model button beside the credits (Sounds has no mode tabs); its name is the model's label. Not
+ * pressed: the model entries are blocked on a capture of the menu it opens (#339).
+ */
 export const SOUNDS_MODEL_BUTTON: Target = {
   role: 'button',
   popup: 'menu',
