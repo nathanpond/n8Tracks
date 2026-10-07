@@ -1209,7 +1209,7 @@ public sealed class VersionImmutabilityGuardTests
         {
             var (from, to) = await InWorkspaceAsync(target);
             Assert.IsType<SongWorkspaceMoveOutcome.Moved>(await InScopeAsync<SongWorkspaceService, SongWorkspaceMoveOutcome>(target, service =>
-                service.MoveSongsAsync(from, new SongWorkspaceMove(null, All: true, to), default)));
+                service.MoveSongsAsync(from, new SongWorkspaceMove(null, All: true, to, ExpectedCount: 1), default)));
         }),
         ["SongService.FindAsync(String, CancellationToken)"] = Service<SongService>(static (service, target) => service.FindAsync(target.SongShortcode, default)),
         ["SongService.UpdateAsync(Guid, SongEdit, Int32, CancellationToken)"] = Service<SongService>(static async (service, target) =>

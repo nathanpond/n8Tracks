@@ -82,6 +82,15 @@ function workspaceServer(songs: Song[]) {
           jsonResponse(422, { code: 'song_not_in_workspace', songs: missing }),
         );
       }
+      if (body.all === true && body.expectedCount !== inFrom.length) {
+        return Promise.resolve(
+          jsonResponse(409, {
+            code: 'song_count_changed',
+            count: inFrom.length,
+            expected: body.expectedCount,
+          }),
+        );
+      }
       const moving = body.all === true ? inFrom : inFrom.filter((song) => named?.includes(song.id));
       for (const song of moving) {
         song.sunoWorkspace = { id: to.id, name: to.name, state: to.state };
@@ -251,7 +260,7 @@ describe('Settings → Suno workspaces', () => {
 
     expect(await screen.findByTestId('songs-moved')).toHaveTextContent('Moved 3 Songs to Studio.');
     expect(server.moves).toEqual([
-      { from: 'default', body: { all: true, targetWorkspaceId: STUDIO.id } },
+      { from: 'default', body: { all: true, expectedCount: 3, targetWorkspaceId: STUDIO.id } },
     ]);
     expect(await screen.findByTestId('no-workspace-songs')).toHaveTextContent(
       'No Songs are in this workspace.',
@@ -313,6 +322,38 @@ describe('Settings → Suno workspaces', () => {
       expect(server.lists.length).toBeGreaterThan(listsBefore);
     });
     expect(server.songs.every((song) => song.sunoWorkspace?.id === DEMOS.id)).toBe(true);
+  });
+
+  it('moves nothing when the workspace holds another number of Songs than the move of all confirmed', async () => {
+    const server = workspaceServer([FIRST, SECOND]);
+    const user = await openWorkspace('Demos');
+    await user.click(
+      screen.getByRole('checkbox', { name: 'Select all 2 Songs in this workspace' }),
+    );
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Move to' }), 'Studio');
+    await user.click(screen.getByRole('button', { name: 'Move 2 Songs' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Move 2 Songs?' });
+
+    // A third Song joins the workspace while the confirmation is open (a sync, another tab).
+    const third = server.songs.find((song) => song.id === FIRST.id);
+    if (third === undefined) {
+      throw new Error('The fake server lost a Song.');
+    }
+    server.songs.push({ ...third, id: 'joined-meanwhile', title: 'Joined meanwhile' });
+    const listsBefore = server.lists.length;
+    await user.click(within(dialog).getByRole('button', { name: 'Move 2 Songs' }));
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+      'Nothing moved: the workspace now holds 3 Songs, not the number confirmed.',
+    );
+    expect(server.moves).toEqual([
+      { from: DEMOS.id, body: { all: true, expectedCount: 2, targetWorkspaceId: STUDIO.id } },
+    ]);
+    expect(server.songs.every((song) => song.sunoWorkspace?.id === DEMOS.id)).toBe(true);
+    expect(screen.queryByTestId('songs-moved')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(server.lists.length).toBeGreaterThan(listsBefore);
+    });
   });
 
   it('says why a move failed when n8Tracks does not answer as expected', async () => {

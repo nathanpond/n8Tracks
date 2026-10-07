@@ -9,8 +9,11 @@ namespace n8Tracks.Application.Songs;
 /// <summary>
 /// A bulk move as asked: the Songs to move (each an ID or a shortcode; null when not sent), or
 /// <paramref name="All"/> of the workspace's Songs, and the Suno ID of the workspace to move them to.
+/// With <paramref name="All"/>, <paramref name="ExpectedCount"/> is how many Songs the user confirmed
+/// would move (#346); it is required then, and the move is refused when the workspace holds another
+/// number by the time it runs.
 /// </summary>
-public sealed record SongWorkspaceMove(IReadOnlyList<string?>? SongIds, bool All, string? TargetWorkspaceId);
+public sealed record SongWorkspaceMove(IReadOnlyList<string?>? SongIds, bool All, string? TargetWorkspaceId, int? ExpectedCount = null);
 
 /// <summary>A Song as a bulk move finds it: its ID, its shortcode number, and the Suno ID of its workspace (null for none).</summary>
 public sealed record SongInWorkspace(Guid Id, long ShortcodeNumber, string? SunoWorkspaceId);
@@ -53,11 +56,18 @@ public abstract record SongWorkspaceMoveOutcome
 
     /// <summary>These Songs, as sent, are not in the workspace (or are no Song at all). Nothing was moved.</summary>
     public sealed record SongsNotInWorkspace(IReadOnlyList<string> Songs) : SongWorkspaceMoveOutcome;
+
+    /// <summary>
+    /// An "all" move found <paramref name="Count"/> Songs in the workspace, not the number confirmed
+    /// (<paramref name="Expected"/>): something added or moved Songs since. Nothing was moved.
+    /// </summary>
+    public sealed record CountChanged(int Expected, int Count) : SongWorkspaceMoveOutcome;
 }
 
 /// <summary>
 /// Moving Songs from one Suno workspace to another in one command (#129): some or all of the
-/// workspace's Songs, at most <see cref="MaximumSongs"/>, all or nothing, without per-Song revisions;
+/// workspace's Songs (all of them only at the count the user confirmed, #346), at most
+/// <see cref="MaximumSongs"/>, all or nothing, without per-Song revisions;
 /// each Song moved is at its next revision. The workspace moved from may be Unavailable (that is how
 /// Songs leave one that has gone); the one moved to must be Available and another one. Only a Song's
 /// workspace changes: never a Version.
@@ -70,6 +80,7 @@ public sealed class SongWorkspaceService(ISongWorkspaceStore songs, ISunoWorkspa
     /// <summary>The fields a move's errors are keyed by, as the API spells them.</summary>
     public const string SongIdsField = "songIds";
     public const string AllField = "all";
+    public const string ExpectedCountField = "expectedCount";
     public const string TargetWorkspaceIdField = "targetWorkspaceId";
 
     /// <summary>
@@ -101,6 +112,11 @@ public sealed class SongWorkspaceService(ISongWorkspaceStore songs, ISunoWorkspa
                     errors[SongIdsField] = ["Name at least one Song to move."];
                 }
 
+                if (move.All && move.ExpectedCount is not >= 0)
+                {
+                    errors[ExpectedCountField] = ["With all: true, send how many Songs the move was confirmed for."];
+                }
+
                 SunoWorkspace? to = null;
                 if (move.TargetWorkspaceId is not { Length: > 0 } targetId)
                 {
@@ -128,6 +144,10 @@ public sealed class SongWorkspaceService(ISongWorkspaceStore songs, ISunoWorkspa
                 if (move.All)
                 {
                     moving = await songs.SongIdsInAsync(from.SunoId, ct).ConfigureAwait(false);
+                    if (moving.Count != move.ExpectedCount)
+                    {
+                        return new SongWorkspaceMoveOutcome.CountChanged(move.ExpectedCount!.Value, moving.Count);
+                    }
                 }
                 else
                 {

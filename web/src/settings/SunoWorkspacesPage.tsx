@@ -165,6 +165,8 @@ function refusal(result: Exclude<MoveSongsResult, { kind: 'moved' }>): string {
       return 'Nothing moved: some of the selected Songs are no longer in this workspace. The list has been read again; select the Songs and move them again.';
     case 'too-many':
       return `Nothing moved: one move takes at most ${result.limit.toLocaleString()} Songs. Select fewer and move them in parts.`;
+    case 'count-changed':
+      return `Nothing moved: the workspace now holds ${songCountText(result.count)}, not the number confirmed. The list has been read again; check it and move them again.`;
     case 'gone':
       return 'Nothing moved: n8Tracks no longer knows this workspace.';
     case 'failed':
@@ -339,7 +341,9 @@ function WorkspaceSongs({
     setMoving(true);
     setMessage(undefined);
     const chosen: WorkspaceSongSelection =
-      selection.kind === 'all' ? { all: true } : { songIds: selection.ids };
+      selection.kind === 'all'
+        ? { all: true, expectedCount: confirmCount }
+        : { songIds: selection.ids };
     const result = await moveWorkspaceSongs(workspace.id, chosen, to.id);
     setMoving(false);
     if (result.kind === 'moved') {
@@ -353,7 +357,11 @@ function WorkspaceSongs({
       return;
     }
     setMessage(refusal(result));
-    if (result.kind === 'not-in-workspace' || result.kind === 'invalid') {
+    if (
+      result.kind === 'not-in-workspace' ||
+      result.kind === 'invalid' ||
+      result.kind === 'count-changed'
+    ) {
       // The Songs or the workspaces changed meanwhile: read them again.
       setSelection(NONE);
       reload();
