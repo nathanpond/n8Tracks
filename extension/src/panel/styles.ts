@@ -67,7 +67,8 @@ h2 {
 }
 
 h2:focus-visible,
-button:focus-visible {
+button:focus-visible,
+.download:focus-visible {
   outline: 2px solid var(--text);
   outline-offset: 2px;
 }
@@ -132,5 +133,22 @@ button {
 
 .check {
   margin-top: 12px;
+}
+
+.statement,
+.preparing {
+  color: var(--secondary-text);
+}
+
+.download {
+  display: inline-block;
+  margin-top: 8px;
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.download[hidden],
+.preparing[hidden] {
+  display: none;
 }
 `;

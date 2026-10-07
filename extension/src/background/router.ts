@@ -1,4 +1,5 @@
 import { isSunoAddress } from '../adapter/addresses.ts';
+import type { Diagnostics } from '../diagnostics/report.ts';
 import {
   isRequest,
   isSyncRequest,
@@ -47,7 +48,13 @@ function onSuno(sender: Sender): boolean {
  * Messages a content script (the relay on the n8Tracks page, the panel on Suno) may send. The sync
  * messages are for the Suno content script's own tab only.
  */
-const CONTENT_SCRIPT_TYPES: readonly Request['type'][] = ['state', 'relay', ...SYNC_TYPES];
+const CONTENT_SCRIPT_TYPES: readonly Request['type'][] = [
+  'state',
+  'relay',
+  'diagnostics-record',
+  'diagnostic-report',
+  ...SYNC_TYPES,
+];
 
 /**
  * Answers one message. Only the extension's own pages may connect or disconnect; a content script
@@ -58,6 +65,7 @@ export async function route(
   message: unknown,
   sender: Sender,
   extensionId: string,
+  diagnostics?: Diagnostics,
   sync?: SyncCoordinator,
 ): Promise<ResponseFor[Request['type']] | Refusal> {
   if (sender.id !== extensionId || !isRequest(message)) {
@@ -78,8 +86,22 @@ export async function route(
       return connection.state(message.fresh ?? false);
     case 'connect':
       return connection.connect(message.address, message.token);
-    case 'disconnect':
-      return connection.disconnect();
+    case 'disconnect': {
+      const state = await connection.disconnect();
+      // Unpairing forgets the step log and the last capture too.
+      await diagnostics?.clear();
+      return state;
+    }
+    case 'diagnostics-record':
+      if (diagnostics === undefined) {
+        return { refused: 'diagnostics are not kept here' };
+      }
+      await diagnostics.record({ run: message.run, statuses: message.statuses });
+      return { recorded: true };
+    case 'diagnostic-report':
+      return diagnostics === undefined
+        ? { refused: 'diagnostics are not kept here' }
+        : diagnostics.report();
     case 'relay': {
       // No page message is handled yet; later stories add theirs here.
       const reply: RelayReply = {

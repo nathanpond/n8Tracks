@@ -1,3 +1,4 @@
+import type { PageStructure } from '../diagnostics/report.ts';
 import type { Page } from './primitives.ts';
 import {
   expected,
@@ -128,6 +129,17 @@ interface LastRun {
 }
 
 /**
+ * A run as the diagnostic report receives it: the workflow, its step log (names, phases,
+ * outcomes, and times only), how it stopped, and the page region around the stop.
+ */
+export interface RecordedRun {
+  workflowId: string;
+  log: readonly StepLogEntry[];
+  failure: StepFailure | null;
+  structure: PageStructure | null;
+}
+
+/**
  * The adapter on one Suno tab: the registered workflows, the page, and the last run of each.
  * The panel shows `statuses()`: a workflow whose last run stopped shows that stop until it is
  * run again or the page reloads; the others show the self-check.
@@ -136,10 +148,13 @@ export class AdapterSession {
   private readonly registry: WorkflowRegistry;
   private readonly page: Page;
   private readonly lastRuns = new Map<string, LastRun>();
+  private readonly onRun: ((run: RecordedRun) => void) | undefined;
 
-  constructor(registry: WorkflowRegistry, page: Page) {
+  /** `onRun` hears of every run that ends, for the diagnostic report's step log. */
+  constructor(registry: WorkflowRegistry, page: Page, onRun?: (run: RecordedRun) => void) {
     this.registry = registry;
     this.page = page;
+    this.onRun = onRun;
   }
 
   statuses(): WorkflowStatus[] {
@@ -164,10 +179,21 @@ export class AdapterSession {
     options: RunOptions = {},
   ): Promise<RunResult> {
     const result = await runWorkflow(workflow, this.page, values, options);
-    this.lastRuns.set(workflow.id, {
-      failure: result.ok ? null : result.failure,
-      log: result.log,
-    });
+    const failure = result.ok ? null : result.failure;
+    this.lastRuns.set(workflow.id, { failure, log: result.log });
+    if (this.onRun !== undefined) {
+      let structure: PageStructure | null = null;
+      try {
+        structure = failure === null ? null : this.page.structureAround();
+      } catch {
+        // A page that cannot be read gives a report without its structure.
+      }
+      try {
+        this.onRun({ workflowId: workflow.id, log: result.log, failure, structure });
+      } catch {
+        // The report is never a reason for a run to fail.
+      }
+    }
     return result;
   }
 

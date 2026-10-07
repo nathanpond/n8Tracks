@@ -1,4 +1,6 @@
 import { ADAPTER_VERSION } from '../adapter/version.ts';
+import { ADAPTER_WORKFLOWS } from '../adapter/workflows/index.ts';
+import { browserVersion, Diagnostics, type UserAgentData } from '../diagnostics/report.ts';
 import { displayVersion } from '../version-label.ts';
 import { Connection } from './connection.ts';
 import { route } from './router.ts';
@@ -29,8 +31,21 @@ const sync = new SyncCoordinator({
   },
 });
 
+// The diagnostic report's step log: in session storage only, cleared on Disconnect, never sent.
+const diagnostics = new Diagnostics({
+  storage: chrome.storage.session,
+  workflows: ADAPTER_WORKFLOWS,
+  versions: {
+    extension: displayVersion(chrome.runtime.getManifest()),
+    adapter: String(ADAPTER_VERSION),
+  },
+  connectionState: () => connection.state(),
+  browser: () =>
+    browserVersion((navigator as Navigator & { userAgentData?: UserAgentData }).userAgentData),
+});
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  void route(connection, message, sender, chrome.runtime.id, sync).then(sendResponse);
+  void route(connection, message, sender, chrome.runtime.id, diagnostics, sync).then(sendResponse);
   return true;
 });
 

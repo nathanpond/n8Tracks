@@ -75,6 +75,17 @@
           <button id="connect" type="submit">Connect</button>
         </div>
       </form>
+
+      <section aria-labelledby="diagnostics-heading">
+        <h2 id="diagnostics-heading">Diagnostics</h2>
+        <p id="diagnostics-statement" class="help"></p>
+        <div class="actions">
+          <button id="download-report" type="button" aria-describedby="diagnostics-statement">
+            Download diagnostic report
+          </button>
+        </div>
+        <p id="diagnostics-result" role="status"></p>
+      </section>
     </main>
     <script type="module" src="./main.ts"></script>
   </body>

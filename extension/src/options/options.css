@@ -52,7 +52,8 @@ input[aria-invalid='true'] {
 }
 
 .error:empty,
-#result:empty {
+#result:empty,
+#diagnostics-result:empty {
   display: none;
 }
 
