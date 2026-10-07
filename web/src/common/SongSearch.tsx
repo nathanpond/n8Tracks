@@ -4,8 +4,9 @@ import { searchSongs, type Song } from '../api/songs';
 
 /**
  * Finds one Song: a text field that suggests the Songs whose title contains what is typed (ignoring
- * case) or whose shortcode starts with it, asked of the API as the user types, up to ten, by title.
- * Each suggestion shows the shortcode, title, and primary Artist. Songs in `unavailable` are shown
+ * case) or whose shortcode starts with it, asked of the API as the user types, up to ten (or
+ * `limit`), by title. Each suggestion shows the shortcode, title, and primary Artist, and what
+ * `noteOf` says about the Song (that it is Archived, say). Songs in `unavailable` are shown
  * but cannot be chosen, with `unavailableNote` saying why; Songs in `exclude` are not shown at all. Choosing one calls `onChoose` and empties
  * the field, so the search adds rather than holding a value. Shared by every screen that adds Songs
  * to something (Playlists, Album tracks, relationships).
@@ -21,6 +22,8 @@ export function SongSearch({
   busy = false,
   disabled = false,
   error,
+  limit,
+  noteOf,
 }: {
   label: string;
   description?: string;
@@ -35,6 +38,10 @@ export function SongSearch({
   /** Whether the field cannot be used yet (something else must be chosen first). */
   disabled?: boolean;
   error?: string;
+  /** How many Songs to suggest at most; the API's default for a search when not given. */
+  limit?: number;
+  /** A note shown with a suggested Song, or undefined for none. */
+  noteOf?: (song: Song) => string | undefined;
 }) {
   const [search, setSearch] = useState('');
   const [open, setOpen] = useState(false);
@@ -54,7 +61,7 @@ export function SongSearch({
       return;
     }
     const controller = new AbortController();
-    void searchSongs(search, controller.signal).then((result) => {
+    void searchSongs(search, controller.signal, limit).then((result) => {
       if (!controller.signal.aborted) {
         setFound({ search, result });
       }
@@ -62,7 +69,7 @@ export function SongSearch({
     return () => {
       controller.abort();
     };
-  }, [search, open]);
+  }, [search, open, limit]);
 
   const typed = search.trim() !== '';
   const loading = open && typed && found?.search !== search;
@@ -142,7 +149,11 @@ export function SongSearch({
                     </Text>
                   </Group>
                   <Text size="xs">
-                    {[song.credits.primary?.name, taken ? unavailableNote : undefined]
+                    {[
+                      song.credits.primary?.name,
+                      noteOf?.(song),
+                      taken ? unavailableNote : undefined,
+                    ]
                       .filter((part) => part !== undefined)
                       .join(' · ')}
                   </Text>

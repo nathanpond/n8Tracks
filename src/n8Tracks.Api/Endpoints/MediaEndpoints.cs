@@ -404,11 +404,14 @@ internal sealed record AudioFileListResponse(AudioFileResponse[] Items, int Tota
 
 /// <summary>
 /// An audio file as the API answers it. The path is relative to the media folder, never absolute.
-/// Its association (#206): <c>song</c> and <c>generation</c> as <c>{id, shortcode}</c> or null,
+/// Its association (#206): <c>song</c> as <c>{id, shortcode, title}</c> (the title since #210) and
+/// <c>generation</c> as <c>{id, shortcode}</c>, or null,
 /// <c>associationOrigin</c> (<c>suno-id</c> or <c>user</c>) while associated, and
 /// <c>unmatchedReason</c> (a code: <c>generation_deleted</c>, <c>multiple_suno_ids</c>,
 /// <c>unassociated_by_user</c>, <c>song_deleted</c>) or null. <c>revision</c> rises with every change
-/// of the association. <c>status</c> is the reported status (#207): <c>unavailable</c> while the media
+/// of the association. <c>autoMatchBlocked</c> (#210) is true once the user removed or replaced the
+/// association of a file whose name holds a UUID: scans do not match it by Suno ID until the user asks
+/// for it (<c>POST .../rematch</c>). <c>status</c> is the reported status (#207): <c>unavailable</c> while the media
 /// folder cannot be read, otherwise <c>storedStatus</c> (<c>available</c> or <c>missing</c>).
 /// <c>suggestions</c> (#209) is there only when the list was asked to include them: up to three, best
 /// first, and empty for an associated file or when nothing is credible.
@@ -428,11 +431,12 @@ internal sealed record AudioFileResponse(
     decimal? DurationSeconds,
     string? Title,
     string? Artist,
-    AudioFileLinkResponse? Song,
+    AudioFileSongResponse? Song,
     AudioFileLinkResponse? Generation,
     string? AssociationOrigin,
     string? UnmatchedReason,
     int Revision,
+    bool AutoMatchBlocked,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] MatchSuggestionResponse[]? Suggestions = null)
 {
     public static AudioFileResponse From(ReportedAudioFile reported)
@@ -455,11 +459,12 @@ internal sealed record AudioFileResponse(
             file.Duration is { } duration ? Math.Round((decimal)duration.TotalMilliseconds / 1000m, 3) : null,
             file.Title,
             file.Artist,
-            file.Link is { } link ? new AudioFileLinkResponse(link.Song.Id, link.Song.Shortcode) : null,
+            file.Link is { } link ? new AudioFileSongResponse(link.Song.Id, link.Song.Shortcode, link.Song.Title ?? string.Empty) : null,
             file.Link?.Generation is { } generation ? new AudioFileLinkResponse(generation.Id, generation.Shortcode) : null,
             file.Link is { } origin ? AudioFileAssociations.Text(origin.Origin) : null,
             file.UnmatchedReason is { } reason ? AudioFileAssociations.Text(reason) : null,
             file.Revision,
+            file.AutoMatchBlocked,
             reported.Suggestions?.Select(MatchSuggestionResponse.From).ToArray());
     }
 }
@@ -523,5 +528,8 @@ internal sealed record MatchReasonResponse(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ArtistSource,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] decimal? DifferenceSeconds);
 
-/// <summary>The Song or Generation an audio file is associated with.</summary>
+/// <summary>The Generation an audio file is associated with.</summary>
 internal sealed record AudioFileLinkResponse(Guid Id, string Shortcode);
+
+/// <summary>The Song an audio file is associated with: its ID, current shortcode, and current title (#210).</summary>
+internal sealed record AudioFileSongResponse(Guid Id, string Shortcode, string Title);

@@ -4247,3 +4247,34 @@ Story #209:
 - **Decision:** The page (`/library/unmatched`) is a table with the File (row header, plus the unmatched reason sentence), Folder ("Top level" at the root), Format, Duration (`m:ss`, "Unknown"), Size, Status (a filled "Missing"/"Unavailable" badge), First seen, and Suggested Songs (an ordered list linking `/go/<shortcode>` for the Song and Generation, with a bulleted list of reasons). Sort is one "Sort by" select of six order/direction pairs. Search, sort and page are kept in the address. It has no hide or dismiss control. The Media page's Unmatched count is a link named "N unmatched: open Unmatched Files".
   **Why:** The AC lists the columns and orders, and #208's note asks for the link and the sidebar entry. The #210 Associate action will go in the row.
   **Issue:** #209
+
+Story #210:
+
+- **Decision:** The "unassociated by you" flag (`user_unassociated` in the story's discretion) is the existing `unmatched_reason = unassociated_by_user` code, which #206 declared. Only `auto_match_blocked` is new: migration `20261008040000_AddAudioFileAutoMatchBlocked` adds it as `INTEGER NOT NULL DEFAULT 0`, with a plain `ALTER TABLE ... ADD COLUMN` (and `DROP COLUMN` in Down). There is no check constraint. `DatabaseStartupTests` lists the column and still asserts #206's composite FK.
+  **Why:** #206 already holds the reason, and the matcher already skips it. A plain ADD COLUMN does not rebuild `audio_files`, so the composite FK that #206 wrote by hand survives (EF Core's DropColumn would rebuild the table). The story's key link names the new column.
+  **Issue:** #210
+- **Decision:** The matcher skips a file whose `auto_match_blocked` is set, as well as `unassociated_by_user`. Both `MatchableAsync` and the conditional `TryAssociateBySunoIdAsync` check it. The flag is set when the user removes or replaces an association on a file whose name holds a UUID (`SunoIdMatcher.FindIds`, whether or not the UUID names a Generation). Nothing clears it except "Match by Suno ID again". It therefore survives a later re-association and a `song_deleted` release. A test proves that the block alone keeps a `song_deleted` file unmatched. A first association of an unmatched file never sets it.
+  **Why:** The discretion says replacing sets it, and the user's decision outranks any scan. Keeping it across a later Song deletion stops a scan from bringing back the match the user moved the file away from.
+  **Issue:** #210
+- **Decision:** API: `PUT /api/v1/audio-files/{id}/association` takes `{song, generation?}`, each an ID or shortcode, as JSON text (any other JSON type is 422 `validation_failed` keyed by field). It answers 200 with the file and its revision as the ETag. `DELETE` on the same route answers 204 with the ETag. `POST /api/v1/audio-files/{id}/rematch` answers 200 with the file. All three need `songs.write` and `If-Match`. The checks run in this order: file (404) → body → Song (404 `not_found`; a deleted Song is 404 `not_found`, not `song_deleted`) → Generation (404) → `generation_not_in_song` (422) → revision (409 with `current`). A PUT naming the current association, or a DELETE on a file with none, stores nothing but still checks the revision. Rematch on an associated file is 422 `audio_file_associated`, with `current`. The files live in `Api/Endpoints/AudioFileAssociationEndpoints.cs` and `Application/Media/AudioFileAssociationService.cs`. Each runs in one exclusive transaction.
+  **Why:** The order and no-op behaviour follow the selection endpoints (#120). The discretion gives the 404s and scope. Rematch refusing an associated file is my choice: it has nothing to match, and the UI never offers it there.
+  **Issue:** #210
+- **Decision:** "Match by Suno ID again" clears both the block and the reason, then runs `SunoIdMatcher.ResolveAsync` for that file only. On no match, the file keeps the reason a scan would give (`generation_deleted` or `multiple_suno_ids`), or no reason. Each write raises the revision, so a rematch that associates raises it twice.
+  **Why:** The discretion says "stays unmatched with no reason". I read that as no user reason: a scan would compute the other two anyway, so the rematch shows them straight away.
+  **Issue:** #210
+- **Decision:** Audio file responses gain `autoMatchBlocked`, and `song` gains `title` (`{id, shortcode, title}`, the current title joined at read, through an optional `CatalogLink.Title`). Both are additive.
+  **Why:** The dialog must name the current association, and a shortcode alone does not tell the user which Song it is.
+  **Issue:** #210
+- **Decision:** `AudioFileAssociationService` signatures take only `Guid`, `string`, and `int`. Its outcomes carry IDs, shortcodes, and `ReportedAudioFile`. It resolves references internally through `SongService.FindAsync(ISongStore, …)` and `GenerationService.FindAsync`. `Application.Media` therefore stays out of `CatalogServiceNamespaces`. The three endpoints are exercised by the invariant 1 API guard on a frozen Version, with the Version's inputs in the body. The reference guard lists their `id` as non-catalog.
+  **Why:** This is the same approach as #209. The guard still proves that the endpoints cannot change a frozen Version.
+  **Issue:** #210
+- **Decision:** Web changes:
+  - Each suggestion has an "Associate" button (named "Associate <file> with <Song> (<shortcode>)[, Generation <g>]"). It associates in one action, with the suggested Generation when there is one.
+  - Every unmatched row has "Choose a Song…", and an associated row has "Change or remove…". Both open `AssociateFileDialog`.
+  - A file with `autoMatchBlocked` has "Match by Suno ID again".
+  - The page has a "Show" select (Unmatched by default, Associated, All), kept in the address as `show`.
+  - After every write the list is read again, and a polite status announces what changed. The last column is now "Song", and "None" became "No suggestions".
+  - The dialog searches Songs with the shared `SongSearch`, which gained optional `limit` (20 here) and `noteOf` ("Archived" by the fixed `ARCHIVED_STATE_ID`) props. It then offers "None: the Song only" (the default) and every Generation of the Song as radios, with the "a Generation is preferred" sentence.
+  - On a 409 the dialog keeps `current`, so trying again uses the new revision.
+  **Why:** These follow the AC and discretion. The #209 note put the action in `FileRow` and the reload after it. Reusing `SongSearch` keeps one Song finder. Radios make "Song only" an explicit choice.
+  **Issue:** #210

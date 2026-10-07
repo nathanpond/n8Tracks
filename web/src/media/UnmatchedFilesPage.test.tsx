@@ -24,8 +24,12 @@ function file(change: Partial<UnmatchedFile> = {}): UnmatchedFile {
     firstSeenAt: '2026-10-08T10:00:00Z',
     status: 'available',
     durationSeconds: 187.4,
+    song: null,
+    generation: null,
+    associationOrigin: null,
     unmatchedReason: null,
     revision: 1,
+    autoMatchBlocked: false,
     suggestions: [suggestion()],
     ...change,
   };
@@ -96,7 +100,7 @@ describe('Library → Unmatched Files', () => {
     expect(within(list).getByText('Title matches the file name')).toBeVisible();
     expect(within(second).getAllByRole('cell')[0]).toHaveTextContent('Album/Disc 1');
     expect(within(second).getByText('Unknown')).toBeVisible();
-    expect(within(second).getByTestId('no-suggestions')).toHaveTextContent('None');
+    expect(within(second).getByTestId('no-suggestions')).toHaveTextContent('No suggestions');
     expect(screen.getByTestId('unmatched-total')).toHaveTextContent('2 files');
 
     const query = server.queries[0];
@@ -261,7 +265,7 @@ describe('Library → Unmatched Files', () => {
     expect(screen.getByRole('combobox', { name: 'Sort by' })).toHaveValue('firstSeen-asc');
   });
 
-  it('offers no way to hide or dismiss a file', async () => {
+  it('offers no way to hide or dismiss a file: only to associate it', async () => {
     unmatchedServer([file()]);
     await openUnmatched();
     const [row] = await rows();
@@ -269,7 +273,11 @@ describe('Library → Unmatched Files', () => {
       throw new Error('A row was expected.');
     }
 
-    expect(within(row).queryByRole('button')).not.toBeInTheDocument();
+    expect(
+      within(row)
+        .getAllByRole('button')
+        .map((button) => button.textContent),
+    ).toEqual(['Associate', 'Choose a Song…']);
     expect(screen.queryByRole('button', { name: /hide|dismiss|ignore/i })).not.toBeInTheDocument();
   });
 });

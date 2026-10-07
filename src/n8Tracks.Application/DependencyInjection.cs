@@ -99,6 +99,7 @@ public static class DependencyInjection
         services.AddSingleton<MediaScanStartLock>();
         services.AddScoped<MediaScanService>();
         services.AddScoped<AudioFileService>();
+        services.AddScoped<AudioFileAssociationService>();
         services.AddScoped<DownloadRecordService>();
         services.AddScoped<MediaStatusService>();
         services.AddScoped<AudioContentService>();

@@ -22,6 +22,10 @@ namespace n8Tracks.Domain.Media;
 /// <param name="Link">The Song (and Generation) it is associated with, and how; null when unassociated (#206).</param>
 /// <param name="UnmatchedReason">Why an unassociated file was left unmatched, when there is a reason; always null when <paramref name="Link"/> is set.</param>
 /// <param name="Revision">Raised by every change of its association, so a user acting on a stale row gets a conflict.</param>
+/// <param name="AutoMatchBlocked">
+/// Set when the user removed or replaced the association of a file whose name holds a UUID (#210): the
+/// scan never associates it by Suno ID again until the user asks for a match.
+/// </param>
 public sealed record AudioFile(
     Guid Id,
     string Path,
@@ -38,7 +42,8 @@ public sealed record AudioFile(
     string? Artist,
     AudioFileLink? Link = null,
     UnmatchedReason? UnmatchedReason = null,
-    int Revision = 1);
+    int Revision = 1,
+    bool AutoMatchBlocked = false);
 
 /// <summary>
 /// An audio file's association (#206): exactly one Song, and at most one Generation, which belongs to
@@ -49,8 +54,8 @@ public sealed record AudioFile(
 /// <param name="Origin">How the association was made.</param>
 public sealed record AudioFileLink(CatalogLink Song, CatalogLink? Generation, AssociationOrigin Origin);
 
-/// <summary>A Song or Generation an audio file names: its ID and its current shortcode.</summary>
-public sealed record CatalogLink(Guid Id, string Shortcode);
+/// <summary>A Song or Generation an audio file names: its ID, its current shortcode, and, for a Song, its current title (#210).</summary>
+public sealed record CatalogLink(Guid Id, string Shortcode, string? Title = null);
 
 /// <summary>How an audio file's association was made.</summary>
 public enum AssociationOrigin

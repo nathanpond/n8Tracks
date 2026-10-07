@@ -1,3 +1,4 @@
+import { writeWithRevision, type SaveResult } from './saves';
 import { isRecord, useResource } from './songs';
 
 /** Where Library → Unmatched Files is (#209). */
@@ -39,7 +40,15 @@ export interface MatchSuggestion {
   reasons: MatchReason[];
 }
 
-/** An unmatched audio file as the list answers it, with its suggestions (best first, up to three). */
+/** How an association was made: by a scan, from the Suno ID in the file name, or by the user. */
+export type AssociationOrigin = 'suno-id' | 'user';
+
+/**
+ * An audio file as the list answers it, with its suggestions (best first, up to three; none once it
+ * is associated). `song` and `generation` are its association (#210), or null; `autoMatchBlocked` is
+ * true once the user removed or replaced the association of a file whose name holds a UUID, so scans
+ * no longer match it by Suno ID.
+ */
 export interface UnmatchedFile {
   id: string;
   path: string;
@@ -49,8 +58,12 @@ export interface UnmatchedFile {
   firstSeenAt: string;
   status: AudioFileStatus;
   durationSeconds: number | null;
+  song: { id: string; shortcode: string; title: string } | null;
+  generation: { id: string; shortcode: string } | null;
+  associationOrigin: AssociationOrigin | null;
   unmatchedReason: UnmatchedReason | null;
   revision: number;
+  autoMatchBlocked: boolean;
   suggestions: MatchSuggestion[];
 }
 
@@ -66,13 +79,26 @@ export type UnmatchedSort = 'firstSeen' | 'name' | 'folder';
 
 export type SortDirection = 'asc' | 'desc';
 
-/** What the page shows: a search in the name or folder, an order, and a page (from 1). */
+/** Which files the page lists (#210): the unmatched ones (the default), the associated ones, or all. */
+export type UnmatchedShow = 'unmatched' | 'associated' | 'all';
+
+/** What the page shows: which files, a search in the name or folder, an order, and a page (from 1). */
 export interface UnmatchedQuery {
+  show: UnmatchedShow;
   q: string;
   sort: UnmatchedSort;
   direction: SortDirection;
   page: number;
 }
+
+const SHOWS: readonly UnmatchedShow[] = ['unmatched', 'associated', 'all'];
+
+/** The API's association filter for each choice. */
+const ASSOCIATION_FILTER: Record<UnmatchedShow, string> = {
+  unmatched: 'none',
+  associated: 'associated',
+  all: 'any',
+};
 
 const SORTS: readonly UnmatchedSort[] = ['firstSeen', 'name', 'folder'];
 
@@ -120,7 +146,14 @@ function isSuggestion(value: unknown): value is MatchSuggestion {
   );
 }
 
-function isFile(value: unknown): value is UnmatchedFile {
+const isLink = (value: unknown) =>
+  value === null ||
+  (isRecord(value) && typeof value.id === 'string' && typeof value.shortcode === 'string');
+
+/** A file as answered: with suggestions only when the list was asked for them. */
+type AnsweredFile = Omit<UnmatchedFile, 'suggestions'> & { suggestions?: MatchSuggestion[] };
+
+function isFile(value: unknown): value is AnsweredFile {
   return (
     isRecord(value) &&
     typeof value.id === 'string' &&
@@ -133,22 +166,43 @@ function isFile(value: unknown): value is UnmatchedFile {
       value.status === 'missing' ||
       value.status === 'unavailable') &&
     numberOrNull(value.durationSeconds) &&
+    isLink(value.song) &&
+    (value.song === null || (isRecord(value.song) && typeof value.song.title === 'string')) &&
+    isLink(value.generation) &&
+    (value.associationOrigin === null ||
+      value.associationOrigin === 'suno-id' ||
+      value.associationOrigin === 'user') &&
     textOrNull(value.unmatchedReason) &&
     typeof value.revision === 'number' &&
-    Array.isArray(value.suggestions) &&
-    value.suggestions.every(isSuggestion)
+    typeof value.autoMatchBlocked === 'boolean' &&
+    (value.suggestions === undefined ||
+      (Array.isArray(value.suggestions) && value.suggestions.every(isSuggestion)))
   );
 }
 
-const acceptPage = (answer: unknown): UnmatchedPage | undefined =>
-  isRecord(answer) &&
-  Array.isArray(answer.items) &&
-  answer.items.every(isFile) &&
-  typeof answer.total === 'number' &&
-  typeof answer.offset === 'number' &&
-  typeof answer.limit === 'number'
-    ? (answer as unknown as UnmatchedPage)
+/** One file as the API answers it; a file answered without suggestions gets none. */
+function acceptFile(answer: unknown): UnmatchedFile | undefined {
+  return isFile(answer) ? { ...answer, suggestions: answer.suggestions ?? [] } : undefined;
+}
+
+function acceptPage(answer: unknown): UnmatchedPage | undefined {
+  if (
+    !isRecord(answer) ||
+    !Array.isArray(answer.items) ||
+    typeof answer.total !== 'number' ||
+    typeof answer.offset !== 'number' ||
+    typeof answer.limit !== 'number'
+  ) {
+    return undefined;
+  }
+  const items: unknown[] = answer.items;
+  const files = items.map((item) =>
+    isFile(item) && item.suggestions !== undefined ? acceptFile(item) : undefined,
+  );
+  return files.every((file): file is UnmatchedFile => file !== undefined)
+    ? { items: files, total: answer.total, offset: answer.offset, limit: answer.limit }
     : undefined;
+}
 
 /** The query the address holds; anything unknown is left at its default. */
 export function unmatchedQueryFrom(parameters: URLSearchParams): UnmatchedQuery {
@@ -160,7 +214,9 @@ export function unmatchedQueryFrom(parameters: URLSearchParams): UnmatchedQuery 
   const direction =
     directionText === 'asc' || directionText === 'desc' ? directionText : defaultDirection(sort);
   const page = Number(parameters.get('page') ?? '1');
+  const showText = parameters.get('show');
   return {
+    show: SHOWS.includes(showText as UnmatchedShow) ? (showText as UnmatchedShow) : 'unmatched',
     q: parameters.get('q') ?? '',
     sort,
     direction,
@@ -171,6 +227,9 @@ export function unmatchedQueryFrom(parameters: URLSearchParams): UnmatchedQuery 
 /** The page's address for `query`, defaults left out. */
 export function unmatchedParameters(query: UnmatchedQuery): URLSearchParams {
   const parameters = new URLSearchParams();
+  if (query.show !== 'unmatched') {
+    parameters.set('show', query.show);
+  }
   if (query.q.trim() !== '') {
     parameters.set('q', query.q.trim());
   }
@@ -186,10 +245,10 @@ export function unmatchedParameters(query: UnmatchedQuery): URLSearchParams {
   return parameters;
 }
 
-/** The API's query for `query`: unassociated files with their suggestions, one page of 100. */
+/** The API's query for `query`: the files chosen, with their suggestions, one page of 100. */
 export function unmatchedApiPath(query: UnmatchedQuery): string {
   const parameters = new URLSearchParams({
-    association: 'none',
+    association: ASSOCIATION_FILTER[query.show],
     include: 'suggestions',
     sort: query.sort,
     direction: query.direction,
@@ -205,4 +264,54 @@ export function unmatchedApiPath(query: UnmatchedQuery): string {
 /** A page of Unmatched Files, with suggestions. */
 export function useUnmatchedFiles(query: UnmatchedQuery) {
   return useResource(unmatchedApiPath(query), acceptPage);
+}
+
+const filePath = (id: string, action: string) =>
+  `api/v1/audio-files/${encodeURIComponent(id)}/${action}`;
+
+/**
+ * Associates the file with a Song (by ID) and, when `generation` is not null, one of its Generations
+ * (#210), based on the revision the page read; any association it has is replaced.
+ */
+export function associateFile(
+  file: Pick<UnmatchedFile, 'id' | 'revision'>,
+  song: string,
+  generation: string | null,
+): Promise<SaveResult<UnmatchedFile>> {
+  return writeWithRevision(
+    'PUT',
+    filePath(file.id, 'association'),
+    file.revision,
+    { song, generation },
+    acceptFile,
+  );
+}
+
+/**
+ * Removes the file's association, based on the revision the page read: it is back among the
+ * unmatched, "unassociated by you". The API answers no body, so a saved result carries null.
+ */
+export function removeAssociation(
+  file: Pick<UnmatchedFile, 'id' | 'revision'>,
+): Promise<SaveResult<UnmatchedFile | null>> {
+  return writeWithRevision(
+    'DELETE',
+    filePath(file.id, 'association'),
+    file.revision,
+    undefined,
+    (answer) => (answer === undefined ? null : acceptFile(answer)),
+  );
+}
+
+/** "Match by Suno ID again": clears the file's block on automatic matching and matches it at once. */
+export function rematchFile(
+  file: Pick<UnmatchedFile, 'id' | 'revision'>,
+): Promise<SaveResult<UnmatchedFile>> {
+  return writeWithRevision(
+    'POST',
+    filePath(file.id, 'rematch'),
+    file.revision,
+    undefined,
+    acceptFile,
+  );
 }

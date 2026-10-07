@@ -284,7 +284,8 @@ public interface IAudioFileStore
 
     /// <summary>
     /// Every record with no association that a scan may match: Missing ones included, those the user
-    /// unassociated (<see cref="UnmatchedReason.UnassociatedByUser"/>) left out. In path order.
+    /// unassociated (<see cref="UnmatchedReason.UnassociatedByUser"/>) and those whose automatic match
+    /// the user blocked (<see cref="AudioFile.AutoMatchBlocked"/>, #210) left out. In path order.
     /// </summary>
     Task<IReadOnlyList<UnassociatedAudioFile>> MatchableAsync(CancellationToken cancellationToken);
 
@@ -309,10 +310,34 @@ public interface IAudioFileStore
     /// <summary>
     /// One conditional write: associates the file with the Generation and that Generation's Song, origin
     /// <c>suno-id</c>, clearing its reason and raising its revision, only while the file is still
-    /// unassociated, was not unassociated by the user, and the Generation is still live. False when any
-    /// of these no longer holds (nothing is written).
+    /// unassociated, was not unassociated by the user, has no automatic match blocked (#210), and the
+    /// Generation is still live. False when any of these no longer holds (nothing is written).
     /// </summary>
     Task<bool> TryAssociateBySunoIdAsync(Guid fileId, Guid generationId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// One conditional write (#210), only while the file is at <paramref name="revision"/>: associates it
+    /// with the Song <paramref name="songId"/> and, when given, its Generation <paramref name="generationId"/>,
+    /// origin <c>user</c>, clearing its reason and raising its revision; sets its automatic-match block
+    /// when <paramref name="blockAutoMatch"/> (never clears it). The database refuses a Generation of
+    /// another Song. False when the file is gone or at another revision (nothing is written).
+    /// </summary>
+    Task<bool> TryAssociateByUserAsync(Guid fileId, int revision, Guid songId, Guid? generationId, bool blockAutoMatch, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// One conditional write (#210), only while the file is at <paramref name="revision"/>: removes its
+    /// association with the reason <see cref="UnmatchedReason.UnassociatedByUser"/>, raising its
+    /// revision, and sets its automatic-match block when <paramref name="blockAutoMatch"/> (never clears
+    /// it). False when the file is gone or at another revision (nothing is written).
+    /// </summary>
+    Task<bool> TryUnassociateByUserAsync(Guid fileId, int revision, bool blockAutoMatch, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// One conditional write (#210), only while the file is unassociated and at <paramref name="revision"/>:
+    /// clears its automatic-match block and its reason, raising its revision, so the matcher may look at
+    /// it again. False when the file is gone, associated, or at another revision (nothing is written).
+    /// </summary>
+    Task<bool> TryUnblockAutoMatchAsync(Guid fileId, int revision, CancellationToken cancellationToken);
 
     /// <summary>One conditional write: the reason of a file that is still unassociated and still has <paramref name="from"/>.</summary>
     Task<bool> TrySetReasonAsync(Guid fileId, UnmatchedReason? from, UnmatchedReason? to, CancellationToken cancellationToken);

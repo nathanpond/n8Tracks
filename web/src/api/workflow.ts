@@ -10,6 +10,12 @@ import {
   type WorkflowState,
 } from './songs';
 
+/**
+ * The ID of the seeded Archived workflow state: fixed, whatever the state is renamed to. A Song in it
+ * is archived.
+ */
+export const ARCHIVED_STATE_ID = '01a10a6e-dc86-7006-8000-000000000007';
+
 /** The longest state name the API takes, in UTF-16 code units after trimming. */
 export const STATE_NAME_MAXIMUM_LENGTH = 50;
 

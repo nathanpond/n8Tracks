@@ -60,4 +60,10 @@ public sealed class AudioFileRecord
 
     /// <summary>Raised by every change of the association.</summary>
     public int Revision { get; set; } = 1;
+
+    /// <summary>
+    /// Set when the user removes or replaces the association of a file whose name holds a UUID (#210):
+    /// the scan's Suno ID matcher never associates it again until the user asks it to.
+    /// </summary>
+    public bool AutoMatchBlocked { get; set; }
 }

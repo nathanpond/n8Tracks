@@ -202,7 +202,7 @@ internal sealed class AudioFileStore(N8TracksDbContext context) : IAudioFileStor
     {
         const string byUser = AudioFileAssociations.UnassociatedByUserReason;
         var rows = await context.AudioFiles.AsNoTracking()
-            .Where(static row => row.SongId == null && row.UnmatchedReason != byUser)
+            .Where(static row => row.SongId == null && row.UnmatchedReason != byUser && !row.AutoMatchBlocked)
             .OrderBy(static row => row.Path)
             .Select(static row => new { row.Id, row.FileName, row.UnmatchedReason })
             .ToListAsync(cancellationToken)
@@ -277,7 +277,7 @@ internal sealed class AudioFileStore(N8TracksDbContext context) : IAudioFileStor
         const string byUser = AudioFileAssociations.UnassociatedByUserReason;
         const string origin = AudioFileAssociations.SunoIdOrigin;
         return await context.AudioFiles
-            .Where(row => row.Id == fileId && row.SongId == null && row.UnmatchedReason != byUser)
+            .Where(row => row.Id == fileId && row.SongId == null && row.UnmatchedReason != byUser && !row.AutoMatchBlocked)
             .ExecuteUpdateAsync(
                 setters => setters
                     .SetProperty(static row => row.SongId, songId)
@@ -288,6 +288,51 @@ internal sealed class AudioFileStore(N8TracksDbContext context) : IAudioFileStor
                 cancellationToken)
             .ConfigureAwait(false) == 1;
     }
+
+    public async Task<bool> TryAssociateByUserAsync(Guid fileId, int revision, Guid songId, Guid? generationId, bool blockAutoMatch, CancellationToken cancellationToken)
+    {
+        const string origin = AudioFileAssociations.UserOrigin;
+        return await context.AudioFiles
+            .Where(row => row.Id == fileId && row.Revision == revision)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(static row => row.SongId, songId)
+                    .SetProperty(static row => row.GenerationId, generationId)
+                    .SetProperty(static row => row.AssociationOrigin, origin)
+                    .SetProperty(static row => row.UnmatchedReason, (string?)null)
+                    .SetProperty(static row => row.AutoMatchBlocked, row => row.AutoMatchBlocked || blockAutoMatch)
+                    .SetProperty(static row => row.Revision, static row => row.Revision + 1),
+                cancellationToken)
+            .ConfigureAwait(false) == 1;
+    }
+
+    public async Task<bool> TryUnassociateByUserAsync(Guid fileId, int revision, bool blockAutoMatch, CancellationToken cancellationToken)
+    {
+        const string reason = AudioFileAssociations.UnassociatedByUserReason;
+        return await context.AudioFiles
+            .Where(row => row.Id == fileId && row.Revision == revision)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(static row => row.SongId, (Guid?)null)
+                    .SetProperty(static row => row.GenerationId, (Guid?)null)
+                    .SetProperty(static row => row.AssociationOrigin, (string?)null)
+                    .SetProperty(static row => row.UnmatchedReason, reason)
+                    .SetProperty(static row => row.AutoMatchBlocked, row => row.AutoMatchBlocked || blockAutoMatch)
+                    .SetProperty(static row => row.Revision, static row => row.Revision + 1),
+                cancellationToken)
+            .ConfigureAwait(false) == 1;
+    }
+
+    public async Task<bool> TryUnblockAutoMatchAsync(Guid fileId, int revision, CancellationToken cancellationToken) =>
+        await context.AudioFiles
+            .Where(row => row.Id == fileId && row.Revision == revision && row.SongId == null)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(static row => row.AutoMatchBlocked, false)
+                    .SetProperty(static row => row.UnmatchedReason, (string?)null)
+                    .SetProperty(static row => row.Revision, static row => row.Revision + 1),
+                cancellationToken)
+            .ConfigureAwait(false) == 1;
 
     public async Task<bool> TrySetReasonAsync(Guid fileId, UnmatchedReason? from, UnmatchedReason? to, CancellationToken cancellationToken)
     {
@@ -335,7 +380,7 @@ internal sealed class AudioFileStore(N8TracksDbContext context) : IAudioFileStor
                     .SetProperty(static row => row.Revision, static row => row.Revision + 1),
                 cancellationToken);
 
-    /// <summary>The domain files of <paramref name="rows"/>, in their order, with the current shortcodes of what each is associated with.</summary>
+    /// <summary>The domain files of <paramref name="rows"/>, in their order, with the current shortcodes of what each is associated with (and the Song's title).</summary>
     private async Task<List<AudioFile>> FilesOfAsync(IReadOnlyList<AudioFileRecord> rows, CancellationToken cancellationToken)
     {
         var songIds = rows.Where(static row => row.SongId is not null).Select(static row => row.SongId!.Value).Distinct().ToList();
@@ -345,8 +390,8 @@ internal sealed class AudioFileStore(N8TracksDbContext context) : IAudioFileStor
             ? []
             : await context.Songs.AsNoTracking()
                 .Where(song => songIds.Contains(song.Id))
-                .Select(static song => new { song.Id, song.ShortcodeNumber })
-                .ToDictionaryAsync(static song => song.Id, static song => Shortcodes.ForSong(song.ShortcodeNumber), cancellationToken)
+                .Select(static song => new { song.Id, song.ShortcodeNumber, song.Title })
+                .ToDictionaryAsync(static song => song.Id, static song => new CatalogLink(song.Id, Shortcodes.ForSong(song.ShortcodeNumber), song.Title), cancellationToken)
                 .ConfigureAwait(false);
         var generations = generationIds.Count == 0
             ? []
@@ -363,7 +408,7 @@ internal sealed class AudioFileStore(N8TracksDbContext context) : IAudioFileStor
         {
             Link = row.SongId is { } songId
                 ? new AudioFileLink(
-                    new CatalogLink(songId, songs[songId]),
+                    songs[songId],
                     row.GenerationId is { } generationId ? new CatalogLink(generationId, generations[generationId]) : null,
                     AudioFileAssociations.ParseOrigin(row.AssociationOrigin)
                         ?? throw new InvalidOperationException($"The audio file {row.Id} has an unknown association origin."))
@@ -409,7 +454,8 @@ internal sealed class AudioFileStore(N8TracksDbContext context) : IAudioFileStor
         row.Artist,
         Link: null,
         UnmatchedReason: ReasonOf(row.UnmatchedReason),
-        Revision: row.Revision);
+        Revision: row.Revision,
+        AutoMatchBlocked: row.AutoMatchBlocked);
 
     private static long? DurationMs(TimeSpan? duration) => duration is { } value ? (long)Math.Round(value.TotalMilliseconds) : null;
 }

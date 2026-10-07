@@ -1,4 +1,9 @@
-import type { MatchReason, UnmatchedFile, UnmatchedReason } from '../api/audioFiles';
+import type {
+  AssociationOrigin,
+  MatchReason,
+  UnmatchedFile,
+  UnmatchedReason,
+} from '../api/audioFiles';
 
 /** The folder a file is in, relative to the media folder; the top level when it is in no folder. */
 export function folderText(file: Pick<UnmatchedFile, 'path' | 'fileName'>): string {
@@ -69,4 +74,18 @@ export function reasonText(reason: MatchReason): string {
     default:
       return reason.code;
   }
+}
+
+/** How an association was made, as the dialog says it. */
+export function originText(origin: AssociationOrigin | null): string {
+  return origin === 'suno-id' ? 'matched by its Suno ID' : 'by you';
+}
+
+/** A file's association as a sentence fragment: the Song, and the Generation when there is one. */
+export function associationText(file: Pick<UnmatchedFile, 'song' | 'generation'>): string {
+  if (file.song === null) {
+    return 'no Song';
+  }
+  const song = `${file.song.title} (${file.song.shortcode})`;
+  return file.generation === null ? song : `${song}, Generation ${file.generation.shortcode}`;
 }

@@ -584,17 +584,21 @@ export const SONG_SEARCH_RESULTS = 10;
 
 /**
  * The first Songs whose title contains `search` (ignoring case) or whose shortcode starts with it,
- * by title, and how many match in all. Nothing for blank text; undefined when the list cannot be
- * read.
+ * by title, and how many match in all: {@link SONG_SEARCH_RESULTS} of them, or `limit` when given.
+ * Nothing for blank text; undefined when the list cannot be read.
  */
 export async function searchSongs(
   search: string,
   signal?: AbortSignal,
+  limit?: number,
 ): Promise<{ songs: Song[]; total: number } | undefined> {
   if (search.trim() === '') {
     return { songs: [], total: 0 };
   }
   const parameters = new URLSearchParams({ q: search.trim(), sort: 'title' });
+  if (limit !== undefined) {
+    parameters.set('pageSize', String(limit));
+  }
   try {
     const response = await apiFetch(`${SONGS_PATH}?${parameters.toString()}`, { signal });
     const answer = await body(response);

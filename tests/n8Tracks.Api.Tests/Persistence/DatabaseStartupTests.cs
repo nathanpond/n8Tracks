@@ -78,7 +78,8 @@ public sealed class DatabaseStartupTests : IDisposable
             migration => Assert.Matches("^[0-9]{14}_ProtectGenerationSunoId\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AddAudioFiles\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AddAudioFileAssociations\\|10\\.0\\.", migration),
-            migration => Assert.Matches("^[0-9]{14}_AddDownloadRecords\\|10\\.0\\.", migration));
+            migration => Assert.Matches("^[0-9]{14}_AddDownloadRecords\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddAudioFileAutoMatchBlocked\\|10\\.0\\.", migration));
 
         // ISO 8601 UTC with milliseconds and Z, taken when the migration ran.
         var initialized = TestDatabase.SchemaInitializedUtc(directory.Path);
@@ -240,12 +241,13 @@ public sealed class DatabaseStartupTests : IDisposable
         // Audio files (#203, associations #206): a Song by RESTRICT key, and a Generation by a composite
         // key to generations (id, song_id), RESTRICT on delete and CASCADE on update, so the Generation
         // is always the Song's and follows its moves. No triggers, so later stories may rebuild it.
+        // #210 added auto_match_blocked by a plain ADD COLUMN, so the keys below survived it.
         Assert.Equal(
             [
                 "id|TEXT|1|1", "path|TEXT|1|0", "file_name|TEXT|1|0", "format|TEXT|1|0", "size_bytes|INTEGER|1|0", "modified_utc|TEXT|1|0",
                 "first_seen_utc|TEXT|1|0", "last_seen_utc|TEXT|1|0", "status|TEXT|1|0", "metadata_readable|INTEGER|1|0", "duration_ms|INTEGER|0|0",
                 "title|TEXT|0|0", "artist|TEXT|0|0", "song_id|TEXT|0|0", "generation_id|TEXT|0|0", "association_origin|TEXT|0|0",
-                "unmatched_reason|TEXT|0|0", "revision|INTEGER|1|0",
+                "unmatched_reason|TEXT|0|0", "revision|INTEGER|1|0", "auto_match_blocked|INTEGER|1|0",
             ],
             TestDatabase.Rows(directory.Path, "SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('audio_files') ORDER BY cid;"));
         Assert.Equal(
@@ -367,7 +369,7 @@ public sealed class DatabaseStartupTests : IDisposable
 
         Assert.Equal(MigrationStatus.UpToDate, state.Status);
         Assert.Equal(TestDatabase.History(directory.Path)[^1].Split('|')[0], state.LastAppliedMigrationId);
-        Assert.EndsWith("_AddDownloadRecords", state.LastAppliedMigrationId, StringComparison.Ordinal);
+        Assert.EndsWith("_AddAudioFileAutoMatchBlocked", state.LastAppliedMigrationId, StringComparison.Ordinal);
     }
 
     [Fact]

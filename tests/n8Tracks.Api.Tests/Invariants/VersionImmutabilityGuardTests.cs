@@ -924,7 +924,52 @@ public sealed class VersionImmutabilityGuardTests
                 await target.InputsJsonAsync($$"""{"generation":"{{target.VersionShortcode}}-g1",""", "}"));
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         }),
+
+        // An audio file's association (#210) names a Song and one of its Generations, by shortcode,
+        // with the Version's inputs alongside: only the file's record changes.
+        ["PUT /api/v1/audio-files/{id:guid}/association"] = new(async target =>
+        {
+            var file = CatalogedFile(target, "associated");
+            using var response = await SendAsync(
+                target.Client,
+                HttpMethod.Put,
+                new Uri($"/api/v1/audio-files/{file}/association", UriKind.Relative),
+                SongApi.Quoted(1),
+                await target.InputsJsonAsync($$"""{"song":"{{target.SongShortcode}}","generation":"{{target.VersionShortcode}}-g1",""", "}"));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }),
+        ["DELETE /api/v1/audio-files/{id:guid}/association"] = new(async target =>
+        {
+            var file = CatalogedFile(target, "removed");
+            using var associated = await SendAsync(
+                target.Client,
+                HttpMethod.Put,
+                new Uri($"/api/v1/audio-files/{file}/association", UriKind.Relative),
+                SongApi.Quoted(1),
+                $$"""{"song":"{{target.SongId}}"}""");
+            Assert.Equal(HttpStatusCode.OK, associated.StatusCode);
+            using var response = await SendAsync(target.Client, HttpMethod.Delete, new Uri($"/api/v1/audio-files/{file}/association", UriKind.Relative), SongApi.Quoted(2), json: null);
+            Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        }),
+        ["POST /api/v1/audio-files/{id:guid}/rematch"] = new(async target =>
+        {
+            var file = CatalogedFile(target, "rematched");
+            using var response = await SendAsync(target.Client, HttpMethod.Post, new Uri($"/api/v1/audio-files/{file}/rematch", UriKind.Relative), SongApi.Quoted(1), json: null);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }),
     };
+
+    /// <summary>A cataloged, unassociated audio file at revision 1, written straight to the table (no scan is needed to associate one).</summary>
+    private static Guid CatalogedFile(Target target, string name)
+    {
+        var id = Guid.CreateVersion7();
+        var path = $"guard/{name}-{id:N}.mp3";
+        TestDatabase.Execute(
+            target.Factory.DataPath,
+            "INSERT INTO audio_files (id, path, file_name, format, size_bytes, modified_utc, first_seen_utc, last_seen_utc, status, metadata_readable) "
+            + $"VALUES ('{id.ToString().ToUpperInvariant()}', '{path}', '{path[6..]}', 'mp3', 1, '2026-10-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z', 'available', 0);");
+        return id;
+    }
 
     /// <summary>Unsafe endpoints that take neither a Song nor a Version, and why they cannot change one's inputs.</summary>
     private static Dictionary<string, string> ApiEndpointsTouchingNoVersion() => new(StringComparer.Ordinal)
