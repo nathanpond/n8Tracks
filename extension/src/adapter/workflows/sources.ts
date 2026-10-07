@@ -127,6 +127,7 @@ export const answerOverwrite: Workflow = {
   title: 'Answer Suno’s Overwrite question',
   feature: 'generate',
   startsOn: sunoPage('create'),
+  after: 'choose-source-action',
   needs: [{ step: 'Overwrite', check: (page) => present(page, OVERWRITE_BUTTON) }],
   steps: [
     {
@@ -150,6 +151,7 @@ export const verifySourceAdvanced: Workflow<VerifySourceContext> = {
   title: 'Verify the source (Advanced)',
   feature: 'generate',
   startsOn: sunoPage('create'),
+  after: 'choose-source-action',
   needs: [{ step: 'source shown', check: (page) => present(page, AUDIO_CONDITION) }],
   steps: [
     {
@@ -168,6 +170,7 @@ export const verifySourceSimple: Workflow<VerifySourceContext> = {
   title: 'Verify the source (Simple)',
   feature: 'generate',
   startsOn: sunoPage('create'),
+  after: 'choose-source-action',
   needs: [{ step: 'source shown', check: (page) => present(page, SIMPLE_CHIP_THUMBNAIL) }],
   steps: [
     {

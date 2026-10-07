@@ -62,6 +62,8 @@ export function stateText(status: WorkflowStatus): string {
       return 'Ready';
     case 'not-checked':
       return `Not checked on this page: it starts on ${status.startsOn}`;
+    case 'waiting':
+      return `Waits for an earlier step: ${status.message ?? 'unknown step'}`;
     case 'not-working':
       return `${status.stopped ? 'Stopped' : 'Not working'}: ${status.message ?? 'unknown step'}`;
   }

@@ -62,6 +62,12 @@ export interface Workflow<C extends StepContext = StepContext> {
   startsOn: PagePattern;
   /** What it needs from the page it starts on: the self-check reads these, and clicks nothing. */
   needs: readonly Probe[];
+  /**
+   * The ID of the workflow that sets up the page state its needs describe (#328): the mode tab it
+   * switched to, the question its press raised. The self-check shows it as waiting for that step,
+   * not as not working, when its needs do not hold yet; it must be registered before this one.
+   */
+  after?: string;
   steps: readonly Step<C>[];
   /** The TS-003 page snapshots (`page.<name>.html`) it is built on and tested against. */
   fixtures: readonly string[];

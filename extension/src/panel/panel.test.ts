@@ -274,6 +274,9 @@ describe('the panel on Suno', () => {
     expect(stateText(status({ state: 'not-checked', startsOn: 'the Library' }))).toBe(
       'Not checked on this page: it starts on the Library',
     );
+    expect(stateText(status({ state: 'waiting', message: 'Open the Songs form' }))).toBe(
+      'Waits for an earlier step: Open the Songs form',
+    );
   });
 
   it('offers Download diagnostic report as a Blob link, with the statement beside it', async () => {

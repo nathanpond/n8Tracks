@@ -20,8 +20,11 @@ import {
  * time, and one that fails, or throws, leaves the others' states alone.
  */
 
-/** `ready`; `not-working`, with the failing step; or `not-checked` on a page it does not start on. */
-export type WorkflowState = 'ready' | 'not-working' | 'not-checked';
+/**
+ * `ready`; `not-working`, with the failing step; `not-checked` on a page it does not start on; or
+ * `waiting` when its needs do not hold yet because an earlier workflow sets them up (#328).
+ */
+export type WorkflowState = 'ready' | 'not-working' | 'not-checked' | 'waiting';
 
 export interface WorkflowStatus {
   id: string;
@@ -30,7 +33,10 @@ export interface WorkflowStatus {
   state: WorkflowState;
   /** "any suno.com page": where it starts, for a `not-checked` workflow. */
   startsOn: string;
-  /** The failing step and the report line, when `not-working`. */
+  /**
+   * The failing step and the report line, when `not-working`; when `waiting`, the step whose need
+   * does not hold yet and the title of the earlier workflow it waits for.
+   */
   step: string | null;
   message: string | null;
   /** True when the state comes from a run that stopped, not from the self-check. */
@@ -45,8 +51,15 @@ function readNeed(check: () => Check): Check {
   }
 }
 
-/** Reads one workflow's needs on `page`, once each, without clicking anything. */
-export function checkWorkflow(workflow: Workflow, page: Page): WorkflowStatus {
+/**
+ * Reads one workflow's needs on `page`, once each, without clicking anything. `titleOf` names the
+ * earlier workflow a waiting one waits for (the registry's titles; the ID otherwise).
+ */
+export function checkWorkflow(
+  workflow: Workflow,
+  page: Page,
+  titleOf: (id: string) => string = (id) => id,
+): WorkflowStatus {
   const base = {
     id: workflow.id,
     title: workflow.title,
@@ -65,6 +78,9 @@ export function checkWorkflow(workflow: Workflow, page: Page): WorkflowStatus {
   }
   for (const need of workflow.needs) {
     const result = readNeed(() => need.check(page));
+    if (!result.ok && workflow.after !== undefined) {
+      return { ...base, state: 'waiting', step: need.step, message: titleOf(workflow.after) };
+    }
     if (!result.ok) {
       return {
         ...base,
@@ -105,6 +121,11 @@ export class WorkflowRegistry {
     if (workflow.fixtures.length === 0) {
       throw new Error(`The workflow '${workflow.id}' names no page snapshot it was built on.`);
     }
+    if (workflow.after !== undefined && !this.workflows.has(workflow.after)) {
+      throw new Error(
+        `The workflow '${workflow.id}' waits for '${workflow.after}', which is not registered before it.`,
+      );
+    }
     const names = workflow.steps.map((step) => step.name);
     if (new Set(names).size !== names.length) {
       throw new Error(`The workflow '${workflow.id}' has two steps of the same name.`);
@@ -118,7 +139,8 @@ export class WorkflowRegistry {
 
   /** The self-check: each workflow's state on `page`, one at a time. */
   check(page: Page): WorkflowStatus[] {
-    return this.all().map((workflow) => checkWorkflow(workflow, page));
+    const titleOf = (id: string) => this.workflows.get(id)?.title ?? id;
+    return this.all().map((workflow) => checkWorkflow(workflow, page, titleOf));
   }
 }
 

@@ -78,6 +78,7 @@ export const fillSpeechSimple: Workflow<FillContext> = {
   title: 'Fill the Speech form (Simple)',
   feature: 'generate',
   startsOn: sunoPage('create'),
+  after: 'switch-speech-form',
   needs: [{ step: 'Speech form', check: (page) => speechFormIn(page, 'simple') }],
   steps: [
     {
@@ -106,6 +107,7 @@ export const fillSpeechAdvanced: Workflow<FillContext> = {
   title: 'Fill the Speech form (Advanced)',
   feature: 'generate',
   startsOn: sunoPage('create'),
+  after: 'switch-speech-form',
   needs: [{ step: 'Speech form', check: (page) => speechFormIn(page, 'advanced') }],
   steps: [
     {

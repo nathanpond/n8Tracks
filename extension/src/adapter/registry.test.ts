@@ -149,6 +149,64 @@ describe('the self-check', () => {
   });
 });
 
+// #328: a workflow whose needs an earlier one sets up (a mode tab, Suno's question) waits for it.
+describe('the self-check of chained workflows', () => {
+  const WAITING = {
+    'fill-songs-simple': 'Open the Songs form',
+    'fill-speech-simple': 'Open the Speech form',
+    'fill-speech-advanced': 'Open the Speech form',
+    'fill-sounds': 'Open the Sounds form',
+    'answer-overwrite': 'Choose the Suno action',
+    'verify-source-advanced': 'Choose the Suno action',
+    'verify-source-simple': 'Choose the Suno action',
+  };
+
+  it('Demo step 1: on the intact Create page, every workflow is ready, waiting for an earlier step, or not for this page', () => {
+    const page = loadSnapshot('workspace-selector', 'https://suno.com/create');
+
+    const statuses = new WorkflowRegistry(ADAPTER_WORKFLOWS).check(page);
+
+    expect(statuses.filter((status) => status.state === 'not-working')).toEqual([]);
+    expect(
+      Object.fromEntries(
+        statuses
+          .filter((status) => status.state === 'waiting')
+          .map((status) => [status.id, status.message]),
+      ),
+    ).toEqual(WAITING);
+    // Complement: what the Create page itself offers is checked, and ready.
+    expect(byId(statuses)['switch-form']?.state).toBe('ready');
+    expect(byId(statuses)['fill-songs-advanced']?.state).toBe('ready');
+  });
+
+  it('shows a chained workflow ready once its needs hold, and one that waits for none as not working', () => {
+    // A workflow that waits for none is not working where its needs fail: this snapshot has no tabs.
+    const simple = loadSnapshot('create-songs-simple', 'https://suno.com/create');
+    expect(byId(new WorkflowRegistry(ADAPTER_WORKFLOWS).check(simple))['switch-form']?.state).toBe(
+      'not-working',
+    );
+    document.body.innerHTML = '';
+
+    const advanced = loadSnapshot(ADVANCED, 'https://suno.com/create');
+    const statuses = byId(new WorkflowRegistry(ADAPTER_WORKFLOWS).check(advanced));
+    expect(statuses['fill-songs-advanced']?.state).toBe('ready');
+    expect(statuses['fill-songs-simple']).toMatchObject({
+      state: 'waiting',
+      step: 'Songs form',
+      message: 'Open the Songs form',
+    });
+  });
+
+  it('refuses a workflow that waits for one not registered before it', () => {
+    const waits: Workflow = { ...fillSongsForm, id: 'test-waits', after: 'test-library-sync' };
+
+    expect(() => new WorkflowRegistry([waits, librarySync])).toThrow(
+      "waits for 'test-library-sync', which is not registered before it",
+    );
+    expect(new WorkflowRegistry([librarySync, waits]).all()).toHaveLength(2);
+  });
+});
+
 describe('the Recognise the Suno page workflow', () => {
   it.each(recogniseSuno.fixtures)('is ready on the %s snapshot', (name) => {
     const page = loadSnapshot(name, 'https://suno.com/me');

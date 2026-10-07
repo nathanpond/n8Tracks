@@ -285,6 +285,8 @@ describe('the diagnostic report', () => {
       statuses: [
         { id: 'recognise-suno', state: 'ready', step: null, stopped: false },
         { id: 'fill-test', state: 'not-working', step: 'workspace', stopped: true },
+        // #328: waiting for an earlier step is a state of its own.
+        { id: 'fill-songs-simple', state: 'waiting', step: 'Songs form', stopped: false },
       ],
     });
 
@@ -309,7 +311,7 @@ describe('the diagnostic report', () => {
       { id: 'select-workspace', state: 'not_checked', step: null },
       { id: 'create-workspace', state: 'not_checked', step: null },
       { id: 'switch-form', state: 'not_checked', step: null },
-      { id: 'fill-songs-simple', state: 'not_checked', step: null },
+      { id: 'fill-songs-simple', state: 'waiting', step: 'Songs form' },
       { id: 'fill-songs-advanced', state: 'not_checked', step: null },
       { id: 'check-songs-form', state: 'not_checked', step: null },
       { id: 'switch-speech-form', state: 'not_checked', step: null },
