@@ -172,6 +172,27 @@ internal sealed class AudioFileStore(N8TracksDbContext context) : IAudioFileStor
     public Task<int> UnassociatedCountAsync(CancellationToken cancellationToken) =>
         context.AudioFiles.CountAsync(static row => row.SongId == null, cancellationToken);
 
+    public async Task<AudioFileCounts> CountsAsync(CancellationToken cancellationToken)
+    {
+        var available = AudioFormats.StatusText(AudioFileStatus.Available);
+        var missing = AudioFormats.StatusText(AudioFileStatus.Missing);
+        var counts = await context.AudioFiles.AsNoTracking()
+            .GroupBy(static row => 1)
+            .Select(group => new
+            {
+                Total = group.Count(),
+                Available = group.Count(row => row.Status == available),
+                Missing = group.Count(row => row.Status == missing),
+                Associated = group.Count(static row => row.SongId != null),
+            })
+            .SingleOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        return counts is null
+            ? AudioFileCounts.None
+            : new AudioFileCounts(counts.Total, counts.Available, counts.Missing, counts.Associated, counts.Total - counts.Associated);
+    }
+
     public async Task<IReadOnlyList<SunoIdOwner>> LiveOwnersAsync(IReadOnlyCollection<string> sunoIds, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(sunoIds);

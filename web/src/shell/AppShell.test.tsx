@@ -24,7 +24,7 @@ function sidebar(): HTMLElement {
 }
 
 describe('the signed-in shell', () => {
-  it('has a sidebar listing Songs, Artists, Albums, Playlists, Suno import, Ignored Suno items, and Settings with Account, Credentials, Workflow, Catalog, Library, Genres, Tags, Relationships, Suno, Suno workspaces, Backups, and System', async () => {
+  it('has a sidebar listing Songs, Artists, Albums, Playlists, Suno import, Ignored Suno items, Library with Media, and Settings with Account, Credentials, Workflow, Catalog, Library, Genres, Tags, Relationships, Suno, Suno workspaces, Backups, and System', async () => {
     stubFetch().mockImplementation(() => Promise.resolve(jsonResponse(200, healthyReport)));
 
     renderAt('/songs');
@@ -38,6 +38,7 @@ describe('the signed-in shell', () => {
       'Playlists',
       'Suno import',
       'Ignored Suno items',
+      'Media',
       'Account',
       'Credentials',
       'Workflow',
@@ -52,6 +53,11 @@ describe('the signed-in shell', () => {
       'System',
     ]);
     expect(within(sidebar()).getByRole('group', { name: 'Settings' })).toBeInTheDocument();
+    expect(
+      within(within(sidebar()).getByRole('group', { name: 'Library' })).getByRole('link', {
+        name: 'Media',
+      }),
+    ).toHaveAttribute('href', '/library/media');
     expect(within(sidebar()).getByRole('link', { name: 'Songs' })).toHaveAttribute(
       'aria-current',
       'page',

@@ -247,7 +247,8 @@ public sealed class MediaScanService(
             .Select(static file => file.Value.Id)
             .ToList();
         var missing = gone.Count == 0 ? 0 : await files.MarkMissingAsync(gone, cancellationToken).ConfigureAwait(false);
-        return tally.Counts() with { Associated = matched.Associated, Unmatched = matched.Unmatched, Missing = missing };
+        var availableBefore = known.Values.Count(static file => file.Status == AudioFileStatus.Available);
+        return tally.Counts() with { Associated = matched.Associated, Unmatched = matched.Unmatched, Missing = missing, AvailableBefore = availableBefore };
     }
 
     /// <summary>What to write about one found file, counted as new, changed, or unchanged, and as unreadable when its header could not be read.</summary>
@@ -492,6 +493,7 @@ public sealed class MediaScanJobHandler(MediaScanService scans) : IJobHandler
             unmatched = counts.Unmatched,
             missing = counts.Missing,
             restored = counts.Restored,
+            availableBefore = counts.AvailableBefore,
             skippedLinks = new
             {
                 escaping = counts.SkippedLinks.Escaping,

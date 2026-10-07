@@ -49,6 +49,17 @@ internal sealed class JobStore(N8TracksDbContext context) : IJobStore
             .FirstOrDefaultAsync(cancellationToken)
             .ConfigureAwait(false);
 
+    public async Task<JobSummary?> FindLatestFinishedAsync(string type, CancellationToken cancellationToken)
+    {
+        var record = await context.Jobs.AsNoTracking()
+            .Where(job => job.Type == type && (job.Status == JobRecord.Succeeded || job.Status == JobRecord.Failed))
+            .OrderByDescending(static job => job.Sequence)
+            .FirstOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        return record is null ? null : Summary(record);
+    }
+
     public Task<bool> AnyActiveAsync(CancellationToken cancellationToken) =>
         context.Jobs.AsNoTracking()
             .AnyAsync(static job => job.Status == JobRecord.Queued || job.Status == JobRecord.Running, cancellationToken);

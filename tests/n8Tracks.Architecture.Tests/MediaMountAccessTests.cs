@@ -10,9 +10,10 @@ namespace n8Tracks.Architecture.Tests;
 /// someone has looked at it and added it.
 /// <list type="bullet">
 /// <item>The media mount setting (<c>N8TRACKS_MEDIA_PATH</c>, <c>MediaPath</c>, a <c>mediaPath</c>
-/// local) is named only by the options loader, the options record, <c>MediaMountReader</c>, and the
+/// local) is named only by the options loader, the options record, <c>MediaMountReader</c>, the
 /// backup code's <c>IsInside</c> comparisons, which refuse a backup path inside the mount and touch
-/// nothing there.</item>
+/// nothing there, and the media status (#208), which only answers the configured path as text for the
+/// Media page to show.</item>
 /// <item>File-system APIs appear only in a fixed list of files (database, data folder, backups,
 /// assets, setup, the frontend's files, and <c>MediaMountReader</c>).</item>
 /// <item>Inside <c>MediaMountReader</c>, nothing creates, writes, appends, moves, copies, renames,
@@ -41,6 +42,7 @@ public partial class MediaMountAccessTests
         "src/n8Tracks.Api/Configuration/EnvironmentOptionsLoader.cs: return new N8TracksOptions(port, baseUrl!, pathBase, timeZone!, logLevel, dataPath, mediaPath, backupPath);",
         "src/n8Tracks.Api/Configuration/EnvironmentOptionsLoader.cs: ResolvePath(DefaultMediaPath, environment.WorkingDirectory),",
         "src/n8Tracks.Api/Configuration/EnvironmentOptionsLoader.cs: MediaPath = ResolvePath(Value(variables, MediaPath) ?? DefaultMediaPath, environment.WorkingDirectory),",
+        "src/n8Tracks.Api/Endpoints/MediaEndpoints.cs: return TypedResults.Ok(MediaStatusResponse.From(status, options.MediaPath));",
         "src/n8Tracks.Application/Backups/OfflineRestoreService.cs: if (IsInside(fullPath, options.MediaPath))",
         "src/n8Tracks.Application/Configuration/N8TracksOptions.cs: string MediaPath,",
         "src/n8Tracks.Infrastructure/Backups/BackupFolders.cs: private bool MountIsUsable() => Directory.Exists(options.BackupPath) && !IsInside(options.BackupPath, options.MediaPath);",

@@ -32,6 +32,9 @@ public interface IJobStore
     /// <summary>The first-enqueued job of <paramref name="type"/> that is queued or running, or null.</summary>
     Task<Guid?> FindActiveAsync(string type, CancellationToken cancellationToken);
 
+    /// <summary>The most recently enqueued job of <paramref name="type"/> that has finished (succeeded or failed), or null.</summary>
+    Task<JobSummary?> FindLatestFinishedAsync(string type, CancellationToken cancellationToken);
+
     /// <summary>Whether any job, of any type, is queued or running.</summary>
     Task<bool> AnyActiveAsync(CancellationToken cancellationToken);
 

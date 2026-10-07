@@ -168,6 +168,17 @@ public sealed record UnassociatedAudioFile(Guid Id, string FileName, UnmatchedRe
 /// <summary>A live Generation that has one of the Suno IDs asked for (lower case), and its Song.</summary>
 public sealed record SunoIdOwner(string SunoId, Guid GenerationId, Guid SongId);
 
+/// <summary>
+/// How many audio files are cataloged (#208): by stored status (<see cref="Available"/> and
+/// <see cref="Missing"/>), and by association (<see cref="Associated"/> with a Song, and
+/// <see cref="Unmatched"/>, with none); each pair adds up to <see cref="Total"/>. Missing files count in
+/// both association counts.
+/// </summary>
+public sealed record AudioFileCounts(int Total, int Available, int Missing, int Associated, int Unmatched)
+{
+    public static AudioFileCounts None { get; } = new(0, 0, 0, 0, 0);
+}
+
 /// <summary>One page of the audio file list.</summary>
 public sealed record AudioFilePage(IReadOnlyList<AudioFile> Items, int Total);
 
@@ -215,6 +226,9 @@ public interface IAudioFileStore
     /// <summary>How many records have no association, whatever their status or reason.</summary>
     Task<int> UnassociatedCountAsync(CancellationToken cancellationToken);
 
+    /// <summary>How many records there are by stored status and by association (#208), in one read.</summary>
+    Task<AudioFileCounts> CountsAsync(CancellationToken cancellationToken);
+
     /// <summary>
     /// The live Generations whose Suno ID is one of <paramref name="sunoIds"/> (lower case), compared
     /// without regard to letter case.
@@ -253,6 +267,12 @@ public interface IMediaScanSummaryStore
     /// <summary>The summary of the last scan that ended, or null when none has.</summary>
     Task<MediaScanSummary?> FindAsync(CancellationToken cancellationToken);
 
-    /// <summary>Replaces the summary.</summary>
+    /// <summary>
+    /// The summary of the last scan that succeeded (#208), or null when none has: kept apart, so a
+    /// failed scan after it does not hide what it counted.
+    /// </summary>
+    Task<MediaScanSummary?> FindLastSuccessfulAsync(CancellationToken cancellationToken);
+
+    /// <summary>Replaces the summary, and the last successful one too when <paramref name="summary"/> succeeded.</summary>
     Task WriteAsync(MediaScanSummary summary, CancellationToken cancellationToken);
 }

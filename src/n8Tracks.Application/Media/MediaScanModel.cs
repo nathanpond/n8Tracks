@@ -77,6 +77,13 @@ public sealed record MediaScanCounts(
 
     /// <summary>The links not followed (#205), by reason; each is in <see cref="Skipped"/> as well.</summary>
     public MediaSkippedLinks SkippedLinks { get; init; } = MediaSkippedLinks.None;
+
+    /// <summary>
+    /// How many cataloged files were Available when the scan began comparing (#208), which
+    /// <see cref="Missing"/> is measured against for the majority-missing warning. 0 for a scan that
+    /// did not get that far, and for a summary written before #208.
+    /// </summary>
+    public int AvailableBefore { get; init; }
 }
 
 /// <summary>
