@@ -37,6 +37,12 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
     /// <summary>The trigger that refuses a new Generation (or a restored one) at a shortcode that is another Generation's alias.</summary>
     public const string GenerationAliasReservedTrigger = "tr_generations_aliases_stay_reserved";
 
+    /// <summary>
+    /// The trigger that refuses changing a Generation's Suno ID once it has one (#324): a frozen Version's
+    /// source that points at the Generation is compared by it.
+    /// </summary>
+    public const string GenerationSunoIdFixedTrigger = "tr_generations_suno_id_never_changes";
+
     /// <summary>The trigger that refuses changing an external reference's Suno ID or kind, which frozen sources are compared by.</summary>
     public const string ExternalReferenceFixedTrigger = "tr_external_suno_references_identity_never_changes";
 
@@ -494,6 +500,7 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                     $"archived_by IS NULL OR archived_by IN ('{GenerationRecord.ArchivedByUser}', '{GenerationRecord.ArchivedBySync}')");
                 table.HasTrigger(GenerationMoveTrigger);
                 table.HasTrigger(GenerationAliasReservedTrigger);
+                table.HasTrigger(GenerationSunoIdFixedTrigger);
             });
             generation.HasKey(record => record.Id);
             generation.HasIndex(record => new { record.VersionId, record.Ordinal }).IsUnique();
