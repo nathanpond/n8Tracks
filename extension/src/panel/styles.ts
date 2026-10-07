@@ -117,6 +117,7 @@ ul {
 }
 
 [data-state='not-checked'] .workflow-state,
+[data-state='waiting'] .workflow-state,
 .features [aria-disabled='true'] .feature-status {
   color: var(--secondary-text);
 }

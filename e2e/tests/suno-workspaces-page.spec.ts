@@ -54,6 +54,18 @@ async function songIn(page: Page, base: URL, title: string, workspace: string): 
   return (await patched.json()) as Song;
 }
 
+/** Takes the Song out of any workspace, as another client would, through the API. */
+async function leaveWorkspace(page: Page, base: URL, song: Song): Promise<void> {
+  const patched = await page.request.patch(
+    new URL(`api/v1/songs/${song.shortcode}`, base).toString(),
+    {
+      headers: { ...ANTIFORGERY_HEADERS, 'If-Match': `"${String(song.revision)}"` },
+      data: { sunoWorkspaceId: null },
+    },
+  );
+  expect(patched.status()).toBe(200);
+}
+
 async function workspaceOf(page: Page, base: URL, shortcode: string): Promise<string | undefined> {
   const response = await page.request.get(new URL(`api/v1/songs/${shortcode}`, base).toString());
   expect(response.status()).toBe(200);
@@ -65,7 +77,9 @@ async function workspaceOf(page: Page, base: URL, shortcode: string): Promise<st
  * extension token reports two workspaces and Settings → Suno workspaces lists them (step 1); the
  * first is opened, all its Songs selected and moved to the second after a confirmation stating the
  * count (step 2); the first then shows no Songs and the second shows them (step 3). Each visited
- * state is scanned with axe.
+ * state is scanned with axe. Before step 2's move, a move of a Song taken out of the workspace
+ * meanwhile is refused inside the dialog, which keeps keyboard focus (#347); after the move, focus
+ * is on what it says.
  */
 test.describe('Suno workspaces page', () => {
   test('moves all of a workspace’s Songs to another after confirming how many', async ({
@@ -117,9 +131,29 @@ test.describe('Suno workspaces page', () => {
       await expectAccessibleInLightAndDark(page);
 
       // 2. Open the first, select all its Songs, move them to the second, and confirm the count.
+      const leaving = await songIn(page, base, `Workspace song C ${stamp}`, first.id);
       await list.getByRole('link', { name: first.name }).click();
       await expect(page.getByRole('heading', { level: 2, name: first.name })).toBeVisible();
+      await expect(page.getByTestId('workspace-song')).toHaveCount(3);
+
+      // A move of a Song that left the workspace meanwhile is refused; focus stays in the dialog.
+      await page.getByRole('checkbox', { name: `Select Workspace song C ${stamp}` }).check();
+      await page.getByRole('combobox', { name: 'Move to' }).selectOption({ label: second.name });
+      await page.getByRole('button', { name: 'Move 1 Song' }).click();
+      const refused = page.getByRole('dialog', { name: 'Move 1 Song?' });
+      await expect(refused.getByTestId('move-count')).toBeVisible();
+      await leaveWorkspace(page, base, leaving);
+      await refused.getByRole('button', { name: 'Move 1 Song' }).click();
+      const reason = refused.getByRole('alert');
+      await expect(reason).toContainText('Nothing moved');
+      await expect(reason).toBeFocused();
+      await page.keyboard.press('Tab');
+      expect(await refused.evaluate((modal) => modal.contains(document.activeElement))).toBe(true);
+      await expectModalAccessibleInBothSchemes(page);
+      await refused.getByRole('button', { name: 'Cancel' }).click();
+      await expect(refused).toBeHidden();
       await expect(page.getByTestId('workspace-song')).toHaveCount(2);
+
       await page.getByRole('checkbox', { name: 'Select all 2 Songs in this workspace' }).check();
       await page.getByRole('combobox', { name: 'Move to' }).selectOption({ label: second.name });
       await expectAccessibleInLightAndDark(page);
@@ -131,6 +165,7 @@ test.describe('Suno workspaces page', () => {
       await expectModalAccessibleInBothSchemes(page);
       await dialog.getByRole('button', { name: 'Move 2 Songs' }).click();
       await expect(page.getByTestId('songs-moved')).toHaveText(`Moved 2 Songs to ${second.name}.`);
+      await expect(page.getByTestId('songs-moved')).toBeFocused();
       for (const song of songs) {
         expect(await workspaceOf(page, base, song.shortcode)).toBe(second.id);
       }

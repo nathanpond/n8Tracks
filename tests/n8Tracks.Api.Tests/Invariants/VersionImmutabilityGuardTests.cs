@@ -343,6 +343,38 @@ public sealed class VersionImmutabilityGuardTests
     }
 
     /// <summary>
+    /// #324: a frozen Version's source that points at a Generation is compared by that Generation's
+    /// Suno ID, so the database refuses changing a Suno ID once set, whatever writes it, and the frozen
+    /// Version's stored inputs stay byte-identical. Complement: a Generation attached without a Suno ID
+    /// may be given one, which is then fixed too.
+    /// </summary>
+    [Fact]
+    public async Task TheDatabaseRefusesChangingTheSunoIdOfAGenerationAFrozenSourcePointsAt()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var frozen = await TargetAsync(factory, client, "Suno ID guard", frozen: true, generationSource: true);
+        var version = frozen.VersionId.ToString().ToUpperInvariant();
+        var source = TestDatabase.Scalar(factory.DataPath, $"SELECT COALESCE(generation_id, 'none') FROM version_sources WHERE version_id = '{version}' AND source_group = 'audio';");
+        Assert.Equal("source-Suno-ID-guard", TestDatabase.Scalar(factory.DataPath, $"SELECT suno_id FROM generations WHERE id = '{source}';"));
+
+        var before = Stored(factory, frozen.VersionId);
+        Assert.Contains("source-Suno-ID-guard", System.Text.Encoding.UTF8.GetString(Convert.FromHexString(before.Split("|sources:")[1].Split('|')[0])), StringComparison.Ordinal);
+        foreach (var write in new[] { "'renamed-clip'", "NULL" })
+        {
+            var refused = Assert.Throws<Microsoft.Data.Sqlite.SqliteException>(() => TestDatabase.Execute(factory.DataPath, $"UPDATE generations SET suno_id = {write} WHERE id = '{source}';"));
+            Assert.Contains("never changes", refused.Message, StringComparison.Ordinal);
+            Assert.True(before == Stored(factory, frozen.VersionId), write);
+        }
+
+        // Complement: one attached with no Suno ID is given one, and from then on it is fixed.
+        var bare = await SongApi.AttachGenerationAsync(factory, frozen.VersionId.ToString());
+        var bareId = bare.Generation.Id.ToString().ToUpperInvariant();
+        TestDatabase.Execute(factory.DataPath, $"UPDATE generations SET suno_id = 'given-later' WHERE id = '{bareId}';");
+        Assert.Throws<Microsoft.Data.Sqlite.SqliteException>(() => TestDatabase.Execute(factory.DataPath, $"UPDATE generations SET suno_id = 'given-again' WHERE id = '{bareId}';"));
+    }
+
+    /// <summary>
     /// Every key of the options document is one the writes below change in turn: the entity's
     /// properties, the rules' keys, and the API's <c>inputs</c> agree, so a new option cannot be left out.
     /// </summary>
@@ -427,7 +459,7 @@ public sealed class VersionImmutabilityGuardTests
             $"{endpoint} is not known to the Version immutability guard: add how to exercise it on a frozen Version, or why it touches no Version."));
         Assert.Equal(endpoints.Order(StringComparer.Ordinal), exercisers.Keys.Concat(exempt.Keys).Order(StringComparer.Ordinal));
 
-        var frozen = await TargetAsync(factory, client, "Frozen guard", frozen: true);
+        var frozen = await TargetAsync(factory, client, "Frozen guard", frozen: true, generationSource: true);
         foreach (var (endpoint, exercise) in exercisers)
         {
             var before = Stored(factory, frozen.VersionId);
@@ -473,7 +505,7 @@ public sealed class VersionImmutabilityGuardTests
             }
         }
 
-        var frozen = await TargetAsync(factory, client, "Frozen service guard", frozen: true);
+        var frozen = await TargetAsync(factory, client, "Frozen service guard", frozen: true, generationSource: true);
         foreach (var (method, exercise) in exercisers)
         {
             var before = Stored(factory, frozen.VersionId);
@@ -1177,7 +1209,7 @@ public sealed class VersionImmutabilityGuardTests
         {
             var (from, to) = await InWorkspaceAsync(target);
             Assert.IsType<SongWorkspaceMoveOutcome.Moved>(await InScopeAsync<SongWorkspaceService, SongWorkspaceMoveOutcome>(target, service =>
-                service.MoveSongsAsync(from, new SongWorkspaceMove(null, All: true, to), default)));
+                service.MoveSongsAsync(from, new SongWorkspaceMove(null, All: true, to, ExpectedCount: 1), default)));
         }),
         ["SongService.FindAsync(String, CancellationToken)"] = Service<SongService>(static (service, target) => service.FindAsync(target.SongShortcode, default)),
         ["SongService.UpdateAsync(Guid, SongEdit, Int32, CancellationToken)"] = Service<SongService>(static async (service, target) =>
@@ -1473,7 +1505,13 @@ public sealed class VersionImmutabilityGuardTests
     /// A new Song whose Version 1 holds lyrics and styles and three snapshots (lyrics changed, styles
     /// changed, both changed), frozen by a Generation when <paramref name="frozen"/>.
     /// </summary>
-    private static async Task<Target> TargetAsync(N8TracksApiFactory factory, HttpClient client, string title, bool frozen)
+    /// <summary>
+    /// A Song titled <paramref name="title"/> whose Version holds lyrics, styles, a full lineage, and
+    /// three history entries, frozen by a Generation when <paramref name="frozen"/>. With
+    /// <paramref name="generationSource"/>, its audio source is another Song's Generation with a Suno ID
+    /// (#324), the target a source has once #137 resolves it, rather than an external reference.
+    /// </summary>
+    private static async Task<Target> TargetAsync(N8TracksApiFactory factory, HttpClient client, string title, bool frozen, bool generationSource = false)
     {
         var song = await SongApi.CreateAsync(client, title);
         var version = song.GetProperty("currentVersion");
@@ -1484,7 +1522,16 @@ public sealed class VersionImmutabilityGuardTests
         }
 
         // Every part of a lineage (#122), so the frozen Version has rows in each lineage table.
-        using (var written = await SendAsync(client, HttpMethod.Patch, new Uri($"/api/v1/versions/{id}", UriKind.Relative), "\"2\"", $$"""{"inputs":{{LineageValues.InitialInputsJson(title.Replace(' ', '-'))}}}"""))
+        var tag = title.Replace(' ', '-');
+        var lineage = JsonNode.Parse(LineageValues.InitialInputsJson(tag))!.AsObject();
+        if (generationSource)
+        {
+            var source = await SongApi.CreateAsync(client, "Source of " + title);
+            var sourceGeneration = await SongApi.AttachGenerationAsync(factory, source.GetProperty("currentVersion").GetProperty("id").GetString()!, Clips.Minimal("source-" + tag));
+            lineage[VersionLineageInputs.SourcesKey] = new JsonArray(new JsonObject { ["typeId"] = SystemRelationshipTypes.SampleThisSong.Id.ToString(), ["generation"] = sourceGeneration.Shortcode });
+        }
+
+        using (var written = await SendAsync(client, HttpMethod.Patch, new Uri($"/api/v1/versions/{id}", UriKind.Relative), "\"2\"", $$"""{"inputs":{{lineage.ToJsonString()}}}"""))
         {
             Assert.True(written.StatusCode == HttpStatusCode.OK, await written.Content.ReadAsStringAsync());
         }

@@ -431,7 +431,7 @@ public sealed class SunoWorkspaceEndpointTests
 
         Assert.Equal(["3|w-to", "2|w-from", "1|"], TestDatabase.Rows(factory.DataPath, "SELECT revision || '|' || ifnull(suno_workspace_id, '') FROM songs ORDER BY shortcode_number;"));
 
-        using (var all = await SunoWorkspaceApi.MoveAsync(client, "w-from", """{"all":true,"targetWorkspaceId":"w-to"}"""))
+        using (var all = await SunoWorkspaceApi.MoveAsync(client, "w-from", """{"all":true,"expectedCount":1,"targetWorkspaceId":"w-to"}"""))
         {
             Assert.Equal(1, (await SetupApi.JsonAsync(all)).GetProperty("moved").GetInt32());
         }
@@ -440,8 +440,40 @@ public sealed class SunoWorkspaceEndpointTests
         Assert.Equal([0, 0, 2], (await SunoWorkspaceApi.ListAsync(client)).Select(static item => item.GetProperty("songCount").GetInt32()));
 
         // Nothing left to move with all is a move of none.
-        using var none = await SunoWorkspaceApi.MoveAsync(client, "w-from", """{"all":true,"targetWorkspaceId":"w-to"}""");
+        using var none = await SunoWorkspaceApi.MoveAsync(client, "w-from", """{"all":true,"expectedCount":0,"targetWorkspaceId":"w-to"}""");
         Assert.Equal(0, (await SetupApi.JsonAsync(none)).GetProperty("moved").GetInt32());
+    }
+
+    /// <summary>
+    /// #346: an "all" move carries the count the user confirmed. A Song that joined the workspace while
+    /// the confirmation was open (a sync, an import, another tab) refuses the move, and nothing moves;
+    /// so does one that left. Sent again with the new count, it moves them all.
+    /// </summary>
+    [Fact]
+    public async Task AnAllMoveIsRefusedMovingNothingWhenTheWorkspaceNoLongerHoldsTheCountConfirmed()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        await ThreeSongsInAsync(factory, client);
+        await SunoWorkspaceApi.AssociatedAsync(client, "n8-3", "w-from");
+        var before = TestDatabase.Rows(factory.DataPath, "SELECT revision || '|' || updated_utc || '|' || ifnull(suno_workspace_id, '') FROM songs ORDER BY shortcode_number;");
+
+        foreach (var confirmed in new[] { 2, 4 })
+        {
+            using var response = await SunoWorkspaceApi.MoveAsync(client, "w-from", $$"""{"all":true,"expectedCount":{{confirmed}},"targetWorkspaceId":"w-to"}""");
+
+            var problem = await SetupApi.ProblemAsync(response, HttpStatusCode.Conflict, "song_count_changed");
+            Assert.Equal(3, problem.GetProperty("count").GetInt32());
+            Assert.Equal(confirmed, problem.GetProperty("expected").GetInt32());
+            Assert.Equal(before, TestDatabase.Rows(factory.DataPath, "SELECT revision || '|' || updated_utc || '|' || ifnull(suno_workspace_id, '') FROM songs ORDER BY shortcode_number;"));
+        }
+
+        using (var moved = await SunoWorkspaceApi.MoveAsync(client, "w-from", """{"all":true,"expectedCount":3,"targetWorkspaceId":"w-to"}"""))
+        {
+            Assert.Equal(3, (await SetupApi.JsonAsync(moved)).GetProperty("moved").GetInt32());
+        }
+
+        Assert.Equal("3", TestDatabase.Scalar(factory.DataPath, "SELECT count(*) FROM songs WHERE suno_workspace_id = 'w-to';"));
     }
 
     [Fact]
@@ -472,6 +504,9 @@ public sealed class SunoWorkspaceEndpointTests
     [InlineData("""{"songIds":[],"targetWorkspaceId":"w-to"}""", "songIds")]
     [InlineData("""{"songIds":[1],"targetWorkspaceId":"w-to"}""", "songIds")]
     [InlineData("""{"all":"yes","targetWorkspaceId":"w-to"}""", "all")]
+    [InlineData("""{"all":true,"targetWorkspaceId":"w-to"}""", "expectedCount")]
+    [InlineData("""{"all":true,"expectedCount":-1,"targetWorkspaceId":"w-to"}""", "expectedCount")]
+    [InlineData("""{"all":true,"expectedCount":"2","targetWorkspaceId":"w-to"}""", "expectedCount")]
     public async Task AWrongMoveIsRefusedMovingNothing(string body, string field)
     {
         using var factory = SongApi.Host();
@@ -495,12 +530,12 @@ public sealed class SunoWorkspaceEndpointTests
         var token = await SunoWorkspaceApi.ExtensionTokenAsync(factory);
         await SunoWorkspaceApi.ReportAsync(client, token, complete: true, SunoWorkspaceApi.Project("w-to", "To"));
 
-        using (var moved = await SunoWorkspaceApi.MoveAsync(client, "w-from", """{"all":true,"targetWorkspaceId":"w-to"}"""))
+        using (var moved = await SunoWorkspaceApi.MoveAsync(client, "w-from", """{"all":true,"expectedCount":2,"targetWorkspaceId":"w-to"}"""))
         {
             Assert.Equal(2, (await SetupApi.JsonAsync(moved)).GetProperty("moved").GetInt32());
         }
 
-        using var unknown = await SunoWorkspaceApi.MoveAsync(client, "w-unknown", """{"all":true,"targetWorkspaceId":"w-to"}""");
+        using var unknown = await SunoWorkspaceApi.MoveAsync(client, "w-unknown", """{"all":true,"expectedCount":0,"targetWorkspaceId":"w-to"}""");
         await SetupApi.ProblemAsync(unknown, HttpStatusCode.NotFound, ApiProblem.NotFoundCode);
     }
 
@@ -515,7 +550,7 @@ public sealed class SunoWorkspaceEndpointTests
 
         using var request = new HttpRequestMessage(HttpMethod.Post, SunoWorkspaceApi.MoveSongs("w-from"))
         {
-            Content = new StringContent("""{"all":true,"targetWorkspaceId":"w-to"}""", System.Text.Encoding.UTF8, "application/json"),
+            Content = new StringContent("""{"all":true,"expectedCount":2,"targetWorkspaceId":"w-to"}""", System.Text.Encoding.UTF8, "application/json"),
         };
         request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
         using var response = await client.SendAsync(request);
@@ -538,7 +573,7 @@ public sealed class SunoWorkspaceEndpointTests
         var page = await SongApi.ListAsync(client, "workspace=w-from&pageSize=1");
         Assert.Equal(2, page.GetProperty("total").GetInt32());
 
-        using (var moved = await SunoWorkspaceApi.MoveAsync(client, "w-from", """{"all":true,"targetWorkspaceId":"w-to"}"""))
+        using (var moved = await SunoWorkspaceApi.MoveAsync(client, "w-from", """{"all":true,"expectedCount":2,"targetWorkspaceId":"w-to"}"""))
         {
             Assert.Equal(2, (await SetupApi.JsonAsync(moved)).GetProperty("moved").GetInt32());
         }
@@ -597,7 +632,7 @@ public sealed class SunoWorkspaceEndpointTests
             $"WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 4999) INSERT INTO songs ({string.Join(", ", columns)}) SELECT {string.Join(", ", values)} FROM songs AS s, n WHERE s.shortcode_number = 1;");
         Assert.Equal("5001", TestDatabase.Scalar(factory.DataPath, "SELECT count(*) FROM songs WHERE suno_workspace_id = 'w-from';"));
 
-        using (var all = await SunoWorkspaceApi.MoveAsync(client, "w-from", """{"all":true,"targetWorkspaceId":"w-to"}"""))
+        using (var all = await SunoWorkspaceApi.MoveAsync(client, "w-from", """{"all":true,"expectedCount":5001,"targetWorkspaceId":"w-to"}"""))
         {
             var problem = await SetupApi.ProblemAsync(all, HttpStatusCode.UnprocessableEntity, "too_many_songs");
             Assert.Equal(5_001, problem.GetProperty("count").GetInt32());

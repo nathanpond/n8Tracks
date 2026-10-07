@@ -416,7 +416,7 @@ export function stepsOfRun(value: unknown, workflows: readonly Workflow[]): Diag
 }
 
 /** A workflow's state as the report says it. */
-export type ReportedState = 'ready' | 'not_working' | 'not_checked';
+export type ReportedState = 'ready' | 'not_working' | 'not_checked' | 'waiting';
 
 export interface ReportedStatus {
   id: string;
@@ -432,6 +432,7 @@ const STATE_OF: Record<string, ReportedState> = {
   ready: 'ready',
   'not-working': 'not_working',
   'not-checked': 'not_checked',
+  waiting: 'waiting',
   not_working: 'not_working',
   not_checked: 'not_checked',
 };

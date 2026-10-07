@@ -9,8 +9,16 @@ import ts from 'typescript';
  *   `EventSource`, or form submission (`submit`, `requestSubmit`) from the browser's own
  *   interfaces, or the name of one as a string, anywhere except the files {@link
  *   NETWORK_EXEMPTIONS} names. A file allowed to request may not hold a Suno address, and the
- *   observer may only wrap: it may not pass an address of its own or build a `Request`;
+ *   observer may only wrap: it may not pass an address of its own or build a `Request`, it may name
+ *   `fetch` only to save the page's original and to replace it, and it may call the saved original
+ *   only with the wrapper's own arguments passed on whole (`original(...args)`), so an address
+ *   computed at run time is found too (#330);
  * - **downloads**: any use of `chrome.downloads` (the download story, #216, adds the one exemption);
+ * - **injection**: by name, anywhere in shipped code, any route that runs code or styles in a page
+ *   from outside it or drives the page from the browser: `executeScript`, `insertCSS`, `removeCSS`,
+ *   `userScripts`, and `debugger` (#331). The one exemption ({@link INJECTION_EXEMPTIONS}) is the
+ *   popup adding the extension's own Suno content script to a tab opened before pairing, and only
+ *   with `{target, files}` naming the extension's own bundles;
  * - **page access**: in page-context code (everything the Suno content script and the page
  *   scripts are built from, and every file under `adapter/`, `page/`, `panel/`, and
  *   `content/suno*`), querying, walking, clicking, dispatching events, or building events,
@@ -20,16 +28,22 @@ import ts from 'typescript';
  *   primitive used outside the workspace workflow.
  *
  * Not covered: a request made through a browser interface not named here, a name assembled at
- * run time (`window[a + b]`), code loaded at run time, and reading `document.body` or
- * `documentElement` themselves (the panel attaches its host there); the runtime guard and the
- * ESLint rule in `eslint.config.js` supplement it.
+ * run time (`window[a + b]`, `chrome.scripting[a + b]`), code loaded at run time, and reading
+ * `document.body` or `documentElement` themselves (the panel attaches its host there). In the
+ * observer, a wrapper that changes its own `args` before passing them on is not found here; the
+ * behavioural tests in `src/page/observe.test.ts` ("sends the page request out exactly as the page
+ * made it", "wraps the page fetch once") cover it. What the registered content scripts are is not
+ * read here: `registerContentScripts` names the extension's own bundles, checked by
+ * `src/background/connection.test.ts`, and the manifest validator refuses `content_scripts` and
+ * the `debugger` and `userScripts` permissions. The runtime guard and the ESLint rule in
+ * `eslint.config.js` supplement it.
  */
 
 /** A finding: the file (relative to the extension), its line, the rule, and the code. */
 export interface ScanFinding {
   file: string;
   line: number;
-  rule: 'request' | 'download' | 'page-access' | 'workflow';
+  rule: 'request' | 'download' | 'injection' | 'page-access' | 'workflow';
   text: string;
 }
 
@@ -95,6 +109,38 @@ export const PAGE_ACCESS_NAMES: ReadonlySet<string> = new Set([
   'TouchEvent',
   'createEvent',
 ]);
+
+/**
+ * The routes that run code or styles in a page from outside it, or drive it from the browser
+ * (`chrome.scripting`, `chrome.tabs` in Manifest V2, `chrome.userScripts`, `chrome.debugger`).
+ * Found by name, not by type, so a hand-written interface over `chrome` cannot hide one.
+ */
+export const INJECTION_NAMES: ReadonlySet<string> = new Set([
+  'executeScript',
+  'insertCSS',
+  'removeCSS',
+  'userScripts',
+  'debugger',
+]);
+
+/** A file allowed one of {@link INJECTION_NAMES}, only to add the extension's own bundles. */
+export interface InjectionExemption {
+  file: string;
+  name: string;
+  why: string;
+}
+
+export const INJECTION_EXEMPTIONS: readonly InjectionExemption[] = [
+  {
+    file: 'src/popup/main.ts',
+    name: 'executeScript',
+    why: "the popup adds the extension's own Suno content script to a tab opened before pairing",
+  },
+];
+
+/** The extension's own bundles, which an exempt injection may name (`background/connection.ts`). */
+const OWN_BUNDLES: ReadonlySet<string> = new Set(['SUNO_FILE', 'RELAY_FILE', 'OBSERVER_FILE']);
+const OWN_BUNDLES_FILE = 'src/background/connection.ts';
 
 /** A file allowed to use some of {@link NETWORK_NAMES}, and why. */
 export interface NetworkExemption {
@@ -330,6 +376,146 @@ function isObjectLiteralOfWorkflow(
   return symbol?.name === 'Workflow' && declaredIn(symbol, root, 'src/adapter/workflow.ts');
 }
 
+/**
+ * Whether an exempt injection call adds only the extension's own bundles: one argument, an object
+ * with exactly `target` and `files`, and `files` a list of the bundle constants. No `func`, `args`,
+ * `css`, or `world`.
+ */
+function addsOwnBundlesOnly(checker: ts.TypeChecker, node: ts.Identifier, root: string): boolean {
+  const access = node.parent;
+  const call = access.parent;
+  if (
+    !ts.isPropertyAccessExpression(access) ||
+    access.name !== node ||
+    !ts.isCallExpression(call) ||
+    call.expression !== access ||
+    call.arguments.length !== 1
+  ) {
+    return false;
+  }
+  const [options] = call.arguments;
+  if (options === undefined || !ts.isObjectLiteralExpression(options)) {
+    return false;
+  }
+  const keys = options.properties.map((property) =>
+    ts.isPropertyAssignment(property) && ts.isIdentifier(property.name) ? property.name.text : '',
+  );
+  const files = options.properties.find(
+    (property): property is ts.PropertyAssignment =>
+      ts.isPropertyAssignment(property) &&
+      ts.isIdentifier(property.name) &&
+      property.name.text === 'files',
+  );
+  return (
+    keys.toSorted().join(',') === 'files,target' &&
+    files !== undefined &&
+    ts.isArrayLiteralExpression(files.initializer) &&
+    files.initializer.elements.length > 0 &&
+    files.initializer.elements.every((element) => {
+      if (!ts.isIdentifier(element) || !OWN_BUNDLES.has(element.text)) {
+        return false;
+      }
+      return declaredIn(
+        target(checker, checker.getSymbolAtLocation(element)),
+        root,
+        OWN_BUNDLES_FILE,
+      );
+    })
+  );
+}
+
+/** Whether `node` lies inside `ancestor`. */
+function isWithin(node: ts.Node, ancestor: ts.Node): boolean {
+  return ts.findAncestor(node, (current) => current === ancestor) !== undefined;
+}
+
+/**
+ * In a wraps-only file: the saved originals, the variables whose initial value names `fetch`
+ * (`const original = view.fetch.bind(view)`).
+ */
+function savedOriginals(checker: ts.TypeChecker, file: ts.SourceFile): Set<ts.Symbol> {
+  const originals = new Set<ts.Symbol>();
+  const namesFetch = (node: ts.Node): boolean =>
+    ((ts.isIdentifier(node) || ts.isStringLiteralLike(node)) && node.text === 'fetch') ||
+    (ts.forEachChild(node, (child) => (namesFetch(child) ? true : undefined)) ?? false);
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && node.initializer !== undefined) {
+      const symbol = checker.getSymbolAtLocation(node.name);
+      if (symbol !== undefined && namesFetch(node.initializer)) {
+        originals.add(symbol);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return originals;
+}
+
+/**
+ * In a wraps-only file, whether a use of the name `fetch` only saves the original
+ * (`const original = view.fetch...`) or replaces it (`view.fetch = ...`).
+ */
+function savesOrReplacesFetch(
+  node: ts.Identifier,
+  originals: ReadonlySet<ts.Symbol>,
+  checker: ts.TypeChecker,
+): boolean {
+  const named =
+    ts.isPropertyAccessExpression(node.parent) && node.parent.name === node ? node.parent : node;
+  if (
+    ts.isBinaryExpression(named.parent) &&
+    named.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    named.parent.left === named
+  ) {
+    return true;
+  }
+  for (let current: ts.Node = named; !ts.isSourceFile(current); current = current.parent) {
+    if (ts.isFunctionLike(current)) {
+      return false;
+    }
+    if (ts.isVariableDeclaration(current)) {
+      const symbol = checker.getSymbolAtLocation(current.name);
+      return (
+        symbol !== undefined &&
+        originals.has(symbol) &&
+        current.initializer !== undefined &&
+        isWithin(named, current.initializer)
+      );
+    }
+  }
+  return false;
+}
+
+/**
+ * In a wraps-only file, whether a use of a saved original is a call passing on the wrapper's own
+ * arguments whole: `original(...args)`, `args` the rest parameter of the function it is called in.
+ */
+function passesOnTheWrappersArguments(node: ts.Identifier, checker: ts.TypeChecker): boolean {
+  const call = node.parent;
+  if (!ts.isCallExpression(call) || call.expression !== node || call.arguments.length !== 1) {
+    return false;
+  }
+  const [argument] = call.arguments;
+  if (
+    argument === undefined ||
+    !ts.isSpreadElement(argument) ||
+    !ts.isIdentifier(argument.expression)
+  ) {
+    return false;
+  }
+  const declaration = checker.getSymbolAtLocation(argument.expression)?.valueDeclaration;
+  let enclosing: ts.Node = call.parent;
+  while (!ts.isSourceFile(enclosing) && !ts.isFunctionLike(enclosing)) {
+    enclosing = enclosing.parent;
+  }
+  return (
+    declaration !== undefined &&
+    ts.isParameter(declaration) &&
+    declaration.dotDotDotToken !== undefined &&
+    declaration.parent === enclosing
+  );
+}
+
 /** What a scan found, and what it read, so a test can tell an empty scan from a clean one. */
 export interface ScanReport {
   findings: ScanFinding[];
@@ -355,6 +541,8 @@ export function scanExtension(options: ScanOptions): ScanReport {
     }
     scanned.push(name);
     const exemption = NETWORK_EXEMPTIONS.find((candidate) => candidate.file === name);
+    const originals =
+      exemption?.wrapsOnly === true ? savedOriginals(checker, file) : new Set<ts.Symbol>();
     const inPageContext = context.has(name) && name !== PRIMITIVES_FILE;
     const add = (node: ts.Node, rule: ScanFinding['rule']) => {
       const { line } = file.getLineAndCharacterOfPosition(node.getStart(file));
@@ -403,6 +591,40 @@ export function scanExtension(options: ScanOptions): ScanReport {
         ['Request', 'URL'].includes(node.expression.text)
       ) {
         add(node, 'request');
+      }
+
+      // The observer names fetch only to save and replace it, and calls the saved original only
+      // with the page's own arguments (#330): no address of its own, literal or computed.
+      if (exemption?.wrapsOnly === true && ts.isIdentifier(node)) {
+        if (node.text === 'fetch' && !savesOrReplacesFetch(node, originals, checker)) {
+          add(node, 'request');
+        }
+        const symbol = checker.getSymbolAtLocation(node);
+        if (
+          symbol !== undefined &&
+          originals.has(symbol) &&
+          !(ts.isVariableDeclaration(node.parent) && node.parent.name === node) &&
+          !passesOnTheWrappersArguments(node, checker)
+        ) {
+          add(node, 'request');
+        }
+      }
+
+      // Running code or styles in a page from outside it, or driving it (#331), by name.
+      if (
+        (ts.isIdentifier(node) || ts.isStringLiteralLike(node)) &&
+        INJECTION_NAMES.has(node.text)
+      ) {
+        const exempt = INJECTION_EXEMPTIONS.some(
+          (candidate) =>
+            candidate.file === name &&
+            candidate.name === node.text &&
+            ts.isIdentifier(node) &&
+            addsOwnBundlesOnly(checker, node, root),
+        );
+        if (!exempt) {
+          add(node, 'injection');
+        }
       }
 
       const reference = referenceAt(checker, node);

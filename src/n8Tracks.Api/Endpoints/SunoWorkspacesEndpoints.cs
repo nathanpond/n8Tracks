@@ -29,6 +29,9 @@ internal static class SunoWorkspacesEndpoints
     /// <summary>422: a Song named is not in the workspace moved from.</summary>
     public const string SongNotInWorkspaceCode = "song_not_in_workspace";
 
+    /// <summary>409: an "all" move found another number of Songs in the workspace than the user confirmed (#346).</summary>
+    public const string SongCountChangedCode = "song_count_changed";
+
     public static IEndpointRouteBuilder MapSunoWorkspaces(this IEndpointRouteBuilder endpoints)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
@@ -52,12 +55,13 @@ internal static class SunoWorkspacesEndpoints
 
         endpoints.MapPost(MoveSongsPath, MoveSongsAsync)
             .WithName("MoveSongsBetweenSunoWorkspaces")
-            .WithSummary("Moves Songs out of the workspace with this Suno ID: { songIds: [Song IDs or shortcodes] | all: true, targetWorkspaceId }. At most 5,000 Songs, all or nothing, without per-Song revisions; each Song moved is at its next revision. The target must be another, available workspace. A Song named that is not in the workspace refuses the whole move (song_not_in_workspace); too many is too_many_songs.")
+            .WithSummary("Moves Songs out of the workspace with this Suno ID: { songIds: [Song IDs or shortcodes] | all: true with expectedCount (the number confirmed), targetWorkspaceId }. At most 5,000 Songs, all or nothing, without per-Song revisions; each Song moved is at its next revision. The target must be another, available workspace. A Song named that is not in the workspace refuses the whole move (song_not_in_workspace); too many is too_many_songs; an all move whose workspace holds another number than expectedCount is song_count_changed (409, with count), and nothing moves.")
             .SessionOnly()
             .Produces<SunoWorkspaceMoveResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         return endpoints;
@@ -162,6 +166,19 @@ internal static class SunoWorkspacesEndpoints
                 break;
         }
 
+        int? expectedCount = null;
+        switch (request?.ExpectedCount.ValueKind)
+        {
+            case null or JsonValueKind.Undefined or JsonValueKind.Null:
+                break;
+            case JsonValueKind.Number when request.ExpectedCount.TryGetInt32(out var count) && count >= 0:
+                expectedCount = count;
+                break;
+            default:
+                errors[SongWorkspaceService.ExpectedCountField] = ["Send how many Songs the move was confirmed for, a whole number."];
+                break;
+        }
+
         string? target = null;
         switch (request?.TargetWorkspaceId.ValueKind)
         {
@@ -180,7 +197,7 @@ internal static class SunoWorkspacesEndpoints
             return ApiProblem.ValidationFailed(context, errors);
         }
 
-        switch (await moves.MoveSongsAsync(id, new SongWorkspaceMove(songIds, all, target), cancellationToken))
+        switch (await moves.MoveSongsAsync(id, new SongWorkspaceMove(songIds, all, target, expectedCount), cancellationToken))
         {
             case SongWorkspaceMoveOutcome.Moved moved:
                 loggers.CreateLogger(typeof(SunoWorkspacesEndpoints)).LogInformation(
@@ -212,6 +229,14 @@ internal static class SunoWorkspacesEndpoints
                     notIn.Songs.Count == 1 ? "A Song named is not in this workspace." : "Some Songs named are not in this workspace.",
                     [new("songs", notIn.Songs)]);
 
+            case SongWorkspaceMoveOutcome.CountChanged changed:
+                return ApiProblem.For(
+                    context,
+                    StatusCodes.Status409Conflict,
+                    SongCountChangedCode,
+                    string.Create(CultureInfo.InvariantCulture, $"The workspace now holds {changed.Count} Songs, not the {changed.Expected} confirmed: nothing was moved. Confirm the move again."),
+                    [new("count", changed.Count), new("expected", changed.Expected)]);
+
             default:
                 throw new InvalidOperationException("Unknown move outcome.");
         }
@@ -221,8 +246,8 @@ internal static class SunoWorkspacesEndpoints
 /// <summary>A workspace report as sent, read as raw JSON: <c>complete</c> (true or false) and <c>workspaces</c> (Suno's raw project objects).</summary>
 internal sealed record SunoWorkspaceReportRequest(JsonElement Complete, JsonElement Workspaces);
 
-/// <summary>A bulk move as sent, read as raw JSON: <c>songIds</c> or <c>all</c>, and <c>targetWorkspaceId</c>.</summary>
-internal sealed record SunoWorkspaceMoveRequest(JsonElement SongIds, JsonElement All, JsonElement TargetWorkspaceId);
+/// <summary>A bulk move as sent, read as raw JSON: <c>songIds</c> or <c>all</c> (with <c>expectedCount</c>), and <c>targetWorkspaceId</c>.</summary>
+internal sealed record SunoWorkspaceMoveRequest(JsonElement SongIds, JsonElement All, JsonElement TargetWorkspaceId, JsonElement ExpectedCount);
 
 /// <summary>Every workspace, by name.</summary>
 internal sealed record SunoWorkspaceListResponse(IReadOnlyList<SunoWorkspaceResponse> Items)

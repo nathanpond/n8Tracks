@@ -56,9 +56,10 @@ export interface Artwork {
 
 /**
  * Where the artwork a Song shows comes from (#121): its own (uploaded, or picked from a Generation
- * and so copied), or its Selected Generation's image, shown while it has none of its own.
+ * and so copied), or its Selected Generation's image, shown while it has none of its own; or, with
+ * no Selected Generation either, its newest Generation's image (#318: an imported Song's cover).
  */
-export type SongArtworkSource = 'own' | 'selectedGeneration';
+export type SongArtworkSource = 'own' | 'selectedGeneration' | 'newestGeneration';
 
 /** The artwork a Song shows, with where it comes from. A Selected Generation's image has no crop. */
 export interface SongArtwork extends Artwork {
@@ -126,11 +127,13 @@ export function isSongArtwork(value: unknown): value is SongArtwork {
   return (
     isArtwork(value) &&
     isRecord(value) &&
-    (value.source === 'own' || value.source === 'selectedGeneration')
+    (value.source === 'own' ||
+      value.source === 'selectedGeneration' ||
+      value.source === 'newestGeneration')
   );
 }
 
-/** A Song's own artwork: what it shows when that is its own, null when it shows none or its Selected Generation's. */
+/** A Song's own artwork: what it shows when that is its own, null when it shows none or a Generation's. */
 export function ownArtwork(artwork: SongArtwork | null): SongArtwork | null {
   return artwork?.source === 'own' ? artwork : null;
 }

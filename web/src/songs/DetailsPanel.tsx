@@ -380,12 +380,18 @@ function AlbumsSection({ song }: { song: Song }) {
 
 /**
  * Where the artwork a Song shows comes from when it is not its own (#121): its Selected
- * Generation's image, shown until the Song has artwork of its own; undefined when it is its own or none.
+ * Generation's image, shown until the Song has artwork of its own; or, with no Selected Generation,
+ * its newest Generation's (#318); undefined when it is its own or none.
  */
 function inheritedArtworkNote(song: Song): string | undefined {
-  return song.artwork?.source === 'selectedGeneration'
-    ? `Showing the image of the Selected Generation${song.selectedGeneration === null ? '' : ` ${song.selectedGeneration.shortcode}`} until the Song has artwork of its own.`
-    : undefined;
+  switch (song.artwork?.source) {
+    case 'selectedGeneration':
+      return `Showing the image of the Selected Generation${song.selectedGeneration === null ? '' : ` ${song.selectedGeneration.shortcode}`} until the Song has artwork of its own.`;
+    case 'newestGeneration':
+      return 'Showing the image of the newest Generation that has one until a Generation is selected or the Song has artwork of its own.';
+    default:
+      return undefined;
+  }
 }
 
 /** What the Details panel holds for a Song: its artwork, credits, Genres, Tags, Suno workspace, notes, release details, related Songs, Albums, and Playlists. Later stories add sections. */

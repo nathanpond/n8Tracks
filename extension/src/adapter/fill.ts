@@ -14,8 +14,6 @@ import {
   LYRICS_EDITOR,
   MAX_MODE_OFF,
   MAX_MODE_ON,
-  MODEL_BUTTON,
-  MODEL_MENU,
   PERSONALIZE_OFF,
   PERSONALIZE_ON,
   SIMPLE_TAB,
@@ -28,13 +26,7 @@ import {
   VOCAL_MALE,
   WEIRDNESS_SLIDER,
 } from './songsForm.ts';
-import {
-  BPM_BOX,
-  SOUND_DESCRIPTION,
-  SOUNDS_MODEL_BUTTON,
-  TYPE_LOOP,
-  TYPE_ONE_SHOT,
-} from './soundsForm.ts';
+import { BPM_BOX, SOUND_DESCRIPTION, TYPE_LOOP, TYPE_ONE_SHOT } from './soundsForm.ts';
 import {
   BACKGROUND_MUSIC_OFF,
   BACKGROUND_MUSIC_ON,
@@ -74,6 +66,12 @@ export interface EntryResult {
   text?: boolean;
   /** Plain words for the user: why, or what to do by hand. */
   note?: string;
+  /**
+   * The note as n8Tracks stores it when `note` quotes the Version's own text (a source's title, a
+   * file note, a Voice or playlist name): the same words naming those generically. n8Tracks keeps
+   * only the adapter's words and refuses a note that carries the Version's text (#340).
+   */
+  reportNote?: string;
 }
 
 /** A source of the request, as the summary names it and the source story (#148) loads it. */
@@ -129,10 +127,14 @@ export const WORKSPACE_ENTRY = 'songs.simple.workspace';
  * (decision D9): Simple's Add Lyrics and Add Styles sections (TS-003 did not exercise them),
  * Duration's Auto or Custom mode (the snapshot shows the slider, not how Auto is shown), and the
  * Sounds Key and Key scale (no snapshot shows the Key picker's popover, with its notes, Any,
- * Major/Minor, and Apply). The summary tells the user to do them by hand until the owner captures
- * those page states.
+ * Major/Minor, and Apply), and the model on Songs and Sounds (#339: no snapshot shows the menu the
+ * model button opens, so nothing is chosen from it). The summary tells the user to do them by hand
+ * until the owner captures those page states.
  */
 export const BLOCKED_ON_CAPTURE: ReadonlySet<string> = new Set([
+  'songs.simple.model',
+  'songs.advanced.model',
+  'sounds.single.sounds_model',
   'songs.simple.simple_add_lyrics',
   'songs.simple.simple_add_styles',
   'songs.advanced.duration_mode',
@@ -331,48 +333,6 @@ const vocalGender: Filler = {
   },
 };
 
-/**
- * The model, by the model list entry's Suno label (#114): the model button shows the chosen
- * model's label. Another model is chosen from the menu the button opens; a model the menu does
- * not offer is unavailable. No snapshot shows the menu open, so it is known by its role only.
- */
-function model(entry: string, button: Target = MODEL_BUTTON): Filler {
-  return {
-    entry,
-    control: button.description,
-    text: false,
-    wanted: (value) =>
-      value === null || value === undefined
-        ? { kind: 'not_applicable', note: 'The Version names no model; Suno keeps its own.' }
-        : typeof value === 'string'
-          ? { kind: 'value', value }
-          : { kind: 'failed', note: 'The Version’s model is not a name.' },
-    read: (page) => shown(page, button, (found) => page.read(found).text),
-    write: (page, value) => {
-      const found = locate(page, button);
-      if (typeof found === 'string') {
-        return;
-      }
-      if (page.read(found).expanded !== true) {
-        page.click(found);
-      }
-      const menu = page.find(MODEL_MENU);
-      if (menu.kind !== 'found') {
-        return { unavailable: 'Suno’s model menu did not open, so choose the model by hand.' };
-      }
-      try {
-        page.choose(menu.found, String(value));
-      } catch (error) {
-        if (error instanceof ForbiddenControlError || error instanceof StoppedError) {
-          throw error;
-        }
-        return { unavailable: 'Suno’s model menu does not offer this model.' };
-      }
-      return undefined;
-    },
-  };
-}
-
 /** The Lyrics editor (Lexical): typed in through the browser's editing commands. */
 const lyrics: Filler = {
   entry: 'songs.advanced.lyrics',
@@ -530,7 +490,6 @@ const SPEECH_AND_SOUNDS_FILLERS: readonly Filler[] = [
     'the Background music switch',
   ),
   slider('speech.advanced.speech_variety', SPEECH_VARIETY_SLIDER, wantedVariety),
-  model('sounds.single.sounds_model', SOUNDS_MODEL_BUTTON),
   textBox('sounds.single.sound_description', SOUND_DESCRIPTION),
   choice(
     'sounds.single.sound_type',
@@ -546,9 +505,7 @@ const SPEECH_AND_SOUNDS_FILLERS: readonly Filler[] = [
 
 /** One filler per `fill` entry of the field map, except those blocked on a capture. */
 export const FILLERS: readonly Filler[] = [
-  model('songs.simple.model'),
   textBox('songs.simple.simple_prompt', SONG_DESCRIPTION),
-  model('songs.advanced.model'),
   lyrics,
   textBox('songs.advanced.styles', STYLES_BOX),
   textBox('songs.advanced.exclude_styles', EXCLUDE_STYLES),
@@ -600,20 +557,36 @@ function manualResult(key: string, job: FormJob): EntryResult {
     return { key, outcome: 'not_applicable' };
   }
   const notes = files.map((file) => file.description).filter((note) => note !== null);
-  return {
-    key,
-    outcome: 'manual',
-    note:
-      notes.length === 0
-        ? 'Attach the file by hand.'
-        : `Attach the file by hand: ${notes.join('; ')}.`,
-  };
+  return notes.length === 0
+    ? { key, outcome: 'manual', note: 'Attach the file by hand.' }
+    : {
+        key,
+        outcome: 'manual',
+        note: `Attach the file by hand: ${notes.join('; ')}.`,
+        reportNote: 'Attach the file by hand: the Version’s file note says which.',
+      };
 }
 
 /** An entry blocked on a capture (D9): never set by the adapter, so told to the user. */
 function blockedResult(key: string, job: FormJob): EntryResult {
   const value = job.entries[key];
   switch (key) {
+    case 'songs.simple.model':
+    case 'songs.advanced.model':
+    case 'sounds.single.sounds_model':
+      if (value === null || value === undefined) {
+        return {
+          key,
+          outcome: 'not_applicable',
+          note: 'The Version names no model; Suno keeps its own.',
+        };
+      }
+      return {
+        key,
+        outcome: 'manual',
+        expected: typeof value === 'string' ? value : null,
+        note: 'Choose the model in Suno’s model menu by hand: the extension cannot use the model menu yet.',
+      };
     case 'sounds.single.sound_key':
       return {
         key,
@@ -857,7 +830,8 @@ async function reported(value: FormValue, text: boolean): Promise<ReportedValue>
 
 /**
  * The summary for n8Tracks: text values (lyrics, styles, prompts, titles) only as length and hash
- * (invariant 6), everything else as it is; notes are the adapter's own words.
+ * (invariant 6), everything else as it is; notes are the adapter's own words, never the Version's
+ * text (`reportNote` where the panel's note quotes it, #340).
  */
 export async function verificationReport(
   results: readonly EntryResult[],
@@ -874,8 +848,9 @@ export async function verificationReport(
     if (result.found !== undefined) {
       entry.found = await reported(result.found, result.text === true);
     }
-    if (result.note !== undefined) {
-      entry.note = result.note;
+    const note = result.reportNote ?? result.note;
+    if (note !== undefined) {
+      entry.note = note;
     }
     entries.push(entry);
   }

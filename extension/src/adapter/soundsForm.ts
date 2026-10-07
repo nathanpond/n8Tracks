@@ -26,7 +26,10 @@ const CREDITS: Target = {
   description: 'the credits button at the top of the Create form',
 };
 
-/** The model button beside the credits (Sounds has no mode tabs); its name is the model's label. */
+/**
+ * The model button beside the credits (Sounds has no mode tabs); its name is the model's label. Not
+ * pressed: the model entries are blocked on a capture of the menu it opens (#339).
+ */
 export const SOUNDS_MODEL_BUTTON: Target = {
   role: 'button',
   popup: 'menu',
@@ -60,16 +63,21 @@ const ADVANCED_OPTIONS: Region = {
   description: 'the Advanced Options section',
 };
 
-function beside(text: string, description: string): Region {
+/** The region around the label `text`; both descriptions are written at the call (#344). */
+function beside(text: string, labelDescription: string, description: string): Region {
   const label: TextAnchor = {
     text,
     within: ADVANCED_OPTIONS,
-    description: `the ${text} label in Advanced Options`,
+    description: labelDescription,
   };
   return { around: label, levels: 2, description };
 }
 
-const TYPE = beside('Type', 'the Type choice in Advanced Options');
+const TYPE = beside(
+  'Type',
+  'the Type label in Advanced Options',
+  'the Type choice in Advanced Options',
+);
 
 export const TYPE_ONE_SHOT: Target = {
   role: 'button',
@@ -88,6 +96,6 @@ export const TYPE_LOOP: Target = {
 /** The BPM number box; empty shows its placeholder, Auto. */
 export const BPM_BOX: Target = {
   role: 'spinbutton',
-  within: beside('BPM', 'the BPM box in Advanced Options'),
+  within: beside('BPM', 'the BPM label in Advanced Options', 'the BPM box in Advanced Options'),
   description: 'the BPM box in Advanced Options',
 };

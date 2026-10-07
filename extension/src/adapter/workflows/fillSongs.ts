@@ -114,6 +114,7 @@ export const fillSongsSimple: Workflow<FillContext> = {
   title: 'Fill the Songs form (Simple)',
   feature: 'generate',
   startsOn: sunoPage('create'),
+  after: 'switch-form',
   needs: [{ step: 'Songs form', check: (page) => songsFormIn(page, 'simple') }],
   steps: [
     {
@@ -142,6 +143,7 @@ export const fillSongsAdvanced: Workflow<FillContext> = {
   title: 'Fill the Songs form (Advanced)',
   feature: 'generate',
   startsOn: sunoPage('create'),
+  after: 'switch-form',
   needs: [{ step: 'Songs form', check: (page) => songsFormIn(page, 'advanced') }],
   steps: [
     {

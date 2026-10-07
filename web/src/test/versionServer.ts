@@ -253,6 +253,29 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     touchSongElsewhere() {
       server.song = { ...server.song, revision: server.song.revision + 1 };
     },
+    /** Plays another client choosing the Song's Selected Generation (`id`, or null to clear it). */
+    selectElsewhere(id: string | null) {
+      const chosen =
+        id === null ? undefined : server.generations.find((candidate) => candidate.id === id);
+      server.song = {
+        ...server.song,
+        hasSelectedGeneration: chosen !== undefined,
+        selectedGeneration:
+          chosen === undefined
+            ? null
+            : {
+                id: chosen.id,
+                shortcode: chosen.shortcode,
+                state: chosen.state,
+                remoteState: chosen.remoteState,
+              },
+        revision: server.song.revision + 1,
+      };
+      server.generations = server.generations.map((generation) => ({
+        ...generation,
+        isSelected: generation.id === chosen?.id,
+      }));
+    },
     /** Plays another client rating the Generation `id`: its rating changes and its revision goes up. */
     rateElsewhere(id: string, rating: number | null) {
       server.generations = server.generations.map((generation) =>

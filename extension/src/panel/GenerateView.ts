@@ -22,6 +22,11 @@ export type GenerateViewState =
     }
   | { kind: 'selected'; name: string }
   /**
+   * Suno lists another workspace with the Song's workspace's name (#335): the extension presses
+   * neither row and waits for the user to select the Song's one, which it recognises by ID.
+   */
+  | { kind: 'select'; name: string }
+  /**
    * The form is filled (#146): the summary, and the user reviews the form and clicks Create.
    * `form` is the Version's kind (#147: `song`, `speech`, or `sound`); a Song's when absent.
    */
@@ -158,6 +163,20 @@ export class GenerateView {
             'p',
             { role: 'status', class: 'generate-selected' },
             `The Song’s workspace “${nameOrUnnamed(this.state.name)}” is selected on Create.`,
+          ),
+        );
+        return;
+      case 'select':
+        this.body.append(
+          this.make(
+            'p',
+            { role: 'alert', class: 'generate-select' },
+            `Suno has more than one workspace named “${nameOrUnnamed(this.state.name)}”. Select the Song’s one in Suno’s workspace list.`,
+          ),
+          this.make(
+            'p',
+            { class: 'detail' },
+            'The extension presses neither and goes on when Suno shows the Song’s workspace, which it checks by ID. It waits two minutes.',
           ),
         );
         return;

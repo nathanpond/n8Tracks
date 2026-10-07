@@ -45,6 +45,7 @@ export const fillSounds: Workflow<FillContext> = {
   title: 'Fill the Sounds form',
   feature: 'generate',
   startsOn: sunoPage('create'),
+  after: 'switch-sounds-form',
   needs: [{ step: 'Sounds form', check: (page) => selected(page, SOUNDS_TAB) }],
   steps: [
     {

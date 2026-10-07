@@ -3763,3 +3763,126 @@ Story #154:
 - **Decision:** CLAUDE.md's invariant 3 guard summary ("only rows a confirmed choice names may change") was left as it is, because the brief allows only the guard-status words. It now has two documented exceptions, both Suno's own state of a Generation that was never complete: #154's completion and #314's status. The guard's own doc comment names both.
   **Why:** The scope of the CLAUDE.md edit is fixed by the brief. The owner may want to reword the line, and whether this reading of "explicit user choice" holds is the owner's call.
   **Issue:** #314
+
+## /n8-exec M4 fix pass — 2026-10-07
+
+Track a1 (#325 #326 #334 #336 #337 #338 #348):
+
+- **Decision:** The commit guard's songs/versions change rules use column allow-lists: an existing Song a choice names may change only `updated_utc`; an existing Version only `updated_utc`, `revision`, `last_generation_ordinal`, and `is_frozen` (and `is_frozen` only 0 → 1). The `settings` `suno.models` row may only be added at revision 2 or raised by exactly one. The lists were read off the real commit (a dump of the changed columns), not guessed.
+  **Why:** Narrowest set the commit legitimately writes; any further column (title, name, notes, inputs) is an overwrite invariant 3 forbids. A permanent trigger-based bite test (`TheGuardFailsWhenTheCommitRetitlesATargetedSongOrRenamesItsVersion`) keeps it honest.
+  **Issue:** #336
+- **Decision:** The commit guard's scenario reads every catalog row before the export's first upload (`Scenario.Pristine`) and asserts, inside the scenario, that nothing changed by the time every choice (resolutions and remote-state PATCHes included) is saved; the discard complement compares against `Pristine`.
+  **Why:** Anchoring all commit tests on a pre-upload snapshot catches an idempotent classify-time write in every test, not only the discard one.
+  **Issue:** #337, #325, #334
+- **Decision:** The staging guard snapshots before the earlier export's upload, and its run now holds a Conflict record, a Generation whose clip is in Suno's Trash, #141 resolution choices (apply/moveToNewVersion/keep), and a #142 remote-state PATCH to Skip and back.
+  **Why:** #325's AC and #334's AC; #326's second AC (every class present) is met by adding Conflict rather than weakening the doc.
+  **Issue:** #325, #334, #326
+- **Decision:** #348's case is built through the real path (an observed Generation still `submitted`, an export retitling it, the Changed diff applied with every field accepted, committed) via a new helper `ProvisionalCompletionApi.ReviewedFromAnExportAsync`, rather than writing `provider_records.export_id` by SQL.
+  **Why:** With every field accepted no hash is remembered, so only the export-sourced raw clip guards it: exactly the reachable case the bug describes.
+  **Issue:** #348
+- **Decision:** #338 extends the existing `AReimportRestoresTheDeletedGenerationWithItsRatingCommentsArtworkAndShortcode` (stage a red cover with the reimported record; the restored Generation keeps its own blue artwork asset) instead of adding a new test; `ImportCommitApi.StageImageAsync` gains an optional colour.
+  **Why:** Same images would deduplicate to one asset and hit the no-op branch, so the staged cover must differ.
+  **Issue:** #338
+- **Decision:** #326's tests leave out the verifier's re-count probe (F2: a committed export is counted as cleared every day).
+  **Why:** That is a separate low-severity finding, not one of the three rules; asserting it would encode a known defect or fail.
+  **Issue:** #326
+
+Track a2 (#318 #319 #320 #321 #323 #324 #333 #340 #346):
+
+- **Decision:** An imported Song's cover comes from a fallback that is only displayed and never stored: a Song with no artwork of its own and no Selected Generation shows its newest Generation's image, active Generations first, then by created time and ordinal. The Song answer gives it `source: "newestGeneration"`. The import does not select a Generation.
+  **Why:** The PRD says the user chooses the Selected Generation ("User may select one Generation"; "Selecting a Generation only marks it…"), and no story says the import selects one. Auto-selecting would also change Album entries and playback (PRD: "if the Song has no Selected Generation, n8Tracks asks the user … instead of guessing"). This narrows #121 AC 3. "Shows nothing when it has no Selected Generation" now holds only when no Generation of the Song has an image. "Shows nothing when that Generation has no image" still holds whenever a Generation is selected. The owner may want #121 AC 3 reworded, or may prefer auto-select.
+  **Issue:** #318 (#121)
+
+- **Decision:** The guard for #319 is an architecture test, not a DI test. No type in Domain, Application, Infrastructure or Api may depend on `System.Net.Http` or `System.Net.WebSockets`, except `Api.Endpoints.HealthCheckCommand`, the container self-check. Raw sockets are excluded because `ListenPortProbe` binds the server's own port.
+  **Why:** The DI container holds `IHttpClientFactory` through ServiceDefaults whether or not anything uses it. The type rule catches the actual way a Suno fetch would be added.
+  **Issue:** #319
+
+- **Decision:** #324 is enforced by a database trigger `tr_generations_suno_id_never_changes` (migration `20261008000000_ProtectGenerationSunoId`, trigger only). It refuses changing a Generation's Suno ID once set. Setting it from null to a value is allowed. In the invariant 1 guard, the frozen targets of both sweeps now carry an audio source that points at a Generation with a Suno ID.
+  **Why:** "Once set" is simpler than "while a frozen source points at it" and fits every current write path. Attach and import insert the ID, #141 refresh and #154 completion never write it, and moves and restore do not update it. Schema change: none, so there is no retention shape bump.
+  **Issue:** #324
+
+- **Decision:** The #340 verification rules:
+  - **Text entries:** the 11 text entries (`GenerationVerification.TextKeys`, the fields the extension marks `text`) accept `expected` and `found` only as `{length, sha256}` or null.
+  - **Notes:** a note that quotes a line of 8 or more characters of the Version's text, taken from the request's snapshot, is refused. That text is the text entries' values plus titles, descriptions and names.
+  - **Extension:** it now sends `reportNote`, the same steps with those names given generically (for example "the source", "the Version's file note says which"). The panel still shows the named version.
+  **Why:** A note cannot be checked against a template without tying the server to each adapter version. Checking it against the snapshot's own user text enforces "never the Version's text" exactly. The 8-character floor keeps short titles from colliding with the adapter's own words.
+  **Issue:** #340 (#146)
+
+- **Decision:** Kept file inputs pass through unchanged (#320). `VersionLineageRules.Errors` takes the held file inputs, and one sent back exactly as held is not checked against the mode. There is no web change.
+  **Why:** The editor sends the whole list. The bug offered either a server fix or a UI fix. Fixing the server also covers API clients and keeps the hidden note stored, as #125 intends.
+  **Issue:** #320 (#125)
+
+- **Decision:** An "all" bulk workspace move requires `expectedCount`. A different count inside the transaction gives 409 `song_count_changed` with `count` and `expected`, and nothing moves. The web sends the count the confirmation stated, and on refusal it says nothing moved and reads the list again.
+  **Why:** #151 AC 2 says the move is refused if the count differs. Requiring the count for `all` makes it impossible to forget. The only callers are the web and tests; the gateway does not call this route.
+  **Issue:** #346 (#151)
+
+Track c (#317 #345 #347):
+
+- **Decision:** Select/Clear of the Selected Generation now save through the shared `useRevisionedSave` with one compared field (the selection, by Generation ID); a 409 whose only difference is elsewhere on the Song is retried silently, a changed selection opens the shared ConflictDialog (Reload / Reapply / Keep editing). Archive/Reactivate keep their one-retry (out of #317's scope).
+  **Why:** docs/conventions.md "Concurrency": the client works out which fields differ; reusing the shared helper keeps one conflict UI. Request shape unchanged (still sends the Generation ID).
+  **Issue:** #317
+- **Decision:** `useGenerationChoices.ts` renamed to `.tsx` (it renders `ConflictValue`); the hook now returns `dialog`, rendered once in `SongVersions`. The pure rename landed in 7c953b5 by an index slip (content unchanged; not force-pushed per brief).
+  **Why:** the hook supplies the dialog rows' JSX.
+  **Issue:** #317
+- **Decision:** After a refused workspace move, focus goes to the refusal text (`role=alert`, `tabIndex=-1`) inside the dialog; after a successful move, to the "Moved N Songs" note (`tabIndex=-1`) in the status region.
+  **Why:** the Move button is disabled while loading and the trigger is disabled after success, so neither can hold focus; the reason is the most useful place to land. Mantine's focus return does not override (it only acts when focus is on BODY).
+  **Issue:** #347
+- **Decision:** e2e suno-workspaces-page walk gains a refused move (a third Song taken out of the workspace via API while the dialog is open, `sunoWorkspaceId: null`) with focus, Tab-containment and modal axe checks; it uses selected IDs, not "all", so it does not depend on track a2's #346 request change.
+  **Why:** the bug asks for the e2e axe walk to cover the refused state.
+  **Issue:** #347
+
+Track b (#322 #327 #328 #329 #330 #331 #332 #335 #339 #341 #342 #343 #344):
+
+- **Decision:** The manifest validator allow-lists top-level keys (`allowedManifestKeys`): manifest_version, name, version, version_name, description, icons, action, background, permissions, optional_host_permissions, options_ui. Every other key fails as "<key> must be absent", replacing the four-key deny-list.
+  **Why:** a deny-list let web_accessible_resources, content_security_policy, declarative_net_request and chrome_url_overrides through; an allow-list fails closed on keys nobody thought of.
+  **Issue:** #322
+
+- **Decision:** Network refusal is a vitest `setupFiles` entry for every suite (`test/no-network.ts`), not only the adapter, panel, field-map and invariant suites. fetch, XMLHttpRequest, WebSocket and EventSource throw, and an afterEach fails a test that reached for one even if the code swallowed the error. The self-test reads the attempt log through a global symbol, not an import, so it fails if the setup file is dropped.
+  **Why:** every suite already passed with it (no suite uses the real network; background tests inject fetch), so scoping it would only leave gaps.
+  **Issue:** #327
+
+- **Decision:** The invariant-4 observer check is structural: in the wraps-only file the name `fetch` may only save the original (`const x = …fetch…`) or replace it (`….fetch = …`), and the saved original may only be called as `original(...args)` with the wrapper's own rest parameter. A wrapper that edits `args` before passing them on is listed under "Not covered", with `observe.test.ts`'s behavioural tests named as its cover.
+  **Why:** a computed address cannot be recognised as an address; only "passes the page's own arguments" can be checked statically.
+  **Issue:** #330
+
+- **Decision:** executeScript, insertCSS, removeCSS, userScripts and debugger are found by name (identifier, property or string) in every shipped file, not by resolved type. The one exemption is `src/popup/main.ts`, and only for `{target, files: [<own bundle constants from background/connection.ts>]}`.
+  **Why:** by name, a hand-written interface over `chrome` (as connection.ts uses for scripting) cannot hide a call; the popup's existing executeScript of suno.js (tabs opened before pairing) is legitimate.
+  **Issue:** #331
+
+- **Decision:** `Page.click`, `choose` and `createWorkspaceClick` ask the forbidden-control matcher (`judge`) before the enabled check; `press` judges, then checks enabled, then dispatches.
+  **Why:** a disabled forbidden control must be reported as refused so the invariant-4 guard sees it (verifier's B04 now fails the guard).
+  **Issue:** #332
+
+- **Decision:** When Suno lists another workspace with the Song's workspace's name, select() first accepts the workspace if the library pane already shows its ID; otherwise it presses neither row, shows a new panel state `select` ("Select the Song's one in Suno's workspace list") and waits up to SAME_NAME_WAIT_MS (2 min) for the library feed to ask for that ID, then accepts it; on timeout it stops with SAME_NAME (reworded to mention selecting by hand). Another ID is never accepted.
+  **Why:** rows carry no ID, so pressing either is a guess (invariant-safe only by verification); the user's own selection is verifiable by ID, which makes P1 (create while the name exists) and P2 (later generations) work without a rename.
+  **Issue:** #335
+
+- **Decision:** A workflow may declare `after: '<earlier workflow id>'` (registered before it). When its needs fail, the self-check gives the new state `waiting` (panel "Waits for an earlier step: <title>", report `waiting`) instead of `not-working`. Chained: fill-songs-simple/advanced after switch-form; fill-speech-* after switch-speech-form; fill-sounds after switch-sounds-form; answer-overwrite and verify-source-* after choose-source-action.
+  **Why:** these needs describe states an earlier step sets up; on a healthy Create page they showed red. Scoping needs to the start page would have removed the useful "ready" signal when the state is present.
+  **Issue:** #328
+
+- **Decision:** songs.simple.model, songs.advanced.model and sounds.single.sounds_model join BLOCKED_ON_CAPTURE (outcome manual, "Choose the model in Suno's model menu by hand", expected = the Version's model; not_applicable when none). The `model()` filler and the invented `MODEL_MENU` target are deleted; the captured model buttons stay as targets, unpressed. ADAPTER_VERSION = 10.
+  **Why:** D9: no snapshot shows the model menu open.
+  **Issue:** #339
+
+- **Decision:** `SourceRoute.automated` (false on every route) gates the clip-page route. The tab keeps a new source phase `byHand`, the panel asks the user to load the source (More options › Remix › action) with Continue, and back on Create the source is verified by the thumbnail clip ID as before. A stored `opening` phase on a non-automated route stops instead of pressing on the clip page. The automated path and its tests are kept, run with `automated` flipped on inside the test.
+  **Why:** D10: the clip page and its More options button are not captured; the form after Cover is, so verification stays.
+  **Issue:** #341
+
+- **Decision:** Reuse Prompt's source entry is `manual` with a note starting "Not verified: Reuse Prompt leaves no source on the form to check…", never `set`.
+  **Why:** nothing on the form shows which clip's inputs were copied.
+  **Issue:** #342
+
+- **Decision:** No value of the Version goes into `expected`: sourceShown's texts are constants; choose() says "to offer the option asked for"; quoted interpolations are no longer accepted by the literal-only guard.
+  **Why:** a quote inside a value splits the report's quote redaction (#343), so quoting is not a safe carrier.
+  **Issue:** #343
+
+- **Decision:** The literal-only guard (`test/diagnostics-source.test.ts`) scans all of `src/adapter/**` plus `src/content/sunoGenerate.ts`: first arguments of expected / PrimitiveError / ForbiddenControlError, findProblem's returns, target descriptions (objects with role/around/text/testId/within), and description parameters (`description` / `*Description`) whose every same-file call passes written text. Allowed spans: `.description`, `String(x.length|x.count)`; pass-throughs `x.expected` and `findProblem(...)`. Not covered (listed in the file): forbidden.ts reasons, the runner's timeout seconds, values passed through another file's function.
+  **Why:** the verifier found text reaching `expected` from four files outside workflows/.
+  **Issue:** #344
+
+## Ad-hoc — 2026-10-07
+
+- **Change:** Imported Songs, and any Song with no artwork of its own and no Selected Generation, now show their newest Generation's image, computed at read time (#318). This narrows #121 AC 3 ("shows nothing when it has no Selected Generation") to Songs whose Generations have no image.
+  **Why:** Verification of #121 found that the must-have truth "a Song imported from Suno shows a cover without the user doing anything" failed. The owner's decision on the AC wording is pending.
+  **Affects:** M4 #121 (closed), epic #11 AC 4; future milestones that list or display Song artwork — plans may be stale.

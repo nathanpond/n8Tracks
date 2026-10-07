@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest';
-import { fakeClock, loadSnapshot } from '../testing/snapshots.ts';
+import { stepsOfRun } from '../diagnostics/report.ts';
+import { fakeClock, loadSnapshot, SNAPSHOT_NAMES } from '../testing/snapshots.ts';
 import { FIELD_MAP } from './fieldMap.ts';
 import type { EntryResult, FormJob, FormSource } from './fill.ts';
 import { nameOf, type Page } from './primitives.ts';
@@ -22,6 +23,7 @@ import {
   verifySourceAdvanced,
   verifySourceSimple,
 } from './workflows/sources.ts';
+import { ADAPTER_WORKFLOWS } from './workflows/index.ts';
 
 /** The source clips of the TS-003 snapshots: the Advanced Audio section's, and the Simple chip's. */
 const ADVANCED_SOURCE = '00000000-0000-4000-8000-000000000104';
@@ -97,7 +99,21 @@ describe('the source plan (#148)', () => {
     });
     expect(
       planSources(form({ sources: [source({ sunoAction: 'reuse_prompt' })] })).load?.route,
-    ).toEqual({ menu: 'Remix', item: 'Reuse Prompt', label: null, captured: true });
+    ).toEqual({
+      menu: 'Remix',
+      item: 'Reuse Prompt',
+      label: null,
+      captured: true,
+      automated: false,
+    });
+  });
+
+  // #341: the clip's page and its More options button are not captured, so no route is taken.
+  it('takes no route itself while the clip’s page is not captured: every source is loaded by hand', () => {
+    expect(
+      [...Object.values(SOURCE_ROUTES), INSPIRATION_ROUTE].filter((route) => route.automated),
+    ).toEqual([]);
+    expect(SNAPSHOT_NAMES.some((name) => name.startsWith('clip-page'))).toBe(false);
   });
 
   it('loads a user type mapped to Cover (#126) as Cover: the extension knows only the action key', () => {
@@ -173,6 +189,8 @@ describe('the summary lines of the source entries (#148)', () => {
       key: 'songs.advanced.audio',
       outcome: 'manual',
       note: 'Load “Night Drive (demo)” with Edit › Extend by hand: no snapshot shows Suno’s form after Extend yet.',
+      reportNote:
+        'Load the source with Edit › Extend by hand: no snapshot shows Suno’s form after Extend yet.',
     });
     expect(sourceEntryResult('songs.advanced.inspiration', job)).toMatchObject({
       outcome: 'manual',
@@ -183,6 +201,8 @@ describe('the summary lines of the source entries (#148)', () => {
       key: 'songs.advanced.voice',
       outcome: 'manual',
       note: 'Choose the voice “Velvet” from + Voice by hand (no snapshot shows the form with a voice chosen).',
+      reportNote:
+        'Choose the voice the Version names from + Voice by hand (no snapshot shows the form with a voice chosen).',
     });
   });
 
@@ -198,6 +218,13 @@ describe('the summary lines of the source entries (#148)', () => {
 
     expect(sourceEntryResult('songs.simple.audio', simple).note).toBe(
       'Load “Demo Song” by hand: it is a Song in n8Tracks, not a Suno clip; attach the audio file by hand (the bass take).',
+    );
+    // n8Tracks keeps the same steps without the Version's text (#340).
+    expect(sourceEntryResult('songs.simple.audio', simple).reportNote).toBe(
+      'Load the source by hand: it is a Song in n8Tracks, not a Suno clip; attach the audio file by hand (the Version’s file note says which).',
+    );
+    expect(sourceEntryResult('songs.simple.simple_add_playlist', simple).reportNote).toMatch(
+      /^Add the playlist the Version names from \+ Inspo by hand/,
     );
     expect(sourceEntryResult('songs.simple.simple_add_playlist', simple)).toMatchObject({
       outcome: 'manual',
@@ -330,7 +357,7 @@ describe('verifying the source on the Create form (TS-002)', () => {
     });
     expect(wrongClip.ok ? null : wrongClip.failure).toMatchObject({
       step: 'source shown',
-      expected: 'the Audio section to show “Night Drive (demo)”',
+      expected: 'the Audio section to show the source clip of the Version',
       pageMayBeChanged: false,
     });
 
@@ -340,9 +367,66 @@ describe('verifying the source on the Create form (TS-002)', () => {
     };
     const wrongAction = await run(page, verifySourceAdvanced, { load: otherAction });
     expect(wrongAction.ok ? null : wrongAction.failure.expected).toBe(
-      'the Audio section to name the action Mashup',
+      'the Audio section to name the source action of the Version',
     );
   });
+
+  // #343: a title with curly and straight quotes split the report's quote redaction. No value of
+  // the Version goes into what a step expected, so nothing of it can reach the diagnostic report.
+  it.each(['advanced', 'simple'])(
+    'puts nothing of the source’s title, action, or ID into what was expected (%s)',
+    async (mode) => {
+      const title = 'Song “quoted” words "said" ”midnight whisper“ tail';
+      const page = loadSnapshot(
+        mode === 'simple' ? 'create-source-simple' : 'create-source-advanced',
+      );
+      const load = loaded(
+        form({
+          mode,
+          sources: [
+            source({
+              key: `songs.${mode}.audio`,
+              title,
+              sunoId: OTHER_CLIP,
+            }),
+          ],
+        }),
+      );
+
+      const result = await run(
+        page,
+        mode === 'simple' ? verifySourceSimple : verifySourceAdvanced,
+        {
+          load,
+        },
+      );
+      const failure = result.ok ? null : result.failure;
+      const report = stepsOfRun(
+        { workflowId: failure?.workflowId ?? '', log: result.log, failure, structure: null },
+        ADAPTER_WORKFLOWS,
+      );
+
+      expect(failure?.step).toBe('source shown');
+      const written = JSON.stringify([failure?.expected, report]);
+      for (const word of [
+        'Song',
+        'quoted',
+        'words',
+        'said',
+        'midnight',
+        'whisper',
+        'tail',
+        OTHER_CLIP,
+      ]) {
+        expect(written).not.toContain(word);
+      }
+      expect(report.at(-1)?.expected).toBe(
+        mode === 'simple'
+          ? 'the source chip to show the source clip of the Version'
+          : 'the Audio section to show the source clip of the Version',
+      );
+    },
+  );
 
   it('verifies a Cover on the Simple chip by its thumbnail, and refuses another clip', async () => {
     const page = loadSnapshot('create-source-simple');

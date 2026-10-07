@@ -396,6 +396,13 @@ describe('Generate on Suno: the Suno tab', () => {
       job: { loads: 1, source: opening },
     });
 
+    // #341: the user loading the source by hand is kept the same way, across the action's loads.
+    const byHand = { phase: 'byHand', sunoId: 'clip-1' } as const;
+    await generate.handleTab({ type: 'generate-source', source: byHand }, 42);
+    expect(await generate.handleTab({ type: 'generate-resume' }, 42)).toMatchObject({
+      job: { source: byHand },
+    });
+
     await generate.handleTab({ type: 'generate-source', source: null }, 42);
     expect(await generate.handleTab({ type: 'generate-resume' }, 42)).toMatchObject({
       job: { source: null },

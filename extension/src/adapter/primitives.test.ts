@@ -305,7 +305,7 @@ describe('choose and click', () => {
 
     expect(() => {
       page.choose(tabs, 'Videos');
-    }).toThrow('the create tabs to offer "Videos"');
+    }).toThrow('the create tabs to offer the option asked for');
     expect(events).toEqual([]);
   });
 
@@ -427,6 +427,58 @@ describe('the forbidden-control check (invariant 4)', () => {
     expect(() => {
       page.createWorkspaceClick(clear);
     }).toThrow("Clear styles to be Suno's create-workspace control");
+    expect(events).toEqual([]);
+    expect(page.refusal()).toBeNull();
+  });
+
+  // #332: the matcher is asked before whether the control is enabled, so a forbidden control that
+  // is disabled on the page is refused (the guard sees it), not a plain "to be enabled" stop.
+  it.each([
+    [
+      'click',
+      (page: Page, create: Found) => {
+        page.click(create);
+      },
+    ],
+    [
+      'choose',
+      (page: Page, create: Found) => {
+        page.choose(create, 'Create song');
+      },
+    ],
+    [
+      'createWorkspaceClick',
+      (page: Page, create: Found) => {
+        page.createWorkspaceClick(create);
+      },
+    ],
+  ])('refuses a disabled forbidden control through %s, before the enabled check', (_, press) => {
+    const page = loadSnapshot('workspace-selector');
+    const events = recordEvents('pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click');
+    const create = found(page.find(CREATE));
+    expect(page.read(create).enabled).toBe(false);
+
+    expect(() => {
+      press(page, create);
+    }).toThrow(ForbiddenControlError);
+    expect(events).toEqual([]);
+    expect(page.refusal()).toMatchObject({
+      control: 'the Create button',
+      reason: 'it is the Create button (Songs and Sounds)',
+    });
+  });
+
+  it('still stops on a disabled control that is allowed, without a refusal', () => {
+    const page = loadSnapshot('create-songs-simple');
+    const events = recordEvents('click');
+    const voice = found(
+      page.find({ role: 'button', name: 'Add Voice', description: 'the Add Voice button' }),
+    );
+    document.querySelector('[aria-label="Add Voice"]')?.setAttribute('disabled', '');
+
+    expect(() => {
+      page.click(voice);
+    }).toThrow('the Add Voice button to be enabled');
     expect(events).toEqual([]);
     expect(page.refusal()).toBeNull();
   });

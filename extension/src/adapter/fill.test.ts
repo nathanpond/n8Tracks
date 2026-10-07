@@ -195,10 +195,6 @@ function labelledIn(section: Element, text: string): Element[] {
 
 /** The elements of each filler's control in the snapshot. */
 const CONTROLS: Readonly<Record<string, () => Element[]>> = {
-  'songs.simple.model': () =>
-    [...document.querySelectorAll('button[aria-haspopup="menu"]')].slice(0, 1),
-  'songs.advanced.model': () =>
-    [...document.querySelectorAll('button[aria-haspopup="menu"]')].slice(0, 1),
   'songs.simple.simple_prompt': () => [...document.querySelectorAll('textarea')],
   'songs.advanced.lyrics': () => [...document.querySelectorAll('[aria-label="Lyrics editor"]')],
   'songs.advanced.styles': () => [...sectionOf(/^Styles/).querySelectorAll('textarea')],
@@ -223,9 +219,6 @@ const CONTROLS: Readonly<Record<string, () => Element[]>> = {
   'speech.advanced.speech_variety': () => [
     ...speechAdvanced().querySelectorAll('[role="slider"][aria-label="Variety"]'),
   ],
-  'sounds.single.sounds_model': () => [
-    ...document.querySelectorAll('button[aria-haspopup="menu"]'),
-  ],
   'sounds.single.sound_description': () => [
     ...document.querySelectorAll('textarea[placeholder="Describe the sound you want"]'),
   ],
@@ -233,11 +226,7 @@ const CONTROLS: Readonly<Record<string, () => Element[]>> = {
   'sounds.single.sound_bpm': () => [...advancedOptions().querySelectorAll('input[type="number"]')],
 };
 
-/**
- * How each filler's control is made to keep another value, as a control Suno did not let change
- * would. The model is the exception: no snapshot shows its menu open, so the menu here is a
- * stand-in whose items change nothing.
- */
+/** How each filler's control is made to keep another value, as a control Suno did not let change would. */
 const BREAKERS: Readonly<Record<string, (controls: Element[]) => void>> = {
   text: (controls) => {
     for (const control of controls) {
@@ -263,24 +252,9 @@ const BREAKERS: Readonly<Record<string, (controls: Element[]) => void>> = {
   editor: () => {
     Object.defineProperty(document, 'execCommand', { configurable: true, value: () => false });
   },
-  menu: (controls) => {
-    for (const control of controls) {
-      control.addEventListener('click', () => {
-        const menu = document.createElement('div');
-        menu.setAttribute('role', 'menu');
-        const item = document.createElement('div');
-        item.setAttribute('role', 'menuitem');
-        item.textContent = 'v6';
-        menu.append(item);
-        document.body.append(menu);
-      });
-    }
-  },
 };
 
 const BREAK: Readonly<Record<string, keyof typeof BREAKERS>> = {
-  'songs.simple.model': 'menu',
-  'songs.advanced.model': 'menu',
   'songs.simple.simple_prompt': 'text',
   'songs.advanced.lyrics': 'editor',
   'songs.advanced.styles': 'text',
@@ -299,7 +273,6 @@ const BREAK: Readonly<Record<string, keyof typeof BREAKERS>> = {
   'speech.advanced.speech_vocal_gender': 'click',
   'speech.advanced.speech_background_music': 'click',
   'speech.advanced.speech_variety': 'keys',
-  'sounds.single.sounds_model': 'menu',
   'sounds.single.sound_description': 'text',
   'sounds.single.sound_type': 'click',
   'sounds.single.sound_bpm': 'text',
@@ -354,17 +327,7 @@ describe('the Songs form fillers', () => {
       const breaker = BREAK[filler.entry];
       expect(breaker).toBeDefined();
       BREAKERS[breaker ?? 'text']?.(CONTROLS[filler.entry]?.() ?? []);
-      const entries = tested.job.entries;
-      const differentModel = /[._]model$/.test(filler.entry)
-        ? { ...entries, [filler.entry]: 'v6' }
-        : entries;
-
-      const results = await verifyForm(
-        page,
-        { ...tested.job, entries: differentModel },
-        'My Workspace',
-        true,
-      );
+      const results = await verifyForm(page, tested.job, 'My Workspace', true);
 
       const broken = byKey(results).get(filler.entry);
       expect(broken?.outcome).toBe('failed');
@@ -504,17 +467,34 @@ describe('the Songs form fillers', () => {
     });
   });
 
-  it('reports a model Suno’s menu does not offer as unavailable', async () => {
+  // #339: no snapshot shows the model menu open, so the model is never chosen from it.
+  it('reports the model as to choose by hand, pressing nothing for it (blocked on a capture)', async () => {
     load(ADVANCED);
+    const pressed: string[] = [];
+    document.addEventListener(
+      'click',
+      (event) => {
+        pressed.push((event.target as Element).getAttribute('aria-haspopup') ?? '');
+      },
+      { capture: true },
+    );
 
     const results = byKey(
       await verifyForm(page, job('advanced', { ...ADVANCED_VALUES, model: 'v6-wild' }), null, true),
     );
 
     expect(results.get('songs.advanced.model')).toMatchObject({
-      outcome: 'unavailable',
+      outcome: 'manual',
       expected: 'v6-wild',
+      note: 'Choose the model in Suno’s model menu by hand: the extension cannot use the model menu yet.',
     });
+    expect(pressed).not.toContain('menu');
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+
+    const none = byKey(
+      await verifyForm(page, job('advanced', { ...ADVANCED_VALUES, model: null }), null, false),
+    );
+    expect(none.get('songs.advanced.model')?.outcome).toBe('not_applicable');
   });
 
   it('never presses Create, and presses nothing outside the form’s own controls', async () => {
@@ -550,7 +530,7 @@ describe('the summary’s other entries', () => {
     const results = await verifyForm(page, simple, 'My Workspace', true);
 
     expect(results.map((result) => [result.key, result.outcome])).toEqual([
-      ['songs.simple.model', 'set'],
+      ['songs.simple.model', 'manual'],
       ['songs.simple.simple_prompt', 'set'],
       ['songs.simple.simple_add_lyrics', 'manual'],
       ['songs.simple.simple_add_styles', 'not_applicable'],
@@ -587,6 +567,7 @@ describe('the summary’s other entries', () => {
       key: entry,
       outcome: 'manual',
       note: 'Attach the file by hand: the note.',
+      reportNote: 'Attach the file by hand: the Version’s file note says which.',
     });
   });
 
@@ -627,10 +608,13 @@ describe('the coverage of the fill entries on every tab (#146 AC 8, #147 AC 4)',
   it('lists exactly the entries no TS-003 snapshot shows as blocked on a capture (D9)', () => {
     expect([...BLOCKED_ON_CAPTURE].sort()).toEqual([
       'songs.advanced.duration_mode',
+      'songs.advanced.model',
+      'songs.simple.model',
       'songs.simple.simple_add_lyrics',
       'songs.simple.simple_add_styles',
       'sounds.single.sound_key',
       'sounds.single.sound_scale',
+      'sounds.single.sounds_model',
     ]);
   });
 });
@@ -679,13 +663,13 @@ describe('the Speech and Sounds summaries (#147)', () => {
     expect(pressed.sort()).toEqual(['Male', 'On']);
   });
 
-  it('lists the six Sounds entries: four set, Key and Key scale to do by hand (D9)', async () => {
+  it('lists the six Sounds entries: three set, the model, Key and Key scale to do by hand (D9)', async () => {
     load(SOUNDS);
 
     const results = await verifyForm(page, job('single', SOUND_VALUES, {}, 'sound'), null, true);
 
     expect(results.map((result) => [result.key, result.outcome])).toEqual([
-      ['sounds.single.sounds_model', 'set'],
+      ['sounds.single.sounds_model', 'manual'],
       ['sounds.single.sound_description', 'set'],
       ['sounds.single.sound_type', 'set'],
       ['sounds.single.sound_bpm', 'set'],
@@ -784,7 +768,7 @@ describe('the Speech and Sounds summaries (#147)', () => {
     });
   });
 
-  it('reports a Sound model Suno’s menu does not offer as unavailable', async () => {
+  it('reports the Sound model as to choose by hand (#339: blocked on a capture)', async () => {
     load(SOUNDS);
 
     const results = byKey(
@@ -797,7 +781,7 @@ describe('the Speech and Sounds summaries (#147)', () => {
     );
 
     expect(results.get('sounds.single.sounds_model')).toMatchObject({
-      outcome: 'unavailable',
+      outcome: 'manual',
       expected: 'v6-wild',
     });
   });
@@ -883,5 +867,51 @@ describe('the verification report', () => {
       ],
     });
     expect(JSON.stringify(report)).not.toContain('"abc"');
+  });
+
+  it('sends the adapter’s words only: no source title, file note, or voice name the panel shows (#340)', async () => {
+    load(SIMPLE);
+    const simple = job(
+      'simple',
+      { ...SIMPLE_VALUES, voice: { name: 'Private Voice Name' } },
+      {
+        sources: [
+          { key: 'songs.simple.audio', title: 'Private Source Title', sunoAction: 'cover' },
+        ],
+        fileInputs: [
+          { key: 'songs.simple.simple_add_image', description: 'private cover photo note' },
+          { key: 'songs.simple.audio', description: 'private bass take note' },
+        ],
+      },
+    );
+    const results = await verifyForm(page, simple, 'My Workspace', true);
+    const privateText = [
+      'Private Voice Name',
+      'Private Source Title',
+      'private cover photo note',
+      'private bass take note',
+    ];
+
+    // The panel names them, so the user knows what to do by hand ...
+    const shown = results.map((result) => result.note ?? '').join(' ');
+    for (const text of privateText) {
+      expect(shown).toContain(text);
+    }
+
+    // ... and n8Tracks gets the same steps naming them generically.
+    const report = await verificationReport(results, 'simple', 5, new Date('2026-10-07T12:00:00Z'));
+    const sent = JSON.stringify(report);
+    for (const text of privateText) {
+      expect(sent).not.toContain(text);
+    }
+    const notes = new Map(report.entries.map((entry) => [entry.key, entry.note]));
+    expect(notes.get('songs.simple.simple_add_image')).toBe(
+      'Attach the file by hand: the Version’s file note says which.',
+    );
+    expect(notes.get('songs.simple.audio')).toContain('Load the source by hand');
+    expect(notes.get('songs.simple.audio')).toContain(
+      'attach the audio file by hand (the Version’s file note says which)',
+    );
+    expect(notes.get('songs.simple.voice')).toContain('Choose the voice the Version names');
   });
 });

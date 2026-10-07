@@ -74,7 +74,8 @@ public sealed class DatabaseStartupTests : IDisposable
             migration => Assert.Matches("^[0-9]{14}_AddSunoGenerationRequests\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_RememberDeclinedSunoChanges\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AddGenerationRequestVerification\\|10\\.0\\.", migration),
-            migration => Assert.Matches("^[0-9]{14}_AddObservedCreates\\|10\\.0\\.", migration));
+            migration => Assert.Matches("^[0-9]{14}_AddObservedCreates\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_ProtectGenerationSunoId\\|10\\.0\\.", migration));
 
         // ISO 8601 UTC with milliseconds and Z, taken when the migration ran.
         var initialized = TestDatabase.SchemaInitializedUtc(directory.Path);
@@ -128,7 +129,7 @@ public sealed class DatabaseStartupTests : IDisposable
             ["tr_versions_frozen_inputs_never_change", "tr_versions_number_never_changes", "tr_versions_record_number_after_insert", "tr_versions_touch_song_after_insert", "tr_versions_touch_song_after_update"],
             TestDatabase.Rows(directory.Path, "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'versions' ORDER BY name;"));
         Assert.Equal(
-            ["tr_generations_aliases_stay_reserved", "tr_generations_move_only_leaving_an_alias"],
+            ["tr_generations_aliases_stay_reserved", "tr_generations_move_only_leaving_an_alias", "tr_generations_suno_id_never_changes"],
             TestDatabase.Rows(directory.Path, "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'generations' ORDER BY name;"));
 
         // A Version's lineage (#122): each table cascades from its Version and has three freeze triggers.
@@ -330,7 +331,7 @@ public sealed class DatabaseStartupTests : IDisposable
 
         Assert.Equal(MigrationStatus.UpToDate, state.Status);
         Assert.Equal(TestDatabase.History(directory.Path)[^1].Split('|')[0], state.LastAppliedMigrationId);
-        Assert.EndsWith("_AddObservedCreates", state.LastAppliedMigrationId, StringComparison.Ordinal);
+        Assert.EndsWith("_ProtectGenerationSunoId", state.LastAppliedMigrationId, StringComparison.Ordinal);
     }
 
     [Fact]

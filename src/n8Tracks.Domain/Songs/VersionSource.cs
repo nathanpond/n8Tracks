@@ -220,6 +220,9 @@ public static class VersionLineageRules
     /// Every rule <paramref name="lineage"/> breaks, for a Version of <paramref name="kind"/> in Song
     /// mode <paramref name="songMode"/>; empty when it is valid. <paramref name="durationOf"/> gives
     /// a source Generation's length in seconds when known, for Extend's position.
+    /// <paramref name="keptFileInputs"/> are the file inputs the Version already holds: one sent back
+    /// exactly as held is not checked against the mode (#320), so an image or video note kept, and
+    /// hidden, from Simple mode never refuses an Advanced-mode edit of the audio note beside it.
     /// </summary>
     public static IReadOnlyList<LineageError> Errors(
         VersionLineage lineage,
@@ -227,7 +230,8 @@ public static class VersionLineageRules
         CreationMode songMode,
         LineageCheck check,
         LineageOrigin origin,
-        Func<VersionSourceTarget, double?>? durationOf = null)
+        Func<VersionSourceTarget, double?>? durationOf = null,
+        IReadOnlyCollection<VersionFileInput>? keptFileInputs = null)
     {
         ArgumentNullException.ThrowIfNull(lineage);
 
@@ -235,7 +239,7 @@ public static class VersionLineageRules
         AudioErrors(lineage, check, origin, durationOf, errors);
         InspirationErrors(lineage, errors);
         VoiceErrors(lineage.Voice, errors);
-        FileInputErrors(lineage, kind, songMode, errors);
+        FileInputErrors(lineage, kind, songMode, keptFileInputs ?? [], errors);
         return errors;
     }
 
@@ -439,7 +443,7 @@ public static class VersionLineageRules
         }
     }
 
-    private static void FileInputErrors(VersionLineage lineage, VersionKind kind, CreationMode songMode, List<LineageError> errors)
+    private static void FileInputErrors(VersionLineage lineage, VersionKind kind, CreationMode songMode, IReadOnlyCollection<VersionFileInput> kept, List<LineageError> errors)
     {
         var files = lineage.FileInputs;
         if (files.GroupBy(static file => file.Kind).Any(static kind => kind.Count() > 1))
@@ -456,7 +460,7 @@ public static class VersionLineageRules
                 errors.Add(new(field + ".description", FileInputDescription, string.Create(CultureInfo.InvariantCulture, $"Describe the file in 1 to {DescriptionMaximumLength} characters.")));
             }
 
-            if (file.Kind != VersionFileInputKind.Audio && !Applies(file.Kind, kind, songMode))
+            if (file.Kind != VersionFileInputKind.Audio && !Applies(file.Kind, kind, songMode) && !kept.Contains(file))
             {
                 errors.Add(new(field, FileInputSimpleOnly, "Suno takes an image or a video for a Simple-mode Song only."));
             }

@@ -692,6 +692,65 @@ public sealed class GenerationRequestTests
         Assert.Equal("0", TestDatabase.Scalar(factory.DataPath, "SELECT count(*) FROM suno_generation_requests WHERE verification_json IS NOT NULL;"));
     }
 
+    /// <summary>
+    /// #340, with the verifier's probe values: a text entry's <c>expected</c> or <c>found</c> sent as
+    /// plain text, however short, is refused, and so is a note quoting the Version's own text (here its
+    /// styles, and a file note); nothing is stored and the request does not move. Complement: the same
+    /// entries as the extension sends them, hashed and with the adapter's words, are stored.
+    /// </summary>
+    [Fact]
+    public async Task ATextEntryInPlainTextOrANoteQuotingTheVersionIsRefusedAndNothingIsStored()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var versionId = VersionId(await SongApi.CreateAsync(client, "Probe 146"));
+        await EditAsync(client, versionId, """{"lyrics":"PROBE-SECRET-LYRIC line one\nsecond line","styles":"my private prompt text","inputs":{"fileInputs":[{"kind":"audio","description":"the hummed demo take"}]}}""");
+        var extension = await CredentialApi.CreateTokenAsync(factory, CredentialScopes.SunoGenerate);
+        var id = (await CreateAsync(client, versionId)).GetProperty("id").GetGuid();
+        await ClaimAsync(client, extension, id, HttpStatusCode.OK);
+        const string Head = "\"adapterVersion\":5,\"mode\":\"advanced\",\"checkedAt\":\"2026-10-07T12:00:00Z\"";
+
+        foreach (var entries in new[]
+        {
+            """[{"key":"songs.advanced.lyrics","outcome":"failed","expected":"PROBE-SECRET-LYRIC line one","found":"PROBE-SECRET-FOUND"}]""",
+            """[{"key":"songs.advanced.lyrics","outcome":"set","expected":"la"}]""",
+            """[{"key":"songs.advanced.exclude_styles","outcome":"failed","expected":null,"found":"metal"}]""",
+            """[{"key":"songs.advanced.title","outcome":"unavailable","expected":"Probe 146"}]""",
+            """[{"key":"songs.advanced.styles","outcome":"manual","note":"PROBE-SECRET-NOTE my private prompt text"}]""",
+            """[{"key":"songs.advanced.audio","outcome":"manual","note":"Attach the audio file by hand (The Hummed Demo Take)."}]""",
+            """[{"key":"songs.advanced.model","outcome":"set","note":"second line"}]""",
+        })
+        {
+            using var refused = await ReportAsync(client, extension, id, Report(Head, entries));
+            var problem = await ExpectProblemAsync(refused, HttpStatusCode.UnprocessableEntity, "validation_failed");
+            Assert.True(problem.GetProperty("errors").TryGetProperty("verification", out _), entries);
+        }
+
+        var current = await CurrentAsync(client, versionId);
+        Assert.Equal(JsonValueKind.Null, current.GetProperty("verification").ValueKind);
+        Assert.Equal("claimed", current.GetProperty("state").GetString());
+        Assert.Equal("0", TestDatabase.Scalar(factory.DataPath, "SELECT count(*) FROM suno_generation_requests WHERE verification_json IS NOT NULL;"));
+
+        // Complement: hashed text, null, a choice, and the adapter's own words are stored.
+        const string Accepted = """
+            [{"key":"songs.advanced.lyrics","outcome":"failed","expected":{"length":39,"sha256":"5f6955e3e1f2c0a0d1b3b1e3b2b0c4b6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2"},"found":null},
+             {"key":"songs.advanced.model","outcome":"set","expected":"v6-mini"},
+             {"key":"songs.advanced.audio","outcome":"manual","note":"Attach the audio file by hand (the Version's file note)."}]
+            """;
+        using (var stored = await ReportAsync(client, extension, id, Report(Head, Accepted)))
+        {
+            Assert.True(stored.StatusCode == HttpStatusCode.OK, await stored.Content.ReadAsStringAsync());
+        }
+
+        var verification = (await CurrentAsync(client, versionId)).GetProperty("verification").GetRawText();
+        Assert.DoesNotContain("PROBE-SECRET", verification, StringComparison.Ordinal);
+        Assert.Equal(3, JsonDocument.Parse(verification).RootElement.GetProperty("entries").GetArrayLength());
+    }
+
+    /// <summary>A waiting report carrying a summary with <paramref name="head"/> and <paramref name="entries"/>.</summary>
+    private static string Report(string head, string entries) =>
+        "{\"state\":\"waiting\",\"step\":\"review and create\",\"verification\":{" + head + ",\"entries\":" + entries + "}}";
+
     private static Guid VersionId(JsonElement song) => song.GetProperty("currentVersion").GetProperty("id").GetGuid();
 
     private static Uri Requests(Guid versionId) => new($"/api/v1/versions/{versionId}/generation-requests", UriKind.Relative);

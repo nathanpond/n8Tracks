@@ -618,6 +618,67 @@ public sealed class SunoExportEndpointTests
     }
 
     /// <summary>
+    /// The 24-hour rule for an export still receiving (#326): a minute short of 24 hours after it was
+    /// created it is kept with its parts; at 24 hours the daily job discards it and its staged rows go.
+    /// </summary>
+    [Fact]
+    public async Task AnExportStillReceivingIsKeptUntil24HoursAndThenDiscarded()
+    {
+        var clock = new TestClock();
+        using var factory = SongApi.Host(clock);
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var token = await SunoWorkspaceApi.ExtensionTokenAsync(factory);
+        var receiving = await SunoExportApi.CreateAsync(client, token);
+        await SunoExportApi.PartAsync(client, token, receiving, SunoExportApi.Part(1, [JsonNode.Parse(Clips.Minimal("still-receiving"))!]));
+
+        clock.Advance(TimeSpan.FromHours(24) - TimeSpan.FromMinutes(1));
+        Assert.Equal(new ExportExpirySummary(0, 0, 0, 0), await SunoExportApi.WithServiceAsync(factory, static service => service.ExpireAsync()));
+        Assert.Equal("receiving", (await SunoExportApi.GetAsync(client, token, receiving)).GetProperty("state").GetString());
+        Assert.Equal(1, SunoExportApi.StagedRows(factory, receiving).Parts);
+
+        clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.Equal(new ExportExpirySummary(0, 1, 0, 0), await SunoExportApi.WithServiceAsync(factory, static service => service.ExpireAsync()));
+        Assert.Equal("discarded", (await SunoExportApi.GetAsync(client, token, receiving)).GetProperty("state").GetString());
+        Assert.Equal((0, 0, 0), SunoExportApi.StagedRows(factory, receiving));
+    }
+
+    /// <summary>
+    /// The 24-hour rules for an export stuck classifying and a committed export (#326): 23 hours after it
+    /// completed (or ended) each is left as it is, its staged rows kept; at 24 hours the stuck export fails
+    /// and its staged rows go, and the committed export stays committed but its staged rows go. The catalog
+    /// is untouched.
+    /// </summary>
+    [Fact]
+    public async Task AStuckClassifyingExportFailsAndACommittedExportsStagedRowsGoAfter24Hours()
+    {
+        var clock = new TestClock();
+        using var factory = SongApi.Host(clock);
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var token = await SunoWorkspaceApi.ExtensionTokenAsync(factory);
+        var at = clock.GetUtcNow().UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture);
+        var (committed, _) = await SunoExportApi.UploadAsync(client, token, SunoExportApi.Header(), SunoExportApi.Part(1, [JsonNode.Parse(Clips.Minimal("committed-1"))!]));
+        TestDatabase.Execute(factory.DataPath, $"UPDATE suno_exports SET state = 'committed', ended_utc = '{at}' WHERE upper(id) = '{committed.ToString().ToUpperInvariant()}';");
+        var stuck = await SunoExportApi.CreateAsync(client, token);
+        await SunoExportApi.PartAsync(client, token, stuck, SunoExportApi.Part(1, [JsonNode.Parse(Clips.Minimal("stuck-1"))!]));
+        TestDatabase.Execute(factory.DataPath, $"UPDATE suno_exports SET state = 'classifying', completed_utc = '{at}' WHERE upper(id) = '{stuck.ToString().ToUpperInvariant()}';");
+        var catalog = SunoExportStagingGuardTests.Snapshot(factory.DataPath);
+
+        clock.Advance(TimeSpan.FromHours(23));
+        Assert.Equal(new ExportExpirySummary(0, 0, 0, 0), await SunoExportApi.WithServiceAsync(factory, static service => service.ExpireAsync()));
+        Assert.Equal(1, SunoExportApi.StagedRows(factory, committed).Records);
+        Assert.Equal(1, SunoExportApi.StagedRows(factory, stuck).Parts);
+        Assert.Equal("classifying", (await SunoExportApi.GetAsync(client, token, stuck)).GetProperty("state").GetString());
+
+        clock.Advance(TimeSpan.FromHours(1));
+        Assert.Equal(new ExportExpirySummary(0, 0, 1, 1), await SunoExportApi.WithServiceAsync(factory, static service => service.ExpireAsync()));
+        Assert.Equal("failed", (await SunoExportApi.GetAsync(client, token, stuck)).GetProperty("state").GetString());
+        Assert.Equal((0, 0, 0), SunoExportApi.StagedRows(factory, stuck));
+        Assert.Equal("committed", (await SunoExportApi.GetAsync(client, token, committed)).GetProperty("state").GetString());
+        Assert.Equal((0, 0, 0), SunoExportApi.StagedRows(factory, committed));
+        Assert.Equal(catalog, SunoExportStagingGuardTests.Snapshot(factory.DataPath));
+    }
+
+    /// <summary>
     /// A cover image staged with a record of a ready export: checked like any artwork, held with the
     /// export (the sweep keeps it while the record holds it), and nothing in the catalog changes.
     /// </summary>

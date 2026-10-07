@@ -1,0 +1,13 @@
+// A fixture for the invariant 4 guard's static scan: background code that reaches into Suno's page
+// without the primitives (#331). Scanned as if it were the file the test names; never built or
+// shipped.
+export async function pressCreate(tabId: number): Promise<void> {
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => (document.querySelector('[aria-label="Create song"]') as HTMLElement | null)?.click(),
+  });
+  await chrome.scripting.insertCSS({ target: { tabId }, css: 'button { display: none }' });
+  await chrome.debugger.attach({ tabId }, '1.3');
+  const scripting = chrome.scripting as unknown as Record<string, (options: unknown) => unknown>;
+  await scripting['executeScript']?.({ target: { tabId }, files: ['other.js'] });
+}
