@@ -94,6 +94,8 @@ internal sealed class SwitchableMediaProbe : IMediaMount, IDisposable
 
     public Stream OpenRead(string relativePath) => inner!.OpenRead(relativePath);
 
+    public OpenedMediaFile OpenWithStat(string relativePath) => inner!.OpenWithStat(relativePath);
+
     public void Dispose()
     {
         released.Set();

@@ -90,7 +90,18 @@ internal sealed class MediaMountReader(N8TracksOptions options) : IMediaMount
         }
     }
 
-    public Stream OpenRead(string relativePath)
+    public Stream OpenRead(string relativePath) => Open(relativePath);
+
+    public OpenedMediaFile OpenWithStat(string relativePath)
+    {
+        var stream = Open(relativePath);
+
+        // Asked of the handle, never of the path: what is sent is what was opened.
+        return new OpenedMediaFile(stream, () => new MediaFileStat(stream.Length, new DateTimeOffset(File.GetLastWriteTimeUtc(stream.SafeFileHandle), TimeSpan.Zero)));
+    }
+
+    /// <summary>Opens the file for reading only, after the real-path check, and checks again where the open handle is.</summary>
+    private FileStream Open(string relativePath)
     {
         var realRoot = RealRoot();
         var stream = new FileStream(

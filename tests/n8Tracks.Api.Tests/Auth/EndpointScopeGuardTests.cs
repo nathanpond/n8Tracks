@@ -164,6 +164,8 @@ public sealed class EndpointScopeGuardTests
         Assert.Equal("session-only", markers["POST /api/v1/media/scans"]);
         Assert.Equal("scope", markers["GET /api/v1/audio-files"]);
         Assert.Equal("scope", markers["GET /api/v1/audio-files/{id:guid}"]);
+        Assert.Equal("scope", markers["GET,HEAD /api/v1/audio-files/{id:guid}/content"]);
+        Assert.Equal("scope", markers["POST,PUT,PATCH,DELETE /api/v1/audio-files/{id:guid}/content"]);
         Assert.Equal("any-caller", markers["* " + ApiNotFoundPattern]);
         Assert.Equal("any-caller", markers["GET /api/v1/extension/handshake"]);
         Assert.Equal(2, markers.Values.Count(static marker => marker == "any-caller"));

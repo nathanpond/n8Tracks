@@ -99,6 +99,45 @@ public sealed class AudioFormatsTests
         Assert.Equal(3, reader.Stat("a.mp3")!.SizeBytes);
     }
 
+    [Theory]
+    [InlineData("wav", "audio/wav")]
+    [InlineData("m4a", "audio/mp4")]
+    [InlineData("mp3", "audio/mpeg")]
+    [InlineData("flac", "audio/flac")]
+    [InlineData("ogg", "audio/ogg")]
+    [InlineData("opus", "audio/ogg")]
+    [InlineData("aac", "audio/aac")]
+    public void EachFormatHasItsMediaType(string format, string mediaType)
+    {
+        Assert.Equal(mediaType, AudioFormats.MediaType(format));
+    }
+
+    [Fact]
+    public void EveryFormatHasAMediaTypeAndNothingElseDoes()
+    {
+        Assert.All(AudioFormats.All, static format => Assert.StartsWith("audio/", AudioFormats.MediaType(format), StringComparison.Ordinal));
+        Assert.Throws<ArgumentOutOfRangeException>(static () => AudioFormats.MediaType("txt"));
+    }
+
+    /// <summary>The stat of an opened file comes from its handle: a change on disk after the open shows, and the stream only reads.</summary>
+    [Fact]
+    public void AFileOpenedWithItsStatReportsItsHandleAndOnlyReads()
+    {
+        using var media = new TemporaryDirectory();
+        var path = Path.Combine(media.Path, "a.mp3");
+        File.WriteAllBytes(path, [1, 2, 3]);
+        var reader = new MediaMountReader(Options(media.Path));
+
+        using var opened = reader.OpenWithStat("a.mp3");
+        Assert.Equal(3, opened.Stat().SizeBytes);
+        Assert.Equal(new DateTimeOffset(File.GetLastWriteTimeUtc(path), TimeSpan.Zero), opened.Stat().ModifiedUtc);
+        Assert.False(opened.Content.CanWrite);
+
+        File.AppendAllBytes(path, [4]);
+        Assert.Equal(4, opened.Stat().SizeBytes);
+        Assert.Throws<FileNotFoundException>(() => reader.OpenWithStat("missing.mp3"));
+    }
+
     private static N8TracksOptions Options(string mediaPath) => new(
         Port: 8080,
         BaseUrl: new Uri("http://localhost:8080/"),

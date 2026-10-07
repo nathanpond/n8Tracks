@@ -24,7 +24,9 @@ namespace n8Tracks.Api.Tests.Media;
 /// followed and a cycle of links ends its branch; a cataloged file swapped for an escaping link is
 /// refused at the open; the resolver refuses traversal by its text; and no API input is a path.
 /// <c>MediaMountAccessTests</c> (architecture) proves that nothing but <c>MediaMountReader</c> touches
-/// the mount, and that it only reads. #217 adds serving audio over HTTP to the same cases.
+/// the mount, and that it only reads. Serving audio over HTTP (#217) is in the same cases: it reads a
+/// read-only tree and changes nothing, a file swapped for a link out is 404 with no byte behind it,
+/// and an audio file is named by its ID only.
 /// </summary>
 public sealed partial class MediaMountGuardTests
 {
@@ -69,11 +71,42 @@ public sealed partial class MediaMountGuardTests
             Assert.True(mount.Probe());
             Assert.NotEmpty(mount.List("album"));
             Assert.Equal(new FileInfo(MediaApi.Fixture("mp3")).Length, mount.Stat("alias.mp3")?.SizeBytes);
+            var flac = await File.ReadAllBytesAsync(MediaApi.Fixture("flac"));
             await using (var stream = mount.OpenRead("album/deeper/two.flac"))
             {
                 using var copy = new MemoryStream();
                 await stream.CopyToAsync(copy);
-                Assert.Equal(await File.ReadAllBytesAsync(MediaApi.Fixture("flac")), copy.ToArray());
+                Assert.Equal(flac, copy.ToArray());
+            }
+
+            await using (var opened = mount.OpenWithStat("alias.mp3"))
+            {
+                Assert.Equal(new FileInfo(MediaApi.Fixture("mp3")).Length, opened.Stat().SizeBytes);
+                using var copy = new MemoryStream();
+                await opened.Content.CopyToAsync(copy);
+                Assert.Equal(await File.ReadAllBytesAsync(MediaApi.Fixture("mp3")), copy.ToArray());
+            }
+
+            // Over HTTP (#217): the whole file, a range, and HEAD, from the read-only tree.
+            var (items, _) = await MediaApi.ListAsync(client);
+            var content = Content(MediaApi.ByPath(items, "album/deeper/two.flac").GetProperty("id").GetGuid());
+            using (var whole = await client.GetAsync(content))
+            {
+                Assert.Equal(HttpStatusCode.OK, whole.StatusCode);
+                Assert.Equal(flac, await whole.Content.ReadAsByteArrayAsync());
+            }
+
+            using (var request = new HttpRequestMessage(HttpMethod.Get, content))
+            {
+                request.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(100, null);
+                using var ranged = await client.SendAsync(request);
+                Assert.Equal(HttpStatusCode.PartialContent, ranged.StatusCode);
+                Assert.Equal(flac[100..], await ranged.Content.ReadAsByteArrayAsync());
+            }
+
+            using (var head = await client.SendAsync(new HttpRequestMessage(HttpMethod.Head, content)))
+            {
+                Assert.Equal(HttpStatusCode.OK, head.StatusCode);
             }
 
             Assert.Equal(before, MediaApi.Listing(factory.MediaPath));
@@ -204,6 +237,18 @@ public sealed partial class MediaMountGuardTests
             Assert.Throws<MediaPathOutsideException>(() => mount.OpenRead(path));
             Assert.Null(mount.Stat(path));
         }
+
+        // Served over HTTP (#217): refused at the open, 404, and no byte behind the link in the answer.
+        foreach (var path in new[] { "swap.mp3", "folder/swap.mp3" })
+        {
+            using var response = await client.GetAsync(Content(MediaApi.ByPath(cataloged, path).GetProperty("id").GetGuid()));
+            var answer = await response.Content.ReadAsStringAsync();
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+            Assert.Contains("\"audio_file_unavailable\"", answer, StringComparison.Ordinal);
+            Assert.DoesNotContain("SENTINEL", answer, StringComparison.Ordinal);
+        }
+
+        Assert.Equal(0, MediaApi.Mount(factory).OpenHandles);
 
         // The next scan does not see either file (#207 marks such records Missing) and reads nothing behind the links.
         MediaApi.Mount(factory).Reset();
@@ -346,6 +391,10 @@ public sealed partial class MediaMountGuardTests
     [InlineData("/api/v1/audio-files/..%2F..%2Fetc%2Fpasswd")]
     [InlineData("/api/v1/audio-files/%2Fetc%2Fpasswd")]
     [InlineData("/api/v1/audio-files/real.mp3")]
+    [InlineData("/api/v1/audio-files/..%2F..%2Fetc%2Fpasswd/content")]
+    [InlineData("/api/v1/audio-files/%2Fetc%2Fpasswd/content")]
+    [InlineData("/api/v1/audio-files/real.mp3/content")]
+    [InlineData("/api/v1/audio-files/real.mp3%2Fcontent")]
     public async Task AnAudioFileNamedByAPathIsNotFound(string path)
     {
         using var factory = MediaApi.Host();
@@ -358,6 +407,8 @@ public sealed partial class MediaMountGuardTests
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
         Assert.Equal(0, MediaApi.Mount(factory).Opens);
     }
+
+    private static Uri Content(Guid id) => new($"/api/v1/audio-files/{id}/content", UriKind.Relative);
 
     private static MediaMountReader Reader(string mediaPath) => new(new N8TracksOptions(
         Port: 8080,
