@@ -46,7 +46,7 @@ internal static class ArtworkEndpoints
 
         endpoints.MapPost(ArtworkPath, UploadAsync)
             .WithName("UploadArtwork")
-            .WithSummary("Stores an uploaded JPEG, PNG, or WebP image (multipart/form-data, one file, at most 25 MB and 12,000 pixels a side) and makes its thumbnails. 201 with the new asset, or 200 with the existing one for identical bytes. 413 artwork_too_large, 415 artwork_type_not_supported, 422 artwork_undecodable or artwork_dimensions_exceeded.")
+            .WithSummary("Stores an uploaded JPEG, PNG, or WebP image (multipart/form-data, one file, at most 25 MB, 12,000 pixels a side, and 100 megapixels) and makes its thumbnails. 201 with the new asset, or 200 with the existing one for identical bytes. 413 artwork_too_large, 415 artwork_type_not_supported, 422 artwork_undecodable or artwork_dimensions_exceeded.")
             .RequireScope(CredentialScopes.ArtworkWrite)
             .Produces<ArtworkResponse>(StatusCodes.Status201Created)
             .Produces<ArtworkResponse>(StatusCodes.Status200OK)
@@ -290,10 +290,12 @@ internal static class ArtworkEndpoints
                     context,
                     StatusCodes.Status422UnprocessableEntity,
                     DimensionsExceededCode,
-                    ArtworkRules.IsWithinMaximumSide(exceeded.Width, exceeded.Height)
-                        ? $"The image is {Pixels(exceeded.Width, exceeded.Height)} pixels, too many to process. Use a smaller image."
-                        : $"The image is {Pixels(exceeded.Width, exceeded.Height)} pixels; artwork can be at most {Number(ArtworkRules.MaximumSide)} pixels on a side.",
-                    [new("width", exceeded.Width), new("height", exceeded.Height), new("maximumSide", ArtworkRules.MaximumSide)]);
+                    !ArtworkRules.IsWithinMaximumSide(exceeded.Width, exceeded.Height)
+                        ? $"The image is {Pixels(exceeded.Width, exceeded.Height)} pixels; artwork can be at most {Number(ArtworkRules.MaximumSide)} pixels on a side."
+                        : !ArtworkRules.IsWithinMaximumPixels(exceeded.Width, exceeded.Height)
+                            ? $"The image is {Pixels(exceeded.Width, exceeded.Height)} pixels; artwork can be at most {Number(ArtworkRules.MaximumPixels / 1_000_000)} megapixels ({Number(ArtworkRules.MaximumPixels)} pixels)."
+                            : $"The image is {Pixels(exceeded.Width, exceeded.Height)} pixels, too many to process. Use a smaller image.",
+                    [new("width", exceeded.Width), new("height", exceeded.Height), new("maximumSide", ArtworkRules.MaximumSide), new("maximumPixels", ArtworkRules.MaximumPixels)]);
 
             default:
                 throw new ArgumentException("Not a refusal: the image was stored.", nameof(outcome));
@@ -407,7 +409,7 @@ internal static class ArtworkEndpoints
 
     private static string Pixels(int width, int height) => $"{Number(width)} × {Number(height)}";
 
-    private static string Number(int value) => value.ToString("N0", CultureInfo.InvariantCulture);
+    private static string Number(long value) => value.ToString("N0", CultureInfo.InvariantCulture);
 
     /// <summary>The file part ran past <see cref="ArtworkRules.MaximumBytes"/>.</summary>
     private sealed class FileTooLargeException : Exception

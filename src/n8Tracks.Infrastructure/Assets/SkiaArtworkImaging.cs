@@ -101,6 +101,13 @@ internal sealed class SkiaArtworkImaging : IArtworkImaging, IDisposable
             return null;
         }
 
+        // Over 100 megapixels is refused from the header too, before any pixel buffer is allocated (#305).
+        if (!ArtworkRules.IsWithinMaximumPixels(encoded.Width, encoded.Height))
+        {
+            failure = new ArtworkDecoding.DimensionsExceeded(width, height);
+            return null;
+        }
+
         if (DecodeSize(codec, encoded.Width, encoded.Height) is not { } size)
         {
             failure = new ArtworkDecoding.DimensionsExceeded(width, height);
@@ -137,7 +144,8 @@ internal sealed class SkiaArtworkImaging : IArtworkImaging, IDisposable
 
     /// <summary>
     /// The size to decode at: full size when its pixels fit the memory cap, otherwise the largest
-    /// eighth-step scale the codec supports that fits; null when none does.
+    /// eighth-step scale the codec supports that fits; null when none does. Since the 100-megapixel
+    /// limit (#305) every accepted image fits at full size; the cap stays as a second bound.
     /// </summary>
     private static SKSizeI? DecodeSize(SKCodec codec, int width, int height)
     {

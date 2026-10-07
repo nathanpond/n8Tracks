@@ -170,6 +170,33 @@ internal static class ArtworkImages
         return output.ToArray();
     }
 
+    /// <summary>
+    /// A real, whole <paramref name="width"/> by <paramref name="height"/> PNG, black and 8-bit grey,
+    /// written row by row so even a 100-megapixel one is made without holding its pixels: every row
+    /// is zero, which compresses to a few hundred kilobytes.
+    /// </summary>
+    public static byte[] BlankPng(int width, int height)
+    {
+        var output = new MemoryStream();
+        output.Write([0x89, (byte)'P', (byte)'N', (byte)'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+        WriteChunk(output, "IHDR", [.. BigEndian((uint)width), .. BigEndian((uint)height), 8, 0, 0, 0, 0]);
+
+        // Each row is its filter byte (none) and one byte a pixel.
+        var row = new byte[width + 1];
+        var compressed = new MemoryStream();
+        using (var zlib = new ZLibStream(compressed, CompressionLevel.Fastest, leaveOpen: true))
+        {
+            for (var y = 0; y < height; y++)
+            {
+                zlib.Write(row);
+            }
+        }
+
+        WriteChunk(output, "IDAT", compressed.ToArray());
+        WriteChunk(output, "IEND", []);
+        return output.ToArray();
+    }
+
     /// <summary>The image's dimensions.</summary>
     public static (int Width, int Height) Dimensions(byte[] encoded)
     {

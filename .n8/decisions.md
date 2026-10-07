@@ -3885,7 +3885,7 @@ Track b (#322 #327 #328 #329 #330 #331 #332 #335 #339 #341 #342 #343 #344):
 
 - **Change:** Imported Songs, and any Song with no artwork of its own and no Selected Generation, now show their newest Generation's image, computed at read time (#318). This narrows #121 AC 3 ("shows nothing when it has no Selected Generation") to Songs whose Generations have no image.
   **Why:** Verification of #121 found that the must-have truth "a Song imported from Suno shows a cover without the user doing anything" failed. The owner's decision on the AC wording is pending.
-  **Affects:** M4 #121 (closed), epic #11 AC 4; future milestones that list or display Song artwork — plans may be stale.
+  **Affects:** M4 #121 (closed), epic #11 AC 4; future milestones that list or display Song artwork — plans may be stale. — reconciled 2026-10-07: owner kept the fallback; #121 AC 3 amended
 
 ## /n8-exec M4 fix pass 2 — 2026-10-07
 
@@ -3914,3 +3914,15 @@ Track b (#322 #327 #328 #329 #330 #331 #332 #335 #339 #341 #342 #343 #344):
 - **Decision:** The e2e verification Demo (`generate-on-suno.spec.ts`) now titles its Song "Duration". That word is part of the extension's Duration note sent in the same report.
   **Why:** It reproduces #379 against the built image. With the old check, that report got 422.
   **Issue:** #379
+
+## Ad-hoc — 2026-10-07
+
+- **Change:** Invariant 3 in `CLAUDE.md` amended. Imports still never change existing catalog data without an explicit user choice, but it now names the one exception: Suno's own state may follow Suno without a choice, in two cases. #154 completes a Generation the user just created (an observed Create, never complete, not decided by a reviewed export), in its clip columns and raw clip only. #314 moves a Generation still generating to Suno's final status (complete or error) at a commit whatever its choice, Skip included, in that column only. Portable import has no exception. The guard reference (#140, merged) now names the rules that bound the exceptions: `TakesSunosFinalStatus` and the completion rule `CompletionUnexplained` in `ImportNeverOverwritesGuardTests`.
+  **Why:** Owner decision ("Amend the wording"). Verification of #140 found the invariant's text no longer matched #154 and #314 behaviour: both change existing Generations with no import choice, and the guard already allowed exactly those changes.
+  **Affects:** M8 #22 (epic AC: "a guard test proves invariant 3 for this path"), #263 (portable-import guard of invariant 3; its `CLAUDE.md` AC must keep the "Portable import has no exception" wording), #260 (conflict decisions, "never offers to overwrite") — plans may be stale. M6 and M7 open issues have no invariant 3 dependency (the "overwrite" matches in #227 and #243 are about saved views and revision checks).
+
+## Ad-hoc — 2026-10-07
+
+- **Change:** Artwork uploads are capped at 100,000,000 pixels (`ArtworkRules.MaximumPixels`, #305). An image over it is refused from its header, before any pixel buffer is allocated, as 422 `artwork_dimensions_exceeded` with the title "The image is W × H pixels; artwork can be at most 100 megapixels (100,000,000 pixels)." and a new `maximumPixels` extension beside `maximumSide`. The 12,000-pixel side limit is kept: it still bounds strips the pixel cap allows (100,000 × 1,000 is 100 MP) and keeps #97 AC's wording true. The 512 MiB decode memory cap and its eighth-step scaled decode are kept as a second bound, though no accepted image reaches them now (100 MP at 4 bytes is 400,000,000 bytes). This narrows #97's decision that every JPEG and WebP within 12,000 a side is accepted by scaled decoding: those over 100 MP are now refused.
+  **Why:** Owner decision ("~100 MP") on #305: a 470 KB PNG could decode to ~484 MB, too much for a home-server memory profile.
+  **Affects:** M3 #97 (closed; its refusal now also covers over 100 MP); M7 artwork upload through the API and MCP (`artwork.write`) inherits the same limit — no open plan names a pixel limit.

@@ -58,6 +58,21 @@ public sealed class ArtworkRulesTests
         Assert.Equal(576_000_000, ArtworkRules.DecodeBytes(12_000, 12_000));
     }
 
+    [Fact]
+    public void AnImageMayHaveAtMostOneHundredMegapixelsWhichAlwaysFitTheDecodeCap()
+    {
+        Assert.Equal(100_000_000, ArtworkRules.MaximumPixels);
+        Assert.True(ArtworkRules.IsWithinMaximumPixels(10_000, 10_000));
+        Assert.True(ArtworkRules.IsWithinMaximumPixels(12_000, 8_333));
+        Assert.False(ArtworkRules.IsWithinMaximumPixels(12_000, 8_334));
+        Assert.False(ArtworkRules.IsWithinMaximumPixels(10_000, 10_001));
+        Assert.False(ArtworkRules.IsWithinMaximumPixels(int.MaxValue, int.MaxValue));
+        Assert.False(ArtworkRules.IsWithinMaximumPixels(0, 10));
+
+        // The largest accepted image decodes at full size: the memory cap never has to scale it down.
+        Assert.True(ArtworkRules.MaximumPixels * ArtworkRules.BytesPerPixel <= ArtworkRules.DecodeMemoryCapBytes);
+    }
+
     [Theory]
     [InlineData(2000, 1000, new[] { 96, 320, 1024 })]
     [InlineData(1024, 10, new[] { 96, 320, 1024 })]
