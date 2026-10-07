@@ -4175,3 +4175,54 @@ Story #222:
 - **Decision:** In the Download view, "Not yet downloaded" is a filter checkbox, disabled until the lookup answers; "Skip files already downloaded" is ticked by default and is not remembered. Files saved in the current run count as downloaded. The summary names up to 20 skipped files, then "and N more". `unlocksNeeded()` now counts the plan's clips (after skipping), so a clip whose paid formats are all skipped needs no unlock, and the count still equals the queue's `clipsToUnlock` check.
   **Why:** The AC gives the filter rule and the default; counting unlocks from the skipped plan keeps the confirmation and the service worker's refusal in step.
   **Issue:** #222
+
+Story #208 (built in parallel; merged into the milestone branch):
+
+- **Decision:** `GET /api/v1/media/status` answers `{mount{state,since,path}, counts{total,available,missing,associated,unmatched}, lastScan, lastSuccessfulScan, activeScanJobId, schedule{enabled,intervalMinutes}, nextScheduledScan, majorityMissingWarning}`; each scan is `{jobId, trigger, outcome, startedAt, finishedAt, durationSeconds, counts, failure}` with `failure` one of `media_folder_unavailable|interrupted|failed`. Built by a new `Application.Media.MediaStatusService` (read-only; not a catalog namespace for the invariant 1 guard).
+  **Why:** The planner's shape, plus the schedule itself (the page must say "off" and link to Settings) and a failure code so the page words known causes without parsing error text.
+  **Issue:** #208
+- **Decision:** The majority-missing count base is a new `MediaScanCounts.AvailableBefore` (init property): the records whose stored status was Available when pass 2 began, kept in the summary JSON (`counts.availableBefore`) and the job result. Rule: `missing > 0 && missing * 2 > availableBefore`, never while Unavailable, read from the last *successful* scan, so only the next successful scan clears it.
+  **Why:** #207's `missing` counts only newly marked files; the denominator must be what was Available before. Old summaries read 0 and never warn.
+  **Issue:** #208
+- **Decision:** The last successful scan is kept in a second `settings` row, `media.lastSuccessfulScan`, written by `MediaScanSummaryStore.WriteAsync` whenever the summary succeeded; before it exists, a succeeded `media.lastScan` stands in. No migration.
+  **Why:** Discretion asks for `lastSuccessfulScan` kept in a stored summary so pruning never empties the page, and a failed scan must show the previous counts.
+  **Issue:** #208
+- **Decision:** `lastScan` is the stored summary unless the newest finished `media-scan` job (new `IJobStore.FindLatestFinishedAsync`) is a different, later job; then that job (trigger and counts null, failure from its error, e.g. `interrupted by restart`).
+  **Why:** Discretion says the last result is read from the newest finished job, but a scan cut off by a process stop writes no summary; the summary stays the source otherwise so pruning never empties the page.
+  **Issue:** #208
+- **Decision:** The page shows `mount.path`, the configured media path (`N8TracksOptions.MediaPath`, the container path), answered by the status endpoint; the one new line naming it is added to `MediaMountAccessTests.AllowedMediaPathLines` (it only answers the text; nothing touches the mount).
+  **Why:** Discretion: "shows the container path from configuration"; the #205 guard requires every line naming the setting to be listed.
+  **Issue:** #208
+- **Decision:** Route `/library/media`; the sidebar gains a "Library" group (role=group, like Settings) between Ignored Suno items and Settings, holding Media only (#209 adds Unmatched Files there). The Unmatched count is plain text until #209 links it.
+  **Why:** Discretion: Library is a new sidebar group holding Media and Unmatched Files.
+  **Issue:** #208
+- **Decision:** The progress bar writes its own ARIA (`withAria={false}` on Mantine's section): no `aria-valuenow` while indeterminate (queued, or the names-only listing pass), `aria-valuetext` with the job's message; completion is announced in a polite `role=status` region ("The scan has finished." / "The scan has stopped."). The state badge uses the theme's default/filled variants.
+  **Why:** Mantine always states a value (wrong for an indeterminate bar) and its light green/red badge failed axe contrast in the e2e.
+  **Issue:** #208
+- **Decision:** Rule 1: `e2e/tests/account.spec.ts`'s exact sidebar list lacked Settings → Library (added by #204, so the spec was already failing on the milestone branch); it now lists `Media` and `Library`.
+  **Why:** The sidebar list is asserted exactly; found while adding Media to it.
+  **Issue:** #208
+- **Decision:** The e2e walks Demo step 1 on its own fresh container (`@root-only`, like `library-settings.spec.ts`), holding the first `GET /jobs/{id}` with `page.route` until the bar has been checked and scanned with axe. Demo steps 2 and 3 (rename the host folder) are covered by `MediaStatusTests` and component tests, not e2e.
+  **Why:** A 3-file scan ends faster than the bar can be observed; the shared containers' media folder path is not exposed to specs.
+  **Issue:** #208
+
+Story #217 (built in parallel; merged into the milestone branch):
+
+- **Decision:** A record whose reported status is not `available` (stored Missing, or the media folder Unavailable) is 404 `audio_file_unavailable` without opening the file, even when the file is back on disk. The live read decides only for a record that reports Available: a file gone since the last scan, or one that cannot be opened, is 404 as well. The request never changes the record.
+  **Why:** AC 3 and the orchestrator's #207 note ("serve a file only when its reported status is available") override the planner's discretion line "a file marked Missing that is in fact present is served". The next scan restores such a file.
+  **Issue:** #217
+- **Decision:** `IMediaMount` gains `OpenWithStat(relativePath)`, which returns `OpenedMediaFile` (the read-only stream, plus `Stat()` read from the open handle: `FileStream.Length` and `File.GetLastWriteTimeUtc(SafeFileHandle)`). `OpenRead` is unchanged, and both go through the same private `Open` (real-path check plus the `/proc/self/fd` re-check).
+  **Why:** the discretion requires the length, tag and modified time to come from the opened handle. Only `MediaMountReader` may use a file-system API, and changing `OpenRead`'s return type would have touched the scan and every fake. The probe-only rule in `MediaMountAccessTests` now also names `OpenWithStat`.
+  **Issue:** #217
+- **Decision:** Ranges and conditionals use ASP.NET Core's own `TypedResults.Stream(..., lastModified, entityTag, enableRangeProcessing: true)`. That covers single, open-ended and suffix ranges, 416 with `Content-Range: bytes */len`, several ranges → 200 with the whole file, `If-Range`, `If-None-Match` → 304, and HEAD without a body. The endpoint runs the result itself so it can catch `AudioContentChangedException` and `Abort()` the connection. `Content-Disposition` is set by hand (`inline`, `ContentDispositionHeaderValue.SetHttpFileName`: an ASCII fallback plus RFC 5987 `filename*`), because the result's own file name would make it `attachment`.
+  **Why:** this avoids hand-writing range parsing that the framework already gets right, and it matches every discretion line.
+  **Issue:** #217
+- **Decision:** "Other methods get 405" is an explicit `POST,PUT,PATCH,DELETE` mapping on the content route. It answers 405 `method_not_allowed` with `Allow: GET, HEAD` and is marked `RequireScope(catalog.read)` (`EndpointScopeGuardTests` lists it).
+  **Why:** the `/api/v1/{**path}` fallback matches every method, so without the mapping ASP.NET Core answers 404 instead of 405.
+  **Issue:** #217
+- **Decision:** The content stream (`AudioContentStream`, internal to `Application/Media/AudioContentService.cs`) checks the handle's stat on every read. It throws `AudioContentChangedException` when the stat differs from the stat at open, or when a read returns 0 before the length. The endpoint then logs a Warning (ID only) and aborts the connection. The entity tag is `"<size hex>-<modified ticks hex>"`. The media type is `AudioFormats.MediaType(format)` in Domain.
+  **Why:** a response is never completed with bytes that do not match its length and tag. The cost is one fstat per 64 KB read.
+  **Issue:** #217
+- **Decision:** Logging is done in the endpoint, not in the service, because Application services take no `ILogger`; the media code logs through ports. The "could not be opened" Warning carries `audioFileId` only, never the exception, whose message holds the absolute path (invariant 6). The access log line already holds only the URL, which carries the ID.
+  **Why:** invariant 6. Tests assert that the log holds neither the file name, the folder name, nor the mount root.
+  **Issue:** #217
