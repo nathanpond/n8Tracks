@@ -4047,3 +4047,38 @@ Story #215 (built in parallel; merged into the milestone branch):
 - **Decision:** A clip is not selectable while its status is submitted, queued, or streaming ("Still generating in Suno"), when its status is `error`, when it is trashed, or when it has no `media_urls[0]` ("no audio"). A hidden clip can be selected. M4A (streaming quality) is planned only for clips that have `media_urls[0]`. WAV, MP3, and M4A are always offered, and per-file failures are left to #216. The formats chosen are kept in `chrome.storage.local` (`downloadFormats`), and none is ticked the first time.
   **Why:** These follow the story's discretion lines and TS-004.
   **Issue:** #215
+
+Story #205 (built in parallel; merged into the milestone branch):
+
+- **Decision:** `IMediaMountProbe` is folded into `IMediaMount.Probe()`, which takes no path and probes the mount root. `HealthService` and `SetupChecks` call it through the interface, and `IMediaMountProbe` and `MediaMountProbe` are deleted. `HealthService` no longer takes `N8TracksOptions`.
+  **Why:** #203's note and the planner's discretion: no second type may touch the mount. This also settles the #205/#207 difference on where the probe lives, since it now sits behind the Application-layer port #207 asked for.
+  **Issue:** #205
+- **Decision:** Real paths are resolved by a managed walk, segment by segment (`FileSystemInfo.LinkTarget` on each segment, 40 hops at most, which is Linux's limit). It starts from the root's own real path, so the root may itself be a link, and it runs on every `List`, `Stat`, and `OpenRead`. Paths are compared ordinally, so on a case-insensitive file system a link spelled in another case is refused as escaping, not followed. On Linux, `OpenRead` reads the handle's path back through `/proc/self/fd` and checks it again; other systems skip that check. No native interop.
+  **Why:** The planner's discretion. The ordinal comparison only ever refuses more, never less.
+  **Issue:** #205
+- **Decision:** `MediaEntryKind.Link` is replaced:
+  - A link that resolves inside the mount is listed as `File` or `Directory` with `ViaLink`.
+  - The other links are listed as `EscapingLink`, `DanglingLink`, or `LoopingLink`.
+  - Directories carry `RealPath`, relative to the root's real path.
+  - The scan ends a branch when a directory's real path is already on its chain of ancestors. A chain of links that never resolves (ELOOP) is also counted as `cycle`.
+  - `skippedLinks {escaping, cycle, dangling}` is added to the job result and the stored summary. It is an init property on `MediaScanCounts`, so a summary row written before this change reads as none skipped. Skipped links are also counted in `skipped`.
+  **Why:** The AC asks for skipped links to be counted with these reasons, and for a cycle to end its branch without hanging. A link loop is literally a cycle.
+  **Issue:** #205
+- **Decision:** One Warning per scan for skipped links: the count and at most ten relative paths. It goes through a new Application port, `IMediaScanLog`, implemented in Infrastructure as `MediaScanLog` with `LoggerMessage`. It is logged on success and on failure.
+  **Why:** The Application project has no logging package, and a port keeps it that way.
+  **Issue:** #205
+- **Decision:** The architecture guard `MediaMountAccessTests` scans the source line by line against exact lists, using the `EnvironmentReadGuardTests` technique:
+  - The media setting is named, case-insensitively as `media_?path` or as the `"/media"` literal, only by the options loader, the options record, `MediaMountReader`, and the three backup `IsInside` lines.
+  - File-system APIs appear only in 20 listed files.
+  - `MediaMountReader` matches a denylist of write, move, delete, attribute, mode, and time APIs, and of non-Read mode, access, sharing, and options. Every `new FileStream(...)` statement in it must name `FileAccess.Read`.
+  - Only six files name `IMediaMount`, and health and setup call nothing but `Probe`.
+  - ATL is constructed only as `new Track(stream, …)`, and the media adapters never save.
+  To keep the denylist strict, the reader avoids `string.Create` and `string.Replace` rather than loosening it.
+  **Why:** The planner's discretion names this technique. Exact lists make every new file-system user a deliberate review.
+  **Issue:** #205
+- **Decision:** The "no API input is a path" check reads every endpoint: route parameters, handler parameters of plain types (query and header), and the request body type from `IAcceptsMetadata`, recursively. It flags names that contain path, file, folder, directory, dir, or mount as a camel-case word. The one allowed entry is the `/api/v1/{**path}` 404 fallback, which never reads the value. A test with deliberate path inputs proves the check bites.
+  **Why:** Handlers like the audio-file list read `Request.Query` by hand, so the structural guarantee is the `IMediaMount`-users rule. The name check catches the obvious regression.
+  **Issue:** #205
+- **Decision:** `scripts/smoke-docker.sh`'s `mounted` section now puts a real fixture (`tone.mp3`) and a link out (`escape.mp3` -> `/etc/hostname`) in the `:ro` media folder. It then runs a manual scan through the API and expects it to succeed, with `seen` 2 (the existing fake `track.flac` counts as unreadable), `skippedLinks.escaping` 1, and no `read-only file system`, `EROFS`, or `UnauthorizedAccess` text in the log. The `api` helper moved above `mounted`. This is a manual scan because the startup scan arrives with #204, in parallel.
+  **Why:** The test plan's container proof. #204 can switch it to the startup scan.
+  **Issue:** #205
