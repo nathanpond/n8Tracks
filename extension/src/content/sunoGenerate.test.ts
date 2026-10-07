@@ -4,6 +4,7 @@ import { ObservationFeed } from '../adapter/observations.ts';
 import { OBSERVER_SOURCE, type ObservedMessage } from '../adapter/observed.ts';
 import { nameOf, Page } from '../adapter/primitives.ts';
 import { AdapterSession, WorkflowRegistry } from '../adapter/registry.ts';
+import { ADAPTER_VERSION } from '../adapter/version.ts';
 import { ADAPTER_WORKFLOWS } from '../adapter/workflows/index.ts';
 import type { GenerateJob, GenerateReply, Request } from '../messages.ts';
 import type { GenerateViewState } from '../panel/GenerateView.ts';
@@ -15,7 +16,7 @@ import {
   FORM_GONE,
   LIST_NOT_READ,
   NO_CREATE_PAGE,
-  NOT_A_SONG,
+  NO_FORM,
   NOT_SIGNED_IN,
   SAME_NAME,
   SunoGenerate,
@@ -486,7 +487,11 @@ describe('Generate on Suno in the Suno tab: filling the form (#146)', () => {
       type: 'generate-progress',
       state: 'waiting',
       step: 'review and create',
-      verification: { adapterVersion: 5, mode: 'advanced', checkedAt: '2026-10-07T12:00:00.000Z' },
+      verification: {
+        adapterVersion: ADAPTER_VERSION,
+        mode: 'advanced',
+        checkedAt: '2026-10-07T12:00:00.000Z',
+      },
     });
     // The lyrics, styles, and title went as lengths and hashes only.
     expect(JSON.stringify(report)).not.toContain('first line');
@@ -545,16 +550,158 @@ describe('Generate on Suno in the Suno tab: filling the form (#146)', () => {
       ),
     ).toBe(false);
   });
+});
 
-  it('leaves a Speech or a Sound to the user for now, and stops saying so', async () => {
+/** A Sound's form job, its values unlike the workspace-selector page's own (One-Shot, BPM 120). */
+function soundForm(change: Partial<FormJob> = {}): FormJob {
+  return {
+    kind: 'sound',
+    mode: 'single',
+    entries: {
+      'sounds.single.sound_description': 'rain on a tin roof',
+      'sounds.single.sound_type': 'loop',
+      'sounds.single.sound_bpm': 120,
+      'sounds.single.sound_key': 'A',
+      'sounds.single.sound_scale': 'minor',
+    },
+    sources: [],
+    fileInputs: [],
+    unsupported: [],
+    ...change,
+  };
+}
+
+/** An Advanced Speech's form job. */
+function speechForm(change: Partial<FormJob> = {}): FormJob {
+  return {
+    kind: 'speech',
+    mode: 'advanced',
+    entries: {
+      'speech.advanced.speech_script': 'Hello there.',
+      'speech.advanced.speech_tone': 'warm',
+      'speech.advanced.speech_vocal_gender': 'male',
+      'speech.advanced.speech_background_music': true,
+      'speech.advanced.speech_variety': 'max',
+    },
+    sources: [],
+    fileInputs: [],
+    unsupported: [],
+    ...change,
+  };
+}
+
+describe('Generate on Suno in the Suno tab: Speech and Sounds (#147)', () => {
+  it('opens the Sounds tab at the step "choose form", fills the Sounds form, and waits for the user’s Create', async () => {
+    const tab = start({ job: job({ workspace: ON_MY_WORKSPACE, form: soundForm() }) });
+    const standIn = standInForSuno(document);
+    tab.feed.take(feedFor('default'));
+
+    try {
+      await tab.generate.resume();
+    } finally {
+      standIn.stop();
+    }
+
+    expect(tab.steps()).toEqual([
+      'workspace check sign-in',
+      'workspace read workspace list',
+      'workspace select workspace',
+      'workspace workspace selected',
+      'filling choose form',
+      'filling fill form',
+      'waiting review and create',
+    ]);
+    expect(tab.pressed).toContain('Sounds');
+    const shown = tab.last();
+    expect(shown).toMatchObject({ kind: 'verification', form: 'sound', mode: 'single' });
+    const results = shown?.kind === 'verification' ? shown.results : [];
+    expect(results.map((result) => [result.key, result.outcome])).toEqual([
+      ['sounds.single.sounds_model', 'not_applicable'],
+      ['sounds.single.sound_description', 'set'],
+      ['sounds.single.sound_type', 'set'],
+      ['sounds.single.sound_bpm', 'set'],
+      ['sounds.single.sound_key', 'manual'],
+      ['sounds.single.sound_scale', 'manual'],
+    ]);
+    const report = tab.asked.at(-1);
+    expect(report).toMatchObject({
+      state: 'waiting',
+      step: 'review and create',
+      verification: { adapterVersion: ADAPTER_VERSION, mode: 'single' },
+    });
+    expect(JSON.stringify(report)).not.toContain('tin roof');
+    // Invariant 4: the user clicks Create; the extension never does.
+    expect(tab.pressed.filter((name) => /^create/i.test(name))).toEqual([]);
+  });
+
+  it('fills the Speech form in its mode, and checks it again with the Speech check', async () => {
+    const tab = start({ job: job({ workspace: ON_MY_WORKSPACE, form: speechForm() }) });
+    const standIn = standInForSuno(document);
+    tab.feed.take(feedFor('default'));
+    try {
+      await tab.generate.resume();
+      const pressedBefore = tab.pressed.length;
+
+      await tab.generate.checkAgain();
+
+      expect(tab.pressed).toHaveLength(pressedBefore);
+    } finally {
+      standIn.stop();
+    }
+
+    expect(tab.steps().slice(-4)).toEqual([
+      'filling choose form',
+      'filling fill form',
+      'waiting review and create',
+      'waiting check form',
+    ]);
+    expect(tab.pressed).toEqual(expect.arrayContaining(['Speech', 'Male']));
+    const shown = tab.last();
+    expect(shown).toMatchObject({ kind: 'verification', form: 'speech', mode: 'advanced' });
+    const results = shown?.kind === 'verification' ? shown.results : [];
+    expect(results.every((result) => result.outcome === 'set')).toBe(true);
+    expect(results).toHaveLength(5);
+  });
+
+  it('stops before filling when the form does not offer the kind’s tab, naming the step', async () => {
+    const tab = start({ job: job({ workspace: ON_MY_WORKSPACE, form: speechForm() }) });
+    const standIn = standInForSuno(document);
+    // The user's account does not offer Speech: the tab is not there.
+    for (const element of document.querySelectorAll('[role="tab"]')) {
+      if (element.textContent.trim() === 'Speech') {
+        element.remove();
+      }
+    }
+    tab.feed.take(feedFor('default'));
+
+    try {
+      await tab.generate.resume();
+    } finally {
+      standIn.stop();
+    }
+
+    const stopped = tab.last();
+    expect(stopped?.kind).toBe('stopped');
+    expect(stopped?.kind === 'stopped' ? stopped.message : '').toContain("step 'Speech tab'");
+    expect(tab.asked.at(-1)).toMatchObject({ state: 'stopped', step: 'choose form' });
+    expect(tab.steps()).not.toContain('filling fill form');
+    expect(
+      tab.asked.some(
+        (request) => request.type === 'generate-progress' && 'verification' in request,
+      ),
+    ).toBe(false);
+  });
+
+  it('stops at the step "choose form" for a kind and mode the adapter has no form for', async () => {
     const tab = start({
-      job: job({ workspace: ON_MY_WORKSPACE, form: advancedForm({ kind: 'speech' }) }),
+      job: job({ workspace: ON_MY_WORKSPACE, form: speechForm({ mode: 'single' }) }),
     });
     tab.feed.take(feedFor('default'));
 
     await tab.generate.resume();
 
-    expect(tab.last()).toEqual({ kind: 'stopped', message: NOT_A_SONG });
-    expect(tab.pressed).toEqual([]);
+    expect(tab.last()).toEqual({ kind: 'stopped', message: NO_FORM });
+    expect(tab.asked.at(-1)).toMatchObject({ state: 'stopped', step: 'choose form' });
+    expect(tab.pressed.filter((name) => name !== 'My Workspace')).toEqual([]);
   });
 });

@@ -13,11 +13,12 @@ import {
   type EntryResult,
   type Filler,
   type FormJob,
+  fillEntry,
 } from './fill.ts';
 import type { Page } from './primitives.ts';
 
 /**
- * The Songs form fillers (#146) against the TS-003 snapshots, with Suno's behaviour stood in
+ * The Create form fillers (#146 Songs, #147 Speech and Sounds) against the TS-003 snapshots, with Suno's behaviour stood in
  * (`testing/sunoForm.ts`): each filler sets its control and reads it back; with the control made
  * to keep another value, the entry is failed and the next is still filled; with the control gone,
  * it is unavailable.
@@ -25,6 +26,12 @@ import type { Page } from './primitives.ts';
 
 const ADVANCED = 'create-songs-advanced-more-options';
 const SIMPLE = 'create-source-simple';
+const SPEECH_SIMPLE = 'create-speech-simple';
+const SPEECH_ADVANCED = 'create-speech-advanced';
+const SOUNDS = 'create-sounds-advanced-options';
+
+/** The field map's tab of each kind. */
+const TAB: Readonly<Record<string, string>> = { song: 'songs', speech: 'speech', sound: 'sounds' };
 
 let standIn: StandIn;
 let page: Page;
@@ -44,17 +51,21 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-/** A Song job of `mode`, with `entries` keyed by field (`weirdness`), not by entry. */
+/** A job of `kind` (a Song unless given) in `mode`, with `entries` keyed by field, not by entry. */
 function job(
   mode: string,
   entries: Record<string, unknown>,
   change: Partial<FormJob> = {},
+  kind = 'song',
 ): FormJob {
   return {
-    kind: 'song',
+    kind,
     mode,
     entries: Object.fromEntries(
-      Object.entries(entries).map(([field, value]) => [`songs.${mode}.${field}`, value]),
+      Object.entries(entries).map(([field, value]) => [
+        `${TAB[kind] ?? kind}.${mode}.${field}`,
+        value,
+      ]),
     ),
     sources: [],
     fileInputs: [],
@@ -87,9 +98,38 @@ const SIMPLE_VALUES: Record<string, unknown> = {
   simple_add_styles: null,
 };
 
+/** Speech and Sounds values unlike the snapshots' own (Female, Background music Off, Loop, 120). */
+const SPEECH_SIMPLE_VALUES: Record<string, unknown> = { speech_prompt: 'a calm narrator' };
+
+const SPEECH_ADVANCED_VALUES: Record<string, unknown> = {
+  speech_script: 'Hello there.\nGoodbye.',
+  speech_tone: 'warm and slow',
+  speech_vocal_gender: 'male',
+  speech_background_music: true,
+  speech_variety: 'max',
+};
+
+const SOUND_VALUES: Record<string, unknown> = {
+  sounds_model: 'v6-mini',
+  sound_description: 'rain on a tin roof',
+  sound_type: 'one_shot',
+  sound_bpm: 90,
+  sound_key: 'A',
+  sound_scale: 'minor',
+};
+
 /** The snapshot and values each filler is tested with. */
 function caseOf(filler: Filler): { snapshot: string; job: FormJob } {
-  return filler.entry.startsWith('songs.simple.')
+  const [tab, mode] = filler.entry.split('.');
+  if (tab === 'speech') {
+    return mode === 'simple'
+      ? { snapshot: SPEECH_SIMPLE, job: job('simple', SPEECH_SIMPLE_VALUES, {}, 'speech') }
+      : { snapshot: SPEECH_ADVANCED, job: job('advanced', SPEECH_ADVANCED_VALUES, {}, 'speech') };
+  }
+  if (tab === 'sounds') {
+    return { snapshot: SOUNDS, job: job('single', SOUND_VALUES, {}, 'sound') };
+  }
+  return mode === 'simple'
     ? { snapshot: SIMPLE, job: job('simple', SIMPLE_VALUES) }
     : { snapshot: ADVANCED, job: job('advanced', ADVANCED_VALUES) };
 }
@@ -133,6 +173,26 @@ function slider(name: string): Element[] {
   return [...moreOptions().querySelectorAll(`[role="slider"][aria-label="${name}"]`)];
 }
 
+/** The Speech form's Advanced section, told from Sounds' Advanced Options. */
+function speechAdvanced(): Element {
+  return sectionOf(/^Advanced(?! Options)/);
+}
+
+function advancedOptions(): Element {
+  return sectionOf(/^Advanced Options/);
+}
+
+/** The choice buttons beside a label inside a section (Speech's and Sounds' own). */
+function labelledIn(section: Element, text: string): Element[] {
+  const label = [...section.querySelectorAll('span')].find(
+    (span) => span.textContent.trim() === text,
+  );
+  return [...(label?.parentElement?.parentElement?.querySelectorAll('button') ?? [])].filter(
+    (button) =>
+      ['Male', 'Female', 'Off', 'On', 'One-Shot', 'Loop'].includes(button.textContent.trim()),
+  );
+}
+
 /** The elements of each filler's control in the snapshot. */
 const CONTROLS: Readonly<Record<string, () => Element[]>> = {
   'songs.simple.model': () =>
@@ -155,6 +215,22 @@ const CONTROLS: Readonly<Record<string, () => Element[]>> = {
   'songs.advanced.title': () => [
     ...document.querySelectorAll('input[placeholder="Song Title (Optional)"]'),
   ],
+  'speech.simple.speech_prompt': () => [...document.querySelectorAll('[aria-label="Prompt"]')],
+  'speech.advanced.speech_script': () => [...document.querySelectorAll('[aria-label="Script"]')],
+  'speech.advanced.speech_tone': () => [...document.querySelectorAll('[aria-label="Tone"]')],
+  'speech.advanced.speech_vocal_gender': () => labelledIn(speechAdvanced(), 'Vocal Gender'),
+  'speech.advanced.speech_background_music': () => labelledIn(speechAdvanced(), 'Background music'),
+  'speech.advanced.speech_variety': () => [
+    ...speechAdvanced().querySelectorAll('[role="slider"][aria-label="Variety"]'),
+  ],
+  'sounds.single.sounds_model': () => [
+    ...document.querySelectorAll('button[aria-haspopup="menu"]'),
+  ],
+  'sounds.single.sound_description': () => [
+    ...document.querySelectorAll('textarea[placeholder="Describe the sound you want"]'),
+  ],
+  'sounds.single.sound_type': () => labelledIn(advancedOptions(), 'Type'),
+  'sounds.single.sound_bpm': () => [...advancedOptions().querySelectorAll('input[type="number"]')],
 };
 
 /**
@@ -217,17 +293,27 @@ const BREAK: Readonly<Record<string, keyof typeof BREAKERS>> = {
   'songs.advanced.variety': 'keys',
   'songs.advanced.personalize': 'click',
   'songs.advanced.title': 'text',
+  'speech.simple.speech_prompt': 'text',
+  'speech.advanced.speech_script': 'text',
+  'speech.advanced.speech_tone': 'text',
+  'speech.advanced.speech_vocal_gender': 'click',
+  'speech.advanced.speech_background_music': 'click',
+  'speech.advanced.speech_variety': 'keys',
+  'sounds.single.sounds_model': 'menu',
+  'sounds.single.sound_description': 'text',
+  'sounds.single.sound_type': 'click',
+  'sounds.single.sound_bpm': 'text',
 };
 
 /**
- * What the coverage test requires (AC 8): every Songs `fill` entry of the field map has a filler,
- * a success case, and a read-back failure case, except the workspace (the workspace story's) and
- * the entries blocked on a capture (D9), which have none.
+ * What the coverage test requires (#146 AC 8, #147 AC 4): every `fill` entry of the field map, on
+ * every tab, has a filler, a success case, and a read-back failure case, except the workspace (the
+ * workspace story's) and the entries blocked on a capture (D9), which have none.
  */
 function coverageProblems(fillers: readonly Filler[]): string[] {
   const problems: string[] = [];
   for (const { entry, how } of FIELD_MAP) {
-    if (!entry.startsWith('songs.') || how !== 'fill' || entry === WORKSPACE_ENTRY) {
+    if (how !== 'fill' || entry === WORKSPACE_ENTRY) {
       continue;
     }
     const filler = fillers.filter((candidate) => candidate.entry === entry);
@@ -269,7 +355,7 @@ describe('the Songs form fillers', () => {
       expect(breaker).toBeDefined();
       BREAKERS[breaker ?? 'text']?.(CONTROLS[filler.entry]?.() ?? []);
       const entries = tested.job.entries;
-      const differentModel = filler.entry.endsWith('.model')
+      const differentModel = /[._]model$/.test(filler.entry)
         ? { ...entries, [filler.entry]: 'v6' }
         : entries;
 
@@ -516,15 +602,25 @@ describe('the summary’s other entries', () => {
   });
 });
 
-describe('the coverage of the Songs fill entries (AC 8)', () => {
-  it('has a filler with a success and a read-back failure case for every Songs fill entry', () => {
+describe('the coverage of the fill entries on every tab (#146 AC 8, #147 AC 4)', () => {
+  it('has a filler with a success and a read-back failure case for every fill entry', () => {
     expect(coverageProblems(FILLERS)).toEqual([]);
   });
 
-  it('bites: with a filler unregistered, the coverage test fails naming its entry', () => {
-    const without = FILLERS.filter((filler) => filler.entry !== 'songs.advanced.lyrics');
+  it('covers the Speech and Sounds tabs too', () => {
+    const covered = FILLERS.map((filler) => filler.entry.split('.')[0]);
 
-    expect(coverageProblems(without)).toEqual(['songs.advanced.lyrics: has 0 fillers, not one']);
+    expect(new Set(covered)).toEqual(new Set(['songs', 'speech', 'sounds']));
+  });
+
+  it.each([
+    ['songs.advanced.lyrics'],
+    ['speech.advanced.speech_tone'],
+    ['sounds.single.sound_bpm'],
+  ])('bites: with %s unregistered, the coverage test fails naming its entry', (entry) => {
+    const without = FILLERS.filter((filler) => filler.entry !== entry);
+
+    expect(coverageProblems(without)).toEqual([`${entry}: has 0 fillers, not one`]);
   });
 
   it('lists exactly the entries no TS-003 snapshot shows as blocked on a capture (D9)', () => {
@@ -532,7 +628,216 @@ describe('the coverage of the Songs fill entries (AC 8)', () => {
       'songs.advanced.duration_mode',
       'songs.simple.simple_add_lyrics',
       'songs.simple.simple_add_styles',
+      'sounds.single.sound_key',
+      'sounds.single.sound_scale',
     ]);
+  });
+});
+
+describe('the Speech and Sounds summaries (#147)', () => {
+  it('lists only its one entry for a Simple Speech Version', async () => {
+    load(SPEECH_SIMPLE);
+
+    const results = await verifyForm(
+      page,
+      job('simple', SPEECH_SIMPLE_VALUES, {}, 'speech'),
+      'My Workspace',
+      true,
+    );
+
+    expect(results.map((result) => [result.key, result.outcome])).toEqual([
+      ['speech.simple.speech_prompt', 'set'],
+    ]);
+  });
+
+  it('lists every Advanced Speech entry as set, with nothing pressed outside the form', async () => {
+    load(SPEECH_ADVANCED);
+    const pressed: string[] = [];
+    document.addEventListener(
+      'click',
+      (event) => {
+        pressed.push((event.target as Element).textContent.trim());
+      },
+      { capture: true },
+    );
+
+    const results = await verifyForm(
+      page,
+      job('advanced', SPEECH_ADVANCED_VALUES, {}, 'speech'),
+      null,
+      true,
+    );
+
+    expect(results.map((result) => [result.key, result.outcome])).toEqual([
+      ['speech.advanced.speech_script', 'set'],
+      ['speech.advanced.speech_tone', 'set'],
+      ['speech.advanced.speech_vocal_gender', 'set'],
+      ['speech.advanced.speech_background_music', 'set'],
+      ['speech.advanced.speech_variety', 'set'],
+    ]);
+    expect(pressed.sort()).toEqual(['Male', 'On']);
+  });
+
+  it('lists the six Sounds entries: four set, Key and Key scale to do by hand (D9)', async () => {
+    load(SOUNDS);
+
+    const results = await verifyForm(page, job('single', SOUND_VALUES, {}, 'sound'), null, true);
+
+    expect(results.map((result) => [result.key, result.outcome])).toEqual([
+      ['sounds.single.sounds_model', 'set'],
+      ['sounds.single.sound_description', 'set'],
+      ['sounds.single.sound_type', 'set'],
+      ['sounds.single.sound_bpm', 'set'],
+      ['sounds.single.sound_key', 'manual'],
+      ['sounds.single.sound_scale', 'manual'],
+    ]);
+    const byEntry = byKey(results);
+    expect(byEntry.get('sounds.single.sound_key')).toMatchObject({ expected: 'A' });
+    expect(byEntry.get('sounds.single.sound_scale')).toMatchObject({ expected: 'minor' });
+    expect(byEntry.get('sounds.single.sound_key')?.note).toMatch(/Key picker/);
+  });
+
+  it('does not ask for a Key scale when the Key is Any (not applicable)', async () => {
+    load(SOUNDS);
+
+    const results = byKey(
+      await verifyForm(
+        page,
+        job('single', { ...SOUND_VALUES, sound_key: 'any', sound_scale: undefined }, {}, 'sound'),
+        null,
+        true,
+      ),
+    );
+
+    expect(results.get('sounds.single.sound_scale')?.outcome).toBe('not_applicable');
+    expect(results.get('sounds.single.sound_key')).toMatchObject({
+      outcome: 'manual',
+      expected: 'any',
+    });
+  });
+
+  it('re-selects Auto for an empty BPM: the box is emptied', async () => {
+    // The snapshot's BPM is 120.
+    load(SOUNDS);
+
+    const results = byKey(
+      await verifyForm(
+        page,
+        job('single', { ...SOUND_VALUES, sound_bpm: null }, {}, 'sound'),
+        null,
+        true,
+      ),
+    );
+
+    expect(results.get('sounds.single.sound_bpm')).toMatchObject({
+      outcome: 'set',
+      expected: null,
+    });
+    expect(
+      CONTROLS['sounds.single.sound_bpm']?.().map((box) => (box as HTMLInputElement).value),
+    ).toEqual(['']);
+  });
+
+  it('leaves BPM on Auto when it already is: nothing is typed', async () => {
+    // The Speech snapshot holds the Sounds form at its defaults: One-Shot, BPM empty (Auto), Key Any.
+    load(SPEECH_ADVANCED);
+    const box = CONTROLS['sounds.single.sound_bpm']?.()[0];
+    let typed = 0;
+    box?.addEventListener('input', () => {
+      typed += 1;
+    });
+    const bpm = FILLERS.find((filler) => filler.entry === 'sounds.single.sound_bpm');
+
+    const result =
+      bpm === undefined
+        ? undefined
+        : await fillEntry(page, bpm, job('single', { sound_bpm: null }, {}, 'sound'));
+
+    expect(result).toMatchObject({ outcome: 'set', expected: null });
+    expect(typed).toBe(0);
+    expect((box as HTMLInputElement | undefined)?.value).toBe('');
+  });
+
+  it('attempts a BPM out of Suno’s range and reports it failed with what Suno kept', async () => {
+    load(SOUNDS);
+    // As Suno would clamp it to its maximum.
+    for (const box of CONTROLS['sounds.single.sound_bpm']?.() ?? []) {
+      box.addEventListener('input', () => {
+        (box as HTMLInputElement).value = '300';
+      });
+    }
+
+    const results = byKey(
+      await verifyForm(
+        page,
+        job('single', { ...SOUND_VALUES, sound_bpm: 400 }, {}, 'sound'),
+        null,
+        true,
+      ),
+    );
+
+    expect(results.get('sounds.single.sound_bpm')).toMatchObject({
+      outcome: 'failed',
+      expected: 400,
+      found: 300,
+    });
+  });
+
+  it('reports a Sound model Suno’s menu does not offer as unavailable', async () => {
+    load(SOUNDS);
+
+    const results = byKey(
+      await verifyForm(
+        page,
+        job('single', { ...SOUND_VALUES, sounds_model: 'v6-wild' }, {}, 'sound'),
+        null,
+        true,
+      ),
+    );
+
+    expect(results.get('sounds.single.sounds_model')).toMatchObject({
+      outcome: 'unavailable',
+      expected: 'v6-wild',
+    });
+  });
+
+  it('deselects the Speech Vocal Gender for None, and reports a Type Suno does not offer as failed', async () => {
+    load(SPEECH_ADVANCED);
+
+    const speech = byKey(
+      await verifyForm(
+        page,
+        job('advanced', { ...SPEECH_ADVANCED_VALUES, speech_vocal_gender: null }, {}, 'speech'),
+        null,
+        true,
+      ),
+    );
+    const sound = byKey(
+      await verifyForm(
+        page,
+        job('single', { ...SOUND_VALUES, sound_type: 'drone' }, {}, 'sound'),
+        null,
+        true,
+      ),
+    );
+
+    expect(speech.get('speech.advanced.speech_vocal_gender')).toMatchObject({
+      outcome: 'set',
+      expected: null,
+    });
+    expect(sound.get('sounds.single.sound_type')).toMatchObject({ outcome: 'failed' });
+    expect(sound.get('sounds.single.sound_type')?.note).toMatch(/not one Suno’s form offers/);
+  });
+
+  it('keeps the other tabs’ controls out: the Songs Variety is never set for a Speech Version', async () => {
+    load(SPEECH_ADVANCED);
+
+    await verifyForm(page, job('advanced', SPEECH_ADVANCED_VALUES, {}, 'speech'), null, true);
+
+    expect(slider('Variety')[0]?.getAttribute('aria-valuenow')).toBe('2');
+    expect(CONTROLS['speech.advanced.speech_variety']?.()[0]?.getAttribute('aria-valuenow')).toBe(
+      '4',
+    );
   });
 });
 

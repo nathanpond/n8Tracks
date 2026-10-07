@@ -1,5 +1,19 @@
 import type { Workflow } from '../workflow.ts';
-import { checkSongsForm, fillSongsAdvanced, fillSongsSimple, switchForm } from './fillSongs.ts';
+import {
+  checkSongsForm,
+  fillSongsAdvanced,
+  fillSongsSimple,
+  switchForm,
+  type FillContext,
+  type SwitchFormContext,
+} from './fillSongs.ts';
+import { checkSoundsForm, fillSounds, switchSoundsForm } from './fillSounds.ts';
+import {
+  checkSpeechForm,
+  fillSpeechAdvanced,
+  fillSpeechSimple,
+  switchSpeechForm,
+} from './fillSpeech.ts';
 import { loadMore } from './loadMore.ts';
 import { recogniseSuno } from './recognise.ts';
 import { createWorkspace, moreWorkspaces, openWorkspaces, selectWorkspace } from './workspace.ts';
@@ -19,4 +33,63 @@ export const ADAPTER_WORKFLOWS: readonly Workflow[] = [
   fillSongsSimple,
   fillSongsAdvanced,
   checkSongsForm,
+  switchSpeechForm,
+  fillSpeechSimple,
+  fillSpeechAdvanced,
+  checkSpeechForm,
+  switchSoundsForm,
+  fillSounds,
+  checkSoundsForm,
 ];
+
+/** The workflows that fill one kind of Version in one mode (#147). */
+export interface FormWorkflows {
+  /** Makes the Create form the kind's form in the mode. */
+  open: Workflow<SwitchFormContext>;
+  /** Whether a source the source story loaded decides the form, so `open` is skipped with one. */
+  sourcesDecideForm: boolean;
+  fill: Workflow<FillContext>;
+  /** Check again: reads every entry without changing anything. */
+  check: Workflow<FillContext>;
+}
+
+/** The form workflows by `<kind>.<mode>` of the generation request. */
+export const FORM_WORKFLOWS: Readonly<Record<string, FormWorkflows>> = {
+  'song.simple': {
+    open: switchForm,
+    sourcesDecideForm: true,
+    fill: fillSongsSimple,
+    check: checkSongsForm,
+  },
+  'song.advanced': {
+    open: switchForm,
+    sourcesDecideForm: true,
+    fill: fillSongsAdvanced,
+    check: checkSongsForm,
+  },
+  'speech.simple': {
+    open: switchSpeechForm,
+    sourcesDecideForm: false,
+    fill: fillSpeechSimple,
+    check: checkSpeechForm,
+  },
+  'speech.advanced': {
+    open: switchSpeechForm,
+    sourcesDecideForm: false,
+    fill: fillSpeechAdvanced,
+    check: checkSpeechForm,
+  },
+  'sound.single': {
+    open: switchSoundsForm,
+    sourcesDecideForm: false,
+    fill: fillSounds,
+    check: checkSoundsForm,
+  },
+};
+
+/** The workflows for a request of `kind` in `mode`, or null when the adapter has none. */
+export function formWorkflowsFor(kind: string, mode: string): FormWorkflows | null {
+  return Object.hasOwn(FORM_WORKFLOWS, `${kind}.${mode}`)
+    ? (FORM_WORKFLOWS[`${kind}.${mode}`] ?? null)
+    : null;
+}

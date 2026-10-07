@@ -6,6 +6,7 @@ import {
   countsText,
   entryDetail,
   entryLabel,
+  modeLabel,
   needsAttention,
   OUTCOME_LABELS,
 } from './verificationRules';
@@ -119,7 +120,7 @@ function VerificationView({
       aria-labelledby="verification-title"
     >
       <Text fw={600} id="verification-title">
-        Verification of Suno’s form ({verification.mode === 'simple' ? 'Simple' : 'Advanced'})
+        Verification of Suno’s form ({modeLabel(verification.mode)})
       </Text>
       <Text size="sm" data-testid="verification-review">
         {needsAttention(verification)

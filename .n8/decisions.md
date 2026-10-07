@@ -3603,3 +3603,38 @@ Story #146 (PARTIAL: D9):
 - **Decision:** The Voice picker is a recognised dialog (title "Voice"; Close, My Voices, and Favorites may be pressed). The Inspo picker is not added.
   **Why:** This follows #133's note. The Inspo dialog has an empty title, and recognising an untitled dialog would recognise every untitled one. #148, which presses in both pickers, decides how to recognise Inspo and adds what it presses.
   **Issue:** #146
+- **Decision:** The Sounds Key and Key scale are not set by the adapter. They are in `BLOCKED_ON_CAPTURE` (D9) and reported `manual` with the Version's value as `expected`. Key scale is `not_applicable` when the Key is Any (or absent). AC 2, AC 3 and AC 4 are left unticked, and the issue is labelled `blocked` + `needs-owner-action` with a capture request.
+  **Why:** TS-003's replan says the key is set through a popover of note buttons, Any, Major/Minor and Apply. No snapshot shows that popover: in `page.create-sounds-advanced-options.html` the Key button is `aria-expanded="true"`, but its `aria-controls` target is absent, and its label is redacted. Under D9, no page structure is invented.
+  **Issue:** #147
+- **Decision:** Type One-Shot, BPM empty (Auto) and Key Any are treated as captured page states. They appear in the hidden Sounds form inside the Speech snapshots, at its defaults. The Type and BPM fillers are built and tested on them.
+  **Why:** TS-003 lists "Sound One-Shot, Auto BPM, Any key" as not exercised in a Create, but the page states themselves are in committed snapshots. D9 forbids only states that no snapshot shows. "major" appears in none, so it stays with the Key.
+  **Issue:** #147
+- **Decision:** Each kind gets its own workflows:
+  - `switch-speech-form`, `fill-speech-simple`, `fill-speech-advanced` and `check-speech-form` in `workflows/fillSpeech.ts`.
+  - `switch-sounds-form`, `fill-sounds` and `check-sounds-form` in `workflows/fillSounds.ts`.
+  - All seven have `RUN_RECIPES`.
+  - `FORM_WORKFLOWS` in `workflows/index.ts` is the registry keyed `<kind>.<mode>`: `song.simple`, `song.advanced`, `speech.simple`, `speech.advanced` and `sound.single`.
+  - A Speech or Sound opens its tab at the reported step `choose form` (Songs keep `open Songs form`). An unknown key stops there with `NO_FORM`, which replaces `NOT_A_SONG`.
+  **Why:** The Discretion says the registry key is `<kind>.<mode>` and that an unknown key and the wait for the form report "choose form". With the tab switch in its own workflow, a missing tab stops before any fill, naming its step (AC 5). The invariant-4 guard needs one recipe per workflow, so a generic switch over kinds could not be finished on each fixture.
+  **Issue:** #147
+- **Decision:** A Speech or Sound summary lists only its own tab's entries. The workspace entry `songs.simple.workspace` is listed for Songs only: `summaryEntries(mode, kind)`, `verifyForm` passing `job.kind`.
+  **Why:** The Discretion says "A Simple Speech Version lists only its one entry", and Demo step 1 expects six Sounds entries. The workspace entry is a Songs key, and the workspace step still runs for every kind.
+  **Issue:** #147
+- **Decision:** The Sounds model is the menu button within 3 levels around the "Credits remaining" button: Sounds has no mode tabs to anchor on. It is chosen through the menu exactly as for Songs (`model(entry, button)`). The menu is still unverified (#146's capture item 5).
+  **Why:** In the Sounds snapshot the model button ("v6-mini") sits beside the credits, and the inventory says "Same dropdown as Songs". Speech has no model button (inventory: "no model dropdown").
+  **Issue:** #147
+- **Decision:** These fillers follow the Songs story:
+  - Speech Vocal Gender (male, female, or None) and Sounds Type (one_shot or loop) share a new `choice` builder. None presses the selected button to deselect it, as Songs' Vocal Gender does. A Type the form does not offer is `failed` with a note.
+  - BPM types any whole number, so an out-of-range value is attempted and the read-back reports what Suno kept. Empty means Auto, which empties the box.
+  - Speech Variety reuses the Songs step table (`wantedVariety`).
+  **Why:** The Discretion says out-of-range imported values are attempted and reported `failed`, and that an empty BPM re-selects Auto. Speech's None-deselect behaviour is not captured. It is attempted and verified by read-back, so a page that will not deselect gives `failed`, not a false `set`.
+  **Issue:** #147
+- **Decision:** These changes go with the new kinds:
+  - `ADAPTER_VERSION` is 6.
+  - `FORM_GONE` now says "The form …".
+  - `fillSongs.ts` exports `selected`, `expandedSection`, `pressUnless` and `fillStep` for reuse.
+  - The panel's heading reads `formName(kind, mode)`, with an optional `form` on the `verification` view state.
+  - The panel and the Version page name the Speech and Sounds fields. On the web, `modeLabel('single')` is "Sounds".
+  - The stand-in `standInForSuno` handles `aria-pressed` groups.
+  **Why:** Selectors and workflows changed (the #133/#134 rule). The rest are additive edits that keep #148's parallel changes to `fill.ts` and the guard mergeable.
+  **Issue:** #147

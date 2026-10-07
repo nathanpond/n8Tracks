@@ -7,7 +7,7 @@ import type {
 
 /**
  * How the Version page words the extension's verification summary of Suno's filled Create form
- * (#146): each entry's field, its outcome, and what was expected and found. Text values arrive only
+ * (#146, #147 Speech and Sounds): each entry's field, its outcome, and what was expected and found. Text values arrive only
  * as their length and hash, so text is told by its length, and two texts of the same length by
  * whether their hashes match.
  */
@@ -36,7 +36,24 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   variety: 'Variety',
   personalize: 'Personalize',
   title: 'Song Title',
+  speech_prompt: 'Speech description',
+  speech_script: 'Script',
+  speech_tone: 'Tone',
+  speech_vocal_gender: 'Vocal Gender',
+  speech_background_music: 'Background music',
+  speech_variety: 'Variety',
+  sounds_model: 'Model',
+  sound_description: 'Sound',
+  sound_type: 'Type',
+  sound_bpm: 'BPM',
+  sound_key: 'Key',
+  sound_scale: 'Key scale',
 };
+
+/** How the summary's heading names the form's mode: Simple, Advanced, or (Sounds' one form) Sounds. */
+export function modeLabel(mode: string): string {
+  return mode === 'simple' ? 'Simple' : mode === 'single' ? 'Sounds' : 'Advanced';
+}
 
 export const OUTCOME_LABELS: Readonly<Record<VerificationOutcome, string>> = {
   set: 'Set',
@@ -81,7 +98,7 @@ export function valueText(key: string, value: VerificationValue | undefined): st
   if (typeof value === 'boolean') {
     return value ? 'On' : 'Off';
   }
-  if (key.endsWith('.variety') && typeof value === 'number') {
+  if (/[._]variety$/.test(key) && typeof value === 'number') {
     return VARIETY_STEPS[value] ?? String(value);
   }
   return String(value);

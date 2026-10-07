@@ -5,8 +5,9 @@
  *
  * - a tab, pressed, becomes the selected one of its tab list;
  * - a section header (Lyrics, Styles, More Options), pressed, opens or closes its section;
- * - a choice button (`data-selected`), pressed, becomes the selected one of its group; pressed
- *   again, Vocal Gender's is deselected (None), while an Off/On pair keeps one selected;
+ * - a choice button (`data-selected`, or `aria-pressed` on the Speech form), pressed, becomes the
+ *   selected one of its group; pressed again, Vocal Gender's is deselected (None), while an Off/On
+ *   pair or Sounds' Type keeps one selected;
  * - a slider moves one step per arrow key (Duration by 5 seconds), between its minimum and
  *   maximum; Home and End do nothing (TS-003);
  * - the Lexical lyrics editor takes the browser's editing commands (`execCommand`), which jsdom
@@ -25,18 +26,19 @@ export interface StandIn {
 
 function selectInGroup(button: Element): void {
   const group = button.parentElement;
-  const selected = button.getAttribute('data-selected') === 'true';
+  const attribute = button.hasAttribute('data-selected') ? 'data-selected' : 'aria-pressed';
+  const selected = button.getAttribute(attribute) === 'true';
   const names = [...(group?.children ?? [])].map((sibling) => sibling.textContent.trim());
   const deselectable = names.includes('Male') && names.includes('Female');
   if (selected) {
     if (deselectable) {
-      button.setAttribute('data-selected', 'false');
+      button.setAttribute(attribute, 'false');
     }
     return;
   }
   for (const sibling of group?.children ?? []) {
-    if (sibling.hasAttribute('data-selected')) {
-      sibling.setAttribute('data-selected', String(sibling === button));
+    if (sibling.hasAttribute(attribute)) {
+      sibling.setAttribute(attribute, String(sibling === button));
     }
   }
 }
@@ -100,7 +102,7 @@ export function standInForSuno(document: Document): StandIn {
       toggleSection(header);
       return;
     }
-    const choice = target.closest('button[data-selected]');
+    const choice = target.closest('button[data-selected], button[aria-pressed]');
     if (choice !== null) {
       selectInGroup(choice);
     }

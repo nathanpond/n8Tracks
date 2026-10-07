@@ -27,12 +27,29 @@ import {
   VOCAL_MALE,
   WEIRDNESS_SLIDER,
 } from './songsForm.ts';
+import {
+  BPM_BOX,
+  SOUND_DESCRIPTION,
+  SOUNDS_MODEL_BUTTON,
+  TYPE_LOOP,
+  TYPE_ONE_SHOT,
+} from './soundsForm.ts';
+import {
+  BACKGROUND_MUSIC_OFF,
+  BACKGROUND_MUSIC_ON,
+  SCRIPT_BOX,
+  SPEECH_PROMPT,
+  SPEECH_VARIETY_SLIDER,
+  SPEECH_VOCAL_FEMALE,
+  SPEECH_VOCAL_MALE,
+  TONE_BOX,
+} from './speechForm.ts';
 
 /**
- * Filling Suno's Songs form from a generation request (#146), and the verification summary: what
- * each entry of the adapter's field map (`fieldMap.ts`) for the Version's mode came to. A filler is
- * registered here for each Songs `fill` entry: it reads the control, sets it as the user would,
- * and reads it back. A failed entry is recorded and the next is still filled; the run never presses
+ * Filling Suno's Create form from a generation request (#146 Songs, #147 Speech and Sounds), and
+ * the verification summary: what each entry of the adapter's field map (`fieldMap.ts`) for the
+ * Version's kind and mode came to. A filler is registered here for each `fill` entry: it reads the
+ * control, sets it as the user would, and reads it back. A failed entry is recorded and the next is still filled; the run never presses
  * Create (invariant 4), and the user is told to review the form and click Create.
  */
 
@@ -95,15 +112,19 @@ export const FILL_LIMIT_MS = 120_000;
 export const WORKSPACE_ENTRY = 'songs.simple.workspace';
 
 /**
- * Songs `fill` entries whose controls no TS-003 snapshot shows, so the adapter does not set them
- * (decision D9): Simple's Add Lyrics and Add Styles sections (TS-003 did not exercise them), and
- * Duration's Auto or Custom mode (the snapshot shows the slider, not how Auto is shown). The
- * summary tells the user to do them by hand until the owner captures those page states.
+ * `fill` entries whose controls no TS-003 snapshot shows, so the adapter does not set them
+ * (decision D9): Simple's Add Lyrics and Add Styles sections (TS-003 did not exercise them),
+ * Duration's Auto or Custom mode (the snapshot shows the slider, not how Auto is shown), and the
+ * Sounds Key and Key scale (no snapshot shows the Key picker's popover, with its notes, Any,
+ * Major/Minor, and Apply). The summary tells the user to do them by hand until the owner captures
+ * those page states.
  */
 export const BLOCKED_ON_CAPTURE: ReadonlySet<string> = new Set([
   'songs.simple.simple_add_lyrics',
   'songs.simple.simple_add_styles',
   'songs.advanced.duration_mode',
+  'sounds.single.sound_key',
+  'sounds.single.sound_scale',
 ]);
 
 /** Variety's steps on the slider, 0 to 4 (`docs/suno-import-field-map.json`). */
@@ -116,7 +137,7 @@ type Wanted =
 
 type Shown = { kind: 'value'; value: FormValue } | { kind: 'absent' } | { kind: 'disabled' };
 
-/** A filler: one Songs `fill` entry, set and read back through the primitives. */
+/** A filler: one `fill` entry, set and read back through the primitives. */
 export interface Filler {
   entry: string;
   /** Plain words for the control, in the summary's notes. */
@@ -302,10 +323,10 @@ const vocalGender: Filler = {
  * model's label. Another model is chosen from the menu the button opens; a model the menu does
  * not offer is unavailable. No snapshot shows the menu open, so it is known by its role only.
  */
-function model(entry: string): Filler {
+function model(entry: string, button: Target = MODEL_BUTTON): Filler {
   return {
     entry,
-    control: MODEL_BUTTON.description,
+    control: button.description,
     text: false,
     wanted: (value) =>
       value === null || value === undefined
@@ -313,14 +334,14 @@ function model(entry: string): Filler {
         : typeof value === 'string'
           ? { kind: 'value', value }
           : { kind: 'failed', note: 'The Version’s model is not a name.' },
-    read: (page) => shown(page, MODEL_BUTTON, (found) => page.read(found).text),
+    read: (page) => shown(page, button, (found) => page.read(found).text),
     write: (page, value) => {
-      const button = locate(page, MODEL_BUTTON);
-      if (typeof button === 'string') {
+      const found = locate(page, button);
+      if (typeof found === 'string') {
         return;
       }
-      if (page.read(button).expanded !== true) {
-        page.click(button);
+      if (page.read(found).expanded !== true) {
+        page.click(found);
       }
       const menu = page.find(MODEL_MENU);
       if (menu.kind !== 'found') {
@@ -388,7 +409,129 @@ const title: Filler = {
   },
 };
 
-/** One filler per Songs `fill` entry of the field map, except those blocked on a capture. */
+/** Variety, by its step name, as the slider's step (Songs and Speech alike). */
+function wantedVariety(value: unknown): Wanted {
+  const step = typeof value === 'string' ? VARIETY_STEPS.indexOf(value) : -1;
+  return step < 0
+    ? { kind: 'failed', note: 'The Version’s Variety is not one of Suno’s steps.' }
+    : { kind: 'value', value: step };
+}
+
+/**
+ * A choice of buttons of which the selected one is the value (Speech's Vocal Gender, Sounds'
+ * Type). With `none`, nothing selected is a value too: the selected button is pressed again to
+ * deselect it, as Songs' Vocal Gender does; the read-back says whether Suno let it.
+ */
+function choice(
+  entry: string,
+  control: string,
+  buttons: readonly (readonly [string, Target])[],
+  none: boolean,
+): Filler {
+  return {
+    entry,
+    control,
+    text: false,
+    wanted: (value) =>
+      none && (value === null || value === undefined)
+        ? { kind: 'value', value: null }
+        : typeof value === 'string' && buttons.some(([name]) => name === value)
+          ? { kind: 'value', value }
+          : { kind: 'failed', note: 'The Version’s value is not one Suno’s form offers here.' },
+    read: (page) => {
+      let selected: FormValue = null;
+      for (const [name, target] of buttons) {
+        const found = locate(page, target);
+        if (typeof found === 'string') {
+          return { kind: found };
+        }
+        if (page.read(found).selected === true) {
+          selected = name;
+        }
+      }
+      return { kind: 'value', value: selected };
+    },
+    write: (page, value) => {
+      for (const [name, target] of buttons) {
+        const found = locate(page, target);
+        if (typeof found === 'string') {
+          continue;
+        }
+        const selected = page.read(found).selected === true;
+        // The wanted one is pressed when not selected; with `none`, a selected other is pressed
+        // to deselect it. Without it, pressing the wanted one moves the selection.
+        if (name === value ? !selected : none && selected) {
+          page.click(found);
+        }
+      }
+    },
+  };
+}
+
+/**
+ * Sounds' BPM: a number box whose empty value shows Auto. Empty (null) is Auto; any whole number
+ * is typed in, out of Suno's range too, and the read-back reports what Suno kept.
+ */
+const soundBpm: Filler = {
+  entry: 'sounds.single.sound_bpm',
+  control: BPM_BOX.description,
+  text: false,
+  wanted: (value) =>
+    value === null || value === undefined
+      ? { kind: 'value', value: null }
+      : typeof value === 'number' && Number.isInteger(value)
+        ? { kind: 'value', value }
+        : { kind: 'failed', note: 'The Version’s BPM is not a whole number.' },
+  read: (page) =>
+    shown(page, BPM_BOX, (found) => {
+      const text = (page.read(found).value ?? '').trim();
+      const value = Number(text);
+      return text === '' ? null : Number.isFinite(value) ? value : text;
+    }),
+  write: (page, value) => {
+    const found = locate(page, BPM_BOX);
+    if (typeof found !== 'string') {
+      page.set(found, value === null ? '' : String(value));
+    }
+  },
+};
+
+/** Speech's and Sounds' fillers (#147), by entry; Key and Key scale are blocked on a capture. */
+const SPEECH_AND_SOUNDS_FILLERS: readonly Filler[] = [
+  textBox('speech.simple.speech_prompt', SPEECH_PROMPT),
+  textBox('speech.advanced.speech_script', SCRIPT_BOX),
+  textBox('speech.advanced.speech_tone', TONE_BOX),
+  choice(
+    'speech.advanced.speech_vocal_gender',
+    'the Vocal Gender choice in the Speech form',
+    [
+      ['male', SPEECH_VOCAL_MALE],
+      ['female', SPEECH_VOCAL_FEMALE],
+    ],
+    true,
+  ),
+  onOff(
+    'speech.advanced.speech_background_music',
+    BACKGROUND_MUSIC_OFF,
+    BACKGROUND_MUSIC_ON,
+    'the Background music switch',
+  ),
+  slider('speech.advanced.speech_variety', SPEECH_VARIETY_SLIDER, wantedVariety),
+  model('sounds.single.sounds_model', SOUNDS_MODEL_BUTTON),
+  textBox('sounds.single.sound_description', SOUND_DESCRIPTION),
+  choice(
+    'sounds.single.sound_type',
+    'the Type choice in Advanced Options',
+    [
+      ['one_shot', TYPE_ONE_SHOT],
+      ['loop', TYPE_LOOP],
+    ],
+    false,
+  ),
+  soundBpm,
+];
+
+/** One filler per `fill` entry of the field map, except those blocked on a capture. */
 export const FILLERS: readonly Filler[] = [
   model('songs.simple.model'),
   textBox('songs.simple.simple_prompt', SONG_DESCRIPTION),
@@ -405,14 +548,10 @@ export const FILLERS: readonly Filler[] = [
   onOff('songs.advanced.max_mode', MAX_MODE_OFF, MAX_MODE_ON, 'the Max Mode switch'),
   slider('songs.advanced.weirdness', WEIRDNESS_SLIDER, wantedNumber(0, 100)),
   slider('songs.advanced.style_influence', STYLE_INFLUENCE_SLIDER, wantedNumber(0, 100)),
-  slider('songs.advanced.variety', VARIETY_SLIDER, (value) => {
-    const step = typeof value === 'string' ? VARIETY_STEPS.indexOf(value) : -1;
-    return step < 0
-      ? { kind: 'failed', note: 'The Version’s Variety is not one of Suno’s steps.' }
-      : { kind: 'value', value: step };
-  }),
+  slider('songs.advanced.variety', VARIETY_SLIDER, wantedVariety),
   onOff('songs.advanced.personalize', PERSONALIZE_OFF, PERSONALIZE_ON, 'the Personalize switch'),
   title,
+  ...SPEECH_AND_SOUNDS_FILLERS,
 ];
 
 /** The mode tab of a Song's mode. */
@@ -420,11 +559,19 @@ export function modeTab(mode: string): Target {
   return mode === 'simple' ? SIMPLE_TAB : ADVANCED_TAB;
 }
 
-/** The field-map entries the summary lists for a Song in `mode`, in the map's order. */
-export function summaryEntries(mode: string): string[] {
-  const prefix = `songs.${mode}.`;
+/** The field map's tab of each kind of Version. */
+const TABS: Readonly<Record<string, string>> = { song: 'songs', speech: 'speech', sound: 'sounds' };
+
+/**
+ * The field-map entries the summary lists for a Version of `kind` in `mode`, in the map's order:
+ * the entries of the kind's tab and mode, and for a Song the workspace (a Songs entry; a Speech or
+ * a Sound lists only its own, so a Simple Speech lists its one entry).
+ */
+export function summaryEntries(mode: string, kind = 'song'): string[] {
+  const prefix = `${TABS[kind] ?? kind}.${mode}.`;
   return FIELD_MAP.filter(
-    (entry) => entry.entry.startsWith(prefix) || entry.entry === WORKSPACE_ENTRY,
+    (entry) =>
+      entry.entry.startsWith(prefix) || (kind === 'song' && entry.entry === WORKSPACE_ENTRY),
   ).map((entry) => entry.entry);
 }
 
@@ -492,6 +639,25 @@ function manualResult(key: string, job: FormJob): EntryResult {
 function blockedResult(key: string, job: FormJob): EntryResult {
   const value = job.entries[key];
   switch (key) {
+    case 'sounds.single.sound_key':
+      return {
+        key,
+        outcome: 'manual',
+        expected: typeof value === 'string' ? value : 'any',
+        note: 'Choose the key in Suno’s Key picker, then press Apply: the extension cannot use the Key picker yet.',
+      };
+    case 'sounds.single.sound_scale': {
+      const soundKey = job.entries['sounds.single.sound_key'];
+      if (typeof soundKey !== 'string' || soundKey.toLowerCase() === 'any') {
+        return { key, outcome: 'not_applicable', note: 'Key is Any, so no scale is chosen.' };
+      }
+      return {
+        key,
+        outcome: 'manual',
+        expected: typeof value === 'string' ? value : null,
+        note: 'Choose the scale with the key in Suno’s Key picker, then press Apply.',
+      };
+    }
     case 'songs.advanced.duration_mode':
       return {
         key,
@@ -651,7 +817,7 @@ export function checkEntry(page: Page, filler: Filler, job: FormJob): EntryResul
 }
 
 /**
- * Every entry of the Song's mode, in the map's order, then the unsupported values: each filler's
+ * Every entry of the Version's kind and mode, in the map's order, then the unsupported values: each filler's
  * entry set (or, with `change` false, only read), the others as {@link unfilledResult} says.
  */
 export async function verifyForm(
@@ -662,7 +828,7 @@ export async function verifyForm(
   fillers: readonly Filler[] = FILLERS,
 ): Promise<EntryResult[]> {
   const results: EntryResult[] = [];
-  for (const key of summaryEntries(job.mode)) {
+  for (const key of summaryEntries(job.mode, job.kind)) {
     const filler = fillers.find((candidate) => candidate.entry === key);
     if (filler === undefined) {
       results.push(unfilledResult(key, job, workspace));

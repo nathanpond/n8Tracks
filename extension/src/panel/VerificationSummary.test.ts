@@ -7,6 +7,7 @@ import {
   countsText,
   entryDetail,
   entryLabel,
+  formName,
   REVIEW_TEXT,
   valueText,
 } from './VerificationSummary.ts';
@@ -129,6 +130,34 @@ describe('the verification summary in the panel', () => {
     expect(checkAgain).toHaveBeenCalledOnce();
     expect(button?.disabled).toBe(true);
     expect(generate.element.querySelector('h4')?.textContent).toBe('Verification: Songs, Simple');
+  });
+
+  it('names the Speech and Sounds forms and their fields (#147)', async () => {
+    const { generate } = view();
+
+    generate.show({
+      kind: 'verification',
+      form: 'sound',
+      mode: 'single',
+      results: [
+        { key: 'sounds.single.sound_bpm', outcome: 'failed', expected: 400, found: 300 },
+        { key: 'sounds.single.sound_scale', outcome: 'not_applicable' },
+      ],
+      checkedAt: new Date('2026-10-07T12:00:00Z'),
+    });
+
+    expect(generate.element.querySelector('h4')?.textContent).toBe('Verification: Sounds');
+    expect([...generate.element.querySelectorAll('li')].map((item) => item.textContent)).toEqual([
+      'BPM: Differs — expected 400, found 300',
+      'Key scale: Not applicable',
+    ]);
+    await expectNoAxeViolations(document);
+    expect(formName('speech', 'simple')).toBe('Speech, Simple');
+    expect(formName('song', 'advanced')).toBe('Songs, Advanced');
+    expect(entryLabel('speech.advanced.speech_background_music')).toBe('Background music');
+    expect(valueText({ key: 'speech.advanced.speech_variety', outcome: 'failed' }, 3)).toBe(
+      'extra',
+    );
   });
 
   it('words values: text by its length, toggles On or Off, Variety by its step, nothing as none', () => {

@@ -34,14 +34,16 @@ export interface FillContext extends StepContext {
   results: EntryResult[];
 }
 
-function selected(page: Page, target: Target): Check {
+/** Whether a tab or choice is the selected one. */
+export function selected(page: Page, target: Target): Check {
   const result = page.find(target);
   return result.kind === 'found' && page.read(result.found).selected === true
     ? OK
     : expected(`${target.description}, selected`);
 }
 
-function expandedSection(page: Page, target: Target): Check {
+/** Whether a section header is open. */
+export function expandedSection(page: Page, target: Target): Check {
   const result = page.find(target);
   return result.kind === 'found' && page.read(result.found).expanded === true
     ? OK
@@ -49,7 +51,7 @@ function expandedSection(page: Page, target: Target): Check {
 }
 
 /** Presses a tab or a section header when it is not already selected or open. */
-function pressUnless(page: Page, target: Target, done: (page: Page) => Check): void {
+export function pressUnless(page: Page, target: Target, done: (page: Page) => Check): void {
   if (done(page).ok) {
     return;
   }
@@ -93,8 +95,8 @@ export const switchForm: Workflow<SwitchFormContext> = {
   fixtures: ['create-songs-advanced-more-options', 'create-source-advanced'],
 };
 
-/** The last step of a fill: every entry of the mode filled and read back. */
-function fillStep(change: boolean) {
+/** The last step of a fill: every entry of the mode filled and read back (or, unchanged, read). */
+export function fillStep(change: boolean) {
   return {
     name: change ? 'fill' : 'check',
     expect: () => OK,

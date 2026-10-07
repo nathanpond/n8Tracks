@@ -54,7 +54,42 @@ const RUN_RECIPES: Readonly<Record<string, RunRecipe>> = {
   'fill-songs-simple': { values: fillValues('simple') },
   'fill-songs-advanced': { values: fillValues('advanced') },
   'check-songs-form': { values: fillValues('advanced') },
+  // Filling the Speech and Sounds forms (#147): their tabs, section headers, choice buttons, the
+  // Variety slider's keys, and the BPM box; Create is never pressed.
+  'switch-speech-form': { values: { mode: 'advanced' } },
+  'fill-speech-simple': { values: kindValues('speech', 'simple') },
+  'fill-speech-advanced': { values: kindValues('speech', 'advanced') },
+  'check-speech-form': { values: kindValues('speech', 'advanced') },
+  'switch-sounds-form': { values: { mode: 'single' } },
+  'fill-sounds': { values: kindValues('sound', 'single') },
+  'check-sounds-form': { values: kindValues('sound', 'single') },
 };
+
+/** A Speech or Sound fill's values, other than the snapshots' own, so every filler acts. */
+function kindValues(kind: string, mode: string): Record<string, unknown> {
+  const job: FormJob = {
+    kind,
+    mode,
+    entries: {
+      'speech.simple.speech_prompt': 'a calm voice',
+      'speech.advanced.speech_script': 'Hello there.',
+      'speech.advanced.speech_tone': 'warm',
+      'speech.advanced.speech_vocal_gender': 'male',
+      'speech.advanced.speech_background_music': true,
+      'speech.advanced.speech_variety': 'max',
+      'sounds.single.sounds_model': 'v6',
+      'sounds.single.sound_description': 'rain on a tin roof',
+      'sounds.single.sound_type': 'one_shot',
+      'sounds.single.sound_bpm': null,
+      'sounds.single.sound_key': 'C',
+      'sounds.single.sound_scale': 'major',
+    },
+    sources: [],
+    fileInputs: [],
+    unsupported: [],
+  };
+  return { job, workspace: 'My Workspace', results: [] };
+}
 
 function fillValues(mode: string): Record<string, unknown> {
   const prefix = `songs.${mode}.`;

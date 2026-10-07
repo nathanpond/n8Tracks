@@ -21,8 +21,17 @@ export type GenerateViewState =
       options: readonly WorkspaceOption[];
     }
   | { kind: 'selected'; name: string }
-  /** The form is filled (#146): the summary, and the user reviews the form and clicks Create. */
-  | { kind: 'verification'; mode: string; results: readonly EntryResult[]; checkedAt: Date }
+  /**
+   * The form is filled (#146): the summary, and the user reviews the form and clicks Create.
+   * `form` is the Version's kind (#147: `song`, `speech`, or `sound`); a Song's when absent.
+   */
+  | {
+      kind: 'verification';
+      form?: string;
+      mode: string;
+      results: readonly EntryResult[];
+      checkedAt: Date;
+    }
   | { kind: 'stopped'; message: string };
 
 export interface GenerateViewOptions {
@@ -168,6 +177,7 @@ export class GenerateView {
               this.options.checkAgain?.();
             },
           },
+          this.state.form,
         );
         this.firstControl = summary.firstControl;
         this.body.append(summary.element);

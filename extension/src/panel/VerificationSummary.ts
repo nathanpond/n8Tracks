@@ -38,7 +38,27 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   variety: 'Variety',
   personalize: 'Personalize',
   title: 'Song Title',
+  speech_prompt: 'Speech description',
+  speech_script: 'Script',
+  speech_tone: 'Tone',
+  speech_vocal_gender: 'Vocal Gender',
+  speech_background_music: 'Background music',
+  speech_variety: 'Variety',
+  sounds_model: 'Model',
+  sound_description: 'Sound',
+  sound_type: 'Type',
+  sound_bpm: 'BPM',
+  sound_key: 'Key',
+  sound_scale: 'Key scale',
 };
+
+/** How the summary's heading names the form: "Songs, Advanced", "Speech, Simple", "Sounds". */
+export function formName(kind: string, mode: string): string {
+  if (kind === 'sound') {
+    return 'Sounds';
+  }
+  return `${kind === 'speech' ? 'Speech' : 'Songs'}, ${mode === 'simple' ? 'Simple' : 'Advanced'}`;
+}
 
 export const OUTCOME_LABELS: Readonly<Record<EntryOutcome, string>> = {
   set: 'Set',
@@ -80,7 +100,7 @@ export function valueText(result: EntryResult, value: FormValue | undefined): st
   if (typeof value === 'boolean') {
     return value ? 'On' : 'Off';
   }
-  if (result.key.endsWith('.variety') && typeof value === 'number') {
+  if (/[._]variety$/.test(result.key) && typeof value === 'number') {
     return VARIETY_STEPS[value] ?? String(value);
   }
   return String(value);
@@ -118,13 +138,17 @@ export interface VerificationSummaryOptions {
   checkAgain(): void;
 }
 
-/** Builds the summary in `page` (the panel's document) for `results` of a Song in `mode`. */
+/**
+ * Builds the summary in `page` (the panel's document) for `results` of a Version of `kind` (a
+ * Song unless given) in `mode`.
+ */
 export function verificationSummary(
   page: Document,
   mode: string,
   results: readonly EntryResult[],
   checkedAt: Date,
   options: VerificationSummaryOptions,
+  kind = 'song',
 ): { element: HTMLElement; firstControl: HTMLButtonElement } {
   const make = <K extends keyof HTMLElementTagNameMap>(
     tag: K,
@@ -146,11 +170,7 @@ export function verificationSummary(
     'aria-labelledby': 'n8-verification-title',
   });
   element.append(
-    make(
-      'h4',
-      { id: 'n8-verification-title' },
-      `Verification: Songs, ${mode === 'simple' ? 'Simple' : 'Advanced'}`,
-    ),
+    make('h4', { id: 'n8-verification-title' }, `Verification: ${formName(kind, mode)}`),
     make('p', { role: 'status', class: 'verification-review' }, REVIEW_TEXT),
     make('p', { class: 'detail verification-counts' }, countsText(results)),
   );
