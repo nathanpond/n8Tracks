@@ -123,7 +123,10 @@ describe('the service worker router', () => {
       diagnostics,
     );
     expect(report).toMatchObject({
-      workflows: [{ id: 'recognise-suno', state: 'ready' }],
+      workflows: [
+        { id: 'recognise-suno', state: 'ready' },
+        { id: 'load-more', state: 'not_checked' },
+      ],
       steps: [{ workflow: 'recognise-suno', step: 'navigation', ms: 3 }],
     });
     // A malformed record is not a request at all.

@@ -35,6 +35,10 @@ const CONNECTED: ConnectedState = {
   ],
 };
 
+/** Leaves out what the panel asks each time it refreshes: the state and the diagnostic report (#150). */
+const PANEL_REFRESH = new Set(['state', 'diagnostics-record', 'diagnostic-report']);
+const notPanelRefresh = (type: string) => !PANEL_REFRESH.has(type);
+
 const LIBRARY: SyncScope = { kind: 'library' };
 const LIBRARY_FILTERS = (sunoObject('feed-v3.library-page-1.request') as { filters: unknown })
   .filters;
@@ -276,7 +280,7 @@ describe('reading a leg after its page loads', () => {
 
     await started.resumed;
 
-    expect(sw.types().filter((type) => type !== 'state')).toEqual([
+    expect(sw.types().filter(notPanelRefresh)).toEqual([
       'sync-resume',
       'sync-create',
       'sync-part',
@@ -352,7 +356,7 @@ describe('reading a leg after its page loads', () => {
 
     await started.resumed;
 
-    expect(sw.types().filter((type) => type !== 'state')).toEqual(['sync-resume', 'sync-discard']);
+    expect(sw.types().filter(notPanelRefresh)).toEqual(['sync-resume', 'sync-discard']);
     expect(text('.sync-stopped')).toBe(
       "Sync stopped: step 'Read the library' expected a page of the library feed with a list of records, each with an ID. Nothing was sent for review.",
     );

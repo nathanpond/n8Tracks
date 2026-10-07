@@ -223,12 +223,7 @@ const missingOnSuno: Workflow = {
   fixtures: ['library-list'],
 };
 
-const WORKFLOWS: readonly Workflow[] = [
-  ...ADAPTER_WORKFLOWS,
-  fill,
-  missing,
-  missingOnSuno,
-];
+const WORKFLOWS: readonly Workflow[] = [...ADAPTER_WORKFLOWS, fill, missing, missingOnSuno];
 
 function diagnostics(options: { connection?: ConnectionState; browser?: string } = {}) {
   const fake = fakeBrowser();
@@ -308,6 +303,7 @@ describe('the diagnostic report', () => {
     expect(report.browser).toBe('Google Chrome 140');
     expect(report.workflows.map(({ id, state, step }) => ({ id, state, step }))).toEqual([
       { id: 'recognise-suno', state: 'ready', step: null },
+      { id: 'load-more', state: 'not_checked', step: null },
       { id: 'fill-test', state: 'not_working', step: 'workspace' },
       { id: 'missing-test', state: 'not_checked', step: null },
       { id: 'missing-on-suno-test', state: 'not_checked', step: null },
