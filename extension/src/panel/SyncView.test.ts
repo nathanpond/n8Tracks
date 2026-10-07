@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SyncScope } from '../messages.ts';
+import type { ImageProgress, SyncScope } from '../messages.ts';
 import { expectNoAxeViolations } from '../testing/a11y.ts';
-import { countsText, summaryText, SyncView, type SyncViewOptions } from './SyncView.ts';
+import { countsText, imagesText, summaryText, SyncView, type SyncViewOptions } from './SyncView.ts';
 
 const COUNTS = { clips: 140, trashed: 1, workspaces: 12, playlists: 0 };
 
@@ -200,5 +200,73 @@ describe('Sync to n8Tracks in the panel', () => {
 
     sync.show({ kind: 'finished', counts: COUNTS });
     expect(sync.element.textContent).toContain('The review is open in n8Tracks.');
+  });
+
+  it('shows the cover images of a finished sync in a status of its own, updated in place', async () => {
+    const { sync, button } = view();
+    const images = (change: Partial<ImageProgress>): ImageProgress => ({
+      exportId: 'e1',
+      tabId: 7,
+      state: 'sending',
+      total: 40,
+      sent: 12,
+      failed: 0,
+      ignored: 0,
+      ...change,
+    });
+    sync.show({ kind: 'finished', counts: COUNTS });
+    const line = () => sync.element.querySelector<HTMLElement>('.sync-images');
+    // Nothing to say until the service worker answers.
+    expect(line()?.hidden).toBe(true);
+    expect(line()?.getAttribute('role')).toBe('status');
+
+    const again = button('Sync again');
+    again?.focus();
+    sync.setImages(images({}));
+    expect(line()?.textContent).toBe(
+      'Cover images: 12 of 40 sent so far. You can start the review meanwhile.',
+    );
+    // Only the line changed: the focus stays where the user left it.
+    expect(document.activeElement).toBe(again);
+    expect(button('Sync again')).toBe(again);
+
+    sync.setImages(images({ state: 'finished', sent: 38, failed: 2 }));
+    expect(line()?.textContent).toBe(
+      'Cover images: 38 of 40 sent. 2 images could not be read or sent; those Generations are imported without artwork.',
+    );
+    expect(sync.current).toMatchObject({ kind: 'finished', images: { sent: 38, failed: 2 } });
+    await expectNoAxeViolations(document);
+
+    // Not after the user moved on.
+    sync.show({ kind: 'choose' });
+    sync.setImages(images({ state: 'finished', sent: 40 }));
+    expect(sync.current).toEqual({ kind: 'choose' });
+  });
+
+  it('says how cover images are going, and when they are skipped', () => {
+    const base: ImageProgress = {
+      exportId: 'e1',
+      tabId: 7,
+      state: 'waiting',
+      total: 1,
+      sent: 0,
+      failed: 0,
+      ignored: 0,
+    };
+    expect(imagesText(null)).toBeNull();
+    expect(imagesText({ ...base, state: 'collecting' })).toBeNull();
+    expect(imagesText(base)).toBe(
+      'Cover images: waiting for n8Tracks to get the export ready (1 image to send).',
+    );
+    expect(imagesText({ ...base, state: 'finished', total: 0 })).toBe('No cover images to send.');
+    expect(imagesText({ ...base, state: 'finished', sent: 0, failed: 1 })).toBe(
+      'Cover images: 0 of 1 sent. 1 image could not be read or sent; that Generation is imported without artwork.',
+    );
+    expect(imagesText({ ...base, state: 'stopped', failed: 1 })).toContain(
+      'Cover images stopped: 0 of 1 sent',
+    );
+    expect(imagesText({ ...base, state: 'skipped' })).toBe(
+      'Cover images are not brought along: Suno does not let the extension read them without signing in, so the Generations are imported without artwork.',
+    );
   });
 });

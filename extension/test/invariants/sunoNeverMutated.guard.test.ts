@@ -82,6 +82,8 @@ describe('invariant 4: the extension never presses a forbidden control on Suno',
         'src/panel/panel.ts',
         'src/page/observe.ts',
         'src/background/sync.ts',
+        'src/adapter/imageReader.ts',
+        'src/background/images.ts',
       ]),
     );
     expect(report.pageContext).toEqual(

@@ -7,6 +7,7 @@ import { OBSERVER_SOURCE, type ObservedMessage } from '../adapter/observed.ts';
 import type {
   ConnectedState,
   ConnectionState,
+  ImageProgress,
   Request,
   SyncScope,
   SyncSession,
@@ -71,7 +72,11 @@ function sessionAt(leg: number, change: Partial<SyncSession> = {}): SyncSession 
 }
 
 /** The service worker, as the content script sees it: it holds one sync and records every ask. */
-function worker(session: SyncSession | null, connection: ConnectionState = CONNECTED) {
+function worker(
+  session: SyncSession | null,
+  connection: ConnectionState = CONNECTED,
+  images: ImageProgress[] = [],
+) {
   const asked: Request[] = [];
   let current = session;
   const send = (request: Request): Promise<unknown> => {
@@ -102,6 +107,8 @@ function worker(session: SyncSession | null, connection: ConnectionState = CONNE
       case 'sync-discard':
         current = null;
         return Promise.resolve({ ok: true });
+      case 'sync-images':
+        return Promise.resolve({ images: images.shift() ?? null });
       default:
         return Promise.resolve(undefined);
     }
@@ -317,6 +324,45 @@ describe('reading a leg after its page loads', () => {
     expect(visited).toEqual([]);
     expect(text('.sync-done')).toBe(
       'Finished: read 0 workspaces, 0 clips, 2 clips in the Trash, 0 playlists. The review is open in n8Tracks.',
+    );
+  });
+
+  it('follows the cover images after the export is complete, until they are done (#152)', async () => {
+    const trash = sunoObject('clips-trashed-v2.response');
+    delete trash.next_cursor;
+    const progress = (change: Partial<ImageProgress>): ImageProgress => ({
+      exportId: 'e1',
+      tabId: 7,
+      state: 'sending',
+      total: 4,
+      sent: 2,
+      failed: 0,
+      ignored: 0,
+      ...change,
+    });
+    const sw = worker(sessionAt(2, { exportId: 'e1', partNumber: 1 }), CONNECTED, [
+      progress({ state: 'waiting', sent: 0 }),
+      progress({}),
+      progress({ state: 'finished', sent: 3, failed: 1 }),
+      progress({ state: 'finished', sent: 4 }),
+    ]);
+    const clock = fakeClock();
+    const { content: started, text } = start({
+      address: 'https://suno.com/me/trash',
+      snapshot: 'library-trash',
+      worker: sw,
+      seen: [observed('trash', trash)],
+      clock,
+    });
+
+    await started.resumed;
+
+    // Asked until they were done, a second apart; never again after that.
+    expect(sw.types().filter((type) => type === 'sync-images')).toHaveLength(3);
+    expect(clock.slept.filter((ms) => ms === 1_000)).toHaveLength(2);
+    expect(text('.sync-done')).toContain('The review is open in n8Tracks.');
+    expect(text('.sync-images')).toBe(
+      'Cover images: 3 of 4 sent. 1 image could not be read or sent; that Generation is imported without artwork.',
     );
   });
 

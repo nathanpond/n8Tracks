@@ -133,6 +133,28 @@ describe('the static scan of the invariant 4 guard (TypeScript compiler API)', (
     ).toEqual(['request 5: fetch']);
   });
 
+  it("flags the real image reader's request anywhere but its own file, and a second fetch beside it", () => {
+    const reader = readFileSync(join(EXTENSION_ROOT, 'src/adapter/imageReader.ts'), 'utf8');
+    expect(
+      findingsIn(scanWith({ 'src/adapter/imageReader.ts': reader }), 'src/adapter/imageReader.ts'),
+    ).toEqual([]);
+
+    // The same read in the service worker's image sender is a second request site: it fails.
+    const moved = reader.replace("from './addresses.ts'", "from '../adapter/addresses.ts'");
+    expect(
+      findingsIn(scanWith({ 'src/background/images.ts': moved }), 'src/background/images.ts'),
+    ).toEqual([expect.stringMatching(/^request \d+: fetch$/)]);
+
+    // The reader may not hold a Suno address of its own: the host list lives in addresses.ts.
+    const withHost = `${reader}\nexport const HOST = 'https://cdn2.suno.ai/';\n`;
+    expect(
+      findingsIn(
+        scanWith({ 'src/adapter/imageReader.ts': withHost }),
+        'src/adapter/imageReader.ts',
+      ),
+    ).toHaveLength(1);
+  });
+
   it('finds a Suno address in a file that may send requests', () => {
     const apiClient = readFileSync(join(EXTENSION_ROOT, 'src/background/apiClient.ts'), 'utf8');
     const report = scanWith({

@@ -10,6 +10,7 @@ import type {
   SyncSession,
 } from '../messages.ts';
 import { DisconnectedError, type Connection } from './connection.ts';
+import { CoverImages } from './images.ts';
 
 /**
  * The service worker's half of a sync (#134). The Suno tab reads; this holds the sync between its
@@ -30,6 +31,7 @@ export interface SyncBrowser {
   local: {
     get(keys: string[]): Promise<Record<string, unknown>>;
     set(items: Record<string, unknown>): Promise<void>;
+    remove(keys: string[]): Promise<void>;
   };
   tabs: {
     get(tabId: number): Promise<{ id?: number; windowId: number }>;
@@ -86,6 +88,8 @@ const DISCONNECTED = 'The extension is not connected to n8Tracks; reconnect it i
 export interface SyncCoordinatorOptions {
   connection: Connection;
   browser: SyncBrowser;
+  /** The cover images (#152); by default over `browser.local`. */
+  images?: CoverImages;
   now?: () => number;
 }
 
@@ -93,11 +97,16 @@ export class SyncCoordinator {
   private readonly connection: Connection;
   private readonly browser: SyncBrowser;
   private readonly now: () => number;
+  /** The cover images of the sync (#152), sent after the export is complete and ready. */
+  readonly images: CoverImages;
 
   constructor(options: SyncCoordinatorOptions) {
     this.connection = options.connection;
     this.browser = options.browser;
     this.now = options.now ?? (() => Date.now());
+    this.images =
+      options.images ??
+      new CoverImages({ connection: options.connection, storage: options.browser.local });
   }
 
   /** Answers a sync message from the Suno content script in tab `tabId`. */
@@ -121,6 +130,8 @@ export class SyncCoordinator {
         return this.complete(tabId);
       case 'sync-discard':
         return this.discard(tabId);
+      case 'sync-images':
+        return { images: await this.images.progress(tabId) };
     }
   }
 
@@ -158,6 +169,7 @@ export class SyncCoordinator {
   private async end(session: SyncSession): Promise<void> {
     await this.browser.session.remove([SYNC_KEY]);
     if (session.exportId !== null) {
+      await this.images.discard(session.exportId).catch(() => undefined);
       try {
         await this.connection.call(
           `${EXPORTS_PATH}/${encodeURIComponent(session.exportId)}/discard`,
@@ -278,6 +290,8 @@ export class SyncCoordinator {
           body,
         });
         if (response.ok) {
+          // The part's covers are read and sent once the export is ready (#152).
+          await this.images.collect(exportId, tabId, part).catch(() => undefined);
           return { ok: true };
         }
         last = await refusal(response, `part ${String(part.partNumber)}`);
@@ -321,6 +335,8 @@ export class SyncCoordinator {
       return { ok: false, message: DISCONNECTED };
     }
     const reviewUrl = reviewAddress(address, exportId);
+    // Images go on in the background; the user may start the review meanwhile (#152).
+    void this.images.start(exportId, tabId).catch(() => undefined);
     await this.openReview(reviewUrl, address, tabId);
     return { ok: true, reviewUrl };
   }

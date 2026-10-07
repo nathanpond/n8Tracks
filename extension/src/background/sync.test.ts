@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { ImageFetch } from '../adapter/imageReader.ts';
 import type { ExportPart, SyncProgress, SyncRequest } from '../messages.ts';
 import { fakeBrowser, jsonResponse } from '../testing/fakeBrowser.ts';
 import type { Fetch } from './apiClient.ts';
 import { Connection } from './connection.ts';
+import { CoverImages, IMAGES_KEY } from './images.ts';
 import {
   LAST_EXPORT_KEY,
   PART_RETRIES,
@@ -28,7 +30,7 @@ interface Call {
  * A paired connection over a fake browser, and a fake n8Tracks: the handshake answers with the
  * scopes given, and every other call is answered by `answer`, which the test may change.
  */
-async function setup(scopes = ['suno.sync']) {
+async function setup(scopes = ['suno.sync'], imageFetch?: ImageFetch) {
   const fake = fakeBrowser(['https://suno.com/*', 'https://n8tracks.example.com/*']);
   const calls: Call[] = [];
   let answer = (call: Call): Response => {
@@ -94,6 +96,16 @@ async function setup(scopes = ['suno.sync']) {
   const sync = new SyncCoordinator({
     connection,
     browser: { session: store(session), local: store(local), tabs },
+    ...(imageFetch === undefined
+      ? {}
+      : {
+          images: new CoverImages({
+            connection,
+            storage: store(local),
+            fetch: imageFetch,
+            sleep: () => Promise.resolve(),
+          }),
+        }),
     now: () => 42,
   });
   const send = (request: SyncRequest, tabId = TAB) => sync.handle(request, tabId);
@@ -383,5 +395,84 @@ describe('ending a sync without an export', () => {
     await context.sync.tabUpdated(TAB, 'https://example.com/');
     expect(context.calls.at(-1)?.path).toBe(`api/v1/suno/exports/${EXPORT}/discard`);
     expect(context.session.has(SYNC_KEY)).toBe(false);
+  });
+});
+
+describe('cover images with a sync (#152)', () => {
+  const cover = (id: string) => ({
+    id,
+    image_large_url: `https://cdn2.suno.ai/image_large_${id}.jpeg`,
+  });
+
+  async function withImages() {
+    const reads = vi.fn<ImageFetch>(() =>
+      Promise.resolve(
+        new Response(new Uint8Array([1, 2, 3]), { headers: { 'Content-Type': 'image/png' } }),
+      ),
+    );
+    const context = await setup(['suno.sync'], reads);
+    expect(await context.send({ type: 'sync-begin', scope: { kind: 'library' } })).toMatchObject({
+      ok: true,
+    });
+    await context.send({ type: 'sync-create', header: { format: 'x' } });
+    return { ...context, reads };
+  }
+
+  it("notes each part's covers, and sends them once the export is complete, answering only its tab", async () => {
+    const context = await withImages();
+    await context.send({
+      type: 'sync-part',
+      part: {
+        partNumber: 1,
+        clips: [cover('a'), { id: 'b' }],
+        trashedClips: [cover('t')],
+        playlists: [],
+      },
+    });
+    // Nothing is read or sent while the sync reads.
+    expect(context.reads).not.toHaveBeenCalled();
+    expect(await context.send({ type: 'sync-images' })).toMatchObject({
+      images: { state: 'collecting', total: 2 },
+    });
+
+    expect(await context.send({ type: 'sync-complete' })).toMatchObject({ ok: true });
+
+    await vi.waitFor(async () => {
+      expect(await context.send({ type: 'sync-images' })).toEqual({
+        images: {
+          exportId: EXPORT,
+          tabId: TAB,
+          state: 'finished',
+          total: 2,
+          sent: 2,
+          failed: 0,
+          ignored: 0,
+        },
+      });
+    });
+    expect(
+      context.calls
+        .filter((call) => call.method === 'PUT')
+        .map((call) => call.path)
+        .toSorted(),
+    ).toEqual([
+      `api/v1/suno/exports/${EXPORT}/artwork/a`,
+      `api/v1/suno/exports/${EXPORT}/artwork/t`,
+    ]);
+    expect(await context.send({ type: 'sync-images' }, TAB + 1)).toEqual({ images: null });
+  });
+
+  it('sends no image for a sync that was discarded', async () => {
+    const context = await withImages();
+    await context.send({
+      type: 'sync-part',
+      part: { partNumber: 1, clips: [cover('a')], trashedClips: [], playlists: [] },
+    });
+
+    await context.send({ type: 'sync-discard' });
+
+    expect(context.local.has(IMAGES_KEY)).toBe(false);
+    expect(context.reads).not.toHaveBeenCalled();
+    expect(await context.send({ type: 'sync-images' })).toEqual({ images: null });
   });
 });

@@ -64,3 +64,6 @@ chrome.permissions.onRemoved.addListener(() => {
 
 // Re-run the handshake whenever the service worker starts.
 void connection.start().catch(() => undefined);
+
+// Cover images a stopped service worker left unsent are sent now (#152).
+void sync.images.resume().catch(() => undefined);

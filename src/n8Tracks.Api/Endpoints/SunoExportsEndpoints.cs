@@ -112,7 +112,7 @@ internal static class SunoExportsEndpoints
 
         endpoints.MapPut(ArtworkPath, StageArtworkAsync)
             .WithName("StageSunoExportArtwork")
-            .WithSummary("Holds a cover image (multipart/form-data, one JPEG, PNG, or WebP file, checked as any artwork upload is) with a staged record of a ready export; a second image replaces the first. Nothing in the catalog changes: the commit gives it to the Generation. 409 export_not_ready unless the export is ready; 404 for an unknown export or record; 413, 415, or 422 as for POST /api/v1/artwork.")
+            .WithSummary("Holds a cover image (multipart/form-data, one JPEG, PNG, or WebP file, checked as any artwork upload is) with a staged record of a ready export; a second image replaces the first. Nothing in the catalog changes: the commit gives it to the Generation. 409 export_not_ready unless the export is ready (with state, and for a committed export the record's live Generation as generationId, so a late image can go to PUT /api/v1/generations/{reference}/artwork); 404 for an unknown export or record; 413, 415, or 422 as for POST /api/v1/artwork.")
             .RequireScope(CredentialScopes.SunoSync)
             .Produces<SunoExportArtworkResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
@@ -390,12 +390,19 @@ internal static class SunoExportsEndpoints
             case ExportArtworkOutcome.RecordNotFound:
                 return ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "The export has no record with this Suno ID.");
             case ExportArtworkOutcome.NotReady notReady:
+                List<KeyValuePair<string, object?>> members = [new("state", SunoExportRules.NameOf(notReady.Export.State))];
+                if (notReady.GenerationId is { } generationId)
+                {
+                    // Committed: the image may still go to the Generation the record became (#152).
+                    members.Add(new("generationId", generationId));
+                }
+
                 return ApiProblem.For(
                     context,
                     StatusCodes.Status409Conflict,
                     ExportStagingService.NotReadyCode,
                     "Images are staged once the export is ready.",
-                    [new("state", SunoExportRules.NameOf(notReady.Export.State))]);
+                    members);
             case ExportArtworkOutcome.Refused refused:
                 return ArtworkEndpoints.UploadRefusal(context, refused.Upload);
             default:

@@ -1,5 +1,5 @@
 import { sunoListAddress, sunoPageOf } from '../adapter/addresses.ts';
-import type { Clock } from '../adapter/clock.ts';
+import { realClock, type Clock } from '../adapter/clock.ts';
 import {
   PAGE_RETRIES,
   readLeg,
@@ -13,6 +13,7 @@ import type { Page } from '../adapter/primitives.ts';
 import type { AdapterSession } from '../adapter/registry.ts';
 import { loadMore } from '../adapter/workflows/loadMore.ts';
 import type {
+  ImageProgress,
   Request,
   ResponseFor,
   SyncLeg,
@@ -37,10 +38,21 @@ export interface SunoSyncOptions {
   send: (request: Request) => Promise<unknown>;
   /** Shows a state in the panel's Sync to n8Tracks, opening the panel. */
   show: (state: SyncViewState) => void;
+  /** Shows the finished sync's cover images (#152), changing nothing else in the panel. */
+  showImages?: (images: ImageProgress | null) => void;
   versions: { extension: string; adapter: number };
   clock?: Clock;
   now?: () => string;
 }
+
+/** How often the panel asks how the cover images are going (#152). */
+export const IMAGES_POLL_MS = 1_000;
+
+/** How long the panel follows the cover images after a sync before it stops asking. */
+export const IMAGES_WATCH_MS = 30 * 60_000;
+
+/** The image states after which nothing changes. */
+const IMAGES_DONE = new Set<ImageProgress['state']>(['finished', 'stopped', 'skipped']);
 
 /** The step named when the Suno tab is no longer on the page a leg is read on. */
 export const TAB_LOST = 'Suno tab lost';
@@ -280,5 +292,32 @@ export class SunoSync {
             report: report('Finish the export', `n8Tracks to accept it (${finished.message})`),
           },
     );
+    if (finished.ok) {
+      await this.watchImages();
+    }
+  }
+
+  /**
+   * Follows the cover images the service worker sends after the export is ready (#152), showing
+   * their counts until they are done, for at most {@link IMAGES_WATCH_MS}.
+   */
+  private async watchImages(): Promise<void> {
+    const clock = this.options.clock ?? realClock;
+    const deadline = clock.now() + IMAGES_WATCH_MS;
+    for (;;) {
+      const answer: unknown = await this.options
+        .send({ type: 'sync-images' })
+        .catch(() => undefined);
+      const found: unknown = isRecord(answer) ? answer.images : null;
+      if (!isRecord(found)) {
+        return;
+      }
+      const images = found as unknown as ImageProgress;
+      this.options.showImages?.(images);
+      if (IMAGES_DONE.has(images.state) || clock.now() >= deadline) {
+        return;
+      }
+      await clock.sleep(IMAGES_POLL_MS);
+    }
   }
 }

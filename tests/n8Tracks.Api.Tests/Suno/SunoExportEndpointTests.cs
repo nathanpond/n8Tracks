@@ -646,6 +646,59 @@ public sealed class SunoExportEndpointTests
     }
 
     /// <summary>
+    /// A cover image that arrives after the import was confirmed (#152): a committed export stages
+    /// nothing, but its 409 names the Generation the record became, and the extension's own token may
+    /// give that Generation an image only when it has none. A record that became no Generation names none.
+    /// </summary>
+    [Fact]
+    public async Task ALateCoverImageIsTurnedToTheRecordsGenerationWhichKeepsAnImageItHas()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var token = await SunoWorkspaceApi.ExtensionTokenAsync(factory);
+        var library = SunoExportApi.LibraryClips();
+        await SongApi.CreateAsync(client, "Imported");
+        await SongApi.AttachGenerationAsync(factory, "n8-1-v1", library[0].ToJsonString());
+        var (id, _) = await SunoExportApi.UploadAsync(client, token, SunoExportApi.Header(), SunoExportApi.Part(1, library));
+        TestDatabase.Execute(factory.DataPath, $"UPDATE suno_exports SET state = 'committed' WHERE upper(id) = '{id.ToString().ToUpperInvariant()}';");
+        var generation = Guid.Parse(TestDatabase.Scalar(factory.DataPath, "SELECT id FROM generations;"));
+        var red = ArtworkImages.Solid(SKEncodedImageFormat.Png, 64, 64, ArtworkImages.Red);
+        var blue = ArtworkImages.Solid(SKEncodedImageFormat.Png, 64, 64, ArtworkImages.Blue);
+
+        using (var late = await UploadArtworkAsync(client, token, id, SunoExportApi.IdOf(library[0]), red))
+        {
+            var problem = await SetupApi.ProblemAsync(late, HttpStatusCode.Conflict, ExportStagingService.NotReadyCode);
+            Assert.Equal("committed", problem.GetProperty("state").GetString());
+            Assert.Equal(generation, problem.GetProperty("generationId").GetGuid());
+        }
+
+        using (var noGeneration = await UploadArtworkAsync(client, token, id, SunoExportApi.IdOf(library[1]), red))
+        {
+            var problem = await SetupApi.ProblemAsync(noGeneration, HttpStatusCode.Conflict, ExportStagingService.NotReadyCode);
+            Assert.False(problem.TryGetProperty("generationId", out _));
+        }
+
+        Assert.Equal(string.Empty, TestDatabase.Scalar(factory.DataPath, "SELECT coalesce(artwork_asset_id, '') FROM generations;"));
+
+        // The Generation has no image: the extension's token gives it one.
+        using (var attached = await UploadGenerationArtworkAsync(client, token, generation, red))
+        {
+            Assert.True(attached.StatusCode == HttpStatusCode.OK, await attached.Content.ReadAsStringAsync());
+        }
+
+        var kept = TestDatabase.Scalar(factory.DataPath, "SELECT artwork_asset_id FROM generations;");
+        Assert.NotEqual(string.Empty, kept);
+
+        // It has one now: another image is refused, and the Generation keeps its own.
+        using (var refused = await UploadGenerationArtworkAsync(client, token, generation, blue))
+        {
+            await SetupApi.ProblemAsync(refused, HttpStatusCode.Conflict, "artwork_exists");
+        }
+
+        Assert.Equal(kept, TestDatabase.Scalar(factory.DataPath, "SELECT artwork_asset_id FROM generations;"));
+    }
+
+    /// <summary>
     /// What Suno says about its own workspaces is applied when the export completes, but only from a
     /// complete list: names and availability are provider state. No Song's workspace changes.
     /// </summary>
@@ -700,6 +753,17 @@ public sealed class SunoExportEndpointTests
         file.Headers.ContentType = new MediaTypeHeaderValue("image/png");
         form.Add(file, "file", "cover.png");
         using var request = new HttpRequestMessage(HttpMethod.Put, SunoExportApi.Export(id, "/artwork/" + Uri.EscapeDataString(sunoId))) { Content = form };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        return await client.SendAsync(request);
+    }
+
+    private static async Task<HttpResponseMessage> UploadGenerationArtworkAsync(HttpClient client, string token, Guid generation, byte[] content)
+    {
+        using var form = new MultipartFormDataContent();
+        var file = new ByteArrayContent(content);
+        file.Headers.ContentType = new MediaTypeHeaderValue("image/png");
+        form.Add(file, "file", "cover.png");
+        using var request = new HttpRequestMessage(HttpMethod.Put, new Uri($"/api/v1/generations/{generation}/artwork", UriKind.Relative)) { Content = form };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         return await client.SendAsync(request);
     }

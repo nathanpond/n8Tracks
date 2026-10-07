@@ -91,6 +91,18 @@ describe('the service worker router', () => {
       ),
     ).toHaveProperty('refused');
     expect(handled).toHaveLength(1);
+
+    // The cover images of a sync (#152) are asked for the same way, and only that way.
+    expect(await route(connection(), { type: 'sync-images' }, suno, ID, undefined, sync)).toEqual({
+      session: null,
+    });
+    expect(handled.at(-1)).toEqual([{ type: 'sync-images' }, 9]);
+    for (const sender of [CONTENT_SCRIPT, PAGE]) {
+      expect(
+        await route(connection(), { type: 'sync-images' }, sender, ID, undefined, sync),
+      ).toHaveProperty('refused');
+    }
+    expect(handled).toHaveLength(2);
   });
 
   it('takes the step log from a content script, answers the report, and clears it on disconnect', async () => {

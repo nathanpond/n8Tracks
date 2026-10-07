@@ -83,8 +83,12 @@ public abstract record ExportArtworkOutcome
     /// <summary>The export has no record with that Suno ID.</summary>
     public sealed record RecordNotFound : ExportArtworkOutcome;
 
-    /// <summary>The export is not ready (images are sent after it is).</summary>
-    public sealed record NotReady(SunoExport Export) : ExportArtworkOutcome;
+    /// <summary>
+    /// The export is not ready (images are sent after it is). For a committed export whose record became
+    /// a live Generation, <paramref name="GenerationId"/> names it, so a cover image that arrives late can
+    /// go to the Generation itself (#152), which keeps an image it already has.
+    /// </summary>
+    public sealed record NotReady(SunoExport Export, Guid? GenerationId = null) : ExportArtworkOutcome;
 
     /// <summary>The upload itself was refused, as any artwork upload is.</summary>
     public sealed record Refused(ArtworkUploadOutcome Upload) : ExportArtworkOutcome;
@@ -134,6 +138,7 @@ public sealed class ExportStagingService(
     RecordClassifier classifier,
     SunoWorkspaceService workspaces,
     ArtworkService artwork,
+    ISunoClipLookup clips,
     IJobQueue jobs,
     IExclusiveTransaction transaction,
     TimeProvider time)
@@ -582,7 +587,19 @@ public sealed class ExportStagingService(
             return new ExportArtworkOutcome.NotFound();
         }
 
-        if (export!.State != SunoExportState.Ready)
+        if (export!.State == SunoExportState.Committed)
+        {
+            // Too late to stage: name the record's Generation, if the commit made one, for the late image.
+            if (!await store.RecordExistsAsync(id, sunoId, cancellationToken).ConfigureAwait(false))
+            {
+                return new ExportArtworkOutcome.RecordNotFound();
+            }
+
+            var live = await clips.LiveGenerationsAsync([sunoId], cancellationToken).ConfigureAwait(false);
+            return new ExportArtworkOutcome.NotReady(export, live.TryGetValue(sunoId, out var linked) ? linked.GenerationId : null);
+        }
+
+        if (export.State != SunoExportState.Ready)
         {
             return new ExportArtworkOutcome.NotReady(export);
         }

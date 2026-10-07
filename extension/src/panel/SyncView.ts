@@ -1,5 +1,5 @@
 import type { Listed } from '../adapter/observations.ts';
-import type { SyncCounts, SyncScope } from '../messages.ts';
+import type { ImageProgress, SyncCounts, SyncScope } from '../messages.ts';
 
 /**
  * Sync to n8Tracks, in the panel on Suno (#134): the user chooses what to read (the whole library,
@@ -13,7 +13,7 @@ export type SyncViewState =
   | { kind: 'choose' }
   | { kind: 'summary'; scope: SyncScope; replacesReady: boolean }
   | { kind: 'reading'; step: string; counts: SyncCounts }
-  | { kind: 'finished'; counts: SyncCounts }
+  | { kind: 'finished'; counts: SyncCounts; images?: ImageProgress | null }
   | { kind: 'stopped'; report: string }
   | { kind: 'cancelled' };
 
@@ -61,6 +61,36 @@ export function summaryText(scope: SyncScope): string {
   }
 }
 
+/**
+ * What the panel says about a sync's cover images (#152), or null before there is anything to
+ * say. The user may start the review while they are sent; an image that could not be read leaves
+ * its Generation without artwork, and never fails the sync.
+ */
+export function imagesText(images: ImageProgress | null | undefined): string | null {
+  if (images === null || images === undefined) {
+    return null;
+  }
+  const sent = `${String(images.sent)} of ${String(images.total)} sent`;
+  const failed =
+    images.failed === 0
+      ? ''
+      : ` ${plural(images.failed, 'image', 'images')} could not be read or sent; ${images.failed === 1 ? 'that Generation is' : 'those Generations are'} imported without artwork.`;
+  switch (images.state) {
+    case 'collecting':
+      return null;
+    case 'skipped':
+      return 'Cover images are not brought along: Suno does not let the extension read them without signing in, so the Generations are imported without artwork.';
+    case 'waiting':
+      return `Cover images: waiting for n8Tracks to get the export ready (${plural(images.total, 'image', 'images')} to send).`;
+    case 'sending':
+      return `Cover images: ${sent} so far. You can start the review meanwhile.${failed}`;
+    case 'finished':
+      return images.total === 0 ? 'No cover images to send.' : `Cover images: ${sent}.${failed}`;
+    case 'stopped':
+      return `Cover images stopped: ${sent}; the export is no longer waiting for them, or the extension was disconnected.${failed}`;
+  }
+}
+
 function nameOrUnnamed(name: string): string {
   return name.trim() === '' ? '(unnamed)' : name;
 }
@@ -75,6 +105,8 @@ export class SyncView {
   private chosenKind: ScopeKind = 'library';
   private chosenIds = new Set<string>();
   private state: SyncViewState = { kind: 'choose' };
+  /** The finished state's line about cover images, updated in place so focus stays put. */
+  private imagesLine: HTMLElement | null = null;
 
   constructor(page: Document, options: SyncViewOptions) {
     this.page = page;
@@ -108,6 +140,23 @@ export class SyncView {
     this.render();
     if (moved) {
       this.focusFirst();
+    }
+  }
+
+  /** The cover images of the finished sync changed (#152): only their line is written again. */
+  setImages(images: ImageProgress | null): void {
+    if (this.state.kind !== 'finished') {
+      return;
+    }
+    this.state = { ...this.state, images };
+    this.writeImages(images);
+  }
+
+  private writeImages(images: ImageProgress | null | undefined): void {
+    const text = imagesText(images);
+    if (this.imagesLine !== null) {
+      this.imagesLine.textContent = text ?? '';
+      this.imagesLine.hidden = text === null;
     }
   }
 
@@ -159,6 +208,7 @@ export class SyncView {
 
   private render(): void {
     this.firstControl = null;
+    this.imagesLine = null;
     this.body.replaceChildren();
     switch (this.state.kind) {
       case 'choose':
@@ -191,11 +241,15 @@ export class SyncView {
           { role: 'status', class: 'sync-done' },
           `Finished: read ${countsText(this.state.counts)}. The review is open in n8Tracks.`,
         );
+        // A status region of its own, so its count updates are announced without moving focus.
+        const images = this.make('p', { role: 'status', class: 'sync-images' });
+        this.imagesLine = images;
+        this.writeImages(this.state.images);
         const again = this.button('Sync again', () => {
           this.show({ kind: 'choose' });
         });
         this.firstControl = again;
-        this.body.append(done, again);
+        this.body.append(done, images, again);
         return;
       }
       case 'stopped': {

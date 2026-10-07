@@ -132,6 +132,27 @@ export interface ExportPart {
   playlists: { id: string; name: string; clipIds: string[] }[];
 }
 
+/**
+ * The cover images of a sync (#152), as the panel shows them: sent once the export is ready.
+ * `failed` counts images that could not be read or were refused (those Generations are imported
+ * without artwork); `ignored` counts those not needed (a Generation that already had an image, or
+ * a record that was not imported).
+ */
+export interface ImageProgress {
+  exportId: string;
+  tabId: number;
+  /**
+   * `collecting` while the sync reads; `waiting` for n8Tracks to get the export ready; `sending`;
+   * then `finished`, or `stopped` (the export went, or the extension was disconnected), or
+   * `skipped` when Suno's images cannot be read without credentials.
+   */
+  state: 'collecting' | 'waiting' | 'sending' | 'finished' | 'stopped' | 'skipped';
+  total: number;
+  sent: number;
+  failed: number;
+  ignored: number;
+}
+
 /** The messages the service worker answers, by type, with the answer each gets. */
 export type Request =
   | { type: 'state'; fresh?: boolean }
@@ -146,6 +167,8 @@ export type Request =
   | { type: 'sync-part'; part: ExportPart }
   | { type: 'sync-complete' }
   | { type: 'sync-discard' }
+  /** The cover images of this tab's last sync (#152). */
+  | { type: 'sync-images' }
   /** The Suno content script: a run that ended and the self-check states (#150). */
   | { type: 'diagnostics-record'; run?: unknown; statuses?: unknown }
   /** The options page and the panel: the diagnostic report, assembled now (#150). */
@@ -166,6 +189,7 @@ export interface ResponseFor {
   'sync-part': SyncReply;
   'sync-complete': SyncReply<{ reviewUrl: string }>;
   'sync-discard': SyncReply;
+  'sync-images': { images: ImageProgress | null };
   'diagnostics-record': { recorded: true };
   'diagnostic-report': DiagnosticReport;
 }
@@ -195,6 +219,7 @@ export const SYNC_TYPES = [
   'sync-part',
   'sync-complete',
   'sync-discard',
+  'sync-images',
 ] as const satisfies readonly Request['type'][];
 
 export type SyncRequest = Extract<Request, { type: (typeof SYNC_TYPES)[number] }>;
@@ -295,6 +320,7 @@ export function isRequest(value: unknown): value is Request {
     case 'sync-resume':
     case 'sync-complete':
     case 'sync-discard':
+    case 'sync-images':
       return true;
     case 'sync-begin':
       return isSyncScope(value.scope);

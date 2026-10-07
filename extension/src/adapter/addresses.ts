@@ -96,3 +96,21 @@ export function sunoListAddress(
       return new URL(`/playlist/${encodeURIComponent(list.id)}`, SUNO_ORIGIN);
   }
 }
+
+/**
+ * The hosts Suno serves cover images from, taken from the image addresses in the TS-003 fixtures
+ * (`image_url`, `image_large_url`). TS-003 read them with no cookies or credentials
+ * (`Access-Control-Allow-Origin: *`). The cover-image read (#152) requests nothing else.
+ */
+export const SUNO_IMAGE_HOSTS: readonly string[] = ['cdn2.suno.ai'];
+
+/** Whether `address` is a cover image on a listed Suno image host, over HTTPS on its own port. */
+export function isSunoImageAddress(address: URL): boolean {
+  return (
+    address.protocol === 'https:' &&
+    address.port === '' &&
+    address.username === '' &&
+    address.password === '' &&
+    SUNO_IMAGE_HOSTS.includes(address.hostname)
+  );
+}

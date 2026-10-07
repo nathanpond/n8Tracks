@@ -3193,3 +3193,24 @@ Merge of #134 and #150:
 - **Decision:** `route` keeps `diagnostics` as its optional fifth argument and takes #134's `sync` as a sixth (`route(connection, message, sender, id, diagnostics?, sync?)`). `CONTENT_SCRIPT_TYPES` is `state`, `relay`, the two diagnostics types, and `SYNC_TYPES`. The sync's runs go through `session.run`, so they reach the step log, and the load-more workflow is in the report like every other workflow.
   **Why:** Both stories added a fifth argument in parallel. #150's notes asked later stories to keep the fifth for `diagnostics`; only #134's three router-test calls and the service worker needed the change.
   **Issue:** #134, #150
+
+#152 (cover images with a sync):
+
+- **Decision:** The service worker reads and sends the images, not the Suno tab. The read (`adapter/imageReader.ts`) is a CORS GET with `credentials: 'omit'`, no headers, `referrerPolicy: 'no-referrer'` and `redirect: 'error'`, made to `https://cdn2.suno.ai` only. The host list (`SUNO_IMAGE_HOSTS`, `isSunoImageAddress`) is in `adapter/addresses.ts`, because the scan forbids a Suno address in a file that sends requests. Neither the manifest nor a permission changes.
+  **Why:** The key link sends images "through the service worker's apiClient", and bytes cannot cross runtime messaging as a Blob. TS-003 found `Access-Control-Allow-Origin: *`, so the extension origin can read the image without a host permission. A redirect could leave the listed hosts, so redirects are refused.
+  **Issue:** #152
+- **Decision:** A clip's cover is `image_large_url` when it is on a listed host, otherwise `image_url`. Covers are collected from every part the sync uploads, library and Trash alike, de-duplicated by Suno ID, and kept in `chrome.storage.local` (`sunoImages`) with the counts. The sender resumes when the service worker starts.
+  **Why:** The large image suits artwork, and the small one is the fallback. Local storage outlives a stopped service worker, so a long send carries on.
+  **Issue:** #152
+- **Decision:** Images wait until the export is `ready`: `GET` every 2 s, for at most 15 min. They are then sent four at a time. Each outcome is counted as `sent`, `failed` (could not be read, or refused with a 4xx/5xx; never retried, per #134), or `ignored` (no such record, a record that became no Generation, or a Generation that already has an image). A discarded, expired or failed export, or a 401, stops the send, and the images not yet sent count as failed.
+  **Why:** The story leaves the wait and the counting open. #134 decided that failures are not retried. A Generation that already has an image is "refused (and ignored)" in the story, so it is not shown as a failure.
+  **Issue:** #152
+- **Decision:** Rule 2: the late-image path needs the record's Generation, and a `suno.sync` credential had no way to find it: `GET .../records` is session-only, and Generation references take no Suno ID. For a **committed** export, `PUT /api/v1/suno/exports/{id}/artwork/{sunoId}` now answers its 409 `export_not_ready` with `generationId`, the live Generation that has the record's Suno ID, when there is one. `ExportStagingService` takes `ISunoClipLookup`, and `NotReady` has an optional `GenerationId`. The extension then calls `PUT /api/v1/generations/{generationId}/artwork`, whose `artwork_exists` refusal for `suno.*` tokens (#121) keeps an existing image. During `committing` the image waits and is sent again.
+  **Why:** This is the smallest additive change that lets the key link (late images go to the Generations endpoint) work. It adds a member to an existing problem and changes no status, route or schema, and it needs no migration. The import still never writes `artwork_asset_id` itself.
+  **Issue:** #152
+- **Decision:** AC 5 is a constant, `IMAGES_READABLE = true` (TS-003), and the sender takes a `readable` option. When it is false, nothing is read or sent and the panel says that images are not brought along.
+  **Why:** TS-003 found that images can be read this way, so the skip path exists only for a future spike result. It is tested through the option.
+  **Issue:** #152
+- **Decision:** The panel follows the images with a new tab-bound message, `sync-images` (in `SYNC_TYPES`, answered only to the sync's own tab), polled every second after a finished sync, for at most 30 min. Only the finished state's `.sync-images` status line is rewritten, so focus stays put. `ADAPTER_VERSION` goes from 2 to 3 because an address pattern was added.
+  **Why:** The router signature stays the same, with no seventh argument. `addresses.ts` says that a new pattern raises the adapter version.
+  **Issue:** #152

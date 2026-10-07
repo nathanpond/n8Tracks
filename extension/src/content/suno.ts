@@ -194,6 +194,9 @@ export function startSunoContent(options: SunoContentOptions): SunoContent {
         void refresh();
       }
     },
+    showImages: (images) => {
+      syncView.setImages(images);
+    },
     versions: { extension: options.extensionVersion, adapter: ADAPTER_VERSION },
     ...(options.clock === undefined ? {} : { clock: options.clock }),
   });
