@@ -3214,3 +3214,61 @@ Merge of #134 and #150:
 - **Decision:** The panel follows the images with a new tab-bound message, `sync-images` (in `SYNC_TYPES`, answered only to the sync's own tab), polled every second after a finished sync, for at most 30 min. Only the finished state's `.sync-images` status line is rewritten, so focus stays put. `ADAPTER_VERSION` goes from 2 to 3 because an address pattern was added.
   **Why:** The router signature stays the same, with no seventh argument. `addresses.ts` says that a new pattern raises the adapter version.
   **Issue:** #152
+
+Story #136 (built in parallel; merged into the milestone branch):
+
+- **Decision:** The kind markers are data. `kindMarkers` in `docs/suno-import-field-map.json` now holds `{path, equals}` for Speech (`metadata.is_speech` = true) and Sound (`metadata.task` = "sound"). `ImportFieldMap.KindMarkers` reads them, and `ClipInputMapper.KindOf` applies them.
+  **Why:** AC 1 says "by the marker the import field map names". Keeping the map as data, with no field code in the mapper, follows #135's approach.
+  **Issue:** #136
+- **Decision:** A clip's kind is undetermined in two cases:
+  - Both markers match.
+  - A marker holds a value of another JSON type than the map's, for example `is_speech: "yes"` or a numeric `task`.
+
+  The clip then maps as a Song with `KindUnknown`, and its staged record gets `flags: ["unknown_kind"]` (`SunoExportRules.UnknownKindFlag`) at staging time. When a repeated record keeps a later copy, the flag follows that copy. A clip with no `metadata`, or with `is_speech: false`, is a determined Song.
+  **Why:** The discretion fixes the flag name and the fallback. "Unrecognised marker" has to be decidable without listing every lineage task. Treating a missing marker as unknown would flag every minimal or older clip (and break #131's flag assertions). The flag name `unknown_kind` follows the discretion literally, though the other flags are camelCase.
+  **Issue:** #136
+- **Decision:** Map data, as #135 did for Variety:
+  - `speech_variety` gets the numeric 0–4 table; only High (2) is verified.
+  - `sound_type` becomes `enum` over the bool (`one_shot`: false, `loop`: true). Absent is the default, One-shot.
+  - `sound_key` and `sound_scale` get a `pattern`, a regex with one capturing group, over the shared `user_key`. Key `^([A-G]#?)m?$` gives the note. Scale `^[A-G]#?(m?)$` gives `m` for minor or nothing for major.
+  - A flat or other unmatched key is kept raw and marked out of range for both. An absent key is Any, with the scale unset (null).
+  **Why:** The inventory holds `sound_type` as a choice, and key and scale as two choices, while Suno returns a bool and one combined string. A generic `pattern` keeps the mapper free of per-field code. Only `Am` and Loop were verified in TS-003.
+  **Issue:** #136
+- **Decision:** Only the fields of the clip's own tab are read. The Songs `title` and `model` are therefore not read for a Speech or a Sound: they keep their defaults, and `MappedClipInputs.Model` is null, so a commit adds no model. Compared keys are `kind`, the kind's mode (`songMode` or `speechMode`; none for a Sound), and the tab's options.
+  **Why:** This follows the discretion: "Options belonging to another tab are ignored (they remain in the raw JSON)". In the inventory, `title` is a Songs-tab field. A kind mismatch with the linked Version makes the record a `conflict`.
+  **Issue:** #136
+- **Decision:** Speech mode:
+  - Simple by #135's marker.
+  - Advanced when `gpt_description_prompt` is absent.
+  - With the prompt but another task (no mode marker), Advanced when the script (`speech_script`'s feed path) is not blank after trimming, else Simple.
+
+  Speech Simple's Variety, which Suno does not send and which is not on the Simple form, stays at the default and is not marked not returned. Songs Simple treats absent sliders the same way.
+  **Why:** This follows the discretion ("Advanced when it has a script", "a whitespace-only script counts as absent") and keeps parity with #135.
+  **Issue:** #136
+- **Decision:** The coverage test now walks every tab. It asserts all 35 inventory keys: 28 in `ReadKeys`, plus the 7 in `ReadElsewhere`, checked against an explicit owner list in the test (6 for #137, 1 for #140). The new bite test adds a made-up `sound_swing` field to a copy of the inventory. Redaction needed no change: #113 already lists `speechprompt`, `speechscript`, `speechtone`, and `sounddescription`. There is no migration and no web change, because the review page belongs to #139.
+  **Why:** This follows AC 5 and the discretion's owner-list line. The attention mark is a staged-record flag, not a Version field.
+  **Issue:** #136
+
+Story #137 (built in parallel; merged into the milestone branch):
+
+- **Decision:** Rule 3: migration `20261007030000_AllowResolvedExternalSources` replaces `tr_version_sources_frozen_update`. On a frozen Version it now allows two pointer rewrites: the existing Generation → external reference (#122), and the reverse, external reference → Generation. Each is allowed only when the Suno ID on both sides is the same and every other column is unchanged. No table is rebuilt.
+  **Why:** Imported Versions are frozen as soon as their Generation is attached, so without this the resolver could not point a "Not imported" source at its parent's Generation. The source's identity (its Suno ID) is unchanged, which keeps invariant 1. The guard asserts the new clause, refuses the rewrite to a Generation with another Suno ID, and checks that `Stored()` is byte-identical before and after resolution.
+  **Issue:** #137
+- **Decision:** Lineage takes part in the same-inputs comparison through a new trailing `MappedClipInputs.Lineage` (`ImportedLineage`) that `SameInputs` compares by `LineageReader.ComparisonKeyOf`. It is not a key of `Compared`, and `Differs` (clip vs Version, the classifier's conflict) ignores lineage.
+  **Why:** Tests assert the exact `Compared` key set, and a lineage key there would make `Differs` read it from `VersionInputs` and call every linked clip with lineage a conflict. The issue's discretion gives "lineage differs from its Version's" to the diff story.
+  **Issue:** #137
+- **Decision:** `metadata.task` decides only the audio action. Inspiration (`playlist_id`/`playlist_clip_ids`) and the Voice (`persona_id` + `persona.name`) are read from their own fields whatever the task. `playlist_condition`, `vox_playlist_condition` and `agentic_thinking` are recognised tasks that have no audio action. An unknown task gets Remix sources from `clip_roots`, and a missing task (Reuse Prompt) gets none.
+  **Why:** TS-002 saw Voice combined with Inspiration under one task. Reading the fields directly keeps any combination Suno reports.
+  **Issue:** #137
+- **Decision:** Secondary IDs are keyed by Suno's field name with its index (`edited_clip_id`, `history[i]`, `clip_roots[i]`, `mashup_clip_ids[i]`). Each ID appears once, up to the 10 the rules allow. A `clip_roots` ID that is already a direct source in the group is not repeated. Extend's direct source is `edited_clip_id`, else the last `history` entry, else the first `clip_roots` entry. Its position comes from the matching `history` entry, else `metadata.continue_at`, rounded to hundredths. A Cover or Mashup clip with no source ID falls back to Remix sources from `clip_roots`.
+  **Why:** The issue gives the fields but not the encoding. These choices keep every identifier, in order, and the result passes `VersionLineageRules` (Complete, Import) for every TS-002 example.
+  **Issue:** #137
+- **Decision:** An uploaded or recorded audio file is marked by a new `fileInput` sub-entry on the `audio` entry of `docs/suno-import-field-map.json` (`notReturned`; parsed as `ImportFieldEntry.FileInput`). Image and video keep their existing `notReturned` entries. The reader turns any file input the map does locate into a note saying "Imported from Suno". With the shipped map, no file note is ever produced.
+  **Why:** AC 7 asks for "not returned" in the map where Suno does not report the file. The `audio` key's own feed path is the lineage task, so it needed a separate marker.
+  **Issue:** #137
+- **Decision:** `ExternalReferenceResolver` (`Application.Suno`) has three methods: `LinkAsync(ImportedLineage)` at import, public `ResolveAsync(sunoId)` in its own transaction, and internal `ResolveWithinAsync(sunoId)` for #140's commit transaction. Resolving relates child Song → parent Song under the source's type (the sources-story rule). `LinkAsync` does not relate: #140's import write should relate linked sources as `VersionService.RelateSourcesAsync` does. The resolver takes no catalog type, so it is not in the guard's namespace list; a dedicated guard fact covers it. Filling `suno_playlists`/`suno_personas` and the review text are left to #153, as the issue's moved-criteria line says. The inspiration playlist's name is blank at read, because the clip carries none.
+  **Why:** This keeps the reader pure and the resolver callable inside or outside a transaction.
+  **Issue:** #137
+- **Decision:** Rule 1: the replaced trigger wraps its "allowed rewrite" test in `COALESCE(..., 0)`, so a comparison SQLite cannot decide counts as a change and is refused. Example: a source pointed at a Generation ID that no longer exists, whose Suno ID subquery gives NULL. The guard has a regression case.
+  **Why:** Without it, `NOT (… = NULL)` is NULL, the trigger's WHEN does not fire, and pointing a frozen source at a deleted Generation got through. This was caught by `VersionSourcesEndpointTests.ASourceWhoseGenerationIsDeletedKeepsItsSunoIdAndAFrozenVersionIsUnchanged`.
+  **Issue:** #137
