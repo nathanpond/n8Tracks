@@ -4082,3 +4082,9 @@ Story #205 (built in parallel; merged into the milestone branch):
 - **Decision:** `scripts/smoke-docker.sh`'s `mounted` section now puts a real fixture (`tone.mp3`) and a link out (`escape.mp3` -> `/etc/hostname`) in the `:ro` media folder. It then runs a manual scan through the API and expects it to succeed, with `seen` 2 (the existing fake `track.flac` counts as unreadable), `skippedLinks.escaping` 1, and no `read-only file system`, `EROFS`, or `UnauthorizedAccess` text in the log. The `api` helper moved above `mounted`. This is a manual scan because the startup scan arrives with #204, in parallel.
   **Why:** The test plan's container proof. #204 can switch it to the startup scan.
   **Issue:** #205
+
+Step A reconcile (merging #205 after #204, #206, and #215):
+
+- **Decision:** `MediaScanService.IsFolderAvailableAsync` (#204) asks `IMediaMount.Probe` within the listing limit instead of listing the whole root. #207 then routes it through `IMediaFolderProbe`. The #205 guard lists needed no change for #204's or #206's files: none of them names `IMediaMount` or `MediaPath`, or uses a file-system API.
+  **Why:** #205 made `Probe` the one check of the mount root, and the merge brief asked to consider it. A root listing in a large library reads every entry only to answer yes or no.
+  **Issue:** #205
