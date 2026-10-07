@@ -47,6 +47,7 @@ public static class DependencyInjection
         services.AddScoped<ExternalReferenceResolver>();
         services.AddScoped<SunoWorkspaceService>();
         services.AddScoped<RecordClassifier>();
+        services.AddScoped<ProposalService>();
         services.AddScoped<ExportStagingService>();
         services.AddJobHandler<ExportClassifyJobHandler>(ExportStagingService.ClassifyJobType);
         services.AddScoped<GenreService>();

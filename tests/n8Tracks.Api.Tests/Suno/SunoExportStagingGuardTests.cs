@@ -12,10 +12,11 @@ using n8Tracks.Application.Suno.Import;
 namespace n8Tracks.Api.Tests.Suno;
 
 /// <summary>
-/// Guard for invariant 3, first half (#131): receiving and classifying a Suno export never changes
-/// catalog data. Every catalog table is snapshotted, whole rows, before an export is uploaded and after
-/// it is classified (with every class present, its records read, an image staged, and an earlier export
-/// discarded), and the two must be identical. The catalog tables are named explicitly, and so are the
+/// Guard for invariant 3, first half (#131, #138): receiving, classifying, and proposing a Suno export,
+/// and changing its choices, never change catalog data. Every catalog table is snapshotted, whole rows,
+/// before an export is uploaded and after it is classified and proposed (with every class present, its
+/// records read, an image staged, choices changed, and an earlier export discarded), and the two must be
+/// identical. The catalog tables are named explicitly, and so are the
 /// tables that are not catalog data; a new table in neither list fails the guard until it is placed.
 /// The commit story (#140) extends this to the commit itself.
 /// <para>
@@ -62,7 +63,7 @@ public sealed class SunoExportStagingGuardTests
     }
 
     [Fact]
-    public async Task ReceivingAndClassifyingAnExportChangesNoCatalogTable()
+    public async Task ReceivingClassifyingProposingAndChoosingChangeNoCatalogTable()
     {
         using var factory = SongApi.Host();
         Assert.Empty(await ChangedTablesAsync(factory));
@@ -185,6 +186,12 @@ public sealed class SunoExportStagingGuardTests
             using var staged = await client.SendAsync(request);
             Assert.Equal(System.Net.HttpStatusCode.OK, staged.StatusCode);
         }
+
+        // Proposals were made (#138), and changing choices, even to targets in the catalog, writes none of it.
+        Assert.Equal("import", (await SunoExportApi.RecordsByIdAsync(client, id))["brand-new"].GetProperty("choice").GetProperty("action").GetString());
+        var newVersion = new JsonObject { ["kind"] = "newVersion", ["key"] = "new:50", ["song"] = "n8-1", ["parentVersion"] = "n8-1-v2", ["number"] = "2.1" };
+        await ProposalApi.ChangedAsync(client, id, 1, ProposalApi.Change(ProposalApi.Import(newVersion), "brand-new"));
+        await ProposalApi.ChangedAsync(client, id, 2, ProposalApi.Change(new JsonObject { ["action"] = "ignore" }, "brand-new"));
 
         // Provider state did change (a complete list), so the run reached it; the catalog did not.
         Assert.Equal("Studio, renamed", (await SunoWorkspaceApi.OneAsync(client, "studio")).GetProperty("name").GetString());

@@ -110,6 +110,19 @@ internal static class SunoExportsEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
+        endpoints.MapPatch(RecordsPath, ChangeChoicesAsync)
+            .WithName("ChangeSunoExportChoices")
+            .WithSummary("Changes the choice of some records of a ready export (#138): { sunoIds: [up to 1,000], choice }, with If-Match on the export's revision. A choice is { action: skip | ignore } or { action: import, target }, the target { kind: newSong, key: \"new:<n>\", title, workspaceId? }, { kind: newVersion, key, song: <Song ID or shortcode, or a new Song's key>, parentVersion: <Version ID or shortcode> | null, number }, or { kind: version, version: <Version ID or shortcode> }. A clip goes to an existing Version only when its inputs are the Version's; a new Version's number follows the numbering rules. Refused whole with 422 invalid_choices and reasons per Suno ID (record_not_found, already_linked, inputs_differ, target_missing, parent_not_in_song, invalid_number, invalid_title, target_conflict). 200 with the export at its new revision. 409 export_not_ready unless ready; 409 revision_conflict. Changes nothing in the catalog.")
+            .SessionOnly()
+            .Produces<SunoExportResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
         endpoints.MapPut(ArtworkPath, StageArtworkAsync)
             .WithName("StageSunoExportArtwork")
             .WithSummary("Holds a cover image (multipart/form-data, one JPEG, PNG, or WebP file, checked as any artwork upload is) with a staged record of a ready export; a second image replaces the first. Nothing in the catalog changes: the commit gives it to the Generation. 409 export_not_ready unless the export is ready (with state, and for a committed export the record's live Generation as generationId, so a late image can go to PUT /api/v1/generations/{reference}/artwork); 404 for an unknown export or record; 413, 415, or 422 as for POST /api/v1/artwork.")
@@ -316,9 +329,13 @@ internal static class SunoExportsEndpoints
     {
         SessionEndpoints.NoStore(context);
 
-        return await exports.FindAsync(id, CallerOf(context.User), cancellationToken) is { } view
-            ? TypedResults.Ok(SunoExportResponse.From(view))
-            : NoSuchExport(context);
+        if (await exports.FindAsync(id, CallerOf(context.User), cancellationToken) is not { } view)
+        {
+            return NoSuchExport(context);
+        }
+
+        Revisions.SetETag(context, view.Export.Revision);
+        return TypedResults.Ok(SunoExportResponse.From(view));
     }
 
     /// <summary>200 with a page of records; 400 <c>invalid_request</c> for a parameter the list does not understand; 404.</summary>
@@ -361,6 +378,78 @@ internal static class SunoExportsEndpoints
         return await exports.RecordsAsync(id, filter, cancellationToken) is { } records
             ? TypedResults.Ok(SunoExportRecordListResponse.From(records))
             : NoSuchExport(context);
+    }
+
+    /// <summary>
+    /// 200 with the export at its new revision (and its ETag); 400 or 422 for a body that is not a change
+    /// of choices; 404; 409 when the export is not ready or not at the revision sent; 422
+    /// <c>invalid_choices</c> with <c>records</c>, the reasons by Suno ID, when any choice is refused.
+    /// </summary>
+    private static async Task<Results<Ok<SunoExportResponse>, ProblemHttpResult>> ChangeChoicesAsync(
+        Guid id,
+        ExportStagingService exports,
+        ProposalService proposals,
+        HttpContext context,
+        ILoggerFactory loggers,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        var (revision, revisionProblem) = Revisions.Read(context);
+        if (revisionProblem is not null)
+        {
+            return revisionProblem;
+        }
+
+        var (body, problem) = await ReadBodyAsync(context, SunoExportRules.MaximumHeaderBytes, cancellationToken);
+        if (problem is not null)
+        {
+            return problem;
+        }
+
+        ChoiceChangeReading.Read change;
+        using (var document = body!)
+        {
+            switch (ImportChoiceJson.ReadChange(document.Document.RootElement))
+            {
+                case ChoiceChangeReading.Invalid invalid:
+                    return ApiProblem.ValidationFailed(context, invalid.Errors);
+                case ChoiceChangeReading.Read read:
+                    change = read;
+                    break;
+                default:
+                    throw new InvalidOperationException("Unknown change reading.");
+            }
+        }
+
+        switch (await proposals.ChangeChoicesAsync(id, revision!.Value, change.SunoIds, change.Choice, cancellationToken))
+        {
+            case ChoiceChangeOutcome.Changed changed:
+                Log(loggers).LogInformation("Suno export choices changed: {ExportId} now at revision {Revision}, {RecordCount} records", id, changed.Revision, changed.Count);
+                var view = (await exports.FindAsync(id, null, cancellationToken))!;
+                Revisions.SetETag(context, view.Export.Revision);
+                return TypedResults.Ok(SunoExportResponse.From(view));
+            case ChoiceChangeOutcome.NotFound:
+                return NoSuchExport(context);
+            case ChoiceChangeOutcome.NotReady notReady:
+                return ApiProblem.For(
+                    context,
+                    StatusCodes.Status409Conflict,
+                    ExportStagingService.NotReadyCode,
+                    "Choices change only while the export is ready for review.",
+                    [new("state", SunoExportRules.NameOf(notReady.Export.State))]);
+            case ChoiceChangeOutcome.Stale:
+                return Revisions.Conflict(context, SunoExportResponse.From((await exports.FindAsync(id, null, cancellationToken))!));
+            case ChoiceChangeOutcome.Refused refused:
+                return ApiProblem.For(
+                    context,
+                    StatusCodes.Status422UnprocessableEntity,
+                    ProposalService.InvalidChoicesCode,
+                    "Some of these choices cannot be made; nothing was changed.",
+                    [new("records", refused.Reasons)]);
+            default:
+                throw new InvalidOperationException("Unknown choice outcome.");
+        }
     }
 
     /// <summary>200 with the staged image; 404, 409, or the upload's own refusals otherwise.</summary>

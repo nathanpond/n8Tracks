@@ -37,6 +37,7 @@ public sealed class ReferenceParameterGuardTests
         "POST /api/v1/suno/exports/{id:guid}/discard: id",
         "GET /api/v1/suno/exports/{id:guid}: id",
         "GET /api/v1/suno/exports/{id:guid}/records: id",
+        "PATCH /api/v1/suno/exports/{id:guid}/records: id",
         "PUT /api/v1/suno/exports/{id:guid}/artwork/{sunoId}: id",
         "PATCH /api/v1/genres/{id:guid}: id",
         "POST /api/v1/genres/{id:guid}/merge: id",

@@ -59,6 +59,15 @@ public sealed record StagedRecord(
     Guid? GenerationId,
     Guid? ArtworkAssetId);
 
+/// <summary>A classified staged record as proposals read it (#138): its Suno ID, raw clip, class, and the Generation holding its Suno ID.</summary>
+public sealed record ClassifiedRecord(string SunoId, string RawJson, SunoRecordClass? Class, Guid? GenerationId);
+
+/// <summary>A staged record's class and current choice (JSON), as a change of choices checks the whole export (#138).</summary>
+public sealed record RecordChoiceState(string SunoId, SunoRecordClass? Class, string? ChoiceJson);
+
+/// <summary>A record's proposal and the choice it starts with, both as JSON (<see cref="ImportChoiceJson"/>).</summary>
+public sealed record RecordProposalRow(string SunoId, string ProposalJson, string ChoiceJson);
+
 /// <summary>Which staged records to list: optional filters, and a page.</summary>
 public sealed record StagedRecordQuery(SunoRecordClass? Class, string? WorkspaceId, string? PlaylistId, int Page, int PageSize);
 
@@ -114,6 +123,22 @@ public interface ISunoExportStore
 
     /// <summary>Writes each record's class, linked Generation, and changed fields.</summary>
     Task ClassifyAsync(Guid exportId, IReadOnlyList<RecordClassification> classifications, CancellationToken cancellationToken);
+
+    /// <summary>The export's staged records (only those of <paramref name="sunoIds"/>, when given) with their class, by Suno ID (ordinal).</summary>
+    Task<IReadOnlyList<ClassifiedRecord>> ClassifiedRecordsAsync(Guid exportId, IReadOnlyCollection<string>? sunoIds, CancellationToken cancellationToken);
+
+    /// <summary>Writes each record's proposal and the choice it starts with (#138).</summary>
+    Task ProposeAsync(Guid exportId, IReadOnlyList<RecordProposalRow> proposals, CancellationToken cancellationToken);
+
+    /// <summary>Every staged record's class and choice.</summary>
+    Task<IReadOnlyList<RecordChoiceState>> ChoicesAsync(Guid exportId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// When the export is ready and at <paramref name="revision"/>: raises its revision by one and sets the
+    /// choice of each of <paramref name="sunoIds"/> to <paramref name="choiceJson"/>; false otherwise, with
+    /// nothing written.
+    /// </summary>
+    Task<bool> TrySetChoicesAsync(Guid exportId, int revision, IReadOnlyCollection<string> sunoIds, string choiceJson, CancellationToken cancellationToken);
 
     /// <summary>How many staged records the export has in each class (a class with none is left out).</summary>
     Task<IReadOnlyDictionary<SunoRecordClass, int>> CountsAsync(Guid exportId, CancellationToken cancellationToken);

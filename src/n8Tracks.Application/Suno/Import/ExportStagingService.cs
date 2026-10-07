@@ -136,6 +136,7 @@ public sealed record ExportExpirySummary(int Expired, int Discarded, int Failed,
 public sealed class ExportStagingService(
     ISunoExportStore store,
     RecordClassifier classifier,
+    ProposalService proposals,
     SunoWorkspaceService workspaces,
     ArtworkService artwork,
     ISunoClipLookup clips,
@@ -447,6 +448,7 @@ public sealed class ExportStagingService(
     /// the parts in number order, then the playlist memberships, then the classes in batches, each step in
     /// its own transaction that first checks the export is still classifying; last, a complete workspace
     /// list is applied and the export becomes ready. A failure leaves it <c>failed</c> with nothing staged.
+    /// After the classes, each record gets its proposal and starting choice (<see cref="ProposalService"/>, #138).
     /// </summary>
     internal async Task<ExportClassification> ClassifyAsync(Guid id, CancellationToken cancellationToken)
     {
@@ -503,6 +505,12 @@ public sealed class ExportStagingService(
                 }
 
                 after = records[^1].SunoId;
+            }
+
+            // Proposals (#138) need every record classed: a new clip may follow a linked group-mate.
+            if (!await StillClassifyingAsync(id, ct => proposals.ProposeWithinAsync(id, ct), cancellationToken).ConfigureAwait(false))
+            {
+                return new ExportClassification.Abandoned();
             }
 
             var ready = await transaction.RunAsync(

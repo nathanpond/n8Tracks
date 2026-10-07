@@ -897,6 +897,7 @@ public sealed class VersionImmutabilityGuardTests
         ["POST /api/v1/suno/exports/{id:guid}/parts"] = "stages a part of a Suno export (suno_export_parts, #131); the catalog is not touched",
         ["POST /api/v1/suno/exports/{id:guid}/complete"] = "classifies a staged export (suno_export_records, #131) and applies a complete workspace list (provider state); no Song, Version, or Generation is touched",
         ["POST /api/v1/suno/exports/{id:guid}/discard"] = "removes a staged export's rows (#131); the catalog is not touched",
+        ["PATCH /api/v1/suno/exports/{id:guid}/records"] = "changes the choices of a staged export's records (suno_export_records, #138); a choice only names a Version, and the catalog is not touched until the commit (#140), which the guard extends to",
         ["PUT /api/v1/suno/exports/{id:guid}/artwork/{sunoId}"] = "stores an image as an asset held by a staged record (#131); no Generation or Version is touched until the commit",
     };
 

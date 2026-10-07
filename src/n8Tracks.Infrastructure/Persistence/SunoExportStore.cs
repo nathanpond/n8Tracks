@@ -231,6 +231,76 @@ internal sealed class SunoExportStore(N8TracksDbContext context) : ISunoExportSt
         }
     }
 
+    public async Task<IReadOnlyList<ClassifiedRecord>> ClassifiedRecordsAsync(Guid exportId, IReadOnlyCollection<string>? sunoIds, CancellationToken cancellationToken)
+    {
+        var rows = context.StagedClips.AsNoTracking().Where(row => row.ExportId == exportId);
+        if (sunoIds is not null)
+        {
+            var ids = sunoIds.ToList();
+            rows = rows.Where(row => ids.Contains(row.SunoId));
+        }
+
+        var read = await rows
+            .OrderBy(static row => row.SunoId)
+            .Select(static row => new { row.SunoId, row.RawJson, row.Class, row.GenerationId })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return [.. read.Select(static row => new ClassifiedRecord(row.SunoId, row.RawJson, SunoExportRules.ClassOf(row.Class), row.GenerationId))];
+    }
+
+    public async Task ProposeAsync(Guid exportId, IReadOnlyList<RecordProposalRow> proposals, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(proposals);
+
+        foreach (var proposal in proposals)
+        {
+            await context.StagedClips
+                .Where(row => row.ExportId == exportId && row.SunoId == proposal.SunoId)
+                .ExecuteUpdateAsync(
+                    setter => setter
+                        .SetProperty(static row => row.ProposalJson, proposal.ProposalJson)
+                        .SetProperty(static row => row.ChoiceJson, proposal.ChoiceJson),
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+    }
+
+    public async Task<IReadOnlyList<RecordChoiceState>> ChoicesAsync(Guid exportId, CancellationToken cancellationToken)
+    {
+        var read = await context.StagedClips.AsNoTracking()
+            .Where(row => row.ExportId == exportId)
+            .OrderBy(static row => row.SunoId)
+            .Select(static row => new { row.SunoId, row.Class, row.ChoiceJson })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return [.. read.Select(static row => new RecordChoiceState(row.SunoId, SunoExportRules.ClassOf(row.Class), row.ChoiceJson))];
+    }
+
+    public async Task<bool> TrySetChoicesAsync(Guid exportId, int revision, IReadOnlyCollection<string> sunoIds, string choiceJson, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(sunoIds);
+
+        var ready = SunoExportRules.NameOf(SunoExportState.Ready);
+        var raised = await context.SunoExports
+            .Where(row => row.Id == exportId && row.Revision == revision && row.State == ready)
+            .ExecuteUpdateAsync(setter => setter.SetProperty(static row => row.Revision, static row => row.Revision + 1), cancellationToken)
+            .ConfigureAwait(false);
+        if (raised == 0)
+        {
+            return false;
+        }
+
+        foreach (var chunk in sunoIds.Chunk(500))
+        {
+            await context.StagedClips
+                .Where(row => row.ExportId == exportId && chunk.Contains(row.SunoId))
+                .ExecuteUpdateAsync(setter => setter.SetProperty(static row => row.ChoiceJson, choiceJson), cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        return true;
+    }
+
     public async Task<IReadOnlyDictionary<SunoRecordClass, int>> CountsAsync(Guid exportId, CancellationToken cancellationToken)
     {
         var counts = await context.StagedClips.AsNoTracking()

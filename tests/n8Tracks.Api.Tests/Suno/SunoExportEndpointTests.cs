@@ -108,8 +108,9 @@ public sealed class SunoExportEndpointTests
         Assert.Equal("A title Suno changed", shown.GetProperty("title").GetString());
         Assert.Equal(changed["project"]!["id"]!.GetValue<string>(), shown.GetProperty("workspaceId").GetString());
         Assert.Equal(changed["metadata"]!["duration"]!.GetValue<double>(), shown.GetProperty("durationSeconds").GetDouble());
-        Assert.Equal(JsonValueKind.Null, shown.GetProperty("proposal").ValueKind);
-        Assert.Equal(JsonValueKind.Null, shown.GetProperty("choice").ValueKind);
+        // A record a Generation holds is proposed Skip (#138), and its choice starts there.
+        Assert.Equal("skip", shown.GetProperty("proposal").GetProperty("choice").GetProperty("action").GetString());
+        Assert.Equal("skip", shown.GetProperty("choice").GetProperty("action").GetString());
         Assert.False(shown.GetProperty("hasArtwork").GetBoolean());
         Assert.DoesNotContain("metadata", shown.GetRawText(), StringComparison.Ordinal);
         Assert.False(shown.TryGetProperty("rawJson", out _));

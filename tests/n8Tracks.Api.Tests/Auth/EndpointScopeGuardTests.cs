@@ -126,6 +126,7 @@ public sealed class EndpointScopeGuardTests
         Assert.Equal("scope", markers["GET /api/v1/suno/exports/{id:guid}"]);
         Assert.Equal("scope", markers["PUT /api/v1/suno/exports/{id:guid}/artwork/{sunoId}"]);
         Assert.Equal("session-only", markers["GET /api/v1/suno/exports/{id:guid}/records"]);
+        Assert.Equal("session-only", markers["PATCH /api/v1/suno/exports/{id:guid}/records"]);
         Assert.Equal("session-only", markers["POST /api/v1/suno/models"]);
         Assert.Equal("session-only", markers["PATCH /api/v1/suno/models/{id:guid}"]);
         Assert.Equal("session-only", markers["PUT /api/v1/suno/models/order"]);
@@ -228,7 +229,7 @@ public sealed class EndpointScopeGuardTests
             }
         }
 
-        Assert.Equal(51, sessionOnly);
+        Assert.Equal(52, sessionOnly);
 
         // An anonymous endpoint answers as it would without the header, even to a token that is not one.
         using var status = await CredentialApi.SendRawAsync(client, HttpMethod.Get, SetupApi.Status, "Bearer not-a-token");

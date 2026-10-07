@@ -3272,3 +3272,33 @@ Story #137 (built in parallel; merged into the milestone branch):
 - **Decision:** Rule 1: the replaced trigger wraps its "allowed rewrite" test in `COALESCE(..., 0)`, so a comparison SQLite cannot decide counts as a change and is refused. Example: a source pointed at a Generation ID that no longer exists, whose Suno ID subquery gives NULL. The guard has a regression case.
   **Why:** Without it, `NOT (… = NULL)` is NULL, the trigger's WHEN does not fire, and pointing a frozen source at a deleted Generation got through. This was caught by `VersionSourcesEndpointTests.ASourceWhoseGenerationIsDeletedKeepsItsSunoIdAndAFrozenVersionIsUnchanged`.
   **Issue:** #137
+
+Story #138:
+
+- **Decision:** Proposals are computed by `ProposalService.ProposeWithinAsync` (`Application.Suno.Import`) as the last step of `ExportStagingService.ClassifyAsync`, in its own still-classifying transaction before the move to `ready`. Every record gets `proposal_json` (`{choice, basis, group, freezesVersion}`), and `choice_json` starts as the proposed choice. Linked, changed and conflict records are proposed `skip` with basis `linked`; ignored and deleted records are proposed `skip` with basis `ignored` or `deleted`.
+  **Why:** The discretion says "same job as classification". Writing the starting choice means #139 and #140 read one field, the choice, while the proposal stays as it was for display. Giving every record a proposal leaves no nulls for the review to special-case. #141 and #142 refine the linked, changed and conflict defaults.
+  **Issue:** #138
+- **Decision:** Grouping (`Domain/Suno/ClipGrouping`) puts every new, linked, changed and conflict record into groups, so a new clip can follow a group-mate that is already a Generation. The anchor is the earliest clip (by time, then `batch_index`, then Suno ID). Members are taken in time order while within 1 s of the anchor, skipping any repeated `batch_index`. A set that has no index 0, or has a single clip, leaves the anchor alone, and the remaining clips are grouped again. `group` is numbered only for groups of two or more.
+  **Why:** This follows the TS-001 rule and the anchoring discretion. The complement cases (proximity without `batch_index`, or without index 0) never group.
+  **Issue:** #138
+- **Decision:** The clip-vs-Version comparison is `!ClipInputMapper.Differs(...)` plus an equal lineage comparison key. In the Version's key, each source Generation is counted by its Suno ID (`IVersionStore.FindSourceGenerationAsync`). A Song-target source never matches a clip. A source typed with a user relationship type mapped to the same action also does not match, because the key uses the type ID.
+  **Why:** The discretion says sources are part of the inputs. `Differs` deliberately ignores lineage (#137), and the clip's key names Suno IDs.
+  **Issue:** #138
+- **Decision:** A new Version on an existing Song reuses the earlier proposal's temporary key when an earlier group of the same export has the same inputs. A new Song is still one per Create request (the user's rule). Proposed numbers are `NextTopLevel` over the Song's used numbers plus the numbers already proposed for it in this export.
+  **Why:** Two Create requests with the same settings belong in one Version. The discretion allows several groups to target one new Version, and merging new Songs is left to the user.
+  **Issue:** #138
+- **Decision:** `PATCH /api/v1/suno/exports/{id}/records` takes `{sunoIds (1–1,000, de-duplicated), choice}`, which is the shape #139's discretion uses. It is SessionOnly and needs If-Match on the export revision. It works only on a ready export; otherwise it answers 409 `export_not_ready`. It answers 200 with the export at its new revision plus an ETag, and the GET of the export now sends an ETag too. Malformed bodies get 422 `validation_failed` with errors by field; refusals get 422 `invalid_choices` with `records: {sunoId: [reasons]}`. The `filter`+exclusions form ("select all that match") is left to #139.
+  **Why:** One choice per request matches the review's bulk-apply interaction. The filter form needs #139's `q` search, which does not exist yet.
+  **Issue:** #138
+- **Decision:** These are the validation rules.
+  - Import and ignore are allowed only for new, ignored and deleted records; other records answer `already_linked`. Skip is allowed for any record.
+  - `version`: the clip's inputs must be that Version's, frozen or mutable.
+  - New targets: every record naming a key must describe the same target (`target_conflict`) and hold clips with the same inputs (`inputs_differ`).
+  - `newVersion` of a new Song: the Song is named by its key, must be top-level, and must exist in the resulting choices (`target_missing`). This is checked across the whole export, so a change that removes a new Song still named by another record's new Version is refused.
+  - Numbers: with a parent, the number must be one of `VersionNumbering.Options(parent, used ∪ other keys' numbers)`. Top-level, it must be one part, at least `NextTopLevel(used)` (a new Song has used `1`), and not claimed by another key on that Song.
+  - Catalog-dependent checks run only for the changed records.
+  **Why:** The top-level rule is symmetric, so a skip elsewhere never invalidates another key's number. Revalidating unrelated records against a catalog that moved would block harmless changes. The commit (#140) revalidates everything.
+  **Issue:** #138
+- **Decision:** No migration: `proposal_json`, `choice_json` and `revision` exist since #131. The invariant 3 staging guard (`SunoExportStagingGuardTests`) now also changes choices, including to a catalog target, before the after-snapshot. The invariant 1 guard lists the PATCH as touching no Version. The session-only count is 52.
+  **Why:** The test plan requires the invariant 3 guard to run over proposing and changing choices.
+  **Issue:** #138
