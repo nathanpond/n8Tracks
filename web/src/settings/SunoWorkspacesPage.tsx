@@ -13,7 +13,7 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import type { Song } from '../api/songs';
 import {
@@ -174,7 +174,9 @@ function refusal(result: Exclude<MoveSongsResult, { kind: 'moved' }>): string {
 
 /**
  * The confirmation for a bulk move: how many Songs will move, from which workspace to which. The
- * move is one command, all or nothing.
+ * move is one command, all or nothing. A refusal is said inside the dialog and takes keyboard focus
+ * there (#347): the Move button waits for the answer disabled, so focus would otherwise fall out of
+ * the modal.
  */
 function MoveDialog({
   opened,
@@ -195,6 +197,12 @@ function MoveDialog({
   onClose: () => void;
   onConfirm: () => void;
 }) {
+  const refusal = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (message !== undefined) {
+      refusal.current?.focus();
+    }
+  }, [message]);
   return (
     <Modal
       opened={opened}
@@ -210,7 +218,14 @@ function MoveDialog({
           changes; nothing else about it does. Either every one moves or none does.
         </Text>
         {message !== undefined && (
-          <Text size="sm" role="alert" c="var(--mantine-color-error)">
+          <Text
+            ref={refusal}
+            tabIndex={-1}
+            size="sm"
+            role="alert"
+            c="var(--mantine-color-error)"
+            data-testid="move-refusal"
+          >
             {message}
           </Text>
         )}
@@ -317,6 +332,13 @@ function WorkspaceSongs({
   const [moving, setMoving] = useState(false);
   const [message, setMessage] = useState<string>();
   const [moved, setMoved] = useState<{ count: number; to: SunoWorkspace }>();
+  // After a move the dialog and its trigger are gone or disabled: focus goes to what it says (#347).
+  const movedNote = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (moved !== undefined) {
+      movedNote.current?.focus();
+    }
+  }, [moved]);
 
   const targets = workspaces.filter(
     (candidate) => candidate.state === 'available' && candidate.id !== workspace.id,
@@ -365,7 +387,7 @@ function WorkspaceSongs({
     <Stack gap="md">
       <div role="status">
         {moved !== undefined && (
-          <Text data-testid="songs-moved">
+          <Text ref={movedNote} tabIndex={-1} data-testid="songs-moved">
             Moved {songCountText(moved.count)} to{' '}
             <Anchor component={Link} to={workspacePath(moved.to.id)} underline="always">
               {workspaceName(moved.to)}
