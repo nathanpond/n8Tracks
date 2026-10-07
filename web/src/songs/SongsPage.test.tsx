@@ -267,6 +267,7 @@ describe('Songs', () => {
       'Tags',
       'Updated ▼',
       'Selected',
+      'Audio files',
     ]);
     const first = row('n8-3');
     // A check mark where the Song has a Selected Generation (said in words to a screen reader).
@@ -290,6 +291,34 @@ describe('Songs', () => {
     expect(within(second).getByText('4')).toBeVisible();
     expect(within(second).getByText('Sound')).toBeVisible();
     expect(screen.getByText('2 Songs')).toBeVisible();
+  });
+
+  it('shows each Song’s count of local audio files, blank for none, and sorts by it, most first', async () => {
+    const mock = backend({
+      list: () =>
+        jsonResponse(200, page([song(3, { audioFileCount: 4 }), song(2, { audioFileCount: 0 })])),
+    });
+    const user = userEvent.setup();
+
+    renderApp('/songs');
+
+    await screen.findByRole('table', { name: 'Songs' });
+    expect(within(row('n8-3')).getByTestId('song-audio-file-count')).toHaveTextContent(/^4$/);
+    expect(within(row('n8-2')).getByTestId('song-audio-file-count')).toHaveTextContent(/^$/);
+
+    await user.click(screen.getByRole('button', { name: /Audio files/ }));
+    await waitFor(() => {
+      expect(listRequests(mock).at(-1)).toBe('?sort=audioFiles');
+    });
+    expect(await screen.findByRole('columnheader', { name: /Audio files/ })).toHaveAttribute(
+      'aria-sort',
+      'descending',
+    );
+
+    await user.click(screen.getByRole('button', { name: /Audio files/ }));
+    await waitFor(() => {
+      expect(listRequests(mock).at(-1)).toBe('?sort=audioFiles&direction=asc');
+    });
   });
 
   it('offers no Delete, row selection, or bulk action: Songs are deleted from their own page', async () => {

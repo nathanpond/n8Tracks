@@ -198,6 +198,38 @@ internal sealed class AudioFileStore(N8TracksDbContext context) : IAudioFileStor
         return row is null ? null : (await FilesOfAsync([row], cancellationToken).ConfigureAwait(false))[0];
     }
 
+    public async Task<IReadOnlyList<AudioFile>> ListForSongAsync(Guid songId, CancellationToken cancellationToken)
+    {
+        var rows = await (from file in context.AudioFiles.AsNoTracking()
+                          where file.SongId == songId
+                          join generation in context.Generations on file.GenerationId equals (Guid?)generation.Id into owners
+                          from owner in owners.DefaultIfEmpty()
+                          join version in context.Versions on owner.VersionId equals version.Id into versions
+                          from version in versions.DefaultIfEmpty()
+                          select new
+                          {
+                              Row = file,
+                              VersionSortKey = version == null ? null : version.NumberSortKey,
+                              Ordinal = owner == null ? (int?)null : owner.Ordinal,
+                          })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        // Song-level files first, then by Version tree order (the sort key), Generation ordinal, and
+        // format rank; ties by folder, then file name, then path (all ordinal).
+        var ordered = rows
+            .OrderBy(static row => row.Ordinal is null ? 0 : 1)
+            .ThenBy(static row => row.VersionSortKey, StringComparer.Ordinal)
+            .ThenBy(static row => row.Ordinal)
+            .ThenBy(static row => row.Row.Format, Comparer<string>.Create(AudioFormats.CompareByRank))
+            .ThenBy(static row => row.Row.Path[..^row.Row.FileName.Length], StringComparer.Ordinal)
+            .ThenBy(static row => row.Row.FileName, StringComparer.Ordinal)
+            .ThenBy(static row => row.Row.Path, StringComparer.Ordinal)
+            .Select(static row => row.Row)
+            .ToList();
+        return await FilesOfAsync(ordered, cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task<IReadOnlyList<UnassociatedAudioFile>> MatchableAsync(CancellationToken cancellationToken)
     {
         const string byUser = AudioFileAssociations.UnassociatedByUserReason;

@@ -1,10 +1,14 @@
 using n8Tracks.Application.Configuration;
+using n8Tracks.Application.Media;
 using n8Tracks.Domain.Media;
 using n8Tracks.Infrastructure.Media;
 
 namespace n8Tracks.Api.Tests.Media;
 
-/// <summary>The rules that tie a file to a format, compare times, and keep tags (#203), and the mount reader's path refusals.</summary>
+/// <summary>
+/// The rules that tie a file to a format, compare times, and keep tags (#203), the mount reader's path
+/// refusals, and the order formats are listed in and a Generation's tally of its files (#211).
+/// </summary>
 public sealed class AudioFormatsTests
 {
     [Theory]
@@ -136,6 +140,32 @@ public sealed class AudioFormatsTests
         File.AppendAllBytes(path, [4]);
         Assert.Equal(4, opened.Stat().SizeBytes);
         Assert.Throws<FileNotFoundException>(() => reader.OpenWithStat("missing.mp3"));
+    }
+
+    [Fact]
+    public void FormatsAreRankedWavM4aMp3ThenTheRestByNameOnceEach()
+    {
+        Assert.Equal(
+            ["wav", "m4a", "mp3", "aac", "flac", "ogg", "opus"],
+            AudioFormats.InRankOrder(["opus", "mp3", "flac", "wav", "mp3", "aac", "ogg", "m4a", "wav"]));
+        Assert.Empty(AudioFormats.InRankOrder([]));
+        Assert.True(AudioFormats.CompareByRank("mp3", "aac") < 0);
+        Assert.True(AudioFormats.CompareByRank("flac", "wav") > 0);
+        Assert.Equal(0, AudioFormats.CompareByRank("ogg", "ogg"));
+    }
+
+    [Fact]
+    public void ATallyCountsMissingAndUnavailableFilesAsTheyReport()
+    {
+        (AudioFileStatus, string)[] files = [(AudioFileStatus.Available, "mp3"), (AudioFileStatus.Missing, "wav"), (AudioFileStatus.Available, "mp3")];
+
+        var available = AudioFileTally.Of(files, MediaMountState.Available);
+        Assert.Equal((3, 1, 0), (available.Count, available.Missing, available.Unavailable));
+        Assert.Equal(["wav", "mp3"], available.Formats);
+
+        var unavailable = AudioFileTally.Of(files, MediaMountState.Unavailable);
+        Assert.Equal((3, 0, 3), (unavailable.Count, unavailable.Missing, unavailable.Unavailable));
+        Assert.Same(AudioFileTally.None, AudioFileTally.Of([], MediaMountState.Available));
     }
 
     private static N8TracksOptions Options(string mediaPath) => new(

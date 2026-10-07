@@ -240,6 +240,9 @@ public sealed class SongService(
 
     public const string SortUpdated = "updated";
     public const string SortTitle = "title";
+
+    /// <summary>By how many local audio files each Song has (#211); most first unless asked otherwise.</summary>
+    public const string SortAudioFiles = "audioFiles";
     public const string Ascending = "asc";
     public const string Descending = "desc";
 
@@ -528,8 +531,9 @@ public sealed class SongService(
     }
 
     /// <summary>
-    /// A page of Songs. <c>sort</c> is <c>updated</c> (the default) or <c>title</c>; <c>direction</c>
-    /// is <c>asc</c> or <c>desc</c> (by default newest first, and titles A to Z); each <c>state</c> is
+    /// A page of Songs. <c>sort</c> is <c>updated</c> (the default), <c>title</c>, or <c>audioFiles</c>
+    /// (#211); <c>direction</c> is <c>asc</c> or <c>desc</c> (by default newest first, titles A to Z,
+    /// and most audio files first); each <c>state</c> is
     /// the ID of a workflow state; each <c>genre</c> is the ID of a Genre or <see cref="NoGenre"/>,
     /// and several match Songs with any of them; each <c>tag</c> likewise is the ID of a Tag or
     /// <see cref="NoTag"/>; each <c>artist</c> is the ID of an Artist, credited as primary or featured,
@@ -556,15 +560,18 @@ public sealed class SongService(
             case SortTitle:
                 sort = SongSort.Title;
                 break;
+            case SortAudioFiles:
+                sort = SongSort.AudioFiles;
+                break;
             default:
-                return Invalid($"{SortParameter} must be {SortUpdated} or {SortTitle}.");
+                return Invalid($"{SortParameter} must be {SortUpdated}, {SortTitle}, or {SortAudioFiles}.");
         }
 
         bool descending;
         switch (request.Direction)
         {
             case null:
-                descending = sort == SongSort.Updated;
+                descending = sort is SongSort.Updated or SongSort.AudioFiles;
                 break;
             case Ascending or Descending:
                 descending = request.Direction == Descending;

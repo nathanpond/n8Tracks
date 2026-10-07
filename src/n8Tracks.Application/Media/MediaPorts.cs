@@ -283,6 +283,14 @@ public interface IAudioFileStore
     Task<AudioFile?> FindAsync(Guid id, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Every file associated with the Song <paramref name="songId"/> (#211), whatever its status: the
+    /// Song-level ones first, then by its Generation's Version in tree order, that Generation's
+    /// ordinal, and format (<see cref="AudioFormats.CompareByRank"/>); ties by folder, then file name
+    /// (ordinal). Empty for a Song with none, or no such Song.
+    /// </summary>
+    Task<IReadOnlyList<AudioFile>> ListForSongAsync(Guid songId, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Every record with no association that a scan may match: Missing ones included, those the user
     /// unassociated (<see cref="UnmatchedReason.UnassociatedByUser"/>) and those whose automatic match
     /// the user blocked (<see cref="AudioFile.AutoMatchBlocked"/>, #210) left out. In path order.

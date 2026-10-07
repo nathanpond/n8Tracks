@@ -309,12 +309,16 @@ function SongRow({ song, timeZone, from }: { song: Song; timeZone: string; from:
           <VisuallyHidden>No</VisuallyHidden>
         )}
       </Table.Td>
+      <Table.Td ta="end" data-testid="song-audio-file-count">
+        {song.audioFileCount === undefined || song.audioFileCount === 0 ? '' : song.audioFileCount}
+      </Table.Td>
     </Table.Tr>
   );
 }
 
 /**
- * Songs: every Song in a table, newest first, sortable by title and by last update, filtered by
+ * Songs: every Song in a table, newest first, sortable by title, by last update, and (#211) by
+ * how many local audio files it has (the last column, blank for none), filtered by
  * workflow state, by Genre, by Tag, by Artist (primary or featured), and by title (ignoring case and
  * spacing; set from a Song page and cleared here), fifty to a page. Each row shows its primary
  * Artist, its first three Tags, and "+N" for the rest. The view (sort, direction, states, Genres,
@@ -497,7 +501,7 @@ export function SongsPage() {
       )}
       {page !== undefined && page.items.length > 0 && (
         <>
-          <Table.ScrollContainer minWidth={900}>
+          <Table.ScrollContainer minWidth={1000}>
             <Table withTableBorder aria-label="Songs">
               <Table.Thead>
                 <Table.Tr>
@@ -515,6 +519,7 @@ export function SongsPage() {
                   <Table.Th scope="col" ta="center">
                     Selected
                   </Table.Th>
+                  <SortHeader label="Audio files" sort="audioFiles" query={query} onSort={sortBy} />
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>

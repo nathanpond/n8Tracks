@@ -210,6 +210,34 @@ public static class AudioFormats
         _ => null,
     };
 
+    /// <summary>
+    /// The order formats are listed in (#211): WAV, M4A, MP3, then every other format by name. Compares
+    /// two format texts (lower case); an unknown text sorts with the rest, by name.
+    /// </summary>
+    public static int CompareByRank(string? left, string? right)
+    {
+        var byRank = RankOf(left).CompareTo(RankOf(right));
+        return byRank != 0 ? byRank : string.CompareOrdinal(left, right);
+    }
+
+    /// <summary><paramref name="formats"/> once each, in <see cref="CompareByRank"/> order.</summary>
+    public static IReadOnlyList<string> InRankOrder(IEnumerable<string> formats)
+    {
+        ArgumentNullException.ThrowIfNull(formats);
+
+        var distinct = formats.Distinct(StringComparer.Ordinal).ToList();
+        distinct.Sort(CompareByRank);
+        return distinct;
+    }
+
+    private static int RankOf(string? format) => format switch
+    {
+        "wav" => 0,
+        "m4a" => 1,
+        "mp3" => 2,
+        _ => 3,
+    };
+
     /// <summary>A last-modified time as scans compare it: truncated to the whole second, in UTC.</summary>
     public static DateTimeOffset ToWholeSecond(DateTimeOffset time)
     {

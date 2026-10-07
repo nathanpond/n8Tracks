@@ -75,6 +75,39 @@ export interface Generation {
   comments: GenerationComment[];
   /** Its cover image in n8Tracks' artwork store (#121), shown whole (`crop` is always null); null when it has none. */
   artwork: Artwork | null;
+  /** Its local audio files (#211), as they report now: counts and formats only. */
+  audioFiles: GenerationAudioFiles;
+}
+
+/**
+ * How many local audio files are associated with a Generation (#211): in all (Missing and Unavailable
+ * ones included), how many are Missing, how many are Unavailable (every one while the media folder
+ * cannot be read), and their formats once each, WAV, M4A, MP3, then the rest by name.
+ */
+export interface GenerationAudioFiles {
+  count: number;
+  missing: number;
+  unavailable: number;
+  formats: string[];
+}
+
+/** No local audio files. */
+export const NO_AUDIO_FILES: GenerationAudioFiles = {
+  count: 0,
+  missing: 0,
+  unavailable: 0,
+  formats: [],
+};
+
+function isAudioFiles(value: unknown): value is GenerationAudioFiles {
+  return (
+    isRecord(value) &&
+    typeof value.count === 'number' &&
+    typeof value.missing === 'number' &&
+    typeof value.unavailable === 'number' &&
+    Array.isArray(value.formats) &&
+    value.formats.every((format) => typeof format === 'string')
+  );
 }
 
 function isOwner(value: unknown): value is { id: string; shortcode: string } {
@@ -145,10 +178,13 @@ export function generationOf(value: unknown): Generation | undefined {
   const comments = commentsOf(value.comments);
   // An answer from before #121 has no image field: it has no image.
   const artwork = value.artwork ?? null;
+  // An answer from before #211 has no audio files field: it has none.
+  const audioFiles = value.audioFiles ?? NO_AUDIO_FILES;
   if (
     !numberOrNull(rating) ||
     comments === undefined ||
-    (artwork !== null && !isArtwork(artwork))
+    (artwork !== null && !isArtwork(artwork)) ||
+    !isAudioFiles(audioFiles)
   ) {
     return undefined;
   }
@@ -174,6 +210,7 @@ export function generationOf(value: unknown): Generation | undefined {
     rating,
     comments,
     artwork,
+    audioFiles,
   };
 }
 

@@ -4278,3 +4278,34 @@ Story #210:
   - On a 409 the dialog keeps `current`, so trying again uses the new revision.
   **Why:** These follow the AC and discretion. The #209 note put the action in `FileRow` and the reload after it. Reusing `SongSearch` keeps one Song finder. Radios make "Song only" an explicit choice.
   **Issue:** #210
+- **Decision:** A Song's list is `GET /api/v1/songs/{reference}/audio-files` (`catalog.read`, in `MediaEndpoints`), answering `{items: AudioFileResponse[]}` without suggestions, not paged. The endpoint finds the Song with `SongService.FindAsync` (404 `song_deleted` through `MissingSongAsync`), then calls `AudioFileService.ListForSongAsync(Guid)`, so `Application.Media` still takes IDs only and stays outside the invariant 1 guard's catalog namespaces.
+  **Why:** One item shape with the audio-file endpoints lets the web reuse `acceptFile` and hand a row straight to #210's `AssociateFileDialog`. Resolving the reference in the endpoint follows the #222 downloads endpoint.
+  **Issue:** #211
+- **Decision:** The order is computed in `AudioFileStore.ListForSongAsync`: Song-level first, then `versions.number_sort_key`, Generation ordinal, format rank (new `AudioFormats.CompareByRank`/`InRankOrder`: WAV, M4A, MP3, then the rest by name), folder, file name, path (all ordinal). The rank is a Domain rule, so #212's preferred-file and player stories can reuse it.
+  **Why:** The discretion fixes the order, and the server is where the Version tree order is known.
+  **Issue:** #211
+- **Decision:** `GenerationSummary` gains `AudioFiles` (`AudioFileTally {Count, Missing, Unavailable, Formats}`, in Application.Media). It is filled in `GenerationRows.SummariesAsync` with one grouped read of `audio_files` plus the `media.mount` settings row (read through `MediaMountStateStore`, with the #207 rule `MediaAvailability.Reported`). So every Generation answer carries `audioFiles`, not only the Song's list. Counts include Missing and Unavailable files; while the folder is unavailable, `unavailable` = `count` and `missing` = 0.
+  **Why:** The discretion asks for Generation responses to carry the counts, and they are built in many places (list, one, rate, select, move). One read path keeps them all the same. Reading the state row in Infrastructure avoids threading the mount state through 15 response call sites.
+  **Issue:** #211
+- **Decision:** `SongSummary.AudioFileCount` (init) and `SongResponse.audioFileCount` are on every Song answer, not only list rows. `SongSort.AudioFiles` (`sort=audioFiles`) orders by a correlated count, most first by default, with the shortcode number breaking ties. An unknown `sort` still gets the existing 400 `invalid_request`, and its message now names `audioFiles`.
+  **Why:** Song answers are one record type. "Most first" matches the column's purpose (finding Songs that have audio), as Updated starts newest first. No column chooser exists, so the column is shown after Selected, per the discretion's fallback.
+  **Issue:** #211
+- **Decision:** Web:
+  - `useSongAudioFiles` lives in `SongVersions`, which already owns the Generations and the panel. The Song's list feeds both `AudioFilesSection` (below the Versions table) and `GenerationAudioFiles` (the panel filters it by Generation ID).
+  - Both lists, and the Generations (for their counts), are read again on window `focus` and after every association change. Reading again keeps what is already shown.
+  - Remove association calls #210's DELETE at once, with a polite announcement and no confirmation step. Change association opens #210's dialog, which shows the current association.
+  - Archived marks come from the loaded Generations and Versions.
+  - Size is MB to one decimal, with 1 MB = 1,048,576 bytes. A Song-level file's Generation cell reads "Song-level".
+  - The panel lists files compactly (one line of details each) rather than as a table, because the drawer is narrow.
+  - `Generation.audioFiles` defaults to none when absent, and `Song.audioFileCount` is optional, as with the existing artwork and `songCount` fixture tolerance.
+  **Why:**
+  - Remove is reversible (associate again), and the dialog already offers it.
+  - One list read serves both views.
+  - The rest follows the discretion lines.
+  **Issue:** #211
+- **Decision:** `MediaMountAccessTests`' file-system regex matched an anonymous member named `File` (`row.File.Path`), so the member was renamed `Row`. No guard list changed. The reference guard lists the new route.
+  **Why:** This is the pitfall #210 noted. The source never touches the file system.
+  **Issue:** #211
+- **Decision:** Rule 1: the empty state's "Open Unmatched Files" link sits inside a sentence, so it is underlined always. Axe `link-in-text-block` failed on every Song page with no files, in the existing versions-table, songs, generation-downloads and generation-evaluation e2e specs. The e2e rerun of those specs is the regression check.
+  **Why:** WCAG 1.4.1: a link in a text block must not be told apart by colour alone.
+  **Issue:** #211

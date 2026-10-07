@@ -155,6 +155,7 @@ public sealed class ReferenceParameterGuardTests
         ["GET /api/v1/resolve/{reference}"] = static (c, _, version) => c.SendAsync(HttpMethod.Get, $"resolve/{version}"),
         ["GET /api/v1/versions/{reference}/generations"] = static (c, _, version) => c.SendAsync(HttpMethod.Get, $"versions/{version}/generations"),
         ["GET /api/v1/songs/{reference}/generations"] = static (c, song, _) => c.SendAsync(HttpMethod.Get, $"songs/{song}/generations"),
+        ["GET /api/v1/songs/{reference}/audio-files"] = static (c, song, _) => c.SendAsync(HttpMethod.Get, $"songs/{song}/audio-files"),
 
         // A Generation by its ID, or by its shortcode (the Version shortcode's Generation 1).
         ["GET /api/v1/generations/{reference}"] = static (c, _, version) => c.SendAsync(HttpMethod.Get, $"generations/{c.GenerationOf(version)}"),

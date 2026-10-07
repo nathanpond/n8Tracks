@@ -1,6 +1,7 @@
 import { Anchor, Button, Grid, Group, Paper, Stack, Text, Title } from '@mantine/core';
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router';
+import { removeAssociation, useSongAudioFiles, type UnmatchedFile } from '../api/audioFiles';
 import { isNamedBy, useSongGenerations, type Generation } from '../api/generations';
 import { movedFromOf, pageFor, resolveReference, stateFor } from '../api/references';
 import { readSong, type Song } from '../api/songs';
@@ -19,6 +20,8 @@ import { RETENTION_DAYS } from '../generations/deletionRules';
 import { MoveToNewSongDialog } from '../generations/MoveToNewSongDialog';
 import { useGenerationChoices } from '../generations/useGenerationChoices';
 import { useRateGeneration, type RatingProblem } from '../generations/useRateGeneration';
+import { AssociateFileDialog } from '../media/AssociateFileDialog';
+import { AudioFilesSection, type AudioFileActions } from '../media/AudioFilesSection';
 import { CreateVersionDialog } from './CreateVersionDialog';
 import { DeleteVersionDialog } from './DeleteVersionDialog';
 import { VersionDetails } from './VersionDetails';
@@ -64,6 +67,20 @@ function storeShowArchived(show: boolean) {
   } catch {
     // Storage may be unavailable (private mode, blocked site data): the choice lasts this visit.
   }
+}
+
+/** What the Audio Files section says when removing an association did not go through. */
+function removalProblemText(
+  file: UnmatchedFile,
+  result: { kind: 'conflict' } | { kind: 'invalid' } | { kind: 'failed'; reason?: string },
+): string {
+  if (result.kind === 'conflict') {
+    return `${file.fileName} changed since the list was loaded, so its association was not removed. The list now shows it as it is: check it and try again.`;
+  }
+  if (result.kind === 'failed' && result.reason === 'gone') {
+    return `${file.fileName} is no longer cataloged. The list has been read again.`;
+  }
+  return `The association of ${file.fileName} was not removed: n8Tracks did not answer as expected. Check that it is running and try again.`;
 }
 
 /** What the page tells the user after an action: an archive that can be undone, a deletion, or a failure. */
@@ -169,6 +186,64 @@ export function SongVersions({
   const [moving, setMoving] = useState<Generation | undefined>();
   /** The Generation the delete confirmation is open for (#124). */
   const [deletingGeneration, setDeletingGeneration] = useState<Generation | undefined>();
+  // The Song's local audio files (#211): the Audio Files section, the Generation panel's list, and
+  // (through the Generations' counts) the Versions table. Read again when the window regains focus
+  // and after any association change made here.
+  const audioFiles = useSongAudioFiles(song.id);
+  const reloadAudioFiles = audioFiles.reload;
+  const [associating, setAssociating] = useState<UnmatchedFile | undefined>();
+  const [removingFile, setRemovingFile] = useState(false);
+  const [fileAnnouncement, setFileAnnouncement] = useState<string>();
+  const [fileProblem, setFileProblem] = useState<string>();
+  const filesChanged = useCallback(
+    (announcement?: string) => {
+      if (announcement !== undefined) {
+        setFileAnnouncement(announcement);
+      }
+      reloadAudioFiles();
+      reloadGenerations();
+    },
+    [reloadAudioFiles, reloadGenerations],
+  );
+  useEffect(() => {
+    const onFocus = () => {
+      reloadAudioFiles();
+      reloadGenerations();
+    };
+    window.addEventListener('focus', onFocus);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [reloadAudioFiles, reloadGenerations]);
+  const audioFileActions: AudioFileActions = {
+    busy: removingFile,
+    onChange: (file) => {
+      setFileProblem(undefined);
+      setFileAnnouncement(undefined);
+      setAssociating(file);
+    },
+    onRemove: (file) => {
+      setRemovingFile(true);
+      setFileProblem(undefined);
+      setFileAnnouncement(undefined);
+      void removeAssociation(file).then((result) => {
+        setRemovingFile(false);
+        if (result.kind === 'saved') {
+          filesChanged(
+            `Removed the association of ${file.fileName}. It is back in Unmatched Files.`,
+          );
+          return;
+        }
+        setFileProblem(removalProblemText(file, result));
+        filesChanged();
+      });
+    },
+  };
+  const panelAudioFiles = {
+    files: audioFiles.state,
+    onRetry: reloadAudioFiles,
+    actions: audioFileActions,
+  };
   const generationActions = {
     onSetState: choices.setState,
     onSelect: choices.select,
@@ -232,6 +307,8 @@ export function SongVersions({
   const linkTo = (version: Version) => `/songs/${song.shortcode}/v/${version.number}${search}`;
   const generationLink = (generation: Generation) =>
     `/songs/${song.shortcode}/generations/${generation.shortcode}${search}`;
+  const generationShortcodeLink = (shortcode: string) =>
+    `/songs/${song.shortcode}/generations/${shortcode}${search}`;
   const wasDeleted = useWasDeleted(song, number, number !== undefined && selected === undefined);
 
   /** Turns one of the Versions table's choices on or off in the URL, replacing this history entry. */
@@ -335,8 +412,9 @@ export function SongVersions({
     setPlaceholders(list.deletedPlaceholders);
     onSong(read);
     reloadGenerations();
+    reloadAudioFiles();
     return true;
-  }, [onSong, song.id, reloadGenerations]);
+  }, [onSong, song.id, reloadGenerations, reloadAudioFiles]);
 
   const deleted = (version: Version, current: VersionDetail) => {
     setDeleting(undefined);
@@ -639,6 +717,23 @@ export function SongVersions({
         onRate={rate}
         actions={generationActions}
       />
+      <AudioFilesSection
+        files={audioFiles.state}
+        onRetry={reloadAudioFiles}
+        generations={generations.state.phase === 'ready' ? generations.state.data : []}
+        versions={versions}
+        generationLink={generationShortcodeLink}
+        actions={audioFileActions}
+        announcement={fileAnnouncement}
+        problem={fileProblem}
+      />
+      <AssociateFileDialog
+        file={associating}
+        onClose={() => {
+          setAssociating(undefined);
+        }}
+        onChanged={filesChanged}
+      />
       <GenerationPanel
         opened={generationReference !== undefined}
         content={panelContent}
@@ -648,6 +743,7 @@ export function SongVersions({
         actions={generationActions}
         problem={ratingProblem}
         movedFrom={movedFromOf(location.state)}
+        audioFiles={panelAudioFiles}
       />
       {choices.dialog}
       <DeleteGenerationDialog
@@ -661,6 +757,8 @@ export function SongVersions({
           setNotice({ kind: 'generation-deleted', shortcode: generation.shortcode });
           onSong(changed);
           reloadGenerations();
+          // Its files are unassociated with it (#206): the Audio Files section no longer lists them.
+          reloadAudioFiles();
           // Its panel closes onto its Version, which stays (frozen) with its other Generations.
           if (generationReference !== undefined && openGeneration?.id === generation.id) {
             closePanel();

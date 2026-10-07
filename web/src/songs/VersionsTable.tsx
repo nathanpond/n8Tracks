@@ -28,6 +28,7 @@ import { kindLabel, type Version } from '../api/versions';
 import { ArtworkImage } from '../common/ArtworkImage';
 import { ShortcodeBadge } from '../common/ShortcodeBadge';
 import { Notice } from '../components/Notice';
+import { tallyText } from '../media/songAudioFilesRules';
 import {
   GenerationActionsMenu,
   GenerationStateBadges,
@@ -80,7 +81,7 @@ function GenerationRows({
     );
   }
   return (
-    <Table.ScrollContainer minWidth={960}>
+    <Table.ScrollContainer minWidth={1080}>
       <Table
         withTableBorder
         aria-label={`Generations of Version ${version.number}`}
@@ -91,6 +92,7 @@ function GenerationRows({
             <Table.Th scope="col">Shortcode</Table.Th>
             <Table.Th scope="col">Suno title</Table.Th>
             <Table.Th scope="col">Duration</Table.Th>
+            <Table.Th scope="col">Local files</Table.Th>
             <Table.Th scope="col">Model</Table.Th>
             <Table.Th scope="col">Rating</Table.Th>
             <Table.Th scope="col">Comments</Table.Th>
@@ -139,6 +141,9 @@ function GenerationRows({
                 <Table.Td style={{ whiteSpace: 'nowrap' }} data-testid="generation-duration">
                   {generationDuration(generation)}
                 </Table.Td>
+                <Table.Td style={{ whiteSpace: 'nowrap' }} data-testid="generation-local-files">
+                  {tallyText(generation.audioFiles)}
+                </Table.Td>
                 <Table.Td>{reportedModel(generation) ?? 'Unknown'}</Table.Td>
                 <Table.Td style={{ whiteSpace: 'nowrap' }} data-testid="generation-rating">
                   <StarRating
@@ -183,8 +188,9 @@ function GenerationRows({
  * row's number opens that Version in the editor without making it current; its chevron button
  * shows its Generations beneath it in ordinal order, where an archived Generation is listed only
  * while `showArchivedGenerations` is on (the Selected one always is). Each Generation row has its
- * shortcode with a one-click copy, its star rating (set here too, `onRate`; the Version's highest
- * rating follows at once), its comment count, and an actions menu that archives or reactivates it
+ * shortcode with a one-click copy, its local audio files (#211: "2 files · WAV, MP3 · 1 missing", or
+ * nothing), its star rating (set here too, `onRate`; the Version's highest rating follows at once),
+ * its comment count, and an actions menu that archives or reactivates it
  * and selects it for the Song or clears that (`actions`); its title opens the Generation panel. `revealVersionId`
  * expands that Version's row (a link to one of its Generations); expansion is otherwise this page's.
  */

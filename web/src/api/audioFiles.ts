@@ -1,5 +1,7 @@
+import { useCallback, useEffect, useState } from 'react';
+import { apiFetch } from './client';
 import { writeWithRevision, type SaveResult } from './saves';
-import { isRecord, useResource } from './songs';
+import { body, isRecord, useResource, type LoadState } from './songs';
 
 /** Where Library → Unmatched Files is (#209). */
 export const UNMATCHED_PATH = '/library/unmatched';
@@ -264,6 +266,84 @@ export function unmatchedApiPath(query: UnmatchedQuery): string {
 /** A page of Unmatched Files, with suggestions. */
 export function useUnmatchedFiles(query: UnmatchedQuery) {
   return useResource(unmatchedApiPath(query), acceptPage);
+}
+
+/** The Song's list (#211): every file, without suggestions. */
+function acceptSongFiles(answer: unknown): UnmatchedFile[] | undefined {
+  if (!isRecord(answer) || !Array.isArray(answer.items)) {
+    return undefined;
+  }
+  const items: unknown[] = answer.items;
+  const files = items.map(acceptFile);
+  return files.every((file): file is UnmatchedFile => file !== undefined) ? files : undefined;
+}
+
+const songFilesPath = (reference: string) =>
+  `api/v1/songs/${encodeURIComponent(reference)}/audio-files`;
+
+/**
+ * Every local audio file associated with a Song (#211), by its ID or shortcode: Song-level files
+ * first, then by Version tree order, Generation ordinal, and format, as the API orders them. Not
+ * paged. `reload` reads it again, keeping the list already shown until the answer comes (and when
+ * reading again fails).
+ */
+export function useSongAudioFiles(reference: string): {
+  state: LoadState<UnmatchedFile[]>;
+  reload: () => void;
+} {
+  const [loaded, setLoaded] = useState<{ reference: string; state: LoadState<UnmatchedFile[]> }>({
+    reference,
+    state: { phase: 'loading' },
+  });
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const settle = (next: LoadState<UnmatchedFile[]>) => {
+      if (controller.signal.aborted) {
+        return;
+      }
+      setLoaded((previous) =>
+        next.phase !== 'ready' &&
+        previous.reference === reference &&
+        previous.state.phase === 'ready'
+          ? previous
+          : { reference, state: next },
+      );
+    };
+    const load = async () => {
+      try {
+        const response = await apiFetch(songFilesPath(reference), { signal: controller.signal });
+        const answer = await body(response);
+        const data = response.ok ? acceptSongFiles(answer) : undefined;
+        if (data !== undefined) {
+          settle({ phase: 'ready', data });
+        } else {
+          settle(
+            response.status === 404 ? { phase: 'not-found', problem: answer } : { phase: 'error' },
+          );
+        }
+      } catch {
+        settle({ phase: 'error' });
+      }
+    };
+    void load();
+    return () => {
+      controller.abort();
+    };
+  }, [reference, attempt]);
+
+  const reload = useCallback(() => {
+    setLoaded((previous) =>
+      previous.state.phase === 'ready' ? previous : { reference, state: { phase: 'loading' } },
+    );
+    setAttempt((previous) => previous + 1);
+  }, [reference]);
+
+  return {
+    state: loaded.reference === reference ? loaded.state : { phase: 'loading' },
+    reload,
+  };
 }
 
 const filePath = (id: string, action: string) =>

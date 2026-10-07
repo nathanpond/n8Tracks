@@ -1,8 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using n8Tracks.Application.Assets;
 using n8Tracks.Application.Generations;
+using n8Tracks.Application.Media;
 using n8Tracks.Application.Songs;
 using n8Tracks.Domain.Assets;
+using n8Tracks.Domain.Media;
 using n8Tracks.Domain.Songs;
 using n8Tracks.Domain.Suno;
 
@@ -355,13 +357,52 @@ internal static class GenerationRows
             .ToLookup(static comment => comment.GenerationId);
 
         var artwork = await ArtworkOfAsync(context, rows.Select(static row => row.generation.ArtworkAssetId), cancellationToken).ConfigureAwait(false);
+        var audioFiles = await AudioFilesOfAsync(context, ids, cancellationToken).ConfigureAwait(false);
 
         return [.. rows.Select(row => new GenerationSummary(ToDomain(row.generation) with { EventId = row.EventId }, row.ShortcodeNumber, row.Number)
         {
             Comments = [.. comments[row.generation.Id]],
             IsSelected = row.IsSelected,
             Artwork = row.generation.ArtworkAssetId is { } assetId ? artwork.GetValueOrDefault(assetId) : null,
+            AudioFiles = audioFiles.GetValueOrDefault(row.generation.Id) ?? AudioFileTally.None,
         })];
+    }
+
+    /// <summary>
+    /// The local audio files associated with each of <paramref name="generationIds"/> that has any
+    /// (#211), tallied as they report now: every file reports Unavailable while the media folder's
+    /// recorded state is unavailable (#207).
+    /// </summary>
+    private static async Task<Dictionary<Guid, AudioFileTally>> AudioFilesOfAsync(
+        N8TracksDbContext context,
+        List<Guid> generationIds,
+        CancellationToken cancellationToken)
+    {
+        if (generationIds.Count == 0)
+        {
+            return [];
+        }
+
+        var files = await context.AudioFiles.AsNoTracking()
+            .Where(file => file.GenerationId != null && generationIds.Contains(file.GenerationId.Value))
+            .Select(static file => new { GenerationId = file.GenerationId!.Value, file.Status, file.Format })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (files.Count == 0)
+        {
+            return [];
+        }
+
+        var mount = (await new MediaMountStateStore(context).FindAsync(cancellationToken).ConfigureAwait(false) ?? MediaMountStatus.Unrecorded).State;
+        return files
+            .GroupBy(static file => file.GenerationId)
+            .ToDictionary(
+                static group => group.Key,
+                group => AudioFileTally.Of(
+                    [.. group.Select(static file => (
+                        AudioFormats.ParseStatus(file.Status) ?? throw new InvalidOperationException("An audio file has an unknown status."),
+                        file.Format))],
+                    mount));
     }
 
     /// <summary>

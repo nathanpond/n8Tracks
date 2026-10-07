@@ -69,6 +69,22 @@ public sealed class AudioFileService(IAudioFileStore files, MediaAvailability av
             page.Total);
     }
 
+    /// <summary>
+    /// Every file associated with the Song <paramref name="songId"/> (#211), complete and not paged, in
+    /// the order <see cref="IAudioFileStore.ListForSongAsync"/> gives, each with the status it reports.
+    /// </summary>
+    public async Task<IReadOnlyList<ReportedAudioFile>> ListForSongAsync(Guid songId, CancellationToken cancellationToken)
+    {
+        var found = await files.ListForSongAsync(songId, cancellationToken).ConfigureAwait(false);
+        if (found.Count == 0)
+        {
+            return [];
+        }
+
+        var mount = (await availability.CurrentAsync(cancellationToken).ConfigureAwait(false)).State;
+        return [.. found.Select(file => Report(file, mount))];
+    }
+
     /// <summary>The file with <paramref name="id"/>, or null.</summary>
     public async Task<ReportedAudioFile?> FindAsync(Guid id, CancellationToken cancellationToken)
     {

@@ -190,6 +190,11 @@ export interface Song {
   selectedGeneration: SelectedGeneration | null;
   /** The Suno workspace it lives in (#129), by Suno's ID, with its name and state; null when it is in none. */
   sunoWorkspace: SongWorkspace | null;
+  /**
+   * How many local audio files are associated with it (#211), at Song level or through its
+   * Generations, whatever their status. The API always sends it; test fixtures may leave it out.
+   */
+  audioFileCount?: number;
 }
 
 /**
@@ -232,7 +237,7 @@ export interface WorkflowState {
   songCount?: number;
 }
 
-export type SongSort = 'updated' | 'title';
+export type SongSort = 'updated' | 'title' | 'audioFiles';
 export type SortDirection = 'asc' | 'desc';
 
 /** What the Songs table shows: the list's own query parameters. */
@@ -363,7 +368,8 @@ export function isSong(value: unknown): value is Song {
     (value.artwork === null || isSongArtwork(value.artwork)) &&
     typeof value.hasSelectedGeneration === 'boolean' &&
     (value.selectedGeneration === null || isSelectedGeneration(value.selectedGeneration)) &&
-    (value.sunoWorkspace === null || isSongWorkspace(value.sunoWorkspace))
+    (value.sunoWorkspace === null || isSongWorkspace(value.sunoWorkspace)) &&
+    (value.audioFileCount === undefined || typeof value.audioFileCount === 'number')
   );
 }
 
@@ -451,17 +457,22 @@ export function songListParameters(query: SongQuery): URLSearchParams {
   return parameters;
 }
 
-/** The direction a sort starts in: newest first by updated time, A to Z by title. */
+/** The direction a sort starts in: newest first by updated time, A to Z by title, most audio files first. */
 export function defaultDirection(sort: SongSort): SortDirection {
-  return sort === 'updated' ? 'desc' : 'asc';
+  return sort === 'title' ? 'asc' : 'desc';
 }
+
+const SONG_SORTS: readonly SongSort[] = ['updated', 'title', 'audioFiles'];
 
 /**
  * Reads a table view out of a page URL's query string. Anything it does not understand is left at
  * its default, so a hand-edited URL still shows a table.
  */
 export function songQueryFrom(parameters: URLSearchParams): SongQuery {
-  const sort: SongSort = parameters.get('sort') === 'title' ? 'title' : 'updated';
+  const sortText = parameters.get('sort');
+  const sort: SongSort = SONG_SORTS.includes(sortText as SongSort)
+    ? (sortText as SongSort)
+    : 'updated';
   const direction = parameters.get('direction');
   const page = Number(parameters.get('page') ?? '1');
   // A blank title would be refused, so it means no title filter.

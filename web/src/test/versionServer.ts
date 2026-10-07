@@ -1,3 +1,4 @@
+import type { UnmatchedFile } from '../api/audioFiles';
 import type { GenerationDownload } from '../api/downloadRecords';
 import type { Generation, GenerationComment } from '../api/generations';
 import type { LineageSource, SunoPersona, SunoPlaylist } from '../api/lineage';
@@ -72,6 +73,41 @@ export function testGeneration(
     rating: null,
     comments: [],
     artwork: null,
+    audioFiles: { count: 0, missing: 0, unavailable: 0, formats: [] },
+    ...change,
+  };
+}
+
+/**
+ * A local audio file of `baseSong` (#211) at `path`: Available, matched by Suno ID to `generation`
+ * (or Song-level when null, associated by the user), 2:05 long and 3 MB.
+ */
+export function testSongAudioFile(
+  path: string,
+  generation: Generation | null,
+  change: Partial<UnmatchedFile> = {},
+): UnmatchedFile {
+  const fileName = path.slice(path.lastIndexOf('/') + 1);
+  let hash = 7;
+  for (let index = 0; index < path.length; index++) {
+    hash = (hash * 31 + path.charCodeAt(index)) % 100_000_000;
+  }
+  return {
+    id: `0199b1a0-7000-7000-9000-${String(path.length).padStart(4, '0')}${String(hash).padStart(8, '0')}`,
+    path,
+    fileName,
+    format: fileName.slice(fileName.lastIndexOf('.') + 1).toLowerCase(),
+    sizeBytes: 3 * 1024 * 1024,
+    firstSeenAt: '2026-10-05T10:00:00Z',
+    status: 'available',
+    durationSeconds: 125,
+    song: { id: baseSong.id, shortcode: baseSong.shortcode, title: baseSong.title },
+    generation: generation === null ? null : { id: generation.id, shortcode: generation.shortcode },
+    associationOrigin: generation === null ? 'user' : 'suno-id',
+    unmatchedReason: null,
+    revision: 2,
+    autoMatchBlocked: false,
+    suggestions: [],
     ...change,
   };
 }
@@ -206,6 +242,19 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     generationCount: 0,
     /** The Song's Generations, as its Generation list answers them (Version order, then ordinal). */
     generations: [] as Generation[],
+    /** The Song's local audio files (#211), in the order its list answers them; none unless set. */
+    audioFiles: [] as UnmatchedFile[],
+    /** How many times the Song's audio file list was read. */
+    audioFileReads: 0,
+    /** Every association write received (#210, from the Song page), in order. */
+    associationWrites: [] as {
+      method: string;
+      id: string;
+      ifMatch: string | null;
+      body: Record<string, unknown> | null;
+    }[],
+    /** When set, answers the next association write (once) instead of the fake API. */
+    nextAssociationWrite: undefined as (() => Response | Promise<Response>) | undefined,
     /** Each Generation's download records (#222), by its ID; none unless set. */
     downloads: new Map<string, GenerationDownload[]>(),
     /** How many times the Song's Generation list was read. */
@@ -1092,6 +1141,54 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
         comments: generation.comments.map((other) => (other === comment ? edited : other)),
       });
       return jsonResponse(200, edited);
+    }
+
+    const songAudioFiles = /\/api\/v1\/songs\/([^/]+)\/audio-files$/.exec(path);
+    if (songAudioFiles && method === 'GET') {
+      server.audioFileReads++;
+      const named = decodeURIComponent(songAudioFiles[1] ?? '');
+      return named === server.song.id || named === server.song.shortcode
+        ? jsonResponse(200, { items: server.audioFiles })
+        : jsonResponse(404, { code: 'not_found' });
+    }
+
+    const association = /\/api\/v1\/audio-files\/([^/]+)\/association$/.exec(path);
+    if (association && (method === 'PUT' || method === 'DELETE')) {
+      const id = decodeURIComponent(association[1] ?? '');
+      const ifMatch = new Headers(init?.headers).get('If-Match');
+      const sent =
+        typeof init?.body === 'string' ? (JSON.parse(init.body) as Record<string, unknown>) : null;
+      server.associationWrites.push({ method, id, ifMatch, body: sent });
+      const nextAssociationWrite = server.nextAssociationWrite;
+      if (nextAssociationWrite) {
+        server.nextAssociationWrite = undefined;
+        return nextAssociationWrite();
+      }
+      const file = server.audioFiles.find((candidate) => candidate.id === id);
+      if (file === undefined) {
+        return jsonResponse(404, { code: 'not_found' });
+      }
+      if (ifMatch !== `"${String(file.revision)}"`) {
+        return jsonResponse(409, { code: 'revision_conflict', current: file });
+      }
+      const revision = file.revision + 1;
+      if (method === 'DELETE') {
+        server.audioFiles = server.audioFiles.filter((candidate) => candidate !== file);
+        return new Response(null, { status: 204, headers: { ETag: `"${String(revision)}"` } });
+      }
+      const generation = server.generations.find((candidate) => candidate.id === sent?.generation);
+      const changed: UnmatchedFile = {
+        ...file,
+        generation:
+          generation === undefined ? null : { id: generation.id, shortcode: generation.shortcode },
+        associationOrigin: 'user',
+        revision,
+      };
+      server.audioFiles =
+        sent?.song === server.song.id
+          ? server.audioFiles.map((candidate) => (candidate === file ? changed : candidate))
+          : server.audioFiles.filter((candidate) => candidate !== file);
+      return jsonResponse(200, changed);
     }
 
     const generationDownloads = /\/api\/v1\/generations\/([^/]+)\/downloads$/.exec(path);

@@ -6,6 +6,8 @@ using n8Tracks.Api.Problems;
 using n8Tracks.Application.Configuration;
 using n8Tracks.Application.Credentials;
 using n8Tracks.Application.Media;
+using n8Tracks.Application.References;
+using n8Tracks.Application.Songs;
 using n8Tracks.Domain.Media;
 
 namespace n8Tracks.Api.Endpoints;
@@ -18,7 +20,8 @@ namespace n8Tracks.Api.Endpoints;
 /// path inside the container, never the host's). Every answer is <c>no-store</c>. The media status
 /// says whether the media folder can be read, and since when (#207), and what the Media page shows
 /// (#208): the files by status and association, the last scan and the last successful one, the scan in
-/// progress, the schedule, and the majority-missing warning.
+/// progress, the schedule, and the majority-missing warning. A Song's files (#211) are read whole, by
+/// the Song's ID or shortcode.
 /// </summary>
 internal static class MediaEndpoints
 {
@@ -26,6 +29,7 @@ internal static class MediaEndpoints
     public const string StatusPath = ApiProblem.VersionPrefix + "/media/status";
     public const string AudioFilesPath = ApiProblem.VersionPrefix + "/audio-files";
     public const string AudioFilePath = AudioFilesPath + "/{id:guid}";
+    public const string SongAudioFilesPath = SongsEndpoints.SongPath + "/audio-files";
 
     public static IEndpointRouteBuilder MapMedia(this IEndpointRouteBuilder endpoints)
     {
@@ -66,7 +70,36 @@ internal static class MediaEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
+        endpoints.MapGet(SongAudioFilesPath, ListForSongAsync)
+            .WithName("ListSongAudioFiles")
+            .WithSummary("Every local audio file associated with a Song (by its ID or shortcode), at Song level or through one of its Generations, whatever its status: Song-level files first, then by Version tree order, Generation ordinal, and format (WAV, M4A, MP3, then the rest by name). Not paged.")
+            .RequireScope(CredentialScopes.CatalogRead)
+            .Produces<SongAudioFileListResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
         return endpoints;
+    }
+
+    /// <summary>200 with the Song's files; 404 (<c>song_deleted</c> when it was deleted) when there is no such Song.</summary>
+    private static async Task<Results<Ok<SongAudioFileListResponse>, ProblemHttpResult>> ListForSongAsync(
+        CatalogReference reference,
+        SongService songs,
+        SongDeletionService deletions,
+        AudioFileService files,
+        HttpContext context,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        if (await songs.FindAsync(reference.Text, cancellationToken) is not { } song)
+        {
+            return await SongDeletionEndpoints.MissingSongAsync(context, reference, deletions, cancellationToken);
+        }
+
+        var items = await files.ListForSongAsync(song.Id, cancellationToken);
+        return TypedResults.Ok(new SongAudioFileListResponse([.. items.Select(AudioFileResponse.From)]));
     }
 
     /// <summary>202 with the new job (and the job as <c>Location</c>); 200 with the job already queued or running.</summary>
@@ -398,6 +431,9 @@ internal sealed record MediaScanCountsResponse(
 
 /// <summary>The scan's job, and whether it was already queued or running.</summary>
 internal sealed record MediaScanStartResponse(Guid JobId, bool AlreadyInProgress);
+
+/// <summary>A Song's audio files, every one (#211).</summary>
+internal sealed record SongAudioFileListResponse(AudioFileResponse[] Items);
 
 /// <summary>One page of audio files.</summary>
 internal sealed record AudioFileListResponse(AudioFileResponse[] Items, int Total, int Offset, int Limit);
