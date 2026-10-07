@@ -97,6 +97,42 @@ export interface GenerationHandOff {
   claimedAt: number;
 }
 
+/** The Song's Suno workspace as a request's snapshot gives it (#145). */
+export interface RequestWorkspace {
+  sunoId: string;
+  name: string;
+  state: 'available' | 'unavailable';
+}
+
+/**
+ * What the Suno tab of a claimed request is to do (#145), as the service worker reads it from
+ * n8Tracks before the tab starts: the Song's title and its workspace (the one the user chose in
+ * the panel, once chosen), and how many times the tab has loaded for the request.
+ */
+export interface GenerateJob {
+  requestId: string;
+  songTitle: string;
+  workspace: RequestWorkspace | null;
+  loads: number;
+}
+
+/** The states the extension reports a request in (`PATCH`, `docs/suno-integration.md`). */
+export type GenerateState = 'opening' | 'workspace' | 'filling' | 'waiting' | 'done' | 'stopped';
+
+/** The workspace the user chose for the Song in the panel (#145). */
+export interface ChosenWorkspace {
+  sunoId: string;
+  name: string;
+  how: 'created' | 'picked';
+}
+
+/**
+ * A generate step's answer: done, or why not in plain words for the panel. `ended` says the
+ * request is over in n8Tracks (cancelled, expired, or refused), so the tab stops.
+ */
+export type GenerateReply<T extends object = object> =
+  ({ ok: true } & T) | { ok: false; ended: boolean; message: string };
+
 /** A request ID as n8Tracks writes it: a UUID. */
 const REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -215,7 +251,15 @@ export type Request =
   /** The Suno content script: a run that ended and the self-check states (#150). */
   | { type: 'diagnostics-record'; run?: unknown; statuses?: unknown }
   /** The options page and the panel: the diagnostic report, assembled now (#150). */
-  | { type: 'diagnostic-report' };
+  | { type: 'diagnostic-report' }
+  /** The Suno content script, on each page load: whether its tab is generating (#145). */
+  | { type: 'generate-resume' }
+  /** A step of Generate on Suno began: read the request, then report it (#145). */
+  | { type: 'generate-progress'; state: GenerateState; step: string; message?: string }
+  /** Suno's complete workspace list, for n8Tracks' record (#145). */
+  | { type: 'generate-workspaces'; workspaces: unknown[] }
+  /** The workspace the user chose in the panel, for the Song (#145). */
+  | { type: 'generate-resolve'; workspace: ChosenWorkspace };
 
 export interface ResponseFor {
   state: ConnectionState;
@@ -235,6 +279,11 @@ export interface ResponseFor {
   'sync-images': { images: ImageProgress | null };
   'diagnostics-record': { recorded: true };
   'diagnostic-report': DiagnosticReport;
+  'generate-resume': { job: GenerateJob | null };
+  'generate-progress': GenerateReply;
+  /** n8Tracks' Song count of each workspace, by Suno ID, after the report. */
+  'generate-workspaces': GenerateReply<{ songCounts: Record<string, number> }>;
+  'generate-resolve': GenerateReply;
 }
 
 export type Response<T extends Request> = ResponseFor[T['type']];
@@ -266,6 +315,40 @@ export const SYNC_TYPES = [
 ] as const satisfies readonly Request['type'][];
 
 export type SyncRequest = Extract<Request, { type: (typeof SYNC_TYPES)[number] }>;
+
+/** The Generate on Suno messages, which only the Suno content script sends, each for its own tab. */
+export const GENERATE_TYPES = [
+  'generate-resume',
+  'generate-progress',
+  'generate-workspaces',
+  'generate-resolve',
+] as const satisfies readonly Request['type'][];
+
+export type GenerateRequest = Extract<Request, { type: (typeof GENERATE_TYPES)[number] }>;
+
+/** Whether `request` is one of the Generate on Suno messages. */
+export function isGenerateRequest(request: Request): request is GenerateRequest {
+  return (GENERATE_TYPES as readonly string[]).includes(request.type);
+}
+
+const GENERATE_STATES: readonly string[] = [
+  'opening',
+  'workspace',
+  'filling',
+  'waiting',
+  'done',
+  'stopped',
+] satisfies GenerateState[];
+
+function isChosenWorkspace(value: unknown): value is ChosenWorkspace {
+  return (
+    isRecord(value) &&
+    typeof value.sunoId === 'string' &&
+    value.sunoId !== '' &&
+    typeof value.name === 'string' &&
+    (value.how === 'created' || value.how === 'picked')
+  );
+}
 
 /** Whether `request` is one of the sync messages. */
 export function isSyncRequest(request: Request): request is SyncRequest {
@@ -380,7 +463,19 @@ export function isRequest(value: unknown): value is Request {
         (value.statuses === undefined || Array.isArray(value.statuses))
       );
     case 'diagnostic-report':
+    case 'generate-resume':
       return true;
+    case 'generate-progress':
+      return (
+        typeof value.state === 'string' &&
+        GENERATE_STATES.includes(value.state) &&
+        typeof value.step === 'string' &&
+        (value.message === undefined || typeof value.message === 'string')
+      );
+    case 'generate-workspaces':
+      return Array.isArray(value.workspaces);
+    case 'generate-resolve':
+      return isChosenWorkspace(value.workspace);
     default:
       return false;
   }

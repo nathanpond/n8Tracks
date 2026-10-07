@@ -29,6 +29,8 @@ export interface PanelOptions {
   onTryAgain: (workflowId: string) => void;
   /** Sync to n8Tracks (#134), shown under the features when given. */
   sync?: HTMLElement;
+  /** Generate on Suno (#145), shown under the sync when given. */
+  generate?: HTMLElement;
   /** Makes and revokes the report's Blob address; the browser's `URL` unless a test stands in. */
   objectUrls?: ObjectUrls;
 }
@@ -169,6 +171,7 @@ export class Panel {
       this.warning,
       this.features,
       ...(options.sync === undefined ? [] : [options.sync]),
+      ...(options.generate === undefined ? [] : [options.generate]),
       workflowsHeading,
       this.workflowList,
       check,

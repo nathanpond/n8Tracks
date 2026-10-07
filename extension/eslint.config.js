@@ -45,8 +45,10 @@ export default defineConfig([
           message: "Only adapter/primitives.ts reads Suno's page: use the find primitive.",
         },
         {
+          // The DOM's click() takes no argument; the click primitive, page.click(found), takes the
+          // element it found (#145), and the type-aware invariant 4 scan still checks every call.
           selector:
-            'CallExpression:matches([callee.property.name="click"], [callee.property.value="click"])',
+            'CallExpression[arguments.length=0]:matches([callee.property.name="click"], [callee.property.value="click"])',
           message: 'Only adapter/primitives.ts clicks: use the click primitive.',
         },
         {

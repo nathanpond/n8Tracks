@@ -12,8 +12,9 @@ namespace n8Tracks.Api.Endpoints;
 
 /// <summary>
 /// The Suno workspaces n8Tracks knows (#129). The extension reports the user's workspace list
-/// (<c>suno.sync</c>); anyone who reads the catalog lists them; and the signed-in user moves Songs from
-/// one workspace to another in bulk (session only). A workspace is named by its Suno ID throughout.
+/// (<c>suno.sync</c>, or <c>suno.generate</c> when Generate on Suno reads it, #145); anyone who
+/// reads the catalog lists them; and the signed-in user moves Songs from one workspace to another in
+/// bulk (session only). A workspace is named by its Suno ID throughout.
 /// A Song's own workspace is changed with the Song's PATCH (<c>sunoWorkspaceId</c>).
 /// </summary>
 internal static class SunoWorkspacesEndpoints
@@ -42,8 +43,8 @@ internal static class SunoWorkspacesEndpoints
 
         endpoints.MapPut(DiscoveredPath, ReportAsync)
             .WithName("ReportSunoWorkspaces")
-            .WithSummary("The extension reports Suno workspaces: { complete, workspaces: [<Suno's raw project>] }. Each is kept by its id, with its name (a blank one never overwrites a known name), description, and the raw project. Only a complete list changes availability: a known workspace it leaves out, or names with is_trashed, becomes unavailable, and one it lists untrashed becomes available again. Nothing about any Song changes. An entry without an id refuses the whole report; a repeated id keeps the last.")
-            .RequireScope(CredentialScopes.SunoSync)
+            .WithSummary("The extension reports Suno workspaces: { complete, workspaces: [<Suno's raw project>] }. Each is kept by its id, with its name (a blank one never overwrites a known name), description, and the raw project. Only a complete list changes availability: a known workspace it leaves out, or names with is_trashed, becomes unavailable, and one it lists untrashed becomes available again. Nothing about any Song changes. An entry without an id refuses the whole report; a repeated id keeps the last. Taken from a sync (suno.sync) or from Generate on Suno (suno.generate), which reports the list it reads when it chooses the Song's workspace.")
+            .RequireAnyScope(CredentialScopes.SunoSync, CredentialScopes.SunoGenerate)
             .Produces<SunoWorkspaceReportResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)

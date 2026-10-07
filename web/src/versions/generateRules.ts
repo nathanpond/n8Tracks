@@ -75,8 +75,17 @@ const STATE_LABELS: Readonly<Record<string, string>> = {
   expired: 'Expired',
 };
 
+/**
+ * The step the extension reports while its panel on Suno offers the user the choice of the Song's
+ * workspace (#145): the request waits for the user there, and the wait counts towards its hour.
+ */
+export const CHOOSE_WORKSPACE_STEP = 'choose workspace';
+
 /** The request's state as the page shows it. */
 export function requestStateLabel(request: GenerationRequest): string {
+  if (request.state === 'workspace' && request.step === CHOOSE_WORKSPACE_STEP) {
+    return 'Waiting for you in Suno: choose the Song’s workspace in the extension’s panel';
+  }
   const label = STATE_LABELS[request.state] ?? request.state;
   return request.state === 'stopped' && request.step !== null
     ? `${label} at step “${request.step}”`

@@ -216,10 +216,14 @@ describe('the registry', () => {
     expect(registry.all().map((workflow) => workflow.id)).toEqual(['test-library-sync']);
   });
 
-  it("registers the recognition check and the library reader's load-more in this version", () => {
+  it("registers the recognition check, the library reader's load-more, and the workspace steps in this version", () => {
     expect(ADAPTER_WORKFLOWS.map((workflow) => workflow.id)).toEqual([
       'recognise-suno',
       'load-more',
+      'open-workspaces',
+      'more-workspaces',
+      'select-workspace',
+      'create-workspace',
     ]);
     expect(recogniseSuno.startsOn).toBe(ANY_SUNO_PAGE);
   });

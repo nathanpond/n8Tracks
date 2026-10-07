@@ -420,6 +420,176 @@ public sealed class GenerationRequestTests
         }
     }
 
+    [Fact]
+    public async Task TheSnapshotCarriesTheSongsWorkspaceWithItsState()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var song = await SongApi.CreateAsync(client, "In a workspace");
+        var shortcode = song.GetProperty("shortcode").GetString()!;
+        var sync = await SunoWorkspaceApi.ExtensionTokenAsync(factory);
+        var extension = await CredentialApi.CreateTokenAsync(factory, CredentialScopes.SunoGenerate);
+        await SunoWorkspaceApi.ReportAsync(client, sync, complete: true, SunoWorkspaceApi.Project("w-1", "Studio"));
+        await SunoWorkspaceApi.AssociatedAsync(client, shortcode, "w-1");
+
+        var available = await ReadAsync(client, extension, (await CreateAsync(client, VersionId(song))).GetProperty("id").GetGuid());
+        var workspace = available.GetProperty("snapshot").GetProperty("workspace");
+        Assert.Equal("w-1", workspace.GetProperty("sunoId").GetString());
+        Assert.Equal("Studio", workspace.GetProperty("name").GetString());
+        Assert.Equal("available", workspace.GetProperty("state").GetString());
+
+        // Complement: once a complete list leaves it out, the next request says it is unavailable.
+        await SunoWorkspaceApi.ReportAsync(client, sync, complete: true, SunoWorkspaceApi.Project("w-2", "Elsewhere"));
+        var unavailable = await ReadAsync(client, extension, (await CreateAsync(client, VersionId(song))).GetProperty("id").GetGuid());
+        Assert.Equal("unavailable", unavailable.GetProperty("snapshot").GetProperty("workspace").GetProperty("state").GetString());
+    }
+
+    [Fact]
+    public async Task TheWorkspaceTheUserCreatesInSunoBecomesTheSongsAndLaterRequestsCarryIt()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var song = await SongApi.CreateAsync(client, "Needs a workspace");
+        var shortcode = song.GetProperty("shortcode").GetString()!;
+        var extension = await CredentialApi.CreateTokenAsync(factory, CredentialScopes.SunoGenerate);
+        var id = (await CreateAsync(client, VersionId(song))).GetProperty("id").GetGuid();
+        await ClaimAsync(client, extension, id, HttpStatusCode.OK);
+
+        using (var created = await ReportAsync(client, extension, id, """{"state":"workspace","step":"create workspace","resolvedWorkspace":{"sunoId":"w-new","name":"Needs a workspace","how":"created"}}"""))
+        {
+            Assert.True(created.StatusCode == HttpStatusCode.OK, await created.Content.ReadAsStringAsync());
+            Assert.Equal("workspace", (await SetupApi.JsonAsync(created)).GetProperty("state").GetString());
+        }
+
+        var details = await SetupApi.JsonAsync(await client.GetAsync(SongApi.Song(shortcode)));
+        Assert.Equal("w-new", details.GetProperty("sunoWorkspace").GetProperty("id").GetString());
+        Assert.Equal("available", details.GetProperty("sunoWorkspace").GetProperty("state").GetString());
+        var recorded = await SunoWorkspaceApi.OneAsync(client, "w-new");
+        Assert.Equal("Needs a workspace", recorded.GetProperty("name").GetString());
+        Assert.Equal(1, recorded.GetProperty("songCount").GetInt32());
+
+        // The same report again (an answer lost on the way) changes nothing and is not refused.
+        var revision = details.GetProperty("revision").GetInt32();
+        using (var again = await ReportAsync(client, extension, id, """{"state":"workspace","step":"create workspace","resolvedWorkspace":{"sunoId":"w-new","name":"Needs a workspace","how":"created"}}"""))
+        {
+            Assert.Equal(HttpStatusCode.OK, again.StatusCode);
+        }
+
+        Assert.Equal(revision, (await SetupApi.JsonAsync(await client.GetAsync(SongApi.Song(shortcode)))).GetProperty("revision").GetInt32());
+
+        // A later request of the Song carries the workspace, so the extension selects it without asking.
+        var later = await ReadAsync(client, extension, (await CreateAsync(client, VersionId(song))).GetProperty("id").GetGuid());
+        Assert.Equal("w-new", later.GetProperty("snapshot").GetProperty("workspace").GetProperty("sunoId").GetString());
+    }
+
+    [Fact]
+    public async Task AResolvedWorkspaceIsRefusedWhenTheSongAlreadyHasAnAvailableOne()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var song = await SongApi.CreateAsync(client, "Already placed");
+        var shortcode = song.GetProperty("shortcode").GetString()!;
+        var sync = await SunoWorkspaceApi.ExtensionTokenAsync(factory);
+        var extension = await CredentialApi.CreateTokenAsync(factory, CredentialScopes.SunoGenerate);
+        await SunoWorkspaceApi.ReportAsync(client, sync, complete: true, SunoWorkspaceApi.Project("w-1", "Home"), SunoWorkspaceApi.Project("w-2", "Other"));
+        await SunoWorkspaceApi.AssociatedAsync(client, shortcode, "w-1");
+        var id = (await CreateAsync(client, VersionId(song))).GetProperty("id").GetGuid();
+        await ClaimAsync(client, extension, id, HttpStatusCode.OK);
+        var before = await SetupApi.JsonAsync(await client.GetAsync(SongApi.Song(shortcode)));
+
+        foreach (var how in new[] { "picked", "created" })
+        {
+            using var refused = await ReportAsync(client, extension, id, $$$"""{"state":"workspace","resolvedWorkspace":{"sunoId":"w-2","name":"Other","how":"{{{how}}}"}}""");
+            var problem = await ExpectProblemAsync(refused, HttpStatusCode.Conflict, "workspace_already_set");
+            Assert.Equal("w-1", problem.GetProperty("workspaceId").GetString());
+        }
+
+        var after = await SetupApi.JsonAsync(await client.GetAsync(SongApi.Song(shortcode)));
+        Assert.Equal("w-1", after.GetProperty("sunoWorkspace").GetProperty("id").GetString());
+        Assert.Equal(before.GetProperty("revision").GetInt32(), after.GetProperty("revision").GetInt32());
+        Assert.Equal("claimed", (await CurrentAsync(client, VersionId(song))).GetProperty("state").GetString());
+
+        // Complement: the same report without a workspace moves the request on.
+        using var plain = await ReportAsync(client, extension, id, """{"state":"workspace","step":"select workspace"}""");
+        Assert.Equal(HttpStatusCode.OK, plain.StatusCode);
+    }
+
+    [Fact]
+    public async Task AnUnavailableWorkspaceIsReplacedByTheOneTheUserPicks()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var song = await SongApi.CreateAsync(client, "Lost its workspace");
+        var shortcode = song.GetProperty("shortcode").GetString()!;
+        var extension = await CredentialApi.CreateTokenAsync(factory, CredentialScopes.SunoGenerate);
+        await SunoWorkspaceApi.ReportAsync(client, extension, complete: true, SunoWorkspaceApi.Project("w-gone", "Gone"), SunoWorkspaceApi.Project("w-2", "Other"), SunoWorkspaceApi.Project("w-3", "Third"));
+        await SunoWorkspaceApi.AssociatedAsync(client, shortcode, "w-gone");
+
+        // Generate on Suno read Suno's complete list without the Song's workspace: n8Tracks marks it unavailable.
+        await SunoWorkspaceApi.ReportAsync(client, extension, complete: true, SunoWorkspaceApi.Project("w-2", "Other"), SunoWorkspaceApi.Project("w-3", "Third", trashed: true));
+        Assert.Equal("unavailable", (await SunoWorkspaceApi.OneAsync(client, "w-gone")).GetProperty("state").GetString());
+
+        var id = (await CreateAsync(client, VersionId(song))).GetProperty("id").GetGuid();
+        await ClaimAsync(client, extension, id, HttpStatusCode.OK);
+
+        // An unavailable workspace cannot be the replacement.
+        using (var trashed = await ReportAsync(client, extension, id, """{"state":"workspace","resolvedWorkspace":{"sunoId":"w-3","name":"Third","how":"picked"}}"""))
+        {
+            var problem = await ExpectProblemAsync(trashed, HttpStatusCode.UnprocessableEntity, "validation_failed");
+            Assert.True(problem.GetProperty("errors").TryGetProperty("resolvedWorkspace", out _));
+        }
+
+        using (var picked = await ReportAsync(client, extension, id, """{"state":"workspace","step":"choose workspace","resolvedWorkspace":{"sunoId":"w-2","name":"Other","how":"picked"}}"""))
+        {
+            Assert.True(picked.StatusCode == HttpStatusCode.OK, await picked.Content.ReadAsStringAsync());
+        }
+
+        var details = await SetupApi.JsonAsync(await client.GetAsync(SongApi.Song(shortcode)));
+        Assert.Equal("w-2", details.GetProperty("sunoWorkspace").GetProperty("id").GetString());
+        Assert.Equal("unavailable", (await SunoWorkspaceApi.OneAsync(client, "w-gone")).GetProperty("state").GetString());
+    }
+
+    [Fact]
+    public async Task AResolvedWorkspaceMustBeWellFormedAndComeFromTheClaimingExtension()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var song = await SongApi.CreateAsync(client, "Badly sent");
+        var shortcode = song.GetProperty("shortcode").GetString()!;
+        var extension = await CredentialApi.CreateTokenAsync(factory, CredentialScopes.SunoGenerate);
+        var other = await CredentialApi.CreateTokenAsync(factory, CredentialScopes.SunoGenerate);
+        var id = (await CreateAsync(client, VersionId(song))).GetProperty("id").GetGuid();
+
+        using (var early = await ReportAsync(client, extension, id, """{"state":"workspace","resolvedWorkspace":{"sunoId":"w-1","name":"One","how":"picked"}}"""))
+        {
+            await ExpectProblemAsync(early, HttpStatusCode.Conflict, "request_not_claimed");
+        }
+
+        await ClaimAsync(client, extension, id, HttpStatusCode.OK);
+        foreach (var body in new[]
+        {
+            """{"state":"workspace","resolvedWorkspace":"w-1"}""",
+            """{"state":"workspace","resolvedWorkspace":{"sunoId":"w-1","name":"One","how":"renamed"}}""",
+            """{"state":"workspace","resolvedWorkspace":{"sunoId":"w-1","how":"picked"}}""",
+            """{"state":"workspace","resolvedWorkspace":{"sunoId":"","name":"One","how":"picked"}}""",
+            $$$"""{"state":"workspace","resolvedWorkspace":{"sunoId":"w-1","name":"{{{new string('n', SunoWorkspaceRules.NameMaximumLength + 1)}}}","how":"created"}}""",
+        })
+        {
+            using var invalid = await ReportAsync(client, extension, id, body);
+            var problem = await ExpectProblemAsync(invalid, HttpStatusCode.UnprocessableEntity, "validation_failed");
+            Assert.True(problem.GetProperty("errors").TryGetProperty("resolvedWorkspace", out _), body);
+        }
+
+        using (var foreign = await ReportAsync(client, other, id, """{"state":"workspace","resolvedWorkspace":{"sunoId":"w-1","name":"One","how":"picked"}}"""))
+        {
+            await ExpectProblemAsync(foreign, HttpStatusCode.Forbidden, "request_claimed");
+        }
+
+        var details = await SetupApi.JsonAsync(await client.GetAsync(SongApi.Song(shortcode)));
+        Assert.Equal(JsonValueKind.Null, details.GetProperty("sunoWorkspace").ValueKind);
+        Assert.Equal("0", TestDatabase.Scalar(factory.DataPath, "SELECT count(*) FROM suno_workspaces;"));
+    }
+
     private static Guid VersionId(JsonElement song) => song.GetProperty("currentVersion").GetProperty("id").GetGuid();
 
     private static Uri Requests(Guid versionId) => new($"/api/v1/versions/{versionId}/generation-requests", UriKind.Relative);

@@ -76,7 +76,9 @@ public sealed record UnavailableSource(string Group, int Position, string? Title
 /// (<see cref="VersionEffectiveInputs"/>), so the extension fills from exactly what the Version shows,
 /// and keyed by the adapter's field map so the extension needs no knowledge of n8Tracks' model:
 /// <c>{ schemaVersion: 1, kind, mode, entries: [{ key, value }], sources, fileInputs, workspace:
-/// { sunoId, name } | null, song: { title, shortcode }, version: { shortcode }, unsupported }</c>.
+/// { sunoId, name, state } | null, song: { title, shortcode }, version: { shortcode }, unsupported }</c>.
+/// The workspace's <c>state</c> (<c>available</c> or <c>unavailable</c>) tells the extension whether to
+/// look for it in Suno or to offer the user a replacement (#145).
 /// A value with no entry on the map is listed under <c>unsupported</c>, keyed as it would have been.
 /// </summary>
 public static class GenerationSnapshot
@@ -188,7 +190,7 @@ public static class GenerationSnapshot
         }
 
         var workspace = effective[VersionEffectiveInputs.WorkspaceKey] is JsonObject chosen
-            ? new JsonObject { ["sunoId"] = chosen["id"]?.DeepClone(), ["name"] = chosen["name"]?.DeepClone() }
+            ? new JsonObject { ["sunoId"] = chosen["id"]?.DeepClone(), ["name"] = chosen["name"]?.DeepClone(), ["state"] = chosen["state"]?.DeepClone() }
             : null;
 
         return new JsonObject

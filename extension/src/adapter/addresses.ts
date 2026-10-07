@@ -97,6 +97,11 @@ export function sunoListAddress(
   }
 }
 
+/** The Create page, where Generate on Suno starts (#145). */
+export function sunoCreateAddress(): URL {
+  return new URL('/create', SUNO_ORIGIN);
+}
+
 /**
  * The hosts Suno serves cover images from, taken from the image addresses in the TS-003 fixtures
  * (`image_url`, `image_large_url`). TS-003 read them with no cookies or credentials

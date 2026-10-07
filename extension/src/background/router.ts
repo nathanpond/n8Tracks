@@ -1,6 +1,8 @@
 import { isSunoAddress } from '../adapter/addresses.ts';
 import type { Diagnostics } from '../diagnostics/report.ts';
 import {
+  GENERATE_TYPES,
+  isGenerateRequest,
   isRequest,
   isSyncRequest,
   SYNC_TYPES,
@@ -47,7 +49,7 @@ function onSuno(sender: Sender): boolean {
 
 /**
  * Messages a content script (the relay on the n8Tracks page, the panel on Suno) may send. The sync
- * messages are for the Suno content script's own tab only.
+ * and generate messages are for the Suno content script's own tab only.
  */
 const CONTENT_SCRIPT_TYPES: readonly Request['type'][] = [
   'state',
@@ -55,6 +57,7 @@ const CONTENT_SCRIPT_TYPES: readonly Request['type'][] = [
   'diagnostics-record',
   'diagnostic-report',
   ...SYNC_TYPES,
+  ...GENERATE_TYPES,
 ];
 
 /**
@@ -83,6 +86,13 @@ export async function route(
     }
     return sync.handle(message, tabId);
   }
+  if (isGenerateRequest(message)) {
+    const tabId = sender.tab?.id;
+    if (tabId === undefined || generate === undefined || !onSuno(sender)) {
+      return { refused: `${message.type} is only for the Suno content script in a tab` };
+    }
+    return generate.handleTab(message, tabId);
+  }
   switch (message.type) {
     case 'state':
       return connection.state(message.fresh ?? false);
@@ -107,7 +117,7 @@ export async function route(
     case 'relay': {
       // Generate on Suno (#144): only from the relay, a content script in a tab that is not on Suno.
       if (generate !== undefined && sender.tab !== undefined && !onSuno(sender)) {
-        const answer = await generate.handle(message.message, sender.url);
+        const answer = await generate.handle(message.message, sender.url, sender.tab.id);
         if (answer !== null) {
           return answer;
         }

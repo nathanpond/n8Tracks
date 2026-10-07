@@ -254,6 +254,11 @@ describe('Generate on Suno', () => {
     const steps: [Partial<GenerationRequest>, string][] = [
       [{ state: 'opening' }, 'Opening Suno'],
       [{ state: 'workspace' }, 'Choosing the Song’s workspace in Suno'],
+      // The extension's panel asks the user to choose the Song's workspace (#145).
+      [
+        { state: 'workspace', step: 'choose workspace' },
+        'Waiting for you in Suno: choose the Song’s workspace in the extension’s panel',
+      ],
       [{ state: 'filling' }, 'Filling Suno’s Create form'],
       [{ state: 'waiting' }, 'Waiting for you to click Create in Suno'],
       [

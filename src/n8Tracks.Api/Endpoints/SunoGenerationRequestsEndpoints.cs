@@ -35,6 +35,7 @@ internal static class SunoGenerationRequestsEndpoints
     public const string RequestClaimedCode = "request_claimed";
     public const string RequestNotClaimedCode = "request_not_claimed";
     public const string CredentialRequiredCode = "credential_required";
+    public const string WorkspaceAlreadySetCode = "workspace_already_set";
 
     public static IEndpointRouteBuilder MapSunoGenerationRequests(this IEndpointRouteBuilder endpoints)
     {
@@ -80,7 +81,7 @@ internal static class SunoGenerationRequestsEndpoints
 
         endpoints.MapPatch(RequestPath, ReportAsync)
             .WithName("ReportGenerationRequest")
-            .WithSummary("The claiming extension reports progress: { state: opening | workspace | filling | waiting | done | stopped, step, message } (a stop says why). No If-Match. The hour before the request expires starts again. 403 request_claimed for another credential; 409 request_not_claimed before a claim; 409 request_ended once it has ended; 422 validation_failed.")
+            .WithSummary("The claiming extension reports progress: { state: opening | workspace | filling | waiting | done | stopped, step, message } (a stop says why), and optionally resolvedWorkspace: { sunoId, name, how: created | picked }, the Suno workspace the user chose for the Song in the extension's panel, which becomes the Song's workspace only when the Song has none or an unavailable one (409 workspace_already_set otherwise; resending the Song's own workspace changes nothing). No If-Match. The hour before the request expires starts again. 403 request_claimed for another credential; 409 request_not_claimed before a claim; 409 request_ended once it has ended; 422 validation_failed.")
             .RequireScope(CredentialScopes.SunoGenerate)
             .Produces<GenerationRequestResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
@@ -233,18 +234,29 @@ internal static class SunoGenerationRequestsEndpoints
 
         var step = Text(body.Step, GenerationRequestService.StepField, errors);
         var message = Text(body.Message, GenerationRequestService.MessageField, errors);
+        var workspace = Workspace(body.ResolvedWorkspace, errors);
         if (errors.Count > 0)
         {
             return ApiProblem.ValidationFailed(context, errors);
         }
 
-        var outcome = await requests.ReportAsync(id, CredentialOf(context.User), new GenerationProgress(state!.Value, step, message), cancellationToken);
+        var outcome = await requests.ReportAsync(id, CredentialOf(context.User), new GenerationProgress(state!.Value, step, message, workspace), cancellationToken);
         if (outcome is GenerationRequestChangeOutcome.Changed changed)
         {
             Log(loggers).LogInformation(
                 "Generation request {GenerationRequestId} reported {GenerationRequestState}",
                 id,
                 GenerationRequestRules.NameOf(changed.Request.State));
+            if (workspace is not null)
+            {
+                // The Suno ID only: a workspace's name is often the Song's title.
+                Log(loggers).LogInformation(
+                    "Generation request {GenerationRequestId} resolved the Song's Suno workspace {SunoWorkspaceId} ({WorkspaceResolution})",
+                    id,
+                    workspace.SunoId,
+                    workspace.How);
+            }
+
             return TypedResults.Ok(GenerationRequestResponse.From(changed.Request, withSnapshot: false));
         }
 
@@ -291,11 +303,48 @@ internal static class SunoGenerationRequestsEndpoints
             RequestNotClaimedCode,
             "Claim this generation request before reporting on it."),
         GenerationRequestChangeOutcome.Invalid invalid => ApiProblem.ValidationFailed(context, invalid.Errors),
+        GenerationRequestChangeOutcome.WorkspaceAlreadySet already => ApiProblem.For(
+            context,
+            StatusCodes.Status409Conflict,
+            WorkspaceAlreadySetCode,
+            "The Song already has an available Suno workspace; change it from the Song's Details.",
+            [new("workspaceId", already.Workspace.SunoId)]),
         _ => throw new InvalidOperationException("Unknown generation request outcome."),
     };
 
     private static ProblemHttpResult NoSuchRequest(HttpContext context) =>
         ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "There is no such generation request.");
+
+    /// <summary>
+    /// <c>resolvedWorkspace</c> as sent: missing or null is none; otherwise <c>{ sunoId, name, how }</c>
+    /// with text Suno ID and name and <c>how</c> <c>created</c> or <c>picked</c>, else a field error.
+    /// The lengths are the service's to check.
+    /// </summary>
+    private static ResolvedWorkspace? Workspace(JsonElement value, Dictionary<string, string[]> errors)
+    {
+        if (value.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
+        {
+            return null;
+        }
+
+        var how = value.ValueKind == JsonValueKind.Object && value.TryGetProperty("how", out var sent) && sent.ValueKind == JsonValueKind.String
+            ? sent.GetString() switch
+            {
+                "created" => WorkspaceResolution.Created,
+                "picked" => WorkspaceResolution.Picked,
+                _ => (WorkspaceResolution?)null,
+            }
+            : null;
+        if (how is null
+            || !value.TryGetProperty("sunoId", out var sunoId) || sunoId.ValueKind != JsonValueKind.String
+            || !value.TryGetProperty("name", out var name) || name.ValueKind != JsonValueKind.String)
+        {
+            errors[GenerationRequestService.ResolvedWorkspaceField] = ["Send { sunoId, name, how: created or picked }, or leave it out."];
+            return null;
+        }
+
+        return new ResolvedWorkspace(sunoId.GetString()!, name.GetString()!, how.Value);
+    }
 
     /// <summary>A text field as sent: missing or null is none; anything but text is an error.</summary>
     private static string? Text(JsonElement value, string field, Dictionary<string, string[]> errors)
@@ -323,7 +372,7 @@ internal static class SunoGenerationRequestsEndpoints
 }
 
 /// <summary>A progress report as sent, read as raw JSON so a wrong type is a field error.</summary>
-internal sealed record GenerationProgressRequest(JsonElement State, JsonElement Step, JsonElement Message);
+internal sealed record GenerationProgressRequest(JsonElement State, JsonElement Step, JsonElement Message, JsonElement ResolvedWorkspace);
 
 /// <summary>A source that blocks a request, as the 422 names it.</summary>
 internal sealed record UnavailableSourceResponse(string Group, int Position, string? Title, string? Shortcode, string Availability);

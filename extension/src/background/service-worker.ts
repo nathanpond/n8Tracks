@@ -32,12 +32,14 @@ const sync = new SyncCoordinator({
   },
 });
 
-// Generate on Suno (#144): the request this extension claimed, in session storage.
+// Generate on Suno (#144, #145): the request this extension claimed and its Suno tab, in session
+// storage.
 const generate = new GenerateCoordinator({
   connection,
   browser: {
     session: chrome.storage.session,
     openOptions: () => chrome.runtime.openOptionsPage(),
+    tabs: chrome.tabs,
   },
 });
 
@@ -64,6 +66,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // A sync's Suno tab that is closed, or taken off suno.com, ends the sync and discards its export.
 chrome.tabs.onRemoved.addListener((tabId) => {
   void sync.tabRemoved(tabId).catch(() => undefined);
+  // A generation's Suno tab that is closed stops its request, saying so.
+  void generate.tabRemoved(tabId).catch(() => undefined);
 });
 chrome.tabs.onUpdated.addListener((tabId, change) => {
   void sync.tabUpdated(tabId, change.url).catch(() => undefined);
