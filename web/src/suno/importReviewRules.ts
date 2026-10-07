@@ -62,6 +62,8 @@ export function reasonText(reason: string): string {
       return 'only a Conflict record can move to a new Version or be kept';
     case 'field_not_changed':
       return 'Suno’s data does not differ in a field chosen';
+    case 'tombstoned':
+      return 'it was deleted from n8Tracks, and a deleted clip is never put on the ignore list';
     default:
       return reason;
   }

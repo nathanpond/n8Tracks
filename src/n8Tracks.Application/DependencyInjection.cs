@@ -50,6 +50,7 @@ public static class DependencyInjection
         services.AddScoped<ProposalService>();
         services.AddScoped<ExportStagingService>();
         services.AddScoped<ImportReviewService>();
+        services.AddScoped<IgnoreListService>();
         services.AddJobHandler<ExportClassifyJobHandler>(ExportStagingService.ClassifyJobType);
         services.AddScoped<ImportCommitService>();
         services.AddScoped<ImportTargetWriter>();

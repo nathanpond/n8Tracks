@@ -129,6 +129,9 @@ public static class ImportChoiceRules
     /// <summary>Refused: a Generation holds its Suno ID already, so it cannot be imported or ignored.</summary>
     public const string AlreadyLinked = "already_linked";
 
+    /// <summary>Refused: Don't copy for a clip deleted in n8Tracks (a provider tombstone): a deleted clip is never ignored (#143).</summary>
+    public const string Tombstoned = "tombstoned";
+
     /// <summary>Refused: its inputs are not the Version's, or not those of the other clips of the new target.</summary>
     public const string InputsDiffer = "inputs_differ";
 

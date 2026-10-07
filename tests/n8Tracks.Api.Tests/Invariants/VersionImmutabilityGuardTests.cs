@@ -913,6 +913,7 @@ public sealed class VersionImmutabilityGuardTests
         ["POST /api/v1/suno/exports/{id:guid}/discard"] = "removes a staged export's rows (#131); the catalog is not touched",
         ["PATCH /api/v1/suno/exports/{id:guid}/records"] = "changes the choices of a staged export's records (suno_export_records, #138); a choice only names a Version, and the catalog is not touched until the commit (#140), which the guard extends to",
         ["PUT /api/v1/suno/exports/{id:guid}/artwork/{sunoId}"] = "stores an image as an asset held by a staged record (#131); no Generation or Version is touched until the commit",
+        ["POST /api/v1/suno/ignored/remove"] = "removes Suno IDs from the ignore list (suno_ignored_items, #143) and reclassifies a ready export; nothing is imported and no Version is touched",
     };
 
     /// <summary>How each public method of a catalog service is called, each creation input touched in turn.</summary>
@@ -1198,6 +1199,8 @@ public sealed class VersionImmutabilityGuardTests
         ["SunoWorkspaceService.ReadReport(JsonElement)"] = "pure: reads a workspace report",
         ["SunoWorkspaceService.ReportAsync(IReadOnlyList`1, Boolean, CancellationToken)"] = "writes Suno's own workspace records (provider state); no Song or Version",
         ["TombstoneService.FindAsync(String, CancellationToken)"] = "reads only",
+        ["IgnoreListService.ListAsync(IgnoredItemQuery, CancellationToken)"] = "reads only: the ignore list (#143)",
+        ["IgnoreListService.RemoveAsync(IReadOnlyCollection`1, CancellationToken)"] = "removes Suno IDs from the ignore list (#143) and reclassifies a ready export's records; nothing is imported and no Version is touched",
         ["TombstoneService.TombstonedAsync(IReadOnlyCollection`1, CancellationToken)"] = "reads only",
         ["VersionDefaultsService.GetAsync(CancellationToken)"] = "reads only: the user's defaults",
         ["VersionDefaultsService.NewVersionInputsAsync(String, CancellationToken)"] = "reads only: the inputs a new, mutable Version starts with",

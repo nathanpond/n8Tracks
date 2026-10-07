@@ -84,6 +84,7 @@ public static class DependencyInjection
         services.AddScoped<SunoExportStore>();
         services.AddScoped<ISunoExportStore>(static provider => provider.GetRequiredService<SunoExportStore>());
         services.AddScoped<ISunoClipLookup>(static provider => provider.GetRequiredService<SunoExportStore>());
+        services.AddScoped<ISunoIgnoreListStore, SunoIgnoreListStore>();
         services.AddScoped<ISongWorkspaceStore, SunoWorkspaceStore>();
         services.AddScoped<IVersionDefaultsStore, VersionDefaultsStore>();
         services.AddSingleton<IBackupStorage, BackupFolders>();
