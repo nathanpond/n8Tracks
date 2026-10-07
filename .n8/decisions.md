@@ -4118,3 +4118,36 @@ Story #207:
 - **Decision:** AC 1's "preferred-file choice pointing at it is kept" is satisfied by construction, because no scan deletes or rewrites a record's ID or association. The preference itself arrives with #212.
   **Why:** No preference exists yet. The tests assert that row counts and associated-row counts never drop.
   **Issue:** #207
+
+Story #216 (built in parallel; merged into the milestone branch):
+
+- **Decision:** WAV, MP3, and M4A are prepared from the Library page (`/me`). The adapter finds the clip's row by its `/song/<id>` link (a new read-only `Target.address`), presses the row's "More options" (a region 6 levels out from the link), then the menu's Download, the format, and "Unlock & Download".
+  **Why:** the clip's own page (`/song/<id>`) has no snapshot (#341, D10). `page.library-list.html` shows one link and one More options per row, `page.clip-download-menu.html` shows the menu, and `page.download-dialog.html` shows the dialog. Every page state pressed has a TS-003 or TS-004 snapshot.
+  **Issue:** #216
+- **Decision:** a clip whose row is not rendered in the list fails that file only, with "scroll to it there, then press Retry failed". The extension does not scroll to look for it.
+  **Why:** no snapshot shows how Suno's list virtualises rows. Searching by scrolling would act on unrecorded page states. The library read has scrolled to the end, so loaded rows are normally present.
+  **Issue:** #216
+- **Decision:** the Download dialog's button is pressed only under its captured name, "Unlock & Download", whether or not the clip is already unlocked. A dialog that names it otherwise stops the step for that format, and no other name is pressed. The unlock is controlled in the service worker. A clip not yet unlocked (`is_download_unlocked` false and not unlocked earlier in the run) gets the page step only when the user confirmed it at Start, and once per clip.
+  **Why:** TS-004 captured only the locked state. The authorize fixture's `already_unlocked` member shows that Suno answers an unlocked clip without spending. Guessing another name would invent page structure, which m4-notes rules out (BLOCKED_ON_CAPTURE). The owner's demo with already-unlocked clips will show the real name. If it differs, the WAV/MP3/M4A path for such clips needs a capture.
+  **Issue:** #216
+- **Decision:** the Download dialog's controls (WAV, MP3, M4A, "Unlock & Download", Close) are a second named exception in `forbidden.ts` (`download-clip`, recognised by the dialog title `/^Download\b/`). `Page.downloadDialogClick` presses them, and the static scan allows it only from `adapter/workflows/download.ts`. `RECOGNISED_DIALOGS` is unchanged. "MP4 video asset" and Manage stay forbidden. The guard's `forbiddenControls` spies the Download dialog control by control (`pressableDialog`).
+  **Why:** #133 reserved the dialog for #216's own primitive. The invariant text already allows the unlock, which `docs/suno-integration.md` amended on 2026-10-05. The exception mirrors `create-workspace`.
+  **Issue:** #216
+- **Decision:** the #133 static scan's downloads rule is narrowed instead of adding a `NETWORK_EXEMPTIONS` entry. `chrome.downloads` and its members are refused everywhere except `src/download/downloader.ts`. That file may use only `download`, `cancel`, `search`, and `onChanged`, and `download` only with an object of `url`, `filename`, `conflictAction`, and `saveAs`. Its `url` must have the adapter's branded type `AudioAddress` (`audioAddressOf` in `addresses.ts`). Bite tests cover a header, an unchecked address, `removeFile`, and the same code in another file.
+  **Why:** `downloader.ts` sends no `fetch`, so a network exemption would widen the wrong rule. This proves both "listed host" and "no credential added" statically.
+  **Issue:** #216
+- **Decision:** the streaming-quality M4A is named `… (suno-<id>) stream.m4a`. Every other format is `… (suno-<id>).<ext>`.
+  **Why:** with only the extension to tell them apart, M4A and the stream in one run would collide into `(1)` numbering. #206 had already put this form in the shared fixture. The token stays whole, so the matcher still finds it.
+  **Issue:** #216
+- **Decision:** unlock confirmation is an explicit checkbox, "Use N Suno download unlocks for this run", which resets when N changes. Start sends N, and the service worker refuses a Start whose N is not the plan's count of distinct clips not yet unlocked in a paid format. The run keeps the confirmed clip IDs, not just a number.
+  **Why:** the AC requires the count to be confirmed in the summary. A set of confirmed clips makes "never more unlocks than confirmed" hold by construction.
+  **Issue:** #216
+- **Decision:** queue mechanics. The service worker sends `download-prepare` (`chrome.tabs.sendMessage`) to the run's tab and waits for the answer, and pushes `download-progress` there. The tab reads `download-run` on each page load that has no library read. A browser restart is detected by an empty `chrome.storage.session` marker (`downloadQueueAlive`). Progress is polled every second while a file downloads, because `downloads.onChanged` reports no bytes. An expired address (`SERVER_FORBIDDEN`, `SERVER_UNAUTHORIZED`) is prepared again once.
+  **Why:** these follow the story's discretion lines (the queue lives in the service worker and survives restarts, Resume after a browser restart, refetch once). Start, too, is refused while a sync or Generate on Suno runs (the page is shared).
+  **Issue:** #216
+- **Decision:** the page's own copy of a prepared file (`<title>.<ext>`, TS-004) is not removed or suppressed. The summary and the docs say it has no Suno ID.
+  **Why:** TS-004 did not establish how the page saves the file. Cancelling downloads the extension did not start is out of scope and not covered by the story's exception.
+  **Issue:** #216
+- **Decision:** `ADAPTER_VERSION` is 12. The new observed kind `download-clip` forwards only `status` and `download_url`, plus `{clipId, format}` from the address, and only ready answers are queued. The workflow `Feature` gains `download` (panel group "Download from Suno"). The manifest's `permissions` gain `downloads`, and the validator's allow-list is widened explicitly with complements: the list without `downloads` fails, and an extra permission fails.
+  **Why:** these are adapter pattern changes, and D4 gave the `downloads` permission to #216.
+  **Issue:** #216
