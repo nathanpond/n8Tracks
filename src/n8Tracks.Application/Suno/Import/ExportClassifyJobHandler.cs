@@ -22,7 +22,7 @@ internal sealed class ExportClassifyJobHandler(ExportStagingService exports) : I
             throw new InvalidOperationException("The job names no export.");
         }
 
-        var outcome = await exports.ClassifyAsync(exportId, cancellationToken).ConfigureAwait(false);
+        var outcome = await exports.ClassifyAsync(exportId, context.JobId, cancellationToken).ConfigureAwait(false);
         context.Report(100);
         return outcome switch
         {

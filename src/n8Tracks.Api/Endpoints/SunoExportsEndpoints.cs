@@ -513,7 +513,8 @@ internal static class SunoExportsEndpoints
     }
 
     /// <summary>
-    /// 202 with the export, now committing, naming the commit job; 404; 409 when it is not ready, is or was
+    /// 202 with the export, naming the commit job it started (committing, or already committed when the job
+    /// was quicker than the answer); 404; 409 when it is not ready, is or was
     /// being committed, or is at another revision; 400 or 428 for a missing or malformed If-Match.
     /// </summary>
     private static async Task<Results<Accepted<SunoExportResponse>, ProblemHttpResult>> CommitAsync(
@@ -535,11 +536,12 @@ internal static class SunoExportsEndpoints
         switch (await commits.CommitAsync(id, revision!.Value, cancellationToken))
         {
             case ImportCommitOutcome.Started started:
-                Log(loggers).LogInformation("Suno export commit started: {ExportId} by job {JobId}", id, started.View.Export.JobId);
+                // The answer names the job this request started, whatever state the job has got the export to.
+                Log(loggers).LogInformation("Suno export commit started: {ExportId} by job {JobId}", id, started.JobId);
                 Revisions.SetETag(context, started.View.Export.Revision);
                 return TypedResults.Accepted(
-                    started.View.Export.JobId is { } jobId ? $"{ApiProblem.VersionPrefix}/jobs/{jobId}" : (string?)null,
-                    SunoExportResponse.From(started.View));
+                    $"{ApiProblem.VersionPrefix}/jobs/{started.JobId}",
+                    SunoExportResponse.From(started.View) with { JobId = started.JobId });
             case ImportCommitOutcome.NotFound:
                 return NoSuchExport(context);
             case ImportCommitOutcome.NotReady notReady:

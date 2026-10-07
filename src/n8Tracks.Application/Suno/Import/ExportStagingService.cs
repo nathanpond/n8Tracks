@@ -284,13 +284,14 @@ public sealed class ExportStagingService(
         Exception? failure = null;
         if (started.Clips <= SunoExportRules.InlineClassificationLimit)
         {
-            if (await ClassifyAsync(id, cancellationToken).ConfigureAwait(false) is ExportClassification.Failed failed)
+            if (await ClassifyAsync(id, null, cancellationToken).ConfigureAwait(false) is ExportClassification.Failed failed)
             {
                 failure = failed.Exception;
             }
         }
         else
         {
+            // The job may end before it is named here: it then names itself as it moves the export on.
             var job = await jobs.EnqueueAsync(ClassifyJobType, JsonSerializer.SerializeToElement(new { exportId = id }), cancellationToken).ConfigureAwait(false);
             await transaction.RunAsync(
                 ct => store.TryMoveAsync(id, Classifying, SunoExportState.Classifying, time.GetUtcNow(), job, ct),
@@ -449,8 +450,10 @@ public sealed class ExportStagingService(
     /// its own transaction that first checks the export is still classifying; last, a complete workspace
     /// list is applied and the export becomes ready. A failure leaves it <c>failed</c> with nothing staged.
     /// After the classes, each record gets its proposal and starting choice (<see cref="ProposalService"/>, #138).
+    /// The classifying job, when there is one (<paramref name="jobId"/>), is named on the export as it ends,
+    /// in case it ended before the completion named it.
     /// </summary>
-    internal async Task<ExportClassification> ClassifyAsync(Guid id, CancellationToken cancellationToken)
+    internal async Task<ExportClassification> ClassifyAsync(Guid id, Guid? jobId, CancellationToken cancellationToken)
     {
         try
         {
@@ -516,7 +519,7 @@ public sealed class ExportStagingService(
             var ready = await transaction.RunAsync(
                 async ct =>
                 {
-                    if (!await store.TryMoveAsync(id, Classifying, SunoExportState.Ready, time.GetUtcNow(), null, ct).ConfigureAwait(false))
+                    if (!await store.TryMoveAsync(id, Classifying, SunoExportState.Ready, time.GetUtcNow(), jobId, ct).ConfigureAwait(false))
                     {
                         return false;
                     }
@@ -542,7 +545,7 @@ public sealed class ExportStagingService(
             await transaction.RunAsync(
                 async ct =>
                 {
-                    if (await store.TryMoveAsync(id, Classifying, SunoExportState.Failed, time.GetUtcNow(), null, ct).ConfigureAwait(false))
+                    if (await store.TryMoveAsync(id, Classifying, SunoExportState.Failed, time.GetUtcNow(), jobId, ct).ConfigureAwait(false))
                     {
                         await store.RemoveStagedAsync(id, ct).ConfigureAwait(false);
                     }

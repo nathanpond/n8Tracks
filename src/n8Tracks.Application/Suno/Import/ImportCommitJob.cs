@@ -20,8 +20,12 @@ public abstract record ImportCommitOutcome
     {
     }
 
-    /// <summary>The export is <c>committing</c> and the commit job named on it is queued.</summary>
-    public sealed record Started(ExportView View) : ImportCommitOutcome;
+    /// <summary>
+    /// The commit job <paramref name="JobId"/> was queued and is named on the export. <paramref name="View"/>
+    /// is the export as read after that: <c>committing</c>, or already <c>committed</c> (or back to
+    /// <c>ready</c>) when the job ended first.
+    /// </summary>
+    public sealed record Started(ExportView View, Guid JobId) : ImportCommitOutcome;
 
     /// <summary>No such export.</summary>
     public sealed record NotFound : ImportCommitOutcome;
@@ -156,11 +160,13 @@ public sealed class ImportCommitService(
         }
 
         // The job finds the export committing whenever the worker takes it; its ID is named once queued.
+        // The job may end before that (a quick one, every record Skip): it then names itself as it moves
+        // the export on, so this move finds nothing to do and the export still names its job.
         var job = await queue.EnqueueAsync(JobType, JsonSerializer.SerializeToElement(new { exportId }), cancellationToken).ConfigureAwait(false);
         await transaction.RunAsync(
             ct => store.TryMoveAsync(exportId, Committing, SunoExportState.Committing, time.GetUtcNow(), job, ct),
             cancellationToken).ConfigureAwait(false);
-        return new ImportCommitOutcome.Started((await staging.FindAsync(exportId, null, cancellationToken).ConfigureAwait(false))!);
+        return new ImportCommitOutcome.Started((await staging.FindAsync(exportId, null, cancellationToken).ConfigureAwait(false))!, job);
     }
 
     /// <summary>
@@ -178,27 +184,31 @@ public sealed class ImportCommitService(
                 continue;
             }
 
-            await ReturnToReadyAsync(export.Id, cancellationToken).ConfigureAwait(false);
+            await ReturnToReadyAsync(export.Id, null, cancellationToken).ConfigureAwait(false);
             recovered++;
         }
 
         return recovered;
     }
 
-    /// <summary>The commit job's last step: the export is <c>committed</c>, its staged records kept for a day (#131's expiry).</summary>
-    internal Task<bool> MarkCommittedAsync(Guid exportId, CancellationToken cancellationToken) =>
+    /// <summary>
+    /// The commit job's last step: the export is <c>committed</c>, its staged records kept for a day
+    /// (#131's expiry), and it names <paramref name="jobId"/> (the job may end before it was named).
+    /// </summary>
+    internal Task<bool> MarkCommittedAsync(Guid exportId, Guid jobId, CancellationToken cancellationToken) =>
         transaction.RunAsync(
-            ct => store.TryMoveAsync(exportId, Committing, SunoExportState.Committed, time.GetUtcNow(), null, ct),
+            ct => store.TryMoveAsync(exportId, Committing, SunoExportState.Committed, time.GetUtcNow(), jobId, ct),
             cancellationToken);
 
     /// <summary>
     /// Puts a <c>committing</c> export back to <c>ready</c> and classifies its records again, so what the
     /// interrupted commit imported is linked and is not offered again (#140: the job is not resumable).
+    /// A failed commit job names itself (<paramref name="jobId"/>), so its failure can be read from the export.
     /// </summary>
-    internal async Task ReturnToReadyAsync(Guid exportId, CancellationToken cancellationToken)
+    internal async Task ReturnToReadyAsync(Guid exportId, Guid? jobId, CancellationToken cancellationToken)
     {
         if (await transaction.RunAsync(
-                ct => store.TryMoveAsync(exportId, Committing, SunoExportState.Ready, time.GetUtcNow(), null, ct),
+                ct => store.TryMoveAsync(exportId, Committing, SunoExportState.Ready, time.GetUtcNow(), jobId, ct),
                 cancellationToken).ConfigureAwait(false))
         {
             await staging.ReclassifyAsync(exportId, cancellationToken).ConfigureAwait(false);
@@ -260,14 +270,14 @@ internal sealed class ImportCommitJob(
         try
         {
             var result = await ApplyAsync(export, context, cancellationToken).ConfigureAwait(false);
-            await commits.MarkCommittedAsync(exportId, cancellationToken).ConfigureAwait(false);
+            await commits.MarkCommittedAsync(exportId, context.JobId, cancellationToken).ConfigureAwait(false);
             context.Report(100);
             return JsonSerializer.SerializeToElement(result, ResultJson.Options);
         }
         catch (Exception)
         {
             // Not resumable: the export goes back to ready, what was imported already now linked.
-            await commits.ReturnToReadyAsync(exportId, CancellationToken.None).ConfigureAwait(false);
+            await commits.ReturnToReadyAsync(exportId, context.JobId, CancellationToken.None).ConfigureAwait(false);
             throw;
         }
     }

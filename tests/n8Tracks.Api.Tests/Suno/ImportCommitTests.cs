@@ -417,5 +417,68 @@ public sealed class ImportCommitTests
         Assert.Equal(1, ImportCommitApi.GenerationCount(factory, "done-1"));
     }
 
+    [Fact]
+    public async Task TheAnswerNamesTheJobItStartedEvenWhenTheJobEndsBeforeTheAnswer()
+    {
+        // The commit job ends before the commit request answers: the queue hands back the job's ID
+        // only once the worker has finished it, as a quick (all Skip) job can on a busy machine.
+        using var factory = new N8TracksApiFactory { TestServices = FinishFirstQueue.Register };
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var token = await SunoWorkspaceApi.ExtensionTokenAsync(factory);
+        var (id, _) = await ProposalApi.ExportAsync(client, token, ProposalApi.Clip("quick-1", null, ProposalApi.At, 0, "Quick words"));
+
+        using var response = await ImportCommitApi.SendAsync(client, id, await ImportCommitApi.IfMatchAsync(client, id));
+
+        Assert.True(response.StatusCode == HttpStatusCode.Accepted, await response.Content.ReadAsStringAsync());
+        var started = await SetupApi.JsonAsync(response);
+        Assert.Equal(JsonValueKind.String, started.GetProperty("jobId").ValueKind);
+        var jobId = started.GetProperty("jobId").GetGuid();
+        Assert.Equal($"/api/v1/jobs/{jobId}", response.Headers.Location?.OriginalString);
+        Assert.Equal("committed", started.GetProperty("state").GetString());
+        Assert.Equal("succeeded", (await Jobs.TestJobs.GetAsync(client, jobId)).GetProperty("status").GetString());
+
+        // The export keeps naming its job, and so does the refusal of a second commit.
+        Assert.Equal(jobId, (await SunoExportApi.GetAsync(client, null, id)).GetProperty("jobId").GetGuid());
+        using var again = await ImportCommitApi.SendAsync(client, id, await ImportCommitApi.IfMatchAsync(client, id));
+        Assert.Equal(HttpStatusCode.Conflict, again.StatusCode);
+        Assert.Equal(jobId, (await SetupApi.JsonAsync(again)).GetProperty("jobId").GetGuid());
+    }
+
     private static string Upper(Guid id) => id.ToString().ToUpperInvariant();
+
+    /// <summary>A queue that returns a commit job's ID only after the worker has finished the job.</summary>
+    private sealed class FinishFirstQueue(Application.Jobs.JobQueue inner, IServiceScopeFactory scopes) : Application.Jobs.IJobQueue
+    {
+        public static void Register(IServiceCollection services)
+        {
+            services.AddSingleton<Application.Jobs.IJobQueue>(static provider =>
+                new FinishFirstQueue(provider.GetRequiredService<Application.Jobs.JobQueue>(), provider.GetRequiredService<IServiceScopeFactory>()));
+        }
+
+        public async Task<Guid> EnqueueAsync(string type, JsonElement? payload, CancellationToken cancellationToken)
+        {
+            var id = await inner.EnqueueAsync(type, payload, cancellationToken);
+            if (type != ImportCommitService.JobType)
+            {
+                return id;
+            }
+
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
+            while (true)
+            {
+                var scope = scopes.CreateAsyncScope();
+                await using (scope.ConfigureAwait(false))
+                {
+                    var job = await scope.ServiceProvider.GetRequiredService<Application.Jobs.JobService>().FindAsync(id, cancellationToken);
+                    if (job is { Status: Application.Jobs.JobStatus.Succeeded or Application.Jobs.JobStatus.Failed })
+                    {
+                        return id;
+                    }
+                }
+
+                Assert.True(DateTime.UtcNow < deadline, $"Commit job {id} never ended.");
+                await Task.Delay(25, cancellationToken);
+            }
+        }
+    }
 }
