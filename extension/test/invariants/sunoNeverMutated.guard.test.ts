@@ -2,9 +2,11 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { ANY_SUNO_PAGE } from '../../src/adapter/addresses.ts';
 import type { FormJob } from '../../src/adapter/fill.ts';
+import { planSources, SOURCE_ROUTES, type LoadedSource } from '../../src/adapter/sources.ts';
 import type { Page, Target } from '../../src/adapter/primitives.ts';
 import { OK, present, type Step, type Workflow } from '../../src/adapter/workflow.ts';
 import { ADAPTER_WORKFLOWS } from '../../src/adapter/workflows/index.ts';
+import { chooseSourceAction, openSourceMenu } from '../../src/adapter/workflows/sources.ts';
 import { SNAPSHOT_NAMES, snapshotHtml } from '../../src/testing/snapshots.ts';
 import { EXTENSION_ROOT, scanExtension } from './sourceScan.ts';
 import {
@@ -54,7 +56,31 @@ const RUN_RECIPES: Readonly<Record<string, RunRecipe>> = {
   'fill-songs-simple': { values: fillValues('simple') },
   'fill-songs-advanced': { values: fillValues('advanced') },
   'check-songs-form': { values: fillValues('advanced') },
+  // Starting from a source (#148): the clip's More options, the Remix submenu, and Cover; the
+  // Remix and Edit menus hold Publish and Move to Trash, which must never be reached. On the
+  // Create form, Overwrite in Suno's question, and the source read without pressing anything.
+  'open-source-menu': { values: { route: SOURCE_ROUTES.cover }, address: () => SONG_PAGE },
+  'choose-source-action': { values: { route: SOURCE_ROUTES.cover }, address: () => SONG_PAGE },
+  'answer-overwrite': { values: {} },
+  'verify-source-advanced': { values: { load: coverOf('00000000-0000-4000-8000-000000000104') } },
+  'verify-source-simple': { values: { load: coverOf('00000000-0000-4000-8000-000000000109') } },
 };
+
+const SONG_PAGE = 'https://suno.com/song/00000000-0000-4000-8000-000000000104';
+
+/** A Cover of the clip `sunoId`, as the source plan loads it. */
+function coverOf(sunoId: string): LoadedSource | null {
+  return planSources({
+    kind: 'song',
+    mode: 'advanced',
+    entries: {},
+    sources: [
+      { key: 'songs.advanced.audio', title: 'Origin', sunoAction: 'cover', sunoId, group: 'audio' },
+    ],
+    fileInputs: [],
+    unsupported: [],
+  }).load;
+}
 
 function fillValues(mode: string): Record<string, unknown> {
   const prefix = `songs.${mode}.`;
@@ -99,6 +125,27 @@ describe('invariant 4: the extension never presses a forbidden control on Suno',
     expect(ADAPTER_WORKFLOWS.length).toBeGreaterThan(0);
     expect(await exerciseWorkflows(ADAPTER_WORKFLOWS, { recipes: RUN_RECIPES })).toEqual([]);
     // Every workflow on every snapshot, each failing step polled to its timeout on a fake clock.
+  }, 60_000);
+
+  it('takes every Suno action through the clip menus without reaching Publish or Move to Trash (#148)', async () => {
+    // Each action's route, on the snapshot of the menu it is in: every step must run there.
+    const workflows: Workflow[] = [];
+    const recipes: Record<string, RunRecipe> = {};
+    for (const [action, route] of Object.entries(SOURCE_ROUTES)) {
+      const fixture = route.menu === 'Remix' ? 'clip-remix-menu' : 'clip-edit-menu';
+      for (const workflow of [openSourceMenu, chooseSourceAction]) {
+        const id = `${workflow.id}-${action}`;
+        workflows.push({ ...(workflow as unknown as Workflow), id, fixtures: [fixture] });
+        recipes[id] = { values: { route }, address: () => SONG_PAGE };
+      }
+    }
+
+    expect(
+      await exerciseWorkflows(workflows, {
+        recipes,
+        snapshots: ['clip-remix-menu', 'clip-edit-menu', 'clip-download-menu'],
+      }),
+    ).toEqual([]);
   }, 60_000);
 
   it('knows every workflow: each module is registered, and each registered one has a recipe', () => {

@@ -687,3 +687,25 @@ describe('sliders that move in steps (#146: Duration by 5 seconds)', () => {
     expect(page.read(slider).value).toBe('45');
   });
 });
+
+describe('image addresses (#148: the source’s thumbnail)', () => {
+  it('reads the one image a control shows, or an image itself, and nothing when there are several', () => {
+    const page = loadSnapshot('create-source-advanced');
+    const player = found(page.find({ role: 'button', name: 'Play audio', description: 'player' }));
+
+    expect(page.imageAddress(player)).toBe(
+      'https://cdn2.suno.ai/image_00000000-0000-4000-8000-000000000104.jpeg',
+    );
+    const image = found(
+      page.find({ role: 'img', name: /^Cover art for /, description: 'the cover art' }),
+    );
+    expect(page.imageAddress(image)).toBe(page.imageAddress(player));
+
+    document.body.innerHTML =
+      '<ul aria-label="Two"><li><img src="https://a.example/1.jpeg" alt=""></li><li><img src="https://a.example/2.jpeg" alt=""></li></ul><ul aria-label="None"><li>No image</li></ul>';
+    const two = found(page.find({ role: 'list', name: 'Two', description: 'two' }));
+    const none = found(page.find({ role: 'list', name: 'None', description: 'none' }));
+    expect(page.imageAddress(two)).toBeNull();
+    expect(page.imageAddress(none)).toBeNull();
+  });
+});

@@ -117,6 +117,18 @@ export interface GenerateJob {
   workspace: RequestWorkspace | null;
   loads: number;
   form: FormJob | null;
+  /** Where loading the Version's source has got to across page loads (#148); null before it. */
+  source?: SourcePhase | null;
+}
+
+/**
+ * Loading a source spans page loads (#148): the tab goes to the source clip's page (`opening`),
+ * chooses the action there (`chosen`), and Suno opens the Create form with the source.
+ */
+export interface SourcePhase {
+  phase: 'opening' | 'chosen';
+  /** The source clip's Suno ID. */
+  sunoId: string;
 }
 
 /** The states the extension reports a request in (`PATCH`, `docs/suno-integration.md`). */
@@ -269,7 +281,9 @@ export type Request =
   /** Suno's complete workspace list, for n8Tracks' record (#145). */
   | { type: 'generate-workspaces'; workspaces: unknown[] }
   /** The workspace the user chose in the panel, for the Song (#145). */
-  | { type: 'generate-resolve'; workspace: ChosenWorkspace };
+  | { type: 'generate-resolve'; workspace: ChosenWorkspace }
+  /** Where loading the source has got to, kept for the next page load; null once loaded (#148). */
+  | { type: 'generate-source'; source: SourcePhase | null };
 
 export interface ResponseFor {
   state: ConnectionState;
@@ -294,6 +308,7 @@ export interface ResponseFor {
   /** n8Tracks' Song count of each workspace, by Suno ID, after the report. */
   'generate-workspaces': GenerateReply<{ songCounts: Record<string, number> }>;
   'generate-resolve': GenerateReply;
+  'generate-source': GenerateReply;
 }
 
 export type Response<T extends Request> = ResponseFor[T['type']];
@@ -332,6 +347,7 @@ export const GENERATE_TYPES = [
   'generate-progress',
   'generate-workspaces',
   'generate-resolve',
+  'generate-source',
 ] as const satisfies readonly Request['type'][];
 
 export type GenerateRequest = Extract<Request, { type: (typeof GENERATE_TYPES)[number] }>;
@@ -349,6 +365,16 @@ const GENERATE_STATES: readonly string[] = [
   'done',
   'stopped',
 ] satisfies GenerateState[];
+
+/** Whether `value` is a source phase as the Suno tab sends it. */
+export function isSourcePhase(value: unknown): value is SourcePhase {
+  return (
+    isRecord(value) &&
+    (value.phase === 'opening' || value.phase === 'chosen') &&
+    typeof value.sunoId === 'string' &&
+    value.sunoId !== ''
+  );
+}
 
 function isChosenWorkspace(value: unknown): value is ChosenWorkspace {
   return (
@@ -501,6 +527,8 @@ export function isRequest(value: unknown): value is Request {
       return Array.isArray(value.workspaces);
     case 'generate-resolve':
       return isChosenWorkspace(value.workspace);
+    case 'generate-source':
+      return value.source === null || isSourcePhase(value.source);
     default:
       return false;
   }

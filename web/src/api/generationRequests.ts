@@ -15,7 +15,7 @@ export type VerificationValue =
 
 /** What became of one entry of Suno's Create form when the extension filled it (#146). */
 export type VerificationOutcome =
-  'set' | 'failed' | 'unavailable' | 'manual' | 'not_applicable' | 'unsupported';
+  'set' | 'verified' | 'failed' | 'unavailable' | 'manual' | 'not_applicable' | 'unsupported';
 
 export interface VerificationEntry {
   key: string;
@@ -92,6 +92,7 @@ export function isGenerationRequest(value: unknown): value is GenerationRequest 
 
 const OUTCOMES: readonly string[] = [
   'set',
+  'verified',
   'failed',
   'unavailable',
   'manual',

@@ -42,6 +42,7 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
 
 export const OUTCOME_LABELS: Readonly<Record<EntryOutcome, string>> = {
   set: 'Set',
+  verified: 'Verified',
   failed: 'Differs',
   unavailable: 'Unavailable',
   manual: 'To do by hand',
@@ -52,6 +53,7 @@ export const OUTCOME_LABELS: Readonly<Record<EntryOutcome, string>> = {
 /** The order the counts are given in. */
 const OUTCOMES: readonly EntryOutcome[] = [
   'set',
+  'verified',
   'failed',
   'unavailable',
   'manual',

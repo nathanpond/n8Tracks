@@ -9,9 +9,11 @@ import type { GenerateJob, GenerateReply, Request } from '../messages.ts';
 import type { GenerateViewState } from '../panel/GenerateView.ts';
 import { fakeClock, snapshotHtml } from '../testing/snapshots.ts';
 import { standInForSuno } from '../testing/sunoForm.ts';
-import type { FormJob } from '../adapter/fill.ts';
+import type { FormJob, FormSource } from '../adapter/fill.ts';
 import { sunoObject } from '../testing/sunoResponses.ts';
 import {
+  actionUnavailable,
+  couldNotOpen,
   FORM_GONE,
   LIST_NOT_READ,
   NO_CREATE_PAGE,
@@ -165,6 +167,7 @@ function start(options: Options = {}) {
       case 'generate-workspaces':
         return Promise.resolve({ ok: true, songCounts: { default: 2, 'w-same': 0 } });
       case 'generate-resolve':
+      case 'generate-source':
         return Promise.resolve({ ok: true });
       default:
         return Promise.resolve(undefined);
@@ -486,7 +489,7 @@ describe('Generate on Suno in the Suno tab: filling the form (#146)', () => {
       type: 'generate-progress',
       state: 'waiting',
       step: 'review and create',
-      verification: { adapterVersion: 5, mode: 'advanced', checkedAt: '2026-10-07T12:00:00.000Z' },
+      verification: { adapterVersion: 6, mode: 'advanced', checkedAt: '2026-10-07T12:00:00.000Z' },
     });
     // The lyrics, styles, and title went as lengths and hashes only.
     expect(JSON.stringify(report)).not.toContain('first line');
@@ -555,6 +558,356 @@ describe('Generate on Suno in the Suno tab: filling the form (#146)', () => {
     await tab.generate.resume();
 
     expect(tab.last()).toEqual({ kind: 'stopped', message: NOT_A_SONG });
+    expect(tab.pressed).toEqual([]);
+  });
+});
+
+// ---- Starting from a source (#148).
+
+const SOURCE_CLIP = '00000000-0000-4000-8000-000000000104';
+const SIMPLE_CLIP = '00000000-0000-4000-8000-000000000109';
+const OTHER_CLIP = '00000000-0000-4000-8000-000000000199';
+const SONG_PAGE = `https://suno.com/song/${SOURCE_CLIP}`;
+
+function coverSource(change: Partial<FormSource> = {}): FormSource {
+  return {
+    key: 'songs.advanced.audio',
+    title: 'Origin',
+    sunoAction: 'cover',
+    group: 'audio',
+    position: 1,
+    sunoId: SOURCE_CLIP,
+    availability: 'ok',
+    continueAtSeconds: null,
+    ...change,
+  };
+}
+
+interface SourceTabOptions {
+  job: GenerateJob;
+  address: string;
+  html: string;
+  /** What Suno does when a control of this name is pressed. */
+  onPress?: (name: string, tab: { go(address: string, html: string): void }) => void;
+}
+
+/** A Suno tab partway through loading a source: the page, its address, and Suno's answers. */
+function sourceTab(options: SourceTabOptions) {
+  document.body.innerHTML = options.html;
+  let address = options.address;
+  const clock = fakeClock();
+  const visited: string[] = [];
+  const page = new Page(document, {
+    address: () => address,
+    navigate: (to) => visited.push(to),
+    clock,
+  });
+  const suno = {
+    go: (to: string, html: string) => {
+      address = to;
+      document.body.innerHTML = html;
+    },
+  };
+  const pressed: string[] = [];
+  document.addEventListener(
+    'click',
+    (event) => {
+      const target = (event.target as Element).closest('[role], button');
+      if (target === null) {
+        return;
+      }
+      const name = nameOf(target);
+      pressed.push(name);
+      options.onPress?.(name, suno);
+    },
+    { capture: true },
+  );
+  const asked: Request[] = [];
+  const shown: GenerateViewState[] = [];
+  const send = (request: Request): Promise<unknown> => {
+    asked.push(structuredClone(request));
+    return Promise.resolve(
+      request.type === 'generate-resume' ? { job: options.job } : { ok: true },
+    );
+  };
+  const feed = new ObservationFeed(
+    {
+      origin: 'https://suno.com',
+      postMessage: () => undefined,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    },
+    clock,
+  );
+  const generate = new SunoGenerate({
+    page,
+    session: new AdapterSession(new WorkflowRegistry(ADAPTER_WORKFLOWS), page),
+    observations: feed,
+    send,
+    show: (state) => shown.push(state),
+    clock,
+    now: () => new Date('2026-10-07T12:00:00Z'),
+  });
+  return {
+    generate,
+    asked,
+    shown,
+    pressed,
+    visited,
+    steps: () =>
+      asked.flatMap((request) =>
+        request.type === 'generate-progress' ? [`${request.state} ${request.step}`] : [],
+      ),
+    kept: () =>
+      asked.flatMap((request) => (request.type === 'generate-source' ? [request.source] : [])),
+    last: () => shown.at(-1),
+  };
+}
+
+function audioResult(shown: GenerateViewState | undefined) {
+  return shown?.kind === 'verification'
+    ? shown.results.find((result) => result.key.endsWith('.audio'))
+    : undefined;
+}
+
+/** Lets the tab run until the panel asks for the source to be loaded by hand. */
+async function untilWaitingForSource(generate: SunoGenerate): Promise<void> {
+  for (let tries = 0; tries < 500 && !generate.waitingForSource; tries += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  expect(generate.waitingForSource).toBe(true);
+}
+
+const FORBIDDEN_WORDS = /^(create|publish|delete|trash|move to trash|remove)/i;
+
+describe('Generate on Suno in the Suno tab: starting from a source (#148)', () => {
+  it('chooses the Version’s mode first, then goes to the source clip’s page, filling nothing yet', async () => {
+    const tab = start({
+      job: job({ workspace: ON_MY_WORKSPACE, form: advancedForm({ sources: [coverSource()] }) }),
+    });
+    const standIn = standInForSuno(document);
+    tab.feed.take(feedFor('default'));
+    try {
+      await tab.generate.resume();
+    } finally {
+      standIn.stop();
+    }
+
+    expect(tab.steps().slice(-2)).toEqual(['filling open Songs form', 'filling open source']);
+    expect(tab.asked).toContainEqual({
+      type: 'generate-source',
+      source: { phase: 'opening', sunoId: SOURCE_CLIP },
+    });
+    expect(tab.visited).toEqual([SONG_PAGE]);
+  });
+
+  it('stops before changing the form when n8Tracks knows a source is in Suno’s Trash (#142)', async () => {
+    const tab = start({
+      job: job({
+        workspace: ON_MY_WORKSPACE,
+        form: advancedForm({ sources: [coverSource({ availability: 'trashed' })] }),
+      }),
+    });
+    tab.feed.take(feedFor('default'));
+
+    await tab.generate.resume();
+
+    const stopped = tab.last();
+    expect(stopped?.kind === 'stopped' ? stopped.message : '').toContain(
+      '“Origin” is in Suno’s Trash',
+    );
+    expect(tab.asked.at(-1)).toMatchObject({ state: 'stopped', step: 'open Songs form' });
+    expect(tab.pressed).toEqual([]);
+    expect(tab.visited).toEqual([]);
+  });
+
+  it('on the clip’s page, chooses Remix › Cover, answers Overwrite, verifies the source, then fills the form', async () => {
+    const tab = sourceTab({
+      job: job({
+        workspace: ON_MY_WORKSPACE,
+        form: advancedForm({ sources: [coverSource()] }),
+        source: { phase: 'opening', sunoId: SOURCE_CLIP },
+      }),
+      address: SONG_PAGE,
+      html: snapshotHtml('clip-remix-menu'),
+      onPress: (name, suno) => {
+        if (name === 'Cover') {
+          // Suno opens Create in the same page, asking first: the form has lyrics and styles.
+          suno.go(
+            'https://suno.com/create',
+            snapshotHtml('overwrite-lyrics-styles-dialog') + snapshotHtml('create-source-advanced'),
+          );
+        }
+        if (name === 'Overwrite') {
+          document.querySelector('[role="dialog"]')?.remove();
+        }
+      },
+    });
+    const standIn = standInForSuno(document);
+    try {
+      await tab.generate.resume();
+    } finally {
+      standIn.stop();
+    }
+
+    expect(tab.steps()).toEqual([
+      'filling choose source action',
+      'filling verify source',
+      'filling fill form',
+      'waiting review and create',
+    ]);
+    // The phase is kept before the action, which may load Create anew, and cleared once verified.
+    expect(tab.kept()).toEqual([{ phase: 'chosen', sunoId: SOURCE_CLIP }, null]);
+    expect(tab.pressed.slice(0, 2)).toEqual(['Cover', 'Overwrite']);
+    expect(tab.pressed.filter((name) => FORBIDDEN_WORDS.test(name))).toEqual([]);
+    expect(audioResult(tab.last())).toMatchObject({
+      key: 'songs.advanced.audio',
+      outcome: 'verified',
+      note: '“Origin” is on the form: the Audio section names Cover and its thumbnail is the source clip’s.',
+    });
+    expect(tab.asked.at(-1)).toMatchObject({
+      state: 'waiting',
+      verification: {
+        entries: expect.arrayContaining([
+          expect.objectContaining({ key: 'songs.advanced.audio', outcome: 'verified' }),
+        ]) as unknown,
+      },
+    });
+  });
+
+  it('carries on after Suno loads Create anew: verifies the source and fills (Simple chip)', async () => {
+    const tab = sourceTab({
+      job: job({
+        workspace: ON_MY_WORKSPACE,
+        form: advancedForm({
+          mode: 'simple',
+          entries: { 'songs.simple.simple_prompt': 'a quiet song' },
+          sources: [coverSource({ key: 'songs.simple.audio', sunoId: SIMPLE_CLIP })],
+        }),
+        source: { phase: 'chosen', sunoId: SIMPLE_CLIP },
+      }),
+      address: 'https://suno.com/create',
+      html: snapshotHtml('create-source-simple'),
+    });
+
+    await tab.generate.resume();
+
+    expect(tab.steps()).toEqual([
+      'filling verify source',
+      'filling fill form',
+      'waiting review and create',
+    ]);
+    expect(audioResult(tab.last())).toMatchObject({ outcome: 'verified' });
+    expect(tab.pressed).toEqual([]);
+  });
+
+  it('when the form shows another source, fills nothing until the user loads it by hand and presses Continue', async () => {
+    const tab = sourceTab({
+      job: job({
+        workspace: ON_MY_WORKSPACE,
+        form: advancedForm({ sources: [coverSource({ sunoId: OTHER_CLIP })] }),
+        source: { phase: 'chosen', sunoId: OTHER_CLIP },
+      }),
+      address: 'https://suno.com/create',
+      html: snapshotHtml('create-source-advanced'),
+    });
+    const standIn = standInForSuno(document);
+    try {
+      const running = tab.generate.resume();
+      await untilWaitingForSource(tab.generate);
+
+      expect(tab.steps()).toEqual(['filling verify source', 'filling load source by hand']);
+      const waiting = tab.last();
+      expect(waiting?.kind).toBe('source');
+      expect(waiting?.kind === 'source' ? waiting.message : '').toContain("step 'source shown'");
+      expect(tab.asked.at(-1)).toMatchObject({
+        state: 'filling',
+        step: 'load source by hand',
+        message: expect.stringContaining('Load “Origin” with Remix › Cover') as string,
+      });
+      expect(tab.pressed).toEqual([]);
+
+      // Continue with the source still wrong: it blocks again.
+      tab.generate.continueSource();
+      await untilWaitingForSource(tab.generate);
+      expect(tab.steps().filter((step) => step === 'filling load source by hand')).toHaveLength(2);
+
+      // The user loads the right clip by hand, and presses Continue.
+      document.querySelectorAll('img').forEach((image) => {
+        image.setAttribute('src', `https://cdn2.suno.ai/image_${OTHER_CLIP}.jpeg`);
+      });
+      tab.generate.continueSource();
+      await running;
+    } finally {
+      standIn.stop();
+    }
+
+    expect(audioResult(tab.last())).toMatchObject({ outcome: 'verified' });
+    expect(tab.steps().at(-1)).toBe('waiting review and create');
+  });
+
+  it('reports Reuse Prompt as set once the menu action is done: it leaves no source to see', async () => {
+    const tab = sourceTab({
+      job: job({
+        workspace: ON_MY_WORKSPACE,
+        form: advancedForm({ sources: [coverSource({ sunoAction: 'reuse_prompt' })] }),
+        source: { phase: 'chosen', sunoId: SOURCE_CLIP },
+      }),
+      address: 'https://suno.com/create',
+      html: snapshotHtml('create-songs-advanced-more-options'),
+    });
+    const standIn = standInForSuno(document);
+    try {
+      await tab.generate.resume();
+    } finally {
+      standIn.stop();
+    }
+
+    expect(audioResult(tab.last())).toMatchObject({ outcome: 'set' });
+  });
+
+  it('stops naming the source when its menu does not offer the action, choosing nothing', async () => {
+    const tab = sourceTab({
+      job: job({
+        workspace: ON_MY_WORKSPACE,
+        form: advancedForm({ sources: [coverSource()] }),
+        source: { phase: 'opening', sunoId: SOURCE_CLIP },
+      }),
+      address: SONG_PAGE,
+      html: snapshotHtml('clip-remix-menu'),
+    });
+    document
+      .querySelector('[role="menuitem"][aria-label="Cover"]')
+      ?.setAttribute('aria-disabled', 'true');
+
+    await tab.generate.resume();
+
+    expect(tab.last()).toEqual({
+      kind: 'stopped',
+      message: actionUnavailable('“Origin”', 'Cover'),
+    });
+    expect(tab.kept()).toEqual([]);
+    expect(tab.pressed).toEqual([]);
+  });
+
+  it('stops naming the source when Suno shows another page instead of the clip’s', async () => {
+    const tab = sourceTab({
+      job: job({
+        workspace: ON_MY_WORKSPACE,
+        form: advancedForm({ sources: [coverSource()] }),
+        source: { phase: 'opening', sunoId: SOURCE_CLIP },
+      }),
+      address: 'https://suno.com/create',
+      html: snapshotHtml('create-songs-advanced-more-options'),
+    });
+
+    await tab.generate.resume();
+
+    expect(tab.last()).toEqual({
+      kind: 'stopped',
+      message: couldNotOpen('“Origin”', 'Suno showed another page instead of the clip’s'),
+    });
+    expect(tab.asked.at(-1)).toMatchObject({ state: 'stopped', step: 'open source' });
     expect(tab.pressed).toEqual([]);
   });
 });

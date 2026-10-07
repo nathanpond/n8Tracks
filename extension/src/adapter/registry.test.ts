@@ -216,7 +216,7 @@ describe('the registry', () => {
     expect(registry.all().map((workflow) => workflow.id)).toEqual(['test-library-sync']);
   });
 
-  it("registers the recognition check, the library reader's load-more, the workspace steps, and the Songs form fill in this version", () => {
+  it("registers the recognition check, the library reader's load-more, the workspace steps, the Songs form fill, and the source steps in this version", () => {
     expect(ADAPTER_WORKFLOWS.map((workflow) => workflow.id)).toEqual([
       'recognise-suno',
       'load-more',
@@ -228,6 +228,11 @@ describe('the registry', () => {
       'fill-songs-simple',
       'fill-songs-advanced',
       'check-songs-form',
+      'open-source-menu',
+      'choose-source-action',
+      'answer-overwrite',
+      'verify-source-advanced',
+      'verify-source-simple',
     ]);
     expect(recogniseSuno.startsOn).toBe(ANY_SUNO_PAGE);
   });

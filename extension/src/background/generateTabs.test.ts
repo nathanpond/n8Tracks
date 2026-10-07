@@ -32,7 +32,18 @@ const SNAPSHOT = {
   song: { title: 'Night Drive', shortcode: 'N8-1' },
   workspace: null,
   entries: [{ key: 'songs.advanced.lyrics', value: 'secret lyric line' }],
-  sources: [{ key: 'songs.advanced.audio', title: 'Origin', sunoAction: 'cover' }],
+  sources: [
+    {
+      key: 'songs.advanced.audio',
+      group: 'audio',
+      position: 1,
+      title: 'Origin',
+      sunoAction: 'cover',
+      target: { kind: 'generation', id: 'g-1', sunoId: 'clip-1' },
+      availability: 'ok',
+      continueAtSeconds: null,
+    },
+  ],
   fileInputs: [{ key: 'songs.advanced.audio', kind: 'audio', description: 'a demo' }],
   unsupported: [{ key: 'songs.advanced.crop', value: 1 }],
 };
@@ -159,6 +170,7 @@ describe('Generate on Suno: the Suno tab', () => {
       tabId: 11,
       loads: 0,
       chosen: null,
+      source: null,
     });
   });
 
@@ -212,10 +224,23 @@ describe('Generate on Suno: the Suno tab', () => {
           kind: 'song',
           mode: 'advanced',
           entries: { 'songs.advanced.lyrics': 'secret lyric line' },
-          sources: [{ key: 'songs.advanced.audio', title: 'Origin', sunoAction: 'cover' }],
+          // Each source with its Suno ID, place, and availability (#148).
+          sources: [
+            {
+              key: 'songs.advanced.audio',
+              title: 'Origin',
+              sunoAction: 'cover',
+              group: 'audio',
+              position: 1,
+              sunoId: 'clip-1',
+              availability: 'ok',
+              continueAtSeconds: null,
+            },
+          ],
           fileInputs: [{ key: 'songs.advanced.audio', description: 'a demo' }],
           unsupported: ['songs.advanced.crop'],
         },
+        source: null,
       },
     });
     expect(await generate.handleTab({ type: 'generate-resume' }, 42)).toMatchObject({
@@ -321,6 +346,33 @@ describe('Generate on Suno: the Suno tab', () => {
     });
     expect(await generate.handleTab({ type: 'generate-resume' }, 42)).toMatchObject({
       job: { workspace: { sunoId: 'w-9', name: 'Night Drive', state: 'available' } },
+    });
+  });
+
+  it('keeps where loading the source has got to for the next page load, counting loads afresh (#148)', async () => {
+    const { handOff, generate, stored } = await setup();
+    await handOff();
+    await generate.handleTab({ type: 'generate-resume' }, 42);
+    await generate.handleTab({ type: 'generate-resume' }, 42);
+
+    const opening = { phase: 'opening', sunoId: 'clip-1' } as const;
+    expect(await generate.handleTab({ type: 'generate-source', source: opening }, 42)).toEqual({
+      ok: true,
+    });
+    expect(stored.get(GENERATION_TAB_KEY)).toMatchObject({ loads: 0, source: opening });
+    expect(await generate.handleTab({ type: 'generate-resume' }, 42)).toMatchObject({
+      job: { loads: 1, source: opening },
+    });
+
+    await generate.handleTab({ type: 'generate-source', source: null }, 42);
+    expect(await generate.handleTab({ type: 'generate-resume' }, 42)).toMatchObject({
+      job: { source: null },
+    });
+    // Only the generation's own tab may record it.
+    expect(await generate.handleTab({ type: 'generate-source', source: opening }, 7)).toEqual({
+      ok: false,
+      ended: true,
+      message: 'This tab is not generating anything.',
     });
   });
 

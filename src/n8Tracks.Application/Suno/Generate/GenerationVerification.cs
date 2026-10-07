@@ -17,7 +17,7 @@ public static partial class GenerationVerification
 {
     /// <summary>The outcomes an entry may have.</summary>
     public static IReadOnlyList<string> Outcomes { get; } =
-        ["set", "failed", "unavailable", "manual", "not_applicable", "unsupported"];
+        ["set", "verified", "failed", "unavailable", "manual", "not_applicable", "unsupported"];
 
     /// <summary>The most entries a summary may hold: every entry of a mode, and unsupported values.</summary>
     public const int MaximumEntries = 100;

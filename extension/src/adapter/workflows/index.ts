@@ -2,6 +2,13 @@ import type { Workflow } from '../workflow.ts';
 import { checkSongsForm, fillSongsAdvanced, fillSongsSimple, switchForm } from './fillSongs.ts';
 import { loadMore } from './loadMore.ts';
 import { recogniseSuno } from './recognise.ts';
+import {
+  answerOverwrite,
+  chooseSourceAction,
+  openSourceMenu,
+  verifySourceAdvanced,
+  verifySourceSimple,
+} from './sources.ts';
 import { createWorkspace, moreWorkspaces, openWorkspaces, selectWorkspace } from './workspace.ts';
 
 /**
@@ -19,4 +26,9 @@ export const ADAPTER_WORKFLOWS: readonly Workflow[] = [
   fillSongsSimple,
   fillSongsAdvanced,
   checkSongsForm,
+  openSourceMenu,
+  chooseSourceAction,
+  answerOverwrite,
+  verifySourceAdvanced,
+  verifySourceSimple,
 ];

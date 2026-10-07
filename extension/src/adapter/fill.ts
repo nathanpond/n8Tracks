@@ -1,4 +1,5 @@
 import { FIELD_MAP } from './fieldMap.ts';
+import { sourceEntryResult } from './sources.ts';
 import {
   ForbiddenControlError,
   StoppedError,
@@ -36,9 +37,9 @@ import {
  * Create (invariant 4), and the user is told to review the form and click Create.
  */
 
-/** What became of one entry. */
+/** What became of one entry; `verified` is a source loaded and seen on the form (#148). */
 export type EntryOutcome =
-  'set' | 'failed' | 'unavailable' | 'manual' | 'not_applicable' | 'unsupported';
+  'set' | 'verified' | 'failed' | 'unavailable' | 'manual' | 'not_applicable' | 'unsupported';
 
 /** A value as the form shows it: text, a slider's number, a toggle, a choice, or nothing. */
 export type FormValue = string | number | boolean | null;
@@ -58,11 +59,21 @@ export interface EntryResult {
   note?: string;
 }
 
-/** A source of the request, as the summary names it. */
+/** A source of the request, as the summary names it and the source story (#148) loads it. */
 export interface FormSource {
   key: string;
   title: string | null;
   sunoAction: string | null;
+  /** `audio` or `inspiration`; audio when not given. */
+  group?: string;
+  /** Its place in its group, from 1. */
+  position?: number;
+  /** The source clip's Suno ID; null for a Song-level source, which is loaded by hand. */
+  sunoId?: string | null;
+  /** n8Tracks' availability of it: `ok`, `not_imported`, `deleted`, `trashed`, or `missing`. */
+  availability?: string | null;
+  /** Where an Extend continues from, in seconds. */
+  continueAtSeconds?: number | null;
 }
 
 /** A file input of the Version, which only the user can attach. */
@@ -82,6 +93,8 @@ export interface FormJob {
   fileInputs: readonly FormFileInput[];
   /** Keys of the Version's values that have no field-map entry. */
   unsupported: readonly string[];
+  /** The loaded source's outcome (#148), once it was loaded and verified on the form. */
+  loaded?: EntryResult | null;
 }
 
 /** How long a set value may take to show (TS-003 read-back: 300 ms, three times). */
@@ -428,47 +441,9 @@ export function summaryEntries(mode: string): string[] {
   ).map((entry) => entry.entry);
 }
 
-function nameOf(value: unknown): string | null {
-  if (typeof value === 'object' && value !== null && 'name' in value) {
-    const name = value.name;
-    return typeof name === 'string' && name.trim() !== '' ? name : null;
-  }
-  return null;
-}
-
-function quoted(text: string | null, otherwise: string): string {
-  return text === null ? otherwise : `“${text}”`;
-}
-
-/** A `source` entry: loading sources is the source story's (#148); until then, by hand. */
+/** A `source` entry: the loaded source's outcome, and the rest named as to do by hand (#148). */
 function sourceResult(key: string, job: FormJob): EntryResult {
-  const sources = job.sources.filter((source) => source.key === key);
-  const files = job.fileInputs.filter((file) => file.key === key);
-  const value = job.entries[key];
-  const steps = [
-    ...sources.map(
-      (source) =>
-        `load ${quoted(source.title, 'the source clip')}${source.sunoAction === null ? '' : ` as ${source.sunoAction}`}`,
-    ),
-    ...files.map(
-      (file) => `attach the audio file${file.description === null ? '' : ` (${file.description})`}`,
-    ),
-    ...(value === undefined || value === null
-      ? []
-      : [
-          key.endsWith('.voice')
-            ? `choose the voice ${quoted(nameOf(value), 'the Version names')}`
-            : `add the playlist ${quoted(nameOf(value), 'the Version names')}`,
-        ]),
-  ];
-  if (steps.length === 0) {
-    return { key, outcome: 'not_applicable' };
-  }
-  return {
-    key,
-    outcome: 'manual',
-    note: `The extension does not load sources yet: ${steps.join('; ')}, by hand.`,
-  };
+  return sourceEntryResult(key, job, job.loaded ?? null);
 }
 
 /** A `manual` entry: a file only the user can attach, with the Version's note. */

@@ -1000,6 +1000,26 @@ export class Page {
   }
 
   /**
+   * The address of the image the element shows: its own `src` when it is an image, else the `src`
+   * of the one visible image inside it; null when there is none or more than one. Reads only. A
+   * source's thumbnail address holds the source clip's Suno ID (TS-002), which is how a loaded
+   * source is verified (#148).
+   */
+  imageAddress(found: Found): string | null {
+    const element = elementOf(found);
+    const images =
+      element.localName === 'img'
+        ? [element]
+        : elementsUnder(element).filter((inner) => inner.localName === 'img' && !isHidden(inner));
+    const [image, ...others] = images;
+    if (image === undefined || others.length > 0) {
+      return null;
+    }
+    const address = image.getAttribute('src');
+    return address === null || address.trim() === '' ? null : address.trim();
+  }
+
+  /**
    * Sets a text box, a number box, or a slider to `value`, as typing would: the native setter and
    * an `input` event. A slider without an input is moved by arrow keys. Never sends Enter.
    */
