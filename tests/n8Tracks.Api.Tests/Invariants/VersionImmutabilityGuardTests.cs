@@ -104,7 +104,10 @@ public sealed class VersionImmutabilityGuardTests
     /// <summary>Always editable, frozen or not.</summary>
     private static readonly string[] EditableMetadata = [nameof(SongVersion.Name), nameof(SongVersion.Notes), nameof(SongVersion.Visibility)];
 
-    /// <summary>Identity, Song, number, revision, timestamps, and the freeze itself: no edit sets them.</summary>
+    /// <summary>
+    /// Identity, Song, number, revision, timestamps, the freeze itself, and what import recorded about
+    /// the inputs (#135, set when import creates the Version): no edit sets them.
+    /// </summary>
     private static readonly string[] SystemFields =
     [
         nameof(SongVersion.Id),
@@ -115,10 +118,15 @@ public sealed class VersionImmutabilityGuardTests
         nameof(SongVersion.Revision),
         nameof(SongVersion.IsFrozen),
         nameof(SongVersion.LastGenerationOrdinal),
+        nameof(SongVersion.Imported),
     ];
 
-    /// <summary>The stored form of the same, column by column (<c>visibility</c> stores the archived flag; the sort key is the number's).</summary>
-    private static readonly string[] SystemColumns = [.. SystemFields, nameof(VersionRecord.NumberSortKey)];
+    /// <summary>
+    /// The stored form of the same, column by column (<c>visibility</c> stores the archived flag; the
+    /// sort key is the number's; <c>imported_inputs</c> stores the import marks).
+    /// </summary>
+    private static readonly string[] SystemColumns =
+        [.. SystemFields.Where(static field => field != nameof(SongVersion.Imported)), nameof(VersionRecord.NumberSortKey), nameof(VersionRecord.ImportedInputs)];
 
     private const string Changed = "changed by the guard";
 

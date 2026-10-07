@@ -147,7 +147,8 @@ public sealed class GenerationMoveService(
                     now,
                     now,
                     Revision: 1,
-                    source.Lineage);
+                    source.Lineage,
+                    Imported: source.Imported);
                 await songs.AddAsync(created, copy, ct).ConfigureAwait(false);
                 if (copy.Lineage != VersionLineage.None)
                 {

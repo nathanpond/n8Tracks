@@ -20,6 +20,7 @@
   "fields": {
     "model": {
       "paths": { "feed": "metadata.model_badges.songrow.display_name", "create": null, "createRequest": "mv" },
+      "feedFallbacks": ["major_model_version", "model_name"],
       "encoding": "enum",
       "values": { "v6-mini": "V6-MINI", "v6": "unverified", "v6-wild": "unverified (the trash page shows a V6-WILD badge)" },
       "example": "V6-MINI",
@@ -33,12 +34,14 @@
     "simple_add_lyrics": {
       "paths": { "feed": null, "create": null, "createRequest": null },
       "encoding": "text",
-      "unverified": "Not exercised. Expected in metadata.prompt, as in Advanced mode."
+      "unverified": "Not exercised. Expected in metadata.prompt, as in Advanced mode.",
+      "notReturned": { "checked": "Unverified in TS-003: no Simple clip with the lyrics section added was captured, and the feed has no field saying a section was added." }
     },
     "simple_add_styles": {
       "paths": { "feed": null, "create": null, "createRequest": null },
       "encoding": "text",
-      "unverified": "Not exercised. Expected in metadata.tags, which the feed rewrites (see styles)."
+      "unverified": "Not exercised. Expected in metadata.tags, which the feed rewrites (see styles).",
+      "notReturned": { "checked": "Unverified in TS-003: no Simple clip with the styles section added was captured, and the feed has no field saying a section was added." }
     },
     "simple_add_playlist": {
       "paths": { "feed": "metadata.playlist_id", "create": "metadata.playlist_id", "createRequest": null },
@@ -132,9 +135,10 @@
     "variety": {
       "paths": { "feed": "metadata.control_sliders.aug_creativity", "create": "metadata.control_sliders.aug_creativity", "createRequest": "metadata.control_sliders.aug_creativity" },
       "encoding": "enum",
-      "values": { "off": "0 (unverified)", "normal": "1 (unverified)", "high": 2, "extra": "3 (unverified)", "max": 4 },
+      "values": { "off": 0, "normal": 1, "high": 2, "extra": 3, "max": 4 },
+      "unverifiedValues": ["off", "normal", "extra"],
       "example": 2,
-      "notes": "Songs Simple also sent aug_creativity (4, the Advanced form's value at the time), so a Simple clip carries the Advanced form's Variety."
+      "notes": "High (2) and Max (4) were seen; Off, Normal, and Extra follow their order on the form (unverified). Songs Simple also sent aug_creativity (4, the Advanced form's value at the time), so a Simple clip carries the Advanced form's Variety."
     },
     "personalize": {
       "paths": { "feed": null, "create": null, "createRequest": "use_personalization" },

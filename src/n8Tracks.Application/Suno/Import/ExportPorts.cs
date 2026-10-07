@@ -1,3 +1,4 @@
+using n8Tracks.Domain.Songs;
 using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Application.Suno.Import;
@@ -15,8 +16,11 @@ public sealed record StagedRecordRaw(string SunoId, string RawJson);
 /// <param name="ChangedFields">The compared fields that differ from that Generation's (empty otherwise).</param>
 public sealed record RecordClassification(string SunoId, SunoRecordClass Class, Guid? GenerationId, IReadOnlyList<string> ChangedFields);
 
-/// <summary>A live Generation holding a Suno ID: its ID and the normalized fields it keeps.</summary>
-public sealed record LinkedClip(Guid GenerationId, ClipFields Stored);
+/// <summary>A live Generation holding a Suno ID: its ID, the normalized fields it keeps, and its Version's creation inputs.</summary>
+public sealed record LinkedClip(Guid GenerationId, ClipFields Stored, LinkedVersionInputs? Version = null);
+
+/// <summary>The creation inputs of a linked Generation's Version, which a clip's mapped inputs are compared with (#135).</summary>
+public sealed record LinkedVersionInputs(string Lyrics, string Styles, VersionInputs Inputs, ImportedInputMarks? Imported);
 
 /// <summary>
 /// One staged record as the records endpoint answers it: never the raw clip.

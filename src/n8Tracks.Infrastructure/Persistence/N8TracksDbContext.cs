@@ -352,6 +352,7 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                 Position = seeded.Order,
                 Retired = seeded.Retired,
                 Discovered = seeded.Discovered,
+                ReportedAs = seeded.ReportedAs,
             }));
         });
 

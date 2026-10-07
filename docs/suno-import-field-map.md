@@ -19,15 +19,16 @@ These values are sent at Create time and never come back in the feed. Import mar
 | `speech_background_music` | Only in the request (`metadata.backing_music`). |
 | `sounds_model` | Sound clips carry no model badge, and `model_name` does not follow the selected label. |
 | `simple_add_image`, `simple_add_video` | No input field appears anywhere. |
+| `simple_add_lyrics`, `simple_add_styles` | Unverified in TS-003: no Simple clip with either section added was captured, and the feed has no field saying a section was added. |
 
 ## Songs
 
 | Field | Feed | Create | Request | Encoding | Example |
 |---|---|---|---|---|---|
-| `model` | `metadata.model_badges.songrow.display_name` | — | `mv` | enum | `V6-MINI` (v6, v6-wild unverified) |
+| `model` | `metadata.model_badges.songrow.display_name`, else `major_model_version`, else `model_name` | — | `mv` | enum | `V6-MINI` (v6, v6-wild unverified) |
 | `simple_prompt` | `metadata.gpt_description_prompt` | same | `gpt_description_prompt` | text | |
-| `simple_add_lyrics` | unverified | | | text | expected `metadata.prompt` |
-| `simple_add_styles` | unverified | | | text | expected `metadata.tags` (rewritten) |
+| `simple_add_lyrics` | not returned (unverified) | | | text | expected `metadata.prompt` |
+| `simple_add_styles` | not returned (unverified) | | | text | expected `metadata.tags` (rewritten) |
 | `simple_add_playlist` | `metadata.playlist_id` | same | — | text | per TS-002 |
 | `simple_add_image` | not returned | — | `user_uploaded_images_b64` | text | |
 | `simple_add_video` | not returned | — | — | text | |
@@ -43,7 +44,7 @@ These values are sent at Create time and never come back in the feed. Import mar
 | `max_mode` | `metadata.is_max_mode` | same | `metadata.is_max_mode` | bool | `true` |
 | `weirdness` | `metadata.control_sliders.weirdness_constraint` | same | same | percent, scale 0.01 | `0.7` for 70 |
 | `style_influence` | `metadata.control_sliders.style_weight` | same | same | percent, scale 0.01 | `0.3` for 30 |
-| `variety` | `metadata.control_sliders.aug_creativity` | same | same | enum 0–4 | `2` High, `4` Max |
+| `variety` | `metadata.control_sliders.aug_creativity` | same | same | enum 0–4 | `2` High, `4` Max (0 Off, 1 Normal, 3 Extra unverified) |
 | `personalize` | not returned | — | `use_personalization` | bool | `true` |
 | `title` | `title` | `title` | `title` | text | a blank title is replaced by Suno's own |
 | `workspace` | `project.id` | — | `project_id` | text | |

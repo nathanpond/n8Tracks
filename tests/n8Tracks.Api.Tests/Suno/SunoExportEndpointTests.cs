@@ -31,7 +31,7 @@ public sealed class SunoExportEndpointTests
     /// also on the ignore list: a live Generation decides first), one whose title Suno changed (changed),
     /// one whose Generation was deleted (deleted, though also ignored: a tombstone comes before the ignore
     /// list), one on the ignore list (ignored), and unknown ones from the library and the Trash (new).
-    /// No record is conflict: that needs the import mapping (#135–#137).
+    /// No record is conflict: each linked clip's Version holds the inputs it maps to (#135).
     /// </summary>
     [Fact]
     public async Task AnExportUploadedInPartsIsClassifiedByItsSunoIdsIntoEachClass()
@@ -43,11 +43,11 @@ public sealed class SunoExportEndpointTests
         var trash = SunoExportApi.FixtureClips(SunoExportApi.TrashFixture);
         var (linked, changed, deleted, ignored) = (library[0], library[1], library[2], library[3]);
 
-        await SongApi.CreateAsync(client, "Linked");
-        await SongApi.AttachGenerationAsync(factory, "n8-1-v1", linked.ToJsonString());
-        await SongApi.AttachGenerationAsync(factory, "n8-1-v1", changed.ToJsonString());
+        var song = await SongApi.CreateAsync(client, "Linked");
+        await ImportedVersions.AttachAsync(factory, song, "2", linked);
+        await ImportedVersions.AttachAsync(factory, song, "3", changed);
         await SongApi.AttachGenerationAsync(factory, "n8-1-v1", deleted.ToJsonString());
-        await DeleteGenerationAsync(client, "n8-1-v1-g3");
+        await DeleteGenerationAsync(client, "n8-1-v1-g1");
         SunoExportApi.Ignore(factory, SunoExportApi.IdOf(ignored));
         SunoExportApi.Ignore(factory, SunoExportApi.IdOf(linked));
         SunoExportApi.Ignore(factory, SunoExportApi.IdOf(deleted));
@@ -98,7 +98,7 @@ public sealed class SunoExportEndpointTests
         // A changed record says what changed, and both name the Generation that holds the Suno ID.
         Assert.Equal(["title"], records[SunoExportApi.IdOf(changed)].GetProperty("changedFields").EnumerateArray().Select(static field => field.GetString()));
         Assert.Empty(records[SunoExportApi.IdOf(linked)].GetProperty("changedFields").EnumerateArray());
-        var generations = TestDatabase.Rows(factory.DataPath, "SELECT suno_id || '|' || lower(id) FROM generations ORDER BY ordinal;");
+        var generations = TestDatabase.Rows(factory.DataPath, "SELECT suno_id || '|' || lower(id) FROM generations ORDER BY rowid;");
         Assert.Equal($"{SunoExportApi.IdOf(linked)}|{records[SunoExportApi.IdOf(linked)].GetProperty("generationId").GetString()}", generations[0]);
         Assert.Equal($"{SunoExportApi.IdOf(changed)}|{records[SunoExportApi.IdOf(changed)].GetProperty("generationId").GetString()}", generations[1]);
         Assert.Equal(JsonValueKind.Null, records[SunoExportApi.IdOf(deleted)].GetProperty("generationId").ValueKind);
@@ -239,8 +239,7 @@ public sealed class SunoExportEndpointTests
         var library = SunoExportApi.LibraryClips();
         var trash = SunoExportApi.FixtureClips(SunoExportApi.TrashFixture);
         List<JsonNode> undated = [JsonNode.Parse(Clips.Minimal("b-undated"))!, JsonNode.Parse(Clips.Minimal("a-undated"))!];
-        await SongApi.CreateAsync(client, "Holder");
-        await SongApi.AttachGenerationAsync(factory, "n8-1-v1", library[0].ToJsonString());
+        await ImportedVersions.AttachAsync(factory, await SongApi.CreateAsync(client, "Holder"), "2", library[0]);
         var workspace = library[1]["project"]!["id"]!.GetValue<string>();
 
         var (id, _) = await SunoExportApi.UploadAsync(

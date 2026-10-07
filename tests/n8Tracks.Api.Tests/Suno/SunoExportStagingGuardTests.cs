@@ -141,12 +141,12 @@ public sealed class SunoExportStagingGuardTests
         var library = SunoExportApi.LibraryClips();
         var trash = SunoExportApi.FixtureClips(SunoExportApi.TrashFixture);
         await SunoWorkspaceApi.ReportAsync(client, token, complete: true, SunoWorkspaceApi.Project("studio", "Studio"));
-        await SongApi.CreateAsync(client, "Already here");
+        var song = await SongApi.CreateAsync(client, "Already here");
         await SunoWorkspaceApi.AssociatedAsync(client, "n8-1", "studio");
-        await SongApi.AttachGenerationAsync(factory, "n8-1-v1", library[0].ToJsonString());
-        await SongApi.AttachGenerationAsync(factory, "n8-1-v1", library[1].ToJsonString());
+        await ImportedVersions.AttachAsync(factory, song, "2", library[0]);
+        await ImportedVersions.AttachAsync(factory, song, "3", library[1]);
         await SongApi.AttachGenerationAsync(factory, "n8-1-v1", library[2].ToJsonString());
-        using (var request = new HttpRequestMessage(HttpMethod.Delete, new Uri("/api/v1/generations/n8-1-v1-g3", UriKind.Relative)))
+        using (var request = new HttpRequestMessage(HttpMethod.Delete, new Uri("/api/v1/generations/n8-1-v1-g1", UriKind.Relative)))
         {
             request.Headers.Add(SessionApi.AntiforgeryHeader, "1");
             Assert.True(request.Headers.TryAddWithoutValidation("If-Match", "\"1\""));

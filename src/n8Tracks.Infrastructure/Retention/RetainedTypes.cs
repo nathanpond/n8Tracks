@@ -146,10 +146,12 @@ internal static class RetainedTypes
     /// <c>used_version_numbers</c> while it is deleted, so it is never offered again; restoring it lets
     /// that row go just before the insert, whose trigger records the number again (a new Version
     /// still cannot take a used number). Once it is back, a blank Version created because it was the
-    /// last one is removed if it was never edited (<see cref="VersionRestore"/>).
+    /// last one is removed if it was never edited (<see cref="VersionRestore"/>). Shape 2 (#135) added
+    /// what import recorded about its inputs; an earlier record restores as a Version made in n8Tracks.
     /// </summary>
-    public static readonly RetainedType Version = new(RetainedRecordTypes.Version, "versions", "Version", ShapeVersion: 1)
+    public static readonly RetainedType Version = new(RetainedRecordTypes.Version, "versions", "Version", ShapeVersion: 2)
     {
+        Upgraders = new Dictionary<int, Func<JsonObject, JsonObject>> { [1] = VersionShape1To2 }.ToFrozenDictionary(),
         BeforeRestoreAsync = static (row, cancellationToken) => VersionRestore.FreeNumberAsync(row, cancellationToken),
         AfterRestoreAsync = static (row, cancellationToken) => VersionRestore.RemoveAutoCreatedBlankAsync(row, cancellationToken),
     };
@@ -393,6 +395,15 @@ internal static class RetainedTypes
             document[column] = null;
         }
 
+        return document;
+    }
+
+    /// <summary>A Version retained before #135 (shape 1) as shape 2: not made by import.</summary>
+    internal static JsonObject VersionShape1To2(JsonObject document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+
+        document["imported_inputs"] = null;
         return document;
     }
 

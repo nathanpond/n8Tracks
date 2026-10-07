@@ -60,6 +60,23 @@ public static class SunoModelRules
     }
 
     /// <summary>
+    /// The model of <paramref name="models"/> that a clip reporting <paramref name="reported"/> was made
+    /// with (#135), or null when none is: the first, in order, whose reported-as name is
+    /// <paramref name="reported"/> ignoring case (<see cref="NameKey"/>), else the first whose name is.
+    /// Retired models match too: they are still the model a clip was made with.
+    /// </summary>
+    public static SunoModel? Match(IEnumerable<SunoModel> models, string reported)
+    {
+        ArgumentNullException.ThrowIfNull(models);
+        ArgumentNullException.ThrowIfNull(reported);
+
+        var key = NameKey(reported);
+        var ordered = models.OrderBy(static model => model.Order).ToList();
+        return ordered.FirstOrDefault(model => model.ReportedAs is { } reportedAs && string.Equals(NameKey(reportedAs), key, StringComparison.Ordinal))
+            ?? ordered.FirstOrDefault(model => string.Equals(NameKey(model.Name), key, StringComparison.Ordinal));
+    }
+
+    /// <summary>
     /// Whether <paramref name="model"/> is the only one of <paramref name="models"/> not retired, so it
     /// can be neither retired nor deleted: a new choice always has a model to offer.
     /// </summary>
