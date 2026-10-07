@@ -3081,3 +3081,115 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** Not built here: the notice on n8Tracks' Suno page for a discarded export. That notice and the review page itself belong to #139. Images belong to #152.
   **Why:** The review page and the Suno entry point are #139's. The story moved its image criteria to #152.
   **Issue:** #134
+
+Story #151 (built in parallel; merged into the milestone branch):
+
+- **Decision:** Added an optional `workspace` parameter (a Suno workspace ID) to `GET /api/v1/songs` so a workspace's page can list its Songs. A blank, unknown, or repeated value is 400 `invalid_request`, like the other filters. It is additive: no schema change, no migration, and no existing parameter changes.
+  **Why:** #151 AC 1 needs a workspace's Songs to be listed, and no endpoint could do that. Fetching every Song and filtering in the browser would not scale. `SongService` already takes `ISunoWorkspaceStore`.
+  **Issue:** #151
+- **Decision:** Two routes: `/settings/suno-workspaces` (the list) and `/settings/suno-workspaces/:id` (one workspace, by Suno ID, URL-encoded). There is one sidebar link, "Suno workspaces", placed after "Suno". `SUNO_WORKSPACES_PATH` and `workspacePath` are in `api/sunoWorkspaces.ts` because the react-refresh lint rule keeps component files to components only.
+  **Why:** the must-have names `settings/SunoWorkspacesPage.tsx`. The conventions require new screens in the sidebar. The discretion links the page from Settings and from the badge.
+  **Issue:** #151
+- **Decision:** The Song's "Workspace unavailable" badge, in the header and in Details, is now a link to the workspace's page. Its accessible name starts with its visible text: "Workspace unavailable: <name>. Open it in Settings".
+  **Why:** the discretion says "The page is linked from Settings and from a Song's workspace badge". The badge only shows for an Unavailable workspace, which is exactly when a move is needed.
+  **Issue:** #151
+- **Decision:** There are two ways to select. The header checkbox "Select all N Songs in this workspace" sends `{all: true}`, so it covers every page. Row checkboxes send `songIds`. The confirmation states the count frozen when it opened: the total for all, or the number ticked. The workspace's page shows 100 Songs at a time, which is the list's largest page.
+  **Why:** AC 2 asks for "some or all … in one action". With `all`, a workspace of up to 5,000 Songs moves in one command, without paging through it.
+  **Issue:** #151
+- **Decision:** A refused move (`song_not_in_workspace`, or `validation_failed` on the target) keeps the dialog open with "Nothing moved: …", clears the selection, and reads the Songs and workspaces again. While a move reads the list again, the page keeps showing the last list it read.
+  **Why:** the move is all or nothing, so the user must see that nothing changed. Reading the list again avoids stale state.
+  **Issue:** #151
+- **Decision:** The API test-plan items (all-or-nothing, an Unavailable or identical target, a Song not in the workspace, and 403 `session_required` for a bearer token) are covered by #129's existing `SunoWorkspaceEndpointTests`, which are reused unchanged. Only tests for the new list filter were added.
+  **Why:** the orchestrator note for #129 says the bulk-move API and its tests already exist.
+  **Issue:** #151
+
+Story #135 (built in parallel; merged into the milestone branch):
+
+- **Decision:** D5 applied. In `docs/suno-import-field-map.json` (and its `.md`), `simple_add_lyrics` and `simple_add_styles` get `notReturned` with the reason "Unverified in TS-003". An imported Version therefore lists `simpleLyricsAdded` and `simpleStylesAdded` as not returned and holds `false` for both.
+  **Why:** Without this the coverage test fails as written: both entries had `feed: null` and only an `unverified` note. AC 2 allows "not returned when the map says so".
+  **Issue:** #135
+- **Decision:** The map is made machine-readable where the mapper needs it, as data rather than code:
+  - Variety's value table is now numbers 0–4. `unverifiedValues` lists Off, Normal and Extra.
+  - The model entry gains `feedFallbacks: [major_model_version, model_name]`.
+  - Any other value an enumeration returns is kept raw and marked out of range.
+  **Why:** The table's strings ("0 (unverified)") could not be decoded. TS-003 saw only 2 (High) and 4 (Max); 0, 1 and 3 follow the form's order. Without them a default Advanced clip (Normal = 1) would always be marked out of range.
+  **Issue:** #135
+- **Decision:** D6 is one migration, `20261007000000_AddImportedInputsAndModelReportedAs`. It adds two nullable columns in place (no table rebuild, no CHECK):
+  - `suno_models.reported_as`. HasData seeds it on v6-mini only (`V6-MINI`, the one label TS-003 saw).
+  - `versions.imported_inputs`, a JSON column for the import marks.
+  Version retention is now **shape 2** (`VersionShape1To2`), and the `retained-shapes.json` baseline is updated.
+  **Why:** The story's discretion says to add the column if #114 lacks it. The out-of-range mark is "a flag on the Version" (system metadata). The reported-as names of v6 and v6-wild were not verified, so they are left null; matching falls back to the model's name, ignoring case, which covers them.
+  **Issue:** #135
+- **Decision:** Model matching is `SunoModelRules.Match`. It compares exactly, ignoring case (NameKey), first against each model's reported-as name and then against its name. Retired models match. The reported name is the songrow badge when the clip has one, else `major_model_version`, else `model_name`. A clip with no model at all lists `model` as not returned.
+  An unknown model is only proposed: `ClipModel(Reported, Matched: null)`, with the reported name in `inputs.model`. `ModelCatalogService.EnsureReportedAsync(reported)` (public, runs inside the caller's transaction) adds it once per commit for #140. The entry is Discovered, named and reported as Suno reported it, and raises the list revision.
+  **Why:** This follows the discretion and the TS-003 replan line. The name fallback stops a commit from adding a duplicate of a model the user typed in by hand.
+  **Issue:** #135
+- **Decision:** Suno's title is read and stored on the Version, but takes no part in input comparisons (`ClipInputMapper.NotCompared`).
+  **Why:** A user can rename a clip in Suno after creating it, which is a `changed` record (ChangedFields already reports `title`), not a `conflict`. Suno also writes a title of its own for a blank one (the TS-003 map note), so two clips of one Create request can differ there. Deviation from the literal AC 5 wording ("every returned option").
+  **Issue:** #135
+- **Decision:** `RecordClassifier` now computes `inputsDiffer` (#131's note). `ISunoClipLookup.LiveGenerationsAsync` returns each linked Generation's Version inputs (`LinkedClip.Version`, a `LinkedVersionInputs`). The clip is mapped against the model list (read only) and compared with `ClipInputMapper.Differs`. Options the clip does not return, and those the Version's own marks list as not returned, take no part.
+  The existing #131 tests that expected `linked` for a library clip on a blank Version 1 now use an imported Version: test helper `ImportedVersions.AttachAsync`. Such a clip on a blank Version is now, correctly, `conflict`.
+  **Why:** This is AC 5's key link ("conflict is decided by comparing mapped inputs with the linked Version's").
+  **Issue:** #135
+- **Decision:** Every clip maps as a Song until #136. A clip is Simple when `metadata.gpt_description_prompt` is present and `metadata.task` is `agentic_thinking`; otherwise it is Advanced. Lineage tasks are left to #137. Reference and file fields go to #137, and the workspace to #140; they are listed in `ClipInputMapper.ReadElsewhere`, and the coverage test asserts each one is a reference or file field.
+  **Why:** This follows the story's discretion lines.
+  **Issue:** #135
+- **Decision:** The import marks are API-spelled keys: `lyrics`, `styles`, and the keys of `inputs`.
+  - They live on `SongVersion.Imported` (`ImportedInputMarks`), which is classified as a SystemField in the invariant 1 guard, with `imported_inputs` as a SystemColumn.
+  - `GenerationMoveService` carries them to the copied Version.
+  - The Version answer has `imported: {notReturned, outOfRange, rawValues} | null`.
+  - The web shows `ImportedNotice` ("Imported from Suno") above the options.
+  - The model list API does not expose `reportedAs`.
+  **Why:** The out-of-range mark is a flag on the Version, shown in the read-only editor (discretion). The not-returned list shares the same notice, so the defaults are not read as what produced the Generation. Keeping `reportedAs` out of the model list API avoids changing an API contract that no AC asks for.
+  **Issue:** #135
+- **Decision:** `docs/suno-import-field-map.json` is embedded in the Application assembly as `n8Tracks.Application.Suno.Import.suno-import-field-map.json`. Its line comes out of `.dockerignore`, and the Dockerfile copies it next to the inventory.
+  **Why:** This follows the discretion ("linked into the Application project as an embedded resource like the inventory"). The image build would fail without the file in the build context.
+  **Issue:** #135
+
+Story #150 (built in parallel; merged into the milestone branch):
+
+- **Decision:** The diagnostic report is saved through a Blob link, and the manifest is unchanged: no `downloads` permission. The panel offers an `<a download>` with a Blob address that the user's own click saves. The options page clicks a Blob link inside the user's click.
+  **Why:** The story's key link says "a Blob link the page itself saves; no `downloads` permission is added in this milestone". The #128 note ("#150 adds `downloads` to `allowedPermissions`") contradicts it, and the story's text wins. `downloads` stays for #216, which the #133 scan already anticipates, so D4's allow-list and its "fails on any extra" complement are untouched.
+  **Issue:** #150
+- **Decision:** The panel's link is never clicked by code. The content script prepares the report on every panel refresh and hands the panel a fresh Blob address, revoking the old one.
+  **Why:** The page-context lint rule and the invariant 4 static scan forbid `.click()` and `dispatchEvent` outside `primitives.ts`. A link the user clicks needs neither, and adds no exemption to either guard.
+  **Issue:** #150
+- **Decision:** The log lives in the service worker, as a `Diagnostics` class in `extension/src/diagnostics/report.ts`, over `chrome.storage.session`. The Suno content script reports to it with two additive messages: `diagnostics-record` (a run that ended, and the self-check states) and `diagnostic-report`. Both are allowed from content scripts. `route` takes an optional fifth argument, `diagnostics`, and `disconnect` clears the log after unpairing.
+  **Why:** Content scripts cannot reach `chrome.storage.session` at its default access level, and the report needs the connection's versions, which only the service worker holds. An optional argument keeps the existing router callers and tests unchanged.
+  **Issue:** #150
+- **Decision:** Redaction is by construction, in three layers.
+  1. The service worker accepts only workflow IDs in the registry and step names those workflows declare. Phases and outcomes come from fixed lists.
+  2. `expected` is redacted. A double-quoted value becomes `"…"`, and addresses, `@` handles, UUIDs, hex and digit runs, and secret-shaped words (an underscore, more than 24 characters, or letters mixed with digits) are removed.
+  3. A source test (`extension/test/diagnostics-source.test.ts`) fails any workflow module whose `id`, `title`, `name`, `step`, `description`, `expected(...)` or `new PrimitiveError(...)` text is not written in the source. A template may hold only another `.description` or a quoted value.
+  **Why:** The planner wanted `expected` to be "a string-literal union type". That would retype `Check`, `Target.description` and every workflow while #134 is changing the same code in parallel. The source test enforces the same rule ("compile-time constants in the adapter") without changing any type. A careless quoted value and every primitive's own interpolation (`to offer "<option>"`) are then caught by the quote rule.
+  **Issue:** #150
+- **Decision:** The page-structure capture is `Page.structureAround()` in `primitives.ts`, the only DOM-reading file. The page remembers the last target a run looked for, in a trail shared with its `withSignal` handles. The capture is anchored on that element if it is present once, else on its `within` container, else on `main`/`role=main`, else on `body`. The capture holds:
+  - the anchor's subtree, breadth-first to depth 6 below the anchor and at most 300 nodes, with a `truncated` flag;
+  - ancestors (up to 6) and siblings (up to 50), by tag only.
+  `AdapterSession` captures when a run stops, and reports every run to an optional `onRun` listener.
+  **Why:** The story says "depth of six around the failing element" and "siblings by tag name only". This is the simplest reading that stays within the 300-node cap.
+  **Issue:** #150
+- **Decision:** A capture keeps:
+  - `role` only from the ARIA role list;
+  - `type` only from the input/button types;
+  - `data-testid` only if it matches `^[a-z0-9_-]{1,40}$` and is not ID-shaped;
+  - `aria-*` attribute names only, sorted.
+  The service worker rebuilds every node through the same rules before storing it.
+  **Why:** Allow-lists rather than patterns keep a free-text `role` or `type` (for example, a user handle) out. The rebuild means a forged capture from page context cannot add text.
+  **Issue:** #150
+- **Decision:** The report's fields:
+  - `browser` is "<brand> <major>" from `navigator.userAgentData`, skipping "Not A Brand" entries and preferring a named brand over Chromium. Otherwise it is `unknown`.
+  - `versions.application` is kept only if it parses as a version, so it can be null even when connected.
+  - `connection` holds only `status` and the address's `scheme`. There is no credential name and no scopes.
+  - Step entries add `phase` to the planned `{workflow, step, outcome, ms, expected?}`. Outcomes are `ok`, `failed`, `timed_out`, `error` and `refused`. `ms` is the time since the previous entry of the same run.
+  **Why:** These are low-cost choices the story leaves open. `phase` is an enumerated value and tells a maintainer whether the check before or after the action failed.
+  **Issue:** #150
+- **Decision:** A failed self-check, as opposed to a stopped run, records its state but not a page-structure capture.
+  **Why:** The story's capture is "around the most recent failure" of a run's step. The self-check reads every workflow in turn, so its last target is ambiguous. Runs already capture.
+  **Issue:** #150
+
+Merge of #134 and #150:
+
+- **Decision:** `route` keeps `diagnostics` as its optional fifth argument and takes #134's `sync` as a sixth (`route(connection, message, sender, id, diagnostics?, sync?)`). `CONTENT_SCRIPT_TYPES` is `state`, `relay`, the two diagnostics types, and `SYNC_TYPES`. The sync's runs go through `session.run`, so they reach the step log, and the load-more workflow is in the report like every other workflow.
+  **Why:** Both stories added a fifth argument in parallel. #150's notes asked later stories to keep the fifth for `diagnostics`; only #134's three router-test calls and the service worker needed the change.
+  **Issue:** #134, #150
