@@ -152,4 +152,95 @@ button {
 .preparing[hidden] {
   display: none;
 }
+
+/* Download from Suno (#215). */
+.download-view [hidden] {
+  display: none;
+}
+
+.dl-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.dl-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--secondary-text);
+}
+
+.dl-field select,
+.dl-field input,
+.dl-formats input,
+.dl-row input {
+  font: inherit;
+  color: var(--text);
+}
+
+.dl-field select,
+.dl-field input {
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--background);
+}
+
+.dl-list {
+  max-height: 320px;
+  margin-top: 8px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.dl-list ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dl-row {
+  box-sizing: border-box;
+  height: 52px;
+  overflow: hidden;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.dl-row label,
+.dl-formats label {
+  display: block;
+}
+
+.dl-facts,
+.dl-unavailable {
+  display: block;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dl-unavailable {
+  color: var(--problem-text);
+}
+
+.dl-formats {
+  margin: 8px 0 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.dl-summary {
+  margin-top: 8px;
+}
+
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
 `;

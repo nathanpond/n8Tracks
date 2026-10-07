@@ -4,6 +4,7 @@ import { browserVersion, Diagnostics, type UserAgentData } from '../diagnostics/
 import { displayVersion } from '../version-label.ts';
 import { CompletionWatch } from './completion.ts';
 import { Connection } from './connection.ts';
+import { DownloadCoordinator } from './download.ts';
 import { GenerateCoordinator } from './generate.ts';
 import { route } from './router.ts';
 import { SyncCoordinator } from './sync.ts';
@@ -52,6 +53,22 @@ const generate = new GenerateCoordinator({
   completion,
 });
 
+// The Download view (#215): a Load library kept across its page load, the formats last chosen,
+// and n8Tracks' clip lookup. It waits while a sync or Generate on Suno runs.
+const download = new DownloadCoordinator({
+  connection,
+  browser: { session: chrome.storage.session, local: chrome.storage.local },
+  busy: async () => {
+    if (await sync.running()) {
+      return 'A sync to n8Tracks is running. Load the library when it has finished or been cancelled.';
+    }
+    if (await generate.running()) {
+      return 'Generate on Suno is running. Load the library when it has finished.';
+    }
+    return null;
+  },
+});
+
 // The diagnostic report's step log: in session storage only, cleared on Disconnect, never sent.
 const diagnostics = new Diagnostics({
   storage: chrome.storage.session,
@@ -66,9 +83,16 @@ const diagnostics = new Diagnostics({
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  void route(connection, message, sender, chrome.runtime.id, diagnostics, sync, generate).then(
-    sendResponse,
-  );
+  void route(
+    connection,
+    message,
+    sender,
+    chrome.runtime.id,
+    diagnostics,
+    sync,
+    generate,
+    download,
+  ).then(sendResponse);
   return true;
 });
 

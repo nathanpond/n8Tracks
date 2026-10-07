@@ -7,6 +7,7 @@ import {
   legsFor,
   PART_CLIPS,
   readLeg,
+  readLibrary,
   ReadCancelled,
   ReadStop,
   stepOf,
@@ -495,5 +496,58 @@ describe('reading the Trash', () => {
       },
     ]);
     expect(next).toMatchObject({ leg: 3, partNumber: 3, counts: { trashed: 5 } });
+  });
+});
+
+describe('reading the library for the Download view (#215)', () => {
+  it('reads Library › Songs to its end the way the library leg does, sending nothing anywhere', async () => {
+    const first = sunoObject('feed-v3.library-page-1.response');
+    const second = sunoObject('feed-v3.library-page-2.response');
+    second.has_more = false;
+    const { context, moreSteps, parts, headers } = suno(
+      [observed('library-feed', first, { filters: LIBRARY_FILTERS })],
+      [[observed('library-feed', second, { filters: LIBRARY_FILTERS, cursor: 'c2' })]],
+    );
+    const taken: string[] = [];
+
+    const count = await readLibrary(context, (records) => {
+      taken.push(...records.map((record) => String(record.id)));
+    });
+
+    expect(count).toBe(4);
+    expect(taken).toEqual([
+      ...(first.clips as Clip[]).map((clip) => clip.id),
+      ...(second.clips as Clip[]).map((clip) => clip.id),
+    ]);
+    expect(moreSteps).toEqual(['Read the library']);
+    // Complement: no export is made or sent.
+    expect(headers).toEqual([]);
+    expect(parts).toEqual([]);
+  });
+
+  it('stops naming the step when a page does not come; what was read stays with the caller', async () => {
+    const { context } = suno([
+      observed('library-feed', sunoObject('feed-v3.library-page-1.response'), {
+        filters: LIBRARY_FILTERS,
+      }),
+    ]);
+    const taken: unknown[] = [];
+
+    const stop = await stopOf(readLibrary(context, (records) => taken.push(...records)));
+
+    expect(stop.step).toBe('Read the library');
+    expect(taken).toHaveLength(2);
+  });
+
+  it('ignores a workspace feed, which is not the whole library', async () => {
+    const { context } = suno([
+      observed('library-feed', sunoObject('feed-v3.workspace-last-page.response'), {
+        filters: WORKSPACE_FILTERS,
+      }),
+    ]);
+
+    const stop = await stopOf(readLibrary(context, () => undefined));
+
+    expect(stop.reopen).toBe(true);
   });
 });

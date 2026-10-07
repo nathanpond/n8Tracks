@@ -31,6 +31,8 @@ export interface PanelOptions {
   sync?: HTMLElement;
   /** Generate on Suno (#145), shown under the sync when given. */
   generate?: HTMLElement;
+  /** Download from Suno (#215), shown under Generate on Suno when given. */
+  download?: HTMLElement;
   /** Makes and revokes the report's Blob address; the browser's `URL` unless a test stands in. */
   objectUrls?: ObjectUrls;
 }
@@ -174,6 +176,7 @@ export class Panel {
       this.features,
       ...(options.sync === undefined ? [] : [options.sync]),
       ...(options.generate === undefined ? [] : [options.generate]),
+      ...(options.download === undefined ? [] : [options.download]),
       workflowsHeading,
       this.workflowList,
       check,

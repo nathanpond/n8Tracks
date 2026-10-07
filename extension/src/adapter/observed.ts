@@ -10,8 +10,9 @@
 
 /**
  * The lists the library reader reads (TS-003, "How lists are paged"), the answer to creating a
- * workspace, which gives Generate on Suno the new workspace's ID (#145), and the answer to the
- * user's own Create click (#149), which the extension never makes itself (invariant 4).
+ * workspace, which gives Generate on Suno the new workspace's ID (#145), the answer to the
+ * user's own Create click (#149), which the extension never makes itself (invariant 4), and the
+ * plan's download allowance the page reads when a Download dialog opens (TS-004, #215).
  */
 export type ObservedKind =
   | 'library-feed'
@@ -20,7 +21,8 @@ export type ObservedKind =
   | 'playlists'
   | 'playlist-feed'
   | 'workspace-created'
-  | 'create';
+  | 'create'
+  | 'billing';
 
 /** One Suno list response: method and path on Suno's API host. */
 interface ListPattern {
@@ -42,7 +44,39 @@ export const OBSERVED_LISTS: readonly ListPattern[] = [
   { kind: 'playlist-feed', method: 'POST', path: '/api/unified/feed' },
   { kind: 'workspace-created', method: 'POST', path: '/api/project' },
   { kind: 'create', method: 'POST', path: '/api/generate/v2-web' },
+  // TS-004: requested by the page when a clip's Download dialog opens. Only `download_usage` is
+  // forwarded ({@link forwardedBody}); the plan's other details and its offers stay in the page.
+  { kind: 'billing', method: 'GET', path: '/api/billing/info' },
 ];
+
+/** The members of `download_usage` forwarded: the counts of the plan's downloads, and nothing else. */
+export const DOWNLOAD_USAGE_FIELDS = [
+  'current_period_downloads_used',
+  'current_period_downloads_limit',
+  'additional_download_remaining',
+] as const;
+
+/**
+ * What of a response body is forwarded: the whole body, less {@link NEVER_FORWARDED}, except for
+ * the billing answer, of which only the download counts go ({@link DOWNLOAD_USAGE_FIELDS}).
+ */
+export function forwardedBody(kind: ObservedKind, body: unknown): unknown {
+  if (kind !== 'billing') {
+    return withoutSecrets(body);
+  }
+  const usage = isRecord(body) ? body.download_usage : undefined;
+  if (!isRecord(usage)) {
+    return {};
+  }
+  return {
+    download_usage: Object.fromEntries(
+      DOWNLOAD_USAGE_FIELDS.filter((field) => typeof usage[field] === 'number').map((field) => [
+        field,
+        usage[field],
+      ]),
+    ),
+  };
+}
 
 /**
  * The Create request's values n8Tracks reads (#149): the import field map's `createRequest` paths

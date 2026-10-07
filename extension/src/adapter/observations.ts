@@ -1,4 +1,5 @@
 import { poll, realClock, type Clock } from './clock.ts';
+import { downloadUsageOf, type DownloadUsage } from '../download/allowance.ts';
 import type { Observations } from './libraryReader.ts';
 import {
   CONTENT_SOURCE,
@@ -11,7 +12,8 @@ import {
 /**
  * The content script's side of the page observer: it takes the observer's messages, checking that
  * they come from this page's own window and origin, queues them for the library reader, and
- * remembers the workspaces and playlists Suno has listed on this page, for the panel's choice.
+ * remembers the workspaces and playlists Suno has listed on this page, for the panel's choice, and
+ * the plan's download allowance as the page last read it (#215).
  */
 
 /** The part of `window` the feed uses, so tests can stand in for the page. */
@@ -53,6 +55,8 @@ export class ObservationFeed implements Observations {
   private readonly queue: ObservedMessage[] = [];
   private readonly workspaces = new Map<string, string>();
   private readonly playlists = new Map<string, string>();
+  private usage: DownloadUsage | null = null;
+  private usageListener: ((usage: DownloadUsage) => void) | null = null;
   private readonly listener = (event: MessageEvent) => {
     if (event.source !== (this.view as unknown) || event.origin !== this.view.origin) {
       return;
@@ -88,8 +92,27 @@ export class ObservationFeed implements Observations {
     return [...this.playlists].map(([id, name]) => ({ id, name }));
   }
 
+  /** The plan's download allowance as the page last read it (`GET /api/billing/info/`), or null. */
+  downloadUsage(): DownloadUsage | null {
+    return this.usage;
+  }
+
+  /** Calls `listener` with each allowance the page reads from now on. */
+  onDownloadUsage(listener: ((usage: DownloadUsage) => void) | null): void {
+    this.usageListener = listener;
+  }
+
   /** Adds a response; exported for the content script's tests and the listener. */
   take(message: ObservedMessage): void {
+    if (message.kind === 'billing') {
+      // Not queued: nothing reads it in turn, only the latest counts.
+      const usage = downloadUsageOf(message.body);
+      if (usage !== null) {
+        this.usage = usage;
+        this.usageListener?.(usage);
+      }
+      return;
+    }
     if (message.kind === 'workspaces' && isRecord(message.body)) {
       for (const item of listed(message.body.projects)) {
         this.workspaces.set(item.id, item.name);

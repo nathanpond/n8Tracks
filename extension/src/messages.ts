@@ -262,6 +262,31 @@ export interface ImageProgress {
   ignored: number;
 }
 
+/** What a Load library or Refresh carries over its page load (#215): the clips selected before. */
+export interface DownloadLoad {
+  selected: string[];
+}
+
+/** One row of n8Tracks' clip lookup (#215), as `POST /api/v1/suno/clips/lookup` answers it. */
+export interface ClipLookupRow {
+  sunoId: string;
+  generation: { id: string; shortcode: string } | null;
+  artist: string | null;
+  deleted: boolean;
+  downloadedFormats: string[];
+}
+
+/**
+ * The lookup's answer: the rows, or why not. `unavailable` when the extension is not connected or
+ * its credential lacks `suno.sync` (the view says so and offers nothing); otherwise the lookup
+ * failed and may be tried again.
+ */
+export type ClipLookupReply =
+  { ok: true; rows: ClipLookupRow[] } | { ok: false; unavailable: boolean; message: string };
+
+/** A Download step's answer: done, or why not, in plain words for the panel. */
+export type DownloadReply = { ok: true } | { ok: false; message: string };
+
 /** The messages the service worker answers, by type, with the answer each gets. */
 export type Request =
   | { type: 'state'; fresh?: boolean }
@@ -312,7 +337,18 @@ export type Request =
    * The completion watch (#154): the clips of the user's Creates that a feed answer the page got
    * shows finished (none, to ask only what is still watched), as Suno's feed returned them.
    */
-  | { type: 'generate-completion'; clips: Record<string, unknown>[] };
+  | { type: 'generate-completion'; clips: Record<string, unknown>[] }
+  /**
+   * Load library or Refresh in the Download view (#215): the library page is opened again and read
+   * on its next load, carrying the selection. Refused while a sync or Generate on Suno runs.
+   */
+  | { type: 'download-begin'; selected: string[] }
+  /** The Suno content script, on each page load: whether its tab is to read the library (#215). */
+  | { type: 'download-resume' }
+  /** Which of these clips n8Tracks has as Generations (#215). */
+  | { type: 'download-lookup'; sunoIds: string[] }
+  /** The formats last chosen (#215); with `formats`, remembers those first. */
+  | { type: 'download-formats'; formats?: string[] };
 
 export interface ResponseFor {
   state: ConnectionState;
@@ -341,6 +377,10 @@ export interface ResponseFor {
   'generate-observed': GenerateReply<{ recorded: ObservedSummary }>;
   'generate-source': GenerateReply;
   'generate-completion': GenerateReply<{ watching: string[] }>;
+  'download-begin': DownloadReply;
+  'download-resume': { load: DownloadLoad | null };
+  'download-lookup': ClipLookupReply;
+  'download-formats': { formats: string[] };
 }
 
 export type Response<T extends Request> = ResponseFor[T['type']];
@@ -385,6 +425,21 @@ export const GENERATE_TYPES = [
 ] as const satisfies readonly Request['type'][];
 
 export type GenerateRequest = Extract<Request, { type: (typeof GENERATE_TYPES)[number] }>;
+
+/** The Download view's messages (#215), which only the Suno content script sends, each for its own tab. */
+export const DOWNLOAD_TYPES = [
+  'download-begin',
+  'download-resume',
+  'download-lookup',
+  'download-formats',
+] as const satisfies readonly Request['type'][];
+
+export type DownloadRequest = Extract<Request, { type: (typeof DOWNLOAD_TYPES)[number] }>;
+
+/** Whether `request` is one of the Download view's messages. */
+export function isDownloadRequest(request: Request): request is DownloadRequest {
+  return (DOWNLOAD_TYPES as readonly string[]).includes(request.type);
+}
 
 /** Whether `request` is one of the Generate on Suno messages. */
 export function isGenerateRequest(request: Request): request is GenerateRequest {
@@ -567,6 +622,17 @@ export function isRequest(value: unknown): value is Request {
       return value.source === null || isSourcePhase(value.source);
     case 'generate-completion':
       return Array.isArray(value.clips) && value.clips.every(isRecord);
+    case 'download-begin':
+      return Array.isArray(value.selected) && isTextList(value.selected);
+    case 'download-resume':
+      return true;
+    case 'download-lookup':
+      return isTextList(value.sunoIds) && value.sunoIds.length > 0;
+    case 'download-formats':
+      return (
+        value.formats === undefined ||
+        (Array.isArray(value.formats) && value.formats.every((item) => typeof item === 'string'))
+      );
     default:
       return false;
   }
