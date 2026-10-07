@@ -105,6 +105,12 @@ public abstract record GenerationRequestChangeOutcome
     /// (<paramref name="Workspace"/>): nothing changed (#145).
     /// </summary>
     public sealed record WorkspaceAlreadySet(GenerationRequest Request, SunoWorkspace Workspace) : GenerationRequestChangeOutcome;
+
+    /// <summary>
+    /// An observed Create whose clips could not be attached (#149): nothing was stored, and
+    /// <paramref name="Reason"/> says why in plain words. A sync brings the clips in.
+    /// </summary>
+    public sealed record NotRecorded(string Reason) : GenerationRequestChangeOutcome;
 }
 
 /// <summary>
@@ -410,6 +416,13 @@ public sealed class GenerationRequestService(
         return errors;
     }
 
+    /// <summary>What a request says when observation of its Creates has ended.</summary>
+    private static string DoneMessage(IReadOnlyList<ObservedCreateResult> observed)
+    {
+        var count = observed.Sum(static result => result.Clips.Count(static clip => clip.GenerationId is not null));
+        return string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{observed.Count} {(observed.Count == 1 ? "Create" : "Creates")} recorded, with {count} {(count == 1 ? "Generation" : "Generations")}.");
+    }
+
     private static string? Blank(string? text) => string.IsNullOrWhiteSpace(text) ? null : text.Trim();
 
     /// <summary>
@@ -422,6 +435,15 @@ public sealed class GenerationRequestService(
         {
             var now = time.GetUtcNow();
             var due = GenerationRequestRules.DueBy(request, now);
+
+            // Observation ends 30 minutes after the last Create the user clicked (#149).
+            if (request.State == GenerationRequestState.Waiting
+                && ObservedCreates.Read(request.ObservedJson) is { Count: > 0 } observed
+                && now - observed[^1].ObservedUtc >= GenerationRequestRules.AfterLastCreate)
+            {
+                due = new(GenerationRequestState.Done, observed[^1].Outcome == ObservedCreates.NothingAttached ? ObservedCreates.MessageOf(observed[^1]) : DoneMessage(observed));
+            }
+
             if (due is null)
             {
                 var snapshot = await SnapshotAsync(request.VersionId, cancellationToken).ConfigureAwait(false);

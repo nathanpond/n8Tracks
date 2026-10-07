@@ -1,7 +1,9 @@
-import { Button, Group, List, Loader, Paper, Stack, Text } from '@mantine/core';
-import type { Verification } from '../api/generationRequests';
+import { Anchor, Button, Group, List, Loader, Paper, Stack, Text } from '@mantine/core';
+import { Link } from 'react-router';
+import type { ObservedCreate, Verification } from '../api/generationRequests';
 import { formatDateTime, useConfiguredTimeZone } from '../api/timeZone';
 import { unavailableSourceText, requestStateLabel } from './generateRules';
+import { observedText, optionList, skipReasonText } from './observedRules';
 import {
   countsText,
   entryDetail,
@@ -87,6 +89,9 @@ export function GenerateOnSunoStatus({ controller }: { controller: GenerateOnSun
                 Nothing has been generated. The extension takes it from here; the Suno steps follow.
               </Text>
             )}
+            {request.observed !== undefined && request.observed.length > 0 && (
+              <ObservedView observed={request.observed} timeZone={timeZone} />
+            )}
             {request.verification != null && (
               <VerificationView verification={request.verification} timeZone={timeZone} />
             )}
@@ -97,6 +102,66 @@ export function GenerateOnSunoStatus({ controller }: { controller: GenerateOnSun
         )}
       </Stack>
     </Paper>
+  );
+}
+
+/**
+ * What each Create the user clicked in Suno came to (#149): the Generations recorded and on which
+ * Version, the options that differed when a new Version was made, the options taken from the Version
+ * because neither Suno's answer nor the page's request gave them, and any clip skipped.
+ */
+function ObservedView({ observed, timeZone }: { observed: ObservedCreate[]; timeZone: string }) {
+  return (
+    <Stack
+      gap={4}
+      data-testid="observed-creates"
+      component="section"
+      aria-labelledby="observed-title"
+    >
+      <Text fw={600} id="observed-title">
+        Your Creates in Suno
+      </Text>
+      <List size="sm" spacing={4}>
+        {observed.map((create) => (
+          <List.Item
+            key={create.observedAt + create.generations.map((item) => item.id).join()}
+            data-testid="observed-create"
+            data-outcome={create.outcome}
+          >
+            <Text size="sm" span>
+              {formatDateTime(create.observedAt, timeZone)}: {observedText(create)}
+            </Text>
+            {create.version !== null && create.outcome === 'branched' && (
+              <Text size="sm" data-testid="observed-version">
+                <Anchor component={Link} underline="always" to={`/go/${create.version.shortcode}`}>
+                  Open Version {create.version.number}
+                </Anchor>
+              </Text>
+            )}
+            {create.differing.length > 0 && create.outcome === 'branched' && (
+              <Text size="sm" data-testid="observed-differing">
+                Options that differed: {optionList(create.differing)}.
+              </Text>
+            )}
+            {create.assumed.length > 0 && (
+              <Text size="xs" c="var(--n8-color-secondary-text)" data-testid="observed-assumed">
+                Taken from the Version, because Suno did not say: {optionList(create.assumed)}.
+                {create.requestRead ? '' : ' What the page sent could not be read.'}
+              </Text>
+            )}
+            {create.skipped.length > 0 && (
+              <List size="xs" data-testid="observed-skipped">
+                {create.skipped.map((item) => (
+                  <List.Item key={item.sunoId}>
+                    Skipped clip {item.sunoId}: {skipReasonText(item.reason)}.
+                  </List.Item>
+                ))}
+              </List>
+            )}
+          </List.Item>
+        ))}
+      </List>
+    </Stack>
   );
 }
 

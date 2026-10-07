@@ -161,6 +161,14 @@ public sealed class ImportFieldMap
             ? encodingValue.GetString()!
             : throw new JsonException($"The import field map's '{key}' has no encoding.");
         var feed = paths.TryGetProperty("feed", out var feedValue) && feedValue.ValueKind == JsonValueKind.String ? feedValue.GetString() : null;
+        var create = paths.TryGetProperty("create", out var createValue) && createValue.ValueKind == JsonValueKind.String ? createValue.GetString() : null;
+        var createRequest = paths.TryGetProperty("createRequest", out var requestValue) && requestValue.ValueKind == JsonValueKind.String ? requestValue.GetString() : null;
+        var absentIsDefault = field.TryGetProperty("absentInCreateRequest", out var absentValue) && absentValue.ValueKind == JsonValueKind.String
+            ? absentValue.GetString() == "default"
+                ? true
+                : throw new JsonException($"The import field map's '{key}' has an absentInCreateRequest other than \"default\".")
+            : false;
+        var presentMeans = field.TryGetProperty("presentInCreateRequest", out var presentValue) && presentValue.ValueKind == JsonValueKind.String ? presentValue.GetString() : null;
         double? scale = field.TryGetProperty("scale", out var scaleValue) && scaleValue.ValueKind == JsonValueKind.Number ? scaleValue.GetDouble() : null;
         var values = field.TryGetProperty("values", out var valuesValue) && valuesValue.ValueKind == JsonValueKind.Object
             ? valuesValue.EnumerateObject().ToDictionary(static value => value.Name, static value => value.Value.Clone(), StringComparer.Ordinal)
@@ -183,7 +191,13 @@ public sealed class ImportFieldMap
             throw new JsonException($"The import field map's '{key}' has a pattern without exactly one capturing group.");
         }
 
-        return new ImportFieldEntry(key, feed, fallbacks, encoding, scale, values, notReturned, pattern, ReadFileInput(key, field));
+        return new ImportFieldEntry(key, feed, fallbacks, encoding, scale, values, notReturned, pattern, ReadFileInput(key, field))
+        {
+            CreatePath = create,
+            CreateRequestPath = createRequest,
+            AbsentInCreateRequestIsDefault = absentIsDefault,
+            PresentInCreateRequest = presentMeans,
+        };
     }
 
     /// <summary>
@@ -289,6 +303,25 @@ public sealed record ImportFieldEntry(
 {
     /// <summary>Whether the map says Suno does not return the value.</summary>
     public bool IsNotReturned => NotReturned is not null;
+
+    /// <summary>Where the value is in a clip of the Create response (<c>paths.create</c>, #149); null when the response does not echo it.</summary>
+    public string? CreatePath { get; init; }
+
+    /// <summary>Where the value is in the Create request's body (<c>paths.createRequest</c>, #149); null when the request does not carry it.</summary>
+    public string? CreateRequestPath { get; init; }
+
+    /// <summary>
+    /// Whether a Create request read without the key means the option's default (<c>absentInCreateRequest:
+    /// "default"</c>: Vocal Gender none, Duration Auto). Otherwise an absent key says nothing, and the value
+    /// is taken from the Version (#149).
+    /// </summary>
+    public bool AbsentInCreateRequestIsDefault { get; init; }
+
+    /// <summary>
+    /// The choice the key's presence in the Create request means, whatever its value
+    /// (<c>presentInCreateRequest</c>: Duration is Custom when <c>duration</c> is sent); null when the value is decoded.
+    /// </summary>
+    public string? PresentInCreateRequest { get; init; }
 }
 
 /// <summary>

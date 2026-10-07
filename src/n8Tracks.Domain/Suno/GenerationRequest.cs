@@ -57,6 +57,11 @@ public enum GenerationRequestState
 /// The extension's last verification summary of the filled Create form (#146), as JSON; null until
 /// one is reported. Text values in it are lengths and hashes, never the text.
 /// </param>
+/// <param name="ObservedJson">
+/// What each Create the user clicked while the request waited came to (#149), as a JSON array, oldest
+/// first: Suno's request ID, the Version the clips went to and how, the options that differed or were
+/// assumed, and the clips attached or skipped; null until the first Create is observed.
+/// </param>
 public sealed record GenerationRequest(
     Guid Id,
     Guid VersionId,
@@ -69,7 +74,8 @@ public sealed record GenerationRequest(
     DateTimeOffset CreatedUtc,
     DateTimeOffset UpdatedUtc,
     DateTimeOffset? EndedUtc,
-    string? VerificationJson = null);
+    string? VerificationJson = null,
+    string? ObservedJson = null);
 
 /// <summary>A change of state a request is due, with what to say about it.</summary>
 public sealed record GenerationRequestTransition(GenerationRequestState State, string Message);
@@ -95,6 +101,9 @@ public static class GenerationRequestRules
     public const string SupersededMessage = "A newer request for this Version replaced it.";
     public const string CancelledMessage = "You cancelled it.";
     public const string VersionGoneMessage = "The Version is no longer there.";
+
+    /// <summary>How long after the last observed Create a request still waiting is done (#149).</summary>
+    public static readonly TimeSpan AfterLastCreate = TimeSpan.FromMinutes(30);
 
     private static readonly Dictionary<GenerationRequestState, string> Names = new()
     {

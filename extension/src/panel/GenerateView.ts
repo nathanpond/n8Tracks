@@ -32,6 +32,11 @@ export type GenerateViewState =
       results: readonly EntryResult[];
       checkedAt: Date;
     }
+  /**
+   * The user's Create (#149): what n8Tracks recorded (`recorded`), or why its clips were not recorded.
+   * The request goes on waiting for further Creates.
+   */
+  | { kind: 'recorded'; recorded: boolean; message: string }
   | { kind: 'stopped'; message: string };
 
 export interface GenerateViewOptions {
@@ -146,6 +151,22 @@ export class GenerateView {
             'p',
             { role: 'status', class: 'generate-selected' },
             `The Song’s workspace “${nameOrUnnamed(this.state.name)}” is selected on Create.`,
+          ),
+        );
+        return;
+      case 'recorded':
+        this.body.append(
+          this.make(
+            'p',
+            this.state.recorded
+              ? { role: 'status', class: 'generate-recorded' }
+              : { role: 'alert', class: 'generate-not-recorded' },
+            this.state.message,
+          ),
+          this.make(
+            'p',
+            { class: 'detail' },
+            'Each further Create on this form is recorded too. The extension never clicks Create.',
           ),
         );
         return;

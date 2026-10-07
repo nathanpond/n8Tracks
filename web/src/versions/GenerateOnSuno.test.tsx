@@ -1,6 +1,7 @@
 import { MantineProvider } from '@mantine/core';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 import type { GenerationRequest } from '../api/generationRequests';
 import { REQUEST_POLL_MS } from '../api/generationRequests';
@@ -109,9 +110,11 @@ function Harness() {
 function renderAction(bridge: Bridge) {
   return render(
     <MantineProvider>
-      <BridgeContext.Provider value={bridge}>
-        <Harness />
-      </BridgeContext.Provider>
+      <MemoryRouter>
+        <BridgeContext.Provider value={bridge}>
+          <Harness />
+        </BridgeContext.Provider>
+      </MemoryRouter>
     </MantineProvider>,
   );
 }
@@ -384,6 +387,71 @@ describe('Generate on Suno', () => {
       'Every entry is as the Version says',
     );
     expect(screen.getByText(/Verification of Suno’s form \(Simple\)/)).toBeInTheDocument();
+  });
+
+  it('says what each of the user’s Creates came to: the Version, the options that differed, and those assumed (#149)', async () => {
+    serve({
+      current: testRequest({
+        state: 'waiting',
+        claimed: true,
+        step: 'Create recorded',
+        message:
+          '1 Generation recorded on the new Version n8-1-v1.1, made from what was submitted.',
+        observed: [
+          {
+            observedAt: '2026-10-07T09:03:00Z',
+            outcome: 'attached',
+            version: { id: VERSION_ID, number: '1', shortcode: 'n8-1-v1' },
+            differing: [],
+            assumed: ['model'],
+            requestRead: true,
+            generations: [
+              { id: 'g-1', shortcode: 'n8-1-v1-g1', sunoId: 'clip-1' },
+              { id: 'g-2', shortcode: 'n8-1-v1-g2', sunoId: 'clip-2' },
+            ],
+            skipped: [],
+          },
+          {
+            observedAt: '2026-10-07T09:05:00Z',
+            outcome: 'branched',
+            version: { id: 'v-2', number: '1.1', shortcode: 'n8-1-v1.1' },
+            differing: ['weirdness', 'styleInfluence', 'sources'],
+            assumed: ['model', 'vocalGender'],
+            requestRead: false,
+            generations: [{ id: 'g-3', shortcode: 'n8-1-v1.1-g1', sunoId: 'clip-3' }],
+            skipped: [{ sunoId: 'clip-4', reason: 'tombstoned' }],
+          },
+        ],
+      }),
+    });
+    renderAction(fakeBridge({ kind: 'ready', extensionVersion: '0.1.0' }).bridge);
+
+    const creates = await screen.findAllByTestId('observed-create');
+    expect(creates.map((create) => create.dataset.outcome)).toEqual(['attached', 'branched']);
+    const [attached, branched] = creates;
+    if (attached === undefined || branched === undefined) {
+      throw new Error('Both Creates are shown.');
+    }
+    expect(attached).toHaveTextContent(
+      '2 Generations recorded on this request’s Version 1, which is now frozen.',
+    );
+    expect(within(attached).queryByTestId('observed-differing')).toBeNull();
+    expect(branched).toHaveTextContent(
+      'You changed the form, so 1 generation went to a new Version 1.1, made from what was submitted; this Version is unchanged.',
+    );
+    expect(within(branched).getByTestId('observed-differing')).toHaveTextContent(
+      'Options that differed: Weirdness, Style Influence, Sources.',
+    );
+    expect(within(branched).getByTestId('observed-assumed')).toHaveTextContent(
+      'Taken from the Version, because Suno did not say: Model, Vocal Gender. What the page sent could not be read.',
+    );
+    expect(within(branched).getByRole('link', { name: 'Open Version 1.1' })).toHaveAttribute(
+      'href',
+      '/go/n8-1-v1.1',
+    );
+    expect(within(branched).getByTestId('observed-skipped')).toHaveTextContent(
+      'Skipped clip clip-4: deleted from n8Tracks, so it stays deleted.',
+    );
   });
 
   it('cancels an active request on request', async () => {

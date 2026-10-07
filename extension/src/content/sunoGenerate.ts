@@ -1,5 +1,5 @@
 import { sunoCreateAddress, sunoPageOf } from '../adapter/addresses.ts';
-import type { Clock } from '../adapter/clock.ts';
+import { realClock, type Clock } from '../adapter/clock.ts';
 import { verificationReport, type EntryResult, type FormJob } from '../adapter/fill.ts';
 import { PAGE_RETRIES, PAGE_WAIT_MS, type Observations } from '../adapter/libraryReader.ts';
 import type { ObservedMessage } from '../adapter/observed.ts';
@@ -31,6 +31,7 @@ import type {
   GenerateJob,
   GenerateReply,
   GenerateState,
+  ObservedSummary,
   Request,
 } from '../messages.ts';
 import type { GenerateViewState } from '../panel/GenerateView.ts';
@@ -57,6 +58,14 @@ import type { GenerateViewState } from '../panel/GenerateView.ts';
  * to n8Tracks, and the request waits for the user to review the form and click Create. The
  * extension never clicks Create (invariant 4). Check again in the panel reads every entry again
  * without changing anything; when the form has gone, the request stops.
+ *
+ * While the request waits, the tab watches for the user's own Create click (#149): the page observer
+ * passes on Suno's answer and the values the page sent, which go to n8Tracks to be recorded as
+ * Generations; the panel says what each came to. Every further Create on the form is recorded the
+ * same way. An answer not as expected sends nothing, and the panel and the request say the clips were
+ * not recorded and that a sync will bring them in. Leaving the Create page, or 30 minutes after the
+ * last Create (an hour before the first), ends the watch; once a Create was recorded, leaving the page
+ * ends the request (done), and a load of the tab never fills the form again.
  */
 
 /** The steps reported to n8Tracks, a fixed list (the Version page shows them). */
@@ -73,6 +82,8 @@ export const GENERATE_STEPS = {
   fill: 'fill form',
   review: 'review and create',
   check: 'check form',
+  record: 'record Create',
+  left: 'left the Create page',
 } as const;
 
 export type GenerateStep = (typeof GENERATE_STEPS)[keyof typeof GENERATE_STEPS];
@@ -87,6 +98,10 @@ export const NO_FORM =
   'The extension cannot fill the Create form for this kind of Version. Fill it by hand in Suno, then click Create.';
 export const FORM_GONE =
   'The form is no longer on this page, so it could not be checked. Start Generate on Suno again from n8Tracks.';
+export const NOT_EXPECTED =
+  'Suno’s answer to Create was not as expected, so its clips were not recorded in n8Tracks; a sync will bring them in.';
+export const LEFT_CREATE =
+  'You left Suno’s Create page, so the extension stopped watching for Creates.';
 export const SAME_NAME =
   "Suno has more than one workspace with the name of the Song's workspace, so the extension cannot tell which row is the Song's. Rename one of them in Suno, then try again.";
 
@@ -95,6 +110,15 @@ export const MAXIMUM_LOADS = 2;
 
 /** How long a new workspace may take to show as selected by itself before its row is pressed. */
 export const SELECTED_BY_ITSELF_MS = 5_000;
+
+/** How often the watch for the user's Create looks at the page's address again (#149). */
+export const CREATE_POLL_MS = 1_000;
+
+/** How long the watch goes on after the last recorded Create (n8Tracks ends the request then too). */
+export const AFTER_LAST_CREATE_MS = 30 * 60_000;
+
+/** How long the watch goes on before the first Create (n8Tracks lets a request idle an hour). */
+export const BEFORE_FIRST_CREATE_MS = 60 * 60_000;
 
 /** How the panel names each step while it runs. */
 const STEP_TEXT: Readonly<Record<GenerateStep, string>> = {
@@ -110,6 +134,8 @@ const STEP_TEXT: Readonly<Record<GenerateStep, string>> = {
   'fill form': 'Filling the form from the Version',
   'review and create': 'Review the form, then click Create',
   'check form': 'Checking the form again',
+  'record Create': 'Recording your Create in n8Tracks',
+  'left the Create page': 'You left the Create page',
 };
 
 export interface SunoGenerateOptions {
@@ -150,6 +176,10 @@ export class SunoGenerate {
   private job: GenerateJob | null = null;
   /** What the form was filled from, for Check again; null until a fill has run. */
   private filled: { form: FormJob; workspace: string | null } | null = null;
+  /** Whether the watch for the user's Create is running (#149). */
+  private watching = false;
+  /** How many Creates n8Tracks has recorded for the request. */
+  private created = 0;
 
   constructor(options: SunoGenerateOptions) {
     this.options = options;
@@ -191,6 +221,17 @@ export class SunoGenerate {
     }
     this.job = job;
     const { page } = this.options;
+    this.created = job.created ?? 0;
+    if (this.created > 0) {
+      // A Create was recorded: the form is never filled again. On it, further Creates are watched for.
+      if (sunoPageOf(page.address()) === 'create') {
+        this.options.show({ kind: 'recorded', recorded: true, message: this.createdText() });
+        void this.watchCreates();
+      } else {
+        await this.leave();
+      }
+      return;
+    }
     if (sunoPageOf(page.address()) !== 'create') {
       if (job.loads <= MAXIMUM_LOADS) {
         this.options.show({ kind: 'working', step: STEP_TEXT[GENERATE_STEPS.open] });
@@ -478,7 +519,125 @@ export class SunoGenerate {
     if (!answer.ok) {
       this.filled = null;
       this.options.show({ kind: 'stopped', message: answer.message });
+      return;
     }
+    void this.watchCreates();
+  }
+
+  /**
+   * Watches for the user's own Create click while the tab stays on the Create page (#149): each
+   * answer the page observer passes on is recorded in n8Tracks. Never clicks anything. Ends when the
+   * page leaves Create, when the request is over, or after the time a request waits.
+   */
+  private async watchCreates(): Promise<void> {
+    if (this.watching) {
+      return;
+    }
+    this.watching = true;
+    const clock = this.options.clock ?? realClock;
+    const signal = new AbortController().signal;
+    let since = clock.now();
+    try {
+      for (;;) {
+        const limit = this.created > 0 ? AFTER_LAST_CREATE_MS : BEFORE_FIRST_CREATE_MS;
+        if (clock.now() - since >= limit) {
+          return;
+        }
+        if (sunoPageOf(this.options.page.address()) !== 'create') {
+          await this.leave();
+          return;
+        }
+        const message = await this.options.observations.next(
+          'create',
+          () => true,
+          CREATE_POLL_MS,
+          signal,
+        );
+        if (message === null) {
+          continue;
+        }
+        if (!(await this.record(message))) {
+          return;
+        }
+        since = clock.now();
+      }
+    } finally {
+      this.watching = false;
+    }
+  }
+
+  /**
+   * Records one observed Create: Suno's answer must name its request and clips, or nothing is sent and
+   * the request says so at its step. False when the request is over.
+   */
+  private async record(message: ObservedMessage): Promise<boolean> {
+    this.step = GENERATE_STEPS.record;
+    const response = message.body;
+    const clips = isRecord(response) && Array.isArray(response.clips) ? response.clips : [];
+    const expectedShape =
+      isRecord(response) &&
+      typeof response.id === 'string' &&
+      response.id !== '' &&
+      clips.length > 0 &&
+      clips.every((clip) => isRecord(clip) && typeof clip.id === 'string' && clip.id !== '');
+    if (!expectedShape) {
+      this.options.show({ kind: 'recorded', recorded: false, message: NOT_EXPECTED });
+      const answer = reply(
+        await this.options
+          .send({
+            type: 'generate-progress',
+            state: 'waiting',
+            step: GENERATE_STEPS.record,
+            message: NOT_EXPECTED,
+          })
+          .catch(() => undefined),
+      );
+      return answer.ok || !answer.ended;
+    }
+    this.options.show({ kind: 'working', step: STEP_TEXT[GENERATE_STEPS.record] });
+    const answer = reply<{ recorded: ObservedSummary }>(
+      await this.options
+        .send({
+          type: 'generate-observed',
+          response,
+          submitted: message.submitted ?? null,
+        })
+        .catch(() => undefined),
+    );
+    if (!answer.ok) {
+      this.options.show(
+        answer.ended
+          ? { kind: 'stopped', message: answer.message }
+          : { kind: 'recorded', recorded: false, message: answer.message },
+      );
+      return !answer.ended;
+    }
+    this.created += 1;
+    this.options.show({ kind: 'recorded', recorded: true, message: answer.recorded.message });
+    return true;
+  }
+
+  /** The tab left the Create page after a recorded Create: the request is done. */
+  private async leave(): Promise<void> {
+    if (this.created === 0) {
+      // Nothing recorded: the request goes on waiting (a load of the Create page fills the form again).
+      return;
+    }
+    this.step = GENERATE_STEPS.left;
+    this.options.show({
+      kind: 'recorded',
+      recorded: true,
+      message: `${this.createdText()} ${LEFT_CREATE}`,
+    });
+    await this.options
+      .send({ type: 'generate-progress', state: 'done', step: GENERATE_STEPS.left })
+      .catch(() => undefined);
+  }
+
+  private createdText(): string {
+    return this.created === 1
+      ? 'Your Create was recorded in n8Tracks.'
+      : `Your ${String(this.created)} Creates were recorded in n8Tracks.`;
   }
 
   /**

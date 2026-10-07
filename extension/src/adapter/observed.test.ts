@@ -5,6 +5,7 @@ import {
   observedKindOf,
   observedRequestOf,
   OBSERVER_SOURCE,
+  submittedOf,
   withoutSecrets,
 } from './observed.ts';
 
@@ -23,13 +24,16 @@ describe('which responses the observer forwards', () => {
     [`${API}/api/playlist/me?page=1&show_trashed=false&show_sharelist=false`, 'GET', 'playlists'],
     [`${API}/api/unified/feed`, 'post', 'playlist-feed'],
     ['/api/feed/v3/', 'POST', 'library-feed'],
+    // The answer to the user's own Create click (#149); the extension never clicks Create itself.
+    [`${API}/api/generate/v2-web/`, 'POST', 'create'],
   ])('forwards %s (%s) as %s', (address, method, kind) => {
     expect(observedKindOf(address, method, PAGE)).toBe(kind);
   });
 
   it.each([
-    // The Create request carries the anti-bot token: never observed by this story.
-    [`${API}/api/generate/v2-web/`, 'POST'],
+    // Only the Create itself: not a read of it, nor another generate path.
+    [`${API}/api/generate/v2-web/`, 'GET'],
+    [`${API}/api/generate/v2`, 'POST'],
     [`${API}/api/persona/get-personas/?page=1`, 'GET'],
     [`${API}/api/billing/info/`, 'GET'],
     [`${API}/api/download/authorize`, 'POST'],
@@ -119,6 +123,63 @@ describe('withoutSecrets', () => {
   });
 });
 
+describe('what the observer keeps of a Create request (#149)', () => {
+  it('keeps the values at the createRequest paths, nested as sent, and leaves out everything else', () => {
+    const body = JSON.stringify({
+      token: 'anti-bot',
+      title: 'A title',
+      tags: 'dream pop',
+      prompt: 'lyrics',
+      mv: 'chirp-goose',
+      duration: 30,
+      user_uploaded_images_b64: ['aGVsbG8='],
+      transaction_uuid: 'tx',
+      lyrics_project_id: 'lp',
+      metadata: {
+        create_mode: 'custom',
+        user_tier: 'tier-secret',
+        create_session_token: 'session-secret',
+        web_client_pathname: '/create',
+        vocal_gender: 'f',
+        control_sliders: { weirdness_constraint: 0.7, other: 1 },
+      },
+    });
+
+    expect(submittedOf(body)).toEqual({
+      title: 'A title',
+      tags: 'dream pop',
+      prompt: 'lyrics',
+      mv: 'chirp-goose',
+      duration: 30,
+      metadata: {
+        create_mode: 'custom',
+        vocal_gender: 'f',
+        control_sliders: { weirdness_constraint: 0.7 },
+      },
+    });
+    const kept = JSON.stringify(submittedOf(body));
+    for (const secret of [
+      'token',
+      'create_session_token',
+      'user_tier',
+      'anti-bot',
+      'session-secret',
+      'tier-secret',
+    ]) {
+      expect(kept).not.toContain(secret);
+    }
+  });
+
+  it('reads a body that is not JSON text of an object as unread', () => {
+    expect(submittedOf(undefined)).toBeNull();
+    expect(submittedOf('not json')).toBeNull();
+    expect(submittedOf('[1]')).toBeNull();
+    expect(submittedOf(new Blob(['{}']))).toBeNull();
+    // Complement: an object with none of the paths is read, and empty.
+    expect(submittedOf('{"token":"t"}')).toEqual({});
+  });
+});
+
 describe('the messages between the observer and the content script', () => {
   it('recognises an observed response, and nothing else', () => {
     const message = {
@@ -130,7 +191,8 @@ describe('the messages between the observer and the content script', () => {
     };
 
     expect(isObservedMessage(message)).toBe(true);
-    expect(isObservedMessage({ ...message, kind: 'create' })).toBe(false);
+    expect(isObservedMessage({ ...message, kind: 'create' })).toBe(true);
+    expect(isObservedMessage({ ...message, kind: 'download' })).toBe(false);
     expect(isObservedMessage({ ...message, source: 'suno' })).toBe(false);
     expect(isObservedMessage({ ...message, request: null })).toBe(false);
     expect(isObserverReady({ source: 'n8tracks-suno-content', type: 'observer-ready' })).toBe(true);

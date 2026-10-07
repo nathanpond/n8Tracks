@@ -4,6 +4,8 @@ Where each option of the Create screen (`docs/suno-create-field-inventory.json`)
 
 Evidence: spike TS-003 (`docs/spikes/TS-003.md`), run 2026-10-05 with one finished clip pair in each of Songs Simple, Songs Advanced (every More Options control off its default, Max Mode on), Speech Simple, Speech Advanced, and Sounds (Loop, 120 BPM, A minor). Fixtures are in `extension/fixtures/suno/`.
 
+The observed Create (#149) takes an option from the response where Suno echoes it, else from the request. In the request, an absent key says nothing (the option is taken from the Version) unless the entry has `absentInCreateRequest: "default"` (Vocal Gender none, Duration Auto); `presentInCreateRequest` names the choice a key's presence makes (Duration Custom). The model is never read from a Create.
+
 Paths are dot paths with `[n]` for arrays. **Feed** is one clip in `clips[]` of `POST /api/feed/v3`. **Create** is one clip in `clips[]` of `POST /api/generate/v2-web/`. **Request** is that call's JSON body. `—` means not present.
 
 ## What import cannot recover

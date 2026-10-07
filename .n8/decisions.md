@@ -3638,3 +3638,39 @@ Story #146 (PARTIAL: D9):
   - The stand-in `standInForSuno` handles `aria-pressed` groups.
   **Why:** Selectors and workflows changed (the #133/#134 rule). The rest are additive edits that keep #148's parallel changes to `fill.ts` and the guard mergeable.
   **Issue:** #147
+- **Decision:** #149 goes ahead although its blocker #146 is PARTIAL. This is the orchestrator's decision.
+  **Why:** #146 left three fill steps unfinished: Simple Add Lyrics and Add Styles, and the Duration mode. Recording the submitted request does not depend on them. A field the user sets by hand is observed like any other.
+  **Issue:** #149
+- **Decision:** The Create observation is a kind in `adapter/observed.ts`: `create`, for `POST /api/generate/v2-web`. There is no `adapter/workflows/observeCreate.ts`, although the story's artifacts list names one.
+  - The observer forwards the response, and `submitted`: the values at `CREATE_REQUEST_PATHS`. Those are the import field map's `createRequest` paths plus `metadata.create_mode`, minus `user_uploaded_images_b64`. A parity test, `extension/test/observed-create-paths.test.ts`, keeps the list in step with the map.
+  - The watch for further Creates lives in `content/sunoGenerate.ts`.
+  **Why:** The binding #134 note puts the Create observation in `observed.ts` with a field allow-list. A Workflow has steps that act on the page, and observing presses nothing, so a workflow that clicks nothing would only weaken the registry and guard checks. An uploaded image's bytes are large, and n8Tracks keeps only a file-input note, so they are never sent.
+  **Issue:** #149
+- **Decision:** The observed Create is mapped by `ClipInputMapper.MapCreate`, and the field map gains two additive members.
+  - **Where each option comes from:** the response (`paths.create`), else the request (`paths.createRequest`), else the requested Version, listed as assumed.
+  - **New members:** `absentInCreateRequest: "default"` on vocal_gender, speech_vocal_gender and duration_mode, and `presentInCreateRequest: "custom"` on duration_mode.
+  - **Absent keys:** without the new member, a key absent from the request says nothing.
+  - **Never decoded from a Create:** the model, and any undecodable value, which is assumed and kept raw. For example, Male's `m` is not verified in the map.
+  **Why:** The map's `values` for request-only options are descriptive text ("duration key present"), so they cannot be decoded as data. TS-003 shows that `mv` is the engine (chirp-goose), not the label. Never guessing means assuming from the Version rather than branching on a value n8Tracks cannot read. The members are additive, so import's feed reading is unchanged (`MapWith` takes a reader).
+  **Issue:** #149
+- **Decision:** These parts of the observed Create are decided here:
+  - **Endpoint:** `POST /api/v1/suno/generation-requests/{id}/observed-create` (`suno.generate`, the claimer only) answers the request with a new `observed` list. Suno's request ID is stored in `generation_events` and `observed_json`, and never answered.
+  - **The `/clips` completion route** from the planner's Discretion is not built. #154 owns completion.
+  - **Migration `20261007100000_AddObservedCreates`** adds `suno_generation_requests.observed_json` (nullable). Its Designer was built from the current snapshot.
+  - **Where the clips go:** to the requested Version when nothing differs, else to an earlier branch of the same request that holds the same inputs, else to a new child Version. The new Version takes the first free child number (`VersionNumberKind.Child`) and the note "Created from what was submitted to Suno". It becomes the Song's current Version.
+  - **Sources:** the new Version's lineage is the requested Version's when the lineage key matches, else the clip's, resolved through `ExternalReferenceResolver.LinkAsync`.
+  **Why:** The AC and the planner's Discretion ask for these. A column on a non-catalog table, like #146's `verification_json`, is the smallest store for "what happened" on the Version page. Reusing an earlier branch avoids one new Version per Create when the form stayed changed.
+  **Issue:** #149
+- **Decision:** These parts of how the request ends and how Creates are watched are decided here:
+  - **The request** stays `waiting` (step `Create recorded`) between Creates. It becomes `done` when the tab leaves the Create page (the extension reports it), or 30 minutes after the last Create. The 30-minute rule is a settle rule in `GenerationRequestService.SettleAsync`, not a service-worker alarm.
+  - **The tab's watch** polls the address every second and ends after 30 minutes (60 before the first Create).
+  - **A failed send** is retried 3 times inside the service worker, and the panel then says the clips were not recorded. Failed reports are not kept in `chrome.storage.session`.
+  - **After a recorded Create,** a load of the tab never fills the form again (`GenerateJob.created`).
+  **Why:** The #144 note says to report `waiting` between Creates and `done` at the end. The server already settles on every read, so a server-side settle is simpler and survives a closed tab. AC 5's "marked done" is met when observation ends. n8Tracks answers a repeated Create once (by Suno's request ID), so the simpler retry is safe. A sync brings in anything still missing.
+  **Issue:** #149
+- **Decision:** `ADAPTER_VERSION` is 7 (the observer gained a pattern). The popup test now reads the constant.
+  **Why:** By the #133/#134 rule, a change to an observed pattern raises the version. #148 also bumps it in parallel, so whichever story merges second takes 8.
+  **Issue:** #149
+- **Decision:** On the web, `VersionDetails` takes an optional `onRecorded`. When the request's `observed` count grows, it reloads the Version and calls `onRecorded`, and `SongVersions` then re-reads the Versions, the Song and the Generations. A branch makes the new Version current, so the e2e opens the requested Version by its number (`/v/1`), whose page lists what each Create came to.
+  **Why:** Without this, the Generations would not appear "at once" until another read. A Version page opened at `/songs/<sc>` follows the Song's current Version, so it switches to the new branch. That Version carries the note.
+  **Issue:** #149

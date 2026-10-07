@@ -73,7 +73,8 @@ public sealed class DatabaseStartupTests : IDisposable
             migration => Assert.Matches("^[0-9]{14}_FollowSunoRemoteState\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AddSunoGenerationRequests\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_RememberDeclinedSunoChanges\\|10\\.0\\.", migration),
-            migration => Assert.Matches("^[0-9]{14}_AddGenerationRequestVerification\\|10\\.0\\.", migration));
+            migration => Assert.Matches("^[0-9]{14}_AddGenerationRequestVerification\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddObservedCreates\\|10\\.0\\.", migration));
 
         // ISO 8601 UTC with milliseconds and Z, taken when the migration ran.
         var initialized = TestDatabase.SchemaInitializedUtc(directory.Path);
@@ -329,7 +330,7 @@ public sealed class DatabaseStartupTests : IDisposable
 
         Assert.Equal(MigrationStatus.UpToDate, state.Status);
         Assert.Equal(TestDatabase.History(directory.Path)[^1].Split('|')[0], state.LastAppliedMigrationId);
-        Assert.EndsWith("_AddGenerationRequestVerification", state.LastAppliedMigrationId, StringComparison.Ordinal);
+        Assert.EndsWith("_AddObservedCreates", state.LastAppliedMigrationId, StringComparison.Ordinal);
     }
 
     [Fact]

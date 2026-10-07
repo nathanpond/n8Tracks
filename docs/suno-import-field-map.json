@@ -101,6 +101,7 @@
     "vocal_gender": {
       "paths": { "feed": null, "create": null, "createRequest": "metadata.vocal_gender" },
       "encoding": "enum",
+      "absentInCreateRequest": "default",
       "values": { "female": "f", "male": "unverified (expected m)", "none": "key absent" },
       "example": "f",
       "notReturned": { "checked": "Every key of the finished clip and its metadata in the feed, and the Create response clip." }
@@ -108,6 +109,8 @@
     "duration_mode": {
       "paths": { "feed": null, "create": null, "createRequest": "duration" },
       "encoding": "enum",
+      "absentInCreateRequest": "default",
+      "presentInCreateRequest": "custom",
       "values": { "custom": "duration key present", "auto": "duration key absent" },
       "example": "custom",
       "notReturned": { "checked": "feed metadata.duration is the measured length of the audio (29.6 and 30.28 for a 30-second request), not the setting." }
@@ -182,6 +185,7 @@
     "speech_vocal_gender": {
       "paths": { "feed": null, "create": null, "createRequest": "metadata.vocal_gender" },
       "encoding": "enum",
+      "absentInCreateRequest": "default",
       "values": { "female": "f", "male": "unverified (expected m)", "none": "key absent" },
       "example": "f",
       "notReturned": { "checked": "Every key of the finished clip and its metadata, and the Create response clip." }

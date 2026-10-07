@@ -605,6 +605,19 @@ public sealed class VersionImmutabilityGuardTests
                 Assert.Equal(HttpStatusCode.Created, response.StatusCode);
             }
         }),
+        ["POST /api/v1/suno/generation-requests/{id:guid}/observed-create"] = new(async target =>
+        {
+            // The user's Create (#149): clips with the requested Version's inputs are attached to it (a frozen
+            // one stays as it is), and clips with other inputs go to a new child Version; the requested
+            // Version's inputs never change. The inputs sent alongside are not read.
+            var (id, token) = await ObservedCreateApi.WaitingRequestAsync(target.Factory, target.Client, target.VersionId);
+            var stamp = Guid.NewGuid().ToString("N");
+            var other = ObservedCreateApi.Response("songs-advanced", $"guard-{stamp}-1", [$"guard-{stamp}-a"]);
+            var answered = await ObservedCreateApi.RecordAsync(target.Client, token, id, other, ObservedCreateApi.Request("songs-advanced"));
+            Assert.Equal("branched", answered.GetProperty("observed")[0].GetProperty("outcome").GetString());
+            var later = ObservedCreateApi.Response("songs-advanced", $"guard-{stamp}-2", [$"guard-{stamp}-b"], static clip => clip["metadata"]!["control_sliders"]!["weirdness_constraint"] = 0.1);
+            Assert.Equal("branched", (await ObservedCreateApi.RecordAsync(target.Client, token, id, later, null)).GetProperty("observed")[1].GetProperty("outcome").GetString());
+        }),
         ["POST /api/v1/versions/{reference}/snapshots"] = new(async target =>
         {
             using var response = await SongApi.SendJsonAsync(target.Client, HttpMethod.Post, new Uri($"/api/v1/versions/{target.VersionShortcode}/snapshots", UriKind.Relative), await target.InputsJsonAsync("{", "}"));
@@ -949,6 +962,17 @@ public sealed class VersionImmutabilityGuardTests
             var id = await GenerationRequestOfAsync(service, target);
             await service.ClaimAsync(id, GuardCredential, default);
             Assert.IsType<GenerationRequestChangeOutcome.Changed>(await service.ReportAsync(id, GuardCredential, new GenerationProgress(GenerationRequestState.Waiting, "fill", null), default));
+        }),
+        ["ObservedCreateService.RecordAsync(Guid, Nullable`1, ObservedCreate, CancellationToken)"] = new(async target =>
+        {
+            // The service behind the endpoint above: a Create with other inputs branches; the requested Version stays as it is.
+            var (id, _) = await ObservedCreateApi.WaitingRequestAsync(target.Factory, target.Client, target.VersionId);
+            var credential = await InScopeAsync<GenerationRequestService, Guid?>(target, async service => (await service.FindAsync(id, default))!.CredentialId);
+            var stamp = Guid.NewGuid().ToString("N");
+            using var response = JsonDocument.Parse(ObservedCreateApi.Response("songs-advanced", $"service-guard-{stamp}", [$"service-guard-{stamp}-a"]).ToJsonString());
+            using var request = JsonDocument.Parse(ObservedCreateApi.Request("songs-advanced").ToJsonString());
+            var outcome = await InScopeAsync<ObservedCreateService, GenerationRequestChangeOutcome>(target, service => service.RecordAsync(id, credential, new ObservedCreate(response.RootElement, request.RootElement), default));
+            Assert.IsType<GenerationRequestChangeOutcome.Changed>(outcome);
         }),
         ["GenerationRequestService.CancelAsync(Guid, CancellationToken)"] = Service<GenerationRequestService>(static async (service, target) =>
             await service.CancelAsync(await GenerationRequestOfAsync(service, target), default)),

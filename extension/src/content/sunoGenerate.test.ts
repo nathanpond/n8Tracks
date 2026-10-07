@@ -17,6 +17,7 @@ import {
   LIST_NOT_READ,
   NO_CREATE_PAGE,
   NO_FORM,
+  NOT_EXPECTED,
   NOT_SIGNED_IN,
   SAME_NAME,
   SunoGenerate,
@@ -82,6 +83,8 @@ interface Options {
   progress?: (request: Extract<Request, { type: 'generate-progress' }>) => GenerateReply;
   /** Whether Suno selects a workspace it just created by itself. */
   selectsCreated?: boolean;
+  /** The service worker's answer to an observed Create (#149). */
+  observedReply?: (request: Extract<Request, { type: 'generate-observed' }>) => unknown;
 }
 
 afterEach(() => {
@@ -97,8 +100,9 @@ function start(options: Options = {}) {
   document.body.innerHTML = snapshotHtml('workspace-selector');
   const clock = fakeClock();
   const visited: string[] = [];
+  let address = options.address ?? 'https://suno.com/create';
   const page = new Page(document, {
-    address: () => options.address ?? 'https://suno.com/create',
+    address: () => address,
     navigate: (address) => visited.push(address),
     clock,
   });
@@ -167,6 +171,13 @@ function start(options: Options = {}) {
         return Promise.resolve({ ok: true, songCounts: { default: 2, 'w-same': 0 } });
       case 'generate-resolve':
         return Promise.resolve({ ok: true });
+      case 'generate-observed':
+        return Promise.resolve(
+          options.observedReply?.(request) ?? {
+            ok: true,
+            recorded: { outcome: 'attached', message: '2 Generations recorded on n8-1-v1.' },
+          },
+        );
       default:
         return Promise.resolve(undefined);
     }
@@ -194,7 +205,18 @@ function start(options: Options = {}) {
       ),
     types: () => asked.map((request) => request.type),
     last: () => shown.at(-1),
+    goTo: (next: string) => {
+      address = next;
+    },
   };
+}
+
+/** Lets the tab run until `done` holds (the watch for Creates runs on after `resume`). */
+async function until(done: () => boolean): Promise<void> {
+  for (let tries = 0; tries < 500 && !done(); tries += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  expect(done()).toBe(true);
 }
 
 /** Lets the tab run until it waits for the user's choice. */
@@ -703,5 +725,115 @@ describe('Generate on Suno in the Suno tab: Speech and Sounds (#147)', () => {
     expect(tab.last()).toEqual({ kind: 'stopped', message: NO_FORM });
     expect(tab.asked.at(-1)).toMatchObject({ state: 'stopped', step: 'choose form' });
     expect(tab.pressed.filter((name) => name !== 'My Workspace')).toEqual([]);
+  });
+});
+
+/** Suno's answer to a Create, as the page observer passes it on, with what the page sent. */
+function createAnswer(
+  id: string,
+  clipIds: string[],
+  submitted: Record<string, unknown> | null = { mv: 'chirp-goose' },
+) {
+  return {
+    ...observed('create', {
+      ...sunoObject('generate-v2-web.songs-advanced.response'),
+      id,
+      clips: clipIds.map((clip) => ({ id: clip, status: 'submitted' })),
+    }),
+    submitted,
+  };
+}
+
+describe('Generate on Suno in the Suno tab: the user’s Create (#149)', () => {
+  it('records the user’s Create after the fill, and the next one on the form too, never clicking Create', async () => {
+    const tab = start({ job: job({ workspace: ON_MY_WORKSPACE, form: advancedForm() }) });
+    const standIn = standInForSuno(document);
+    tab.feed.take(feedFor('default'));
+    tab.feed.take(createAnswer('request-1', ['clip-1', 'clip-2']));
+    tab.feed.take(createAnswer('request-2', ['clip-3', 'clip-4'], null));
+
+    try {
+      await tab.generate.resume();
+      await until(() => tab.types().filter((type) => type === 'generate-observed').length === 2);
+    } finally {
+      standIn.stop();
+    }
+
+    const creates = tab.asked.filter((request) => request.type === 'generate-observed');
+    expect(creates.map((request) => (request.response as { id: string }).id)).toEqual([
+      'request-1',
+      'request-2',
+    ]);
+    expect(creates[0]?.submitted).toEqual({ mv: 'chirp-goose' });
+    expect(creates[1]?.submitted).toBeNull();
+    expect(tab.steps().at(-1)).toBe('waiting review and create');
+    expect(tab.last()).toEqual({
+      kind: 'recorded',
+      recorded: true,
+      message: '2 Generations recorded on n8-1-v1.',
+    });
+    // Invariant 4: the user clicks Create; the extension never does.
+    expect(tab.pressed.filter((name) => /^create/i.test(name))).toEqual([]);
+  });
+
+  it('sends no clips for an answer not as expected, and says at its step that a sync will bring them in', async () => {
+    const tab = start({ job: job({ created: 1 }) });
+    tab.feed.take(createAnswer('request-1', []));
+    tab.feed.take({
+      ...createAnswer('request-2', ['clip-1']),
+      body: { clips: [{ id: 'clip-1' }] },
+    });
+
+    await tab.generate.resume();
+    await until(() => tab.steps().length === 2);
+
+    expect(tab.types()).not.toContain('generate-observed');
+    expect(tab.steps()).toEqual(['waiting record Create', 'waiting record Create']);
+    expect(tab.asked.at(-1)).toMatchObject({ message: NOT_EXPECTED });
+    expect(tab.last()).toEqual({ kind: 'recorded', recorded: false, message: NOT_EXPECTED });
+  });
+
+  it('after a recorded Create, never fills the form again, and leaving the Create page ends the request', async () => {
+    const tab = start({
+      job: job({ created: 2, form: advancedForm() }),
+      address: 'https://suno.com/me',
+    });
+
+    await tab.generate.resume();
+
+    expect(tab.steps()).toEqual(['done left the Create page']);
+    expect(tab.visited).toEqual([]);
+    expect(tab.last()).toMatchObject({ kind: 'recorded', recorded: true });
+
+    // On the Create page, the tab only watches; leaving it then ends the request.
+    const again = start({ job: job({ created: 1, form: advancedForm() }) });
+    await again.generate.resume();
+    expect(again.steps()).toEqual([]);
+    again.goTo('https://suno.com/me');
+    await until(() => again.steps().length === 1);
+    expect(again.steps()).toEqual(['done left the Create page']);
+    expect(again.pressed).toEqual([]);
+  });
+
+  it('records nothing in a tab with no active request, and stops watching when n8Tracks ends the request', async () => {
+    const idle = start({ job: null });
+    idle.feed.take(createAnswer('request-1', ['clip-1']));
+    await idle.generate.resume();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(idle.types()).toEqual(['generate-resume']);
+
+    const ended = start({
+      job: job({ created: 1 }),
+      observedReply: () => ({
+        ok: false,
+        ended: true,
+        message: 'The request has ended in n8Tracks.',
+      }),
+    });
+    ended.feed.take(createAnswer('request-1', ['clip-1']));
+    ended.feed.take(createAnswer('request-2', ['clip-2']));
+    await ended.generate.resume();
+    await until(() => ended.last()?.kind === 'stopped');
+    expect(ended.types().filter((type) => type === 'generate-observed')).toHaveLength(1);
   });
 });

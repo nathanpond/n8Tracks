@@ -29,6 +29,7 @@ internal static class SunoGenerationRequestsEndpoints
     public const string RequestPath = RequestsPath + "/{id:guid}";
     public const string ClaimPath = RequestPath + "/claim";
     public const string CancelPath = RequestPath + "/cancel";
+    public const string ObservedCreatePath = RequestPath + "/observed-create";
 
     public const string SourcesUnavailableCode = "sources_unavailable";
     public const string RequestEndedCode = "request_ended";
@@ -36,6 +37,7 @@ internal static class SunoGenerationRequestsEndpoints
     public const string RequestNotClaimedCode = "request_not_claimed";
     public const string CredentialRequiredCode = "credential_required";
     public const string WorkspaceAlreadySetCode = "workspace_already_set";
+    public const string CreateNotRecordedCode = "create_not_recorded";
 
     public static IEndpointRouteBuilder MapSunoGenerationRequests(this IEndpointRouteBuilder endpoints)
     {
@@ -82,6 +84,18 @@ internal static class SunoGenerationRequestsEndpoints
         endpoints.MapPatch(RequestPath, ReportAsync)
             .WithName("ReportGenerationRequest")
             .WithSummary("The claiming extension reports progress: { state: opening | workspace | filling | waiting | done | stopped, step, message } (a stop says why), and optionally resolvedWorkspace: { sunoId, name, how: created | picked }, the Suno workspace the user chose for the Song in the extension's panel, which becomes the Song's workspace only when the Song has none or an unavailable one (409 workspace_already_set otherwise; resending the Song's own workspace changes nothing), and optionally verification: { adapterVersion, mode, checkedAt, entries: [{ key, outcome: set | failed | unavailable | manual | not_applicable | unsupported, expected, found, note }] }, the summary of the filled Create form (#146), text values only as { length, sha256 }, which replaces the last summary. No If-Match. The hour before the request expires starts again. 403 request_claimed for another credential; 409 request_not_claimed before a claim; 409 request_ended once it has ended; 422 validation_failed.")
+            .RequireScope(CredentialScopes.SunoGenerate)
+            .Produces<GenerationRequestResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        endpoints.MapPost(ObservedCreatePath, ObservedCreateAsync)
+            .WithName("RecordObservedCreate")
+            .WithSummary("The claiming extension reports the user's own Create click in Suno (#149; the extension never clicks Create): { response: Suno's Create response { id, clips }, request: the values the page sent at the import field map's createRequest paths, or null when they could not be read }. Each clip's inputs are mapped as import maps them (the response's values, else the request's, else the Version's, listed as assumed) and compared with the requested Version: the same, and the clips are attached to it as Generations, which freezes it; different, and a new child Version holding what was submitted (note \"Created from what was submitted to Suno\") becomes the Song's current Version and takes them, the requested Version unchanged. One Generation Event links the clips. A clip whose Suno ID a live Generation holds, or whose Generation was deleted from n8Tracks, is skipped and reported. Sending the same Create again answers what it came to. The request stays waiting; its observed list says what each Create came to. 403 credential_required for a session, request_claimed for another credential; 409 request_not_claimed, request_ended, create_not_recorded (nothing stored; a sync brings the clips in); 422 validation_failed.")
             .RequireScope(CredentialScopes.SunoGenerate)
             .Produces<GenerationRequestResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
@@ -266,6 +280,55 @@ internal static class SunoGenerationRequestsEndpoints
         return Refusal(context, outcome);
     }
 
+    /// <summary>200 with the request and what the Create came to; 400, 403, 404, 409, or 422 otherwise.</summary>
+    private static async Task<Results<Ok<GenerationRequestResponse>, ProblemHttpResult>> ObservedCreateAsync(
+        Guid id,
+        ObservedCreateRequest? body,
+        ObservedCreateService observed,
+        HttpContext context,
+        ILoggerFactory loggers,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        if (CredentialOf(context.User) is not { } credentialId)
+        {
+            return ApiProblem.For(context, StatusCodes.Status403Forbidden, CredentialRequiredCode, "Only the extension reports a Create it observed, with its own credential.");
+        }
+
+        if (body is null)
+        {
+            return ApiProblem.For(context, StatusCodes.Status400BadRequest, ApiProblem.InvalidRequestCode, "Send { response, request }.");
+        }
+
+        if (body.Request.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null or JsonValueKind.Object))
+        {
+            return ApiProblem.ValidationFailed(context, new Dictionary<string, string[]>(StringComparer.Ordinal)
+            {
+                [ObservedCreateService.RequestField] = ["Send the request values as an object, or null when they could not be read."],
+            });
+        }
+
+        var request = body.Request.ValueKind == JsonValueKind.Object ? body.Request : (JsonElement?)null;
+        var outcome = await observed.RecordAsync(id, credentialId, new ObservedCreate(body.Response, request), cancellationToken);
+        if (outcome is GenerationRequestChangeOutcome.Changed changed)
+        {
+            // What it came to, never a value the user wrote or Suno's payload (invariant 6).
+            if (ObservedCreates.Read(changed.Request.ObservedJson) is { Count: > 0 } results)
+            {
+                Log(loggers).LogInformation(
+                    "Generation request {GenerationRequestId} recorded an observed Create: {ObservedOutcome} on Version {VersionId}",
+                    id,
+                    results[^1].Outcome,
+                    results[^1].VersionId);
+            }
+
+            return TypedResults.Ok(GenerationRequestResponse.From(changed.Request, withSnapshot: false));
+        }
+
+        return Refusal(context, outcome);
+    }
+
     /// <summary>200 with the cancelled request; 404 or 409 otherwise.</summary>
     private static async Task<Results<Ok<GenerationRequestResponse>, ProblemHttpResult>> CancelAsync(
         Guid id,
@@ -297,7 +360,9 @@ internal static class SunoGenerationRequestsEndpoints
             [new("current", GenerationRequestResponse.From(ended.Request, withSnapshot: false))]),
         GenerationRequestChangeOutcome.ClaimedByAnother => ApiProblem.For(
             context,
-            context.Request.Method == HttpMethods.Patch ? StatusCodes.Status403Forbidden : StatusCodes.Status409Conflict,
+            context.Request.Method == HttpMethods.Patch || context.Request.Path.Value?.EndsWith("/observed-create", StringComparison.Ordinal) == true
+                ? StatusCodes.Status403Forbidden
+                : StatusCodes.Status409Conflict,
             RequestClaimedCode,
             "Another credential has claimed this generation request."),
         GenerationRequestChangeOutcome.NotClaimed => ApiProblem.For(
@@ -306,6 +371,11 @@ internal static class SunoGenerationRequestsEndpoints
             RequestNotClaimedCode,
             "Claim this generation request before reporting on it."),
         GenerationRequestChangeOutcome.Invalid invalid => ApiProblem.ValidationFailed(context, invalid.Errors),
+        GenerationRequestChangeOutcome.NotRecorded notRecorded => ApiProblem.For(
+            context,
+            StatusCodes.Status409Conflict,
+            CreateNotRecordedCode,
+            notRecorded.Reason),
         GenerationRequestChangeOutcome.WorkspaceAlreadySet already => ApiProblem.For(
             context,
             StatusCodes.Status409Conflict,
@@ -374,6 +444,42 @@ internal static class SunoGenerationRequestsEndpoints
     private static ILogger Log(ILoggerFactory loggers) => loggers.CreateLogger(typeof(SunoGenerationRequestsEndpoints));
 }
 
+/// <summary>An observed Create as sent: Suno's response and the request values, read as raw JSON.</summary>
+internal sealed record ObservedCreateRequest(JsonElement Response, JsonElement Request);
+
+/// <summary>
+/// What one observed Create came to (#149), as answered: when, the outcome (attached, branched, or none),
+/// the Version the clips went to, the options that differed and those assumed from the Version, whether
+/// the request's values were read, and each clip's Generation or why it was skipped. Suno's request ID is
+/// kept but not answered.
+/// </summary>
+internal sealed record ObservedCreateResponse(
+    DateTime ObservedAt,
+    string Outcome,
+    ObservedVersionResponse? Version,
+    IReadOnlyList<string> Differing,
+    IReadOnlyList<string> Assumed,
+    bool RequestRead,
+    IReadOnlyList<ObservedGenerationResponse> Generations,
+    IReadOnlyList<ObservedSkipResponse> Skipped)
+{
+    public static ObservedCreateResponse From(ObservedCreateResult result) => new(
+        result.ObservedUtc.UtcDateTime,
+        result.Outcome,
+        result.VersionId is { } versionId ? new ObservedVersionResponse(versionId, result.VersionNumber!, result.VersionShortcode!) : null,
+        result.Differing,
+        result.Assumed,
+        result.RequestRead,
+        [.. result.Clips.Where(static clip => clip.GenerationId is not null).Select(static clip => new ObservedGenerationResponse(clip.GenerationId!.Value, clip.Shortcode!, clip.SunoId))],
+        [.. result.Clips.Where(static clip => clip.Skipped is not null).Select(static clip => new ObservedSkipResponse(clip.SunoId, clip.Skipped!))]);
+}
+
+internal sealed record ObservedVersionResponse(Guid Id, string Number, string Shortcode);
+
+internal sealed record ObservedGenerationResponse(Guid Id, string Shortcode, string SunoId);
+
+internal sealed record ObservedSkipResponse(string SunoId, string Reason);
+
 /// <summary>A progress report as sent, read as raw JSON so a wrong type is a field error.</summary>
 internal sealed record GenerationProgressRequest(JsonElement State, JsonElement Step, JsonElement Message, JsonElement ResolvedWorkspace, JsonElement Verification);
 
@@ -387,7 +493,8 @@ internal sealed record CurrentGenerationRequestResponse(GenerationRequestRespons
 /// A Generate on Suno request: its Version, state (active ones are pending, claimed, opening,
 /// workspace, filling, waiting; terminal ones done, stopped, cancelled, expired), the step the
 /// extension last named, the message, whether it is claimed, its times (UTC), and the last
-/// verification summary of the filled form (#146; text values as length and hash). The snapshot
+/// verification summary of the filled form (#146; text values as length and hash), and what each Create
+/// the user clicked came to (#149, oldest first; empty before the first). The snapshot
 /// only to the extension's reads.
 /// </summary>
 internal sealed record GenerationRequestResponse(
@@ -403,6 +510,7 @@ internal sealed record GenerationRequestResponse(
     DateTime? EndedAt,
     DateTime ExpiresAt,
     JsonObject? Verification,
+    IReadOnlyList<ObservedCreateResponse> Observed,
     JsonObject? Snapshot)
 {
     public static GenerationRequestResponse From(GenerationRequest request, bool withSnapshot)
@@ -422,6 +530,7 @@ internal sealed record GenerationRequestResponse(
             request.EndedUtc?.UtcDateTime,
             (request.State == GenerationRequestState.Pending ? request.CreatedUtc + GenerationRequestRules.ClaimTimeout : request.UpdatedUtc + GenerationRequestRules.IdleLimit).UtcDateTime,
             request.VerificationJson is { } verification ? JsonNode.Parse(verification)!.AsObject() : null,
+            [.. ObservedCreates.Read(request.ObservedJson).Select(ObservedCreateResponse.From)],
             withSnapshot ? JsonNode.Parse(request.SnapshotJson)!.AsObject() : null);
     }
 }

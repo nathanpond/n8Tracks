@@ -10,6 +10,7 @@ import {
   type GenerateRequest,
   type GenerateState,
   type GenerationHandOff,
+  type ObservedSummary,
   type PageMessage,
   type RelayReply,
   type RequestWorkspace,
@@ -77,6 +78,13 @@ export const SUNO_CREATE_ADDRESS = sunoCreateAddress().href;
 /** How many times a report of the chosen workspace is sent again before the panel says it failed. */
 export const RESOLVE_RETRIES = 3;
 
+/** How many times an observed Create is sent again when n8Tracks cannot be reached (#149). */
+export const OBSERVED_RETRIES = 3;
+
+/** What the panel says when an observed Create could not be recorded (#149). */
+export const NOT_RECORDED =
+  'The clips of this Create were not recorded in n8Tracks; a sync will bring them in.';
+
 /** The Suno tab working on a request, as kept between its page loads. */
 interface GenerationTab {
   requestId: string;
@@ -84,6 +92,8 @@ interface GenerationTab {
   loads: number;
   /** The workspace the user chose, once n8Tracks recorded it: later loads use it. */
   chosen: RequestWorkspace | null;
+  /** How many of the user's Creates n8Tracks has recorded (#149). */
+  created: number;
 }
 
 const DISCONNECTED = 'The extension is not connected to n8Tracks; reconnect it in the options.';
@@ -262,7 +272,7 @@ export class GenerateCoordinator {
       if (tabId === undefined) {
         throw new Error('The browser gave the new tab no ID.');
       }
-      const tab: GenerationTab = { requestId, tabId, loads: 0, chosen: null };
+      const tab: GenerationTab = { requestId, tabId, loads: 0, chosen: null, created: 0 };
       await this.browser.session.set({ [GENERATION_TAB_KEY]: tab });
     } catch {
       await this.report(
@@ -299,6 +309,8 @@ export class GenerateCoordinator {
         return this.workspaces(request.workspaces);
       case 'generate-resolve':
         return this.resolve(tab, request.workspace);
+      case 'generate-observed':
+        return this.observed(tab, request.response, request.submitted);
     }
   }
 
@@ -322,6 +334,7 @@ export class GenerateCoordinator {
           tabId: stored.tabId,
           loads: stored.loads,
           chosen: workspaceOf(stored.chosen),
+          created: typeof stored.created === 'number' ? stored.created : 0,
         }
       : null;
   }
@@ -364,6 +377,7 @@ export class GenerateCoordinator {
       workspace: tab.chosen ?? workspaceOf(snapshot.workspace),
       loads,
       form: formOf(snapshot),
+      created: tab.created,
     };
   }
 
@@ -463,6 +477,70 @@ export class GenerateCoordinator {
           chosen: { sunoId: chosen.sunoId, name: chosen.name, state: 'available' },
         },
       });
+    }
+    return answer;
+  }
+
+  /**
+   * The user's own Create click, as the tab's page observer saw it (#149): Suno's response and the
+   * request values, sent to n8Tracks, which attaches the clips. Sent again while n8Tracks cannot be
+   * reached (n8Tracks answers the same Create once); a refusal is not. Never fails.
+   */
+  private async observed(
+    tab: GenerationTab,
+    response: Record<string, unknown>,
+    submitted: Record<string, unknown> | null,
+  ): Promise<GenerateReply<{ recorded: ObservedSummary }>> {
+    let answer: GenerateReply<{ recorded: ObservedSummary }> = {
+      ok: false,
+      ended: false,
+      message: `${NOT_RECORDED} (${UNREACHABLE})`,
+    };
+    for (let attempt = 0; attempt <= OBSERVED_RETRIES; attempt += 1) {
+      try {
+        const sent = await this.connection.call(
+          `${GENERATION_REQUESTS_PATH}/${encodeURIComponent(tab.requestId)}/observed-create`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ response, request: submitted }),
+          },
+        );
+        const body = await bodyOf(sent);
+        if (sent.status >= 500) {
+          continue;
+        }
+        if (!sent.ok) {
+          const code = isRecord(body) && typeof body.code === 'string' ? body.code : '';
+          const ended =
+            code === 'request_ended' || code === 'request_claimed' || sent.status === 404;
+          if (ended) {
+            await this.forget();
+          }
+          return {
+            ok: false,
+            ended,
+            message: `${NOT_RECORDED} (${await refusalOf(sent, 'the Create', body)})`,
+          };
+        }
+        const observed = isRecord(body) && Array.isArray(body.observed) ? body.observed : [];
+        const last: unknown = observed.at(-1);
+        await this.browser.session.set({
+          [GENERATION_TAB_KEY]: { ...tab, created: tab.created + 1 },
+        });
+        return {
+          ok: true,
+          recorded: {
+            outcome: isRecord(last) && typeof last.outcome === 'string' ? last.outcome : 'none',
+            message: isRecord(body) && typeof body.message === 'string' ? body.message : '',
+          },
+        };
+      } catch (error) {
+        answer = { ok: false, ended: false, message: `${NOT_RECORDED} (${callFailure(error)})` };
+        if (error instanceof DisconnectedError) {
+          break;
+        }
+      }
     }
     return answer;
   }

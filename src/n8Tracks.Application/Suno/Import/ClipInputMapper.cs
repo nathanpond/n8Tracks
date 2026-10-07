@@ -170,8 +170,86 @@ public static class ClipInputMapper
     /// <summary>Maps <paramref name="clip"/>, one clip object, by <paramref name="map"/> and <paramref name="inventory"/>.</summary>
     public static MappedClipInputs Map(JsonElement clip, IReadOnlyCollection<SunoModel> models, ImportFieldMap map, CreateFieldInventory inventory)
     {
-        ArgumentNullException.ThrowIfNull(models);
         ArgumentNullException.ThrowIfNull(map);
+
+        return MapWith(clip, models, map, inventory, FeedReader(clip), fromCreate: false);
+    }
+
+    /// <summary>
+    /// Maps one clip of the response to the user's Create (#149) with what the page sent for it, by the
+    /// embedded map and inventory: see <see cref="MapCreate(JsonElement, JsonElement?, IReadOnlyCollection{SunoModel}, ImportFieldMap, CreateFieldInventory)"/>.
+    /// </summary>
+    public static MappedClipInputs MapCreate(JsonElement clip, JsonElement? request, IReadOnlyCollection<SunoModel> models) =>
+        MapCreate(clip, request, models, ImportFieldMap.Embedded, CreateFieldInventory.Embedded);
+
+    /// <summary>
+    /// Maps one clip of the response to the user's Create (#149), with <paramref name="request"/>, the
+    /// values the page sent at the map's <c>createRequest</c> paths (null when the request could not be
+    /// read). Each option is taken from the response where Suno echoes it (<c>paths.create</c>), else from
+    /// the request (<c>paths.createRequest</c>), decoded by the entry's encoding as import decodes a feed
+    /// value. An option in neither, or one whose value the map cannot decode, is not read: it is listed in
+    /// <see cref="ImportedInputMarks.NotReturned"/> (an undecodable value also in the raw values) and
+    /// takes no part in a comparison, so the caller takes it from the Version. The model is never read
+    /// from a Create: the response has no badge, and the request's <c>mv</c> names Suno's engine, which
+    /// is the same for different labels (TS-003). Kind, mode, and lineage are read from the response clip
+    /// as import reads them.
+    /// </summary>
+    public static MappedClipInputs MapCreate(JsonElement clip, JsonElement? request, IReadOnlyCollection<SunoModel> models, ImportFieldMap map, CreateFieldInventory inventory)
+    {
+        ArgumentNullException.ThrowIfNull(map);
+
+        return MapWith(clip, models, map, inventory, CreateReader(clip, request), fromCreate: true);
+    }
+
+    /// <summary>Where an option's value is read from a feed clip: <c>paths.feed</c>, then its fallbacks; an entry with neither must say it is not returned.</summary>
+    private static Func<ImportFieldEntry, FieldValue> FeedReader(JsonElement clip) => entry =>
+    {
+        if (entry.FeedPath is null)
+        {
+            return entry.IsNotReturned
+                ? FieldValue.NotRead
+                : throw new InvalidOperationException($"The import field map neither maps '{entry.Key}' nor says Suno does not return it.");
+        }
+
+        return new FieldValue(true, ImportFieldMap.Read(clip, entry.FeedPath)
+            ?? entry.FeedFallbacks.Select(path => ImportFieldMap.Read(clip, path)).FirstOrDefault(static found => found is not null), null);
+    };
+
+    /// <summary>Where an option's value is read from an observed Create: the response clip, else the request, else nowhere.</summary>
+    private static Func<ImportFieldEntry, FieldValue> CreateReader(JsonElement clip, JsonElement? request) => entry =>
+    {
+        if (ModelKeys.Contains(entry.Key))
+        {
+            return FieldValue.NotRead;
+        }
+
+        if (entry.CreatePath is { } path)
+        {
+            return new FieldValue(true, ImportFieldMap.Read(clip, path), null);
+        }
+
+        if (request is not { ValueKind: JsonValueKind.Object } sent || entry.CreateRequestPath is not { } requestPath)
+        {
+            return FieldValue.NotRead;
+        }
+
+        if (ImportFieldMap.Read(sent, requestPath) is not { } value)
+        {
+            return entry.AbsentInCreateRequestIsDefault ? new FieldValue(true, null, null) : FieldValue.NotRead;
+        }
+
+        return entry.PresentInCreateRequest is { } choice ? new FieldValue(true, null, choice) : new FieldValue(true, value, null);
+    };
+
+    private static MappedClipInputs MapWith(
+        JsonElement clip,
+        IReadOnlyCollection<SunoModel> models,
+        ImportFieldMap map,
+        CreateFieldInventory inventory,
+        Func<ImportFieldEntry, FieldValue> read,
+        bool fromCreate)
+    {
+        ArgumentNullException.ThrowIfNull(models);
         ArgumentNullException.ThrowIfNull(inventory);
 
         var kind = KindOf(clip, map);
@@ -210,28 +288,26 @@ public static class ClipInputMapper
         {
             var name = ApiNames[field.Key];
             var entry = map.Find(field.Key) ?? throw new InvalidOperationException($"The import field map has no entry for '{field.Key}'.");
-            if (entry.FeedPath is null)
+            var found = read(entry);
+            if (!found.Read)
             {
-                if (!entry.IsNotReturned)
-                {
-                    throw new InvalidOperationException($"The import field map neither maps '{field.Key}' nor says Suno does not return it.");
-                }
-
                 notReturned.Add(name);
                 continue;
             }
 
-            var value = ImportFieldMap.Read(clip, entry.FeedPath)
-                ?? entry.FeedFallbacks.Select(path => ImportFieldMap.Read(clip, path)).FirstOrDefault(static found => found is not null);
+            var value = found.Value;
             Decoded decoded;
-            if (ModelKeys.Contains(field.Key) && value is null)
+            if (found.Choice is { } choice)
+            {
+                decoded = Decode(entry, field, choice);
+            }
+            else if (ModelKeys.Contains(field.Key) && value is null)
             {
                 // A clip with no model at all (no badge, version, or name) did not return it.
                 notReturned.Add(name);
                 continue;
             }
-
-            if (ModelKeys.Contains(field.Key))
+            else if (ModelKeys.Contains(field.Key))
             {
                 (decoded, model) = DecodeModel(value!.Value, models);
             }
@@ -242,6 +318,14 @@ public static class ClipInputMapper
             else
             {
                 decoded = Decode(entry, field, value.Value);
+            }
+
+            if (decoded.Raw is not null && fromCreate)
+            {
+                // Sent, but not in a form the map can read: taken from the Version, never guessed.
+                raw[name] = decoded.Raw;
+                notReturned.Add(name);
+                continue;
             }
 
             if (decoded.Raw is not null)
@@ -488,6 +572,12 @@ public static class ClipInputMapper
         }
     }
 
+    /// <summary>A choice the map gives by the key's presence alone (<see cref="ImportFieldEntry.PresentInCreateRequest"/>), checked against the option's values.</summary>
+    private static Decoded Decode(ImportFieldEntry entry, CreateField field, string choice) =>
+        field.Values?.Contains(choice, StringComparer.Ordinal) ?? true
+            ? Decoded.Of(JsonValue.Create(choice), outOfRange: false)
+            : Decoded.Unknown(JsonSerializer.SerializeToElement(choice));
+
     /// <summary>A whole number in the option's range, a whole number outside it (kept, out of range), or anything else (kept raw).</summary>
     private static Decoded Whole(decimal number, CreateField field, JsonElement value)
     {
@@ -525,6 +615,15 @@ public static class ClipInputMapper
     }
 
     private static string Camel(string name) => JsonNamingPolicy.CamelCase.ConvertName(name);
+
+    /// <summary>What a reader found for one option.</summary>
+    /// <param name="Read">Whether the source says anything about it; false leaves it not returned.</param>
+    /// <param name="Value">The value found; null when absent, which is the option's default.</param>
+    /// <param name="Choice">A choice the source gives without a value to decode; null otherwise.</param>
+    private sealed record FieldValue(bool Read, JsonElement? Value, string? Choice)
+    {
+        public static FieldValue NotRead { get; } = new(false, null, null);
+    }
 
     /// <summary>What one returned value decoded to.</summary>
     /// <param name="Value">The typed value; null when it stays at the default.</param>

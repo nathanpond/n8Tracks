@@ -41,4 +41,10 @@ public sealed class SunoGenerationRequestRecord
     /// is reported. Text values in it are lengths and hashes.
     /// </summary>
     public string? VerificationJson { get; set; }
+
+    /// <summary>
+    /// What each observed Create came to (#149), as a JSON array; null until the first. Suno IDs, Version
+    /// numbers, and option keys only: never a value the user wrote.
+    /// </summary>
+    public string? ObservedJson { get; set; }
 }

@@ -332,6 +332,11 @@ interface DetailsProps {
    * lyrics and styles, if any, to offer as a new Version's content.
    */
   onDeletedElsewhere: (version: Version, text: EditorText | undefined) => void;
+  /**
+   * The user's Create in Suno was recorded (#149): Generations were attached, and maybe a new Version
+   * made, so the page reads its Versions and Generations again.
+   */
+  onRecorded?: () => void;
 }
 
 /** The heading, marks, and action buttons of the selected Version. */
@@ -431,6 +436,22 @@ export function VersionDetails(props: DetailsProps) {
   }, [missing, onDeletedElsewhere, version]);
 
   const generate = useGenerateOnSuno(props.version.id);
+
+  // Each Create recorded since the page opened changes the catalog: the Version froze, Generations
+  // came, or a new Version was made. The first answer read is only what was recorded before.
+  const { onRecorded } = props;
+  const recorded = generate.request?.observed?.length;
+  const seen = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (recorded === undefined) {
+      return;
+    }
+    if (seen.current !== undefined && recorded > seen.current) {
+      reload();
+      onRecorded?.();
+    }
+    seen.current = recorded;
+  }, [recorded, reload, onRecorded]);
 
   if (state.phase === 'ready' && fieldsState.phase === 'ready') {
     return (

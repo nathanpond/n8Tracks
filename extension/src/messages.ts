@@ -117,6 +117,19 @@ export interface GenerateJob {
   workspace: RequestWorkspace | null;
   loads: number;
   form: FormJob | null;
+  /**
+   * How many of the user's Creates n8Tracks has recorded for the request (#149); absent or 0 before
+   * the first. After one, a load of the tab does not fill the form again: on the Create page the tab
+   * watches for further Creates, and anywhere else the request is done.
+   */
+  created?: number;
+}
+
+/** What an observed Create came to in n8Tracks (#149), in plain words for the panel. */
+export interface ObservedSummary {
+  /** `attached`, `branched`, or `none` (every clip skipped). */
+  outcome: string;
+  message: string;
 }
 
 /** The states the extension reports a request in (`PATCH`, `docs/suno-integration.md`). */
@@ -269,7 +282,16 @@ export type Request =
   /** Suno's complete workspace list, for n8Tracks' record (#145). */
   | { type: 'generate-workspaces'; workspaces: unknown[] }
   /** The workspace the user chose in the panel, for the Song (#145). */
-  | { type: 'generate-resolve'; workspace: ChosenWorkspace };
+  | { type: 'generate-resolve'; workspace: ChosenWorkspace }
+  /**
+   * The user's own Create click, as the page observer saw it (#149): Suno's response, and the
+   * request values at the import field map's `createRequest` paths (null when not read).
+   */
+  | {
+      type: 'generate-observed';
+      response: Record<string, unknown>;
+      submitted: Record<string, unknown> | null;
+    };
 
 export interface ResponseFor {
   state: ConnectionState;
@@ -294,6 +316,7 @@ export interface ResponseFor {
   /** n8Tracks' Song count of each workspace, by Suno ID, after the report. */
   'generate-workspaces': GenerateReply<{ songCounts: Record<string, number> }>;
   'generate-resolve': GenerateReply;
+  'generate-observed': GenerateReply<{ recorded: ObservedSummary }>;
 }
 
 export type Response<T extends Request> = ResponseFor[T['type']];
@@ -332,6 +355,7 @@ export const GENERATE_TYPES = [
   'generate-progress',
   'generate-workspaces',
   'generate-resolve',
+  'generate-observed',
 ] as const satisfies readonly Request['type'][];
 
 export type GenerateRequest = Extract<Request, { type: (typeof GENERATE_TYPES)[number] }>;
@@ -501,6 +525,8 @@ export function isRequest(value: unknown): value is Request {
       return Array.isArray(value.workspaces);
     case 'generate-resolve':
       return isChosenWorkspace(value.workspace);
+    case 'generate-observed':
+      return isRecord(value.response) && (value.submitted === null || isRecord(value.submitted));
     default:
       return false;
   }

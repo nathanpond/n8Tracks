@@ -9,11 +9,18 @@
  */
 
 /**
- * The lists the library reader reads (TS-003, "How lists are paged"), and the answer to creating
- * a workspace, which gives Generate on Suno the new workspace's ID (#145).
+ * The lists the library reader reads (TS-003, "How lists are paged"), the answer to creating a
+ * workspace, which gives Generate on Suno the new workspace's ID (#145), and the answer to the
+ * user's own Create click (#149), which the extension never makes itself (invariant 4).
  */
 export type ObservedKind =
-  'library-feed' | 'trash' | 'workspaces' | 'playlists' | 'playlist-feed' | 'workspace-created';
+  | 'library-feed'
+  | 'trash'
+  | 'workspaces'
+  | 'playlists'
+  | 'playlist-feed'
+  | 'workspace-created'
+  | 'create';
 
 /** One Suno list response: method and path on Suno's API host. */
 interface ListPattern {
@@ -34,6 +41,38 @@ export const OBSERVED_LISTS: readonly ListPattern[] = [
   { kind: 'playlists', method: 'GET', path: '/api/playlist/me' },
   { kind: 'playlist-feed', method: 'POST', path: '/api/unified/feed' },
   { kind: 'workspace-created', method: 'POST', path: '/api/project' },
+  { kind: 'create', method: 'POST', path: '/api/generate/v2-web' },
+];
+
+/**
+ * The Create request's values n8Tracks reads (#149): the import field map's `createRequest` paths
+ * (`docs/suno-import-field-map.json`; `test/observed-create-paths.test.ts` keeps the two in step) and
+ * the mode marker, and nothing else. `user_uploaded_images_b64` is left out: an uploaded image's bytes
+ * are never sent on (n8Tracks keeps only a note of a file input). `token`, `create_session_token`, and
+ * `user_tier` are never among them (invariant 6).
+ */
+export const CREATE_REQUEST_PATHS: readonly string[] = [
+  'cover_clip_id',
+  'duration',
+  'gpt_description_prompt',
+  'metadata.backing_music',
+  'metadata.control_sliders.aug_creativity',
+  'metadata.control_sliders.style_weight',
+  'metadata.control_sliders.weirdness_constraint',
+  'metadata.create_mode',
+  'metadata.is_max_mode',
+  'metadata.sound_configs.user_key',
+  'metadata.sound_configs.user_loop',
+  'metadata.sound_configs.user_tempo',
+  'metadata.vocal_gender',
+  'mv',
+  'negative_tags',
+  'persona_id',
+  'project_id',
+  'prompt',
+  'tags',
+  'title',
+  'use_personalization',
 ];
 
 /** Never forwarded, wherever they appear (TS-003: the Create request carries them). */
@@ -69,6 +108,11 @@ export interface ObservedMessage {
   kind: ObservedKind;
   request: ObservedRequest;
   body: unknown;
+  /**
+   * For a Create (#149): the values the page sent at {@link CREATE_REQUEST_PATHS}, nested as sent, or
+   * null when the request body could not be read. Absent for every other kind.
+   */
+  submitted?: Record<string, unknown> | null;
 }
 
 /** The content script's message asking the observer for what it saw before the script started. */
@@ -175,6 +219,43 @@ function queryFields(address: string, base: string): Partial<Record<string, stri
   } catch {
     return {};
   }
+}
+
+/**
+ * The values a Create request body sent at {@link CREATE_REQUEST_PATHS}, nested as sent (a path the
+ * body lacks is left out), and nothing else; null when the body is not JSON text of an object.
+ */
+export function submittedOf(body: unknown): Record<string, unknown> | null {
+  if (typeof body !== 'string') {
+    return null;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed)) {
+    return null;
+  }
+  const submitted: Record<string, unknown> = {};
+  for (const path of CREATE_REQUEST_PATHS) {
+    const parts = path.split('.');
+    let value: unknown = parsed;
+    for (const part of parts) {
+      value = isRecord(value) && Object.hasOwn(value, part) ? value[part] : undefined;
+    }
+    if (value === undefined || isRecord(value) || NEVER_FORWARDED.has(parts.at(-1) ?? '')) {
+      continue;
+    }
+    let into = submitted;
+    for (const part of parts.slice(0, -1)) {
+      const next = into[part];
+      into = isRecord(next) ? next : (into[part] = {});
+    }
+    into[parts.at(-1) ?? ''] = Array.isArray(value) ? withoutSecrets(value) : value;
+  }
+  return submitted;
 }
 
 /** Whether `value` is a message from the observer, as the content script receives it. */

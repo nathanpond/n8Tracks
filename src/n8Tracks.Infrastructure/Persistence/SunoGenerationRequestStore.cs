@@ -114,6 +114,7 @@ internal sealed class SunoGenerationRequestStore(N8TracksDbContext context) : IG
         record.UpdatedUtc = UtcText.From(request.UpdatedUtc);
         record.EndedUtc = request.EndedUtc is { } ended ? UtcText.From(ended) : null;
         record.VerificationJson = request.VerificationJson;
+        record.ObservedJson = request.ObservedJson;
     }
 
     private static GenerationRequest ToRequest(SunoGenerationRequestRecord record) => new(
@@ -128,5 +129,6 @@ internal sealed class SunoGenerationRequestStore(N8TracksDbContext context) : IG
         UtcText.Parse(record.CreatedUtc),
         UtcText.Parse(record.UpdatedUtc),
         record.EndedUtc is { } ended ? UtcText.Parse(ended) : null,
-        record.VerificationJson);
+        record.VerificationJson,
+        record.ObservedJson);
 }

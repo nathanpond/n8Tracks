@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ADAPTER_VERSION } from '../adapter/version.ts';
 import type { ConnectedState, ConnectionState, Request, ResponseFor } from '../messages.ts';
 import { expectNoAxeViolations, loadPage } from '../testing/a11y.ts';
 import popupHtml from './popup.html?raw';
@@ -167,7 +168,7 @@ describe('the popup', () => {
     await open({ status: 'not-paired' });
 
     expect(text('version')).toBe('v0.1.0');
-    expect(text('adapter')).toBe('Suno adapter 6');
+    expect(text('adapter')).toBe(`Suno adapter ${String(ADAPTER_VERSION)}`);
   });
 
   it('offers the panel on a Suno tab while connected, and opens it there', async () => {

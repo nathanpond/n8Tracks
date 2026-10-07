@@ -101,6 +101,32 @@ describe('Generate on Suno in the panel', () => {
     await expectNoAxeViolations(document);
   });
 
+  it('says what the user’s Create came to, or that its clips were not recorded (#149)', async () => {
+    const { generate, buttons } = view();
+
+    generate.show({
+      kind: 'recorded',
+      recorded: true,
+      message: '2 Generations recorded on n8-1-v1.',
+    });
+    expect(generate.element.querySelector('[role="status"]')?.textContent).toBe(
+      '2 Generations recorded on n8-1-v1.',
+    );
+    expect(generate.element.textContent).toContain('The extension never clicks Create.');
+    expect(buttons()).toEqual([]);
+    await expectNoAxeViolations(document);
+
+    generate.show({
+      kind: 'recorded',
+      recorded: false,
+      message: 'Not recorded; a sync will bring them in.',
+    });
+    expect(generate.element.querySelector('[role="alert"]')?.textContent).toBe(
+      'Not recorded; a sync will bring them in.',
+    );
+    await expectNoAxeViolations(document);
+  });
+
   it('describes a workspace by the Songs in it', () => {
     expect(optionDetail({ id: 'a', name: 'A', songCount: 0, sameName: false })).toBe(
       'No n8Tracks Song in it',

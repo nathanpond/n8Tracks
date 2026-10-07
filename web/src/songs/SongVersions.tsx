@@ -353,6 +353,11 @@ export function SongVersions({
     void navigate(linkTo(current), { replace: true, state: location.state });
   };
 
+  /** The user's Create in Suno was recorded (#149): the Versions, the Song, and its Generations are read again. */
+  const recorded = useCallback(() => {
+    void refresh();
+  }, [refresh]);
+
   /** The open Version turned out to be deleted elsewhere: its unsaved text, if any, waits here. */
   const deletedElsewhere = useCallback(
     (version: Version, text: EditorText | undefined) => {
@@ -583,6 +588,7 @@ export function SongVersions({
               version={selected}
               onVersion={replace}
               onDeletedElsewhere={deletedElsewhere}
+              onRecorded={recorded}
               actions={actions}
               busy={busy}
             />

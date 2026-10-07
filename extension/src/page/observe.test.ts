@@ -107,7 +107,57 @@ describe('the page observer, replaying the TS-003 fixtures', () => {
     );
   });
 
-  it('forwards nothing of the Create request, which carries the token, nor of any other request', async () => {
+  it.each(['songs-simple', 'songs-advanced', 'speech-simple', 'speech-advanced', 'sounds'])(
+    'forwards the answer to the user’s Create (%s) with only the request values n8Tracks reads, never a secret',
+    async (mode) => {
+      const { view, posted } = suno(
+        fixtureAnswer({ '/api/generate/v2-web/': `generate-v2-web.${mode}.response` }),
+      );
+      const create = sunoFixture(`generate-v2-web.${mode}.request`) as Record<string, unknown>;
+      // The fixture keeps the fields, redacted, where the real request carries them.
+      for (const secret of SECRETS) {
+        expect(JSON.stringify(create)).toContain(`"${secret}"`);
+      }
+
+      const answer = await view.fetch(`${API}/api/generate/v2-web/`, {
+        method: 'POST',
+        body: JSON.stringify(create),
+      });
+      await settled();
+
+      expect(posted).toHaveLength(1);
+      const message = posted[0]?.message;
+      expect(message?.kind).toBe('create');
+      expect(message?.body).toEqual(sunoFixture(`generate-v2-web.${mode}.response`));
+      const submitted = message?.submitted ?? {};
+      const sent = JSON.stringify(posted);
+      for (const secret of SECRETS) {
+        expect(sent).not.toContain(`"${secret}"`);
+        expect(sent).not.toContain(`<redacted ${secret}>`);
+      }
+      // What the page sent beyond the createRequest paths stays in the page.
+      for (const kept of [
+        'transaction_uuid',
+        'lyrics_project_id',
+        'web_client_pathname',
+        'override_fields',
+      ]) {
+        expect(sent).not.toContain(`"${kept}"`);
+      }
+      // Complement: the values n8Tracks maps from the request alone are there.
+      expect(submitted.mv).toBe(create.mv);
+      expect((submitted.metadata as Record<string, unknown>).create_mode).toBe(
+        (create.metadata as Record<string, unknown>).create_mode,
+      );
+      if ('use_personalization' in create) {
+        expect(submitted.use_personalization).toBe(create.use_personalization);
+      }
+      // The page still got Suno's answer, untouched.
+      expect(await answer.json()).toEqual(sunoFixture(`generate-v2-web.${mode}.response`));
+    },
+  );
+
+  it('marks a Create whose body it could not read as unread, and forwards nothing of other requests', async () => {
     const { view, posted } = suno(
       fixtureAnswer({
         '/api/generate/v2-web/': 'generate-v2-web.songs-advanced.response',
@@ -115,23 +165,18 @@ describe('the page observer, replaying the TS-003 fixtures', () => {
         '/api/download/authorize': 'download-authorize.response',
       }),
     );
-    const create = sunoFixture('generate-v2-web.songs-simple.request');
-    // The fixture keeps the fields, redacted, where the real request carries them.
-    for (const secret of SECRETS) {
-      expect(JSON.stringify(create)).toContain(`"${secret}"`);
-    }
 
-    const answer = await view.fetch(`${API}/api/generate/v2-web/`, {
-      method: 'POST',
-      body: JSON.stringify(create),
-    });
+    await view.fetch(
+      new Request(`${API}/api/generate/v2-web/`, { method: 'POST', body: '{"token":"T"}' }),
+    );
     await view.fetch(`${API}/api/persona/get-personas/?page=1`);
     await view.fetch(`${API}/api/download/authorize`, { method: 'POST', body: '{}' });
     await settled();
 
-    expect(posted).toEqual([]);
-    // Complement: the page still got Suno's answer.
-    expect(await answer.json()).toEqual(sunoFixture('generate-v2-web.songs-advanced.response'));
+    expect(posted).toHaveLength(1);
+    expect(posted[0]?.message.kind).toBe('create');
+    expect(posted[0]?.message.submitted).toBeNull();
+    expect(JSON.stringify(posted)).not.toContain('"T"');
   });
 
   it('never forwards a token, session token, or tier, in a request or a response, at any depth', async () => {

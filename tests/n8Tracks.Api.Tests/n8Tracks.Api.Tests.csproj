@@ -31,7 +31,7 @@
 
   <!-- Suno's clip responses as the spikes captured them (sanitized), for the clip reader's tests. -->
   <ItemGroup>
-    <None Include="..\..\extension\fixtures\suno\feed-v3.*.response.json;..\..\extension\fixtures\suno\generate-v2-web*.response.json;..\..\extension\fixtures\suno\project-me.*.response.json;..\..\extension\fixtures\suno\clips-trashed-v2.response.json;..\..\extension\fixtures\suno\playlist-me.response.json;..\..\extension\fixtures\suno\lineage-metadata.examples.json" LinkBase="SunoFixtures" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\extension\fixtures\suno\feed-v3.*.response.json;..\..\extension\fixtures\suno\generate-v2-web*.json;..\..\extension\fixtures\suno\project-me.*.response.json;..\..\extension\fixtures\suno\clips-trashed-v2.response.json;..\..\extension\fixtures\suno\playlist-me.response.json;..\..\extension\fixtures\suno\lineage-metadata.examples.json" LinkBase="SunoFixtures" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

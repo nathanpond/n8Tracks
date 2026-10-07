@@ -118,6 +118,7 @@ public sealed class EndpointScopeGuardTests
         Assert.Equal("scope", markers["GET /api/v1/suno/personas"]);
         Assert.Equal("scope", markers["GET /api/v1/suno/workspaces"]);
         Assert.Equal("scope", markers["PUT /api/v1/suno/workspaces/discovered"]);
+        Assert.Equal("scope", markers["POST /api/v1/suno/generation-requests/{id:guid}/observed-create"]);
         Assert.Equal("session-only", markers["POST /api/v1/suno/workspaces/{id}/move-songs"]);
         Assert.Equal("scope", markers["POST /api/v1/suno/exports"]);
         Assert.Equal("scope", markers["POST /api/v1/suno/exports/{id:guid}/parts"]);

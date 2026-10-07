@@ -33,6 +33,22 @@ export interface Verification {
   entries: VerificationEntry[];
 }
 
+/** What one of the user's Creates in Suno came to (#149). */
+export interface ObservedCreate {
+  observedAt: string;
+  /** `attached` to the requested Version, `branched` to a new Version, or `none` (every clip skipped). */
+  outcome: 'attached' | 'branched' | 'none';
+  version: { id: string; number: string; shortcode: string } | null;
+  /** The options (API names; `sources` for the lineage) in which what was submitted differed. */
+  differing: string[];
+  /** The options neither Suno's answer nor the page's request gave, taken from the Version. */
+  assumed: string[];
+  /** Whether the values the page sent were read. */
+  requestRead: boolean;
+  generations: { id: string; shortcode: string; sunoId: string }[];
+  skipped: { sunoId: string; reason: string }[];
+}
+
 /** A Generate on Suno request as the Version page sees it (never its snapshot). */
 export interface GenerationRequest {
   id: string;
@@ -47,6 +63,8 @@ export interface GenerationRequest {
   endedAt: string | null;
   /** Absent in answers from before #146, null until the extension reports one. */
   verification?: Verification | null;
+  /** What each of the user's Creates came to, oldest first (#149); absent in answers from before it. */
+  observed?: ObservedCreate[];
 }
 
 /** A source that blocks a request, as n8Tracks names it. */
@@ -86,7 +104,42 @@ export function isGenerationRequest(value: unknown): value is GenerationRequest 
     nullableText(value.endedAt) &&
     (value.verification === undefined ||
       value.verification === null ||
-      isVerification(value.verification))
+      isVerification(value.verification)) &&
+    (value.observed === undefined ||
+      (Array.isArray(value.observed) && value.observed.every(isObservedCreate)))
+  );
+}
+
+function isTextList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string');
+}
+
+function isObservedCreate(value: unknown): value is ObservedCreate {
+  return (
+    isRecord(value) &&
+    typeof value.observedAt === 'string' &&
+    (value.outcome === 'attached' || value.outcome === 'branched' || value.outcome === 'none') &&
+    (value.version === null ||
+      (isRecord(value.version) &&
+        typeof value.version.id === 'string' &&
+        typeof value.version.number === 'string' &&
+        typeof value.version.shortcode === 'string')) &&
+    isTextList(value.differing) &&
+    isTextList(value.assumed) &&
+    typeof value.requestRead === 'boolean' &&
+    Array.isArray(value.generations) &&
+    value.generations.every(
+      (item) =>
+        isRecord(item) &&
+        typeof item.id === 'string' &&
+        typeof item.shortcode === 'string' &&
+        typeof item.sunoId === 'string',
+    ) &&
+    Array.isArray(value.skipped) &&
+    value.skipped.every(
+      (item) =>
+        isRecord(item) && typeof item.sunoId === 'string' && typeof item.reason === 'string',
+    )
   );
 }
 

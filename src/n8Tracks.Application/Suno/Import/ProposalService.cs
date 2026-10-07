@@ -377,6 +377,18 @@ public sealed class ProposalService(
         return catalog.Matches(clip, version, await catalog.LineageKeyAsync(version, cancellationToken).ConfigureAwait(false));
     }
 
+    /// <summary>
+    /// The lineage comparison key of <paramref name="version"/>, each source Generation counted by its Suno
+    /// ID, as a clip's sources are (<see cref="LineageReader.ComparisonKeyOf"/>): what an observed Create's
+    /// sources are compared with (#149). Reads only.
+    /// </summary>
+    internal Task<string> LineageKeyAsync(SongVersion version, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(version);
+
+        return new CatalogView(versions, songs, []).LineageKeyAsync(version, cancellationToken);
+    }
+
     /// <summary>The change itself: the records chosen inside the transaction by <paramref name="select"/>, checked, then stored.</summary>
     private Task<ChoiceChangeOutcome> ChangeAsync(
         Guid exportId,

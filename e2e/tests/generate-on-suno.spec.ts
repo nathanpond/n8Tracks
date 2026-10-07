@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { expect, test, type Page } from '@playwright/test';
 import { expectAccessibleInLightAndDark } from '../support/a11y.ts';
 import { ANTIFORGERY_HEADERS } from '../support/session.ts';
@@ -68,6 +70,52 @@ function installRelayStub() {
       reply({ type: 'options-opened' });
     }
   });
+}
+
+/** A TS-003 Create fixture (`generate-v2-web.<name>.json`). */
+function createFixture(name: string): Record<string, unknown> {
+  return JSON.parse(
+    readFileSync(
+      new URL(`../../extension/fixtures/suno/generate-v2-web.${name}.json`, import.meta.url),
+      'utf8',
+    ),
+  ) as Record<string, unknown>;
+}
+
+/** The Songs › Advanced Create request as the extension forwards it: never the three secrets. */
+function forwardedRequest(): Record<string, unknown> {
+  const sent = createFixture('songs-advanced.request');
+  const metadata = { ...(sent.metadata as Record<string, unknown>) };
+  delete metadata.user_tier;
+  delete metadata.create_session_token;
+  const forwarded: Record<string, unknown> = { ...sent, metadata };
+  delete forwarded.token;
+  return forwarded;
+}
+
+/** The Songs › Advanced Create response with a fresh request ID and clips, Weirdness as given. */
+function createResponse(weirdness = 0.7): { id: string; clips: Record<string, unknown>[] } {
+  const response = createFixture('songs-advanced.response') as {
+    clips: Record<string, unknown>[];
+  };
+  return {
+    ...response,
+    id: randomUUID(),
+    clips: response.clips.map((clip) => {
+      const metadata = clip.metadata as Record<string, unknown>;
+      return {
+        ...clip,
+        id: randomUUID(),
+        metadata: {
+          ...metadata,
+          control_sliders: {
+            ...(metadata.control_sliders as Record<string, unknown>),
+            weirdness_constraint: weirdness,
+          },
+        },
+      };
+    }),
+  };
 }
 
 async function appBase(page: Page): Promise<URL> {
@@ -282,6 +330,147 @@ test.describe('Generate on Suno', () => {
         '3 set, 1 differs, 1 to do by hand',
       );
       await expectAccessibleInLightAndDark(page);
+    } finally {
+      await extension.dispose();
+    }
+  });
+
+  /**
+   * #149's Demo as n8Tracks sees it: the user's own Create click in Suno, which the extension
+   * (standing in through the API with its own token, sending the TS-003 fixtures as the page
+   * observer passes them on) reports. The Version gets both clips as Generating and freezes; a
+   * second Create after Weirdness was changed by hand makes a new child Version. The Create clicks on
+   * the live site are the owner's.
+   */
+  test('records the user’s Create on its Version, and a changed form as a new Version', async ({
+    page,
+    playwright,
+  }, testInfo) => {
+    const stamp = `${String(Date.now()).slice(-7)}${testInfo.project.name}`;
+    const base = await appBase(page);
+    const credential = await page.request.post(new URL('api/v1/credentials', base).toString(), {
+      headers: ANTIFORGERY_HEADERS,
+      data: { name: `Create stub ${stamp}`, kind: 'extension', scopes: ['suno.generate'] },
+    });
+    expect(credential.status()).toBe(201);
+    const { token } = (await credential.json()) as { token: string };
+    const extension = await playwright.request.newContext({ storageState: undefined });
+    const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+
+    try {
+      const created = await page.request.post(new URL('api/v1/songs', base).toString(), {
+        headers: ANTIFORGERY_HEADERS,
+        data: { title: `Observed Create ${stamp}` },
+      });
+      expect(created.status()).toBe(201);
+      const song = (await created.json()) as { shortcode: string; currentVersion: { id: string } };
+      const versionPath = new URL(`api/v1/versions/${song.currentVersion.id}`, base).toString();
+
+      // Version 1 holds what the fixture's form submitted (the extension filled it from the Version).
+      const response = createResponse();
+      const clip = response.clips[0] as { metadata: Record<string, unknown> };
+      const submitted = forwardedRequest();
+      const edited = await page.request.patch(versionPath, {
+        headers: { ...ANTIFORGERY_HEADERS, 'If-Match': '"1"' },
+        data: {
+          lyrics: clip.metadata.prompt,
+          styles: clip.metadata.tags,
+          inputs: {
+            songMode: 'advanced',
+            excludeStyles: clip.metadata.negative_tags,
+            vocalGender: 'female',
+            durationMode: 'custom',
+            durationSeconds: 30,
+            maxMode: true,
+            weirdness: 70,
+            styleInfluence: 30,
+            variety: 'high',
+            personalize: true,
+          },
+        },
+      });
+      expect(edited.status(), await edited.text()).toBe(200);
+
+      const made = await page.request.post(`${versionPath}/generation-requests`, {
+        headers: ANTIFORGERY_HEADERS,
+        data: {},
+      });
+      expect(made.status()).toBe(201);
+      const { id } = (await made.json()) as { id: string };
+      const request = new URL(`api/v1/suno/generation-requests/${id}`, base).toString();
+      expect((await extension.post(`${request}/claim`, { headers })).status()).toBe(200);
+      expect(
+        (
+          await extension.patch(request, {
+            headers,
+            data: { state: 'waiting', step: 'review and create' },
+          })
+        ).status(),
+      ).toBe(200);
+      // The requested Version's own page: a new current Version made later does not move it.
+      await page.goto(`./songs/${song.shortcode}/v/1`);
+      await expect(page.getByTestId('generation-request-state')).toHaveText(
+        'Generate on Suno: Waiting for you to click Create in Suno',
+      );
+
+      // 1. The user clicks Create in Suno: within seconds both clips are on Version 1, Generating, and it is frozen.
+      const first = await extension.post(`${request}/observed-create`, {
+        headers,
+        data: { response, request: submitted },
+      });
+      expect(first.status(), await first.text()).toBe(200);
+      const observed = page.getByTestId('observed-create');
+      await expect(observed).toHaveCount(1, { timeout: 10_000 });
+      await expect(observed.first()).toHaveAttribute('data-outcome', 'attached');
+      await expect(observed.first()).toContainText(
+        '2 Generations recorded on this request’s Version 1, which is now frozen.',
+      );
+      await expect(page.getByTestId('frozen-notice')).toBeVisible();
+      const row = page.locator('tr[data-version-row="1"]');
+      await expect(row.getByTestId('generation-count')).toHaveText('2');
+      const generations = (await (
+        await page.request.get(
+          new URL(`api/v1/songs/${song.shortcode}/generations`, base).toString(),
+        )
+      ).json()) as { items: { providerStatus: string }[] };
+      expect(generations.items.map((item) => item.providerStatus)).toEqual([
+        'submitted',
+        'submitted',
+      ]);
+      await expectAccessibleInLightAndDark(page);
+
+      // 2. Weirdness changed by hand in Suno before the next Create: a new child Version holds it.
+      const second = await extension.post(`${request}/observed-create`, {
+        headers,
+        data: { response: createResponse(0.4), request: submitted },
+      });
+      expect(second.status(), await second.text()).toBe(200);
+      await expect(observed).toHaveCount(2, { timeout: 10_000 });
+      const branched = observed.nth(1);
+      await expect(branched).toHaveAttribute('data-outcome', 'branched');
+      await expect(branched.getByTestId('observed-differing')).toHaveText(
+        'Options that differed: Weirdness.',
+      );
+      await expect(branched.getByTestId('observed-assumed')).toContainText('Model');
+      await expect(
+        page.locator('tr[data-version-row="1.1"]').getByTestId('generation-count'),
+      ).toHaveText('2');
+      await expectAccessibleInLightAndDark(page);
+
+      await branched.getByRole('link', { name: 'Open Version 1.1' }).click();
+      await expect(page.getByRole('heading', { name: 'Version 1.1' })).toBeVisible();
+      await expect(page.getByRole('textbox', { name: 'Notes' })).toHaveValue(
+        'Created from what was submitted to Suno',
+      );
+      const current = (await (
+        await page.request.get(new URL(`api/v1/songs/${song.shortcode}`, base).toString())
+      ).json()) as { currentVersion: { id: string } };
+      const child = (await (
+        await page.request.get(
+          new URL(`api/v1/versions/${current.currentVersion.id}`, base).toString(),
+        )
+      ).json()) as { number: string; isFrozen: boolean; inputs: { weirdness: number } };
+      expect(child).toMatchObject({ number: '1.1', isFrozen: true, inputs: { weirdness: 40 } });
     } finally {
       await extension.dispose();
     }

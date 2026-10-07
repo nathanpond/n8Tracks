@@ -46,6 +46,13 @@ async function setup(tabs: GenerateTab[] = []) {
   const calls: Call[] = [];
   const request = { active: true, message: null as string | null, snapshot: SNAPSHOT };
   let patch = (): Response => jsonResponse(200, { state: 'workspace' });
+  let observedCreate = (): Response =>
+    jsonResponse(200, {
+      id: REQUEST,
+      state: 'waiting',
+      message: '2 Generations recorded on n8-1-v1.',
+      observed: [{ outcome: 'attached' }],
+    });
   let discovered = (): Response =>
     jsonResponse(200, {
       items: [
@@ -82,6 +89,9 @@ async function setup(tabs: GenerateTab[] = []) {
     }
     if (path === 'api/v1/suno/workspaces/discovered') {
       return Promise.resolve(discovered());
+    }
+    if (path === `${REQUEST_PATH}/observed-create` && method === 'POST') {
+      return Promise.resolve(observedCreate());
     }
     return Promise.resolve(jsonResponse(404, {}));
   });
@@ -135,6 +145,9 @@ async function setup(tabs: GenerateTab[] = []) {
     answerDiscovered: (answer: () => Response) => {
       discovered = answer;
     },
+    answerObserved: (answer: () => Response) => {
+      observedCreate = answer;
+    },
   };
 }
 
@@ -159,6 +172,7 @@ describe('Generate on Suno: the Suno tab', () => {
       tabId: 11,
       loads: 0,
       chosen: null,
+      created: 0,
     });
   });
 
@@ -216,6 +230,7 @@ describe('Generate on Suno: the Suno tab', () => {
           fileInputs: [{ key: 'songs.advanced.audio', description: 'a demo' }],
           unsupported: ['songs.advanced.crop'],
         },
+        created: 0,
       },
     });
     expect(await generate.handleTab({ type: 'generate-resume' }, 42)).toMatchObject({
@@ -341,6 +356,67 @@ describe('Generate on Suno: the Suno tab', () => {
       message: 'n8Tracks refused the report: 409 (workspace_already_set).',
     });
     expect(calls.slice(before).filter((call) => call.method === 'PATCH')).toHaveLength(1);
+  });
+
+  it('sends the user’s Create to n8Tracks and counts it, so a later load of the tab only watches (#149)', async () => {
+    const { handOff, generate, calls, stored } = await setup();
+    await handOff();
+    const response = { id: 'suno-request', clips: [{ id: 'clip-1' }] };
+    const submitted = { mv: 'chirp-goose', metadata: { vocal_gender: 'f' } };
+
+    const answer = await generate.handleTab({ type: 'generate-observed', response, submitted }, 42);
+
+    expect(answer).toEqual({
+      ok: true,
+      recorded: { outcome: 'attached', message: '2 Generations recorded on n8-1-v1.' },
+    });
+    const sent = calls.filter((call) => call.path.endsWith('/observed-create'));
+    expect(sent).toEqual([
+      {
+        method: 'POST',
+        path: `${REQUEST_PATH}/observed-create`,
+        body: { response, request: submitted },
+      },
+    ]);
+    expect(stored.get(GENERATION_TAB_KEY)).toMatchObject({ created: 1 });
+    expect(await generate.handleTab({ type: 'generate-resume' }, 42)).toMatchObject({
+      job: { created: 1 },
+    });
+    // Another tab sends nothing.
+    expect(
+      await generate.handleTab({ type: 'generate-observed', response, submitted: null }, 7),
+    ).toMatchObject({ ok: false, ended: true });
+    expect(calls.filter((call) => call.path.endsWith('/observed-create'))).toHaveLength(1);
+  });
+
+  it('sends a Create again while n8Tracks cannot answer, and says when it was not recorded', async () => {
+    const { handOff, generate, calls, answerObserved, stored } = await setup();
+    await handOff();
+    let failures = 2;
+    answerObserved(() =>
+      failures-- > 0
+        ? jsonResponse(503, {})
+        : jsonResponse(200, { message: 'recorded', observed: [{ outcome: 'branched' }] }),
+    );
+    const response = { id: 'suno-request', clips: [{ id: 'clip-1' }] };
+
+    expect(
+      await generate.handleTab({ type: 'generate-observed', response, submitted: null }, 42),
+    ).toEqual({ ok: true, recorded: { outcome: 'branched', message: 'recorded' } });
+    expect(calls.filter((call) => call.path.endsWith('/observed-create'))).toHaveLength(3);
+
+    // A refusal is not sent again; one that ends the request forgets the tab.
+    answerObserved(() => jsonResponse(409, { code: 'request_ended' }));
+    const refused = await generate.handleTab(
+      { type: 'generate-observed', response, submitted: null },
+      42,
+    );
+    expect(refused).toMatchObject({ ok: false, ended: true });
+    const words = JSON.stringify(refused);
+    expect(words).toContain('were not recorded');
+    expect(words).toContain('request_ended');
+    expect(calls.filter((call) => call.path.endsWith('/observed-create'))).toHaveLength(4);
+    expect(stored.get(GENERATION_TAB_KEY) ?? null).toBeNull();
   });
 
   it('stops the request when its Suno tab is closed', async () => {
