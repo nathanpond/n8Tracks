@@ -107,6 +107,7 @@ public enum SongSort
 /// <param name="Search">Trimmed, not empty: only Songs whose title contains it (ignoring case) or whose shortcode starts with it (ignoring case); every Song when null.</param>
 /// <param name="TitleKey">Not empty: only Songs whose <see cref="Domain.Songs.SongRules.TitleKey"/> is exactly this; every Song when null.</param>
 /// <param name="ExcludeId">Every Song but this one; every Song when null.</param>
+/// <param name="SunoWorkspaceId">Only Songs in the Suno workspace with this ID; every Song when null.</param>
 public sealed record SongListQuery(
     SongSort Sort,
     bool Descending,
@@ -121,7 +122,8 @@ public sealed record SongListQuery(
     bool NoArtist,
     string? Search = null,
     string? TitleKey = null,
-    Guid? ExcludeId = null);
+    Guid? ExcludeId = null,
+    string? SunoWorkspaceId = null);
 
 /// <summary>A page of Songs and how many match in all.</summary>
 public sealed record SongPage(IReadOnlyList<SongSummary> Items, int Page, int PageSize, int Total);

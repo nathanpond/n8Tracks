@@ -61,6 +61,8 @@ Workspaces are kept in `suno_workspaces`, one record per Suno workspace ID (#129
   - It moves at most 5,000 Songs, all or nothing, and raises each moved Song's revision.
   - The target must be another workspace, and Available.
   - Errors are `too_many_songs` and `song_not_in_workspace`.
+- **A workspace's Songs:** `GET /api/v1/songs?workspace=<Suno ID>` lists only the Songs in that workspace, whether it is Available or not. A blank or unknown ID is 400 `invalid_request`.
+- **Settings → Suno workspaces** (`/settings/suno-workspaces`) lists the workspaces with their state and Song counts. An Unavailable workspace shows the date it was last seen. Each workspace opens its own page (`/settings/suno-workspaces/<Suno ID>`), which lists its Songs and moves some or all of them with the bulk move, after a confirmation that states how many Songs will move. The "Workspace unavailable" badge on a Song links to that page.
 
 ## Export format
 
