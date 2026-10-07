@@ -1,8 +1,8 @@
 using System.Globalization;
 using n8Tracks.Application.Backups;
-using n8Tracks.Application.Configuration;
 using n8Tracks.Application.Health;
 using n8Tracks.Application.Maintenance;
+using n8Tracks.Application.Media;
 using n8Tracks.Application.Persistence;
 using n8Tracks.Infrastructure.Persistence;
 
@@ -31,12 +31,11 @@ internal sealed class HealthService : IHealthService
     private static readonly HealthComponent DatabaseInMaintenance = new(HealthStatus.Degraded, HealthDetails.DatabaseInMaintenance);
 
     private readonly IDatabaseConnectionFactory connections;
-    private readonly IMediaMountProbe mediaProbe;
+    private readonly IMediaMount media;
     private readonly IMigrationStateProvider migrationState;
     private readonly IBackupStorage backups;
     private readonly MaintenanceMode maintenance;
     private readonly Serilog.ILogger log;
-    private readonly string mediaPath;
     private readonly DeadlineCheck databaseCheck;
     private readonly DeadlineCheck mediaCheck;
 
@@ -44,24 +43,21 @@ internal sealed class HealthService : IHealthService
     private readonly Dictionary<string, HealthStatus> previous = new(StringComparer.Ordinal);
 
     public HealthService(
-        N8TracksOptions options,
         IDatabaseConnectionFactory connections,
-        IMediaMountProbe mediaProbe,
+        IMediaMount media,
         IMigrationStateProvider migrationState,
         IBackupStorage backups,
         MaintenanceMode maintenance,
         Serilog.ILogger log)
     {
-        ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(log);
 
         this.connections = connections;
-        this.mediaProbe = mediaProbe;
+        this.media = media;
         this.migrationState = migrationState;
         this.backups = backups;
         this.maintenance = maintenance;
         this.log = log.ForContext<HealthService>();
-        mediaPath = options.MediaPath;
         databaseCheck = new DeadlineCheck(QueryDatabase, CheckTimeout);
         mediaCheck = new DeadlineCheck(ReadMedia, CheckTimeout);
     }
@@ -110,7 +106,7 @@ internal sealed class HealthService : IHealthService
     {
         deadline.ThrowIfCancellationRequested();
 
-        return mediaProbe.IsReadable(mediaPath);
+        return media.Probe();
     }
 
     /// <summary>

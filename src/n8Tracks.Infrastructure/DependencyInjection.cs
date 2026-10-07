@@ -48,7 +48,6 @@ public static class DependencyInjection
 
         services.AddSingleton<IDatabaseConnectionFactory, SqliteConnectionFactory>();
         services.AddScoped<IDatabaseSchemaCheck, DatabaseSchemaCheck>();
-        services.AddSingleton<IMediaMountProbe, MediaMountProbe>();
         services.AddSingleton<IHealthService, HealthService>();
 
         services.AddScoped<IAdministratorStore, AdministratorStore>();
@@ -93,6 +92,7 @@ public static class DependencyInjection
         services.AddScoped<IGenerationRequestStore, SunoGenerationRequestStore>();
         services.AddScoped<IVersionDefaultsStore, VersionDefaultsStore>();
         services.AddSingleton<IMediaMount, MediaMountReader>();
+        services.AddSingleton<IMediaScanLog, MediaScanLog>();
         services.AddSingleton<IAudioMetadataReader, AtlAudioMetadataReader>();
         services.AddScoped<IAudioFileStore, AudioFileStore>();
         services.AddScoped<IMediaScanSummaryStore, MediaScanSummaryStore>();

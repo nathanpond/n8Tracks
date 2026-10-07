@@ -32,9 +32,7 @@ internal static class MediaApi
         {
             TestServices = collection =>
             {
-                collection.RemoveAll<IMediaMount>();
-                collection.AddSingleton(provider => new CountingMount(new MediaMountReader(provider.GetRequiredService<N8TracksOptions>())));
-                collection.AddSingleton<IMediaMount>(static provider => provider.GetRequiredService<CountingMount>());
+                UseCountingMount(collection);
                 if (options is not null)
                 {
                     collection.RemoveAll<MediaScanOptions>();
@@ -44,6 +42,14 @@ internal static class MediaApi
                 services?.Invoke(collection);
             },
         };
+
+    /// <summary>Wraps the host's real media mount in a <see cref="CountingMount"/>.</summary>
+    public static void UseCountingMount(IServiceCollection collection)
+    {
+        collection.RemoveAll<IMediaMount>();
+        collection.AddSingleton(static provider => new CountingMount(new MediaMountReader(provider.GetRequiredService<N8TracksOptions>())));
+        collection.AddSingleton<IMediaMount>(static provider => provider.GetRequiredService<CountingMount>());
+    }
 
     public static CountingMount Mount(N8TracksApiFactory factory) => factory.Services.GetRequiredService<CountingMount>();
 
@@ -149,6 +155,8 @@ internal sealed class CountingMount(IMediaMount inner) : IMediaMount
     public int OpensOf(string relativePath) => opened.GetValueOrDefault(relativePath);
 
     public void Reset() => opened.Clear();
+
+    public bool Probe() => inner.Probe();
 
     public IReadOnlyList<MediaEntry> List(string relativeDirectory)
     {

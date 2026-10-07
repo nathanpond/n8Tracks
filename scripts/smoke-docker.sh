@@ -437,6 +437,45 @@ fi
 media="$WORK/media"
 mkdir -p "$media"
 printf 'not a real track\n' > "$media/track.flac"
+# A real track, and a link that leads out of the mount (inside the container, to its own /etc): the
+# scan of the read-only mount catalogs the first and does not follow the second (invariant 2, #205).
+cp "$ROOT/tests/n8Tracks.Api.Tests/Media/Fixtures/tone.mp3" "$media/tone.mp3"
+ln -s /etc/hostname "$media/escape.mp3"
+
+# api JAR METHOD PATH [BODY]: an API call with the session in the file JAR (and the anti-forgery
+# header), printing the HTTP status on the last line after the body.
+api() {
+    curl --silent --max-time 10 --cookie "$1" --header 'X-N8Tracks-Request: 1' \
+        --header 'Content-Type: application/json' --request "$2" ${4:+--data "$4"} \
+        --write-out '\n%{http_code}' "$(url "$3")" || true
+}
+
+# job_field JSON KEY...: a value inside a job document, by its keys in turn; empty when it is not there.
+job_field() {
+    printf '%s' "$1" | python3 -c '
+import json, sys
+
+value = json.load(sys.stdin)
+for key in sys.argv[1:]:
+    value = value[key]
+print(value if isinstance(value, str) else json.dumps(value))
+' "${@:2}" 2>/dev/null || true
+}
+
+# scan_media JAR: starts a media scan with the session in JAR and prints its job once it has ended
+# (or the last state seen, after WAIT_SECONDS).
+scan_media() {
+    local job document="" deadline
+    job="$(api "$1" POST /api/v1/media/scans | sed '$d' | json_field jobId 2>/dev/null || true)"
+    deadline=$((SECONDS + WAIT_SECONDS))
+    while [ -n "$job" ] && [ "$SECONDS" -lt "$deadline" ]; do
+        document="$(api "$1" GET "/api/v1/jobs/$job" | sed '$d')"
+        case "$(job_field "$document" status)" in succeeded | failed) break ;; esac
+        sleep 1
+    done
+    printf '%s' "$document"
+}
+
 
 # ---------------------------------------------------------------------------------------------------
 
@@ -466,7 +505,7 @@ section "Image contents" image_contents
 # ---------------------------------------------------------------------------------------------------
 
 mounted() {
-    local name="$PREFIX-main" data="$WORK/data" health shell asset seeded
+    local name="$PREFIX-main" data="$WORK/data" health shell asset seeded scanned
     mkdir -p "$data"
 
     run_main() {
@@ -494,6 +533,14 @@ mounted() {
     expect "the code of the API endpoint without a session" not_authenticated "$(api_field "$(url /api/v1/songs)" code)" "$name"
     expect "signing in" 201 "$(sign_in "$WORK/cookies-mounted")" "$name"
     expect "the session after signing in" 200 "$(session_status "$WORK/cookies-mounted")" "$name"
+
+    # Invariant 2 (#205): every scan step works on the read-only mount, and nothing tried to write.
+    scanned="$(scan_media "$WORK/cookies-mounted")"
+    expect "a scan of the read-only media mount" succeeded "$(job_field "$scanned" status)" "$name"
+    expect "the audio files the scan found on the read-only mount" 2 "$(job_field "$scanned" result seen)" "$name"
+    expect "the links out of the mount the scan did not follow" 1 "$(job_field "$scanned" result skippedLinks escaping)" "$name"
+    refute "the log holds no write error under /media" "$name" \
+        sh -c "docker logs '$name' 2>&1 | grep -i -e 'read-only file system' -e 'EROFS' -e 'UnauthorizedAccess'"
 
     shell="$(curl --silent --max-time 5 "$(url /)")"
     case "$shell" in
@@ -546,14 +593,6 @@ mounted() {
 section "Data and read-only media mounted, PUID=$RUN_UID PGID=$RUN_GID" mounted
 
 # ---------------------------------------------------------------------------------------------------
-
-# api JAR METHOD PATH [BODY]: an API call with the session in the file JAR (and the anti-forgery
-# header), printing the HTTP status on the last line after the body.
-api() {
-    curl --silent --max-time 10 --cookie "$1" --header 'X-N8Tracks-Request: 1' \
-        --header 'Content-Type: application/json' --request "$2" ${4:+--data "$4"} \
-        --write-out '\n%{http_code}' "$(url "$3")" || true
-}
 
 # song_titles JAR: the titles of every Song, sorted and joined with commas.
 song_titles() {

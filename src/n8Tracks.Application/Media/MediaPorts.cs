@@ -3,26 +3,37 @@ using n8Tracks.Domain.Media;
 namespace n8Tracks.Application.Media;
 
 /// <summary>
-/// The media mount, read-only (invariant 2). Its one implementation, <c>MediaMountReader</c>, is the
-/// only code in the solution that touches a path under the mount: it never creates, changes,
-/// renames, or deletes anything there. Every path it takes is relative to the mount root, with
-/// <c>/</c> between segments (the empty string is the root); one that is absolute or steps out of the
-/// root is refused with an <see cref="ArgumentException"/>.
+/// The media mount, read-only (invariant 2; guarded by #205). Its one implementation,
+/// <c>MediaMountReader</c>, is the only code in the solution that touches a path under the mount: it
+/// never creates, changes, renames, or deletes anything there. Every path it takes is relative to the
+/// mount root, with <c>/</c> between segments (the empty string is the root); one that is absolute,
+/// holds a NUL, a backslash, or an empty, <c>.</c>, or <c>..</c> segment is refused with an
+/// <see cref="ArgumentException"/>. Every path is resolved to its real path, link by link, each time
+/// it is used, and one that does not end under the mount root's real path is refused: a link is
+/// followed only while it stays inside.
 /// </summary>
 public interface IMediaMount
 {
     /// <summary>
-    /// The entries of the directory at <paramref name="relativeDirectory"/>, names only, in no
-    /// particular order. Links are reported as links and never followed (#205 brings its rules).
+    /// Whether the mount root is a directory whose entries can be listed. False when nothing is there
+    /// or it is a file; may throw when the directory cannot be read. Health and setup ask this.
     /// </summary>
-    /// <exception cref="IOException">The directory is not there or cannot be listed.</exception>
+    bool Probe();
+
+    /// <summary>
+    /// The entries of the directory at <paramref name="relativeDirectory"/>, in no particular order.
+    /// A link that resolves inside the mount is listed as the file or directory it leads to, under its
+    /// own name; any other link is listed by why it is not followed.
+    /// </summary>
+    /// <exception cref="IOException">The directory is not there, cannot be listed, or is not under the mount root once resolved.</exception>
     /// <exception cref="UnauthorizedAccessException">The directory may not be listed.</exception>
     IReadOnlyList<MediaEntry> List(string relativeDirectory);
 
-    /// <summary>The size and last-modified time of the file at <paramref name="relativePath"/>, or null when it is gone, is not a plain file, or cannot be looked at.</summary>
+    /// <summary>The size and last-modified time of the file at <paramref name="relativePath"/>, or null when it is gone, is not a plain file, resolves outside the mount, or cannot be looked at.</summary>
     MediaFileStat? Stat(string relativePath);
 
     /// <summary>Opens the file at <paramref name="relativePath"/> for reading only, sharing reads.</summary>
+    /// <exception cref="MediaPathOutsideException">The path resolves outside the mount root (no byte is read).</exception>
     /// <exception cref="IOException">The file cannot be opened.</exception>
     /// <exception cref="UnauthorizedAccessException">The file may not be read.</exception>
     Stream OpenRead(string relativePath);
@@ -30,16 +41,65 @@ public interface IMediaMount
 
 /// <summary>One entry of a listed directory.</summary>
 /// <param name="Name">Its name, exactly as the file system returned it.</param>
-public sealed record MediaEntry(string Name, MediaEntryKind Kind);
+public sealed record MediaEntry(string Name, MediaEntryKind Kind)
+{
+    /// <summary>
+    /// For a <see cref="MediaEntryKind.Directory"/>: where it really is, relative to the mount root's
+    /// real path (the root is the empty string). The scan ends a cycle of links with it.
+    /// </summary>
+    public string? RealPath { get; init; }
+
+    /// <summary>True when the entry is a link that resolves inside the mount (listed as what it leads to).</summary>
+    public bool ViaLink { get; init; }
+}
 
 /// <summary>What a listed entry is.</summary>
 public enum MediaEntryKind
 {
+    /// <summary>A file, or a link that resolves to one inside the mount.</summary>
     File,
+
+    /// <summary>A directory, or a link that resolves to one inside the mount.</summary>
     Directory,
 
-    /// <summary>A symbolic link (to a file or a directory), never followed by a scan in #203.</summary>
-    Link,
+    /// <summary>A link that resolves outside the mount root, directly or through other links: never followed.</summary>
+    EscapingLink,
+
+    /// <summary>A link that leads to nothing (inside the mount).</summary>
+    DanglingLink,
+
+    /// <summary>A link that never resolves: its chain of links goes round (counted as a cycle).</summary>
+    LoopingLink,
+}
+
+/// <summary>A path named under the mount resolves outside the mount root, through a link: it is not opened, or not read.</summary>
+public sealed class MediaPathOutsideException : IOException
+{
+    public MediaPathOutsideException()
+        : base("The path leads outside the media folder.")
+    {
+    }
+
+    public MediaPathOutsideException(string message)
+        : base(message)
+    {
+    }
+
+    public MediaPathOutsideException(string message, Exception innerException)
+        : base(message, innerException)
+    {
+    }
+}
+
+/// <summary>
+/// Where the scan reports the links it did not follow: once per scan, with the count and at most
+/// <see cref="MaximumPaths"/> relative paths (never an absolute path or a link's target).
+/// </summary>
+public interface IMediaScanLog
+{
+    public const int MaximumPaths = 10;
+
+    void SkippedLinks(int count, IReadOnlyList<string> relativePaths);
 }
 
 /// <summary>A file's size and last-modified time (UTC).</summary>
