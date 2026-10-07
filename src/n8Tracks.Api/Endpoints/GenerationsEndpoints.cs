@@ -479,7 +479,9 @@ internal sealed record GenerationOwnerResponse(Guid Id, string Shortcode);
 /// Generation (#120). <c>styleTags</c> is Suno's own style description of the clip
 /// (<c>metadata.tags</c>), not the Version's styles. <c>rating</c> (1 to 5, or null) and
 /// <c>comments</c> (oldest first) are the user's own. <c>artwork</c> (#121) is its cover image in the
-/// managed store, shown whole (<c>crop</c> is always null), or null. Times are UTC. Never the raw clip.
+/// managed store, shown whole (<c>crop</c> is always null), or null. <c>archivedBy</c> (#142) says who
+/// archived an archived Generation, <c>user</c> or <c>sync</c> (its clip was in Suno's Trash); null while
+/// active. Times are UTC. Never the raw clip.
 /// </summary>
 internal sealed record GenerationResponse(
     Guid Id,
@@ -512,7 +514,8 @@ internal sealed record GenerationResponse(
     IReadOnlyList<GenerationCommentResponse> Comments,
     DateTime CreatedAt,
     int Revision,
-    AttachedArtworkResponse? Artwork)
+    AttachedArtworkResponse? Artwork,
+    string? ArchivedBy)
 {
     /// <summary>The Generation as the API shows it; <paramref name="pathBase"/> starts its image's URLs.</summary>
     public static GenerationResponse From(GenerationSummary summary, PathString pathBase)
@@ -552,7 +555,8 @@ internal sealed record GenerationResponse(
             [.. summary.Comments.Select(GenerationCommentResponse.From)],
             generation.CreatedUtc.UtcDateTime,
             generation.Revision,
-            summary.Artwork is { } artwork ? AttachedArtworkResponse.From(artwork with { Crop = null }, pathBase) : null);
+            summary.Artwork is { } artwork ? AttachedArtworkResponse.From(artwork with { Crop = null }, pathBase) : null,
+            GenerationStates.ArchiverOf(generation.State, generation.ArchivedBy) is { } archiver ? GenerationStates.NameOf(archiver) : null);
     }
 }
 

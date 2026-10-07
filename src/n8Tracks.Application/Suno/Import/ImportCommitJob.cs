@@ -47,6 +47,9 @@ public static class ImportCommitOutcomes
     public const string Skipped = "skipped";
     public const string Ignored = "ignored";
     public const string Failed = "failed";
+
+    /// <summary>A remote-state row (#142) applied to its Generation.</summary>
+    public const string Applied = "applied";
 }
 
 /// <summary>The fixed reasons a record was not imported as chosen, or a note on how it was (<see cref="NumberTaken"/>).</summary>
@@ -372,11 +375,20 @@ internal sealed class ImportCommitJob(
             }
         }
 
+        // Following Suno (#142): the remote-state rows, worked out again now, each applied unless set to Skip.
+        var remoteStates = await InScopeAsync<RemoteStateService, IReadOnlyList<RemoteStateApplied>>(
+            remote => remote.ApplyAsync(export, cancellationToken)).ConfigureAwait(false);
+
         return new CommitResult(
             export.Id,
             [.. plan.Order.Select(sunoId => results[sunoId].For(sunoId))],
             created,
-            [.. songs.Values.OrderBy(static song => song.Shortcode, StringComparer.Ordinal)]);
+            [.. songs.Values.OrderBy(static song => song.Shortcode, StringComparer.Ordinal)],
+            [.. remoteStates.Select(static row => new CommittedRemoteState(
+                row.SunoId,
+                RemoteStateRules.NameOf(row.Kind),
+                row.Applied ? ImportCommitOutcomes.Applied : ImportCommitOutcomes.Skipped,
+                new CommittedRemoteGeneration(row.GenerationId, row.Shortcode)))]);
     }
 
     /// <summary>A Generation Event for each group (Create request, #138) with at least two clips attached, its batch size the number attached.</summary>
@@ -962,8 +974,17 @@ internal sealed class CreatedCounts
     public int Generations { get; set; }
 }
 
-/// <summary>The commit job's result, kept with the job: every record's outcome, what was created, and the Songs to link to.</summary>
-internal sealed record CommitResult(Guid ExportId, IReadOnlyList<CommittedRecord> Records, CreatedCounts Created, IReadOnlyList<SongLink> Songs);
+/// <summary>
+/// The commit job's result, kept with the job: every record's outcome, what was created, the Songs to link
+/// to, and each remote-state row (#142), applied or skipped.
+/// </summary>
+internal sealed record CommitResult(Guid ExportId, IReadOnlyList<CommittedRecord> Records, CreatedCounts Created, IReadOnlyList<SongLink> Songs, IReadOnlyList<CommittedRemoteState> RemoteStates);
+
+/// <summary>One remote-state row in the result: its clip, its change (<c>trashed</c>, <c>restored</c>, <c>missing</c>), <c>applied</c> or <c>skipped</c>, and its Generation.</summary>
+internal sealed record CommittedRemoteState(string SunoId, string Change, string Outcome, CommittedRemoteGeneration Generation);
+
+/// <summary>The Generation a remote-state row names.</summary>
+internal sealed record CommittedRemoteGeneration(Guid Id, string Shortcode);
 
 /// <summary>One record in the result.</summary>
 internal sealed record CommittedRecord(string SunoId, string Outcome, string? Reason, CommittedGeneration? Generation, bool? Restored, string? Note);

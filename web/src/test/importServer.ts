@@ -9,6 +9,7 @@ import type {
   NamedTarget,
   SunoImport,
 } from '../api/sunoImports';
+import type { RemoteStateRow } from '../api/sunoRemoteStates';
 import { healthyReport, jsonResponse, requestPath, stubFetch } from './helpers';
 import { baseSong } from './songServer';
 
@@ -51,6 +52,31 @@ export function testCommitResult(change: Partial<CommitResult> = {}): CommitResu
         created: true,
       },
     ],
+    ...change,
+  };
+}
+
+/** A Suno state change (#142): by default Alpha (`a`) in Suno's Trash, its active Generation to be archived. */
+export function testRemoteState(
+  sunoId: string,
+  change: Partial<RemoteStateRow> = {},
+): RemoteStateRow {
+  return {
+    sunoId,
+    title: `Clip ${sunoId}`,
+    change: 'trashed',
+    remoteState: 'present',
+    newRemoteState: 'trashed',
+    state: 'active',
+    newState: 'archived',
+    archives: true,
+    reactivates: false,
+    apply: true,
+    generation: {
+      id: `0199c500-0000-7000-8000-0000000000${sunoId.padStart(2, '0').slice(-2)}`,
+      shortcode: `n8-7-v1-g${String(sunoId.length)}`,
+      songShortcode: 'n8-7',
+    },
     ...change,
   };
 }
@@ -243,6 +269,9 @@ export function importServer(records: ImportRecord[], exported: Partial<SunoImpo
       { id: 'demos', name: 'Demos', count: 0 },
     ],
     playlists: [] as { id: string; name: string | null; count: number }[],
+    /** The Suno state changes (#142) and each change of them received. */
+    remoteStates: [] as RemoteStateRow[],
+    remotePatches: [] as ReceivedPatch[],
     current: undefined as { waiting: SunoImport | null; last: SunoImport | null } | undefined,
     /** The If-Match of each commit request. */
     commits: [] as (string | null)[],
@@ -309,7 +338,10 @@ export function importServer(records: ImportRecord[], exported: Partial<SunoImpo
       valid: invalidCount === 0,
       invalidCount,
       invalid: server.invalid,
-      nothingToDo: imports.length === 0 && newlyIgnored === 0,
+      nothingToDo:
+        imports.length === 0 &&
+        newlyIgnored === 0 &&
+        server.remoteStates.every((row) => !row.apply),
       nextKey: 'new:90',
       workspaces: server.workspaces.map((workspace) => ({
         ...workspace,
@@ -318,6 +350,8 @@ export function importServer(records: ImportRecord[], exported: Partial<SunoImpo
       playlists: server.playlists,
       libraryExcluded: server.export.libraryExcluded,
       revision: server.export.revision,
+      remoteChanges: server.remoteStates.filter((row) => row.apply).length,
+      remoteChangesTotal: server.remoteStates.length,
     };
   };
 
@@ -413,6 +447,50 @@ export function importServer(records: ImportRecord[], exported: Partial<SunoImpo
       return Promise.resolve(
         jsonResponse(200, { items, page: 1, pageSize: 100, total: items.length }),
       );
+    }
+    if (rest === '/remote-states' && method === 'GET') {
+      const q = url.searchParams.get('q')?.toLowerCase();
+      const items = server.remoteStates.filter(
+        (row) => q === undefined || (row.title ?? '').toLowerCase().includes(q),
+      );
+      const count = (change: string) =>
+        server.remoteStates.filter((row) => row.change === change).length;
+      const applied = server.remoteStates.filter((row) => row.apply).length;
+      return Promise.resolve(
+        jsonResponse(200, {
+          items,
+          page: 1,
+          pageSize: 100,
+          total: items.length,
+          counts: {
+            trashed: count('trashed'),
+            restored: count('restored'),
+            missing: count('missing'),
+            applied,
+            skipped: server.remoteStates.length - applied,
+          },
+          missingChecked: server.export.libraryComplete,
+          revision: server.export.revision,
+        }),
+      );
+    }
+    if (rest === '/remote-states' && method === 'PATCH') {
+      const headers = new Headers(init?.headers);
+      const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as {
+        sunoIds: string[];
+        apply: boolean;
+      };
+      server.remotePatches.push({ ifMatch: headers.get('If-Match'), body });
+      if (headers.get('If-Match') !== `"${String(server.export.revision)}"`) {
+        return Promise.resolve(
+          jsonResponse(409, { code: 'revision_conflict', current: counted() }),
+        );
+      }
+      server.remoteStates = server.remoteStates.map((row) =>
+        body.sunoIds.includes(row.sunoId) ? { ...row, apply: body.apply } : row,
+      );
+      server.export = { ...server.export, revision: server.export.revision + 1 };
+      return Promise.resolve(jsonResponse(200, counted()));
     }
     if (rest === '/records' && method === 'PATCH') {
       const headers = new Headers(init?.headers);

@@ -46,6 +46,12 @@ public sealed class SunoExportRecord
     /// </summary>
     public string? LibraryFiltersJson { get; set; }
 
+    /// <summary>
+    /// The Suno IDs of the remote-state rows (#142) the user set to Skip, as a JSON array; null when none
+    /// is. Every other row is applied at Confirm.
+    /// </summary>
+    public string? RemoteSkipsJson { get; set; }
+
     public required string CreatedUtc { get; set; }
 
     public string? CompletedUtc { get; set; }

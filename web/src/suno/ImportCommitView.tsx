@@ -1,6 +1,7 @@
 import { Anchor, Loader, Progress, Stack, Table, Text, Title } from '@mantine/core';
 import { Link } from 'react-router';
 import { useCommitJob, type CommitJob, type SunoImport } from '../api/sunoImports';
+import { remoteResultText } from '../api/sunoRemoteStates';
 import { Notice } from '../components/Notice';
 import { commitReasonText, createdText, outcomesText, stateText } from './importReviewRules';
 
@@ -77,6 +78,9 @@ export function ImportCommitView({
       <Title order={3}>This import was confirmed</Title>
       <Text data-testid="commit-created">{createdText(result.created)}</Text>
       <Text data-testid="commit-outcomes">{outcomesText(result.records)}</Text>
+      {result.remoteStates !== undefined && result.remoteStates.length > 0 && (
+        <Text data-testid="commit-remote-states">{remoteResultText(result.remoteStates)}</Text>
+      )}
       {result.songs.length > 0 && (
         <Stack gap={4} component="section" aria-labelledby="commit-songs-title">
           <Title order={4} id="commit-songs-title">

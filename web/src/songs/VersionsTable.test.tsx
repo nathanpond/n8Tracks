@@ -330,6 +330,24 @@ describe('the Versions table', () => {
     expect(within(manual).getByTestId('generation-duration')).toHaveTextContent('Unknown');
   });
 
+  it('shows In Suno Trash on a Generation whose clip a sync found in Suno’s Trash (#142)', async () => {
+    const user = userEvent.setup();
+    const { server } = versionServer([ONE]);
+    server.generations = [
+      testGeneration('1', 1, { state: 'archived', remoteState: 'trashed' }),
+      testGeneration('1', 2),
+    ];
+
+    await openSong();
+    await user.click(expander('1'));
+    await user.click(within(section()).getByRole('switch', { name: 'Show archived Generations' }));
+
+    expect(within(generationRow('n8-7-v1-g1')).getByTestId('in-suno-trash')).toHaveTextContent(
+      'In Suno Trash',
+    );
+    expect(within(generationRow('n8-7-v1-g2')).queryByTestId('in-suno-trash')).toBeNull();
+  });
+
   it('copies a Generation shortcode in one click', async () => {
     const user = userEvent.setup();
     const { server } = versionServer([ONE]);

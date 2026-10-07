@@ -36,6 +36,14 @@ public sealed record Generation(Guid Id, Guid VersionId, Guid SongId, int Ordina
     public GenerationState State { get; init; } = GenerationState.Active;
 
     /// <summary>
+    /// Who archived it (#142): the user, or a sync that found its clip in Suno's Trash. Null while it is
+    /// <see cref="GenerationState.Active"/>; an archived Generation with none was archived by the user
+    /// (<see cref="GenerationStates.ArchiverOf(GenerationState, GenerationArchiver?)"/>). A restore in Suno
+    /// reactivates only a Generation a sync archived: a user's own archive is never undone.
+    /// </summary>
+    public GenerationArchiver? ArchivedBy { get; init; }
+
+    /// <summary>
     /// Whether Suno still lists the clip; separate from <see cref="State"/> (a user may archive a
     /// present clip). A new Generation is <see cref="GenerationRemoteState.Present"/>.
     /// </summary>
@@ -71,6 +79,16 @@ public enum GenerationState
     Archived,
 }
 
+/// <summary>Who archived a Generation (#142).</summary>
+public enum GenerationArchiver
+{
+    /// <summary>The user, by hand: only the user reactivates it.</summary>
+    User,
+
+    /// <summary>A sync that found its clip in Suno's Trash: a later sync that finds it restored reactivates it.</summary>
+    Sync,
+}
+
 /// <summary>Whether Suno still has the clip, as the last sync saw it.</summary>
 public enum GenerationRemoteState
 {
@@ -101,6 +119,29 @@ public static class GenerationStates
         GenerationRemoteState.Missing => "missing",
         _ => throw new ArgumentOutOfRangeException(nameof(state)),
     };
+
+    public static string NameOf(GenerationArchiver archiver) => archiver switch
+    {
+        GenerationArchiver.User => "user",
+        GenerationArchiver.Sync => "sync",
+        _ => throw new ArgumentOutOfRangeException(nameof(archiver)),
+    };
+
+    /// <summary>The archiver a stored name stands for; null for none.</summary>
+    public static GenerationArchiver? ArchiverOf(string? name) => name switch
+    {
+        null => null,
+        "user" => GenerationArchiver.User,
+        "sync" => GenerationArchiver.Sync,
+        _ => throw new ArgumentOutOfRangeException(nameof(name), name, "Not a Generation archiver."),
+    };
+
+    /// <summary>
+    /// Who archived a Generation in <paramref name="state"/>: null while it is active, and the user when it
+    /// is archived with none recorded (one archived before #142, or restored from such a record).
+    /// </summary>
+    public static GenerationArchiver? ArchiverOf(GenerationState state, GenerationArchiver? archivedBy) =>
+        state == GenerationState.Archived ? archivedBy ?? GenerationArchiver.User : null;
 
     public static GenerationState StateOf(string name) => name switch
     {

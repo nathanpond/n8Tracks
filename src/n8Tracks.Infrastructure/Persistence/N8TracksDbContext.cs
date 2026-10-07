@@ -487,6 +487,9 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                 table.HasCheckConstraint("ck_generations_revision", "revision >= 1");
                 table.HasCheckConstraint("ck_generations_suno_id", "suno_id IS NULL OR length(suno_id) > 0");
                 table.HasCheckConstraint("ck_generations_rating", "rating IS NULL OR rating BETWEEN 1 AND 5");
+                table.HasCheckConstraint(
+                    "ck_generations_archived_by",
+                    $"archived_by IS NULL OR archived_by IN ('{GenerationRecord.ArchivedByUser}', '{GenerationRecord.ArchivedBySync}')");
                 table.HasTrigger(GenerationMoveTrigger);
                 table.HasTrigger(GenerationAliasReservedTrigger);
             });

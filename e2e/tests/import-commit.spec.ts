@@ -78,7 +78,9 @@ async function uploadExport(
       adapterVersion: '3',
       capturedAt: new Date().toISOString(),
       scope: { kind: 'library', ids: [] },
-      libraryComplete: true,
+      // Not read to the end: a whole-library sync would mark every other test's clip on the shared
+      // containers Remote Missing (#142), which this walk is not about.
+      libraryComplete: false,
       trashedComplete: true,
       workspaces: [{ id: workspace.id, name: workspace.name, description: '' }],
       workspacesComplete: false,

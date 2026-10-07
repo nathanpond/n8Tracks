@@ -57,6 +57,7 @@ internal static class SunoEndpoints
         endpoints.MapSunoModels();
         endpoints.MapSunoWorkspaces();
         endpoints.MapSunoExports();
+        endpoints.MapSunoRemoteStates();
 
         return endpoints;
     }

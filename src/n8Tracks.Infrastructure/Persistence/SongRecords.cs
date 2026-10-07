@@ -179,6 +179,8 @@ public sealed class GenerationRecord
     public const string Present = "present";
     public const string Trashed = "trashed";
     public const string Missing = "missing";
+    public const string ArchivedByUser = "user";
+    public const string ArchivedBySync = "sync";
 
     public required Guid Id { get; set; }
 
@@ -197,6 +199,12 @@ public sealed class GenerationRecord
 
     /// <summary><see cref="Present"/>, <see cref="Trashed"/>, or <see cref="Missing"/>: whether Suno still lists the clip.</summary>
     public string RemoteState { get; set; } = Present;
+
+    /// <summary>
+    /// <see cref="ArchivedByUser"/> or <see cref="ArchivedBySync"/> while <see cref="State"/> is archived
+    /// (#142); null while active, and for a Generation archived before #142 (read as the user's archive).
+    /// </summary>
+    public string? ArchivedBy { get; set; }
 
     /// <summary>Starts at 1; raised by rating and state changes (comments have their own).</summary>
     public int Revision { get; set; } = 1;

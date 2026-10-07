@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { apiFetch } from './client';
 import { ifMatch } from './saves';
 import { body, isErrorMap, isRecord, useResource } from './songs';
+import type { CommittedRemoteState } from './sunoRemoteStates';
 
 /** Where the review page of the export with ID `id` is (#139); the extension opens it after a sync. */
 export function importPath(id: string): string {
@@ -154,6 +155,9 @@ export interface ImportSummary {
   playlists: ImportFacet[];
   libraryExcluded: string[];
   revision: number;
+  /** How many Suno state changes (#142) confirming applies, of how many the review lists. */
+  remoteChanges?: number;
+  remoteChangesTotal?: number;
 }
 
 /** The filters of the review: class, workspace, playlist (Suno IDs), and text in the title. */
@@ -507,6 +511,8 @@ export interface CommitResult {
   records: CommittedRecord[];
   created: { songs: number; versions: number; generations: number };
   songs: CommittedSong[];
+  /** The Suno state changes (#142), applied or skipped. */
+  remoteStates?: CommittedRemoteState[];
 }
 
 /** The commit job as `GET /api/v1/jobs/{id}` answers it, the fields the page reads. */

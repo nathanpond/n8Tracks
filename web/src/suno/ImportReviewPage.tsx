@@ -32,10 +32,12 @@ import {
   type RecordSelection,
   type SunoImport,
 } from '../api/sunoImports';
+import { REMOTE_STATE_CLASS } from '../api/sunoRemoteStates';
 import { formatDateTime, useConfiguredTimeZone } from '../api/timeZone';
 import { Notice } from '../components/Notice';
 import { ChoiceEditor } from './ChoiceEditor';
 import { ImportCommitView } from './ImportCommitView';
+import { RemoteStateChanges } from './RemoteStateChanges';
 import {
   CLASS_LABELS,
   choiceNote,
@@ -184,6 +186,8 @@ function LoadedReview({ id, onEnded }: { id: string; onEnded: () => void }) {
   const timeZone = useConfiguredTimeZone();
   const [searchParams, setSearchParams] = useSearchParams();
   const filter = filterFrom(searchParams);
+  // The Class filter's "Suno state changes" (#142) lists those instead of records.
+  const remoteView = searchParams.get('class') === REMOTE_STATE_CLASS;
   const page = Math.max(1, Number(searchParams.get('page') ?? '1') || 1);
   const summaryLoad = useImportSummary(id);
   const recordsLoad = useImportRecords(id, filter, page);
@@ -421,13 +425,17 @@ function LoadedReview({ id, onEnded }: { id: string; onEnded: () => void }) {
       <Group gap="sm" align="flex-end" role="search" aria-label="Filter records">
         <NativeSelect
           label="Class"
-          value={filter.class ?? ''}
+          value={remoteView ? REMOTE_STATE_CLASS : (filter.class ?? '')}
           data={[
             { value: '', label: 'All classes' },
             ...RECORD_CLASSES.map((recordClass) => ({
               value: recordClass,
               label: `${CLASS_LABELS[recordClass]} (${String(exported.counts[recordClass] ?? 0)})`,
             })),
+            {
+              value: REMOTE_STATE_CLASS,
+              label: `Suno state changes (${String(summary.remoteChangesTotal ?? 0)})`,
+            },
           ]}
           onChange={(event) => {
             setQuery({ class: event.currentTarget.value });
@@ -472,91 +480,106 @@ function LoadedReview({ id, onEnded }: { id: string; onEnded: () => void }) {
         />
       </Group>
 
-      <Stack gap="sm" role="group" aria-label="Select records">
-        <Group gap="sm" align="flex-end">
-          <Button
-            variant="default"
-            disabled={records.total === 0}
-            onClick={() => {
-              setSelection({
-                kind: 'filter',
-                filter,
-                label: 'that matches the filter',
-                except: [],
-              });
-            }}
-          >
-            Select all that match
-          </Button>
-          <NativeSelect
-            label="Select a workspace’s records"
-            value=""
-            data={[
-              { value: '', label: 'Choose…' },
-              ...summary.workspaces.map((facet) => ({
-                value: facet.id,
-                label: facet.name ?? facet.id,
-              })),
-            ]}
-            onChange={(event) => {
-              const workspace = event.currentTarget.value;
-              if (workspace !== '') {
+      {remoteView && (
+        <RemoteStateChanges
+          exportId={id}
+          revision={summary.revision}
+          q={filter.q}
+          onChanged={summaryLoad.reload}
+          onConflict={() => {
+            setConflict(true);
+          }}
+          onEnded={onEnded}
+        />
+      )}
+
+      {!remoteView && (
+        <Stack gap="sm" role="group" aria-label="Select records">
+          <Group gap="sm" align="flex-end">
+            <Button
+              variant="default"
+              disabled={records.total === 0}
+              onClick={() => {
                 setSelection({
                   kind: 'filter',
-                  filter: { workspace },
-                  label: `in workspace ${workspaceLabel(workspace)}`,
+                  filter,
+                  label: 'that matches the filter',
                   except: [],
                 });
-              }
-            }}
-          />
-          {summary.playlists.length > 0 && (
+              }}
+            >
+              Select all that match
+            </Button>
             <NativeSelect
-              label="Select a playlist’s records"
+              label="Select a workspace’s records"
               value=""
               data={[
                 { value: '', label: 'Choose…' },
-                ...summary.playlists.map((facet) => ({
+                ...summary.workspaces.map((facet) => ({
                   value: facet.id,
                   label: facet.name ?? facet.id,
                 })),
               ]}
               onChange={(event) => {
-                const playlist = event.currentTarget.value;
-                if (playlist !== '') {
-                  const name = summary.playlists.find((facet) => facet.id === playlist)?.name;
+                const workspace = event.currentTarget.value;
+                if (workspace !== '') {
                   setSelection({
                     kind: 'filter',
-                    filter: { playlist },
-                    label: `in playlist ${name ?? playlist}`,
+                    filter: { workspace },
+                    label: `in workspace ${workspaceLabel(workspace)}`,
                     except: [],
                   });
                 }
               }}
             />
-          )}
-          <Button
-            variant="default"
-            disabled={!hasSelection}
-            onClick={() => {
-              setSelection(NONE);
-            }}
-          >
-            Clear the selection
-          </Button>
-        </Group>
-        <Text size="sm" data-testid="selection">
-          {hasSelection
-            ? `Selected: ${selectionCount}. Records already in n8Tracks are never selected.`
-            : 'No record is selected. Tick records, or select a whole workspace, playlist, or filter.'}
-        </Text>
-      </Stack>
+            {summary.playlists.length > 0 && (
+              <NativeSelect
+                label="Select a playlist’s records"
+                value=""
+                data={[
+                  { value: '', label: 'Choose…' },
+                  ...summary.playlists.map((facet) => ({
+                    value: facet.id,
+                    label: facet.name ?? facet.id,
+                  })),
+                ]}
+                onChange={(event) => {
+                  const playlist = event.currentTarget.value;
+                  if (playlist !== '') {
+                    const name = summary.playlists.find((facet) => facet.id === playlist)?.name;
+                    setSelection({
+                      kind: 'filter',
+                      filter: { playlist },
+                      label: `in playlist ${name ?? playlist}`,
+                      except: [],
+                    });
+                  }
+                }}
+              />
+            )}
+            <Button
+              variant="default"
+              disabled={!hasSelection}
+              onClick={() => {
+                setSelection(NONE);
+              }}
+            >
+              Clear the selection
+            </Button>
+          </Group>
+          <Text size="sm" data-testid="selection">
+            {hasSelection
+              ? `Selected: ${selectionCount}. Records already in n8Tracks are never selected.`
+              : 'No record is selected. Tick records, or select a whole workspace, playlist, or filter.'}
+          </Text>
+        </Stack>
+      )}
 
       <div role="status">
         {message !== undefined && <Text data-testid="change-message">{message}</Text>}
       </div>
 
-      {hasSelection && (
+      {hasSelection && !remoteView && (
         <ChoiceEditor
           key={editorKey}
           exportId={id}
@@ -570,7 +593,7 @@ function LoadedReview({ id, onEnded }: { id: string; onEnded: () => void }) {
         />
       )}
 
-      {records.total === 0 ? (
+      {remoteView ? null : records.total === 0 ? (
         <Text data-testid="no-records">No record matches these filters.</Text>
       ) : (
         <RecordTable
@@ -589,7 +612,7 @@ function LoadedReview({ id, onEnded }: { id: string; onEnded: () => void }) {
         />
       )}
 
-      {pages > 1 && (
+      {pages > 1 && !remoteView && (
         <Pagination
           total={pages}
           value={page}
@@ -704,6 +727,13 @@ function SummaryNumbers({ summary, testId }: { summary: ImportSummary; testId?: 
       <Text data-testid={testId === undefined ? 'summary-skipped' : undefined}>
         Leave {recordCountText(summary.skipped)} for a later sync (Skip this time).
       </Text>
+      {(summary.remoteChangesTotal ?? 0) > 0 && (
+        <Text data-testid={testId === undefined ? 'summary-remote' : undefined}>
+          Follow {countText(summary.remoteChanges ?? 0, 'Suno state change')} of{' '}
+          {String(summary.remoteChangesTotal ?? 0)} (Suno state changes: archive what is in Suno
+          Trash, reactivate what was restored, mark what is missing; nothing is deleted).
+        </Text>
+      )}
     </Stack>
   );
 }
