@@ -1,7 +1,9 @@
+import type { Downloader } from '../download/downloader.ts';
 import { isDownloadFormat } from '../download/selection.ts';
 import type {
   ClipLookupReply,
   ClipLookupRow,
+  DownloadAction,
   DownloadReply,
   DownloadRequest,
   ResponseFor,
@@ -13,7 +15,8 @@ import { DisconnectedError, type Connection } from './connection.ts';
  * load that reads it (in session storage), refuses one while a sync or Generate on Suno runs,
  * remembers the formats last chosen (in local storage), and asks n8Tracks which clips it has as
  * Generations: `POST /api/v1/suno/clips/lookup`, the only call the view makes, with the extension's
- * `suno.sync` token. Nothing here reaches Suno, and nothing is imported.
+ * `suno.sync` token. Nothing here reaches Suno, and nothing is imported. Start, Cancel, Retry, and
+ * Resume go to the download queue (#216, `download/downloader.ts`).
  */
 
 /** The parts of `chrome.storage` the Download view uses, so tests can stand in for the browser. */
@@ -46,6 +49,7 @@ export const LOAD_WAIT_MS = 120_000;
 const DISCONNECTED = 'The extension is not connected to n8Tracks.';
 const NO_SYNC_SCOPE = 'This credential lacks suno.sync.';
 const UNREACHABLE = 'Cannot reach n8Tracks. Check that it is running.';
+const NO_DOWNLOADER = 'Downloading is not available in this extension.';
 
 export interface DownloadCoordinatorOptions {
   connection: Connection;
@@ -55,6 +59,8 @@ export interface DownloadCoordinatorOptions {
    * extension, in any tab.
    */
   busy: () => Promise<string | null>;
+  /** The download queue (#216); without it, Start is refused. */
+  downloader?: Downloader;
   now?: () => number;
 }
 
@@ -95,12 +101,14 @@ export class DownloadCoordinator {
   private readonly connection: Connection;
   private readonly browser: DownloadBrowser;
   private readonly busy: () => Promise<string | null>;
+  private readonly downloader: Downloader | null;
   private readonly now: () => number;
 
   constructor(options: DownloadCoordinatorOptions) {
     this.connection = options.connection;
     this.browser = options.browser;
     this.busy = options.busy;
+    this.downloader = options.downloader ?? null;
     this.now = options.now ?? (() => Date.now());
   }
 
@@ -118,7 +126,48 @@ export class DownloadCoordinator {
         return this.lookup(request.sunoIds);
       case 'download-formats':
         return { formats: await this.formats(request.formats) };
+      case 'download-start':
+        return this.start(request.files, request.unlocks, tabId);
+      case 'download-control':
+        return this.control(request.action, tabId);
+      case 'download-run':
+        return { run: this.downloader === null ? null : await this.downloader.current() };
     }
+  }
+
+  /** Start: refused while a sync or Generate on Suno runs, since the page is shared. */
+  private async start(
+    files: Parameters<Downloader['add']>[1],
+    unlocks: number,
+    tabId: number,
+  ): Promise<DownloadReply> {
+    if (this.downloader === null) {
+      return { ok: false, message: NO_DOWNLOADER };
+    }
+    const reason = await this.busy();
+    if (reason !== null) {
+      return { ok: false, message: reason };
+    }
+    const refused = await this.downloader.add(tabId, files, unlocks);
+    return refused === null ? { ok: true } : { ok: false, message: refused };
+  }
+
+  private async control(action: DownloadAction, tabId: number): Promise<DownloadReply> {
+    if (this.downloader === null) {
+      return { ok: false, message: NO_DOWNLOADER };
+    }
+    switch (action) {
+      case 'cancel':
+        await this.downloader.cancel();
+        break;
+      case 'retry':
+        await this.downloader.retry();
+        break;
+      case 'resume':
+        await this.downloader.resume(tabId);
+        break;
+    }
+    return { ok: true };
   }
 
   private async begin(selected: string[], tabId: number): Promise<DownloadReply> {

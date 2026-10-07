@@ -34,6 +34,11 @@ export interface DownloadClip {
   unavailable: string | null;
   /** Whether the playback stream (`media_urls[0]`) is in the clip data. */
   hasStream: boolean;
+  /**
+   * The playback stream's address (`media_urls[0].url`), which the streaming-quality M4A is
+   * downloaded from (#216); absent or null when the clip data has none.
+   */
+  streamAddress?: string | null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -47,9 +52,9 @@ function text(value: unknown): string {
 /** Suno's statuses of a clip still being made (TS-001). */
 const GENERATING: ReadonlySet<string> = new Set(['submitted', 'queued', 'streaming']);
 
-function streamOf(clip: Record<string, unknown>): boolean {
+function streamOf(clip: Record<string, unknown>): string | null {
   const first: unknown = Array.isArray(clip.media_urls) ? clip.media_urls[0] : undefined;
-  return isRecord(first) && typeof first.url === 'string' && first.url !== '';
+  return isRecord(first) && typeof first.url === 'string' && first.url !== '' ? first.url : null;
 }
 
 function unavailableOf(clip: Record<string, unknown>, hasStream: boolean): string | null {
@@ -76,7 +81,8 @@ export function clipOf(raw: unknown): DownloadClip | null {
   }
   const metadata = isRecord(raw.metadata) ? raw.metadata : {};
   const project = isRecord(raw.project) ? raw.project : null;
-  const hasStream = streamOf(raw);
+  const streamAddress = streamOf(raw);
+  const hasStream = streamAddress !== null;
   const title = text(raw.title).trim();
   const duration = metadata.duration;
   return {
@@ -94,6 +100,7 @@ export function clipOf(raw: unknown): DownloadClip | null {
     hidden: raw.is_hidden === true,
     unavailable: unavailableOf(raw, hasStream),
     hasStream,
+    streamAddress,
   };
 }
 

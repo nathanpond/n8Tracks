@@ -132,6 +132,36 @@ describe('the service worker router', () => {
     expect(await send({ type: 'download-lookup', sunoIds: [] }, suno)).toHaveProperty('refused');
     expect(await send({ type: 'download-begin', selected: [3] }, suno)).toHaveProperty('refused');
     expect(handled).toHaveLength(2);
+
+    // The download run's messages (#216): checked member by member, from the Suno tab only.
+    const file = {
+      sunoId: 'a',
+      title: 'A',
+      displayName: 'maker',
+      artist: null,
+      format: 'wav',
+      unlocked: false,
+      streamAddress: null,
+    };
+    await send({ type: 'download-start', files: [file], unlocks: 1 }, suno);
+    await send({ type: 'download-control', action: 'retry' }, suno);
+    await send({ type: 'download-run' }, suno);
+    expect(handled.slice(2).map(([message]) => (message as { type: string }).type)).toEqual([
+      'download-start',
+      'download-control',
+      'download-run',
+    ]);
+    for (const bad of [
+      { type: 'download-start', files: [], unlocks: 0 },
+      { type: 'download-start', files: [{ ...file, format: 'flac' }], unlocks: 0 },
+      { type: 'download-start', files: [{ ...file, streamAddress: 3 }], unlocks: 0 },
+      { type: 'download-start', files: [file], unlocks: -1 },
+      { type: 'download-control', action: 'delete' },
+    ]) {
+      expect(await send(bad, suno), JSON.stringify(bad)).toHaveProperty('refused');
+    }
+    expect(await send({ type: 'download-run' }, CONTENT_SCRIPT)).toHaveProperty('refused');
+    expect(handled).toHaveLength(5);
   });
 
   it('takes the step log from a content script, answers the report, and clears it on disconnect', async () => {
@@ -188,6 +218,10 @@ describe('the service worker router', () => {
         { id: 'verify-source-advanced', state: 'not_checked' },
         { id: 'verify-source-simple', state: 'not_checked' },
         { id: 'refresh-library', state: 'not_checked' },
+        { id: 'open-clip-menu', state: 'not_checked' },
+        { id: 'choose-download', state: 'not_checked' },
+        { id: 'choose-download-format', state: 'not_checked' },
+        { id: 'close-download-dialog', state: 'not_checked' },
       ],
       steps: [{ workflow: 'recognise-suno', step: 'navigation', ms: 3 }],
     });

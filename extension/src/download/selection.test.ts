@@ -53,6 +53,7 @@ describe('a clip as the Download view reads it from the library feed', () => {
       hidden: false,
       unavailable: null,
       hasStream: true,
+      streamAddress: ((raw.media_urls as { url: string }[])[0] ?? { url: '' }).url,
     });
     expect(durationText(read?.durationSeconds ?? null)).toBe('4:04');
     expect(createdText(read?.createdAt ?? null)).toBe('2026-10-01');
@@ -175,6 +176,7 @@ describe('the file plan', () => {
         artist: 'The Artist',
         format: 'wav',
         unlocked: true,
+        streamAddress: null,
       },
       {
         sunoId: 'a',
@@ -183,6 +185,7 @@ describe('the file plan', () => {
         artist: 'The Artist',
         format: 'mp3',
         unlocked: true,
+        streamAddress: null,
       },
       {
         sunoId: 'b',
@@ -191,6 +194,7 @@ describe('the file plan', () => {
         artist: null,
         format: 'wav',
         unlocked: false,
+        streamAddress: null,
       },
       {
         sunoId: 'b',
@@ -199,6 +203,7 @@ describe('the file plan', () => {
         artist: null,
         format: 'mp3',
         unlocked: false,
+        streamAddress: null,
       },
     ]);
   });

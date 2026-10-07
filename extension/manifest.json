@@ -21,7 +21,7 @@
     "service_worker": "src/background/service-worker.ts",
     "type": "module"
   },
-  "permissions": ["storage", "scripting", "tabs", "alarms"],
+  "permissions": ["storage", "scripting", "tabs", "alarms", "downloads"],
   "optional_host_permissions": ["https://suno.com/*", "https://*/*", "http://*/*"],
   "options_ui": {
     "page": "src/options/options.html",

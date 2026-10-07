@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  DOWNLOAD_EXEMPTION,
   EXTENSION_ROOT,
   NETWORK_EXEMPTIONS,
   scanExtension,
@@ -57,7 +58,65 @@ describe('the static scan of the invariant 4 guard (TypeScript compiler API)', (
       'request 22: requestSubmit',
       'request 23: submit',
       'download 27: downloads',
+      'download 27: download',
     ]);
+  });
+
+  it('lets the download queue alone hand an adapter-checked audio address to the downloads interface (#216)', () => {
+    expect([DOWNLOAD_EXEMPTION.file, DOWNLOAD_EXEMPTION.members]).toEqual([
+      'src/download/downloader.ts',
+      ['download', 'cancel', 'search', 'onChanged'],
+    ]);
+    const file = DOWNLOAD_EXEMPTION.file;
+    const real = readFileSync(join(EXTENSION_ROOT, file), 'utf8');
+    const call =
+      "api.download({ url: address, filename: path, conflictAction: 'uniquify', saveAs: false })";
+    expect(real).toContain(call);
+    expect(findingsIn(scanWith({}), file)).toEqual([]);
+
+    // Complements: a header (a credential the extension could add), an address the adapter did not
+    // check, another member of the interface, and the same code in any other file.
+    const lineOf = (text: string, code: string) =>
+      String(text.split('\n').findIndex((line) => line.includes(code)) + 1);
+    const withHeader = real.replace(
+      call,
+      "api.download({ url: address, filename: path, headers: [{ name: 'Cookie', value: 'x' }] })",
+    );
+    expect(findingsIn(scanWith({ [file]: withHeader }), file)).toEqual([
+      `download ${lineOf(withHeader, 'headers:')}: download`,
+    ]);
+    const unchecked = real.replace(call, 'api.download({ url: String(address), filename: path })');
+    expect(findingsIn(scanWith({ [file]: unchecked }), file)).toEqual([
+      `download ${lineOf(unchecked, 'String(address)')}: download`,
+    ]);
+    const removes = real.replace(
+      'cancel: (id) => api.cancel(id),',
+      'cancel: (id) => api.removeFile(id),',
+    );
+    expect(findingsIn(scanWith({ [file]: removes }), file)).toEqual([
+      `download ${lineOf(removes, 'api.removeFile')}: removeFile`,
+    ]);
+    const elsewhere = scanWith({ 'src/background/rogue.ts': real });
+    expect(findingsIn(elsewhere, 'src/background/rogue.ts').length).toBeGreaterThanOrEqual(5);
+  });
+
+  it('lets the download workflows alone use the download primitive (#216)', () => {
+    const code = [
+      "import type { Found, Page } from '../adapter/primitives.ts';",
+      'export function press(page: Page, found: Found): void {',
+      '  page.downloadDialogClick(found);',
+      '}',
+      '',
+    ].join('\n');
+    expect(findingsIn(scanWith({ 'src/content/rogue.ts': code }), 'src/content/rogue.ts')).toEqual([
+      'workflow 3: downloadDialogClick',
+    ]);
+    expect(
+      findingsIn(
+        scanWith({ 'src/adapter/workflows/download.ts': code.replace("'../adapter/", "'../") }),
+        'src/adapter/workflows/download.ts',
+      ),
+    ).toEqual([]);
   });
 
   it('finds page access outside the primitives in page-context code', () => {

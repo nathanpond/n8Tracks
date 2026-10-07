@@ -212,6 +212,12 @@ export function startSunoContent(options: SunoContentOptions): SunoContent {
     formatsChanged: (formats) => {
       void download?.rememberFormats(formats);
     },
+    start: (unlocks) => {
+      void download?.start(unlocks);
+    },
+    control: (action) => {
+      void download?.control(action);
+    },
   });
 
   const panel = new Panel(page, {

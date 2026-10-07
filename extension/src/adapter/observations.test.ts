@@ -102,3 +102,34 @@ describe("the plan's download allowance (#215)", () => {
     expect(await feed.next('billing', () => true, 10, controller.signal)).toBeNull();
   });
 });
+
+describe("a prepared download's answers (#216)", () => {
+  function prepared(
+    body: unknown,
+    download: ObservedMessage['download'] = { clipId: 'c', format: 'wav' },
+  ) {
+    const message: ObservedMessage = {
+      source: OBSERVER_SOURCE,
+      type: 'observed',
+      kind: 'download-clip',
+      request: { cursor: null, page: null, filters: null, feedId: null },
+      body,
+      download,
+    };
+    return message;
+  }
+
+  it('queues only a ready answer with its address; the polls before it are dropped', async () => {
+    const { feed, message } = page();
+    message(prepared({ status: 'processing' }));
+    message(prepared({ status: 'ready' }));
+    message(prepared({ status: 'ready', download_url: 'https://x' }, null));
+    message(prepared({ status: 'ready', download_url: 'https://a' }));
+
+    const found = await feed.next('download-clip', () => true, 1000, new AbortController().signal);
+    expect(found?.body).toEqual({ status: 'ready', download_url: 'https://a' });
+    expect(
+      await feed.next('download-clip', () => true, 1000, new AbortController().signal),
+    ).toBeNull();
+  });
+});

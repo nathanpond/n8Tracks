@@ -1,12 +1,15 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest';
 import type { DownloadClip } from '../download/clips.ts';
+import type { DownloadFile, DownloadRun } from '../download/downloader.ts';
 import { expectNoAxeViolations } from '../testing/a11y.ts';
 import {
   DownloadView,
   DRAWN_ROWS,
+  fileStatusText,
   inN8TracksText,
   ROW_HEIGHT,
+  startRefusal,
   VIRTUALISE_ABOVE,
   type DownloadViewOptions,
 } from './DownloadView.ts';
@@ -155,5 +158,146 @@ describe('the Download view', () => {
     expect(inN8TracksText({ kind: 'found', rows }, 'c')).toBe('Not in n8Tracks');
     expect(inN8TracksText({ kind: 'unavailable', message: 'x' }, 'a')).toBe('In n8Tracks: unknown');
     expect(inN8TracksText({ kind: 'failed', message: 'x' }, 'a')).toBe('In n8Tracks: unknown');
+  });
+});
+
+function file(key: string, change: Partial<DownloadFile> = {}): DownloadFile {
+  const [sunoId = key, format = 'wav'] = key.split(':');
+  return {
+    key,
+    sunoId,
+    title: 'Song',
+    displayName: 'maker',
+    artist: null,
+    format: format as DownloadFile['format'],
+    unlocked: true,
+    streamAddress: null,
+    fileName: `Song (suno-${sunoId}).${format === 'm4a-stream' ? 'm4a' : format}`,
+    state: 'queued',
+    paused: null,
+    downloadId: null,
+    received: 0,
+    total: null,
+    reason: null,
+    savedName: null,
+    renamed: false,
+    renameToM4a: false,
+    fetchedAgain: false,
+    ...change,
+  };
+}
+
+function run(files: DownloadFile[]): DownloadRun {
+  return { files, tabId: 7, unlocks: { confirmed: [], spent: [] } };
+}
+
+describe('Start and the run (#216)', () => {
+  it('starts once the unlocks are confirmed, with the count the user confirmed', () => {
+    const started: number[] = [];
+    const { view } = render({
+      start: (unlocks) => {
+        started.push(unlocks);
+      },
+    });
+    view.addClips([clip(1), clip(2)]);
+    view.setRead({ kind: 'read', count: 2 });
+    view.selection.toggle('clip-1', true);
+    view.setFormats(['wav']);
+    view.setUsage({ used: 0, limit: 60, additional: 0 });
+    const start = [...view.element.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Start download',
+    );
+    const confirm = view.element.querySelector<HTMLInputElement>('.dl-confirm input');
+
+    expect(start?.disabled).toBe(true);
+    expect(startRefusal(view.selection, { used: 0, limit: 60, additional: 0 })).toBe(
+      'Confirm the 1 Suno download unlock this run uses.',
+    );
+    if (confirm !== null) {
+      confirm.checked = true;
+      confirm.dispatchEvent(new Event('change'));
+    }
+    expect(start?.disabled).toBe(false);
+    start?.click();
+
+    expect(started).toEqual([1]);
+    // A run's confirmation is not kept for the next one.
+    expect(confirm?.checked).toBe(false);
+  });
+
+  it('shows each file and the whole run, with Cancel, Retry failed, and Resume, and is accessible', async () => {
+    const asked: string[] = [];
+    const { view } = render({
+      control: (action) => {
+        asked.push(action);
+      },
+    });
+    const section = () => view.element.querySelector<HTMLElement>('.dl-run');
+    const lines = () =>
+      [...view.element.querySelectorAll('.dl-file')].map((line) => line.textContent);
+    const button = (name: string) =>
+      [...view.element.querySelectorAll('button')].find(
+        (candidate) => (candidate.getAttribute('aria-label') ?? candidate.textContent) === name,
+      );
+    expect(section()?.hidden).toBe(true);
+
+    view.setRun(
+      run([
+        file('a:wav', { state: 'saved', savedName: 'Song (suno-a).wav' }),
+        file('b:mp3', { state: 'downloading', received: 250, total: 1000 }),
+        file('c:wav', {
+          state: 'failed',
+          reason: 'Suno did not prepare the file within 30 seconds',
+        }),
+        file('d:m4a', {
+          state: 'saved',
+          savedName: 'd_lyrics.mp4',
+          renamed: true,
+          renameToM4a: true,
+        }),
+        file('e:m4a-stream', { state: 'queued' }),
+      ]),
+    );
+
+    expect(section()?.hidden).toBe(false);
+    expect(view.element.querySelector('.dl-run-status')?.textContent).toBe(
+      '2 of 5 files saved, 1 failed, 2 to go.',
+    );
+    expect(lines()).toEqual([
+      'Song (suno-a).wav (WAV): Saved',
+      'Song (suno-b).mp3 (MP3): Downloading, 25%',
+      'Song (suno-c).wav (WAV): Failed: Suno did not prepare the file within 30 seconds.',
+      'Song (suno-d).m4a (M4A): Saved, saved under a different name: d_lyrics.mp4; rename it from .mp4 to .m4a before n8Tracks scans it.',
+      'Song (suno-e).m4a (M4A (streaming quality)): Waiting',
+    ]);
+    expect(button('Resume downloads')?.hidden).toBe(true);
+    await expectNoAxeViolations(document);
+
+    button('Cancel downloads')?.click();
+    button('Retry failed downloads')?.click();
+    expect(asked).toEqual(['cancel', 'retry']);
+
+    view.setRun(
+      run([
+        file('c:wav', {
+          paused: "The Suno tab was closed. Open Suno's Library in a tab and press Resume.",
+        }),
+      ]),
+    );
+    expect(lines()).toEqual([
+      "Song (suno-c).wav (WAV): Waiting for Resume. The Suno tab was closed. Open Suno's Library in a tab and press Resume.",
+    ]);
+    expect(view.element.querySelector('.dl-run-status')?.textContent).toBe(
+      '0 of 1 file saved, 1 waiting for Resume.',
+    );
+    expect(button('Retry failed downloads')?.disabled).toBe(true);
+    button('Resume downloads')?.click();
+    expect(asked).toEqual(['cancel', 'retry', 'resume']);
+  });
+
+  it('says what the browser did with the chosen name', () => {
+    expect(
+      fileStatusText(file('a:wav', { state: 'saved', savedName: 'Song (suno-a) (1).wav' })),
+    ).toBe('Song (suno-a).wav (WAV): Saved, saved as Song (suno-a) (1).wav.');
   });
 });

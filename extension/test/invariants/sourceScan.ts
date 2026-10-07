@@ -13,7 +13,11 @@ import ts from 'typescript';
  *   `fetch` only to save the page's original and to replace it, and it may call the saved original
  *   only with the wrapper's own arguments passed on whole (`original(...args)`), so an address
  *   computed at run time is found too (#330);
- * - **downloads**: any use of `chrome.downloads` (the download story, #216, adds the one exemption);
+ * - **downloads**: any use of `chrome.downloads` or a member of it, except in the download queue
+ *   ({@link DOWNLOAD_EXEMPTION}, #216), which may use only `download`, `cancel`, `search`, and
+ *   `onChanged`, and may call `download` only with one object of `url`, `filename`,
+ *   `conflictAction`, and `saveAs`, its `url` an `AudioAddress` (an address the adapter checked is
+ *   on a listed Suno audio host): no header, method, or body, so no credential the extension made;
  * - **injection**: by name, anywhere in shipped code, any route that runs code or styles in a page
  *   from outside it or drives the page from the browser: `executeScript`, `insertCSS`, `removeCSS`,
  *   `userScripts`, and `debugger` (#331). The one exemption ({@link INJECTION_EXEMPTIONS}) is the
@@ -24,8 +28,9 @@ import ts from 'typescript';
  *   `content/suno*`), querying, walking, clicking, dispatching events, or building events,
  *   except in `adapter/primitives.ts`, so the click check in the primitives cannot be bypassed;
  * - **workflows**: a `Workflow` declared outside `adapter/workflows/` (the runtime guard runs
- *   those), `WorkflowRegistry.register` called outside the registry, and the create-workspace
- *   primitive used outside the workspace workflow.
+ *   those), `WorkflowRegistry.register` called outside the registry, the create-workspace
+ *   primitive used outside the workspace workflow, and the download primitive used outside the
+ *   download workflows (#216).
  *
  * Not covered: a request made through a browser interface not named here, a name assembled at
  * run time (`window[a + b]`, `chrome.scripting[a + b]`), code loaded at run time, and reading
@@ -186,6 +191,24 @@ export const PRIMITIVES_FILE = 'src/adapter/primitives.ts';
 export const WORKFLOWS_FOLDER = 'src/adapter/workflows/';
 /** The only caller of the create-workspace primitive (#145). */
 export const WORKSPACE_WORKFLOW_FILE = 'src/adapter/workflows/workspace.ts';
+/** The only caller of the download primitive (#216). */
+export const DOWNLOAD_WORKFLOW_FILE = 'src/adapter/workflows/download.ts';
+
+/**
+ * The one file allowed the browser's downloads interface (#216): the download queue hands it an
+ * address the adapter checked is on a listed Suno audio host, with nothing added.
+ */
+export const DOWNLOAD_EXEMPTION = {
+  file: 'src/download/downloader.ts',
+  /** The members of `chrome.downloads` it may use. */
+  members: ['download', 'cancel', 'search', 'onChanged'],
+  /** What it may pass to `download`: no `headers`, `method`, or `body`. */
+  options: ['url', 'filename', 'conflictAction', 'saveAs'],
+  /** The type `url` must have, declared in the adapter's addresses. */
+  addressType: 'AudioAddress',
+  addressFile: 'src/adapter/addresses.ts',
+  why: 'the download queue hands an adapter-listed Suno audio address to the downloads interface',
+} as const;
 
 /** The page-context folders, whatever imports them. */
 const PAGE_CONTEXT_FOLDERS = ['src/adapter/', 'src/page/', 'src/panel/'];
@@ -278,6 +301,70 @@ function isPlatform(program: ts.Program, symbol: ts.Symbol | undefined): boolean
         toPosix(file.fileName).includes('/node_modules/')
       );
     })
+  );
+}
+
+/** Whether `symbol` is a member of the browser's `chrome.downloads` namespace. */
+function inDownloadsNamespace(symbol: ts.Symbol | undefined): boolean {
+  return (symbol?.declarations ?? []).some((declaration) => {
+    const block = declaration.parent as ts.Node | undefined;
+    // A function or a `var` declared in `namespace downloads { ... }`.
+    const holder =
+      block !== undefined && ts.isVariableDeclarationList(block) ? block.parent.parent : block;
+    return (
+      holder !== undefined &&
+      ts.isModuleBlock(holder) &&
+      ts.isModuleDeclaration(holder.parent) &&
+      holder.parent.name.text === 'downloads'
+    );
+  });
+}
+
+/**
+ * Whether a call of the downloads interface's `download` passes one object of the allowed options
+ * only, its `url` typed as the adapter's checked audio address.
+ */
+function downloadsOnlyAListedAddress(
+  checker: ts.TypeChecker,
+  node: ts.Identifier,
+  root: string,
+): boolean {
+  const access = node.parent;
+  const call = access.parent;
+  if (
+    !ts.isPropertyAccessExpression(access) ||
+    access.name !== node ||
+    !ts.isCallExpression(call) ||
+    call.expression !== access ||
+    call.arguments.length !== 1
+  ) {
+    return false;
+  }
+  const [options] = call.arguments;
+  if (options === undefined || !ts.isObjectLiteralExpression(options)) {
+    return false;
+  }
+  const allowed: readonly string[] = DOWNLOAD_EXEMPTION.options;
+  let url: ts.Expression | null = null;
+  for (const property of options.properties) {
+    if (!ts.isPropertyAssignment(property) || !ts.isIdentifier(property.name)) {
+      return false;
+    }
+    if (!allowed.includes(property.name.text)) {
+      return false;
+    }
+    if (property.name.text === 'url') {
+      url = property.initializer;
+    }
+  }
+  if (url === null) {
+    return false;
+  }
+  const type = checker.getTypeAtLocation(url);
+  const alias = type.aliasSymbol;
+  return (
+    alias?.name === DOWNLOAD_EXEMPTION.addressType &&
+    declaredIn(alias, root, DOWNLOAD_EXEMPTION.addressFile)
   );
 }
 
@@ -635,8 +722,20 @@ export function scanExtension(options: ScanOptions): ScanReport {
         ) {
           add(node, 'request');
         }
-        if (reference.name === 'downloads') {
+        const downloadsAllowed = name === DOWNLOAD_EXEMPTION.file;
+        if (reference.name === 'downloads' && !downloadsAllowed) {
           add(node, 'download');
+        }
+        if (inDownloadsNamespace(reference.symbol)) {
+          const members: readonly string[] = DOWNLOAD_EXEMPTION.members;
+          if (
+            !downloadsAllowed ||
+            !members.includes(reference.name) ||
+            (reference.name === 'download' &&
+              (!ts.isIdentifier(node) || !downloadsOnlyAListedAddress(checker, node, root)))
+          ) {
+            add(node, 'download');
+          }
         }
         if (
           inPageContext &&
@@ -662,6 +761,14 @@ export function scanExtension(options: ScanOptions): ScanReport {
           declaredIn(reference.symbol, root, PRIMITIVES_FILE) &&
           name !== PRIMITIVES_FILE &&
           name !== WORKSPACE_WORKFLOW_FILE
+        ) {
+          add(node, 'workflow');
+        }
+        if (
+          reference.name === 'downloadDialogClick' &&
+          declaredIn(reference.symbol, root, PRIMITIVES_FILE) &&
+          name !== PRIMITIVES_FILE &&
+          name !== DOWNLOAD_WORKFLOW_FILE
         ) {
           add(node, 'workflow');
         }

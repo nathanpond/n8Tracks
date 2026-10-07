@@ -1,6 +1,8 @@
 import { ADAPTER_VERSION } from '../adapter/version.ts';
 import { ADAPTER_WORKFLOWS } from '../adapter/workflows/index.ts';
 import { browserVersion, Diagnostics, type UserAgentData } from '../diagnostics/report.ts';
+import { browserDownloads, Downloader } from '../download/downloader.ts';
+import type { DownloadPrepareReply, DownloadTabMessage } from '../messages.ts';
 import { displayVersion } from '../version-label.ts';
 import { CompletionWatch } from './completion.ts';
 import { Connection } from './connection.ts';
@@ -53,10 +55,39 @@ const generate = new GenerateCoordinator({
   completion,
 });
 
+// The download queue (#216): files prepared in the run's Suno tab (or the stream's address from the
+// clip data), handed to the browser's downloads interface, and kept in local storage.
+const browserDownloadsApi = browserDownloads();
+const QUEUE_ALIVE_KEY = 'downloadQueueAlive';
+const tell = (tabId: number, message: DownloadTabMessage) =>
+  chrome.tabs.sendMessage(tabId, message);
+const downloader = new Downloader({
+  downloads: browserDownloadsApi,
+  prepare: async (tabId, job) =>
+    (await tell(tabId, { type: 'download-prepare', job })) as DownloadPrepareReply,
+  storage: chrome.storage.local,
+  // Session storage is empty after a browser restart: the queue then waits for Resume.
+  browserStarted: async () => {
+    const alive = (await chrome.storage.session.get([QUEUE_ALIVE_KEY]))[QUEUE_ALIVE_KEY] === true;
+    await chrome.storage.session.set({ [QUEUE_ALIVE_KEY]: true });
+    return !alive;
+  },
+  onChange: (run) => {
+    if (run.tabId !== null) {
+      void tell(run.tabId, { type: 'download-progress', run }).catch(() => undefined);
+    }
+  },
+});
+browserDownloadsApi.onChanged((id) => {
+  downloader.downloadChanged(id);
+});
+void downloader.restore().catch(() => undefined);
+
 // The Download view (#215): a Load library kept across its page load, the formats last chosen,
 // and n8Tracks' clip lookup. It waits while a sync or Generate on Suno runs.
 const download = new DownloadCoordinator({
   connection,
+  downloader,
   browser: { session: chrome.storage.session, local: chrome.storage.local },
   busy: async () => {
     if (await sync.running()) {
@@ -102,6 +133,8 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   // A generation's Suno tab that is closed stops its request, saying so, and ends its watch.
   void generate.tabRemoved(tabId).catch(() => undefined);
   void completion.tabRemoved(tabId).catch(() => undefined);
+  // The download run's Suno tab: files that need the page wait for Resume; the stream goes on.
+  void downloader.tabClosed(tabId).catch(() => undefined);
 });
 chrome.alarms.onAlarm.addListener((alarm) => {
   void completion.alarm(alarm.name).catch(() => undefined);

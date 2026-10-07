@@ -202,6 +202,34 @@ describe('the page observer, replaying the TS-003 fixtures', () => {
     expect(await answer.json()).toEqual(whole);
   });
 
+  it("forwards a prepared download's status and address only, with the clip and format its address names (#216)", async () => {
+    const whole = {
+      ...(sunoFixture('download-clip.wav.ready.response') as Record<string, unknown>),
+      token: 'T',
+      credits: 3,
+    };
+    const { view, posted } = suno(() => jsonResponse(200, whole));
+
+    const answer = await view.fetch(
+      `${API}/api/download/clip/00000000-0000-4000-8000-000000000139?format=wav`,
+    );
+    await settled();
+
+    expect(posted.map(({ message }) => message.kind)).toEqual(['download-clip']);
+    expect(posted[0]?.message.body).toStrictEqual({
+      status: 'ready',
+      download_url:
+        'https://suno-data-uploads.s3.amazonaws.com/studio/uploads/00000000-0000-4000-8000-000000000139.wav',
+    });
+    expect(posted[0]?.message.download).toEqual({
+      clipId: '00000000-0000-4000-8000-000000000139',
+      format: 'wav',
+    });
+    expect(JSON.stringify(posted)).not.toContain('"T"');
+    expect(JSON.stringify(posted)).not.toContain('credits');
+    expect(await answer.json()).toEqual(whole);
+  });
+
   it('never forwards a token, session token, or tier, in a request or a response, at any depth', async () => {
     const response = sunoFixture('feed-v3.library-page-2.response') as {
       clips: Record<string, unknown>[];

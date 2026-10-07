@@ -11,8 +11,9 @@
 /**
  * The lists the library reader reads (TS-003, "How lists are paged"), the answer to creating a
  * workspace, which gives Generate on Suno the new workspace's ID (#145), the answer to the
- * user's own Create click (#149), which the extension never makes itself (invariant 4), and the
- * plan's download allowance the page reads when a Download dialog opens (TS-004, #215).
+ * user's own Create click (#149), which the extension never makes itself (invariant 4), the
+ * plan's download allowance the page reads when a Download dialog opens (TS-004, #215), and the
+ * page's own answer when a format is prepared for download in that dialog (TS-004, #216).
  */
 export type ObservedKind =
   | 'library-feed'
@@ -22,13 +23,14 @@ export type ObservedKind =
   | 'playlist-feed'
   | 'workspace-created'
   | 'create'
-  | 'billing';
+  | 'billing'
+  | 'download-clip';
 
-/** One Suno list response: method and path on Suno's API host. */
+/** One Suno list response: method and path on Suno's API host, exact or by pattern. */
 interface ListPattern {
   kind: ObservedKind;
   method: 'GET' | 'POST';
-  path: string;
+  path: string | RegExp;
 }
 
 /**
@@ -47,7 +49,24 @@ export const OBSERVED_LISTS: readonly ListPattern[] = [
   // TS-004: requested by the page when a clip's Download dialog opens. Only `download_usage` is
   // forwarded ({@link forwardedBody}); the plan's other details and its offers stay in the page.
   { kind: 'billing', method: 'GET', path: '/api/billing/info' },
+  // TS-004: polled by the page after a format's button is pressed in the Download dialog, until it
+  // answers `status: "ready"` with a signed `download_url`. Only those two members are forwarded.
+  { kind: 'download-clip', method: 'GET', path: /^\/api\/download\/clip\/[^/]+$/ },
 ];
+
+/** The members of a prepared download's answer forwarded (TS-004): its status and its address. */
+export const DOWNLOAD_CLIP_FIELDS = ['status', 'download_url'] as const;
+
+/** The formats Suno prepares in the Download dialog (TS-004), as its `format` query names them. */
+export const PREPARED_FORMATS = ['wav', 'mp3', 'm4a'] as const;
+
+export type PreparedFormat = (typeof PREPARED_FORMATS)[number];
+
+/** Which clip and format a prepared download's answer is for, read from its address. */
+export interface DownloadRequestOf {
+  clipId: string;
+  format: PreparedFormat;
+}
 
 /** The members of `download_usage` forwarded: the counts of the plan's downloads, and nothing else. */
 export const DOWNLOAD_USAGE_FIELDS = [
@@ -61,6 +80,16 @@ export const DOWNLOAD_USAGE_FIELDS = [
  * the billing answer, of which only the download counts go ({@link DOWNLOAD_USAGE_FIELDS}).
  */
 export function forwardedBody(kind: ObservedKind, body: unknown): unknown {
+  if (kind === 'download-clip') {
+    return isRecord(body)
+      ? Object.fromEntries(
+          DOWNLOAD_CLIP_FIELDS.filter((field) => typeof body[field] === 'string').map((field) => [
+            field,
+            body[field],
+          ]),
+        )
+      : {};
+  }
   if (kind !== 'billing') {
     return withoutSecrets(body);
   }
@@ -147,6 +176,8 @@ export interface ObservedMessage {
    * null when the request body could not be read. Absent for every other kind.
    */
   submitted?: Record<string, unknown> | null;
+  /** For a prepared download (#216): the clip and format its address named, or null. */
+  download?: DownloadRequestOf | null;
 }
 
 /** The content script's message asking the observer for what it saw before the script started. */
@@ -185,7 +216,36 @@ export function observedKindOf(address: string, method: string, base: string): O
   }
   const path = url.pathname.replace(/\/+$/, '');
   const verb = method.toUpperCase();
-  return OBSERVED_LISTS.find((list) => list.path === path && list.method === verb)?.kind ?? null;
+  return (
+    OBSERVED_LISTS.find(
+      (list) =>
+        list.method === verb &&
+        (typeof list.path === 'string' ? list.path === path : list.path.test(path)),
+    )?.kind ?? null
+  );
+}
+
+/**
+ * The clip and format a prepared download's address names (`/api/download/clip/<id>?format=wav`),
+ * or null when it names no format Suno prepares.
+ */
+export function downloadRequestOf(address: string, base: string): DownloadRequestOf | null {
+  let url: URL;
+  try {
+    url = new URL(address, base);
+  } catch {
+    return null;
+  }
+  const segment = url.pathname.replace(/\/+$/, '').split('/').at(-1) ?? '';
+  const format = url.searchParams.get('format');
+  let clipId: string;
+  try {
+    clipId = decodeURIComponent(segment);
+  } catch {
+    return null;
+  }
+  const known = PREPARED_FORMATS.find((candidate) => candidate === format);
+  return clipId === '' || known === undefined ? null : { clipId, format: known };
 }
 
 /** A copy of `value` with every member named in {@link NEVER_FORWARDED} left out, at any depth. */

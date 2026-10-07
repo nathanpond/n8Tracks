@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { fakeBrowser, jsonResponse } from '../testing/fakeBrowser.ts';
 import type { Fetch } from './apiClient.ts';
 import { Connection } from './connection.ts';
+import type { Downloader } from '../download/downloader.ts';
+import type { PlanEntry } from '../download/selection.ts';
 import {
   CLIP_LOOKUP_PATH,
   DOWNLOAD_FORMATS_KEY,
@@ -50,7 +52,13 @@ function row(sunoId: string) {
 
 /** A coordinator over a fake browser and a fake n8Tracks, paired unless `paired` is false. */
 async function setup(
-  options: { scopes?: string[]; paired?: boolean; busy?: string | null; answer?: Fetch } = {},
+  options: {
+    scopes?: string[];
+    paired?: boolean;
+    busy?: string | null;
+    answer?: Fetch;
+    downloader?: Downloader;
+  } = {},
 ) {
   const fake = fakeBrowser(['https://suno.com/*', 'https://n8tracks.example.com/*']);
   const calls: Call[] = [];
@@ -93,6 +101,7 @@ async function setup(
     connection,
     browser: { session, local },
     busy: () => Promise.resolve(options.busy ?? null),
+    ...(options.downloader === undefined ? {} : { downloader: options.downloader }),
     now: () => now,
   });
   return {
@@ -255,6 +264,97 @@ describe('the clip lookup', () => {
       ok: false,
       unavailable: false,
       message: 'Cannot reach n8Tracks. Check that it is running.',
+    });
+  });
+});
+
+describe('the download run (#216)', () => {
+  const file: PlanEntry = {
+    sunoId: 'a',
+    title: 'A',
+    displayName: 'maker',
+    artist: null,
+    format: 'm4a-stream',
+    unlocked: true,
+    streamAddress: 'https://d2lwuy8qc234o3.cloudfront.net/1/clip/a.m4a',
+  };
+
+  function queue(refusal: string | null = null) {
+    const done: unknown[][] = [];
+    const downloader = {
+      add: (...args: unknown[]) => {
+        done.push(['add', ...args]);
+        return Promise.resolve(refusal);
+      },
+      cancel: () => {
+        done.push(['cancel']);
+        return Promise.resolve();
+      },
+      retry: () => {
+        done.push(['retry']);
+        return Promise.resolve();
+      },
+      resume: (tabId: number) => {
+        done.push(['resume', tabId]);
+        return Promise.resolve();
+      },
+      current: () =>
+        Promise.resolve({ files: [], tabId: TAB, unlocks: { confirmed: [], spent: [] } }),
+    } as unknown as Downloader;
+    return { downloader, done };
+  }
+
+  it('hands Start, Cancel, Retry, and Resume to the queue, with the tab', async () => {
+    const { downloader, done } = queue();
+    const { coordinator, calls } = await setup({ downloader });
+
+    expect(
+      await coordinator.handle({ type: 'download-start', files: [file], unlocks: 0 }, TAB),
+    ).toEqual({
+      ok: true,
+    });
+    for (const action of ['cancel', 'retry', 'resume'] as const) {
+      expect(await coordinator.handle({ type: 'download-control', action }, TAB)).toEqual({
+        ok: true,
+      });
+    }
+    expect(await coordinator.handle({ type: 'download-run' }, TAB)).toEqual({
+      run: { files: [], tabId: TAB, unlocks: { confirmed: [], spent: [] } },
+    });
+    expect(done).toEqual([['add', TAB, [file], 0], ['cancel'], ['retry'], ['resume', TAB]]);
+    // Downloading calls nothing in n8Tracks: it imports, syncs, and changes nothing there.
+    expect(calls).toEqual([]);
+  });
+
+  it('refuses Start while a sync or Generate on Suno runs, and says why the queue refused', async () => {
+    const busy = queue();
+    const refused = await setup({
+      downloader: busy.downloader,
+      busy: 'A sync to n8Tracks is running.',
+    });
+    expect(
+      await refused.coordinator.handle({ type: 'download-start', files: [file], unlocks: 0 }, TAB),
+    ).toEqual({
+      ok: false,
+      message: 'A sync to n8Tracks is running.',
+    });
+    expect(busy.done).toEqual([]);
+
+    const mismatch = await setup({ downloader: queue('The count does not match.').downloader });
+    expect(
+      await mismatch.coordinator.handle({ type: 'download-start', files: [file], unlocks: 1 }, TAB),
+    ).toEqual({
+      ok: false,
+      message: 'The count does not match.',
+    });
+
+    const none = await setup();
+    expect(await none.coordinator.handle({ type: 'download-run' }, TAB)).toEqual({ run: null });
+    expect(
+      await none.coordinator.handle({ type: 'download-control', action: 'cancel' }, TAB),
+    ).toEqual({
+      ok: false,
+      message: 'Downloading is not available in this extension.',
     });
   });
 });

@@ -6,6 +6,7 @@ import {
   type DownloadFormat,
   type ListFilter,
 } from '../download/selection.ts';
+import type { DownloadFile, DownloadRun } from '../download/downloader.ts';
 import type { ClipLookupRow } from '../messages.ts';
 
 /**
@@ -15,7 +16,9 @@ import type { ClipLookupRow } from '../messages.ts';
  * in Suno and import nothing into n8Tracks. Plain DOM in the panel's shadow root, every control
  * labelled and reachable by keyboard; the list draws only the rows in view above 200 clips.
  *
- * Downloading itself is the next story's (#216): until then Start is shown disabled.
+ * Start (#216) hands the plan to the service worker's download queue, once the user has confirmed
+ * the Suno unlocks the run uses; the run's files then show here with their progress, and can be
+ * cancelled, retried, or resumed.
  */
 
 /** Where reading the library has got to. */
@@ -46,6 +49,10 @@ export interface DownloadViewOptions {
   retryLookup(): void;
   /** The formats chosen changed, to be remembered. */
   formatsChanged(formats: DownloadFormat[]): void;
+  /** Start: the plan goes to the download queue (#216), with the unlocks the user confirmed. */
+  start?(unlocks: number): void;
+  /** Cancel the downloads, Retry failed downloads, or Resume (#216). */
+  control?(action: 'cancel' | 'retry' | 'resume'): void;
   /** Stands in for the selection, for tests. */
   selection?: DownloadSelection;
 }
@@ -57,13 +64,20 @@ export const ROW_HEIGHT = 52;
 /** How many rows are drawn around those in view when the list is virtualised. */
 export const DRAWN_ROWS = 40;
 
-/** What the panel says while Start cannot work yet, because downloading arrives with #216. */
-export const START_NOT_YET =
-  'Downloading arrives in a later version of the extension: for now this view plans the files only.';
-
 /** Where the files go, said before every start. */
 export const DESTINATION =
-  "The files go to the browser's download folder. Copy them into the n8Tracks media folder yourself.";
+  "The files go to the n8Tracks folder in the browser's download folder. Copy them into the n8Tracks media folder yourself.";
+
+/**
+ * The browser setting the extension cannot read, said before every start: with it on, the browser
+ * asks where to save every file.
+ */
+export const ASK_WHERE_TO_SAVE =
+  'Turn off the browser\'s "Ask where to save each file before downloading" setting, or it asks for every file.';
+
+/** What a run that unlocks clips also says (TS-004): Suno's page saves its own copy too. */
+export const PAGE_COPY =
+  "Suno's page may also save its own copy of a WAV, MP3, or M4A, named by its title only: that copy has no Suno ID, so n8Tracks cannot match it.";
 
 /** What is said about the view's effect, beside Load library. */
 export const NOTHING_CHANGES =
@@ -78,10 +92,14 @@ function formatLabel(format: DownloadFormat): string {
 }
 
 /**
- * Why Start cannot be pressed, in plain words, or null when it could. While downloading is not in
- * the extension (#216), a run that could start says {@link START_NOT_YET}.
+ * Why Start cannot be pressed, in plain words, or null when it can. A run that unlocks clips
+ * starts only once the user has confirmed that count (`confirmed`, the count ticked).
  */
-export function startRefusal(selection: DownloadSelection, usage: DownloadUsage | null): string {
+export function startRefusal(
+  selection: DownloadSelection,
+  usage: DownloadUsage | null,
+  confirmed: number | null = null,
+): string | null {
   if (selection.selected().length === 0) {
     return 'Select at least one clip.';
   }
@@ -95,7 +113,10 @@ export function startRefusal(selection: DownloadSelection, usage: DownloadUsage 
   if (usage !== null && needed > remainingUnlocks(usage)) {
     return `This run needs ${plural(needed, 'Suno download unlock', 'Suno download unlocks')}, but only ${String(remainingUnlocks(usage))} remain this period.`;
   }
-  return START_NOT_YET;
+  if (needed > 0 && confirmed !== needed) {
+    return `Confirm the ${plural(needed, 'Suno download unlock', 'Suno download unlocks')} this run uses.`;
+  }
+  return null;
 }
 
 /** The summary's lines, before Start. */
@@ -132,8 +153,76 @@ export function summaryLines(
         : `${uses} ${String(remainingUnlocks(usage))} remain this period.`,
     );
   }
-  lines.push(DESTINATION);
+  lines.push(DESTINATION, ASK_WHERE_TO_SAVE);
+  if (formats.some((format) => format !== 'm4a-stream')) {
+    lines.push(PAGE_COPY);
+  }
   return lines;
+}
+
+const STATE_WORDS: Readonly<Record<DownloadFile['state'], string>> = {
+  queued: 'Waiting',
+  preparing: 'Being prepared on Suno',
+  downloading: 'Downloading',
+  saved: 'Saved',
+  failed: 'Failed',
+  cancelled: 'Cancelled',
+};
+
+/** How the panel says one file of the run is getting on. */
+export function fileStatusText(file: DownloadFile): string {
+  const format = formatLabel(file.format);
+  const head = `${file.fileName} (${format})`;
+  if (file.state === 'queued' && file.paused !== null) {
+    return `${head}: Waiting for Resume. ${file.paused}`;
+  }
+  switch (file.state) {
+    case 'downloading':
+      return file.total !== null && file.total > 0
+        ? `${head}: Downloading, ${String(Math.floor((file.received / file.total) * 100))}%`
+        : `${head}: Downloading`;
+    case 'failed':
+      return `${head}: Failed: ${file.reason ?? 'no reason given'}.`;
+    case 'saved': {
+      const notes: string[] = [];
+      if (file.renamed && file.savedName !== null) {
+        notes.push(`saved under a different name: ${file.savedName}`);
+      } else if (file.savedName !== null && file.savedName !== file.fileName) {
+        notes.push(`saved as ${file.savedName}`);
+      }
+      if (file.renameToM4a) {
+        notes.push('rename it from .mp4 to .m4a before n8Tracks scans it');
+      }
+      return notes.length === 0 ? `${head}: Saved` : `${head}: Saved, ${notes.join('; ')}.`;
+    }
+    default:
+      return `${head}: ${STATE_WORDS[file.state]}`;
+  }
+}
+
+/** The run's overall line: how many files are done, failed, and still to come. */
+export function runSummaryText(run: DownloadRun): string {
+  const count = (state: DownloadFile['state']) =>
+    run.files.filter((file) => file.state === state).length;
+  const total = run.files.length;
+  const saved = count('saved');
+  const failed = count('failed');
+  const cancelled = count('cancelled');
+  const waiting = run.files.filter(
+    (file) => file.state === 'queued' && file.paused !== null,
+  ).length;
+  const going = total - saved - failed - cancelled;
+  const parts = [`${String(saved)} of ${plural(total, 'file', 'files')} saved`];
+  if (failed > 0) {
+    parts.push(`${String(failed)} failed`);
+  }
+  if (cancelled > 0) {
+    parts.push(`${String(cancelled)} cancelled`);
+  }
+  if (going > 0) {
+    parts.push(waiting > 0 ? `${String(waiting)} waiting for Resume` : `${String(going)} to go`);
+  }
+  return `${parts.join(', ')}.`;
 }
 
 /** How a row says whether n8Tracks has the clip. */
@@ -167,6 +256,9 @@ export class DownloadView {
   private read: ReadState = { kind: 'idle' };
   private lookup: LookupState = { kind: 'none' };
   private usage: DownloadUsage | null = null;
+  /** The unlock count the user ticked, or null. */
+  private confirmed: number | null = null;
+  private run: DownloadRun | null = null;
   private filter: ListFilter = { workspaceId: null, text: '' };
   /** The first row drawn when the list is virtualised. */
   private firstDrawn = 0;
@@ -191,6 +283,16 @@ export class DownloadView {
   private readonly summary: HTMLElement;
   private readonly startButton: HTMLButtonElement;
   private readonly startWhy: HTMLElement;
+  private readonly confirmLabel: HTMLLabelElement;
+  private readonly confirmBox: HTMLInputElement;
+  private readonly confirmText: HTMLElement;
+  private readonly runSection: HTMLElement;
+  private readonly runStatus: HTMLElement;
+  private readonly runMessage: HTMLElement;
+  private readonly runList: HTMLElement;
+  private readonly cancelRunButton: HTMLButtonElement;
+  private readonly retryRunButton: HTMLButtonElement;
+  private readonly resumeRunButton: HTMLButtonElement;
   private rows = new Map<string, { box: HTMLInputElement; known: HTMLElement }>();
 
   constructor(page: Document, options: DownloadViewOptions) {
@@ -308,8 +410,52 @@ export class DownloadView {
     // Summary and Start.
     this.summary = this.make('div', { class: 'dl-summary', 'aria-live': 'polite' });
     this.startWhy = this.make('p', { class: 'detail dl-start-why', id: 'n8-dl-start-why' });
-    this.startButton = this.button('Start download', () => undefined, true);
+    this.confirmLabel = this.make('label', { class: 'dl-confirm' });
+    this.confirmBox = this.make('input', { type: 'checkbox' });
+    this.confirmText = this.make('span');
+    this.confirmBox.addEventListener('change', () => {
+      this.confirmed = this.confirmBox.checked ? this.selection.unlocksNeeded() : null;
+      this.renderSummary();
+    });
+    this.confirmLabel.append(this.confirmBox, ' ', this.confirmText);
+    this.startButton = this.button(
+      'Start download',
+      () => {
+        if (startRefusal(this.selection, this.usage, this.confirmed) === null) {
+          this.options.start?.(this.selection.unlocksNeeded());
+          this.confirmed = null;
+          this.renderSummary();
+        }
+      },
+      true,
+    );
     this.startButton.setAttribute('aria-describedby', 'n8-dl-start-why');
+
+    // The run: its files and how they are getting on (#216).
+    this.runSection = this.make('section', { class: 'dl-run', 'aria-labelledby': 'n8-dl-run' });
+    this.runStatus = this.make('p', { class: 'dl-run-status', role: 'status' });
+    this.runMessage = this.make('p', { class: 'warning dl-run-message', role: 'alert' });
+    this.runMessage.hidden = true;
+    this.runList = this.make('ul', { 'aria-label': 'Files' });
+    this.cancelRunButton = this.button('Cancel downloads', () => {
+      this.options.control?.('cancel');
+    });
+    this.retryRunButton = this.button('Retry failed downloads', () => {
+      this.options.control?.('retry');
+    });
+    this.resumeRunButton = this.button('Resume', () => {
+      this.options.control?.('resume');
+    });
+    this.resumeRunButton.setAttribute('aria-label', 'Resume downloads');
+    const runActions = this.make('p', { class: 'dl-run-actions' });
+    runActions.append(this.cancelRunButton, ' ', this.retryRunButton, ' ', this.resumeRunButton);
+    this.runSection.append(
+      this.make('h4', { id: 'n8-dl-run' }, 'Downloads'),
+      this.runStatus,
+      runActions,
+      this.runList,
+    );
+    this.runSection.hidden = true;
 
     this.element.append(
       heading,
@@ -325,8 +471,11 @@ export class DownloadView {
       this.listBox,
       formats,
       this.summary,
+      this.confirmLabel,
       this.startButton,
       this.startWhy,
+      this.runMessage,
+      this.runSection,
     );
     this.renderAll();
   }
@@ -375,6 +524,22 @@ export class DownloadView {
   setUsage(usage: DownloadUsage | null): void {
     this.usage = usage;
     this.renderSummary();
+  }
+
+  /** The download queue as the service worker reports it (#216); null when there is none. */
+  setRun(run: DownloadRun | null): void {
+    this.run = run;
+    this.renderRun();
+  }
+
+  /** Why Start or a run control did not work, or null to clear it. */
+  setRunMessage(message: string | null): void {
+    this.runMessage.textContent = message ?? '';
+    this.runMessage.hidden = message === null;
+  }
+
+  get runState(): DownloadRun | null {
+    return this.run;
   }
 
   /** The formats remembered from last time; none the first time. */
@@ -604,8 +769,43 @@ export class DownloadView {
   private renderSummary(): void {
     const lines = summaryLines(this.selection, this.usage, this.filter);
     this.summary.replaceChildren(...lines.map((line) => this.make('p', {}, line)));
-    // Start stays disabled until downloading is in the extension (#216); the reason says why.
-    this.startButton.disabled = true;
-    this.startWhy.textContent = startRefusal(this.selection, this.usage);
+    const needed = this.selection.unlocksNeeded();
+    if (this.confirmed !== null && this.confirmed !== needed) {
+      // The count changed since it was ticked: it is asked again.
+      this.confirmed = null;
+    }
+    this.confirmLabel.hidden = needed === 0;
+    this.confirmBox.checked = this.confirmed !== null;
+    this.confirmText.textContent = `Use ${plural(needed, 'Suno download unlock', 'Suno download unlocks')} for this run`;
+    const refusal = startRefusal(this.selection, this.usage, this.confirmed);
+    this.startButton.disabled = refusal !== null;
+    this.startWhy.textContent = refusal ?? '';
+  }
+
+  private renderRun(): void {
+    const run = this.run;
+    this.runSection.hidden = run === null || run.files.length === 0;
+    if (run === null) {
+      this.runList.replaceChildren();
+      return;
+    }
+    this.runStatus.textContent = runSummaryText(run);
+    this.runList.replaceChildren(
+      ...run.files.map((file) =>
+        this.make(
+          'li',
+          { class: `dl-file dl-file-${file.state}`, 'data-key': file.key },
+          fileStatusText(file),
+        ),
+      ),
+    );
+    const active = run.files.some((file) =>
+      ['queued', 'preparing', 'downloading'].includes(file.state),
+    );
+    this.cancelRunButton.disabled = !active;
+    this.retryRunButton.disabled = !run.files.some((file) => file.state === 'failed');
+    this.resumeRunButton.hidden = !run.files.some(
+      (file) => file.state === 'queued' && file.paused !== null,
+    );
   }
 }
