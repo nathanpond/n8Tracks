@@ -7,7 +7,7 @@ namespace n8Tracks.Infrastructure.Persistence;
 
 /// <summary>
 /// The last scan's summary (#203) in the <c>settings</c> row <see cref="Key"/>, as
-/// <c>{"jobId", "trigger", "outcome", "startedUtc", "finishedUtc", "counts": {...}, "error"}</c>, the counts including <c>associated</c> and <c>unmatched</c> since #206.
+/// <c>{"jobId", "trigger", "outcome", "startedUtc", "finishedUtc", "counts": {...}, "error"}</c>, the counts including <c>associated</c> and <c>unmatched</c> since #206, and <c>missing</c> and <c>restored</c> since #207.
 /// Kept outside the jobs table, which is pruned after 30 days. A summary written before #205 has no
 /// <c>counts.skippedLinks</c>, and reads as none skipped.
 /// </summary>
@@ -48,7 +48,7 @@ internal sealed class MediaScanSummaryStore(N8TracksDbContext context) : IMediaS
             value.Outcome == "succeeded" ? MediaScanOutcome.Succeeded : MediaScanOutcome.Failed,
             UtcText.Parse(value.StartedUtc),
             UtcText.Parse(value.FinishedUtc),
-            new MediaScanCounts(counts.Seen, counts.New, counts.Changed, counts.Unchanged, counts.Skipped, counts.Unreadable, counts.UnreadableDirectories, counts.Associated, counts.Unmatched)
+            new MediaScanCounts(counts.Seen, counts.New, counts.Changed, counts.Unchanged, counts.Skipped, counts.Unreadable, counts.UnreadableDirectories, counts.Associated, counts.Unmatched, counts.Missing, counts.Restored)
             {
                 SkippedLinks = counts.SkippedLinks is { } links ? new MediaSkippedLinks(links.Escaping, links.Cycle, links.Dangling) : MediaSkippedLinks.None,
             },
@@ -77,7 +77,9 @@ internal sealed class MediaScanSummaryStore(N8TracksDbContext context) : IMediaS
                     counts.UnreadableDirectories,
                     new SkippedLinksValue(counts.SkippedLinks.Escaping, counts.SkippedLinks.Cycle, counts.SkippedLinks.Dangling),
                     counts.Associated,
-                    counts.Unmatched),
+                    counts.Unmatched,
+                    counts.Missing,
+                    counts.Restored),
                 summary.Error),
             Json);
 
@@ -89,8 +91,9 @@ internal sealed class MediaScanSummaryStore(N8TracksDbContext context) : IMediaS
     private sealed record SummaryValue(Guid JobId, string? Trigger, string? Outcome, string? StartedUtc, string? FinishedUtc, CountsValue? Counts, string? Error);
 
     /// <summary>
-    /// The counts; <c>associated</c> and <c>unmatched</c> (#206) read as 0, and <c>skippedLinks</c>
-    /// (#205) as null, from a summary written before them.
+    /// The counts; <c>associated</c> and <c>unmatched</c> (#206) and <c>missing</c> and
+    /// <c>restored</c> (#207) read as 0, and <c>skippedLinks</c> (#205) as null, from a summary written
+    /// before them.
     /// </summary>
     private sealed record CountsValue(
         int Seen,
@@ -102,7 +105,9 @@ internal sealed class MediaScanSummaryStore(N8TracksDbContext context) : IMediaS
         int UnreadableDirectories,
         SkippedLinksValue? SkippedLinks = null,
         int Associated = 0,
-        int Unmatched = 0);
+        int Unmatched = 0,
+        int Missing = 0,
+        int Restored = 0);
 
     private sealed record SkippedLinksValue(int Escaping, int Cycle, int Dangling);
 }

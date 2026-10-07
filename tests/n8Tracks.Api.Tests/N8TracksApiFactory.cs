@@ -119,6 +119,10 @@ public class N8TracksApiFactory : WebApplicationFactory<Program>
             // jobs unless the test switches it on (MediaScheduleApi) or calls its look itself.
             services.RemoveAll<MediaScanSchedulerOptions>();
             services.AddSingleton(new MediaScanSchedulerOptions { Enabled = false });
+
+            // And the media availability monitor (#207): tests call its look themselves.
+            services.RemoveAll<MediaAvailabilityMonitorOptions>();
+            services.AddSingleton(new MediaAvailabilityMonitorOptions { Enabled = false });
             TestServices?.Invoke(services);
         });
     }

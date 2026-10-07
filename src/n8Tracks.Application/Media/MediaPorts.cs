@@ -119,8 +119,8 @@ public interface IAudioMetadataReader
 /// <summary>What a header gave.</summary>
 public sealed record AudioMetadata(TimeSpan? Duration, string? Title, string? Artist);
 
-/// <summary>A cataloged file as a scan compares it.</summary>
-public sealed record KnownAudioFile(Guid Id, long SizeBytes, DateTimeOffset ModifiedUtc);
+/// <summary>A cataloged file as a scan compares it, with its stored status.</summary>
+public sealed record KnownAudioFile(Guid Id, long SizeBytes, DateTimeOffset ModifiedUtc, AudioFileStatus Status);
 
 /// <summary>What a scan writes about one file it found.</summary>
 public abstract record AudioFileWrite
@@ -132,15 +132,22 @@ public abstract record AudioFileWrite
     /// <summary>A file found for the first time.</summary>
     public sealed record Added(AudioFile File) : AudioFileWrite;
 
-    /// <summary>A cataloged file whose size or modified time changed: its metadata as read again.</summary>
-    public sealed record Changed(Guid Id, long SizeBytes, DateTimeOffset ModifiedUtc, bool MetadataReadable, AudioMetadata? Metadata) : AudioFileWrite;
+    /// <summary>
+    /// A cataloged file whose size or modified time changed: its metadata as read again. When
+    /// <paramref name="Available"/> its status becomes Available (#207); otherwise (it could not be
+    /// opened) its status is kept.
+    /// </summary>
+    public sealed record Changed(Guid Id, long SizeBytes, DateTimeOffset ModifiedUtc, bool MetadataReadable, AudioMetadata? Metadata, bool Available) : AudioFileWrite;
 
-    /// <summary>A cataloged file found as it was: only its last-seen time moves.</summary>
-    public sealed record Seen(Guid Id) : AudioFileWrite;
+    /// <summary>
+    /// A cataloged file found as it was: its last-seen time moves, and when <paramref name="Available"/>
+    /// its status becomes Available (#207); otherwise (it could not be looked at) its status is kept.
+    /// </summary>
+    public sealed record Seen(Guid Id, bool Available) : AudioFileWrite;
 }
 
-/// <summary>How the audio file list is narrowed.</summary>
-/// <param name="Status">Only files of this status, or null for all.</param>
+/// <summary>How the audio file list is narrowed, as the store reads it.</summary>
+/// <param name="Status">Only files of this stored status, or null for all.</param>
 /// <param name="Association">Which files by association.</param>
 /// <param name="MetadataReadable">Only files whose header was (or was not) readable, or null for all.</param>
 /// <param name="Offset">How many to skip, in path order.</param>
@@ -164,6 +171,20 @@ public sealed record SunoIdOwner(string SunoId, Guid GenerationId, Guid SongId);
 /// <summary>One page of the audio file list.</summary>
 public sealed record AudioFilePage(IReadOnlyList<AudioFile> Items, int Total);
 
+/// <summary>How the audio file list is narrowed, as a reader asks: by reported status (#207).</summary>
+/// <param name="Status">Only files that report this status, or null for all.</param>
+/// <param name="Association">Which files by association.</param>
+/// <param name="MetadataReadable">Only files whose header was (or was not) readable, or null for all.</param>
+/// <param name="Offset">How many to skip, in path order.</param>
+/// <param name="Limit">How many to return at most.</param>
+public sealed record AudioFileListRequest(AudioFileReportedStatus? Status, AudioFileAssociation Association, bool? MetadataReadable, int Offset, int Limit);
+
+/// <summary>An audio file and the status it reports now (#207).</summary>
+public sealed record ReportedAudioFile(AudioFile File, AudioFileReportedStatus Status);
+
+/// <summary>One page of the audio file list, as reported.</summary>
+public sealed record ReportedAudioFilePage(IReadOnlyList<ReportedAudioFile> Items, int Total);
+
 /// <summary>Where audio file records are kept.</summary>
 public interface IAudioFileStore
 {
@@ -172,6 +193,12 @@ public interface IAudioFileStore
 
     /// <summary>Writes one batch, in one transaction; <paramref name="seenUtc"/> is every written file's last-seen time.</summary>
     Task WriteAsync(IReadOnlyCollection<AudioFileWrite> batch, DateTimeOffset seenUtc, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// In one transaction, marks Missing each of <paramref name="ids"/> that is still Available (#207).
+    /// Neither the association nor the revision changes. Returns how many changed.
+    /// </summary>
+    Task<int> MarkMissingAsync(IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken);
 
     /// <summary>One page of files, in path order (ordinal), and how many match in all.</summary>
     Task<AudioFilePage> ListAsync(AudioFileQuery query, CancellationToken cancellationToken);

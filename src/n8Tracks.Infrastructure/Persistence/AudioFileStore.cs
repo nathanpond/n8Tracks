@@ -5,18 +5,28 @@ using n8Tracks.Domain.Songs;
 
 namespace n8Tracks.Infrastructure.Persistence;
 
-/// <summary>The audio file catalog in <c>audio_files</c> (#203), with each file's association (#206).</summary>
+/// <summary>
+/// The audio file catalog in <c>audio_files</c> (#203), with each file's association (#206) and stored
+/// status (#207). A status change never raises the revision, which covers the association only.
+/// </summary>
 internal sealed class AudioFileStore(N8TracksDbContext context) : IAudioFileStore
 {
+    /// <summary>How many IDs one statement marks Missing, well inside SQLite's limit on parameters.</summary>
+    private const int MissingChunk = 500;
+
     public async Task<IReadOnlyDictionary<string, KnownAudioFile>> KnownAsync(CancellationToken cancellationToken)
     {
         var rows = await context.AudioFiles.AsNoTracking()
-            .Select(static row => new { row.Id, row.Path, row.SizeBytes, row.ModifiedUtc })
+            .Select(static row => new { row.Id, row.Path, row.SizeBytes, row.ModifiedUtc, row.Status })
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
         return rows.ToDictionary(
             static row => row.Path,
-            static row => new KnownAudioFile(row.Id, row.SizeBytes, UtcText.Parse(row.ModifiedUtc)),
+            static row => new KnownAudioFile(
+                row.Id,
+                row.SizeBytes,
+                UtcText.Parse(row.ModifiedUtc),
+                AudioFormats.ParseStatus(row.Status) ?? throw new InvalidOperationException($"The audio file {row.Id} has an unknown status.")),
             StringComparer.Ordinal);
     }
 
@@ -26,7 +36,9 @@ internal sealed class AudioFileStore(N8TracksDbContext context) : IAudioFileStor
 
         var seen = UtcText.From(seenUtc);
         var changed = batch.OfType<AudioFileWrite.Changed>().ToDictionary(static write => write.Id);
-        var touched = batch.OfType<AudioFileWrite.Seen>().Select(static write => write.Id).ToList();
+        var touched = batch.OfType<AudioFileWrite.Seen>().Where(static write => !write.Available).Select(static write => write.Id).ToList();
+        var found = batch.OfType<AudioFileWrite.Seen>().Where(static write => write.Available).Select(static write => write.Id).ToList();
+        var available = AudioFormats.StatusText(AudioFileStatus.Available);
 
         var transaction = await context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
@@ -50,6 +62,10 @@ internal sealed class AudioFileStore(N8TracksDbContext context) : IAudioFileStor
                     row.DurationMs = DurationMs(write.Metadata?.Duration);
                     row.Title = AudioFormats.Tag(write.Metadata?.Title);
                     row.Artist = AudioFormats.Tag(write.Metadata?.Artist);
+                    if (write.Available)
+                    {
+                        row.Status = available;
+                    }
                 }
             }
 
@@ -63,10 +79,42 @@ internal sealed class AudioFileStore(N8TracksDbContext context) : IAudioFileStor
                     .ConfigureAwait(false);
             }
 
+            if (found.Count > 0)
+            {
+                await context.AudioFiles
+                    .Where(row => found.Contains(row.Id))
+                    .ExecuteUpdateAsync(setters => setters.SetProperty(static row => row.LastSeenUtc, seen).SetProperty(static row => row.Status, available), cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
 
         context.ChangeTracker.Clear();
+    }
+
+    public async Task<int> MarkMissingAsync(IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+
+        var available = AudioFormats.StatusText(AudioFileStatus.Available);
+        var missing = AudioFormats.StatusText(AudioFileStatus.Missing);
+        var marked = 0;
+        var transaction = await context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        await using (transaction.ConfigureAwait(false))
+        {
+            foreach (var chunk in ids.Distinct().Chunk(MissingChunk))
+            {
+                marked += await context.AudioFiles
+                    .Where(row => chunk.Contains(row.Id) && row.Status == available)
+                    .ExecuteUpdateAsync(setters => setters.SetProperty(static row => row.Status, missing), cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        return marked;
     }
 
     public async Task<AudioFilePage> ListAsync(AudioFileQuery query, CancellationToken cancellationToken)

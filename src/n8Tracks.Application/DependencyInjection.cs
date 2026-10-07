@@ -102,6 +102,9 @@ public static class DependencyInjection
         services.AddJobHandler<MediaScanJobHandler>(MediaScanService.JobType);
         services.AddSingleton<MediaScanStartup>();
         services.AddScoped<MediaScanScheduleService>();
+        services.AddScoped<MediaAvailability>();
+        services.AddSingleton<MediaProbeStreak>();
+        services.AddScoped<MediaRecoveryService>();
         services.AddScoped<RetentionService>();
         services.AddScoped<DeletedItemsService>();
         services.AddDailyTask<RetentionPruneTask>();

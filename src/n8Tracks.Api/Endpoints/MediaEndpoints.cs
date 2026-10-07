@@ -12,11 +12,13 @@ namespace n8Tracks.Api.Endpoints;
 /// The local media library (#203): starting a scan of the media folder, and reading the audio files
 /// it cataloged. Starting a scan is session-only (invariant 7 keeps file-system actions away from
 /// tokens and MCP); reading needs <c>catalog.read</c>. Every input names an audio file by ID, never
-/// by a path, and no answer carries an absolute path. Every answer is <c>no-store</c>.
+/// by a path, and no answer carries an absolute path. Every answer is <c>no-store</c>. The media
+/// status (#207) says whether the media folder can be read, and since when; #208 adds the rest.
 /// </summary>
 internal static class MediaEndpoints
 {
     public const string ScansPath = ApiProblem.VersionPrefix + "/media/scans";
+    public const string StatusPath = ApiProblem.VersionPrefix + "/media/status";
     public const string AudioFilesPath = ApiProblem.VersionPrefix + "/audio-files";
     public const string AudioFilePath = AudioFilesPath + "/{id:guid}";
 
@@ -33,9 +35,17 @@ internal static class MediaEndpoints
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden);
 
+        endpoints.MapGet(StatusPath, StatusAsync)
+            .WithName("GetMediaStatus")
+            .WithSummary("Whether the media folder can be read (available or unavailable), and since when.")
+            .RequireScope(CredentialScopes.CatalogRead)
+            .Produces<MediaStatusResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
         endpoints.MapGet(AudioFilesPath, ListAsync)
             .WithName("ListAudioFiles")
-            .WithSummary("Cataloged audio files in path order, up to 200 at a time, filtered by status, association, and whether the header was readable.")
+            .WithSummary("Cataloged audio files in path order, up to 200 at a time, filtered by reported status, association, and whether the header was readable.")
             .RequireScope(CredentialScopes.CatalogRead)
             .Produces<AudioFileListResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
@@ -69,6 +79,18 @@ internal static class MediaEndpoints
             : TypedResults.Accepted($"{context.Request.PathBase}{JobsEndpoints.JobsPath}/{start.JobId}", response);
     }
 
+    /// <summary>200 with the mount state; <c>since</c> is null before anything was ever recorded.</summary>
+    private static async Task<Ok<MediaStatusResponse>> StatusAsync(
+        MediaAvailability availability,
+        HttpContext context,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        var mount = await availability.CurrentAsync(cancellationToken);
+        return TypedResults.Ok(new MediaStatusResponse(new MediaMountResponse(MediaAvailabilityTexts.Text(mount.State), mount.SinceUtc?.UtcDateTime)));
+    }
+
     /// <summary>200 with a page; 422 <c>validation_failed</c> for a malformed or unknown query value, or a limit over 200.</summary>
     private static async Task<Results<Ok<AudioFileListResponse>, ProblemHttpResult>> ListAsync(
         AudioFileService files,
@@ -80,13 +102,13 @@ internal static class MediaEndpoints
         var query = context.Request.Query;
         var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
 
-        AudioFileStatus? status = null;
+        AudioFileReportedStatus? status = null;
         if (Single(query, "status", errors) is { } statusText)
         {
-            status = AudioFormats.ParseStatus(statusText);
+            status = MediaAvailabilityTexts.ParseReported(statusText);
             if (status is null)
             {
-                errors["status"] = ["Use available or missing."];
+                errors["status"] = ["Use available, missing, or unavailable."];
             }
         }
 
@@ -132,7 +154,7 @@ internal static class MediaEndpoints
             return ApiProblem.ValidationFailed(context, errors);
         }
 
-        var page = await files.ListAsync(new AudioFileQuery(status, association, readable, offset, limit), cancellationToken);
+        var page = await files.ListAsync(new AudioFileListRequest(status, association, readable, offset, limit), cancellationToken);
         return TypedResults.Ok(new AudioFileListResponse(page.Items.Select(AudioFileResponse.From).ToArray(), page.Total, offset, limit));
     }
 
@@ -186,6 +208,12 @@ internal static class MediaEndpoints
     }
 }
 
+/// <summary>The media status (#207): the mount state. #208 adds the counts and the scans.</summary>
+internal sealed record MediaStatusResponse(MediaMountResponse Mount);
+
+/// <summary>Whether the media folder can be read (<c>available</c> or <c>unavailable</c>), and since when (null before anything was recorded).</summary>
+internal sealed record MediaMountResponse(string State, DateTime? Since);
+
 /// <summary>The scan's job, and whether it was already queued or running.</summary>
 internal sealed record MediaScanStartResponse(Guid JobId, bool AlreadyInProgress);
 
@@ -198,7 +226,8 @@ internal sealed record AudioFileListResponse(AudioFileResponse[] Items, int Tota
 /// <c>associationOrigin</c> (<c>suno-id</c> or <c>user</c>) while associated, and
 /// <c>unmatchedReason</c> (a code: <c>generation_deleted</c>, <c>multiple_suno_ids</c>,
 /// <c>unassociated_by_user</c>, <c>song_deleted</c>) or null. <c>revision</c> rises with every change
-/// of the association.
+/// of the association. <c>status</c> is the reported status (#207): <c>unavailable</c> while the media
+/// folder cannot be read, otherwise <c>storedStatus</c> (<c>available</c> or <c>missing</c>).
 /// </summary>
 internal sealed record AudioFileResponse(
     Guid Id,
@@ -210,6 +239,7 @@ internal sealed record AudioFileResponse(
     DateTime FirstSeenAt,
     DateTime LastSeenAt,
     string Status,
+    string StoredStatus,
     bool MetadataReadable,
     decimal? DurationSeconds,
     string? Title,
@@ -220,10 +250,11 @@ internal sealed record AudioFileResponse(
     string? UnmatchedReason,
     int Revision)
 {
-    public static AudioFileResponse From(AudioFile file)
+    public static AudioFileResponse From(ReportedAudioFile reported)
     {
-        ArgumentNullException.ThrowIfNull(file);
+        ArgumentNullException.ThrowIfNull(reported);
 
+        var file = reported.File;
         return new(
             file.Id,
             file.Path,
@@ -233,6 +264,7 @@ internal sealed record AudioFileResponse(
             file.ModifiedUtc.UtcDateTime,
             file.FirstSeenUtc.UtcDateTime,
             file.LastSeenUtc.UtcDateTime,
+            MediaAvailabilityTexts.Text(reported.Status),
             AudioFormats.StatusText(file.Status),
             file.MetadataReadable,
             file.Duration is { } duration ? Math.Round((decimal)duration.TotalMilliseconds / 1000m, 3) : null,

@@ -18,7 +18,7 @@ namespace n8Tracks.Architecture.Tests;
 /// <item>Inside <c>MediaMountReader</c>, nothing creates, writes, appends, moves, copies, renames,
 /// replaces, or deletes, or sets an attribute, a mode, or a time; every <c>FileStream</c> names
 /// <c>FileAccess.Read</c>, and no other access, mode, or sharing appears.</item>
-/// <item><c>IMediaMount</c> has a fixed set of users; health and setup only probe through it.</item>
+/// <item><c>IMediaMount</c> has a fixed set of users; the media probe and setup only probe through it.</item>
 /// <item>The tag library is given a stream, never a path, and never saves.</item>
 /// </list>
 /// Not covered: a path to the mount that reaches code without naming the setting (the options
@@ -75,15 +75,16 @@ public partial class MediaMountAccessTests
 
     /// <summary>
     /// The files that name <c>IMediaMount</c>: its declaration, its one implementation, its
-    /// registration, the scan (which names only paths it listed), and health and setup (which only probe).
-    /// #217 adds the audio content service, which names only stored paths.
+    /// registration, the scan (which names only paths it listed), the one media probe (#207, which
+    /// health, the availability monitor, and the scheduler ask instead of the mount), and setup (which
+    /// only probes). #217 adds the audio content service, which names only stored paths.
     /// </summary>
     private static readonly string[] MediaMountUsers =
     [
         "src/n8Tracks.Application/Media/MediaPorts.cs",
         "src/n8Tracks.Application/Media/MediaScanService.cs",
         "src/n8Tracks.Infrastructure/DependencyInjection.cs",
-        "src/n8Tracks.Infrastructure/Health/HealthService.cs",
+        "src/n8Tracks.Infrastructure/Media/MediaFolderProbe.cs",
         "src/n8Tracks.Infrastructure/Media/MediaMountReader.cs",
         "src/n8Tracks.Infrastructure/Setup/SetupChecks.cs",
     ];
@@ -91,7 +92,7 @@ public partial class MediaMountAccessTests
     /// <summary>The users of <c>IMediaMount</c> that may only call <c>Probe</c>.</summary>
     private static readonly string[] ProbeOnlyUsers =
     [
-        "src/n8Tracks.Infrastructure/Health/HealthService.cs",
+        "src/n8Tracks.Infrastructure/Media/MediaFolderProbe.cs",
         "src/n8Tracks.Infrastructure/Setup/SetupChecks.cs",
     ];
 

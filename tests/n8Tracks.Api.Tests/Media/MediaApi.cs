@@ -150,6 +150,9 @@ internal sealed class CountingMount(IMediaMount inner) : IMediaMount
     /// <summary>Looking at a path in this set throws.</summary>
     public ConcurrentDictionary<string, bool> FailingStats { get; } = new(StringComparer.Ordinal);
 
+    /// <summary>Looking at a path in this set answers null, as the real reader does for a file it cannot look at.</summary>
+    public ConcurrentDictionary<string, bool> NullStats { get; } = new(StringComparer.Ordinal);
+
     public int Opens => opened.Values.Sum();
 
     public int OpensOf(string relativePath) => opened.GetValueOrDefault(relativePath);
@@ -165,7 +168,9 @@ internal sealed class CountingMount(IMediaMount inner) : IMediaMount
     }
 
     public MediaFileStat? Stat(string relativePath) =>
-        FailingStats.ContainsKey(relativePath) ? throw new InvalidOperationException("Stat failed on purpose.") : inner.Stat(relativePath);
+        FailingStats.ContainsKey(relativePath) ? throw new InvalidOperationException("Stat failed on purpose.")
+        : NullStats.ContainsKey(relativePath) ? null
+        : inner.Stat(relativePath);
 
     public Stream OpenRead(string relativePath)
     {

@@ -1,4 +1,5 @@
 using System.Globalization;
+using Microsoft.Extensions.DependencyInjection;
 using n8Tracks.Application.Backups;
 using n8Tracks.Application.Health;
 using n8Tracks.Application.Maintenance;
@@ -10,7 +11,10 @@ namespace n8Tracks.Infrastructure.Health;
 
 /// <summary>
 /// Checks the components one after another on every call. One per host: it remembers each component's
-/// last status so that a failure is logged when it starts and when it ends, not on every poll.
+/// last status so that a failure is logged when it starts and when it ends, not on every poll. The
+/// media component is the live answer of the one media probe (#207), and what it saw is recorded as
+/// the mount state at once (the state the audio files report from), which queues a recovery scan when
+/// the folder has just come back; that is skipped while the database cannot be used.
 /// </summary>
 internal sealed class HealthService : IHealthService
 {
@@ -31,20 +35,21 @@ internal sealed class HealthService : IHealthService
     private static readonly HealthComponent DatabaseInMaintenance = new(HealthStatus.Degraded, HealthDetails.DatabaseInMaintenance);
 
     private readonly IDatabaseConnectionFactory connections;
-    private readonly IMediaMount media;
+    private readonly IMediaFolderProbe media;
+    private readonly IServiceScopeFactory scopes;
     private readonly IMigrationStateProvider migrationState;
     private readonly IBackupStorage backups;
     private readonly MaintenanceMode maintenance;
     private readonly Serilog.ILogger log;
     private readonly DeadlineCheck databaseCheck;
-    private readonly DeadlineCheck mediaCheck;
 
     private readonly Lock gate = new();
     private readonly Dictionary<string, HealthStatus> previous = new(StringComparer.Ordinal);
 
     public HealthService(
         IDatabaseConnectionFactory connections,
-        IMediaMount media,
+        IMediaFolderProbe media,
+        IServiceScopeFactory scopes,
         IMigrationStateProvider migrationState,
         IBackupStorage backups,
         MaintenanceMode maintenance,
@@ -54,12 +59,12 @@ internal sealed class HealthService : IHealthService
 
         this.connections = connections;
         this.media = media;
+        this.scopes = scopes;
         this.migrationState = migrationState;
         this.backups = backups;
         this.maintenance = maintenance;
         this.log = log.ForContext<HealthService>();
         databaseCheck = new DeadlineCheck(QueryDatabase, CheckTimeout);
-        mediaCheck = new DeadlineCheck(ReadMedia, CheckTimeout);
     }
 
     public async Task<HealthReport> GetReportAsync(CancellationToken cancellationToken)
@@ -81,9 +86,13 @@ internal sealed class HealthService : IHealthService
 
         var migrations = Migrations(await LastSafetyBackupAtAsync(cancellationToken).ConfigureAwait(false));
 
-        var mediaOutcome = await mediaCheck.RunAsync(cancellationToken).ConfigureAwait(false);
-        var media = mediaOutcome.Result == CheckResult.Passed ? MediaAvailable : MediaUnavailable;
-        Observe(MediaComponent, media.Status, mediaOutcome);
+        var probe = await this.media.ProbeAsync(cancellationToken).ConfigureAwait(false);
+        var media = probe.Readable ? MediaAvailable : MediaUnavailable;
+        Observe(MediaComponent, media.Status, OutcomeOf(probe));
+        if (database == DatabaseReachable)
+        {
+            await RecordMediaAsync(probe.Readable, cancellationToken).ConfigureAwait(false);
+        }
 
         return new HealthReport(ApplicationRunning, database, migrations, media, inMaintenance ? MaintenanceRestoring : MaintenanceOff);
     }
@@ -102,11 +111,28 @@ internal sealed class HealthService : IHealthService
         return Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture) == 1;
     }
 
-    private bool ReadMedia(CancellationToken deadline)
+    private static CheckOutcome OutcomeOf(MediaProbeOutcome probe) => probe.Result switch
     {
-        deadline.ThrowIfCancellationRequested();
+        MediaProbeResult.Readable => new CheckOutcome(CheckResult.Passed),
+        MediaProbeResult.TimedOut => new CheckOutcome(CheckResult.TimedOut, probe.Exception),
+        _ => new CheckOutcome(CheckResult.Failed, probe.Exception),
+    };
 
-        return media.Probe();
+    /// <summary>Records what the media probe saw as the mount state. A failure to record does not change the report.</summary>
+    private async Task RecordMediaAsync(bool readable, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var scope = scopes.CreateAsyncScope();
+            await using (scope.ConfigureAwait(false))
+            {
+                _ = await scope.ServiceProvider.GetRequiredService<MediaRecoveryService>().ObserveAsync(readable, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            log.Warning(exception, "The media folder's state could not be recorded");
+        }
     }
 
     /// <summary>

@@ -498,7 +498,7 @@ public sealed class MediaScanTests
     [InlineData("limit=ten", "limit")]
     [InlineData("offset=-1", "offset")]
     [InlineData("offset=1.5", "offset")]
-    [InlineData("status=unavailable", "status")]
+    [InlineData("status=gone", "status")]
     [InlineData("status=AVAILABLE", "status")]
     [InlineData("association=some", "association")]
     [InlineData("metadataReadable=yes", "metadataReadable")]

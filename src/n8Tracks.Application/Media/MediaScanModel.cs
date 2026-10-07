@@ -49,6 +49,9 @@ public static class MediaScanTriggers
 /// <see cref="Associated"/> is files the Suno ID matcher associated at the end of the scan, and
 /// <see cref="Unmatched"/> every record left without an association (Missing and user-unassociated
 /// ones included); both are 0 for a scan that did not complete (#206).
+/// <see cref="Missing"/> is the cataloged files this scan newly marked Missing, and
+/// <see cref="Restored"/> the Missing files it found again (#207); Missing is written only by a scan
+/// that completed, so it is 0 for one that did not.
 /// </summary>
 public sealed record MediaScanCounts(
     int Seen,
@@ -59,15 +62,18 @@ public sealed record MediaScanCounts(
     int Unreadable,
     int UnreadableDirectories,
     int Associated = 0,
-    int Unmatched = 0)
+    int Unmatched = 0,
+    int Missing = 0,
+    int Restored = 0)
 {
     public static MediaScanCounts None { get; } = new(0, 0, 0, 0, 0, 0, 0);
 
     /// <summary>
-    /// Whether the scan found nothing new and nothing changed (#204: such a startup or scheduled
-    /// scan is dropped from the jobs list). #207 adds files gone missing to this test.
+    /// Whether the scan found nothing new, nothing changed, nothing gone missing or come back, and
+    /// associated nothing (#204: such a startup or scheduled scan is dropped from the jobs list; #207
+    /// adds Missing, Restored, and Associated).
     /// </summary>
-    public bool FoundNothing => New == 0 && Changed == 0;
+    public bool FoundNothing => New == 0 && Changed == 0 && Missing == 0 && Restored == 0 && Associated == 0;
 
     /// <summary>The links not followed (#205), by reason; each is in <see cref="Skipped"/> as well.</summary>
     public MediaSkippedLinks SkippedLinks { get; init; } = MediaSkippedLinks.None;

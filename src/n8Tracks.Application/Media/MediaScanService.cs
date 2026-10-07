@@ -14,7 +14,12 @@ namespace n8Tracks.Application.Media;
 /// followed and its files are cataloged under the link's own path; one that leads outside, to nothing,
 /// or back to a directory the walk is already inside is skipped, counted by reason, and logged once
 /// per scan (#205). A walk that completes ends with the Suno ID matcher (#206) over every
-/// unassociated record.
+/// unassociated record, and then (#207), once the root probes readable again, marks Missing every
+/// Available record the walk did not find, except those under a directory that could not be listed.
+/// A Missing file found again is Available again, with its association; a file listed but not looked
+/// at or opened keeps its status. No record is ever deleted. A scan that finds the folder unavailable
+/// makes the mount state <see cref="MediaMountState.Unavailable"/>, and one that completes makes it
+/// <see cref="MediaMountState.Available"/>.
 /// </summary>
 public sealed class MediaScanService(
     IMediaMount mount,
@@ -23,6 +28,7 @@ public sealed class MediaScanService(
     IMediaScanSummaryStore summaries,
     SunoIdMatcher matcher,
     IMediaScanLog log,
+    MediaAvailability availability,
     IJobStore jobs,
     IJobQueue queue,
     MediaScanStartLock startLock,
@@ -61,23 +67,12 @@ public sealed class MediaScanService(
     public Task<MediaScanSummary?> LastScanAsync(CancellationToken cancellationToken) => summaries.FindAsync(cancellationToken);
 
     /// <summary>
-    /// Whether the media folder's root is there and can be read now, within the listing limit: what a
-    /// scan needs first. It asks the mount's own <see cref="IMediaMount.Probe"/> (#205), the check
-    /// health and setup use. The scheduler (#204) queues nothing while it cannot.
+    /// Whether the media folder's root is there and can be read now: the one probe (#207), with its
+    /// 2-second deadline, that health and the availability monitor ask too. The scheduler (#204)
+    /// queues nothing while it cannot.
     /// </summary>
-    public async Task<bool> IsFolderAvailableAsync(CancellationToken cancellationToken)
-    {
-        var probe = Task.Run(mount.Probe, CancellationToken.None);
-        try
-        {
-            return await probe.WaitAsync(options.DirectoryListTimeout, time, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
-        {
-            Observe(probe);
-            return false;
-        }
-    }
+    public async Task<bool> IsFolderAvailableAsync(CancellationToken cancellationToken) =>
+        (await availability.ProbeAsync(cancellationToken).ConfigureAwait(false)).Readable;
 
     /// <summary>
     /// Runs one scan and writes its summary, whether it succeeds or not. A mount that is absent, or
@@ -100,6 +95,7 @@ public sealed class MediaScanService(
             previous = await summaries.FindAsync(cancellationToken).ConfigureAwait(false);
             var counts = await ScanAsync(started, tally, report, cancellationToken).ConfigureAwait(false);
             LogSkippedLinks(tally);
+            _ = await availability.RecordAsync(readable: true, CancellationToken.None).ConfigureAwait(false);
             await ForgetAsync(previous, jobId).ConfigureAwait(false);
             await summaries.WriteAsync(
                 new MediaScanSummary(jobId, trigger, MediaScanOutcome.Succeeded, started, time.GetUtcNow(), counts, null),
@@ -109,6 +105,11 @@ public sealed class MediaScanService(
         catch (Exception exception)
         {
             LogSkippedLinks(tally);
+            if (exception is MediaFolderUnavailableException)
+            {
+                _ = await availability.RecordAsync(readable: false, CancellationToken.None).ConfigureAwait(false);
+            }
+
             var error = exception switch
             {
                 MediaFolderUnavailableException => MediaFolderUnavailableException.Text,
@@ -163,7 +164,7 @@ public sealed class MediaScanService(
                     throw new MediaFolderUnavailableException(MediaFolderUnavailableException.Text, exception);
                 }
 
-                tally.UnreadableDirectories++;
+                tally.Unlisted(directory);
                 continue;
             }
 
@@ -228,7 +229,25 @@ public sealed class MediaScanService(
         // Only a walk that completed matches, over every unassociated record, earlier scans' included.
         report(99, Progress(found.Count, found.Count, tally) + "; matching Suno IDs");
         var matched = await matcher.MatchAllAsync(cancellationToken).ConfigureAwait(false);
-        return tally.Counts() with { Associated = matched.Associated, Unmatched = matched.Unmatched };
+
+        // Missing comes last (#207), so a scan stopped at any earlier point marks nothing Missing, and
+        // only once the root still answers: a folder that went away during the walk fails the scan.
+        cancellationToken.ThrowIfCancellationRequested();
+        var probe = await availability.ProbeAsync(cancellationToken).ConfigureAwait(false);
+        if (!probe.Readable)
+        {
+            throw probe.Exception is { } cause
+                ? new MediaFolderUnavailableException(MediaFolderUnavailableException.Text, cause)
+                : new MediaFolderUnavailableException();
+        }
+
+        var listed = found.Select(static file => file.Path).ToHashSet(StringComparer.Ordinal);
+        var gone = known
+            .Where(file => file.Value.Status == AudioFileStatus.Available && !listed.Contains(file.Key) && !tally.IsUnderUnlisted(file.Key))
+            .Select(static file => file.Value.Id)
+            .ToList();
+        var missing = gone.Count == 0 ? 0 : await files.MarkMissingAsync(gone, cancellationToken).ConfigureAwait(false);
+        return tally.Counts() with { Associated = matched.Associated, Unmatched = matched.Unmatched, Missing = missing };
     }
 
     /// <summary>What to write about one found file, counted as new, changed, or unchanged, and as unreadable when its header could not be read.</summary>
@@ -246,25 +265,27 @@ public sealed class MediaScanService(
 
         if (known.TryGetValue(path, out var record))
         {
+            var wasMissing = record.Status == AudioFileStatus.Missing;
             if (stat is null)
             {
-                // Listed, but it cannot be looked at now: kept as it was.
+                // Listed, but it cannot be looked at now: kept as it was, its status included.
                 tally.Pending(unchanged: true, unreadable: true);
-                return new AudioFileWrite.Seen(record.Id);
+                return new AudioFileWrite.Seen(record.Id, Available: false);
             }
 
             if (stat.SizeBytes == record.SizeBytes && modified == AudioFormats.ToWholeSecond(record.ModifiedUtc))
             {
-                tally.Pending(unchanged: true, unreadable: false);
-                return new AudioFileWrite.Seen(record.Id);
+                tally.Pending(unchanged: true, unreadable: false, restored: wasMissing);
+                return new AudioFileWrite.Seen(record.Id, Available: true);
             }
 
-            var read = await ReadAsync(path, format, stat, cancellationToken).ConfigureAwait(false);
-            tally.Pending(changed: true, unreadable: read is null);
-            return new AudioFileWrite.Changed(record.Id, stat.SizeBytes, modified!.Value, read is not null, read);
+            // A Missing file back with other content is the same record: read again, association kept.
+            var (read, opened) = await ReadAsync(path, format, stat, cancellationToken).ConfigureAwait(false);
+            tally.Pending(changed: true, unreadable: read is null, restored: wasMissing && opened);
+            return new AudioFileWrite.Changed(record.Id, stat.SizeBytes, modified!.Value, read is not null, read, Available: opened);
         }
 
-        var header = stat is null ? null : await ReadAsync(path, format, stat, cancellationToken).ConfigureAwait(false);
+        var header = stat is null ? null : (await ReadAsync(path, format, stat, cancellationToken).ConfigureAwait(false)).Header;
         tally.Pending(added: true, unreadable: header is null);
         return new AudioFileWrite.Added(new AudioFile(
             Guid.CreateVersion7(time.GetUtcNow()),
@@ -285,25 +306,29 @@ public sealed class MediaScanService(
     /// <summary>
     /// The header of the file, or null when it is unreadable: empty, cannot be opened, damaged, gives
     /// no duration, or takes longer than the limit (a reader that overruns is abandoned, not waited for).
+    /// <c>Opened</c> is false when the file could not be opened at all, or the limit passed first: it
+    /// cannot be told apart from a file that is not there (#207), so it keeps its status.
     /// </summary>
-    private async Task<AudioMetadata?> ReadAsync(string path, string format, MediaFileStat stat, CancellationToken cancellationToken)
+    private async Task<(AudioMetadata? Header, bool Opened)> ReadAsync(string path, string format, MediaFileStat stat, CancellationToken cancellationToken)
     {
         if (stat.SizeBytes == 0)
         {
-            return null;
+            return (null, true);
         }
 
+        var opened = 0;
         var reading = Task.Run(
             () =>
             {
                 using var stream = mount.OpenRead(path);
+                Volatile.Write(ref opened, 1);
                 return metadata.Read(stream, format);
             },
             CancellationToken.None);
         try
         {
             var header = await reading.WaitAsync(options.HeaderReadTimeout, time, cancellationToken).ConfigureAwait(false);
-            return header.Duration is { } duration && duration > TimeSpan.Zero ? header : null;
+            return (header.Duration is { } duration && duration > TimeSpan.Zero ? header : null, true);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -313,7 +338,7 @@ public sealed class MediaScanService(
         catch (Exception)
         {
             Observe(reading);
-            return null;
+            return (null, Volatile.Read(ref opened) == 1);
         }
     }
 
@@ -377,15 +402,15 @@ public sealed class MediaScanService(
     /// </summary>
     private sealed class Tally
     {
-        private readonly List<(bool Added, bool Changed, bool Unchanged, bool Unreadable)> pending = [];
+        private readonly List<(bool Added, bool Changed, bool Unchanged, bool Unreadable, bool Restored)> pending = [];
+        private readonly List<string> unlisted = [];
         private int added;
         private int changed;
         private int unchanged;
         private int unreadable;
+        private int restored;
 
         public int Skipped { get; set; }
-
-        public int UnreadableDirectories { get; set; }
 
         public MediaSkippedLinks Links { get; private set; } = MediaSkippedLinks.None;
 
@@ -407,8 +432,14 @@ public sealed class MediaScanService(
             }
         }
 
-        public void Pending(bool added = false, bool changed = false, bool unchanged = false, bool unreadable = false) =>
-            pending.Add((added, changed, unchanged, unreadable));
+        /// <summary>A subdirectory that could not be listed: the files cataloged under it are left as they are.</summary>
+        public void Unlisted(string directory) => unlisted.Add(directory + "/");
+
+        /// <summary>Whether <paramref name="path"/> is under a directory that could not be listed.</summary>
+        public bool IsUnderUnlisted(string path) => unlisted.Exists(directory => path.StartsWith(directory, StringComparison.Ordinal));
+
+        public void Pending(bool added = false, bool changed = false, bool unchanged = false, bool unreadable = false, bool restored = false) =>
+            pending.Add((added, changed, unchanged, unreadable, restored));
 
         public void Written(IReadOnlyCollection<AudioFileWrite> batch)
         {
@@ -418,13 +449,14 @@ public sealed class MediaScanService(
                 changed += file.Changed ? 1 : 0;
                 unchanged += file.Unchanged ? 1 : 0;
                 unreadable += file.Unreadable ? 1 : 0;
+                restored += file.Restored ? 1 : 0;
             }
 
             pending.RemoveRange(0, Math.Min(batch.Count, pending.Count));
         }
 
         public MediaScanCounts Counts() =>
-            new(added + changed + unchanged, added, changed, unchanged, Skipped, unreadable, UnreadableDirectories) { SkippedLinks = Links };
+            new(added + changed + unchanged, added, changed, unchanged, Skipped, unreadable, unlisted.Count, Restored: restored) { SkippedLinks = Links };
     }
 }
 
@@ -458,6 +490,8 @@ public sealed class MediaScanJobHandler(MediaScanService scans) : IJobHandler
             unreadableDirectories = counts.UnreadableDirectories,
             associated = counts.Associated,
             unmatched = counts.Unmatched,
+            missing = counts.Missing,
+            restored = counts.Restored,
             skippedLinks = new
             {
                 escaping = counts.SkippedLinks.Escaping,

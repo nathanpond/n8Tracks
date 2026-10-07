@@ -98,6 +98,8 @@ public static class DependencyInjection
         services.AddScoped<IAudioFileStore, AudioFileStore>();
         services.AddScoped<IMediaScanSummaryStore, MediaScanSummaryStore>();
         services.AddScoped<IMediaScanScheduleStore, MediaScanScheduleStore>();
+        services.AddSingleton<IMediaFolderProbe, MediaFolderProbe>();
+        services.AddScoped<IMediaMountStateStore, MediaMountStateStore>();
         services.AddSingleton<IBackupStorage, BackupFolders>();
         services.AddSingleton<IBackupWriter, BackupWriter>();
         services.AddScoped<IBackupScheduleStore, BackupScheduleStore>();
@@ -149,6 +151,7 @@ public static class DependencyInjection
         services.TryAddSingleton(new JobWorkerOptions());
         services.TryAddSingleton(new DailyTaskSchedulerOptions());
         services.TryAddSingleton(new MediaScanSchedulerOptions());
+        services.TryAddSingleton(new MediaAvailabilityMonitorOptions());
         services.AddHostedService<BackupStartupCleanup>();
         services.AddHostedService<RestoreHousekeeping>();
 
@@ -160,6 +163,7 @@ public static class DependencyInjection
         // After the worker, whose start marks a scan left running by the last process failed: a scan
         // still queued from before counts as the startup scan, one left running does not.
         services.AddHostedService<MediaScanScheduler>();
+        services.AddHostedService<MediaAvailabilityMonitor>();
 
         return services;
     }

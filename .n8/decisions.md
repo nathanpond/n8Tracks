@@ -4088,3 +4088,33 @@ Step A reconcile (merging #205 after #204, #206, and #215):
 - **Decision:** `MediaScanService.IsFolderAvailableAsync` (#204) asks `IMediaMount.Probe` within the listing limit instead of listing the whole root. #207 then routes it through `IMediaFolderProbe`. The #205 guard lists needed no change for #204's or #206's files: none of them names `IMediaMount` or `MediaPath`, or uses a file-system API.
   **Why:** #205 made `Probe` the one check of the mount root, and the merge brief asked to consider it. A root listing in a large library reads every entry only to answer yes or no.
   **Issue:** #205
+
+Story #207:
+
+- **Decision:** The mount state is the `settings` row `media.mount` `{state, sinceUtc, recoveryQueuedUtc}`, through `IMediaMountStateStore`. No row means available with `since` null. `MediaAvailability.RecordAsync` writes it only when the state changes, in an exclusive transaction. Nothing is written per file: a file reports `unavailable` while the mount is unavailable, and its stored status otherwise (`MediaAvailability.Reported`).
+  **Why:** These are the planner's discretion lines. No migration is needed: `audio_files.status` already allows `missing` (#203).
+  **Issue:** #207
+- **Decision:** `IMediaMountProbe` is replaced by an Application port, `IMediaFolderProbe`. It is implemented once, as `Infrastructure/Media/MediaFolderProbe`, a singleton `DeadlineCheck` over `IMediaMount.Probe` with health's 2-second deadline. `HealthService`, `MediaAvailability`, the scheduler's `IsFolderAvailableAsync`, and the scan's last check all use it. `HealthService` no longer names `IMediaMount`. In `MediaMountAccessTests`, `MediaFolderProbe` replaces `HealthService` in `MediaMountUsers` and `ProbeOnlyUsers`. `SetupChecks` is unchanged.
+  **Why:** The discretion line says the health service and `MediaAvailability` share the probe and its 2-second deadline. #205 had already folded the old probe into `IMediaMount.Probe`, so the port wraps that. The guard stays exact: the probe may only call `Probe`.
+  **Issue:** #207
+- **Decision:** The health probe changes the state at once both ways. The 60-second monitor (`MediaAvailabilityMonitor` → `MediaRecoveryService.CheckAsync`) needs two failed probes in a row (`MediaProbeStreak`, a singleton) and one readable probe. A readable probe from health also resets the streak. Health records the state only when its database check passed. Nothing is probed or recorded during maintenance or before setup is complete.
+  **Why:** The discretion lines say both "the health probe flips the mount state itself" and "two failed probes in a row" for the monitor. The AC needs health, the media status, and the files to agree, so a failure that health shows has to show in the files as well. Recording needs the database. Health is polled before setup, and recording then would put a row in a settings table that holds nothing before setup.
+  **Issue:** #207
+- **Decision:** A recovery scan is queued only when the state goes from unavailable to available through a probe (health or the monitor). It goes through `MediaScanService.StartAsync(MediaScanTrigger.Recovery)`, after `MediaAvailability.TryClaimRecoveryAsync` records `recoveryQueuedUtc`, at most once every 5 minutes. A completed scan makes the mount available without queuing one. A scan that fails with `media folder unavailable` makes it unavailable at once.
+  **Why:** #204's note asks for `StartAsync(Recovery)`, which also takes a scan already queued or running. A completed scan already did the recovery work. The 5-minute spacing is the discretion line, and it is kept in the row so a restart does not reset it.
+  **Issue:** #207
+- **Decision:** Missing is written as the very last step of a scan: after pass 2 and the Suno ID matcher, and after a fresh probe of the root. If that probe fails, the scan fails as `media folder unavailable` and the mount becomes unavailable. Only Available records the walk did not find are marked, and not those whose path is under a subdirectory that could not be listed. This uses one `IAudioFileStore.MarkMissingAsync` transaction, in chunks of 500 IDs. The status changes leave `revision` alone. Missing files found again become Available in the same batch writes, through `Seen(id, Available)` and `Changed(..., Available)`. A listed file that cannot be looked at, or whose changed content cannot be opened, keeps its status.
+  **Why:** The AC requires that a scan that fails or is interrupted part-way marks nothing missing. The key link says Missing is written only after the root is probed again, and only for directories actually listed. #203's note says the same. "Under a directory that could not be listed" is used rather than "in a listed directory", so a folder deleted whole, or an empty mount, still marks its files Missing (the discretion line). The matcher runs before Missing, so it is unaffected: it already covers Missing records.
+  **Issue:** #207
+- **Decision:** `MediaScanCounts` gains `Missing` (records newly marked Missing) and `Restored` (Missing records found again) as trailing optional parameters. They are in the job result (`missing`, `restored`) and the stored summary, where a summary written before reads them as 0. `FoundNothing` is `New == 0 && Changed == 0 && Missing == 0 && Restored == 0 && Associated == 0`.
+  **Why:** #204 asked for `Missing == 0`. The orchestrator added `Associated == 0`: a scan that linked files did something. `Restored == 0` is added for the same reason. #208's discretion line lists "newly Missing, restored" among the counts shown.
+  **Issue:** #207
+- **Decision:** The audio file API answers `status` (reported: `available`, `missing`, or `unavailable`) and `storedStatus`. The `status` filter and the total use the reported status, so `status=unavailable` is now accepted. `AudioFileService` takes an `AudioFileListRequest` and returns `ReportedAudioFile`s. The store keeps `AudioFileQuery` by stored status.
+  **Why:** This is the discretion line ("filters and counts use the reported one").
+  **Issue:** #207
+- **Decision:** Added `GET /api/v1/media/status` (`catalog.read`, no-store), which answers `{mount: {state, since}}`. #208 extends it with counts, scans, and the warning.
+  **Why:** AC 7 says "the media status in the API". #208's discretion line gives this endpoint and its `mount` shape, so this story starts it rather than adding a second one.
+  **Issue:** #207
+- **Decision:** AC 1's "preferred-file choice pointing at it is kept" is satisfied by construction, because no scan deletes or rewrites a record's ID or association. The preference itself arrives with #212.
+  **Why:** No preference exists yet. The tests assert that row counts and associated-row counts never drop.
+  **Issue:** #207
