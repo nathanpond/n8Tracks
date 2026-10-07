@@ -323,6 +323,7 @@ public sealed class Program
             app.MapGenerationDeletion();
             app.MapResolve();
             app.MapSuno();
+            app.MapMedia();
             app.MapBackups();
             app.MapSettings();
             app.MapRestores();

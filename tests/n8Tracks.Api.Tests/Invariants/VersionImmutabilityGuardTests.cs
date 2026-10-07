@@ -964,6 +964,7 @@ public sealed class VersionImmutabilityGuardTests
         ["PUT /api/v1/suno/models/order"] = "reorders the model list; a Version's model is not touched",
         ["DELETE /api/v1/workflow-states/{id:guid}"] = "workflow states; moves Songs to another state, never a Version",
         ["POST /api/v1/backups"] = "queues a backup: reads the database, writes only an archive file",
+        ["POST /api/v1/media/scans"] = "queues a media scan (#203): it writes only audio_files and the settings row media.lastScan, never a Version",
         ["DELETE /api/v1/backups/{location}/{name}"] = "deletes an archive file, never a database row",
         ["PUT /api/v1/settings/backup-schedule"] = "the backup schedule: one settings row",
         ["PUT /api/v1/settings/version-defaults"] = "the defaults for new Versions: one settings row, applied only when a Song is created",

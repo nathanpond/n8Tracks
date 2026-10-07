@@ -3914,3 +3914,37 @@ Track b (#322 #327 #328 #329 #330 #331 #332 #335 #339 #341 #342 #343 #344):
 - **Decision:** The e2e verification Demo (`generate-on-suno.spec.ts`) now titles its Song "Duration". That word is part of the extension's Duration note sent in the same report.
   **Why:** It reproduces #379 against the built image. With the old check, that report got 422.
   **Issue:** #379
+
+## /n8-exec M5 — 2026-10-07
+
+- **Decision:** `audio_files` is a new table (migration `20261008010000_AddAudioFiles`). Its status check already allows `missing` as well as `available`. A scan writes only `available`; the domain `AudioFileStatus` declares both. The association columns (#206) and `revision` (#210) are not added here.
+  **Why:** #207 writes `missing`. #206 may put a hand-written trigger on `audio_files`, and widening a CHECK later would rebuild the table and drop that trigger (orchestrator rule). The association columns depend on #206's FK/trigger design, so adding them now would guess at that story's schema.
+  **Issue:** #203
+
+- **Decision:** The scan does not follow symbolic links, whether to a file or a directory, and whether they lead inside or outside the mount. Each link counts as `skipped`. `MediaMountReader` also refuses any relative path with an empty, `.`, or `..` segment, a backslash, a NUL, or a rooted form.
+  **Why:** Invariant 2: until #205 brings real-path resolution and the `skippedLinks` reasons, never following a link is the only rule that cannot read outside the mount. #205 changes "inside links" to followed.
+  **Issue:** #203
+
+- **Decision:** `POST /api/v1/media/scans` answers 202 with `{jobId, alreadyInProgress:false}` and the job as `Location` when it queues a scan. When a scan is already queued or running, it answers 200 with `{jobId, alreadyInProgress:true}`, not a 409 like backups. A token gets 403 `session_required`.
+  **Why:** The AC says it "returns that job instead of starting another", so a client should treat both answers as success. The status code and the flag tell them apart.
+  **Issue:** #203
+
+- **Decision:** The last-scan summary is the `settings` row `media.lastScan` `{jobId, trigger, outcome, startedUtc, finishedUtc, counts, error}`, written on success and on failure, including interruption. A failed job carries no result (the worker drops it), so its progress message carries the counts reached ("N of M files: … new, … changed, …"). File counts move only once their batch is written.
+  **Why:** The discretion asks for a summary outside the jobs table, and for a failed job to report the counts reached. The worker keeps a failed job's last message, not its result. Counting on write keeps the summary equal to what is in the table.
+  **Issue:** #203
+
+- **Decision:** The scan uses one timestamp for every record: `last_seen_utc` (and `first_seen_utc` for new files) is the time the scan started. A file that is listed but cannot be stat'ed is counted unreadable. If it is cataloged, it counts as unchanged and keeps its record. If it is new, it is cataloged with size 0 and the epoch as its modified time, so the next scan sees it as changed and reads it. A zero-byte file is never opened. This also covers FIFOs and devices, which report size 0, so opening one cannot hang.
+  **Why:** One timestamp per scan lets #207 mark `missing` as "last seen before this scan began". The partition new/changed/unchanged = seen must hold for every listed file.
+  **Issue:** #203
+
+- **Decision:** Header reading uses `z440.atl.core` 7.18.0 (the latest on NuGet, published 2026-09-28) in Infrastructure, behind `IAudioMetadataReader`, given the read-only `FileStream` and the extension. Its process-wide settings are: `NullAbsentValues`, no title made up from a file name, `ReadAllMetaFrames` off, and stack traces kept off the console. Only duration, title and artist are taken. Title and artist are trimmed and cut to 500 characters, and duration is stored in milliseconds. A header counts as unreadable when there is no duration or the duration is zero.
+  **Why:** This is the story's discretion. A cap keeps a damaged or hostile tag from filling the database.
+  **Issue:** #203
+
+- **Decision:** The test fixtures are seven 1.5 s tones tagged "Fixture Title" / "Fixture Artist", made with ffmpeg (Docker `linuxserver/ffmpeg`) and committed under `tests/n8Tracks.Api.Tests/Media/Fixtures/`. `scripts/check-suppressions.py` now counts `.opus` and `.aac` as binary, beside `.ogg`, `.m4a` and the others. The `config-file-not-utf8` good fixture gained a `.opus` and a `.aac` file, and fails without the change (checked).
+  **Why:** The scanner refuses any tracked non-UTF-8 file whose extension is not on its binary list. These two audio formats are now real repository content. A two-entry widening of the binary list loosens no warning rule.
+  **Issue:** #203
+
+- **Decision:** The `association` filter accepts `any`, `associated`, and `none`. Until #206, `associated` answers an empty page. `status` accepts `available` and `missing`. `metadataReadable` accepts `true` and `false`. `offset` defaults to 0 and `limit` to 200 (range 1–200). Any other value, or a repeated parameter, answers 422 `validation_failed` keyed by the parameter. `audio_files` counts as catalog data in the invariant 3 guard. `POST /media/scans` is in the invariant 1 table of endpoints that touch no Version. `Application.Media` takes no catalog type, so it is not in `CatalogServiceNamespaces`.
+  **Why:** These follow the story's JSON-shape discretion and the M5 orchestrator rules for new tables and namespaces.
+  **Issue:** #203

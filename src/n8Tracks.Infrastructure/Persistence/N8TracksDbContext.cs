@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using n8Tracks.Domain.Catalog;
+using n8Tracks.Domain.Media;
 using n8Tracks.Domain.Songs;
 using n8Tracks.Domain.Suno;
 using n8Tracks.Infrastructure.Retention;
@@ -166,6 +167,8 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
 
     public DbSet<ArtworkAttachmentRecord> ArtworkAttachments => Set<ArtworkAttachmentRecord>();
 
+    public DbSet<AudioFileRecord> AudioFiles => Set<AudioFileRecord>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         ArgumentNullException.ThrowIfNull(configurationBuilder);
@@ -238,6 +241,35 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
         OnCatalogCreating(modelBuilder);
         OnRetentionCreating(modelBuilder);
         OnAssetsCreating(modelBuilder);
+        OnMediaCreating(modelBuilder);
+    }
+
+    /// <summary>
+    /// The audio file catalog (#203): one row per distinct path under the media mount, unique by its
+    /// relative path (compared byte for byte, so letter case and Unicode form make distinct rows).
+    /// </summary>
+    private static void OnMediaCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<AudioFileRecord>(file =>
+        {
+            file.ToTable("audio_files", static table =>
+            {
+                table.HasCheckConstraint("ck_audio_files_path", "length(path) > 0 AND substr(path, 1, 1) <> '/'");
+                table.HasCheckConstraint("ck_audio_files_file_name", "length(file_name) > 0");
+                table.HasCheckConstraint(
+                    "ck_audio_files_format",
+                    $"format IN ({string.Join(", ", AudioFormats.All.Select(static format => $"'{format}'"))})");
+                table.HasCheckConstraint("ck_audio_files_size_bytes", "size_bytes >= 0");
+                table.HasCheckConstraint("ck_audio_files_status", $"status IN ('{AudioFileRecord.Available}', '{AudioFileRecord.Missing}')");
+                table.HasCheckConstraint("ck_audio_files_duration_ms", "duration_ms IS NULL OR duration_ms > 0");
+                table.HasCheckConstraint("ck_audio_files_metadata_readable", "metadata_readable = (duration_ms IS NOT NULL)");
+                table.HasCheckConstraint("ck_audio_files_title", $"title IS NULL OR length(title) BETWEEN 1 AND {AudioFormats.MaximumTagLength}");
+                table.HasCheckConstraint("ck_audio_files_artist", $"artist IS NULL OR length(artist) BETWEEN 1 AND {AudioFormats.MaximumTagLength}");
+            });
+            file.HasKey(record => record.Id);
+            file.HasIndex(record => record.Path).IsUnique();
+            file.HasIndex(record => record.Status);
+        });
     }
 
     /// <summary>

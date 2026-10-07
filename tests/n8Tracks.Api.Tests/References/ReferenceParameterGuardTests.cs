@@ -26,6 +26,7 @@ public sealed class ReferenceParameterGuardTests
     private static readonly HashSet<string> OtherIds = new(StringComparer.Ordinal)
     {
         "GET /api/v1/jobs/{id:guid}: id",
+        "GET /api/v1/audio-files/{id:guid}: id",
         "PATCH /api/v1/credentials/{id:guid}: id",
         "POST /api/v1/credentials/{id:guid}/revoke: id",
         "PATCH /api/v1/workflow-states/{id:guid}: id",

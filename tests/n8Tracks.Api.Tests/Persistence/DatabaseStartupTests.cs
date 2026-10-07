@@ -75,7 +75,8 @@ public sealed class DatabaseStartupTests : IDisposable
             migration => Assert.Matches("^[0-9]{14}_RememberDeclinedSunoChanges\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AddGenerationRequestVerification\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AddObservedCreates\\|10\\.0\\.", migration),
-            migration => Assert.Matches("^[0-9]{14}_ProtectGenerationSunoId\\|10\\.0\\.", migration));
+            migration => Assert.Matches("^[0-9]{14}_ProtectGenerationSunoId\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddAudioFiles\\|10\\.0\\.", migration));
 
         // ISO 8601 UTC with milliseconds and Z, taken when the migration ran.
         var initialized = TestDatabase.SchemaInitializedUtc(directory.Path);
@@ -94,7 +95,7 @@ public sealed class DatabaseStartupTests : IDisposable
         Start();
 
         Assert.Equal(
-            ["__EFMigrationsHistory", "administrators", "album_links", "album_songs", "albums", "app_metadata", "artist_aliases", "artist_links", "artists", "artwork_attachments", "assets", "credentials", "editor_revisions", "external_suno_references", "generation_comments", "generation_event_links", "generation_events", "generations", "genres", "jobs", "pending_file_deletions", "playlist_songs", "playlists", "provider_records", "provider_tombstones", "retention_groups", "retention_records", "sessions", "settings", "shortcode_aliases", "shortcode_sequence", "song_artist_credits", "song_genres", "song_links", "song_relationship_types", "song_relationships", "song_tags", "songs", "suno_export_parts", "suno_export_record_playlists", "suno_export_records", "suno_exports", "suno_generation_requests", "suno_ignored_items", "suno_models", "suno_personas", "suno_playlists", "suno_workspaces", "tags", "used_version_numbers", "version_file_inputs", "version_inspiration_playlists", "version_sources", "version_voices", "versions", "workflow_states"],
+            ["__EFMigrationsHistory", "administrators", "album_links", "album_songs", "albums", "app_metadata", "artist_aliases", "artist_links", "artists", "artwork_attachments", "assets", "audio_files", "credentials", "editor_revisions", "external_suno_references", "generation_comments", "generation_event_links", "generation_events", "generations", "genres", "jobs", "pending_file_deletions", "playlist_songs", "playlists", "provider_records", "provider_tombstones", "retention_groups", "retention_records", "sessions", "settings", "shortcode_aliases", "shortcode_sequence", "song_artist_credits", "song_genres", "song_links", "song_relationship_types", "song_relationships", "song_tags", "songs", "suno_export_parts", "suno_export_record_playlists", "suno_export_records", "suno_exports", "suno_generation_requests", "suno_ignored_items", "suno_models", "suno_personas", "suno_playlists", "suno_workspaces", "tags", "used_version_numbers", "version_file_inputs", "version_inspiration_playlists", "version_sources", "version_voices", "versions", "workflow_states"],
             TestDatabase.Rows(
                 directory.Path,
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> '__EFMigrationsLock' ORDER BY name;"));
@@ -331,7 +332,7 @@ public sealed class DatabaseStartupTests : IDisposable
 
         Assert.Equal(MigrationStatus.UpToDate, state.Status);
         Assert.Equal(TestDatabase.History(directory.Path)[^1].Split('|')[0], state.LastAppliedMigrationId);
-        Assert.EndsWith("_ProtectGenerationSunoId", state.LastAppliedMigrationId, StringComparison.Ordinal);
+        Assert.EndsWith("_AddAudioFiles", state.LastAppliedMigrationId, StringComparison.Ordinal);
     }
 
     [Fact]
