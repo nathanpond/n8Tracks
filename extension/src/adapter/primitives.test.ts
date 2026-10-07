@@ -305,7 +305,7 @@ describe('choose and click', () => {
 
     expect(() => {
       page.choose(tabs, 'Videos');
-    }).toThrow('the create tabs to offer "Videos"');
+    }).toThrow('the create tabs to offer the option asked for');
     expect(events).toEqual([]);
   });
 

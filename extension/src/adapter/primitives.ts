@@ -1092,7 +1092,7 @@ export class Page {
   choose(found: Found, option: string): void {
     // The matcher first (#332): a forbidden control is refused even while it is disabled.
     const element = this.reachable(found);
-    this.judge(element, found.target.description, null);
+    this.judge(element, found.target, null);
     if (!isEnabled(element)) {
       throw new PrimitiveError(`${found.target.description} to be enabled`);
     }
@@ -1102,7 +1102,7 @@ export class Page {
         (item) => collapse(item.text) === collapse(option),
       );
       if (match === undefined || others.length > 0) {
-        throw new PrimitiveError(`${found.target.description} to offer "${option}"`);
+        throw new PrimitiveError(`${found.target.description} to offer the option asked for`);
       }
       setNativeValue(select)(match.value);
       announce(select, 'input', 'change');
@@ -1126,11 +1126,11 @@ export class Page {
     if (choice === undefined || others.length > 0) {
       throw new PrimitiveError(
         choice === undefined
-          ? `${found.target.description} to offer "${option}"`
-          : `${found.target.description} to offer "${option}" once (found ${String(choices.length)})`,
+          ? `${found.target.description} to offer the option asked for`
+          : `${found.target.description} to offer the option asked for once (found ${String(choices.length)})`,
       );
     }
-    this.press(choice, found.target.description, null);
+    this.press(choice, found.target, null);
   }
 
   /**
@@ -1138,7 +1138,7 @@ export class Page {
    * matcher is asked first, on every call: a forbidden control or a named exception is refused.
    */
   click(found: Found): void {
-    this.press(this.reachable(found), found.target.description, null);
+    this.press(this.reachable(found), found.target, null);
   }
 
   /**
@@ -1150,10 +1150,10 @@ export class Page {
     const element = this.reachable(found);
     // A forbidden control, or a different exception once there is one, is refused here, enabled or
     // not (#332); anything else allowed is not this primitive's to press.
-    if (this.judge(element, found.target.description, 'create-workspace').kind !== 'exception') {
+    if (this.judge(element, found.target, 'create-workspace').kind !== 'exception') {
       throw new PrimitiveError(`${found.target.description} to be Suno's create-workspace control`);
     }
-    this.press(element, found.target.description, 'create-workspace');
+    this.press(element, found.target, 'create-workspace');
   }
 
   /**
@@ -1234,10 +1234,10 @@ export class Page {
    * The one place a press reaches the page. The matcher is asked before any event, with no way to
    * skip it: only an allowed control, or the named exception `allow`, is pressed.
    */
-  private press(element: Element, description: string, allow: ExceptionName | null): void {
-    this.judge(element, description, allow);
+  private press(element: Element, target: Target, allow: ExceptionName | null): void {
+    this.judge(element, target, allow);
     if (!isEnabled(element)) {
-      throw new PrimitiveError(`${description} to be enabled`);
+      throw new PrimitiveError(`${target.description} to be enabled`);
     }
     const view = viewOf(element);
     const init = { bubbles: true, cancelable: true, composed: true, button: 0 };
@@ -1253,7 +1253,7 @@ export class Page {
    * is enabled included, #332): a forbidden control, or an exception other than `allow`, is refused
    * and poisons the handle.
    */
-  private judge(element: Element, description: string, allow: ExceptionName | null): Verdict {
+  private judge(element: Element, target: Target, allow: ExceptionName | null): Verdict {
     if (this.refused !== null) {
       throw this.refused;
     }
@@ -1266,7 +1266,7 @@ export class Page {
       (verdict.kind === 'exception' && verdict.exception !== allow)
     ) {
       this.refused = new ForbiddenControlError(
-        description,
+        target.description,
         verdict.kind === 'forbidden'
           ? verdict.reason
           : `it is the named exception '${verdict.exception}', pressed only by its own primitive`,

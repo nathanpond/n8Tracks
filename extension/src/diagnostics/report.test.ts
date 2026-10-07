@@ -343,7 +343,8 @@ describe('the diagnostic report', () => {
     ]);
     const failed = report.steps.at(-1);
     expect(failed).toMatchObject({ workflow: 'fill-test', step: 'workspace', phase: 'act' });
-    expect(failed?.expected).toBe('the workspace list to offer "…"');
+    // The option asked for (the private workspace name) never enters the text (#343, #344).
+    expect(failed?.expected).toBe('the workspace list to offer the option asked for');
     for (const step of report.steps) {
       expect(Number.isInteger(step.ms) && step.ms >= 0).toBe(true);
     }

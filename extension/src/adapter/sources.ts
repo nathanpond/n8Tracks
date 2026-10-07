@@ -12,8 +12,11 @@ import { expected, OK, type Check } from './workflow.ts';
  *
  * What TS-003 captured decides what is built (decision D10). The menus (`page.clip-remix-menu.html`,
  * `page.clip-edit-menu.html`), a loaded Cover (`page.create-source-advanced.html`,
- * `page.create-source-simple.html`), and the Overwrite dialog are captured, so Cover and Reuse
- * Prompt are loaded. No snapshot shows the form after Extend, Mashup, Sample this song, or a
+ * `page.create-source-simple.html`), and the Overwrite dialog are captured, so a Cover is verified
+ * on the form and Reuse Prompt is planned. The clip's own page (`/song/<id>`) and its "More
+ * options" button are not captured, so no route is taken by the extension yet (#341: `automated`
+ * is false on every route): the user loads the source by hand, and the extension then verifies it
+ * on the form before filling anything else. No snapshot shows the form after Extend, Mashup, Sample this song, or a
  * single song used as Inspiration, nor a chosen voice or playlist: those are listed in the summary
  * as to do by hand, never guessed at. The Inspo picker's dialog has no title, so the
  * forbidden-control matcher keeps refusing it (#133), and a playlist is added by hand.
@@ -30,8 +33,14 @@ export interface SourceRoute {
    * Cover"); null when the action leaves no source on the form (Reuse Prompt only copies inputs).
    */
   label: string | null;
-  /** Whether a TS-003 snapshot shows the form after the action, so the extension may take it. */
+  /** Whether a TS-003 snapshot shows the form after the action, so the extension may plan it. */
   captured: boolean;
+  /**
+   * Whether the extension takes the route itself: goes to the clip's page and presses its "More
+   * options" menu. False until a snapshot shows the clip's page (#341, D10); the user then loads
+   * the source by hand and the extension verifies it on the form.
+   */
+  automated: boolean;
 }
 
 /**
@@ -39,11 +48,23 @@ export interface SourceRoute {
  * action arrives as that action's key, #126). Only Cover's and Reuse Prompt's results are captured.
  */
 export const SOURCE_ROUTES: Readonly<Record<string, SourceRoute>> = {
-  cover: { menu: 'Remix', item: 'Cover', label: 'Cover', captured: true },
-  reuse_prompt: { menu: 'Remix', item: 'Reuse Prompt', label: null, captured: true },
-  mashup: { menu: 'Remix', item: 'Mashup', label: 'Mashup', captured: false },
-  sample: { menu: 'Remix', item: 'Sample this song', label: 'Sample', captured: false },
-  extend: { menu: 'Edit', item: 'Extend', label: 'Extend', captured: false },
+  cover: { menu: 'Remix', item: 'Cover', label: 'Cover', captured: true, automated: false },
+  reuse_prompt: {
+    menu: 'Remix',
+    item: 'Reuse Prompt',
+    label: null,
+    captured: true,
+    automated: false,
+  },
+  mashup: { menu: 'Remix', item: 'Mashup', label: 'Mashup', captured: false, automated: false },
+  sample: {
+    menu: 'Remix',
+    item: 'Sample this song',
+    label: 'Sample',
+    captured: false,
+    automated: false,
+  },
+  extend: { menu: 'Edit', item: 'Extend', label: 'Extend', captured: false, automated: false },
 };
 
 /** A single song used as Inspiration, from the Remix menu (not captured: done by hand). */
@@ -52,6 +73,7 @@ export const INSPIRATION_ROUTE: SourceRoute = {
   item: 'Use as Inspiration',
   label: 'Inspo',
   captured: false,
+  automated: false,
 };
 
 /** Suno takes at most four songs as Inspiration (TS-002). */
@@ -236,8 +258,9 @@ export function sourceEntryResult(
 
 /**
  * A clip's "More options" button: the name every captured Suno list gives a clip's menu button
- * (Library, Trash, playlist). The clip's own page was not captured, so it is found only when the
- * page has exactly one; anything else stops the run, naming the step.
+ * (Library, Trash, playlist). The clip's own page was not captured, so nothing presses it while
+ * every route has `automated: false` (#341); once the page is captured, it is found only when the
+ * page has exactly one, and anything else stops the run, naming the step.
  */
 export const MORE_OPTIONS: Target = {
   role: 'button',
@@ -251,13 +274,18 @@ export function submenuItem(menu: SourceRoute['menu']): Target {
     role: 'menuitem',
     name: menu,
     popup: 'menu',
-    description: `the ${menu} item in the clip’s menu`,
+    description:
+      menu === 'Remix' ? 'the Remix item in the clip’s menu' : 'the Edit item in the clip’s menu',
   };
 }
 
 /** The submenu that item opens, named by the item (`aria-labelledby`). */
 export function submenu(menu: SourceRoute['menu']): Target {
-  return { role: 'menu', name: menu, description: `the clip’s ${menu} menu` };
+  return {
+    role: 'menu',
+    name: menu,
+    description: menu === 'Remix' ? 'the clip’s Remix menu' : 'the clip’s Edit menu',
+  };
 }
 
 /** The action's item in its submenu. */
@@ -266,7 +294,7 @@ export function actionItem(route: SourceRoute): Target {
     role: 'menuitem',
     name: route.item,
     within: submenu(route.menu),
-    description: `the ${route.item} item in the ${route.menu} menu`,
+    description: 'the action’s item in the clip’s Remix or Edit menu',
   };
 }
 
@@ -331,7 +359,9 @@ export function holdsClip(address: string | null, sunoId: string): boolean {
 /**
  * The verification rule (TS-002): in Advanced mode the Audio section's condition names the action
  * and its player's thumbnail holds the source clip's Suno ID; in Simple mode the chip's thumbnail
- * holds it (the chip does not name the action). Reads only.
+ * holds it (the chip does not name the action). Reads only. What it expected is written here and
+ * names no value of the Version (#343): the source's title, the action, and the clip's ID stay out
+ * of the step log and the diagnostic report.
  */
 export function sourceShown(page: Page, mode: string, load: LoadedSource): Check {
   const label = load.route.label ?? load.route.item;
@@ -342,7 +372,7 @@ export function sourceShown(page: Page, mode: string, load: LoadedSource): Check
     }
     return holdsClip(page.imageAddress(chip.found), load.sunoId)
       ? OK
-      : expected(`the source chip to show ${sourceName(load.source)}`);
+      : expected('the source chip to show the source clip of the Version');
   }
   const condition = page.find(AUDIO_CONDITION);
   if (condition.kind !== 'found') {
@@ -350,7 +380,7 @@ export function sourceShown(page: Page, mode: string, load: LoadedSource): Check
   }
   // The button shows the action as its text ("Cover"), as its name says ("… from Cover").
   if (page.read(condition.found).text !== label) {
-    return expected(`the Audio section to name the action ${label}`);
+    return expected('the Audio section to name the source action of the Version');
   }
   const player = page.find(AUDIO_PLAYER);
   if (player.kind !== 'found') {
@@ -358,5 +388,5 @@ export function sourceShown(page: Page, mode: string, load: LoadedSource): Check
   }
   return holdsClip(page.imageAddress(player.found), load.sunoId)
     ? OK
-    : expected(`the Audio section to show ${sourceName(load.source)}`);
+    : expected('the Audio section to show the source clip of the Version');
 }

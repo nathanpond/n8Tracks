@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ObservationFeed } from '../adapter/observations.ts';
 import { OBSERVER_SOURCE, type ObservedMessage } from '../adapter/observed.ts';
 import { nameOf, Page } from '../adapter/primitives.ts';
 import { AdapterSession, WorkflowRegistry } from '../adapter/registry.ts';
 import { ADAPTER_VERSION } from '../adapter/version.ts';
+import { SOURCE_ROUTES } from '../adapter/sources.ts';
 import { ADAPTER_WORKFLOWS } from '../adapter/workflows/index.ts';
 import type { GenerateJob, GenerateReply, Request } from '../messages.ts';
 import type { GenerateViewState } from '../panel/GenerateView.ts';
@@ -23,6 +24,7 @@ import {
   NOT_SIGNED_IN,
   COMPLETION_LIMIT_MS,
   COMPLETION_PROMPT_MS,
+  loadByHandFirst,
   SAME_NAME,
   SunoGenerate,
 } from './sunoGenerate.ts';
@@ -1177,24 +1179,34 @@ async function untilWaitingForSource(generate: SunoGenerate): Promise<void> {
 const FORBIDDEN_WORDS = /^(create|publish|delete|trash|move to trash|remove)/i;
 
 describe('Generate on Suno in the Suno tab: starting from a source (#148)', () => {
-  it('chooses the Version’s mode first, then goes to the source clip’s page, filling nothing yet', async () => {
+  // #341: the clip's page and its More options button are not captured, so the user loads it.
+  it('chooses the Version’s mode first, then asks the user to load the source by hand, going nowhere and filling nothing yet', async () => {
     const tab = start({
       job: job({ workspace: ON_MY_WORKSPACE, form: advancedForm({ sources: [coverSource()] }) }),
     });
     const standIn = standInForSuno(document);
     tab.feed.take(feedFor('default'));
     try {
-      await tab.generate.resume();
+      void tab.generate.resume();
+      await untilWaitingForSource(tab.generate);
     } finally {
       standIn.stop();
     }
 
-    expect(tab.steps().slice(-2)).toEqual(['filling open Songs form', 'filling open source']);
+    expect(tab.steps().slice(-2)).toEqual([
+      'filling open Songs form',
+      'filling load source by hand',
+    ]);
     expect(tab.asked).toContainEqual({
       type: 'generate-source',
-      source: { phase: 'opening', sunoId: SOURCE_CLIP },
+      source: { phase: 'byHand', sunoId: SOURCE_CLIP },
     });
-    expect(tab.visited).toEqual([SONG_PAGE]);
+    expect(tab.last()).toEqual({
+      kind: 'source',
+      message: loadByHandFirst('“Origin”', 'Remix', 'Cover'),
+    });
+    expect(tab.visited).toEqual([]);
+    expect(tab.ran.filter((id) => id.startsWith('fill-') || id.includes('source'))).toEqual([]);
   });
 
   it('always switches to the kind’s form and the Version’s mode first; only a Song loads its source after it (#147, #148)', async () => {
@@ -1205,13 +1217,14 @@ describe('Generate on Suno in the Suno tab: starting from a source (#148)', () =
     let standIn = standInForSuno(document);
     song.feed.take(feedFor('default'));
     try {
-      await song.generate.resume();
+      void song.generate.resume();
+      await untilWaitingForSource(song.generate);
     } finally {
       standIn.stop();
     }
     expect(song.ran.slice(-1)).toEqual(['switch-form']);
     expect(song.ran.filter((id) => id.startsWith('fill-'))).toEqual([]);
-    expect(song.visited).toEqual([SONG_PAGE]);
+    expect(song.visited).toEqual([]);
     document.body.innerHTML = '';
 
     // A Speech Version with a source the snapshot carries: its own form is switched to, and no
@@ -1249,6 +1262,108 @@ describe('Generate on Suno in the Suno tab: starting from a source (#148)', () =
     expect(tab.asked.at(-1)).toMatchObject({ state: 'stopped', step: 'open Songs form' });
     expect(tab.pressed).toEqual([]);
     expect(tab.visited).toEqual([]);
+  });
+
+  it('back on Create after the user loaded the source by hand, verifies it and fills the form, pressing nothing (#341)', async () => {
+    const tab = sourceTab({
+      job: job({
+        workspace: ON_MY_WORKSPACE,
+        form: advancedForm({ sources: [coverSource()] }),
+        source: { phase: 'byHand', sunoId: SOURCE_CLIP },
+      }),
+      address: 'https://suno.com/create',
+      html: snapshotHtml('create-source-advanced'),
+    });
+    const standIn = standInForSuno(document);
+    try {
+      await tab.generate.resume();
+    } finally {
+      standIn.stop();
+    }
+
+    expect(tab.steps()).toEqual([
+      'filling verify source',
+      'filling fill form',
+      'waiting review and create',
+    ]);
+    expect(tab.kept()).toEqual([null]);
+    expect(audioResult(tab.last())).toMatchObject({ outcome: 'verified' });
+    expect(tab.pressed.filter((name) => FORBIDDEN_WORDS.test(name))).toEqual([]);
+    expect(tab.pressed).not.toContain('More options');
+  });
+
+  it('on the clip’s page while the user loads the source by hand, waits, pressing and reporting nothing (#341)', async () => {
+    const tab = sourceTab({
+      job: job({
+        workspace: ON_MY_WORKSPACE,
+        form: advancedForm({ sources: [coverSource()] }),
+        source: { phase: 'byHand', sunoId: SOURCE_CLIP },
+      }),
+      address: SONG_PAGE,
+      html: snapshotHtml('clip-remix-menu'),
+    });
+
+    await tab.generate.resume();
+
+    expect(tab.last()).toEqual({ kind: 'working', step: 'Waiting for you to load the source' });
+    expect(tab.steps()).toEqual([]);
+    expect(tab.pressed).toEqual([]);
+    expect(tab.visited).toEqual([]);
+  });
+
+  it('refuses to go on from the clip’s page by itself while that page is not captured (#341)', async () => {
+    const tab = sourceTab({
+      job: job({
+        workspace: ON_MY_WORKSPACE,
+        form: advancedForm({ sources: [coverSource()] }),
+        source: { phase: 'opening', sunoId: SOURCE_CLIP },
+      }),
+      address: SONG_PAGE,
+      html: snapshotHtml('clip-remix-menu'),
+    });
+
+    await tab.generate.resume();
+
+    expect(tab.last()).toMatchObject({ kind: 'stopped' });
+    expect(tab.pressed).toEqual([]);
+  });
+});
+
+/**
+ * The route the extension takes itself once the clip's page is captured (#148): kept and tested,
+ * with the route marked automated here only, while every route is `automated: false` (#341).
+ */
+describe('Generate on Suno in the Suno tab: an automated source route, once captured (#148)', () => {
+  const routes = SOURCE_ROUTES as Record<string, { automated: boolean }>;
+  beforeEach(() => {
+    for (const route of Object.values(routes)) {
+      route.automated = true;
+    }
+  });
+  afterEach(() => {
+    for (const route of Object.values(routes)) {
+      route.automated = false;
+    }
+  });
+
+  it('goes to the source clip’s page, filling nothing yet', async () => {
+    const tab = start({
+      job: job({ workspace: ON_MY_WORKSPACE, form: advancedForm({ sources: [coverSource()] }) }),
+    });
+    const standIn = standInForSuno(document);
+    tab.feed.take(feedFor('default'));
+    try {
+      await tab.generate.resume();
+    } finally {
+      standIn.stop();
+    }
+
+    expect(tab.steps().slice(-2)).toEqual(['filling open Songs form', 'filling open source']);
+    expect(tab.asked).toContainEqual({
+      type: 'generate-source',
+      source: { phase: 'opening', sunoId: SOURCE_CLIP },
+    });
+    expect(tab.visited).toEqual([SONG_PAGE]);
   });
 
   it('on the clip’s page, chooses Remix › Cover, answers Overwrite, verifies the source, then fills the form', async () => {
@@ -1376,7 +1491,8 @@ describe('Generate on Suno in the Suno tab: starting from a source (#148)', () =
     expect(tab.steps().at(-1)).toBe('waiting review and create');
   });
 
-  it('reports Reuse Prompt as set once the menu action is done: it leaves no source to see', async () => {
+  // #342: Reuse Prompt leaves no source on the form, so which clip's inputs were copied is unseen.
+  it('never reports Reuse Prompt as set on a page that shows no source: it is to check by hand, not verified', async () => {
     const tab = sourceTab({
       job: job({
         workspace: ON_MY_WORKSPACE,
@@ -1393,7 +1509,17 @@ describe('Generate on Suno in the Suno tab: starting from a source (#148)', () =
       standIn.stop();
     }
 
-    expect(audioResult(tab.last())).toMatchObject({ outcome: 'set' });
+    const result = audioResult(tab.last());
+    expect(result?.outcome).toBe('manual');
+    expect(result?.note).toMatch(/^Not verified: Reuse Prompt leaves no source on the form/);
+    expect(result?.note).toContain('“Origin”');
+    expect(tab.asked.at(-1)).toMatchObject({
+      verification: {
+        entries: expect.arrayContaining([
+          expect.objectContaining({ key: 'songs.advanced.audio', outcome: 'manual' }),
+        ]) as unknown,
+      },
+    });
   });
 
   it('stops naming the source when its menu does not offer the action, choosing nothing', async () => {
