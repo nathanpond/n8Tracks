@@ -56,19 +56,22 @@ public sealed class SunoWorkspaceEndpointTests
     }
 
     [Fact]
-    public async Task ReportingNeedsSunoSyncAndListingNeedsCatalogRead()
+    public async Task ReportingNeedsSunoSyncOrSunoGenerateAndListingNeedsCatalogRead()
     {
         using var factory = SongApi.Host();
         using var client = factory.CreateClient();
         await SetupApi.CompleteAsync(client);
-        var others = await CredentialApi.CreateTokenAsync(factory, [.. CredentialScopes.All.Where(static scope => scope != CredentialScopes.SunoSync)]);
+        var others = await CredentialApi.CreateTokenAsync(factory, [.. CredentialScopes.All.Where(static scope => scope != CredentialScopes.SunoSync && scope != CredentialScopes.SunoGenerate)]);
         var sync = await SunoWorkspaceApi.ExtensionTokenAsync(factory);
+        var generate = await CredentialApi.CreateTokenAsync(factory, CredentialScopes.SunoGenerate);
         var body = new JsonObject { ["complete"] = false, ["workspaces"] = new JsonArray(SunoWorkspaceApi.Project("w-1", "One")) }.ToJsonString();
 
         using (var refused = await SunoWorkspaceApi.SendReportAsync(client, others, body))
         {
             var problem = await SetupApi.ProblemAsync(refused, HttpStatusCode.Forbidden, "insufficient_scope");
-            Assert.Equal(CredentialScopes.SunoSync, problem.GetProperty("requiredScope").GetString());
+            Assert.Equal(
+                [CredentialScopes.SunoSync, CredentialScopes.SunoGenerate],
+                problem.GetProperty("requiredScope").EnumerateArray().Select(static scope => scope.GetString()));
         }
 
         using (var listRefused = await CredentialApi.SendAsync(client, HttpMethod.Get, SunoWorkspaceApi.Workspaces, sync))
@@ -78,10 +81,15 @@ public sealed class SunoWorkspaceEndpointTests
 
         Assert.Equal("0", TestDatabase.Scalar(factory.DataPath, "SELECT count(*) FROM suno_workspaces;"));
 
-        // Complement: suno.sync reports, and catalog.read lists.
+        // Complement: suno.sync reports, so does suno.generate (Generate on Suno, #145), and catalog.read lists.
         using (var reported = await SunoWorkspaceApi.SendReportAsync(client, sync, body))
         {
             Assert.Equal(HttpStatusCode.OK, reported.StatusCode);
+        }
+
+        using (var fromGenerate = await SunoWorkspaceApi.SendReportAsync(client, generate, body))
+        {
+            Assert.Equal(HttpStatusCode.OK, fromGenerate.StatusCode);
         }
 
         var reader = await CredentialApi.CreateTokenAsync(factory, CredentialScopes.CatalogRead);

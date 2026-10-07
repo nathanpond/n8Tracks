@@ -33,8 +33,27 @@ public interface IGenerationRequestStore
     Task<DateTimeOffset?> LastConfirmedSyncAsync(CancellationToken cancellationToken);
 }
 
-/// <summary>A report from the extension: the state it moved to, the step it names, and what it says.</summary>
-public sealed record GenerationProgress(GenerationRequestState State, string? Step, string? Message);
+/// <summary>
+/// A report from the extension: the state it moved to, the step it names, and what it says; and,
+/// when the user chose the Song's workspace in the extension's panel (#145), that workspace.
+/// </summary>
+public sealed record GenerationProgress(GenerationRequestState State, string? Step, string? Message, ResolvedWorkspace? Workspace = null);
+
+/// <summary>How the user settled the Song's workspace in the extension's panel (#145).</summary>
+public enum WorkspaceResolution
+{
+    /// <summary>The extension created it in Suno, named after the Song.</summary>
+    Created,
+
+    /// <summary>The user picked one Suno already had.</summary>
+    Picked,
+}
+
+/// <summary>
+/// The Suno workspace the user chose for the Song in the extension's panel (#145): Suno's ID for it,
+/// its name as Suno shows it, and whether it was created or picked.
+/// </summary>
+public sealed record ResolvedWorkspace(string SunoId, string Name, WorkspaceResolution How);
 
 /// <summary>What creating a request came to.</summary>
 public abstract record GenerationRequestCreateOutcome
@@ -80,6 +99,12 @@ public abstract record GenerationRequestChangeOutcome
 
     /// <summary>The report itself is wrong, keyed by field.</summary>
     public sealed record Invalid(IReadOnlyDictionary<string, string[]> Errors) : GenerationRequestChangeOutcome;
+
+    /// <summary>
+    /// A report that resolves the Song's workspace when the Song already has another, Available one
+    /// (<paramref name="Workspace"/>): nothing changed (#145).
+    /// </summary>
+    public sealed record WorkspaceAlreadySet(GenerationRequest Request, SunoWorkspace Workspace) : GenerationRequestChangeOutcome;
 }
 
 /// <summary>
@@ -95,12 +120,16 @@ public sealed class GenerationRequestService(
     IGenerationRequestStore store,
     VersionService versions,
     ISongStore songs,
+    ISongWorkspaceStore songWorkspaces,
+    ISunoWorkspaceStore workspaces,
+    SunoWorkspaceService workspaceRecords,
     IExclusiveTransaction transaction,
     TimeProvider time)
 {
     public const string StateField = "state";
     public const string StepField = "step";
     public const string MessageField = "message";
+    public const string ResolvedWorkspaceField = "resolvedWorkspace";
 
     /// <summary>
     /// Makes a request from the Version <paramref name="versionId"/> as it is now, for a mutable or a
@@ -231,9 +260,84 @@ public sealed class GenerationRequestService(
         }
 
         var reported = GenerationRequestRules.Moved(request, progress.State, Blank(progress.Step), Blank(progress.Message), time.GetUtcNow());
+        if (progress.Workspace is { } resolved)
+        {
+            return await ResolveWorkspaceAsync(request, reported, resolved, cancellationToken).ConfigureAwait(false)
+                ?? await ReportAsync(id, credentialId, progress, cancellationToken).ConfigureAwait(false);
+        }
+
         return await store.TryMoveAsync(reported, request.State, request.UpdatedUtc, cancellationToken).ConfigureAwait(false)
             ? new GenerationRequestChangeOutcome.Changed(reported)
             : await ReportAsync(id, credentialId, progress, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Moves <paramref name="request"/> on to <paramref name="reported"/> and, in the same transaction,
+    /// makes <paramref name="resolved"/> the Song's workspace (#145). That is allowed only when the Song
+    /// has no workspace or its workspace is Unavailable: it is the user's explicit choice in the panel,
+    /// which <c>suno.generate</c> carries. Otherwise nothing changes (<c>WorkspaceAlreadySet</c>); resending
+    /// the workspace the Song already has is accepted and changes no Song, so a report that is sent
+    /// again after a lost answer does no harm. A workspace n8Tracks has not seen yet (one just created)
+    /// is recorded as Available; an Unavailable one cannot be chosen. Null when the request moved on
+    /// meanwhile, for the caller to read it again.
+    /// </summary>
+    private async Task<GenerationRequestChangeOutcome?> ResolveWorkspaceAsync(
+        GenerationRequest request,
+        GenerationRequest reported,
+        ResolvedWorkspace resolved,
+        CancellationToken cancellationToken)
+    {
+        if (await versions.FindAsync(request.VersionId, cancellationToken).ConfigureAwait(false) is not { } version)
+        {
+            return new GenerationRequestChangeOutcome.NotFound();
+        }
+
+        var songId = version.Summary.SongId;
+        return await transaction.RunAsync<GenerationRequestChangeOutcome?>(
+            async ct =>
+            {
+                var song = (await songWorkspaces.FindAsync([songId], [], ct).ConfigureAwait(false)).SingleOrDefault();
+                if (song is null)
+                {
+                    return new GenerationRequestChangeOutcome.NotFound();
+                }
+
+                var current = song.SunoWorkspaceId is { } currentId
+                    ? await workspaces.FindAsync(currentId, ct).ConfigureAwait(false)
+                    : null;
+                var same = string.Equals(song.SunoWorkspaceId, resolved.SunoId, StringComparison.Ordinal);
+                if (current is { State: SunoWorkspaceState.Available } && !same)
+                {
+                    return new GenerationRequestChangeOutcome.WorkspaceAlreadySet(request, current);
+                }
+
+                var chosen = await workspaces.FindAsync(resolved.SunoId, ct).ConfigureAwait(false);
+                if (chosen is null)
+                {
+                    var raw = new JsonObject { ["id"] = resolved.SunoId, ["name"] = resolved.Name }.ToJsonString();
+                    await workspaceRecords.RecordAsync([new SunoWorkspaceSighting(resolved.SunoId, resolved.Name, null, IsTrashed: false, raw)], complete: false, ct).ConfigureAwait(false);
+                }
+                else if (chosen.State == SunoWorkspaceState.Unavailable)
+                {
+                    return new GenerationRequestChangeOutcome.Invalid(new Dictionary<string, string[]>(StringComparer.Ordinal)
+                    {
+                        [ResolvedWorkspaceField] = ["This workspace is unavailable in Suno; choose another."],
+                    });
+                }
+
+                if (!await store.TryMoveAsync(reported, request.State, request.UpdatedUtc, ct).ConfigureAwait(false))
+                {
+                    return null;
+                }
+
+                if (!same)
+                {
+                    await songWorkspaces.MoveAsync([songId], resolved.SunoId, reported.UpdatedUtc, ct).ConfigureAwait(false);
+                }
+
+                return new GenerationRequestChangeOutcome.Changed(reported);
+            },
+            cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -280,6 +384,15 @@ public sealed class GenerationRequestService(
         if (progress.State == GenerationRequestState.Stopped && string.IsNullOrWhiteSpace(progress.Message))
         {
             errors[MessageField] = ["Say why the request stopped."];
+        }
+
+        if (progress.Workspace is { } workspace
+            && (string.IsNullOrWhiteSpace(workspace.SunoId)
+                || workspace.SunoId.Length > SunoWorkspaceRules.SunoIdMaximumLength
+                || workspace.Name is null
+                || workspace.Name.Length > SunoWorkspaceRules.NameMaximumLength))
+        {
+            errors[ResolvedWorkspaceField] = [$"Send the workspace's Suno ID (1 to {SunoWorkspaceRules.SunoIdMaximumLength} characters) and its name (at most {SunoWorkspaceRules.NameMaximumLength} characters)."];
         }
 
         return errors;

@@ -35,6 +35,17 @@ const RUN_RECIPES: Readonly<Record<string, RunRecipe>> = {
   'recognise-suno': { values: {} },
   // Scrolls the list on screen; it presses nothing on any snapshot.
   'load-more': { values: {} },
+  // Generate on Suno's workspace (#145). Opening the list presses only the breadcrumb (no snapshot
+  // shows it), scrolling presses nothing, and selecting presses a workspace row; the page's own
+  // answer that each waits for stands in as already come.
+  'open-workspaces': { values: {} },
+  'more-workspaces': { values: {} },
+  'select-workspace': { values: { workspaceName: 'My Workspace', shown: () => OK } },
+  // The one permitted change to Suno: its two controls, through their own primitive only.
+  'create-workspace': {
+    values: { workspaceName: 'A new Song', created: () => OK },
+    exceptions: ['create-workspace'],
+  },
 };
 
 /** Every workflow module under `src/adapter/workflows/`, except the list itself. */
@@ -51,7 +62,8 @@ describe('invariant 4: the extension never presses a forbidden control on Suno',
   it('runs every registered workflow on every snapshot without activating a forbidden control', async () => {
     expect(ADAPTER_WORKFLOWS.length).toBeGreaterThan(0);
     expect(await exerciseWorkflows(ADAPTER_WORKFLOWS, { recipes: RUN_RECIPES })).toEqual([]);
-  });
+    // Every workflow on every snapshot, each failing step polled to its timeout on a fake clock.
+  }, 60_000);
 
   it('knows every workflow: each module is registered, and each registered one has a recipe', () => {
     expect(Object.keys(WORKFLOW_MODULES).length).toBeGreaterThan(0);
@@ -93,6 +105,9 @@ describe('invariant 4: the extension never presses a forbidden control on Suno',
         'src/adapter/libraryReader.ts',
         'src/content/suno-main.ts',
         'src/content/sunoSync.ts',
+        'src/content/sunoGenerate.ts',
+        'src/adapter/workflows/workspace.ts',
+        'src/panel/GenerateView.ts',
         'src/page/observe.ts',
         'src/page/observe-main.ts',
         'src/panel/panel.ts',

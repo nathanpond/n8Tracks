@@ -11,8 +11,10 @@ import {
 import { ADAPTER_WORKFLOWS } from '../adapter/workflows/index.ts';
 import type { DiagnosticReport } from '../diagnostics/report.ts';
 import type { ConnectionState, Request } from '../messages.ts';
+import { GenerateView } from '../panel/GenerateView.ts';
 import { Panel, type ObjectUrls } from '../panel/panel.ts';
 import { SyncView } from '../panel/SyncView.ts';
+import { SunoGenerate } from './sunoGenerate.ts';
 import { SunoSync } from './sunoSync.ts';
 
 export interface SunoContentOptions {
@@ -39,9 +41,13 @@ export interface SunoContent {
   panel: Panel;
   sync: SunoSync;
   syncView: SyncView;
+  generate: SunoGenerate;
+  generateView: GenerateView;
   observations: ObservationFeed;
   /** The resume check of this page load: whether this tab is in a sync, and if so its leg. */
   resumed: Promise<void>;
+  /** The same for Generate on Suno (#145): whether this tab works on a request, and its steps. */
+  generating: Promise<void>;
   /** Opens the panel if closed, closes it if open; opening runs the self-check. */
   toggle(): Promise<void>;
   /** Reads the connection and runs the self-check again, if the panel is open. */
@@ -168,6 +174,17 @@ export function startSunoContent(options: SunoContentOptions): SunoContent {
     },
   });
 
+  // Set below, like the sync: the view's buttons answer the controller's choice.
+  let generate: SunoGenerate | null = null;
+  const generateView = new GenerateView(page, {
+    create: () => {
+      generate?.create();
+    },
+    pick: (option) => {
+      generate?.pick(option);
+    },
+  });
+
   const panel = new Panel(page, {
     versions: { extension: options.extensionVersion, adapter: ADAPTER_VERSION },
     ...(options.objectUrls === undefined ? {} : { objectUrls: options.objectUrls }),
@@ -179,6 +196,7 @@ export function startSunoContent(options: SunoContentOptions): SunoContent {
       void refresh();
     },
     sync: syncView.element,
+    generate: generateView.element,
   });
 
   sync = new SunoSync({
@@ -200,6 +218,21 @@ export function startSunoContent(options: SunoContentOptions): SunoContent {
     versions: { extension: options.extensionVersion, adapter: ADAPTER_VERSION },
     ...(options.clock === undefined ? {} : { clock: options.clock }),
   });
+  generate = new SunoGenerate({
+    page: sunoPage,
+    session,
+    observations,
+    send,
+    show: (state) => {
+      generateView.show(state);
+      if (!panel.isOpen) {
+        panel.open();
+        watch();
+        void refresh();
+      }
+    },
+    ...(options.clock === undefined ? {} : { clock: options.clock }),
+  });
   observations.start();
 
   const watch = () => {
@@ -219,14 +252,19 @@ export function startSunoContent(options: SunoContentOptions): SunoContent {
 
   // Never starts a sync: only reads on if this tab's sync, started by the user, is under way.
   const resumed = sync.resume();
+  // Never starts a request either: only works on one n8Tracks handed over and this tab was opened for.
+  const generating = generate.resume();
 
   return {
     session,
     panel,
     sync,
     syncView,
+    generate,
+    generateView,
     observations,
     resumed,
+    generating,
     toggle: async () => {
       if (panel.isOpen) {
         panel.close();

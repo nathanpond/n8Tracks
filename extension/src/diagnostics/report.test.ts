@@ -304,6 +304,10 @@ describe('the diagnostic report', () => {
     expect(report.workflows.map(({ id, state, step }) => ({ id, state, step }))).toEqual([
       { id: 'recognise-suno', state: 'ready', step: null },
       { id: 'load-more', state: 'not_checked', step: null },
+      { id: 'open-workspaces', state: 'not_checked', step: null },
+      { id: 'more-workspaces', state: 'not_checked', step: null },
+      { id: 'select-workspace', state: 'not_checked', step: null },
+      { id: 'create-workspace', state: 'not_checked', step: null },
       { id: 'fill-test', state: 'not_working', step: 'workspace' },
       { id: 'missing-test', state: 'not_checked', step: null },
       { id: 'missing-on-suno-test', state: 'not_checked', step: null },

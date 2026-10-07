@@ -13,11 +13,19 @@ export function touch(target: HTMLElement): void {
 }
 `;
 
+/** A workflow step pressing what it found, through the click primitive (#145). */
+const USES_THE_PRIMITIVE = `
+import type { Found, Page } from './primitives.ts';
+export function press(page: Page, found: Found): void {
+  page.click(found);
+}
+`;
+
 const eslint = new ESLint({ cwd: extensionRoot });
 
 /** The DOM-access findings for `code` linted as if it were the file at `path`. */
-async function findings(path: string): Promise<string[]> {
-  const [result] = await eslint.lintText(TOUCHES_THE_PAGE, {
+async function findings(path: string, code = TOUCHES_THE_PAGE): Promise<string[]> {
+  const [result] = await eslint.lintText(code, {
     filePath: join(extensionRoot, path),
   });
   return (result?.messages ?? [])
@@ -41,6 +49,10 @@ describe("the rule that keeps Suno's page to the primitives", () => {
       'Only adapter/primitives.ts sends events to the page: use a primitive.',
       'Only adapter/primitives.ts clicks: use the click primitive.',
     ]);
+  });
+
+  it('lets a workflow press through the click primitive, which takes what it found', async () => {
+    expect(await findings('src/adapter/workflows/workspace.ts', USES_THE_PRIMITIVE)).toEqual([]);
   });
 
   it.each(['src/adapter/primitives.ts', 'src/popup/popup.ts', 'src/adapter/primitives.test.ts'])(

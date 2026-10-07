@@ -8,8 +8,12 @@
  * These are adapter patterns: a change to one raises `ADAPTER_VERSION`.
  */
 
-/** The lists the library reader reads (TS-003, "How lists are paged"). */
-export type ObservedKind = 'library-feed' | 'trash' | 'workspaces' | 'playlists' | 'playlist-feed';
+/**
+ * The lists the library reader reads (TS-003, "How lists are paged"), and the answer to creating
+ * a workspace, which gives Generate on Suno the new workspace's ID (#145).
+ */
+export type ObservedKind =
+  'library-feed' | 'trash' | 'workspaces' | 'playlists' | 'playlist-feed' | 'workspace-created';
 
 /** One Suno list response: method and path on Suno's API host. */
 interface ListPattern {
@@ -20,7 +24,8 @@ interface ListPattern {
 
 /**
  * The responses the observer forwards (TS-003): the feed of Library › Songs or a workspace, the
- * Trash list, the workspace list, the playlist list, and a playlist's songs.
+ * Trash list, the workspace list, the playlist list, a playlist's songs, and the new workspace
+ * from the list's inline "Create new workspace" row (`project.create.response.json`).
  */
 export const OBSERVED_LISTS: readonly ListPattern[] = [
   { kind: 'library-feed', method: 'POST', path: '/api/feed/v3' },
@@ -28,6 +33,7 @@ export const OBSERVED_LISTS: readonly ListPattern[] = [
   { kind: 'workspaces', method: 'GET', path: '/api/project/me' },
   { kind: 'playlists', method: 'GET', path: '/api/playlist/me' },
   { kind: 'playlist-feed', method: 'POST', path: '/api/unified/feed' },
+  { kind: 'workspace-created', method: 'POST', path: '/api/project' },
 ];
 
 /** Never forwarded, wherever they appear (TS-003: the Create request carries them). */

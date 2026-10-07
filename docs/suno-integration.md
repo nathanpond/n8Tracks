@@ -27,7 +27,7 @@ Shared design the M4 stories refer to as "the Suno integration design". A story'
 Two scopes join the list from #56:
 
 - `suno.sync`: create and upload an export, upload Generation artwork for it, read the state of exports this credential created, and report workspace discovery.
-- `suno.generate`: claim and read a pending generation request, report its progress, record the workspace the user chose for the Song, and report an observed Create and its finished clips (which attaches Generations to the requested Version, or to a new child Version when the submitted inputs differ) with their artwork.
+- `suno.generate`: claim and read a pending generation request, report its progress, report Suno's workspace list as it reads it, record the workspace the user chose for the Song, and report an observed Create and its finished clips (which attaches Generations to the requested Version, or to a new child Version when the submitted inputs differ) with their artwork.
 
 Committing an import, resolving diffs, managing the ignore list, deleting Generations, and reassigning workspaces are session-only. Rating, commenting, archiving, and selecting use `generations.evaluate`.
 
@@ -47,7 +47,7 @@ A Generation (the minimal record from #69) gains:
 
 Workspaces are kept in `suno_workspaces`, one record per Suno workspace ID (#129). Each record holds the latest name and description, Available or Unavailable, when the workspace was first and last seen, and the raw project object. Records are never deleted in V1.
 
-- **Discovery:** `PUT /api/v1/suno/workspaces/discovered` (`suno.sync`) takes `{ complete, workspaces: [<raw project>] }`. It reads `id`, `name`, `description`, and `is_trashed`.
+- **Discovery:** `PUT /api/v1/suno/workspaces/discovered` (`suno.sync` or `suno.generate`) takes `{ complete, workspaces: [<raw project>] }`. A sync reports the list it reads, and so does Generate on Suno whenever it has read Suno's complete list (#145). It reads `id`, `name`, `description`, and `is_trashed`.
   - An entry without an `id` refuses the whole body with 422.
   - If an ID is repeated, the last entry wins.
   - A blank name never overwrites a known one.
@@ -131,10 +131,10 @@ Raw objects are sent as Suno returned them. It is uploaded in parts: `POST /api/
   - `GET /api/v1/versions/{reference}/generation-request` (`catalog.read`) answers the newest request, without its snapshot.
   - `GET /api/v1/suno/generation-requests/{id}` (`suno.generate`) answers it with its snapshot.
   - `POST .../claim` (`suno.generate`) lets the extension take the request; a session gets 403 `credential_required`. The claim binds the request to that credential, and only it may report.
-  - `PATCH` (`suno.generate`, no If-Match) takes the claimer's progress, `{ state: opening | workspace | filling | waiting | done | stopped, step, message }`; a stop says why.
+  - `PATCH` (`suno.generate`, no If-Match) takes the claimer's progress, `{ state: opening | workspace | filling | waiting | done | stopped, step, message }`; a stop says why. It may also carry `resolvedWorkspace: { sunoId, name, how: created | picked }`, the workspace the user chose for the Song in the extension's panel (#145). It becomes the Song's workspace in the same transaction, but only when the Song has none or its workspace is Unavailable; otherwise the answer is 409 `workspace_already_set` and nothing changes. Sending the Song's own workspace again changes nothing, so a report sent again after a lost answer is harmless. A workspace n8Tracks has not seen is recorded as Available. An Unavailable one cannot be chosen (422).
   - `POST .../cancel` (`versions.write`) cancels it.
   - Refusals: 409 `request_ended` out of a terminal state, 409 `request_claimed` for another credential's claim (403 on a report), 409 `request_not_claimed` for a report before the claim.
-- **Snapshot:** `{ schemaVersion: 1, kind, mode, entries: [{ key, value }], sources, fileInputs, workspace: { sunoId, name } | null, song: { title, shortcode }, version: { shortcode }, unsupported }`. It is built from the same `effectiveInputs` the Version answer shows.
+- **Snapshot:** `{ schemaVersion: 1, kind, mode, entries: [{ key, value }], sources, fileInputs, workspace: { sunoId, name, state } | null, song: { title, shortcode }, version: { shortcode }, unsupported }`. It is built from the same `effectiveInputs` the Version answer shows.
   - Each entry is keyed by its adapter field-map entry (`docs/suno-adapter-field-map.md`). A value with no entry is listed under `unsupported`.
   - In Simple mode, the added lyrics and styles are the value of `songs.simple.simple_add_lyrics` and `songs.simple.simple_add_styles` (null when not added).
   - Each source carries its entry, group, position, Suno action, target (`{ kind, id, sunoId }`), title, shortcode, and availability.
@@ -144,6 +144,11 @@ Raw objects are sent as Suno returned them. It is uploaded in parts: `POST /api/
   - Unclaimed 15 seconds after it was made, it is `stopped` with "The extension did not respond".
   - With no report for an hour, it is `expired`.
   - When the Version's effective content has changed since it was made, it is `cancelled` and the user is told to start again. A name, notes, the Song's workspace, or a source's availability do not count.
+- **The Song's workspace (#145):** after the claim, the extension reuses the most recently active suno.com tab in the n8Tracks tab's window, or opens a new tab beside it, on /create. Before each step it reads the request and stops if it is no longer active, then reports the step. The steps are a fixed list: `open Suno`, `check sign-in`, `read workspace list`, `select workspace`, `choose workspace`, `create workspace`, and `workspace selected`.
+  - **Not signed in:** the extension stops and says so. There is no snapshot of a signed-out page, so being signed in is told by Suno's profile menu, and also by the Create page loading at all.
+  - **The workspace list:** it opens the list with the "Workspaces" breadcrumb (never the workspace-name breadcrumb, which renames) and reads it to its end (TS-003 paging). It then reports the complete list, which keeps n8Tracks' record current and marks a workspace Suno no longer lists Unavailable. A list that does not load stops the request without marking anything.
+  - **Selecting:** when Suno's list holds the Song's workspace, the extension selects it by its row. Suno's rows carry no ID, so the row is found by the name Suno's list gives for that ID, and two rows that match are never chosen between. The page must then load that workspace's songs.
+  - **Choosing:** otherwise the panel offers to create a workspace named with the Song's title, or to use an existing one (same-name ones with no Song first, then the rest with their Song counts). Nothing is created until the user chooses, and the Version page shows "Waiting for you in Suno". Creating goes through Suno's own inline row ("Create new workspace", the name, Confirm), which is invariant 4's one permitted change. The new workspace's ID is read from Suno's answer to `POST /api/project`. The choice goes to n8Tracks as `resolvedWorkspace`; the report is retried, but the creation never is.
 - **The web app:** the button sits beside Create New Version From. It pings the relay first and makes nothing unless the extension answers connected, compatible, and with `suno.generate`. Otherwise the page says which, and when the relay answered, it offers to open the extension's options (`open-options`).
   - It then makes the request and posts `{ type: "generate", requestId }`. The extension checks its connection afresh, claims the request, and answers `generate-accepted`. A refused hand-off cancels the request.
   - The page reads the request every two seconds while it is active and offers Cancel.
