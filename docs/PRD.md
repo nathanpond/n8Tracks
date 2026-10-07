@@ -524,7 +524,7 @@ The following previously established V1 areas remain in scope:
 - A user may select Song artwork from any of the Song's Generations or upload a local image.
 - Albums and Playlists each have independently selected artwork.
 - Selected artwork is copied into n8Tracks-managed storage so the catalog does not depend on expiring Suno URLs or the continued availability of a Generation.
-- V1 accepts JPEG, PNG, and WebP artwork up to 25 MB and validates file contents rather than trusting filename extensions.
+- V1 accepts JPEG, PNG, and WebP artwork up to 25 MB, 12,000 pixels on a side, and 100 megapixels in all, and validates file contents rather than trusting filename extensions. An image over a pixel limit is refused from its header, before it is decoded.
 - n8Tracks preserves the original image and generates optimized thumbnails.
 - Users may position a non-destructive square crop without modifying the original.
 - Artwork copied or selected for a Song, Album, or Playlist becomes an independent managed asset.
