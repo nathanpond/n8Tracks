@@ -1,4 +1,5 @@
 import { isSunoAddress, sunoCreateAddress } from '../adapter/addresses.ts';
+import type { FormJob, VerificationReport } from '../adapter/fill.ts';
 import {
   pageRequestOf,
   type ChosenWorkspace,
@@ -287,7 +288,13 @@ export class GenerateCoordinator {
     }
     switch (request.type) {
       case 'generate-progress':
-        return this.progress(tab, request.state, request.step, request.message);
+        return this.progress(
+          tab,
+          request.state,
+          request.step,
+          request.message,
+          request.verification,
+        );
       case 'generate-workspaces':
         return this.workspaces(request.workspaces);
       case 'generate-resolve':
@@ -356,6 +363,7 @@ export class GenerateCoordinator {
       songTitle: typeof song.title === 'string' ? song.title : '',
       workspace: tab.chosen ?? workspaceOf(snapshot.workspace),
       loads,
+      form: formOf(snapshot),
     };
   }
 
@@ -368,6 +376,7 @@ export class GenerateCoordinator {
     state: GenerateState,
     step: string,
     message: string | undefined,
+    verification?: VerificationReport,
   ): Promise<GenerateReply> {
     const request = await this.read(tab.requestId);
     if (request === null) {
@@ -381,7 +390,14 @@ export class GenerateCoordinator {
         message: typeof request.message === 'string' ? request.message : ENDED,
       };
     }
-    const answer = await this.report(tab.requestId, state, step, message ?? null);
+    const answer = await this.report(
+      tab.requestId,
+      state,
+      step,
+      message ?? null,
+      undefined,
+      verification,
+    );
     if (answer.ok && (state === 'stopped' || state === 'done')) {
       await this.forget();
     }
@@ -458,6 +474,7 @@ export class GenerateCoordinator {
     step: string | null,
     message: string | null = null,
     resolvedWorkspace?: ChosenWorkspace,
+    verification?: VerificationReport,
   ): Promise<GenerateReply> {
     try {
       const response = await this.connection.call(
@@ -470,6 +487,7 @@ export class GenerateCoordinator {
             step,
             message,
             ...(resolvedWorkspace === undefined ? {} : { resolvedWorkspace }),
+            ...(verification === undefined ? {} : { verification }),
           }),
         },
       );
@@ -498,6 +516,49 @@ function onSuno(address: string | undefined): boolean {
   } catch {
     return false;
   }
+}
+
+function textOrNull(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
+}
+
+/**
+ * What the Suno tab fills the Create form from (#146): the snapshot's kind, mode, entries by key,
+ * sources and file inputs by entry, and the keys of unsupported values; null when the snapshot has
+ * no kind or mode.
+ */
+export function formOf(snapshot: Record<string, unknown>): FormJob | null {
+  if (typeof snapshot.kind !== 'string' || typeof snapshot.mode !== 'string') {
+    return null;
+  }
+  const records = (value: unknown) =>
+    Array.isArray(value)
+      ? value.filter((item): item is Record<string, unknown> => isRecord(item))
+      : [];
+  const entries: Record<string, unknown> = {};
+  for (const entry of records(snapshot.entries)) {
+    if (typeof entry.key === 'string') {
+      entries[entry.key] = entry.value ?? null;
+    }
+  }
+  return {
+    kind: snapshot.kind,
+    mode: snapshot.mode,
+    entries,
+    sources: records(snapshot.sources)
+      .filter((source) => typeof source.key === 'string')
+      .map((source) => ({
+        key: source.key as string,
+        title: textOrNull(source.title) ?? textOrNull(source.shortcode),
+        sunoAction: textOrNull(source.sunoAction),
+      })),
+    fileInputs: records(snapshot.fileInputs)
+      .filter((file) => typeof file.key === 'string')
+      .map((file) => ({ key: file.key as string, description: textOrNull(file.description) })),
+    unsupported: records(snapshot.unsupported)
+      .map((item) => item.key)
+      .filter((key): key is string => typeof key === 'string'),
+  };
 }
 
 /** The workspace a snapshot (or the kept choice) names, or null. */

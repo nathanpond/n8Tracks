@@ -53,6 +53,10 @@ public enum GenerationRequestState
 /// <param name="CreatedUtc">When it was made.</param>
 /// <param name="UpdatedUtc">When it was made, claimed, or last reported on: the hour runs from here.</param>
 /// <param name="EndedUtc">When it reached a terminal state; null while active.</param>
+/// <param name="VerificationJson">
+/// The extension's last verification summary of the filled Create form (#146), as JSON; null until
+/// one is reported. Text values in it are lengths and hashes, never the text.
+/// </param>
 public sealed record GenerationRequest(
     Guid Id,
     Guid VersionId,
@@ -64,7 +68,8 @@ public sealed record GenerationRequest(
     Guid? CredentialId,
     DateTimeOffset CreatedUtc,
     DateTimeOffset UpdatedUtc,
-    DateTimeOffset? EndedUtc);
+    DateTimeOffset? EndedUtc,
+    string? VerificationJson = null);
 
 /// <summary>A change of state a request is due, with what to say about it.</summary>
 public sealed record GenerationRequestTransition(GenerationRequestState State, string Message);

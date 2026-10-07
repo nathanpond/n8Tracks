@@ -524,3 +524,166 @@ describe('scrollToEnd and go (the library reader, #134)', () => {
     expect(page.find({ role: 'rowgroup', description: 'rows' }).kind).toBe('found');
   });
 });
+
+describe('regions and labels (#146)', () => {
+  const MORE_OPTIONS: Target = {
+    role: 'button',
+    name: /^More Options\b/,
+    description: 'the More Options section header',
+  };
+
+  it('finds an unnamed control beside its label, where the name alone is ambiguous', () => {
+    const page = loadSnapshot(ADVANCED);
+    const on: Target = {
+      role: 'button',
+      name: 'On',
+      within: {
+        around: {
+          text: 'Max Mode',
+          within: { around: MORE_OPTIONS, levels: 2, description: 'More Options' },
+          description: 'the Max Mode label',
+        },
+        levels: 2,
+        description: 'the Max Mode switch',
+      },
+      description: 'the Max Mode On button',
+    };
+
+    expect(page.find({ role: 'button', name: 'On', description: 'On' })).toMatchObject({
+      kind: 'ambiguous',
+    });
+    expect(page.read(found(page.find(on))).selected).toBe(true);
+  });
+
+  it('reaches no further out than its levels, so a control that has gone is not found elsewhere', () => {
+    const page = loadSnapshot(ADVANCED);
+    const variety: Target = {
+      role: 'slider',
+      name: 'Variety',
+      within: { around: MORE_OPTIONS, levels: 2, description: 'More Options' },
+      description: 'the Variety slider in More Options',
+    };
+    expect(page.read(found(page.find(variety))).value).toBe('2');
+
+    document.querySelector('[role="slider"][aria-label="Variety"]')?.remove();
+
+    // The Speech form's Variety slider is further out; it is not taken in its place.
+    expect(page.find(variety)).toMatchObject({ kind: 'not_found' });
+    expect(
+      page.find({ ...variety, within: { ...variety.within, levels: 10 } as Target['within'] }),
+    ).toMatchObject({ kind: 'found' });
+  });
+
+  it('finds a menu button by the popup it opens, and reads whether it is open', () => {
+    const page = loadSnapshot(ADVANCED);
+    const model = found(
+      page.find({
+        role: 'button',
+        popup: 'menu',
+        within: {
+          around: { role: 'tablist', name: 'Create form mode', description: 'the mode tabs' },
+          levels: 3,
+          description: 'the top of the form',
+        },
+        description: 'the model button',
+      }),
+    );
+
+    expect(page.read(model)).toMatchObject({ text: 'v6-mini', expanded: false });
+    expect(page.read(found(page.find(MORE_OPTIONS))).expanded).toBe(true);
+  });
+});
+
+describe('editable text (#146: the Lexical lyrics editor)', () => {
+  const EDITOR: Target = {
+    role: 'textbox',
+    name: 'Lyrics editor',
+    description: 'the Lyrics editor',
+  };
+
+  it('reads an editable region as its lines: one per paragraph, an empty paragraph as an empty line', () => {
+    document.body.innerHTML =
+      '<div contenteditable="true" aria-label="Lyrics editor"><p><span>one</span></p><p><br></p><p>two<br>three</p></div>';
+    const page = new Page(document);
+
+    expect(page.read(found(page.find(EDITOR))).value).toBe('one\n\ntwo\nthree');
+  });
+
+  it('types line by line through the browser’s editing commands, with everything selected first', () => {
+    const page = loadSnapshot(ADVANCED);
+    const calls: string[] = [];
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: (command: string, _ui: boolean, value?: string) => {
+        calls.push(`${command}${value === undefined ? '' : ` ${value}`}`);
+        if (calls.length === 1) {
+          expect(document.getSelection()?.isCollapsed).toBe(false);
+        }
+        return true;
+      },
+    });
+    const keys = recordEvents('keydown');
+    try {
+      page.typeText(found(page.find(EDITOR)), 'one\r\n\r\ntwo');
+      page.typeText(found(page.find(EDITOR)), '');
+    } finally {
+      Reflect.deleteProperty(document, 'execCommand');
+    }
+
+    expect(calls).toEqual([
+      'insertText one',
+      'insertParagraph',
+      'insertParagraph',
+      'insertText two',
+      'delete',
+    ]);
+    expect(keys).toEqual([]);
+  });
+
+  it('refuses where it cannot type: not an editable region, no editing commands, or after the run stopped', () => {
+    const page = loadSnapshot(ADVANCED);
+    const editor = found(page.find(EDITOR));
+
+    expect(() => {
+      page.typeText(found(page.find(WEIRDNESS)), 'x');
+    }).toThrow('the Weirdness slider to be an editable text region');
+    expect(() => {
+      page.typeText(editor, 'x');
+    }).toThrow('a browser that can type into the Lyrics editor');
+    expect(() => {
+      page.set(editor, 'x');
+    }).toThrow('the Lyrics editor to take a typed value');
+    const controller = new AbortController();
+    controller.abort();
+    expect(() => {
+      page.withSignal(controller.signal).typeText(editor, 'x');
+    }).toThrow(StoppedError);
+  });
+});
+
+describe('sliders that move in steps (#146: Duration by 5 seconds)', () => {
+  function durationPage() {
+    document.body.innerHTML =
+      '<div role="slider" aria-label="Duration" aria-valuenow="30" aria-valuemin="10" aria-valuemax="360"></div>';
+    const element = document.querySelector('[role="slider"]');
+    element?.addEventListener('keydown', (event) => {
+      const now = Number(element.getAttribute('aria-valuenow'));
+      const key = (event as KeyboardEvent).key;
+      element.setAttribute('aria-valuenow', String(key === 'ArrowRight' ? now + 5 : now - 5));
+    });
+    const page = new Page(document);
+    return {
+      page,
+      slider: found(page.find({ role: 'slider', name: 'Duration', description: 'Duration' })),
+    };
+  }
+
+  it('ends on the nearer step when the value lies between two', () => {
+    const { page, slider } = durationPage();
+
+    page.set(slider, 33);
+    expect(page.read(slider).value).toBe('35');
+    page.set(slider, 47);
+    expect(page.read(slider).value).toBe('45');
+  });
+});

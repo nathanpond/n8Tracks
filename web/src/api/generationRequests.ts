@@ -9,6 +9,30 @@ export const REQUEST_POLL_MS = 2_000;
 export const ACTIVE_STATES = ['pending', 'claimed', 'opening', 'workspace', 'filling', 'waiting'];
 export const ENDED_STATES = ['done', 'stopped', 'cancelled', 'expired'];
 
+/** A value of the verification summary: text only as its length and hash (#146). */
+export type VerificationValue =
+  string | number | boolean | null | { length: number; sha256: string };
+
+/** What became of one entry of Suno's Create form when the extension filled it (#146). */
+export type VerificationOutcome =
+  'set' | 'failed' | 'unavailable' | 'manual' | 'not_applicable' | 'unsupported';
+
+export interface VerificationEntry {
+  key: string;
+  outcome: VerificationOutcome;
+  expected?: VerificationValue;
+  found?: VerificationValue;
+  note?: string;
+}
+
+/** The extension's last verification summary of the filled form (#146). */
+export interface Verification {
+  adapterVersion: number;
+  mode: string;
+  checkedAt: string;
+  entries: VerificationEntry[];
+}
+
 /** A Generate on Suno request as the Version page sees it (never its snapshot). */
 export interface GenerationRequest {
   id: string;
@@ -21,6 +45,8 @@ export interface GenerationRequest {
   createdAt: string;
   updatedAt: string;
   endedAt: string | null;
+  /** Absent in answers from before #146, null until the extension reports one. */
+  verification?: Verification | null;
 }
 
 /** A source that blocks a request, as n8Tracks names it. */
@@ -57,7 +83,36 @@ export function isGenerationRequest(value: unknown): value is GenerationRequest 
     typeof value.claimed === 'boolean' &&
     typeof value.createdAt === 'string' &&
     typeof value.updatedAt === 'string' &&
-    nullableText(value.endedAt)
+    nullableText(value.endedAt) &&
+    (value.verification === undefined ||
+      value.verification === null ||
+      isVerification(value.verification))
+  );
+}
+
+const OUTCOMES: readonly string[] = [
+  'set',
+  'failed',
+  'unavailable',
+  'manual',
+  'not_applicable',
+  'unsupported',
+] satisfies VerificationOutcome[];
+
+function isVerification(value: unknown): value is Verification {
+  return (
+    isRecord(value) &&
+    typeof value.adapterVersion === 'number' &&
+    typeof value.mode === 'string' &&
+    typeof value.checkedAt === 'string' &&
+    Array.isArray(value.entries) &&
+    value.entries.every(
+      (entry) =>
+        isRecord(entry) &&
+        typeof entry.key === 'string' &&
+        typeof entry.outcome === 'string' &&
+        OUTCOMES.includes(entry.outcome),
+    )
   );
 }
 

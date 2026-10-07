@@ -142,6 +142,10 @@ describe('the service worker router', () => {
         { id: 'more-workspaces', state: 'not_checked' },
         { id: 'select-workspace', state: 'not_checked' },
         { id: 'create-workspace', state: 'not_checked' },
+        { id: 'switch-form', state: 'not_checked' },
+        { id: 'fill-songs-simple', state: 'not_checked' },
+        { id: 'fill-songs-advanced', state: 'not_checked' },
+        { id: 'check-songs-form', state: 'not_checked' },
       ],
       steps: [{ workflow: 'recognise-suno', step: 'navigation', ms: 3 }],
     });

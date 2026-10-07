@@ -62,14 +62,22 @@ export interface RecognisedDialog {
 
 /**
  * Dialogs whose controls may be pressed (TS-003). Loading a source onto a filled form asks
- * whether to overwrite the lyrics and styles; either answer only changes the form. The Download
- * dialog is not here: only the download story's own primitive may recognise it (#216).
+ * whether to overwrite the lyrics and styles; either answer only changes the form. The Voice
+ * picker ("+ Voice", #146) may be closed and its two lists switched; choosing a voice in it is the
+ * source story's (#148), which adds what it presses. The Inspo picker is not here: its dialog has
+ * no title, and recognising an untitled dialog would recognise every untitled one. The Download
+ * dialog is not here either: only the download story's own primitive may recognise it (#216).
  */
 export const RECOGNISED_DIALOGS: readonly RecognisedDialog[] = [
   {
     title: 'Overwrite Lyrics & Styles?',
     allows: ['Overwrite', 'Keep Current'],
     snapshot: 'overwrite-lyrics-styles-dialog',
+  },
+  {
+    title: 'Voice',
+    allows: ['Close', 'My Voices', 'Favorites'],
+    snapshot: 'voice-picker',
   },
 ];
 

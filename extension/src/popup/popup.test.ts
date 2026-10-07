@@ -167,7 +167,7 @@ describe('the popup', () => {
     await open({ status: 'not-paired' });
 
     expect(text('version')).toBe('v0.1.0');
-    expect(text('adapter')).toBe('Suno adapter 4');
+    expect(text('adapter')).toBe('Suno adapter 5');
   });
 
   it('offers the panel on a Suno tab while connected, and opens it there', async () => {

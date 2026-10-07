@@ -27,9 +27,14 @@ interface Call {
 
 const SNAPSHOT = {
   schemaVersion: 1,
+  kind: 'song',
+  mode: 'advanced',
   song: { title: 'Night Drive', shortcode: 'N8-1' },
   workspace: null,
   entries: [{ key: 'songs.advanced.lyrics', value: 'secret lyric line' }],
+  sources: [{ key: 'songs.advanced.audio', title: 'Origin', sunoAction: 'cover' }],
+  fileInputs: [{ key: 'songs.advanced.audio', kind: 'audio', description: 'a demo' }],
+  unsupported: [{ key: 'songs.advanced.crop', value: 1 }],
 };
 
 /**
@@ -197,10 +202,22 @@ describe('Generate on Suno: the Suno tab', () => {
     expect(await generate.handleTab({ type: 'generate-resume' }, 7)).toEqual({ job: null });
     const first = await generate.handleTab({ type: 'generate-resume' }, 42);
     expect(first).toEqual({
-      job: { requestId: REQUEST, songTitle: 'Night Drive', workspace: null, loads: 1 },
+      job: {
+        requestId: REQUEST,
+        songTitle: 'Night Drive',
+        workspace: null,
+        loads: 1,
+        // What the tab fills the form from (#146): the snapshot's values, by entry.
+        form: {
+          kind: 'song',
+          mode: 'advanced',
+          entries: { 'songs.advanced.lyrics': 'secret lyric line' },
+          sources: [{ key: 'songs.advanced.audio', title: 'Origin', sunoAction: 'cover' }],
+          fileInputs: [{ key: 'songs.advanced.audio', description: 'a demo' }],
+          unsupported: ['songs.advanced.crop'],
+        },
+      },
     });
-    // The job carries no lyrics, prompts, or other values of the snapshot.
-    expect(JSON.stringify(first)).not.toContain('secret');
     expect(await generate.handleTab({ type: 'generate-resume' }, 42)).toMatchObject({
       job: { loads: 2 },
     });

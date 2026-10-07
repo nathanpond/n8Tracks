@@ -1,10 +1,19 @@
 import { sunoCreateAddress, sunoPageOf } from '../adapter/addresses.ts';
 import type { Clock } from '../adapter/clock.ts';
+import { verificationReport, type EntryResult, type FormJob } from '../adapter/fill.ts';
 import { PAGE_RETRIES, PAGE_WAIT_MS, type Observations } from '../adapter/libraryReader.ts';
 import type { ObservedMessage } from '../adapter/observed.ts';
 import type { Page } from '../adapter/primitives.ts';
 import type { AdapterSession } from '../adapter/registry.ts';
+import { ADAPTER_VERSION } from '../adapter/version.ts';
 import { expected, failureText, OK, type Check, type RunResult } from '../adapter/workflow.ts';
+import {
+  checkSongsForm,
+  fillSongsAdvanced,
+  fillSongsSimple,
+  switchForm,
+  type FillContext,
+} from '../adapter/workflows/fillSongs.ts';
 import {
   createWorkspace,
   moreWorkspaces,
@@ -44,6 +53,13 @@ import type { GenerateViewState } from '../panel/GenerateView.ts';
  *   Suno has. Nothing is created until the user chooses; waiting counts towards the request's hour.
  * - Not signed in to Suno (no profile menu, or no Create page after loading it twice): it stops
  *   and says so.
+ *
+ * With the workspace selected, it fills the Create form (#146): the Songs tab and the Version's
+ * mode (left as they are when the Version has a source, which the source story loads first), then
+ * every entry of the mode, each read back. The panel shows the verification summary, which goes
+ * to n8Tracks, and the request waits for the user to review the form and click Create. The
+ * extension never clicks Create (invariant 4). Check again in the panel reads every entry again
+ * without changing anything; when the form has gone, the request stops.
  */
 
 /** The steps reported to n8Tracks, a fixed list (the Version page shows them). */
@@ -55,6 +71,10 @@ export const GENERATE_STEPS = {
   choose: 'choose workspace',
   create: 'create workspace',
   selected: 'workspace selected',
+  form: 'open Songs form',
+  fill: 'fill form',
+  review: 'review and create',
+  check: 'check form',
 } as const;
 
 export type GenerateStep = (typeof GENERATE_STEPS)[keyof typeof GENERATE_STEPS];
@@ -65,6 +85,10 @@ export const NO_CREATE_PAGE =
   'Suno did not show its Create page. If you are not signed in to Suno, sign in, then start Generate on Suno again from n8Tracks.';
 export const LIST_NOT_READ =
   "Suno's workspace list did not load completely, so nothing was chosen or marked. Try again.";
+export const NOT_A_SONG =
+  'Filling the Create form for a Speech or a Sound is not built yet. Fill it by hand in Suno, then click Create.';
+export const FORM_GONE =
+  'The Songs form is no longer on this page, so it could not be checked. Start Generate on Suno again from n8Tracks.';
 export const SAME_NAME =
   "Suno has more than one workspace with the name of the Song's workspace, so the extension cannot tell which row is the Song's. Rename one of them in Suno, then try again.";
 
@@ -83,6 +107,10 @@ const STEP_TEXT: Readonly<Record<GenerateStep, string>> = {
   'choose workspace': 'Waiting for your choice',
   'create workspace': 'Creating the Song’s workspace',
   'workspace selected': 'The Song’s workspace is selected',
+  'open Songs form': 'Opening the Songs form',
+  'fill form': 'Filling the form from the Version',
+  'review and create': 'Review the form, then click Create',
+  'check form': 'Checking the form again',
 };
 
 export interface SunoGenerateOptions {
@@ -93,6 +121,8 @@ export interface SunoGenerateOptions {
   /** Shows a state in the panel's Generate on Suno, opening the panel. */
   show: (state: GenerateViewState) => void;
   clock?: Clock;
+  /** The time a summary is checked at; the real time unless a test stands in. */
+  now?: () => Date;
 }
 
 type Choice = { kind: 'create' } | { kind: 'pick'; option: WorkspaceOption };
@@ -117,6 +147,10 @@ export class SunoGenerate {
   private readonly options: SunoGenerateOptions;
   private step: GenerateStep = GENERATE_STEPS.open;
   private waiting: ((choice: Choice) => void) | null = null;
+  /** The request this tab works on, once the service worker has given it. */
+  private job: GenerateJob | null = null;
+  /** What the form was filled from, for Check again; null until a fill has run. */
+  private filled: { form: FormJob; workspace: string | null } | null = null;
 
   constructor(options: SunoGenerateOptions) {
     this.options = options;
@@ -156,6 +190,7 @@ export class SunoGenerate {
     if (job === null) {
       return;
     }
+    this.job = job;
     const { page } = this.options;
     if (sunoPageOf(page.address()) !== 'create') {
       if (job.loads <= MAXIMUM_LOADS) {
@@ -343,6 +378,99 @@ export class SunoGenerate {
   private async selected(workspace: ListedWorkspace): Promise<void> {
     if (await this.begin(GENERATE_STEPS.selected)) {
       this.options.show({ kind: 'selected', name: workspace.name });
+      await this.fill(workspace.name);
+    }
+  }
+
+  /**
+   * Fills the Create form from the request (#146) and reports the summary; the request then waits
+   * for the user. A request with no form to fill (its snapshot unreadable) ends here.
+   */
+  private async fill(workspace: string): Promise<void> {
+    const form = this.job?.form ?? null;
+    if (form === null) {
+      return;
+    }
+    if (form.kind !== 'song') {
+      if (await this.begin(GENERATE_STEPS.form, 'filling')) {
+        await this.stop(NOT_A_SONG);
+      }
+      return;
+    }
+    if (!(await this.begin(GENERATE_STEPS.form, 'filling'))) {
+      return;
+    }
+    // A source the source story loaded decided the form; it is not switched away from.
+    if (form.sources.length === 0) {
+      const switched = await this.options.session.run(
+        switchForm,
+        { mode: form.mode },
+        this.runOptions(),
+      );
+      if (!switched.ok) {
+        await this.stop(failureText(switched.failure));
+        return;
+      }
+    }
+    if (!(await this.begin(GENERATE_STEPS.fill, 'filling'))) {
+      return;
+    }
+    const context: Omit<FillContext, 'page' | 'signal'> = { job: form, workspace, results: [] };
+    const filling = await this.options.session.run(
+      form.mode === 'simple' ? fillSongsSimple : fillSongsAdvanced,
+      context,
+      this.runOptions(),
+    );
+    if (!filling.ok) {
+      await this.stop(failureText(filling.failure));
+      return;
+    }
+    this.filled = { form, workspace };
+    await this.review(GENERATE_STEPS.review, form, context.results);
+  }
+
+  /**
+   * Check again (the summary's button): every entry read without changing anything; the new
+   * summary replaces the reported one. When the Songs form has gone, the request stops.
+   */
+  async checkAgain(): Promise<void> {
+    const filled = this.filled;
+    if (filled === null) {
+      return;
+    }
+    this.options.show({ kind: 'working', step: STEP_TEXT[GENERATE_STEPS.check] });
+    const context: Omit<FillContext, 'page' | 'signal'> = {
+      job: filled.form,
+      workspace: filled.workspace,
+      results: [],
+    };
+    const checked = await this.options.session.run(checkSongsForm, context, this.runOptions());
+    if (!checked.ok) {
+      this.filled = null;
+      await this.stop(FORM_GONE);
+      return;
+    }
+    await this.review(GENERATE_STEPS.check, filled.form, context.results);
+  }
+
+  /** Shows the summary and reports it; the request waits for the user's Create. */
+  private async review(
+    step: GenerateStep,
+    form: FormJob,
+    results: readonly EntryResult[],
+  ): Promise<void> {
+    const checkedAt = this.options.now?.() ?? new Date();
+    this.options.show({ kind: 'verification', mode: form.mode, results, checkedAt });
+    const verification = await verificationReport(results, form.mode, ADAPTER_VERSION, checkedAt);
+    this.step = step;
+    const answer = reply(
+      await this.options
+        .send({ type: 'generate-progress', state: 'waiting', step, verification })
+        .catch(() => undefined),
+    );
+    if (!answer.ok) {
+      this.filled = null;
+      this.options.show({ kind: 'stopped', message: answer.message });
     }
   }
 

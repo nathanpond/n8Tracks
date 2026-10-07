@@ -3558,3 +3558,48 @@ Story #145 (built in parallel; merged into the milestone branch):
 - **Decision:** `ADAPTER_VERSION` is 4. Four workflows are registered in `adapter/workflows/workspace.ts` (`open-workspaces`, `more-workspaces`, `select-workspace`, `create-workspace`), each with a guard recipe; `create-workspace` has `exceptions: ['create-workspace']`. The runtime guard test's timeout is raised to 60 s.
   **Why:** Selectors and an observed request changed (#133/#134 rule). The guard runs every workflow on every snapshot; with six workflows it takes about 8 s, past vitest's 5 s default. No check was weakened.
   **Issue:** #145
+
+Story #146 (PARTIAL: D9):
+
+- **Decision:** Simple mode's Add Lyrics and Add Styles sections, and Duration's Auto or Custom mode, are not set by the adapter. They are listed in `BLOCKED_ON_CAPTURE` in `extension/src/adapter/fill.ts`. The summary reports a Version value for them as `manual` ("add it from the + menu…" / "set Duration … by hand") and a section the Version does not add as `not_applicable`, with a note that the extension cannot see Simple's added sections. AC 1 and AC 8 stay unticked. #146 is labelled `blocked` + `needs-owner-action`, with a capture-session request.
+  **Why:** This is binding decision D9: no TS-003 snapshot shows those page states, so no page structure is invented. Duration's mode is the same kind of gap, found while building: the More Options snapshot shows the slider and "0:30", but no control or reading that tells Auto from Custom. The coverage test names the three entries explicitly, and fails if one of them gains a filler without leaving the list.
+  **Issue:** #146
+- **Decision:** Two primitive additions in `adapter/primitives.ts`.
+  - A `Region` scope (`{ around, levels, description }`): the nearest container, outwards from an anchor, that holds the target, never more than `levels` elements out.
+  - A `TextAnchor` (`{ text, within? }`): the innermost visible element whose whole text is the label.
+  - `Target.popup` (`aria-haspopup`) and `Reading.expanded` (`aria-expanded`).
+  **Why:** More Options' Off/On and Male/Female buttons have no name or test attribute of their own, and the snapshots also keep the Speech form's Male/Female/Variety controls. A plain `find` is ambiguous, and an unbounded region found the Speech controls once a Songs control was removed (caught by the "unavailable" tests). Every level count was measured on the snapshots and is the smallest that finds the control.
+  **Issue:** #146
+- **Decision:** The lyrics editor is filled by a new `Page.typeText`: focus, select all, then `execCommand('insertText')` per line and `insertParagraph` between lines (`delete` for empty). `execCommand` is read with `Reflect.get`, and a browser without it (jsdom) gets a `PrimitiveError`. An editable region reads as lines (one per `<p>`, `<br>` a break). Tests stand in for Lexical (`src/testing/sunoForm.ts`).
+  **Why:** #132's note: `set` refuses contenteditable. Lexical takes text only from the browser's own trusted input. A synthetic `beforeinput` is not inserted for a collapsed selection, and `execCommand` is the one way to make trusted input. It is deprecated in lib.dom, so it is read by name rather than with a lint suppression. The live Demo confirms it.
+  **Issue:** #146
+- **Decision:** The model is read from the menu button beside the mode tabs (its name is the label). Another model is chosen from the `role=menu` that the button's `aria-haspopup="menu"` declares. A menu that does not open, or does not offer the label, gives `unavailable`. No snapshot shows the menu open, so its read-back failure test uses a stand-in menu.
+  **Why:** The Discretion line says "a model absent from Suno's dropdown is unavailable". The role comes from the page's own ARIA, not from invented structure. The menu's item names are unverified, and the owner's Demo checks them; the capture request lists the open menu.
+  **Issue:** #146
+- **Decision:** Both Song Title boxes are set, each found by its own place: around "Add audio" (4 levels) and around "Save to..." (2 levels).
+  **Why:** TS-003 says the title is shared, and the snapshot shows both boxes visible. `find` never chooses between two matches. Setting each one shown means neither is chosen over the other.
+  **Issue:** #146
+- **Decision:** The workflows are `switch-form`, `fill-songs-simple`, `fill-songs-advanced`, and `check-songs-form` (`adapter/workflows/fillSongs.ts`), each with a `RUN_RECIPES` entry. The fill is one step, `fill`, with a 2-minute timeout, and it records each entry's outcome. The precondition steps are the Songs form, the Song description box, and the Lyrics, Styles, and More Options sections opened. `ADAPTER_VERSION` is 5.
+  **Why:** A failed entry must not stop the run (Discretion), but the runner stops at a failed step. Only "the form as a whole" preconditions are steps. Selectors and workflows changed (#133/#134 rule).
+  **Issue:** #146
+- **Decision:** The read-back polls every 100 ms for up to 900 ms (`READ_BACK_MS × READ_BACK_TRIES`) through `Page.wait`, rather than three fixed 300 ms sleeps.
+  **Why:** It is the same deadline as the Discretion's "300 ms, up to three times", and a value that shows sooner is taken sooner.
+  **Issue:** #146
+- **Decision:** A control is pressed or set only when it differs from the Version's value. Vocal Gender None presses the selected one (deselect), and is `failed` if it stays selected.
+  **Why:** AC 3 requires every entry to be set, defaults included, and that is checked by reading every entry back. Pressing an already-selected toggle would deselect it.
+  **Issue:** #146
+- **Decision:** Source entries (audio, voice, inspiration, Simple playlist) are reported as `manual`, naming what to load by hand, until #148 loads sources. Without a source they are `not_applicable`. When the Version has a source, the Songs tab and mode are not switched.
+  **Why:** The source story (#148) is not built. The Discretion says the summary lists the outcomes the source story reports. Until then, "to do by hand" is the honest outcome.
+  **Issue:** #146
+- **Decision:** The Suno tab now receives the snapshot's values (`GenerateJob.form`: kind, mode, entries, sources, file inputs, unsupported keys). #145's test "the job carries no values of the snapshot" was changed to assert the form instead.
+  **Why:** The tab fills the form, so it needs the lyrics and settings. Nothing is logged or put in the diagnostic report, whose workflow text rule still holds.
+  **Issue:** #146
+- **Decision:** The PATCH takes an optional `verification` (adapterVersion ≥ 1, mode, checkedAt, at most 100 entries of `{ key, outcome, expected?, found?, note? }`). Each value is null, a number, a boolean, a string of at most 100 characters, or `{ length, sha256 }`. Any other member is refused (422 `validation_failed` on `verification`). It is validated in `Application.Suno.Generate.GenerationVerification`, stored normalised in the new nullable `suno_generation_requests.verification_json`, replaced by each later summary, kept by a report without one, and answered on both GETs. `verification` and `verificationjson` were added to the redaction names.
+  **Why:** AC 7, with the key link "lyrics and prompts sent as lengths and hashes". Refusing unknown members keeps raw text out. The migration is `20261007080000_AddGenerationRequestVerification`: an in-place `ADD COLUMN`, with the Designer from the current snapshot (the diff is the one property).
+  **Issue:** #146
+- **Decision:** A Speech or Sound request stops at `open Songs form`, saying that filling those forms is not built yet. A request whose snapshot has no kind or mode ends the tab's part at "workspace selected", as before.
+  **Why:** #147 owns Speech and Sounds. The second case keeps #145's behaviour for a malformed snapshot.
+  **Issue:** #146
+- **Decision:** The Voice picker is a recognised dialog (title "Voice"; Close, My Voices, and Favorites may be pressed). The Inspo picker is not added.
+  **Why:** This follows #133's note. The Inspo dialog has an empty title, and recognising an untitled dialog would recognise every untitled one. #148, which presses in both pickers, decides how to recognise Inspo and adds what it presses.
+  **Issue:** #146

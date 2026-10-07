@@ -1,4 +1,6 @@
+import type { EntryResult } from '../adapter/fill.ts';
 import type { WorkspaceOption } from '../adapter/workspaces.ts';
+import { verificationSummary } from './VerificationSummary.ts';
 
 /**
  * Generate on Suno, in the panel on Suno (#145): what the extension is doing for the request
@@ -19,6 +21,8 @@ export type GenerateViewState =
       options: readonly WorkspaceOption[];
     }
   | { kind: 'selected'; name: string }
+  /** The form is filled (#146): the summary, and the user reviews the form and clicks Create. */
+  | { kind: 'verification'; mode: string; results: readonly EntryResult[]; checkedAt: Date }
   | { kind: 'stopped'; message: string };
 
 export interface GenerateViewOptions {
@@ -26,6 +30,8 @@ export interface GenerateViewOptions {
   create(): void;
   /** "Use": the user chose an existing workspace. */
   pick(option: WorkspaceOption): void;
+  /** "Check again" in the verification summary (#146). */
+  checkAgain?(): void;
 }
 
 function nameOrUnnamed(name: string): string {
@@ -70,7 +76,8 @@ export class GenerateView {
   }
 
   show(state: GenerateViewState): void {
-    const moved = state.kind !== this.state.kind;
+    // A new summary (after Check again) is a move too: focus returns to its Check again button.
+    const moved = state.kind !== this.state.kind || state.kind === 'verification';
     this.state = state;
     this.render();
     if (moved && this.firstControl?.isConnected === true) {
@@ -150,6 +157,22 @@ export class GenerateView {
       case 'choose':
         this.renderChoice(this.state.title, this.state.reason, this.state.options);
         return;
+      case 'verification': {
+        const summary = verificationSummary(
+          this.page,
+          this.state.mode,
+          this.state.results,
+          this.state.checkedAt,
+          {
+            checkAgain: () => {
+              this.options.checkAgain?.();
+            },
+          },
+        );
+        this.firstControl = summary.firstControl;
+        this.body.append(summary.element);
+        return;
+      }
     }
   }
 

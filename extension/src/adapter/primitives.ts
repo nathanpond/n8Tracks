@@ -66,6 +66,36 @@ export interface Scope {
   description: string;
 }
 
+/**
+ * A piece of the page's own text that names a control without being tied to it, as Suno's More
+ * Options labels ("Max Mode") sit beside their Off and On buttons. It is the innermost visible
+ * element whose whole text, white space collapsed, is `text`.
+ */
+export interface TextAnchor {
+  text: string;
+  /** Look only inside this element or region, which must itself be found exactly once. */
+  within?: Target | Scope | Region;
+  /** Plain words for a report: "the label Max Mode". */
+  description: string;
+}
+
+/**
+ * The smallest part of the page around an anchor that holds what is looked for: from the anchor,
+ * found exactly once, outwards to the first element that contains a match. Used where Suno gives a
+ * control no name of its own but sits it beside one that has (TS-003).
+ */
+export interface Region {
+  around: Target | TextAnchor;
+  /**
+   * How many elements outwards from the anchor the region may reach: as far as the snapshot shows
+   * the control sitting from it, so that a control that has gone is not found in the next part of
+   * the page instead.
+   */
+  levels: number;
+  /** Plain words for a report: "the More Options section". */
+  description: string;
+}
+
 /** What a workflow looks for. */
 export interface Target {
   role: Role;
@@ -73,8 +103,10 @@ export interface Target {
   name?: string | RegExp;
   /** A test attribute the element itself carries. */
   testId?: string;
+  /** The kind of popup the element opens (`aria-haspopup`): "menu" for a menu button. */
+  popup?: string;
   /** Look only inside this element or region, which must itself be found exactly once. */
-  within?: Target | Scope;
+  within?: Target | Scope | Region;
   /** Plain words for a report, read after "expected": "a text box labelled Styles". */
   description: string;
 }
@@ -84,10 +116,13 @@ export interface Found {
   readonly target: Target;
 }
 
+/** Anything `find` locates on the way to a target. */
+type Wanted = Target | Scope | TextAnchor | Region;
+
 export type FindResult =
   | { kind: 'found'; found: Found }
-  | { kind: 'not_found'; missing: Target | Scope }
-  | { kind: 'ambiguous'; target: Target | Scope; count: number };
+  | { kind: 'not_found'; missing: Wanted }
+  | { kind: 'ambiguous'; target: Wanted; count: number };
 
 /** What `read` sees on an element. Values are never logged. */
 export interface Reading {
@@ -99,6 +134,8 @@ export interface Reading {
   checked: boolean | null;
   /** For tabs, options, and toggle buttons (`aria-selected`, `aria-pressed`, `data-selected`). */
   selected: boolean | null;
+  /** For a section header or a menu button (`aria-expanded`). */
+  expanded: boolean | null;
   enabled: boolean;
 }
 
@@ -385,34 +422,86 @@ function nameMatches(element: Element, name: string | RegExp | undefined): boole
   return typeof name === 'string' ? actual === collapse(name) : name.test(actual);
 }
 
-function isScope(value: Target | Scope): value is Scope {
-  return !('role' in value);
+function isRegion(value: Wanted): value is Region {
+  return 'around' in value;
+}
+
+function isTextAnchor(value: Wanted): value is TextAnchor {
+  return 'text' in value;
+}
+
+function isTarget(value: Wanted): value is Target {
+  return 'role' in value;
 }
 
 function matchesTarget(element: Element, target: Target): boolean {
   return (
     roleOf(element) === target.role &&
     (target.testId === undefined || element.getAttribute('data-testid') === target.testId) &&
+    (target.popup === undefined || element.getAttribute('aria-haspopup') === target.popup) &&
     nameMatches(element, target.name) &&
     !isHidden(element)
   );
 }
 
-function matching(root: ParentNode, wanted: Target | Scope): Element[] {
+/** Whether the element's whole text is `text`, and no element inside it says the same alone. */
+function saysExactly(element: Element, text: string): boolean {
+  const wanted = collapse(text);
+  return (
+    collapse(textOf(element, true)) === wanted &&
+    !childElementsOf(element).some((child) => collapse(textOf(child, true)) === wanted) &&
+    !isHidden(element)
+  );
+}
+
+function matching(root: ParentNode, wanted: Target | Scope | TextAnchor): Element[] {
   const candidates = elementsUnder(root);
-  return isScope(wanted)
-    ? candidates.filter(
-        (element) => element.getAttribute('data-testid') === wanted.testId && !isHidden(element),
-      )
-    : candidates.filter((element) => matchesTarget(element, wanted));
+  if (isTarget(wanted)) {
+    return candidates.filter((element) => matchesTarget(element, wanted));
+  }
+  if (isTextAnchor(wanted)) {
+    return candidates.filter((element) => saysExactly(element, wanted.text));
+  }
+  return candidates.filter(
+    (element) => element.getAttribute('data-testid') === wanted.testId && !isHidden(element),
+  );
 }
 
 type Located = { kind: 'one'; element: Element } | Exclude<FindResult, { kind: 'found' }>;
 
-function locate(root: ParentNode, wanted: Target | Scope): Located {
+/**
+ * The container to look for `wanted` in: the region around its anchor, outwards from the anchor
+ * to the first element holding a match, never past `root`.
+ */
+function regionFor(root: ParentNode, region: Region, wanted: Target | TextAnchor): Located {
+  const anchor = locate(root, region.around);
+  if (anchor.kind !== 'one') {
+    return anchor;
+  }
+  let current = parentOf(anchor.element);
+  for (let level = 1; current !== null && level <= region.levels; level += 1) {
+    if (matching(current, wanted).length > 0) {
+      return { kind: 'one', element: current };
+    }
+    if (current === root) {
+      break;
+    }
+    current = parentOf(current);
+  }
+  return { kind: 'not_found', missing: wanted };
+}
+
+function locate(root: ParentNode, wanted: Wanted): Located {
+  if (isRegion(wanted)) {
+    // A region is only ever looked inside, through what it is around.
+    return locate(root, wanted.around);
+  }
   let container: ParentNode = root;
-  if (!isScope(wanted) && wanted.within !== undefined) {
-    const outer = locate(root, wanted.within);
+  const within = isTarget(wanted) || isTextAnchor(wanted) ? wanted.within : undefined;
+  if (within !== undefined) {
+    const outer = isRegion(within)
+      ? regionFor(root, within, wanted as Target | TextAnchor)
+      : locate(root, within);
     if (outer.kind !== 'one') {
       return outer;
     }
@@ -657,6 +746,68 @@ function checkedOf(element: Element): boolean | null {
   return null;
 }
 
+const BLOCK_ELEMENTS = new Set([
+  'p',
+  'div',
+  'li',
+  'pre',
+  'blockquote',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+]);
+
+/**
+ * The text of an editable region as its lines: each paragraph (Suno's Lexical editor writes one
+ * `<p>` per line) and each line break ends a line; an empty paragraph holding only its `<br>` is
+ * one empty line.
+ */
+function editableText(root: Element): string {
+  const lines: string[] = [];
+  let line = '';
+  let endedByBreak = false;
+  const visit = (node: Node) => {
+    if (node.nodeType === node.TEXT_NODE) {
+      line += node.textContent ?? '';
+      endedByBreak = false;
+      return;
+    }
+    if (node.nodeType !== node.ELEMENT_NODE) {
+      return;
+    }
+    const element = node as Element;
+    if (element.localName === 'br') {
+      lines.push(line);
+      line = '';
+      endedByBreak = true;
+      return;
+    }
+    const block = element !== root && BLOCK_ELEMENTS.has(element.localName);
+    if (block && line !== '') {
+      lines.push(line);
+      line = '';
+    }
+    for (const child of element.childNodes) {
+      visit(child);
+    }
+    if (block) {
+      if (!(endedByBreak && line === '')) {
+        lines.push(line);
+      }
+      line = '';
+      endedByBreak = false;
+    }
+  };
+  visit(root);
+  if (line !== '') {
+    lines.push(line);
+  }
+  return lines.join('\n');
+}
+
 function valueOf(element: Element): string | null {
   if (['input', 'textarea', 'select'].includes(element.localName)) {
     return (element as HTMLInputElement).value;
@@ -665,9 +816,14 @@ function valueOf(element: Element): string | null {
     return element.getAttribute('aria-valuenow');
   }
   if (element.getAttribute('contenteditable') === 'true') {
-    return element.textContent;
+    return editableText(element);
   }
   return null;
+}
+
+function expandedOf(element: Element): boolean | null {
+  const value = element.getAttribute('aria-expanded');
+  return value === 'true' || value === 'false' ? value === 'true' : null;
 }
 
 /** The native value setter, so that React's own tracking sees the change as the user's. */
@@ -731,7 +887,20 @@ function stepSlider(element: Element, wanted: number): void {
       new view.KeyboardEvent('keyup', { key, bubbles: true, cancelable: true }),
     );
     const after = current();
-    if (after === before || (before < wanted ? after > wanted : after < wanted)) {
+    if (after === before) {
+      return;
+    }
+    if (before < wanted ? after > wanted : after < wanted) {
+      // Passed it: a slider that moves in steps (Duration, by 5) ends on the nearer step.
+      if (Math.abs(after - wanted) > Math.abs(before - wanted)) {
+        const back = key === 'ArrowRight' ? 'ArrowLeft' : 'ArrowRight';
+        element.dispatchEvent(
+          new view.KeyboardEvent('keydown', { key: back, bubbles: true, cancelable: true }),
+        );
+        element.dispatchEvent(
+          new view.KeyboardEvent('keyup', { key: back, bubbles: true, cancelable: true }),
+        );
+      }
       return;
     }
   }
@@ -825,6 +994,7 @@ export class Page {
       text: collapse(element.textContent),
       checked: checkedOf(element),
       selected: selectedOf(element),
+      expanded: expandedOf(element),
       enabled: isEnabled(element),
     };
   }
@@ -852,6 +1022,47 @@ export class Page {
       return;
     }
     throw new PrimitiveError(`${found.target.description} to take a typed value`);
+  }
+
+  /**
+   * Replaces the text of an editable region (Suno's Lexical lyrics editor, which `set` refuses) as
+   * typing it would: the region is focused, everything in it is selected, and the text goes in
+   * through the browser's own editing commands, which Lexical takes as the user's typing; one line
+   * at a time, each new line as a new paragraph, as Enter would make it. Empty text deletes what
+   * is there. Nothing is pressed and no Enter key is sent. The step's read-back decides whether it
+   * worked.
+   */
+  typeText(found: Found, text: string): void {
+    const element = this.changeable(found);
+    if (element.getAttribute('contenteditable') !== 'true') {
+      throw new PrimitiveError(`${found.target.description} to be an editable text region`);
+    }
+    const document = element.ownerDocument;
+    // execCommand is deprecated, but it is the one way to give Lexical the browser's own trusted
+    // input events (a synthetic `beforeinput` is not inserted by the browser). It is read by name
+    // so that a browser without it (jsdom) is told apart, not called.
+    const execCommand: unknown = Reflect.get(document, 'execCommand');
+    if (typeof execCommand !== 'function') {
+      throw new PrimitiveError(`a browser that can type into ${found.target.description}`);
+    }
+    (element as HTMLElement).focus();
+    viewOf(element).getSelection()?.selectAllChildren(element);
+    const edit = (command: string, value?: string) => {
+      Reflect.apply(execCommand, document, [command, false, value]);
+    };
+    const lines = text.replace(/\r\n?/g, '\n').split('\n');
+    if (text === '') {
+      edit('delete');
+      return;
+    }
+    lines.forEach((line, index) => {
+      if (index > 0) {
+        edit('insertParagraph');
+      }
+      if (line !== '') {
+        edit('insertText', line);
+      }
+    });
   }
 
   /**

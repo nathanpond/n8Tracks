@@ -183,6 +183,9 @@ export function startSunoContent(options: SunoContentOptions): SunoContent {
     pick: (option) => {
       generate?.pick(option);
     },
+    checkAgain: () => {
+      void generate?.checkAgain();
+    },
   });
 
   const panel = new Panel(page, {

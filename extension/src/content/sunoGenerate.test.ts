@@ -8,10 +8,14 @@ import { ADAPTER_WORKFLOWS } from '../adapter/workflows/index.ts';
 import type { GenerateJob, GenerateReply, Request } from '../messages.ts';
 import type { GenerateViewState } from '../panel/GenerateView.ts';
 import { fakeClock, snapshotHtml } from '../testing/snapshots.ts';
+import { standInForSuno } from '../testing/sunoForm.ts';
+import type { FormJob } from '../adapter/fill.ts';
 import { sunoObject } from '../testing/sunoResponses.ts';
 import {
+  FORM_GONE,
   LIST_NOT_READ,
   NO_CREATE_PAGE,
+  NOT_A_SONG,
   NOT_SIGNED_IN,
   SAME_NAME,
   SunoGenerate,
@@ -63,6 +67,7 @@ function job(change: Partial<GenerateJob> = {}): GenerateJob {
     songTitle: 'Night Drive',
     workspace: null,
     loads: 1,
+    form: null,
     ...change,
   };
 }
@@ -173,6 +178,7 @@ function start(options: Options = {}) {
     send,
     show: (state) => shown.push(state),
     clock,
+    now: () => new Date('2026-10-07T12:00:00Z'),
   });
   return {
     generate,
@@ -415,6 +421,140 @@ describe('Generate on Suno in the Suno tab: stopping', () => {
 
     expect(tab.types()).toEqual(['generate-resume']);
     expect(tab.shown).toEqual([]);
+    expect(tab.pressed).toEqual([]);
+  });
+});
+
+/** An Advanced Song's form job, its values unlike the workspace-selector page's own. */
+function advancedForm(change: Partial<FormJob> = {}): FormJob {
+  return {
+    kind: 'song',
+    mode: 'advanced',
+    entries: {
+      'songs.advanced.model': 'v6-mini',
+      'songs.advanced.lyrics': 'first line\nsecond line',
+      'songs.advanced.styles': 'dream pop',
+      'songs.advanced.exclude_styles': 'metal',
+      'songs.advanced.vocal_gender': null,
+      'songs.advanced.duration_mode': 'auto',
+      'songs.advanced.duration_seconds': 180,
+      'songs.advanced.max_mode': false,
+      'songs.advanced.weirdness': 61,
+      'songs.advanced.style_influence': 40,
+      'songs.advanced.variety': 'high',
+      'songs.advanced.personalize': false,
+      'songs.advanced.title': 'Night Drive',
+    },
+    sources: [],
+    fileInputs: [],
+    unsupported: [],
+    ...change,
+  };
+}
+
+const ON_MY_WORKSPACE = { sunoId: 'default', name: 'My Workspace', state: 'available' } as const;
+
+describe('Generate on Suno in the Suno tab: filling the form (#146)', () => {
+  it('fills the Songs form once the workspace is selected, shows and reports the summary, and waits for the user’s Create', async () => {
+    const tab = start({ job: job({ workspace: ON_MY_WORKSPACE, form: advancedForm() }) });
+    const standIn = standInForSuno(document);
+    tab.feed.take(feedFor('default'));
+
+    try {
+      await tab.generate.resume();
+    } finally {
+      standIn.stop();
+    }
+
+    expect(tab.steps()).toEqual([
+      'workspace check sign-in',
+      'workspace read workspace list',
+      'workspace select workspace',
+      'workspace workspace selected',
+      'filling open Songs form',
+      'filling fill form',
+      'waiting review and create',
+    ]);
+    const shown = tab.last();
+    expect(shown?.kind).toBe('verification');
+    const results = shown?.kind === 'verification' ? shown.results : [];
+    expect(
+      results.filter((result) => result.outcome === 'failed' || result.outcome === 'unavailable'),
+    ).toEqual([]);
+    const report = tab.asked.at(-1);
+    expect(report).toMatchObject({
+      type: 'generate-progress',
+      state: 'waiting',
+      step: 'review and create',
+      verification: { adapterVersion: 5, mode: 'advanced', checkedAt: '2026-10-07T12:00:00.000Z' },
+    });
+    // The lyrics, styles, and title went as lengths and hashes only.
+    expect(JSON.stringify(report)).not.toContain('first line');
+    expect(JSON.stringify(report)).not.toContain('dream pop');
+    // Invariant 4: the user clicks Create; the extension never does.
+    expect(tab.pressed.filter((name) => /^create/i.test(name))).toEqual([]);
+  });
+
+  it('checks again without changing anything, replacing the summary; with the form gone, the request stops', async () => {
+    const tab = start({ job: job({ workspace: ON_MY_WORKSPACE, form: advancedForm() }) });
+    const standIn = standInForSuno(document);
+    tab.feed.take(feedFor('default'));
+    try {
+      await tab.generate.resume();
+      // The user changes Weirdness by hand in Suno.
+      document.querySelectorAll('[role="slider"][aria-label="Weirdness"]').forEach((slider) => {
+        slider.setAttribute('aria-valuenow', '90');
+      });
+      const pressedBefore = tab.pressed.length;
+
+      await tab.generate.checkAgain();
+
+      expect(tab.pressed).toHaveLength(pressedBefore);
+      expect(tab.steps().at(-1)).toBe('waiting check form');
+      const shown = tab.last();
+      const weirdness =
+        shown?.kind === 'verification'
+          ? shown.results.find((result) => result.key === 'songs.advanced.weirdness')
+          : undefined;
+      expect(weirdness).toMatchObject({ outcome: 'failed', expected: 61, found: 90 });
+
+      document.body.innerHTML = '';
+      await tab.generate.checkAgain();
+    } finally {
+      standIn.stop();
+    }
+
+    expect(tab.last()).toEqual({ kind: 'stopped', message: FORM_GONE });
+    expect(tab.asked.at(-1)).toMatchObject({ state: 'stopped', message: FORM_GONE });
+  });
+
+  it('fills nothing when the form is not as expected, naming the step', async () => {
+    const tab = start({ job: job({ workspace: ON_MY_WORKSPACE, form: advancedForm() }) });
+    tab.feed.take(feedFor('default'));
+    // No stand-in: the More Options section the page shows closed never opens.
+
+    await tab.generate.resume();
+
+    const stopped = tab.last();
+    expect(stopped?.kind).toBe('stopped');
+    expect(stopped?.kind === 'stopped' ? stopped.message : '').toContain("step 'More Options'");
+    expect(tab.pressed.filter((name) => !name.startsWith('More Options'))).toEqual([]);
+    expect(
+      tab.asked.some(
+        (request) => request.type === 'generate-progress' && 'verification' in request,
+      ),
+    ).toBe(false);
+  });
+
+  it('leaves a Speech or a Sound to the user for now, and stops saying so', async () => {
+    const tab = start({
+      job: job({ workspace: ON_MY_WORKSPACE, form: advancedForm({ kind: 'speech' }) }),
+    });
+    tab.feed.take(feedFor('default'));
+
+    await tab.generate.resume();
+
+    expect(tab.last()).toEqual({ kind: 'stopped', message: NOT_A_SONG });
     expect(tab.pressed).toEqual([]);
   });
 });

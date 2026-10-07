@@ -80,6 +80,8 @@ public static class RedactionPolicy
         // Version's lyrics, styles, and prompts, as the extension fills them.
         "snapshot",
         "snapshotjson",
+        "verification",
+        "verificationjson",
 
         // A job's payload: whatever the code that enqueued it passed, which may be any of the above.
         "payload",

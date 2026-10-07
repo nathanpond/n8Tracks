@@ -185,4 +185,105 @@ test.describe('Generate on Suno', () => {
       await extension.dispose();
     }
   });
+
+  /**
+   * #146's Demo as n8Tracks sees it: the extension (standing in through the API with its own
+   * token) fills Suno's form and reports the verification summary, which the Version page shows;
+   * after the user changes Weirdness in Suno and checks again, the page marks it as differing.
+   * Filling the form on Suno and the Create click are the owner's, on the live site.
+   */
+  test('shows the extension’s verification summary of Suno’s form, and its Check again', async ({
+    page,
+    playwright,
+  }, testInfo) => {
+    const stamp = `${String(Date.now()).slice(-7)}${testInfo.project.name}`;
+    const base = await appBase(page);
+    const credential = await page.request.post(new URL('api/v1/credentials', base).toString(), {
+      headers: ANTIFORGERY_HEADERS,
+      data: { name: `Verify stub ${stamp}`, kind: 'extension', scopes: ['suno.generate'] },
+    });
+    expect(credential.status()).toBe(201);
+    const { token } = (await credential.json()) as { token: string };
+    const extension = await playwright.request.newContext({ storageState: undefined });
+    const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+
+    try {
+      const created = await page.request.post(new URL('api/v1/songs', base).toString(), {
+        headers: ANTIFORGERY_HEADERS,
+        data: { title: `Verified on Suno ${stamp}` },
+      });
+      expect(created.status()).toBe(201);
+      const song = (await created.json()) as { shortcode: string; currentVersion: { id: string } };
+      const made = await page.request.post(
+        new URL(`api/v1/versions/${song.currentVersion.id}/generation-requests`, base).toString(),
+        { headers: ANTIFORGERY_HEADERS, data: {} },
+      );
+      expect(made.status()).toBe(201);
+      const { id } = (await made.json()) as { id: string };
+      const request = new URL(`api/v1/suno/generation-requests/${id}`, base).toString();
+      expect((await extension.post(`${request}/claim`, { headers })).status()).toBe(200);
+      const lyrics = { length: 23, sha256: 'a'.repeat(64) };
+      const report = (weirdness: number, step: string) =>
+        extension.patch(request, {
+          headers,
+          data: {
+            state: 'waiting',
+            step,
+            verification: {
+              adapterVersion: 5,
+              mode: 'advanced',
+              checkedAt: new Date().toISOString(),
+              entries: [
+                { key: 'songs.advanced.model', outcome: 'set', expected: 'v6-mini' },
+                { key: 'songs.advanced.lyrics', outcome: 'set', expected: lyrics },
+                weirdness === 70
+                  ? { key: 'songs.advanced.weirdness', outcome: 'set', expected: 70 }
+                  : {
+                      key: 'songs.advanced.weirdness',
+                      outcome: 'failed',
+                      expected: 70,
+                      found: weirdness,
+                    },
+                { key: 'songs.advanced.variety', outcome: 'set', expected: 2 },
+                {
+                  key: 'songs.advanced.duration_mode',
+                  outcome: 'manual',
+                  expected: 'auto',
+                  note: 'Set Duration to Auto by hand: the extension cannot read Suno’s Duration mode yet.',
+                },
+              ],
+            },
+          },
+        });
+
+      // 2. The form is filled: the page shows each entry as set, and waits for the user's Create.
+      expect((await report(70, 'review and create')).status()).toBe(200);
+      await page.goto(`./songs/${song.shortcode}`);
+      await expect(page.getByTestId('generation-request-state')).toHaveText(
+        'Generate on Suno: Waiting for you to click Create in Suno',
+      );
+      const summary = page.getByTestId('verification');
+      await expect(summary.getByTestId('verification-entry')).toHaveText([
+        'Model: Set',
+        'Lyrics: Set',
+        'Weirdness: Set',
+        'Variety: Set',
+        'Duration: To do by hand — Set Duration to Auto by hand: the extension cannot read Suno’s Duration mode yet.',
+      ]);
+      await expectAccessibleInLightAndDark(page);
+
+      // 3. Weirdness changed by hand in Suno, and Check again: the page marks it as differing.
+      expect((await report(55, 'check form')).status()).toBe(200);
+      await expect(summary.locator('[data-key="songs.advanced.weirdness"]')).toHaveText(
+        'Weirdness: Differs — expected 70, found 55',
+        { timeout: 10_000 },
+      );
+      await expect(summary.getByTestId('verification-counts')).toHaveText(
+        '3 set, 1 differs, 1 to do by hand',
+      );
+      await expectAccessibleInLightAndDark(page);
+    } finally {
+      await extension.dispose();
+    }
+  });
 });

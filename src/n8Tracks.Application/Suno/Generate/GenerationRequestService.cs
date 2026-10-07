@@ -37,7 +37,7 @@ public interface IGenerationRequestStore
 /// A report from the extension: the state it moved to, the step it names, and what it says; and,
 /// when the user chose the Song's workspace in the extension's panel (#145), that workspace.
 /// </summary>
-public sealed record GenerationProgress(GenerationRequestState State, string? Step, string? Message, ResolvedWorkspace? Workspace = null);
+public sealed record GenerationProgress(GenerationRequestState State, string? Step, string? Message, ResolvedWorkspace? Workspace = null, JsonNode? Verification = null);
 
 /// <summary>How the user settled the Song's workspace in the extension's panel (#145).</summary>
 public enum WorkspaceResolution
@@ -130,6 +130,7 @@ public sealed class GenerationRequestService(
     public const string StepField = "step";
     public const string MessageField = "message";
     public const string ResolvedWorkspaceField = "resolvedWorkspace";
+    public const string VerificationField = "verification";
 
     /// <summary>
     /// Makes a request from the Version <paramref name="versionId"/> as it is now, for a mutable or a
@@ -260,6 +261,12 @@ public sealed class GenerationRequestService(
         }
 
         var reported = GenerationRequestRules.Moved(request, progress.State, Blank(progress.Step), Blank(progress.Message), time.GetUtcNow());
+        if (progress.Verification is not null)
+        {
+            // Each summary replaces the last: Check again re-reads the form (#146).
+            reported = reported with { VerificationJson = GenerationVerification.Read(progress.Verification, out _)!.ToJsonString() };
+        }
+
         if (progress.Workspace is { } resolved)
         {
             return await ResolveWorkspaceAsync(request, reported, resolved, cancellationToken).ConfigureAwait(false)
@@ -393,6 +400,11 @@ public sealed class GenerationRequestService(
                 || workspace.Name.Length > SunoWorkspaceRules.NameMaximumLength))
         {
             errors[ResolvedWorkspaceField] = [$"Send the workspace's Suno ID (1 to {SunoWorkspaceRules.SunoIdMaximumLength} characters) and its name (at most {SunoWorkspaceRules.NameMaximumLength} characters)."];
+        }
+
+        if (progress.Verification is not null && GenerationVerification.Read(progress.Verification, out var problems) is null)
+        {
+            errors[VerificationField] = [.. problems];
         }
 
         return errors;

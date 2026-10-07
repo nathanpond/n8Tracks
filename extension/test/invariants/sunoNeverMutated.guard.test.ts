@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest';
 import { ANY_SUNO_PAGE } from '../../src/adapter/addresses.ts';
+import type { FormJob } from '../../src/adapter/fill.ts';
 import type { Page, Target } from '../../src/adapter/primitives.ts';
 import { OK, present, type Step, type Workflow } from '../../src/adapter/workflow.ts';
 import { ADAPTER_WORKFLOWS } from '../../src/adapter/workflows/index.ts';
@@ -46,7 +47,42 @@ const RUN_RECIPES: Readonly<Record<string, RunRecipe>> = {
     values: { workspaceName: 'A new Song', created: () => OK },
     exceptions: ['create-workspace'],
   },
+  // Filling the Songs form (#146): tabs, section headers, More Options' toggles, and slider keys
+  // (never Enter); Create is never pressed. Every entry is given a value other than the
+  // snapshot's, so every filler acts.
+  'switch-form': { values: { mode: 'advanced' } },
+  'fill-songs-simple': { values: fillValues('simple') },
+  'fill-songs-advanced': { values: fillValues('advanced') },
+  'check-songs-form': { values: fillValues('advanced') },
 };
+
+function fillValues(mode: string): Record<string, unknown> {
+  const prefix = `songs.${mode}.`;
+  const job: FormJob = {
+    kind: 'song',
+    mode,
+    entries: {
+      [`${prefix}model`]: 'v6',
+      [`${prefix}simple_prompt`]: 'a quiet song',
+      [`${prefix}lyrics`]: 'line one\nline two',
+      [`${prefix}styles`]: 'dream pop',
+      [`${prefix}exclude_styles`]: '',
+      [`${prefix}vocal_gender`]: null,
+      [`${prefix}duration_mode`]: 'custom',
+      [`${prefix}duration_seconds`]: 120,
+      [`${prefix}max_mode`]: false,
+      [`${prefix}weirdness`]: 40,
+      [`${prefix}style_influence`]: 60,
+      [`${prefix}variety`]: 'normal',
+      [`${prefix}personalize`]: false,
+      [`${prefix}title`]: 'A title',
+    },
+    sources: [],
+    fileInputs: [],
+    unsupported: [],
+  };
+  return { job, workspace: 'My Workspace', results: [] };
+}
 
 /** Every workflow module under `src/adapter/workflows/`, except the list itself. */
 const WORKFLOW_MODULES = import.meta.glob<Record<string, unknown>>(

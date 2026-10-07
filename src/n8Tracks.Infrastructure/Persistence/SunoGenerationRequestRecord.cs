@@ -35,4 +35,10 @@ public sealed class SunoGenerationRequestRecord
 
     /// <summary>UTC, ISO 8601 (<see cref="UtcText"/>); null while active.</summary>
     public string? EndedUtc { get; set; }
+
+    /// <summary>
+    /// The extension's last verification summary of the filled form (#146), as JSON; null until one
+    /// is reported. Text values in it are lengths and hashes.
+    /// </summary>
+    public string? VerificationJson { get; set; }
 }

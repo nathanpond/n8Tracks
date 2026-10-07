@@ -299,6 +299,93 @@ describe('Generate on Suno', () => {
     );
   });
 
+  it('shows the extension’s verification summary of Suno’s form, text by its length only', async () => {
+    const hash = (digit: string) => ({ length: 11, sha256: digit.repeat(64) });
+    serve({
+      current: testRequest({
+        state: 'waiting',
+        claimed: true,
+        step: 'review and create',
+        verification: {
+          adapterVersion: 5,
+          mode: 'advanced',
+          checkedAt: '2026-10-07T09:02:00Z',
+          entries: [
+            { key: 'songs.advanced.lyrics', outcome: 'set', expected: hash('a') },
+            { key: 'songs.advanced.weirdness', outcome: 'failed', expected: 70, found: 65 },
+            {
+              key: 'songs.advanced.styles',
+              outcome: 'failed',
+              expected: hash('a'),
+              found: hash('b'),
+            },
+            { key: 'songs.advanced.variety', outcome: 'failed', expected: 4, found: 2 },
+            {
+              key: 'songs.advanced.model',
+              outcome: 'unavailable',
+              expected: 'v6-wild',
+              note: 'Suno’s model menu does not offer this model.',
+            },
+            {
+              key: 'songs.advanced.audio',
+              outcome: 'manual',
+              note: 'Attach the file by hand: the demo.',
+            },
+            { key: 'songs.advanced.inspiration', outcome: 'not_applicable' },
+            { key: 'songs.advanced.crop', outcome: 'unsupported' },
+          ],
+        },
+      }),
+    });
+    renderAction(fakeBridge({ kind: 'ready', extensionVersion: '0.1.0' }).bridge);
+
+    const summary = await screen.findByTestId('verification');
+    expect(within(summary).getByTestId('verification-review')).toHaveTextContent(
+      'Some entries need you before you generate',
+    );
+    expect(within(summary).getByTestId('verification-counts')).toHaveTextContent(
+      '1 set, 3 differs, 1 unavailable, 1 to do by hand, 1 not applicable, 1 unsupported',
+    );
+    expect(
+      within(summary)
+        .getAllByTestId('verification-entry')
+        .map((entry) => entry.textContent),
+    ).toEqual([
+      'Lyrics: Set',
+      'Weirdness: Differs — expected 70, found 65',
+      'Styles: Differs — expected the Version’s text, found other text of the same length',
+      'Variety: Differs — expected max, found high',
+      'Model: Unavailable — Suno’s model menu does not offer this model.',
+      'Audio: To do by hand — Attach the file by hand: the demo.',
+      'Inspo: Not applicable',
+      'songs.advanced.crop: Unsupported',
+    ]);
+    expect(screen.getByTestId('generation-request-state')).toHaveTextContent(
+      'Waiting for you to click Create in Suno',
+    );
+  });
+
+  it('says every entry is as the Version says when nothing needs the user', async () => {
+    serve({
+      current: testRequest({
+        state: 'waiting',
+        claimed: true,
+        verification: {
+          adapterVersion: 5,
+          mode: 'simple',
+          checkedAt: '2026-10-07T09:02:00Z',
+          entries: [{ key: 'songs.simple.model', outcome: 'set', expected: 'v6-mini' }],
+        },
+      }),
+    });
+    renderAction(fakeBridge({ kind: 'ready', extensionVersion: '0.1.0' }).bridge);
+
+    expect(await screen.findByTestId('verification-review')).toHaveTextContent(
+      'Every entry is as the Version says',
+    );
+    expect(screen.getByText(/Verification of Suno’s form \(Simple\)/)).toBeInTheDocument();
+  });
+
   it('cancels an active request on request', async () => {
     const server = serve({ current: testRequest({ state: 'waiting', claimed: true }) });
     renderAction(fakeBridge({ kind: 'ready', extensionVersion: '0.1.0' }).bridge);

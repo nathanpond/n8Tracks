@@ -1,4 +1,5 @@
 import type { Workflow } from '../workflow.ts';
+import { checkSongsForm, fillSongsAdvanced, fillSongsSimple, switchForm } from './fillSongs.ts';
 import { loadMore } from './loadMore.ts';
 import { recogniseSuno } from './recognise.ts';
 import { createWorkspace, moreWorkspaces, openWorkspaces, selectWorkspace } from './workspace.ts';
@@ -14,4 +15,8 @@ export const ADAPTER_WORKFLOWS: readonly Workflow[] = [
   moreWorkspaces,
   selectWorkspace,
   createWorkspace,
+  switchForm,
+  fillSongsSimple,
+  fillSongsAdvanced,
+  checkSongsForm,
 ];

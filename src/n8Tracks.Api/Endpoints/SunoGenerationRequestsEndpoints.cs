@@ -81,7 +81,7 @@ internal static class SunoGenerationRequestsEndpoints
 
         endpoints.MapPatch(RequestPath, ReportAsync)
             .WithName("ReportGenerationRequest")
-            .WithSummary("The claiming extension reports progress: { state: opening | workspace | filling | waiting | done | stopped, step, message } (a stop says why), and optionally resolvedWorkspace: { sunoId, name, how: created | picked }, the Suno workspace the user chose for the Song in the extension's panel, which becomes the Song's workspace only when the Song has none or an unavailable one (409 workspace_already_set otherwise; resending the Song's own workspace changes nothing). No If-Match. The hour before the request expires starts again. 403 request_claimed for another credential; 409 request_not_claimed before a claim; 409 request_ended once it has ended; 422 validation_failed.")
+            .WithSummary("The claiming extension reports progress: { state: opening | workspace | filling | waiting | done | stopped, step, message } (a stop says why), and optionally resolvedWorkspace: { sunoId, name, how: created | picked }, the Suno workspace the user chose for the Song in the extension's panel, which becomes the Song's workspace only when the Song has none or an unavailable one (409 workspace_already_set otherwise; resending the Song's own workspace changes nothing), and optionally verification: { adapterVersion, mode, checkedAt, entries: [{ key, outcome: set | failed | unavailable | manual | not_applicable | unsupported, expected, found, note }] }, the summary of the filled Create form (#146), text values only as { length, sha256 }, which replaces the last summary. No If-Match. The hour before the request expires starts again. 403 request_claimed for another credential; 409 request_not_claimed before a claim; 409 request_ended once it has ended; 422 validation_failed.")
             .RequireScope(CredentialScopes.SunoGenerate)
             .Produces<GenerationRequestResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
@@ -240,7 +240,10 @@ internal static class SunoGenerationRequestsEndpoints
             return ApiProblem.ValidationFailed(context, errors);
         }
 
-        var outcome = await requests.ReportAsync(id, CredentialOf(context.User), new GenerationProgress(state!.Value, step, message, workspace), cancellationToken);
+        var verification = body.Verification.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null
+            ? null
+            : JsonNode.Parse(body.Verification.GetRawText());
+        var outcome = await requests.ReportAsync(id, CredentialOf(context.User), new GenerationProgress(state!.Value, step, message, workspace, verification), cancellationToken);
         if (outcome is GenerationRequestChangeOutcome.Changed changed)
         {
             Log(loggers).LogInformation(
@@ -372,7 +375,7 @@ internal static class SunoGenerationRequestsEndpoints
 }
 
 /// <summary>A progress report as sent, read as raw JSON so a wrong type is a field error.</summary>
-internal sealed record GenerationProgressRequest(JsonElement State, JsonElement Step, JsonElement Message, JsonElement ResolvedWorkspace);
+internal sealed record GenerationProgressRequest(JsonElement State, JsonElement Step, JsonElement Message, JsonElement ResolvedWorkspace, JsonElement Verification);
 
 /// <summary>A source that blocks a request, as the 422 names it.</summary>
 internal sealed record UnavailableSourceResponse(string Group, int Position, string? Title, string? Shortcode, string Availability);
@@ -383,8 +386,9 @@ internal sealed record CurrentGenerationRequestResponse(GenerationRequestRespons
 /// <summary>
 /// A Generate on Suno request: its Version, state (active ones are pending, claimed, opening,
 /// workspace, filling, waiting; terminal ones done, stopped, cancelled, expired), the step the
-/// extension last named, the message, whether it is claimed, and its times (UTC). The snapshot only
-/// to the extension's reads.
+/// extension last named, the message, whether it is claimed, its times (UTC), and the last
+/// verification summary of the filled form (#146; text values as length and hash). The snapshot
+/// only to the extension's reads.
 /// </summary>
 internal sealed record GenerationRequestResponse(
     Guid Id,
@@ -398,6 +402,7 @@ internal sealed record GenerationRequestResponse(
     DateTime UpdatedAt,
     DateTime? EndedAt,
     DateTime ExpiresAt,
+    JsonObject? Verification,
     JsonObject? Snapshot)
 {
     public static GenerationRequestResponse From(GenerationRequest request, bool withSnapshot)
@@ -416,6 +421,7 @@ internal sealed record GenerationRequestResponse(
             request.UpdatedUtc.UtcDateTime,
             request.EndedUtc?.UtcDateTime,
             (request.State == GenerationRequestState.Pending ? request.CreatedUtc + GenerationRequestRules.ClaimTimeout : request.UpdatedUtc + GenerationRequestRules.IdleLimit).UtcDateTime,
+            request.VerificationJson is { } verification ? JsonNode.Parse(verification)!.AsObject() : null,
             withSnapshot ? JsonNode.Parse(request.SnapshotJson)!.AsObject() : null);
     }
 }

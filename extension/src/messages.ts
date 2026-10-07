@@ -1,4 +1,5 @@
 import type { Compatibility } from './compatibility.ts';
+import type { FormJob, VerificationReport } from './adapter/fill.ts';
 import type { DiagnosticReport } from './diagnostics/report.ts';
 
 /** A feature of the extension and the scope it needs. */
@@ -107,13 +108,15 @@ export interface RequestWorkspace {
 /**
  * What the Suno tab of a claimed request is to do (#145), as the service worker reads it from
  * n8Tracks before the tab starts: the Song's title and its workspace (the one the user chose in
- * the panel, once chosen), and how many times the tab has loaded for the request.
+ * the panel, once chosen), how many times the tab has loaded for the request, and what to fill
+ * the Create form with (#146; null when the snapshot cannot be read).
  */
 export interface GenerateJob {
   requestId: string;
   songTitle: string;
   workspace: RequestWorkspace | null;
   loads: number;
+  form: FormJob | null;
 }
 
 /** The states the extension reports a request in (`PATCH`, `docs/suno-integration.md`). */
@@ -255,7 +258,14 @@ export type Request =
   /** The Suno content script, on each page load: whether its tab is generating (#145). */
   | { type: 'generate-resume' }
   /** A step of Generate on Suno began: read the request, then report it (#145). */
-  | { type: 'generate-progress'; state: GenerateState; step: string; message?: string }
+  | {
+      type: 'generate-progress';
+      state: GenerateState;
+      step: string;
+      message?: string;
+      /** The verification summary of the filled form (#146), which replaces the last one. */
+      verification?: VerificationReport;
+    }
   /** Suno's complete workspace list, for n8Tracks' record (#145). */
   | { type: 'generate-workspaces'; workspaces: unknown[] }
   /** The workspace the user chose in the panel, for the Song (#145). */
@@ -347,6 +357,20 @@ function isChosenWorkspace(value: unknown): value is ChosenWorkspace {
     value.sunoId !== '' &&
     typeof value.name === 'string' &&
     (value.how === 'created' || value.how === 'picked')
+  );
+}
+
+function isVerification(value: unknown): value is VerificationReport {
+  return (
+    isRecord(value) &&
+    typeof value.adapterVersion === 'number' &&
+    typeof value.mode === 'string' &&
+    typeof value.checkedAt === 'string' &&
+    Array.isArray(value.entries) &&
+    value.entries.every(
+      (entry) =>
+        isRecord(entry) && typeof entry.key === 'string' && typeof entry.outcome === 'string',
+    )
   );
 }
 
@@ -470,7 +494,8 @@ export function isRequest(value: unknown): value is Request {
         typeof value.state === 'string' &&
         GENERATE_STATES.includes(value.state) &&
         typeof value.step === 'string' &&
-        (value.message === undefined || typeof value.message === 'string')
+        (value.message === undefined || typeof value.message === 'string') &&
+        (value.verification === undefined || isVerification(value.verification))
       );
     case 'generate-workspaces':
       return Array.isArray(value.workspaces);

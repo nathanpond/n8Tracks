@@ -1,6 +1,14 @@
 import { Button, Group, List, Loader, Paper, Stack, Text } from '@mantine/core';
+import type { Verification } from '../api/generationRequests';
 import { formatDateTime, useConfiguredTimeZone } from '../api/timeZone';
 import { unavailableSourceText, requestStateLabel } from './generateRules';
+import {
+  countsText,
+  entryDetail,
+  entryLabel,
+  needsAttention,
+  OUTCOME_LABELS,
+} from './verificationRules';
 import type { GenerateOnSunoController, Problem } from './useGenerateOnSuno';
 
 /** The Generate on Suno action, for the Version header beside Create New Version From. */
@@ -78,6 +86,9 @@ export function GenerateOnSunoStatus({ controller }: { controller: GenerateOnSun
                 Nothing has been generated. The extension takes it from here; the Suno steps follow.
               </Text>
             )}
+            {request.verification != null && (
+              <VerificationView verification={request.verification} timeZone={timeZone} />
+            )}
             <Text size="xs" c="var(--n8-color-secondary-text)">
               Started {formatDateTime(request.createdAt, timeZone)}
             </Text>
@@ -85,6 +96,60 @@ export function GenerateOnSunoStatus({ controller }: { controller: GenerateOnSun
         )}
       </Stack>
     </Paper>
+  );
+}
+
+/**
+ * The extension's verification summary of Suno's filled Create form (#146): every entry of the
+ * Version's mode with its outcome, and the reminder that the user reviews the form and clicks
+ * Create in Suno. Lyrics, styles, and prompts are shown by length only: n8Tracks receives no text.
+ */
+function VerificationView({
+  verification,
+  timeZone,
+}: {
+  verification: Verification;
+  timeZone: string;
+}) {
+  return (
+    <Stack
+      gap={4}
+      data-testid="verification"
+      component="section"
+      aria-labelledby="verification-title"
+    >
+      <Text fw={600} id="verification-title">
+        Verification of Suno’s form ({verification.mode === 'simple' ? 'Simple' : 'Advanced'})
+      </Text>
+      <Text size="sm" data-testid="verification-review">
+        {needsAttention(verification)
+          ? 'Some entries need you before you generate: review them in Suno’s form, then click Create there.'
+          : 'Every entry is as the Version says: review Suno’s form, then click Create there.'}
+      </Text>
+      <Text size="sm" c="var(--n8-color-secondary-text)" data-testid="verification-counts">
+        {countsText(verification)}
+      </Text>
+      <List size="sm" spacing={2}>
+        {verification.entries.map((entry) => {
+          const detail = entryDetail(entry);
+          return (
+            <List.Item
+              key={entry.key}
+              data-testid="verification-entry"
+              data-outcome={entry.outcome}
+              data-key={entry.key}
+            >
+              {entryLabel(entry.key)}: <strong>{OUTCOME_LABELS[entry.outcome]}</strong>
+              {detail === '' ? null : ` — ${detail}`}
+            </List.Item>
+          );
+        })}
+      </List>
+      <Text size="xs" c="var(--n8-color-secondary-text)">
+        Checked {formatDateTime(verification.checkedAt, timeZone)} (Suno adapter{' '}
+        {verification.adapterVersion})
+      </Text>
+    </Stack>
   );
 }
 

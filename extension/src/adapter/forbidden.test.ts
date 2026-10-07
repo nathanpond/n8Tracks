@@ -73,7 +73,7 @@ describe('the forbidden-control matcher, on the TS-003 snapshots', () => {
     ['create-source-simple', 'button', /^Remove /],
     ['download-dialog', 'button', 'Unlock & Download'],
     ['download-dialog', 'button', 'MP3'],
-    ['voice-picker', 'button', 'My Voices'],
+    ['inspo-picker', 'button', 'Close'],
     ['overwrite-lyrics-styles-dialog', 'button', 'Close'],
   ])('recognises in %s the %s %s', (snapshot, role, name) => {
     load(snapshot);
@@ -96,6 +96,9 @@ describe('the forbidden-control matcher, on the TS-003 snapshots', () => {
     ['clip-remix-menu', 'menuitem', 'Cover'],
     ['overwrite-lyrics-styles-dialog', 'button', 'Overwrite'],
     ['overwrite-lyrics-styles-dialog', 'button', 'Keep Current'],
+    ['voice-picker', 'button', 'Close'],
+    ['voice-picker', 'button', 'My Voices'],
+    ['voice-picker', 'button', 'Favorites'],
   ])('leaves alone in %s the %s %s', (snapshot, role, name) => {
     load(snapshot);
     expect(verdictsOf(role, name)).toEqual(['allowed']);
@@ -135,10 +138,18 @@ describe('the forbidden-control matcher, on the TS-003 snapshots', () => {
     ]);
   });
 
-  it('recognises only the Overwrite dialog, by its title', () => {
+  it('recognises only the Overwrite dialog and the Voice picker, by their titles', () => {
     expect(RECOGNISED_DIALOGS.map((dialog) => [dialog.title, dialog.allows])).toEqual([
       ['Overwrite Lyrics & Styles?', ['Overwrite', 'Keep Current']],
+      ['Voice', ['Close', 'My Voices', 'Favorites']],
     ]);
+  });
+
+  it('still refuses everything else in the Voice picker', () => {
+    load('voice-picker');
+    const play = verdictsOf('button', 'Play');
+    expect(play.length).toBeGreaterThan(0);
+    expect(new Set(play)).toEqual(new Set(['forbidden']));
   });
 });
 
