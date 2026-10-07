@@ -2,6 +2,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Connection } from '../background/connection.ts';
 import { route } from '../background/router.ts';
+import { ADAPTER_WORKFLOWS } from '../adapter/workflows/index.ts';
+import { Diagnostics, DIAGNOSTICS_KEY, REPORT_STATEMENT } from '../diagnostics/report.ts';
 import type { Request, ResponseFor } from '../messages.ts';
 import { expectNoAxeViolations, loadPage } from '../testing/a11y.ts';
 import { fakeBrowser, jsonResponse } from '../testing/fakeBrowser.ts';
@@ -47,13 +49,25 @@ async function open(options: { grant?: boolean; answer?: () => Promise<Response>
     versions: { extension: '0.1.0', adapter: '1' },
     fetch: fetchImpl,
   });
+  // The step log's session storage, apart from the pairing's local storage.
+  const session = fakeBrowser();
+  const diagnostics = new Diagnostics({
+    storage: session.browser.storage,
+    workflows: ADAPTER_WORKFLOWS,
+    versions: { extension: '0.1.0', adapter: '1' },
+    connectionState: () => connection.state(),
+    browser: () => 'Google Chrome 140',
+    now: () => new Date('2026-10-06T08:00:00Z'),
+  });
   const send = <T extends Request>(request: T) =>
     route(
       connection,
       request,
       { id: ID, url: `chrome-extension://${ID}/options/options.html` },
       ID,
+      diagnostics,
     ) as Promise<ResponseFor[T['type']]>;
+  const saveFile = vi.fn<(fileName: string, text: string) => void>();
   const requestPermissions = vi.fn((origins: string[]) => {
     if (options.grant !== false) {
       fake.grant(origins);
@@ -64,8 +78,9 @@ async function open(options: { grant?: boolean; answer?: () => Promise<Response>
     manifest: { name: 'n8Tracks', version: '0.1.0' },
     send,
     requestPermissions,
+    saveFile,
   });
-  return { ...fake, fetchImpl, requestPermissions, connection };
+  return { ...fake, fetchImpl, requestPermissions, connection, diagnostics, session, saveFile };
 }
 
 function fill(address: string, token: string) {
@@ -277,5 +292,68 @@ describe('the options page', () => {
       );
     });
     expect(text('connection')).toBe('Connected to https://n8tracks.example.com');
+  });
+
+  it('offers Download diagnostic report with the statement of what it holds beside it', async () => {
+    const context = await open();
+    const button = document.getElementById('download-report') as HTMLButtonElement;
+
+    expect(button.textContent.trim()).toBe('Download diagnostic report');
+    expect(text('diagnostics-statement')).toBe(REPORT_STATEMENT);
+    expect(button.getAttribute('aria-describedby')).toBe('diagnostics-statement');
+    await expectNoAxeViolations(document);
+
+    button.click();
+
+    await vi.waitFor(() => {
+      expect(context.saveFile).toHaveBeenCalledTimes(1);
+    });
+    const [fileName, json] = context.saveFile.mock.calls[0] ?? ['', ''];
+    expect(fileName).toBe('n8tracks-extension-diagnostics-2026-10-06.json');
+    expect(JSON.parse(json)).toMatchObject({
+      reportVersion: 1,
+      versions: { extension: '0.1.0', adapter: '1', application: null },
+      connection: { status: 'not-paired', scheme: null },
+      pageStructure: null,
+    });
+    expect(text('diagnostics-result')).toBe('The diagnostic report is saved to your downloads.');
+    await expectNoAxeViolations(document);
+  });
+
+  it('keeps the token and the address out of the report, and Disconnect clears the step log', async () => {
+    const context = await open();
+    fill('https://n8tracks.example.com/', TOKEN);
+    submit();
+    await vi.waitFor(() => {
+      expect(text('connection')).toBe('Connected to https://n8tracks.example.com');
+    });
+    await context.diagnostics.record({
+      run: {
+        workflowId: 'recognise-suno',
+        log: [{ step: 'navigation', phase: 'expect', outcome: 'ok', atMs: 12 }],
+        failure: null,
+      },
+    });
+
+    document.getElementById('download-report')?.click();
+    await vi.waitFor(() => {
+      expect(context.saveFile).toHaveBeenCalledTimes(1);
+    });
+    const json = context.saveFile.mock.calls[0]?.[1] ?? '';
+    expect(json).not.toContain(TOKEN);
+    expect(json).not.toContain('n8tracks.example.com');
+    expect(json).not.toContain('Chrome at home');
+    expect(JSON.parse(json)).toMatchObject({
+      versions: { application: '0.1.0', compatible: true },
+      connection: { status: 'connected', scheme: 'https' },
+      steps: [{ workflow: 'recognise-suno', step: 'navigation', ms: 12 }],
+    });
+    expect(context.session.stored.has(DIAGNOSTICS_KEY)).toBe(true);
+
+    document.getElementById('disconnect')?.click();
+
+    await vi.waitFor(() => {
+      expect(context.session.stored.has(DIAGNOSTICS_KEY)).toBe(false);
+    });
   });
 });

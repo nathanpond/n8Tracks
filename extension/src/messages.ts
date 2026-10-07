@@ -1,4 +1,5 @@
 import type { Compatibility } from './compatibility.ts';
+import type { DiagnosticReport } from './diagnostics/report.ts';
 
 /** A feature of the extension and the scope it needs. */
 export interface FeatureState {
@@ -75,13 +76,19 @@ export type Request =
   | { type: 'state'; fresh?: boolean }
   | { type: 'connect'; address: string; token: string }
   | { type: 'disconnect' }
-  | { type: 'relay'; message: PageMessage };
+  | { type: 'relay'; message: PageMessage }
+  /** The Suno content script: a run that ended and the self-check states (#150). */
+  | { type: 'diagnostics-record'; run?: unknown; statuses?: unknown }
+  /** The options page and the panel: the diagnostic report, assembled now (#150). */
+  | { type: 'diagnostic-report' };
 
 export interface ResponseFor {
   state: ConnectionState;
   connect: ConnectResult;
   disconnect: ConnectionState;
   relay: RelayReply;
+  'diagnostics-record': { recorded: true };
+  'diagnostic-report': DiagnosticReport;
 }
 
 export type Response<T extends Request> = ResponseFor[T['type']];
@@ -127,6 +134,14 @@ export function isRequest(value: unknown): value is Request {
       return true;
     case 'relay':
       return isPageMessage(value.message);
+    // The service worker checks the parts itself: only declared names and fixed values are kept.
+    case 'diagnostics-record':
+      return (
+        (value.run === undefined || isRecord(value.run)) &&
+        (value.statuses === undefined || Array.isArray(value.statuses))
+      );
+    case 'diagnostic-report':
+      return true;
     default:
       return false;
   }

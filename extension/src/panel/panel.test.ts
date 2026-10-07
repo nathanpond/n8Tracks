@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { WorkflowStatus } from '../adapter/registry.ts';
+import { REPORT_STATEMENT, type DiagnosticReport } from '../diagnostics/report.ts';
 import type { ConnectedState } from '../messages.ts';
 import { expectNoAxeViolations } from '../testing/a11y.ts';
 import { Panel, stateText } from './panel.ts';
@@ -65,17 +66,26 @@ function mount() {
   document.title = 'Suno';
   const onCheckAgain = vi.fn();
   const onTryAgain = vi.fn();
+  const blobs: Blob[] = [];
+  const revoked: string[] = [];
   const panel = new Panel(document, {
     versions: { extension: '0.1.0', adapter: 1 },
     onCheckAgain,
     onTryAgain,
+    objectUrls: {
+      create: (blob) => {
+        blobs.push(blob);
+        return `blob:https://suno.com/report-${String(blobs.length)}`;
+      },
+      revoke: (url) => revoked.push(url),
+    },
   });
   const root = panel.host.shadowRoot;
   if (root === null) {
     throw new Error('The panel has no open shadow root.');
   }
   const text = (selector: string) => root.querySelector(selector)?.textContent ?? '';
-  return { panel, root, text, onCheckAgain, onTryAgain };
+  return { panel, root, text, onCheckAgain, onTryAgain, blobs, revoked };
 }
 
 afterEach(() => {
@@ -265,4 +275,46 @@ describe('the panel on Suno', () => {
       'Not checked on this page: it starts on the Library',
     );
   });
+
+  it('offers Download diagnostic report as a Blob link, with the statement beside it', async () => {
+    const { panel, root, text, blobs, revoked } = mount();
+    panel.render({ connection: CONNECTED, workflows: WORKFLOWS });
+    panel.open();
+    const link = root.querySelector<HTMLAnchorElement>('a.download');
+
+    // Until the report is assembled, the link waits and says so.
+    expect(link?.hidden).toBe(true);
+    expect(text('.preparing')).toBe('Preparing the diagnostic report…');
+    expect(text('#n8-diagnostics-statement')).toBe(REPORT_STATEMENT);
+
+    panel.setReport(REPORT);
+
+    expect(link?.hidden).toBe(false);
+    expect(link?.textContent).toBe('Download diagnostic report');
+    expect(link?.getAttribute('href')).toBe('blob:https://suno.com/report-1');
+    expect(link?.getAttribute('download')).toBe('n8tracks-extension-diagnostics-2026-10-06.json');
+    expect(link?.getAttribute('aria-describedby')).toBe('n8-diagnostics-statement');
+    expect(root.querySelector<HTMLElement>('.preparing')?.hidden).toBe(true);
+    expect(blobs[0]?.type).toBe('application/json');
+    expect(JSON.parse((await blobs[0]?.text()) ?? '')).toEqual(REPORT);
+    await expectNoAxeViolations(document);
+
+    // A fresh report replaces the address; the old one is let go.
+    panel.setReport(REPORT);
+    expect(link?.getAttribute('href')).toBe('blob:https://suno.com/report-2');
+    expect(revoked).toEqual(['blob:https://suno.com/report-1']);
+    panel.remove();
+    expect(revoked).toEqual(['blob:https://suno.com/report-1', 'blob:https://suno.com/report-2']);
+  });
 });
+
+const REPORT: DiagnosticReport = {
+  reportVersion: 1,
+  generatedAt: '2026-10-06T21:15:00.000Z',
+  versions: { extension: '0.1.0', adapter: '1', application: null, compatible: null, update: null },
+  connection: { status: 'not-paired', scheme: null },
+  browser: 'unknown',
+  workflows: [],
+  steps: [],
+  pageStructure: null,
+};

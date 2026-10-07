@@ -1,4 +1,5 @@
 import { pairingOrigins, parseAddress, type N8TracksAddress } from '../address.ts';
+import { REPORT_STATEMENT, reportFileName } from '../diagnostics/report.ts';
 import type { ConnectResult, ConnectionState, Request, ResponseFor } from '../messages.ts';
 import { describeConnection, showText, warningFor } from '../ui/connectionView.ts';
 import { element } from '../ui/element.ts';
@@ -10,6 +11,26 @@ export interface OptionsPageOptions {
   send: <T extends Request>(request: T) => Promise<ResponseFor[T['type']]>;
   /** `chrome.permissions.request`: must run inside the click that asks for it. */
   requestPermissions: (origins: string[]) => Promise<boolean>;
+  /** Saves a file the user chose to download; a Blob link the page clicks unless a test stands in. */
+  saveFile?: (fileName: string, text: string) => void;
+}
+
+/**
+ * Saves `text` as `fileName` through a Blob link the page itself clicks, inside the user's click:
+ * no `downloads` permission is needed, and nothing leaves the browser.
+ */
+export function saveWithLink(page: Document, fileName: string, text: string): void {
+  const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+  const link = page.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  link.hidden = true;
+  page.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+  }, 0);
 }
 
 export const PERMISSION_DECLINED_MESSAGE =
@@ -173,6 +194,27 @@ export async function startOptions(page: Document, options: OptionsPageOptions):
     });
   });
   addressInput.addEventListener('input', showInsecure);
+
+  // The diagnostic report (#150): the statement of what it holds sits beside the button.
+  element(page, 'diagnostics-statement').textContent = REPORT_STATEMENT;
+  const diagnosticsResult = element(page, 'diagnostics-result');
+  const saveFile =
+    options.saveFile ??
+    ((fileName: string, text: string) => {
+      saveWithLink(page, fileName, text);
+    });
+  element(page, 'download-report').addEventListener('click', () => {
+    diagnosticsResult.textContent = '';
+    void options.send({ type: 'diagnostic-report' }).then(
+      (report) => {
+        saveFile(reportFileName(new Date(report.generatedAt)), JSON.stringify(report, null, 2));
+        diagnosticsResult.textContent = 'The diagnostic report is saved to your downloads.';
+      },
+      () => {
+        diagnosticsResult.textContent = 'The diagnostic report could not be made. Try again.';
+      },
+    );
+  });
 
   const initial = await options.send({ type: 'state' });
   show(initial);

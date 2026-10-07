@@ -6,6 +6,16 @@ import {
   type ExceptionName,
   type Verdict,
 } from './forbidden.ts';
+import {
+  STRUCTURE_MAX_ANCESTORS,
+  STRUCTURE_MAX_DEPTH,
+  STRUCTURE_MAX_NODES,
+  STRUCTURE_MAX_SIBLINGS,
+  structureNodeOf,
+  type PageStructure,
+  type StructureAnchor,
+  type StructureNode,
+} from '../diagnostics/report.ts';
 
 /**
  * The only code in the extension that touches Suno's page. A workflow finds, reads, sets, chooses,
@@ -530,6 +540,73 @@ export interface PageOptions {
   address?: () => string;
 }
 
+/** What a page and its run handles last looked for, so a failure can be located afterwards. */
+interface Trail {
+  target: Target | null;
+}
+
+/** The children of an element, inside an open shadow root too, leaving out the extension's panel. */
+function childElementsOf(element: Element): Element[] {
+  const children = [...element.children, ...(element.shadowRoot?.children ?? [])];
+  return children.filter((child) => !child.hasAttribute(PANEL_HOST_ATTRIBUTE));
+}
+
+/** The node the diagnostic report keeps for an element: tag and safe attributes, never text. */
+function structureNode(element: Element): StructureNode {
+  return structureNodeOf({
+    tag: element.localName,
+    role: element.getAttribute('role'),
+    type: element.getAttribute('type'),
+    testId: element.getAttribute('data-testid'),
+    attributeNames: element.getAttributeNames(),
+  });
+}
+
+/**
+ * The page region around `anchor` for the diagnostic report (invariant 6): its ancestors and
+ * siblings by tag name only, and the anchor with what it holds, breadth-first to six levels and
+ * at most 300 nodes. Only tag names and the kept attributes are read; no text node is visited.
+ */
+function captureStructure(anchor: Element, anchoredOn: StructureAnchor): PageStructure {
+  const ancestors: string[] = [];
+  for (
+    let parent = parentOf(anchor);
+    parent !== null && ancestors.length < STRUCTURE_MAX_ANCESTORS;
+    parent = parentOf(parent)
+  ) {
+    ancestors.push(parent.localName);
+  }
+  const parent = parentOf(anchor);
+  const siblings = (parent === null ? [] : childElementsOf(parent))
+    .filter((sibling) => sibling !== anchor)
+    .map((sibling) => sibling.localName);
+  let truncated = siblings.length > STRUCTURE_MAX_SIBLINGS;
+  const keptSiblings = siblings.slice(0, STRUCTURE_MAX_SIBLINGS);
+  let count = keptSiblings.length + 1;
+  const root: StructureNode = { ...structureNode(anchor), anchor: true };
+  const queue: { element: Element; node: StructureNode; depth: number }[] = [
+    { element: anchor, node: root, depth: 0 },
+  ];
+  for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
+    const children = childElementsOf(next.element);
+    if (children.length > 0 && next.depth >= STRUCTURE_MAX_DEPTH) {
+      truncated = true;
+      continue;
+    }
+    for (const child of children) {
+      if (count >= STRUCTURE_MAX_NODES) {
+        truncated = true;
+        break;
+      }
+      const node = structureNode(child);
+      (next.node.children ??= []).push(node);
+      count += 1;
+      queue.push({ element: child, node, depth: next.depth + 1 });
+    }
+  }
+  return { anchoredOn, ancestors, siblings: keptSiblings, root, nodeCount: count, truncated };
+}
+
 function viewOf(element: Element): Window & typeof globalThis {
   const view = element.ownerDocument.defaultView;
   if (view === null) {
@@ -654,17 +731,52 @@ export class Page {
   private readonly location: () => string;
   /** The press the matcher refused on this handle, after which it changes nothing more. */
   private refused: ForbiddenControlError | null = null;
+  /** Shared with the run handles made from this page: what was last looked for. */
+  private readonly trail: Trail;
 
-  constructor(document: Document, options: PageOptions = {}) {
+  constructor(document: Document, options: PageOptions = {}, trail: Trail = { target: null }) {
     this.document = document;
     this.clock = options.clock ?? realClock;
     this.signal = options.signal;
     this.location = options.address ?? (() => document.location.href);
+    this.trail = trail;
   }
 
   /** The same page for one run: once `signal` is aborted, nothing more changes on the page. */
   withSignal(signal: AbortSignal): Page {
-    return new Page(this.document, { clock: this.clock, signal, address: this.location });
+    return new Page(
+      this.document,
+      { clock: this.clock, signal, address: this.location },
+      this.trail,
+    );
+  }
+
+  /**
+   * The structure of the page region around the most recent failure, for the diagnostic report:
+   * anchored on the element last looked for when it is on the page once, else on the container
+   * it was looked for in, else on the page's main region. Reads only; never any text.
+   */
+  structureAround(): PageStructure {
+    const target = this.trail.target;
+    if (target !== null) {
+      const failing = locate(this.document, target);
+      if (failing.kind === 'one') {
+        return captureStructure(failing.element, 'failing-element');
+      }
+      if (target.within !== undefined) {
+        const container = locate(this.document, target.within);
+        if (container.kind === 'one') {
+          return captureStructure(container.element, 'container');
+        }
+      }
+    }
+    const main = elementsUnder(this.document).find(
+      (element) => element.localName === 'main' || element.getAttribute('role') === 'main',
+    );
+    if (main !== undefined) {
+      return captureStructure(main, 'main-region');
+    }
+    return captureStructure(this.document.body, 'page');
   }
 
   /** The page's address. */
@@ -674,6 +786,7 @@ export class Page {
 
   /** Finds exactly one visible element; two matches are `ambiguous`, never the first of them. */
   find(target: Target): FindResult {
+    this.trail.target = target;
     const located = locate(this.document, target);
     return located.kind === 'one'
       ? { kind: 'found', found: handle(target, located.element) }

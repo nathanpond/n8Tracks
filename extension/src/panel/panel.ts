@@ -1,6 +1,12 @@
 import { PANEL_HOST_ATTRIBUTE } from '../adapter/primitives.ts';
 import type { WorkflowStatus } from '../adapter/registry.ts';
 import type { Feature } from '../adapter/workflow.ts';
+import {
+  DOWNLOAD_LABEL,
+  REPORT_STATEMENT,
+  reportFileName,
+  type DiagnosticReport,
+} from '../diagnostics/report.ts';
 import type { ConnectionState } from '../messages.ts';
 import { describeConnection, renderFeatures, showText, warningFor } from '../ui/connectionView.ts';
 import { versionLabel } from '../version-label.ts';
@@ -21,7 +27,22 @@ export interface PanelOptions {
    * and checks the page again. Nothing is pressed for the user.
    */
   onTryAgain: (workflowId: string) => void;
+  /** Makes and revokes the report's Blob address; the browser's `URL` unless a test stands in. */
+  objectUrls?: ObjectUrls;
 }
+
+/** `URL.createObjectURL` and `URL.revokeObjectURL`. */
+export interface ObjectUrls {
+  create(blob: Blob): string;
+  revoke(url: string): void;
+}
+
+const BROWSER_OBJECT_URLS: ObjectUrls = {
+  create: (blob) => URL.createObjectURL(blob),
+  revoke: (url) => {
+    URL.revokeObjectURL(url);
+  },
+};
 
 /** The panel's groups, in order, and their headings. */
 const GROUPS: readonly { feature: Feature; heading: string }[] = [
@@ -58,6 +79,10 @@ export class Panel {
   private readonly features: HTMLElement;
   private readonly workflowList: HTMLElement;
   private readonly onTryAgain: (workflowId: string) => void;
+  private readonly download: HTMLAnchorElement;
+  private readonly preparing: HTMLElement;
+  private readonly objectUrls: ObjectUrls;
+  private reportUrl: string | null = null;
   private returnFocus: Element | null = null;
 
   constructor(page: Document, options: PanelOptions) {
@@ -112,6 +137,28 @@ export class Panel {
       options.onCheckAgain();
     });
 
+    // The diagnostic report: a Blob link the user's own click saves (no downloads permission and
+    // no click by the extension), with the statement of what it holds beside it.
+    this.objectUrls = options.objectUrls ?? BROWSER_OBJECT_URLS;
+    const diagnostics = make('section', {
+      class: 'diagnostics',
+      'aria-labelledby': 'n8-diagnostics',
+    });
+    const diagnosticsHeading = make('h3', { id: 'n8-diagnostics' }, 'Diagnostics');
+    const statement = make(
+      'p',
+      { id: 'n8-diagnostics-statement', class: 'statement' },
+      REPORT_STATEMENT,
+    );
+    this.download = make(
+      'a',
+      { class: 'download', 'aria-describedby': 'n8-diagnostics-statement' },
+      DOWNLOAD_LABEL,
+    );
+    this.download.hidden = true;
+    this.preparing = make('p', { class: 'preparing' }, 'Preparing the diagnostic report…');
+    diagnostics.append(diagnosticsHeading, statement, this.download, this.preparing);
+
     panel.append(
       header,
       versions,
@@ -122,6 +169,7 @@ export class Panel {
       workflowsHeading,
       this.workflowList,
       check,
+      diagnostics,
     );
     this.root.append(style, panel);
     this.root.addEventListener('keydown', (event) => {
@@ -216,8 +264,32 @@ export class Panel {
     }
   }
 
+  /**
+   * Offers `report` behind Download diagnostic report, replacing the one offered before; null
+   * withdraws it while a new one is prepared.
+   */
+  setReport(report: DiagnosticReport | null): void {
+    if (this.reportUrl !== null) {
+      this.objectUrls.revoke(this.reportUrl);
+      this.reportUrl = null;
+    }
+    if (report === null) {
+      this.download.removeAttribute('href');
+      this.download.hidden = true;
+      this.preparing.hidden = false;
+      return;
+    }
+    const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+    this.reportUrl = this.objectUrls.create(blob);
+    this.download.href = this.reportUrl;
+    this.download.download = reportFileName(new Date(report.generatedAt));
+    this.download.hidden = false;
+    this.preparing.hidden = true;
+  }
+
   /** Removes the panel from the page. */
   remove(): void {
+    this.setReport(null);
     this.host.remove();
   }
 }

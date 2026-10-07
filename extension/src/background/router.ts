@@ -1,4 +1,5 @@
 import { isRequest, type RelayReply, type Request, type ResponseFor } from '../messages.ts';
+import type { Diagnostics } from '../diagnostics/report.ts';
 import type { Connection } from './connection.ts';
 
 /** Who sent a message, as `chrome.runtime.onMessage` reports it. */
@@ -26,7 +27,12 @@ function isExtensionPage(sender: Sender, extensionId: string): boolean {
 }
 
 /** Messages a content script (the relay on the n8Tracks page, the panel on Suno) may send. */
-const CONTENT_SCRIPT_TYPES: readonly Request['type'][] = ['state', 'relay'];
+const CONTENT_SCRIPT_TYPES: readonly Request['type'][] = [
+  'state',
+  'relay',
+  'diagnostics-record',
+  'diagnostic-report',
+];
 
 /**
  * Answers one message. Only the extension's own pages may connect or disconnect; a content script
@@ -37,6 +43,7 @@ export async function route(
   message: unknown,
   sender: Sender,
   extensionId: string,
+  diagnostics?: Diagnostics,
 ): Promise<ResponseFor[Request['type']] | Refusal> {
   if (sender.id !== extensionId || !isRequest(message)) {
     return { refused: 'not a request this extension answers' };
@@ -49,8 +56,22 @@ export async function route(
       return connection.state(message.fresh ?? false);
     case 'connect':
       return connection.connect(message.address, message.token);
-    case 'disconnect':
-      return connection.disconnect();
+    case 'disconnect': {
+      const state = await connection.disconnect();
+      // Unpairing forgets the step log and the last capture too.
+      await diagnostics?.clear();
+      return state;
+    }
+    case 'diagnostics-record':
+      if (diagnostics === undefined) {
+        return { refused: 'diagnostics are not kept here' };
+      }
+      await diagnostics.record({ run: message.run, statuses: message.statuses });
+      return { recorded: true };
+    case 'diagnostic-report':
+      return diagnostics === undefined
+        ? { refused: 'diagnostics are not kept here' }
+        : diagnostics.report();
     case 'relay': {
       // No page message is handled yet; later stories add theirs here.
       const reply: RelayReply = {
