@@ -30,6 +30,10 @@ namespace n8Tracks.Domain.Songs;
 /// The ordinal of the last Generation attached, 0 when none has been: the next one is one more, so an
 /// ordinal is never given out twice, even after its Generation is gone.
 /// </param>
+/// <param name="Imported">
+/// What import recorded about its inputs when it was created from a Suno clip (#135); null for a
+/// Version made in n8Tracks. System metadata, set at creation and kept by every change.
+/// </param>
 public sealed record SongVersion(
     Guid Id,
     Guid SongId,
@@ -45,7 +49,8 @@ public sealed record SongVersion(
     int Revision,
     VersionLineage Lineage,
     bool IsFrozen = false,
-    int LastGenerationOrdinal = 0)
+    int LastGenerationOrdinal = 0,
+    ImportedInputMarks? Imported = null)
 {
     // Every property is get-only, so `with` cannot set one: changes go through the methods below.
     public Guid Id { get; } = Id;
@@ -79,6 +84,8 @@ public sealed record SongVersion(
     public int LastGenerationOrdinal { get; } = LastGenerationOrdinal >= 0
         ? LastGenerationOrdinal
         : throw new ArgumentOutOfRangeException(nameof(LastGenerationOrdinal));
+
+    public ImportedInputMarks? Imported { get; } = Imported;
 
     /// <summary>
     /// The freeze rule: throws <see cref="VersionFrozenException"/> when a Generation has been
@@ -191,7 +198,7 @@ public sealed record SongVersion(
         DateTimeOffset updatedUtc,
         bool isFrozen,
         int lastGenerationOrdinal) =>
-        new(Id, SongId, Number, name, notes, visibility, lyrics, styles, inputs, CreatedUtc, updatedUtc, revision, lineage, isFrozen, lastGenerationOrdinal);
+        new(Id, SongId, Number, name, notes, visibility, lyrics, styles, inputs, CreatedUtc, updatedUtc, revision, lineage, isFrozen, lastGenerationOrdinal, Imported);
 }
 
 /// <summary>Whether a Version is shown by default. Archiving changes nothing else about it.</summary>

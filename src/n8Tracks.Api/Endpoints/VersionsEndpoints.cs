@@ -930,6 +930,10 @@ internal sealed record VersionResponse(
 /// modes, every Suno option, applicable or not, and its lineage: <c>sources</c>, <c>inspiration</c>,
 /// <c>voice</c>, and <c>fileInputs</c>, #122), and the read-only <c>effectiveInputs</c> (the ones that
 /// apply to its kind and mode, lyrics and styles included when they do: what is sent to Suno). Times are UTC.
+/// <c>imported</c> is null for a Version made in n8Tracks; for one created from a Suno clip (#135) it
+/// says which options Suno does not return (<c>notReturned</c>: they hold the default), which returned
+/// values are outside n8Tracks' limits (<c>outOfRange</c>: kept as Suno returned them), and each unknown
+/// choice as Suno returned it (<c>rawValues</c>, JSON text). Options are named as the API spells them.
 /// </summary>
 internal sealed record VersionDetailResponse(
     Guid Id,
@@ -948,7 +952,8 @@ internal sealed record VersionDetailResponse(
     string Lyrics,
     string Styles,
     JsonObject Inputs,
-    JsonObject EffectiveInputs)
+    JsonObject EffectiveInputs,
+    ImportedInputsResponse? Imported)
 {
     public static VersionDetailResponse From(VersionDetail version)
     {
@@ -976,7 +981,8 @@ internal sealed record VersionDetailResponse(
                 With(
                     VersionInputRules.Effective(CreateFieldInventory.Embedded, version.Inputs, version.Lyrics, version.Styles),
                     VersionLineageInputs.Effective(version.Lineage, version.Inputs)),
-                version.Workspace));
+                version.Workspace),
+            ImportedInputsResponse.From(version.Imported));
     }
 
     /// <summary>The key of <c>effectiveInputs</c> that reports the Song's Suno workspace (the inventory's <c>workspace</c>, #129).</summary>
@@ -1055,3 +1061,10 @@ internal sealed record SnapshotDetailResponse(Guid Id, Guid VersionId, DateTime 
 
 /// <summary>A Version's snapshots, newest first.</summary>
 internal sealed record SnapshotListResponse(SnapshotResponse[] Items);
+
+/// <summary>What import recorded about a Version's inputs (#135), as <see cref="VersionDetailResponse"/> shows it.</summary>
+internal sealed record ImportedInputsResponse(IReadOnlyList<string> NotReturned, IReadOnlyList<string> OutOfRange, IReadOnlyDictionary<string, string> RawValues)
+{
+    public static ImportedInputsResponse? From(ImportedInputMarks? marks) =>
+        marks is null ? null : new(marks.NotReturned, marks.OutOfRange, marks.RawValues);
+}

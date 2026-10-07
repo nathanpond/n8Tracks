@@ -51,6 +51,7 @@ import { useRevisionedSave, type SavedField } from '../common/useRevisionedSave'
 import { AutosaveIndicator } from '../editor/AutosaveIndicator';
 import { FrozenNotice } from '../editor/FrozenNotice';
 import { HistoryPanel, type RestoreResult } from '../editor/HistoryPanel';
+import { ImportedNotice } from '../editor/ImportedNotice';
 import { LeaveGuard } from '../editor/LeaveGuard';
 import { useAutosave, type AutosaveStatus, type Edit } from '../editor/useAutosave';
 import { useSnapshots, type EditorText } from '../editor/useSnapshots';
@@ -861,6 +862,7 @@ function LoadedVersionDetails({
             />
           )}
         </div>
+        <ImportedNotice imported={record.imported} fields={createFields.fields} />
         <OptionsPanel
           fields={createFields}
           options={drafts.inputs}

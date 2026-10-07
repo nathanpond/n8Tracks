@@ -83,6 +83,7 @@ internal sealed class SunoModelStore(N8TracksDbContext context) : ISunoModelStor
             Position = model.Order,
             Retired = model.Retired,
             Discovered = model.Discovered,
+            ReportedAs = model.ReportedAs,
         });
         await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         context.ChangeTracker.Clear();
@@ -156,7 +157,7 @@ internal sealed class SunoModelStore(N8TracksDbContext context) : ISunoModelStor
             : JsonSerializer.Deserialize<RevisionValue>(value)?.Revision ?? throw new InvalidOperationException("The model list record holds no revision.");
     }
 
-    private static SunoModel ToModel(SunoModelRecord model) => new(model.Id, model.Name, model.Note, model.Position, model.Retired, model.Discovered);
+    private static SunoModel ToModel(SunoModelRecord model) => new(model.Id, model.Name, model.Note, model.Position, model.Retired, model.Discovered, model.ReportedAs);
 
     /// <summary>One row of the usage query: a model name and how many Versions name it.</summary>
     private sealed record ModelUse(string Name, int Uses);

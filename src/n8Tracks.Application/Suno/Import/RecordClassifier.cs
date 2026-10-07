@@ -1,3 +1,4 @@
+using System.Text.Json;
 using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Application.Suno.Import;
@@ -10,12 +11,13 @@ namespace n8Tracks.Application.Suno.Import;
 /// never decide it. A live Generation decides first, then a tombstone, then the ignore list.
 /// <para>
 /// "Changed" compares the normalized fields in <see cref="SunoExportRules.ChangedFields"/>. "Conflict"
-/// needs the import mapping (#135–#137) to tell whether a clip's creation inputs differ from its
-/// Version's; until it lands no record is classed <c>conflict</c>. The classifier only reads: it writes
-/// nothing anywhere, the catalog included (invariant 3).
+/// is a linked clip whose creation inputs, mapped by <see cref="ClipInputMapper"/> (#135), differ from
+/// its Version's on an option Suno returns. A model the clip reports that is not on the model list is
+/// only proposed by the mapping, never added here. The classifier only reads: it writes nothing
+/// anywhere, the catalog and the model list included (invariant 3).
 /// </para>
 /// </summary>
-public sealed class RecordClassifier(ISunoClipLookup lookup, TombstoneService tombstones)
+public sealed class RecordClassifier(ISunoClipLookup lookup, TombstoneService tombstones, ISunoModelStore models)
 {
     /// <summary>Classifies <paramref name="records"/>: one class for each, by its Suno ID.</summary>
     public async Task<IReadOnlyList<RecordClassification>> ClassifyAsync(IReadOnlyList<StagedRecordRaw> records, CancellationToken cancellationToken)
@@ -30,23 +32,26 @@ public sealed class RecordClassifier(ISunoClipLookup lookup, TombstoneService to
         var live = await lookup.LiveGenerationsAsync(ids, cancellationToken).ConfigureAwait(false);
         var tombstoned = await tombstones.TombstonedAsync(ids, cancellationToken).ConfigureAwait(false);
         var ignored = await lookup.IgnoredAsync(ids, cancellationToken).ConfigureAwait(false);
+        var modelList = live.Count > 0 ? await models.ListAsync(cancellationToken).ConfigureAwait(false) : [];
 
         var classifications = new List<RecordClassification>(records.Count);
         foreach (var record in records)
         {
             IReadOnlyList<string> changed = [];
             Guid? generationId = null;
+            var inputsDiffer = false;
             if (live.TryGetValue(record.SunoId, out var linked))
             {
                 generationId = linked.GenerationId;
                 changed = ClipReader.Read(record.RawJson) is ClipReading.Read read
                     ? SunoExportRules.ChangedFields(linked.Stored, read.Fields)
                     : [];
+                inputsDiffer = linked.Version is { } version && InputsDiffer(record.RawJson, version, modelList);
             }
 
             var recordClass = SunoExportRules.Classify(
                 linked: generationId is not null,
-                inputsDiffer: false,
+                inputsDiffer,
                 changed,
                 tombstoned.Contains(record.SunoId),
                 ignored.Contains(record.SunoId));
@@ -54,5 +59,18 @@ public sealed class RecordClassifier(ISunoClipLookup lookup, TombstoneService to
         }
 
         return classifications;
+    }
+
+    /// <summary>Whether the clip's mapped creation inputs differ from its Version's; a clip that is not a JSON object is not compared.</summary>
+    private static bool InputsDiffer(string rawJson, LinkedVersionInputs version, IReadOnlyCollection<SunoModel> modelList)
+    {
+        using var document = JsonDocument.Parse(rawJson);
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        var mapped = ClipInputMapper.Map(document.RootElement, modelList);
+        return ClipInputMapper.Differs(mapped, version.Lyrics, version.Styles, version.Inputs, version.Imported);
     }
 }

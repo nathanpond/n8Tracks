@@ -52,7 +52,8 @@ internal sealed class VersionStore(N8TracksDbContext context, TimeProvider time)
                 record.Revision,
                 await VersionLineageRows.ReadAsync(context, id, cancellationToken).ConfigureAwait(false),
                 record.IsFrozen,
-                record.LastGenerationOrdinal);
+                record.LastGenerationOrdinal,
+                VersionInputsColumns.ReadImported(record.ImportedInputs));
     }
 
     public async Task<Guid?> FindIdByShortcodeAsync(long songShortcodeNumber, string number, CancellationToken cancellationToken) =>
@@ -85,7 +86,7 @@ internal sealed class VersionStore(N8TracksDbContext context, TimeProvider time)
 
         var inputs = await context.Versions.AsNoTracking()
             .Where(version => version.Id == id)
-            .Select(static version => new { version.Lyrics, version.Styles, version.Kind, version.Model, version.Inputs })
+            .Select(static version => new { version.Lyrics, version.Styles, version.Kind, version.Model, version.Inputs, version.ImportedInputs })
             .SingleOrDefaultAsync(cancellationToken)
             .ConfigureAwait(false);
 
@@ -111,7 +112,8 @@ internal sealed class VersionStore(N8TracksDbContext context, TimeProvider time)
             inputs.Styles,
             VersionInputsColumns.Read(inputs.Kind, inputs.Model, inputs.Inputs),
             await VersionLineageRows.ViewAsync(context, lineage, cancellationToken).ConfigureAwait(false),
-            workspace);
+            workspace,
+            VersionInputsColumns.ReadImported(inputs.ImportedInputs));
     }
 
     public async Task<IReadOnlyList<VersionSummary>> ListAsync(Guid songId, CancellationToken cancellationToken)
@@ -199,6 +201,7 @@ internal sealed class VersionStore(N8TracksDbContext context, TimeProvider time)
             Revision = version.Revision,
             IsFrozen = version.IsFrozen,
             LastGenerationOrdinal = version.LastGenerationOrdinal,
+            ImportedInputs = VersionInputsColumns.ImportedJson(version.Imported),
         };
     }
 

@@ -340,9 +340,24 @@ internal sealed class SunoExportStore(N8TracksDbContext context) : ISunoExportSt
             .Where(row => row.SunoId != null && ids.Contains(row.SunoId))
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
+
+        // Each one's Version's creation inputs, which the classifier compares the clip's with (#135).
+        var versionIds = rows.Select(static row => row.VersionId).Distinct().ToList();
+        var versions = await context.Versions.AsNoTracking()
+            .Where(version => versionIds.Contains(version.Id))
+            .Select(static version => new { version.Id, version.Lyrics, version.Styles, version.Kind, version.Model, version.Inputs, version.ImportedInputs })
+            .ToDictionaryAsync(
+                static version => version.Id,
+                static version => new LinkedVersionInputs(
+                    version.Lyrics,
+                    version.Styles,
+                    VersionInputsColumns.Read(version.Kind, version.Model, version.Inputs),
+                    VersionInputsColumns.ReadImported(version.ImportedInputs)),
+                cancellationToken)
+            .ConfigureAwait(false);
         return rows.ToDictionary(
             static row => row.SunoId!,
-            static row => new LinkedClip(
+            row => new LinkedClip(
                 row.Id,
                 new ClipFields(
                     row.SunoId!,
@@ -361,7 +376,8 @@ internal sealed class SunoExportStore(N8TracksDbContext context) : ISunoExportSt
                     row.AudioUrl,
                     row.ImageUrl,
                     row.WorkspaceId,
-                    row.BatchIndex)),
+                    row.BatchIndex),
+                versions.GetValueOrDefault(row.VersionId)),
             StringComparer.Ordinal);
     }
 

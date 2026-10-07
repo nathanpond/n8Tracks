@@ -25,4 +25,10 @@ public sealed class SunoModelRecord
 
     /// <summary>Whether n8Tracks added it on its own, from an imported clip, rather than the user.</summary>
     public required bool Discovered { get; set; }
+
+    /// <summary>
+    /// The name Suno reports the model by on a clip (such as <c>V6-MINI</c>), which import matches
+    /// clips by (#135), ignoring case; null when it is not known, and the model's name is matched instead.
+    /// </summary>
+    public string? ReportedAs { get; set; }
 }

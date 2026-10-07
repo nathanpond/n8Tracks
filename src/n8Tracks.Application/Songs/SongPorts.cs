@@ -271,7 +271,15 @@ public sealed record VersionAnnotations(string? Name, string? Notes, bool Archiv
 /// Its Song's Suno workspace (#129), or null: not an input of the Version (it never freezes), but
 /// where Generate on Suno saves the result, so <c>effectiveInputs</c> reports it.
 /// </param>
-public sealed record VersionDetail(VersionSummary Summary, string Lyrics, string Styles, VersionInputs Inputs, VersionLineageView Lineage, SunoWorkspace? Workspace = null);
+/// <param name="Imported">What import recorded about its inputs (#135); null for a Version made in n8Tracks.</param>
+public sealed record VersionDetail(
+    VersionSummary Summary,
+    string Lyrics,
+    string Styles,
+    VersionInputs Inputs,
+    VersionLineageView Lineage,
+    SunoWorkspace? Workspace = null,
+    ImportedInputMarks? Imported = null);
 
 /// <summary>
 /// A Version's lineage as it is read: the lineage itself, and for each source (audio, then

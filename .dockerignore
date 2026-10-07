@@ -15,10 +15,9 @@ src/n8Tracks.Api/wwwroot/
 .idea/
 .n8/
 .playwright-mcp/
-# docs/: only the Suno field inventory is read by the build (embedded in the Application assembly)
+# docs/: only the Suno field inventory and import field map are read by the build (embedded in the Application assembly)
 docs/*.md
 docs/spikes/
-docs/suno-import-field-map.json
 tests/
 e2e/
 extension/

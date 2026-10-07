@@ -157,6 +157,13 @@ public sealed class VersionRecord
 
     /// <summary>The ordinal of the last Generation attached; 0 when none has been. Never goes down.</summary>
     public int LastGenerationOrdinal { get; set; }
+
+    /// <summary>
+    /// What import recorded about the inputs of a Version created from a Suno clip (#135), as JSON
+    /// (<see cref="VersionInputsColumns.ImportedJson"/>); null for a Version made in n8Tracks. System
+    /// metadata: written when the Version is created and never changed.
+    /// </summary>
+    public string? ImportedInputs { get; set; }
 }
 
 /// <summary>
