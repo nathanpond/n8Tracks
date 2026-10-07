@@ -200,7 +200,7 @@ public sealed class ImportCommitService(
 /// existing Version, created whole or not at all. One failing target is reported and undoes nothing
 /// else. Every Generation is attached through <see cref="GenerationService"/>'s one attach path, so the
 /// freeze, the ordinal, and the Suno ID's uniqueness are enforced there. Skip stores nothing; Don't copy
-/// (ignore) stores nothing here (#143 adds the ignore list). Every choice is checked again: a record a
+/// (ignore) adds to the ignore list (#143), importing one takes it off. Every choice is checked again: a record a
 /// Generation holds now is reported as linked and skipped, never duplicated; an existing Version whose
 /// inputs are no longer the clip's fails its target (invariant 1 is never at stake: a frozen Version is
 /// only ever attached to, and a mutable one is frozen as it is).
@@ -355,6 +355,7 @@ internal sealed class ImportCommitJob(
             Progress();
         }
 
+        await IgnoreAsync(export, plan, results, cancellationToken).ConfigureAwait(false);
         await RecordEventsAsync(attached, cancellationToken).ConfigureAwait(false);
 
         foreach (var (clip, generationId) in attached)
@@ -377,6 +378,31 @@ internal sealed class ImportCommitJob(
             [.. plan.Order.Select(sunoId => results[sunoId].For(sunoId))],
             created,
             [.. songs.Values.OrderBy(static song => song.Shortcode, StringComparer.Ordinal)]);
+    }
+
+    /// <summary>
+    /// The ignore list (#143): each Don't copy record added in a transaction of its own (a record linked
+    /// or deleted since the review is reported so, and not added), then the entries the export contains
+    /// refreshed, and the others marked when the export read the whole library.
+    /// </summary>
+    private async Task IgnoreAsync(SunoExport export, CommitPlan plan, Dictionary<string, RecordResult> results, CancellationToken cancellationToken)
+    {
+        var now = time.GetUtcNow();
+        foreach (var sunoId in plan.Ignores)
+        {
+            results[sunoId] = await InScopeAsync<IgnoreListService, IgnoreOutcome>(list => list.IgnoreAsync(export, sunoId, now, cancellationToken)).ConfigureAwait(false) switch
+            {
+                IgnoreOutcome.Linked => RecordResult.Linked(),
+                IgnoreOutcome.Tombstoned => RecordResult.Skipped(ImportCommitReasons.Tombstoned),
+                _ => RecordResult.Ignored(),
+            };
+        }
+
+        await InScopeAsync<IgnoreListService, bool>(async list =>
+        {
+            await list.RefreshAsync(export, cancellationToken).ConfigureAwait(false);
+            return true;
+        }).ConfigureAwait(false);
     }
 
     /// <summary>A Generation Event for each group (Create request, #138) with at least two clips attached, its batch size the number attached.</summary>
@@ -433,6 +459,9 @@ internal sealed class CommitPlan
     /// <summary>Every record's Suno ID, in the export's order.</summary>
     public List<string> Order { get; } = [];
 
+    /// <summary>The Don't copy records, added to the ignore list (#143) after the targets.</summary>
+    public List<string> Ignores { get; } = [];
+
     /// <summary>The Reimports, tried first as restores.</summary>
     public List<CommitClip> Restores { get; } = [];
 
@@ -457,6 +486,7 @@ internal sealed class CommitPlan
                     continue;
                 case ImportAction.Ignore:
                     results[record.SunoId] = RecordResult.Ignored();
+                    plan.Ignores.Add(record.SunoId);
                     continue;
             }
 
@@ -568,7 +598,8 @@ internal sealed class ImportTargetWriter(
     TombstoneService tombstones,
     RetentionService retention,
     IExclusiveTransaction transaction,
-    TimeProvider time)
+    TimeProvider time,
+    IgnoreListService ignoreList)
 {
     /// <summary>
     /// Restores the Generation a Reimport names from retention, in its own transaction, when it was
@@ -705,6 +736,9 @@ internal sealed class ImportTargetWriter(
 
                     // Sources elsewhere that name this clip by its Suno ID now point at its Generation (#137).
                     await resolver.ResolveWithinAsync(clip.SunoId, ct).ConfigureAwait(false);
+
+                    // An ignored clip imported leaves the ignore list with its import (#143).
+                    await ignoreList.ForgetWithinAsync(clip.SunoId, ct).ConfigureAwait(false);
                     attached.Add((clip, generation));
                 }
 

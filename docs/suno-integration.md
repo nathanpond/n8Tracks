@@ -115,6 +115,13 @@ Raw objects are sent as Suno returned them. It is uploaded in parts: `POST /api/
     - A Reimport restores the deleted Generation from retention while its group (a Generation deleted alone) is retained; otherwise it attaches afresh. Its tombstone goes either way.
     - Afterwards: one Generation Event per group of two or more clips attached, then staged cover images, which never replace an image a Generation already has.
     - The job's result lists each record's `outcome` (`created`, `linked`, `skipped`, `ignored`, `failed`) and `reason`, what was created, and the Songs. A commit interrupted by a restart returns the export to `ready`, reclassified.
+- **Ignore list (#143):** `suno_ignored_items` holds one entry per Suno ID: Suno's title and workspace, when it was ignored, its status as last seen (`present`, `trashed`, `missing`, `not_seen`), and when a sync last included it.
+    - Only a commit adds to it: each Don't copy record, in its own transaction (idempotent; a record linked or deleted since the review is reported so and not added). Don't copy for a `deleted` record is refused with `tombstoned`, and a change by filter to Don't copy passes over deleted records.
+    - Importing an ignored record removes its entry in the transaction that imports it. Skip leaves it on the list. Suno's changes, its Trash included, never remove an entry.
+    - At each commit, the entries the export contains take its title, workspace, and status (`trashed` or `present`) and are last seen at the export's capture time. A whole-library sync (scope `library`, `libraryComplete`) marks the other entries `missing` when `trashedComplete`, else `not_seen`. Nothing changes at upload.
+    - `GET /api/v1/suno/ignored` (session only) lists it newest ignored first, 50 to a page, with `q` (a case-insensitive substring of the title or the start of the Suno ID), `workspace`, `status`, and `page`, plus the workspaces of the whole list. A tombstoned Suno ID is never listed.
+    - `POST /api/v1/suno/ignored/remove` (session only) takes `{ sunoIds }` (1 to 1,000), skips unknown IDs, and answers `{ removed, unknown }`. Nothing is imported; a ready export's records are reclassified, so a removed one is `new` there. More than 1,000 is 422 `too_many_items`.
+    - The web screen is Ignored Suno items, at `/suno/ignored`, in the sidebar after Suno import.
 
 ## Extension structure
 

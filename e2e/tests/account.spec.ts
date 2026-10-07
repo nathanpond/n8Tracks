@@ -99,6 +99,7 @@ test.describe(
         'Albums',
         'Playlists',
         'Suno import',
+        'Ignored Suno items',
         'Account',
         'Credentials',
         'Workflow',

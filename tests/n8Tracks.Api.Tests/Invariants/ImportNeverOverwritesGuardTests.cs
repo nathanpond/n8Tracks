@@ -74,6 +74,71 @@ public sealed class ImportNeverOverwritesGuardTests
     }
 
     /// <summary>
+    /// The ignore list (#143) is confirmed-choice data: a commit adds the Don't copy records, removes the
+    /// ignored records imported, and refreshes the entries it saw (and, for a whole-library sync, the
+    /// status of those it did not), and nothing else; receiving and discarding an export changes nothing,
+    /// and a removal takes off exactly the items named.
+    /// </summary>
+    [Fact]
+    public async Task TheIgnoreListChangesOnlyAsTheConfirmedChoicesSay()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var token = await SunoWorkspaceApi.ExtensionTokenAsync(factory);
+        foreach (var (sunoId, title) in new[] { ("kept-1", "Old title"), ("wanted-1", "Wanted"), ("elsewhere-1", "Elsewhere") })
+        {
+            TestDatabase.Execute(factory.DataPath, $"INSERT INTO suno_ignored_items (suno_id, title, ignored_utc, last_status, last_seen_utc) VALUES ('{sunoId}', '{title}', '2026-09-01T00:00:00.000Z', 'present', '2026-09-01T00:00:00.000Z');");
+        }
+
+        var at = ProposalApi.At;
+        JsonNode[] clips =
+        [
+            ProposalApi.Clip("dont-1", null, at, 0, "Dont words"),
+            ProposalApi.Clip("kept-1", null, at.AddHours(1), 0, "Kept words", "New title"),
+            ProposalApi.Clip("wanted-1", null, at.AddHours(2), 0, "Wanted words"),
+            ProposalApi.Clip("skip-1", null, at.AddHours(3), 0, "Skip words"),
+        ];
+
+        // Received, classified, and discarded: nothing changes.
+        var start = Rows(factory.DataPath);
+        var (discarded, _) = await ProposalApi.ExportAsync(client, token, clips);
+        using (var response = await SunoExportApi.SendAsync(client, HttpMethod.Post, SunoExportApi.Export(discarded, "/discard"), token))
+        {
+            Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
+        }
+
+        Assert.Empty(Differences(start, Rows(factory.DataPath)));
+
+        var (exportId, records) = await ProposalApi.ExportAsync(client, token, clips);
+        Assert.Equal(["new", "ignored", "ignored", "new"], new[] { "dont-1", "kept-1", "wanted-1", "skip-1" }.Select(id => records[id].GetProperty("class").GetString()));
+        await ProposalApi.ChangedAsync(client, exportId, 1, ProposalApi.Change(new JsonObject { ["action"] = "ignore" }, "dont-1"));
+        await ProposalApi.ChangedAsync(client, exportId, 2, ProposalApi.Change(new JsonObject { ["action"] = "skip" }, "skip-1"));
+        await ProposalApi.ChangedAsync(client, exportId, 3, ProposalApi.Change(ProposalApi.Import(new JsonObject { ["kind"] = "newSong", ["key"] = "new:1", ["title"] = "Wanted" }), "wanted-1"));
+        var before = Rows(factory.DataPath);
+
+        await ImportCommitApi.CommitAsync(client, exportId);
+
+        var changes = Differences(before, Rows(factory.DataPath));
+        Assert.Equal(
+            ["A dont-1", "C elsewhere-1", "C kept-1", "R wanted-1"],
+            changes.Where(static change => change.Table == "suno_ignored_items").Select(static change => $"{change.Kind} {change.Key}").Order(StringComparer.Ordinal));
+        var kept = changes.Single(static change => change.Key == "kept-1").Row;
+        Assert.Equal(("New title", "present"), (kept["title"], kept["last_status"]));
+        Assert.Equal("missing", changes.Single(static change => change.Key == "elsewhere-1").Row["last_status"]);
+        string[] imported = ["songs", "versions", "generations", "provider_records", "used_version_numbers"];
+        Assert.All(
+            changes.Where(static change => change.Table != "suno_ignored_items"),
+            change => Assert.True(
+                (change.Kind == 'A' && imported.Contains(change.Table)) || (change.Kind == 'C' && change.Table == "shortcode_sequence"),
+                $"{change.Table}: {change.Kind} {change.Key}"));
+
+        // A removal takes off exactly the items named.
+        var listed = Rows(factory.DataPath);
+        await IgnoreListTests.RemoveAsync(client, "kept-1", "not-listed");
+        Assert.Equal(["suno_ignored_items R kept-1"], Differences(listed, Rows(factory.DataPath)).Select(static change => $"{change.Table} {change.Kind} {change.Key}"));
+    }
+
+    /// <summary>
     /// The guard bites: with the commit made to retitle an existing Generation that no choice names (as
     /// an import must never do), the same run reports that row as unexplained.
     /// </summary>
@@ -239,6 +304,7 @@ public sealed class ImportNeverOverwritesGuardTests
             ["provider_tombstones"] = static (kind, row) => kind == 'R' && row["suno_id"] == "deleted-1",
             ["retention_groups"] = (kind, row) => kind == 'R' && In(restoredGroups, row["id"]),
             ["retention_records"] = (kind, row) => kind == 'R' && In(restoredGroups, row["group_id"]),
+            ["suno_ignored_items"] = static (kind, row) => kind == 'A' && row["suno_id"] == "ignored-1",
         };
 
         var unexplained = new List<string>();

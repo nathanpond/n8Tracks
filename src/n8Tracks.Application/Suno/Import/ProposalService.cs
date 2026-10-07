@@ -148,7 +148,8 @@ public sealed class ProposalService(
 
     /// <summary>
     /// Changes the choice of every record matching <paramref name="filter"/> whose class the review
-    /// changes (<see cref="ReviewableClasses"/>), except those it names, to <paramref name="request"/>
+    /// changes (<see cref="ReviewableClasses"/>; deleted records are passed over for Don't copy, #143),
+    /// except those it names, to <paramref name="request"/>
     /// (#139, "select all that match"), as <see cref="ChangeChoicesAsync(Guid, int, IReadOnlyList{string}, ImportChoiceRequest, CancellationToken)"/>
     /// does for named records. The records are found inside the same transaction.
     /// </summary>
@@ -169,7 +170,11 @@ public sealed class ProposalService(
             {
                 var except = filter.Except.ToHashSet(StringComparer.Ordinal);
                 var query = new StagedRecordQuery(filter.Class, filter.WorkspaceId, filter.PlaylistId, 1, 1, filter.Search);
-                return [.. (await exports.MatchingSunoIdsAsync(exportId, query, ReviewableClasses.ToList(), ct).ConfigureAwait(false)).Where(id => !except.Contains(id))];
+                // Don't copy by filter passes over deleted records, which are never ignored (#143).
+                var classes = request.Action == ImportAction.Ignore
+                    ? ReviewableClasses.Where(static recordClass => recordClass != SunoRecordClass.Deleted).ToList()
+                    : ReviewableClasses.ToList();
+                return [.. (await exports.MatchingSunoIdsAsync(exportId, query, classes, ct).ConfigureAwait(false)).Where(id => !except.Contains(id))];
             },
             request,
             cancellationToken);
@@ -235,6 +240,12 @@ public sealed class ProposalService(
             {
                 Refuse(sunoId, verdict);
             }
+        }
+
+        // A deleted clip is never ignored (#143): its tombstone, not the ignore list, keeps it out.
+        foreach (var (sunoId, _) in choices.Where(pair => pair.Value?.Action == ImportAction.Ignore && classes[pair.Key] == SunoRecordClass.Deleted))
+        {
+            Refuse(sunoId, ImportChoiceRules.Tombstoned);
         }
 
         // Records naming one temporary key must describe the same target.
@@ -546,6 +557,10 @@ public sealed class ProposalService(
             else if (request.Action != ImportAction.Skip && state.Class is not (SunoRecordClass.New or SunoRecordClass.Ignored or SunoRecordClass.Deleted))
             {
                 Refuse(sunoId, ImportChoiceRules.AlreadyLinked);
+            }
+            else if (request.Action == ImportAction.Ignore && state.Class == SunoRecordClass.Deleted)
+            {
+                Refuse(sunoId, ImportChoiceRules.Tombstoned);
             }
             else if (targetReason is not null)
             {

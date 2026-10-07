@@ -56,6 +56,8 @@ export function reasonText(reason: string): string {
       return 'a Generation already holds it';
     case 'record_not_found':
       return 'the record is no longer in this import';
+    case 'tombstoned':
+      return 'it was deleted from n8Tracks, and a deleted clip is never put on the ignore list';
     default:
       return reason;
   }
