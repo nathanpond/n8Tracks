@@ -76,6 +76,11 @@ public static class RedactionPolicy
         "comments",
         "commenttext",
 
+        // A Generate on Suno request's snapshot (suno_generation_requests.snapshot_json, #144): the
+        // Version's lyrics, styles, and prompts, as the extension fills them.
+        "snapshot",
+        "snapshotjson",
+
         // A job's payload: whatever the code that enqueued it passed, which may be any of the above.
         "payload",
 

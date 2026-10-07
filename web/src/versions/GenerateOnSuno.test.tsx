@@ -1,0 +1,394 @@
+import { MantineProvider } from '@mantine/core';
+import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { describe, expect, it, vi } from 'vitest';
+import type { GenerationRequest } from '../api/generationRequests';
+import { REQUEST_POLL_MS } from '../api/generationRequests';
+import type { Bridge, BridgeMessage, BridgeReply, ExtensionState } from '../extension/bridge';
+import { stateOfPong } from '../extension/bridge';
+import { BridgeContext } from '../extension/bridgeContext';
+import {
+  advanceTimers,
+  fakeTimeouts,
+  healthyReport,
+  jsonResponse,
+  requestPath,
+  stubFetch,
+} from '../test/helpers';
+import { GenerateOnSunoButton, GenerateOnSunoStatus } from './GenerateOnSuno';
+import { useGenerateOnSuno } from './useGenerateOnSuno';
+
+const VERSION_ID = '0199b1a0-7000-7000-9000-000000000001';
+const REQUEST_ID = '0199b1a0-7000-7000-9000-0000000000aa';
+
+function testRequest(change: Partial<GenerationRequest> = {}): GenerationRequest {
+  return {
+    id: REQUEST_ID,
+    versionId: VERSION_ID,
+    state: 'pending',
+    active: true,
+    step: null,
+    message: null,
+    claimed: false,
+    createdAt: '2026-10-07T09:00:00Z',
+    updatedAt: '2026-10-07T09:00:00Z',
+    endedAt: null,
+    ...change,
+  };
+}
+
+/** A fake extension: answers detection with `state`, and `generate` with `reply`. */
+function fakeBridge(state: ExtensionState, reply: BridgeReply = { type: 'generate-accepted' }) {
+  const sent: BridgeMessage[] = [];
+  const bridge: Bridge = {
+    detect: () => Promise.resolve(state),
+    send: (message) => {
+      sent.push(message);
+      return Promise.resolve(message.type === 'generate' ? reply : { type: 'options-opened' });
+    },
+  };
+  return { bridge, sent };
+}
+
+/** A fake n8Tracks for one Version's requests: the current one is `current`, a POST makes `created`. */
+function serve(options: {
+  current?: GenerationRequest | null;
+  create?: () => Response;
+  cancel?: () => Response;
+}) {
+  const server = {
+    current: options.current ?? null,
+    creates: 0,
+    cancels: [] as string[],
+    reads: 0,
+  };
+  const mock = stubFetch();
+  mock.mockImplementation((input, init) => {
+    const path = requestPath(input);
+    const method = (init?.method ?? 'GET').toUpperCase();
+    if (path.endsWith('/health')) {
+      return Promise.resolve(jsonResponse(200, healthyReport));
+    }
+    if (method === 'GET' && path.endsWith(`/versions/${VERSION_ID}/generation-request`)) {
+      server.reads += 1;
+      return Promise.resolve(jsonResponse(200, { request: server.current }));
+    }
+    if (method === 'POST' && path.endsWith(`/versions/${VERSION_ID}/generation-requests`)) {
+      server.creates += 1;
+      const response = options.create?.() ?? jsonResponse(201, testRequest());
+      if (response.status === 201) {
+        server.current = testRequest();
+      }
+      return Promise.resolve(response);
+    }
+    if (method === 'POST' && path.endsWith(`/generation-requests/${REQUEST_ID}/cancel`)) {
+      server.cancels.push(REQUEST_ID);
+      server.current = testRequest({
+        state: 'cancelled',
+        active: false,
+        message: 'You cancelled it.',
+        endedAt: '2026-10-07T09:01:00Z',
+      });
+      return Promise.resolve(options.cancel?.() ?? jsonResponse(200, server.current));
+    }
+    return Promise.resolve(jsonResponse(404, { code: 'not_found' }));
+  });
+  return server;
+}
+
+function Harness() {
+  const controller = useGenerateOnSuno(VERSION_ID);
+  return (
+    <>
+      <GenerateOnSunoButton controller={controller} />
+      <GenerateOnSunoStatus controller={controller} />
+    </>
+  );
+}
+
+function renderAction(bridge: Bridge) {
+  return render(
+    <MantineProvider>
+      <BridgeContext.Provider value={bridge}>
+        <Harness />
+      </BridgeContext.Provider>
+    </MantineProvider>,
+  );
+}
+
+async function choose() {
+  const user = userEvent.setup();
+  const button = await screen.findByRole('button', { name: 'Generate on Suno' });
+  await waitFor(() => {
+    expect(button).toBeEnabled();
+  });
+  await user.click(button);
+  return user;
+}
+
+describe('Generate on Suno', () => {
+  it('makes a request and hands its ID to the extension when the extension is ready', async () => {
+    const server = serve({});
+    const { bridge, sent } = fakeBridge({ kind: 'ready', extensionVersion: '0.1.0' });
+    renderAction(bridge);
+
+    await choose();
+
+    const state = await screen.findByTestId('generation-request-state');
+    expect(state).toHaveTextContent('Generate on Suno: Handed to the extension');
+    expect(server.creates).toBe(1);
+    expect(sent).toEqual([{ type: 'generate', requestId: REQUEST_ID }]);
+    expect(screen.getByRole('button', { name: 'Generate on Suno' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Cancel the request' })).toBeEnabled();
+    expect(screen.getByText(/Nothing has been generated/)).toBeInTheDocument();
+  });
+
+  it.each<[string, ExtensionState, RegExp, boolean]>([
+    ['absent', { kind: 'absent' }, /did not answer/, false],
+    ['disconnected', { kind: 'disconnected', status: 'not-paired' }, /is not connected/, true],
+    [
+      'incompatible',
+      { kind: 'incompatible', extensionVersion: '0.1.0', applicationVersion: '0.2.0' },
+      /needs updating/,
+      true,
+    ],
+    [
+      'without suno.generate',
+      { kind: 'no-scope', credentialName: 'Laptop' },
+      /cannot generate/,
+      true,
+    ],
+  ])(
+    'says what to do and makes nothing when the extension is %s',
+    async (_name, state, title, canOpen) => {
+      const server = serve({});
+      const { bridge, sent } = fakeBridge(state);
+      renderAction(bridge);
+
+      const user = await choose();
+
+      const problem = await screen.findByTestId('extension-problem');
+      expect(within(problem).getByRole('alert')).toHaveTextContent(title);
+      expect(problem).toHaveTextContent('no request was made');
+      expect(server.creates).toBe(0);
+      expect(sent).toEqual([]);
+      const name = 'Open the extension’s options';
+      if (canOpen) {
+        await user.click(within(problem).getByRole('button', { name }));
+        expect(sent).toEqual([{ type: 'open-options' }]);
+      } else {
+        expect(within(problem).queryByRole('button', { name })).toBeNull();
+      }
+    },
+  );
+
+  it('names each blocking source and when Suno was last synced, and makes nothing', async () => {
+    serve({
+      create: () =>
+        jsonResponse(422, {
+          code: 'sources_unavailable',
+          sources: [
+            {
+              group: 'audio',
+              position: 1,
+              title: 'Night drive',
+              shortcode: 'n8-3-v1-g2',
+              availability: 'trashed',
+            },
+            {
+              group: 'inspiration',
+              position: 2,
+              title: null,
+              shortcode: 'n8-4',
+              availability: 'deleted',
+            },
+          ],
+          lastSyncAt: '2026-10-06T12:00:00Z',
+        }),
+    });
+    const { bridge, sent } = fakeBridge({ kind: 'ready', extensionVersion: '0.1.0' });
+    renderAction(bridge);
+
+    await choose();
+
+    const blocked = await screen.findByTestId('sources-blocked');
+    const items = within(blocked).getAllByTestId('blocked-source');
+    expect(items.map((item) => item.textContent)).toEqual([
+      'Audio source 1, Night drive (n8-3-v1-g2): in Suno’s Trash',
+      'Inspiration source 2, n8-4: deleted from n8Tracks',
+    ]);
+    expect(within(blocked).getByTestId('last-sync')).toHaveTextContent(
+      /as of the last confirmed sync, .*2026/,
+    );
+    expect(sent).toEqual([]);
+    expect(screen.queryByTestId('generation-request')).toBeNull();
+  });
+
+  it('cancels a request the extension did not take, and says why', async () => {
+    const server = serve({});
+    const { bridge } = fakeBridge(
+      { kind: 'ready', extensionVersion: '0.1.0' },
+      { type: 'error', error: 'refused', message: 'n8Tracks refused the claim: 409.' },
+    );
+    renderAction(bridge);
+
+    await choose();
+
+    expect(await screen.findByTestId('handoff-problem')).toHaveTextContent(
+      'The extension did not take the request: n8Tracks refused the claim: 409.',
+    );
+    expect(server.cancels).toEqual([REQUEST_ID]);
+    await waitFor(() => {
+      expect(screen.getByTestId('generation-request-state')).toHaveTextContent('Cancelled');
+    });
+  });
+
+  it('follows the request as the extension reports it, every two seconds while it is active', async () => {
+    fakeTimeouts();
+    const server = serve({ current: testRequest({ state: 'claimed', claimed: true }) });
+    const { bridge } = fakeBridge({ kind: 'ready', extensionVersion: '0.1.0' });
+    renderAction(bridge);
+
+    const state = await screen.findByTestId('generation-request-state');
+    expect(state).toHaveTextContent('The extension has the request');
+    const steps: [Partial<GenerationRequest>, string][] = [
+      [{ state: 'opening' }, 'Opening Suno'],
+      [{ state: 'workspace' }, 'Choosing the Song’s workspace in Suno'],
+      [{ state: 'filling' }, 'Filling Suno’s Create form'],
+      [{ state: 'waiting' }, 'Waiting for you to click Create in Suno'],
+      [
+        {
+          state: 'stopped',
+          active: false,
+          step: 'fill-lyrics',
+          message: 'The lyrics field was not found.',
+        },
+        'Stopped at step “fill-lyrics”',
+      ],
+    ];
+    for (const [change, label] of steps) {
+      server.current = testRequest({ claimed: true, ...change });
+      advanceTimers(REQUEST_POLL_MS);
+      await waitFor(() => {
+        expect(screen.getByTestId('generation-request-state')).toHaveTextContent(label);
+      });
+    }
+    expect(screen.getByTestId('generation-request-message')).toHaveTextContent(
+      'The lyrics field was not found.',
+    );
+
+    // Once it has ended it is not read again, and a new one may be made.
+    const reads = server.reads;
+    advanceTimers(REQUEST_POLL_MS * 3);
+    expect(server.reads).toBe(reads);
+    expect(screen.getByRole('button', { name: 'Generate on Suno' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Cancel the request' })).toBeNull();
+  });
+
+  it('shows a finished request as done', async () => {
+    serve({ current: testRequest({ state: 'done', active: false, claimed: true }) });
+    renderAction(fakeBridge({ kind: 'ready', extensionVersion: '0.1.0' }).bridge);
+
+    expect(await screen.findByTestId('generation-request-state')).toHaveTextContent(
+      'Generate on Suno: Done',
+    );
+  });
+
+  it('cancels an active request on request', async () => {
+    const server = serve({ current: testRequest({ state: 'waiting', claimed: true }) });
+    renderAction(fakeBridge({ kind: 'ready', extensionVersion: '0.1.0' }).bridge);
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: 'Cancel the request' }));
+
+    expect(server.cancels).toEqual([REQUEST_ID]);
+    expect(await screen.findByTestId('generation-request-message')).toHaveTextContent(
+      'You cancelled it.',
+    );
+    expect(screen.getByTestId('generation-request-state')).toHaveTextContent('Cancelled');
+  });
+});
+
+describe('the extension state a pong says', () => {
+  it.each<[string, BridgeReply, ExtensionState['kind']]>([
+    ['no answer', null, 'absent'],
+    ['another answer', { type: 'error' }, 'absent'],
+    ['not paired', { type: 'pong', connection: { status: 'not-paired' } }, 'disconnected'],
+    ['still checking', { type: 'pong', connection: { status: 'checking' } }, 'disconnected'],
+    [
+      'an incompatible version',
+      {
+        type: 'pong',
+        extensionVersion: '0.1.0',
+        connection: { status: 'connected', compatible: false, scopes: ['suno.generate'] },
+      },
+      'incompatible',
+    ],
+    [
+      'a credential without suno.generate',
+      {
+        type: 'pong',
+        extensionVersion: '0.1.0',
+        connection: { status: 'connected', compatible: true, scopes: ['suno.sync'] },
+      },
+      'no-scope',
+    ],
+    [
+      'ready',
+      {
+        type: 'pong',
+        extensionVersion: '0.1.0',
+        connection: { status: 'connected', compatible: true, scopes: ['suno.generate'] },
+      },
+      'ready',
+    ],
+  ])('%s', (_name, pong, kind) => {
+    expect(stateOfPong(pong).kind).toBe(kind);
+  });
+});
+
+describe('the window bridge', () => {
+  it('takes only an answer from its own window and origin with the id it sent', async () => {
+    const { windowBridge } = await import('../extension/bridge');
+    const origin = window.location.origin;
+    const answer = (data: Record<string, unknown>, change: Partial<MessageEventInit> = {}) => {
+      window.dispatchEvent(
+        new MessageEvent('message', { data, source: window, origin, ...change }),
+      );
+    };
+    const posted: unknown[] = [];
+    const post = vi.spyOn(window, 'postMessage').mockImplementation((message: unknown) => {
+      const data = message as Record<string, unknown>;
+      posted.push(data);
+      const pong = {
+        source: 'n8tracks-extension',
+        id: data.id,
+        type: 'pong',
+        extensionVersion: '0.1.0',
+        connection: { status: 'connected', compatible: true, scopes: ['suno.generate'] },
+      };
+      // Ignored: another id, another origin, another window, another source.
+      answer({ ...pong, id: 'other' });
+      answer(pong, { origin: 'https://elsewhere.example' });
+      answer(pong, { source: null });
+      answer({ ...pong, source: 'n8tracks' });
+      answer({ ...pong, extensionVersion: '9.9.9' });
+    });
+    try {
+      const state = await windowBridge(window).detect();
+      expect(state).toEqual({ kind: 'ready', extensionVersion: '9.9.9' });
+      expect(posted).toEqual([expect.objectContaining({ type: 'ping', source: 'n8tracks' })]);
+      expect(post).toHaveBeenCalledWith(expect.anything(), origin);
+    } finally {
+      post.mockRestore();
+    }
+  });
+
+  it('says the extension is absent when nothing answers within half a second', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const { windowBridge, PING_TIMEOUT_MS } = await import('../extension/bridge');
+    const detected = windowBridge(window).detect();
+    vi.advanceTimersByTime(PING_TIMEOUT_MS);
+    await expect(detected).resolves.toEqual({ kind: 'absent' });
+  });
+});

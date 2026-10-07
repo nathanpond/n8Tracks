@@ -15,6 +15,7 @@ using n8Tracks.Application.Scheduling;
 using n8Tracks.Application.Setup;
 using n8Tracks.Application.Songs;
 using n8Tracks.Application.Suno;
+using n8Tracks.Application.Suno.Generate;
 using n8Tracks.Application.Suno.Import;
 
 namespace n8Tracks.Application;
@@ -52,6 +53,7 @@ public static class DependencyInjection
         services.AddScoped<ImportReviewService>();
         services.AddScoped<IgnoreListService>();
         services.AddScoped<RemoteStateService>();
+        services.AddScoped<GenerationRequestService>();
         services.AddJobHandler<ExportClassifyJobHandler>(ExportStagingService.ClassifyJobType);
         services.AddScoped<ImportCommitService>();
         services.AddScoped<ImportTargetWriter>();

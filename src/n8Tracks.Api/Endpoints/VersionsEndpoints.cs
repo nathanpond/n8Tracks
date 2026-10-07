@@ -977,37 +977,12 @@ internal sealed record VersionDetailResponse(
             version.Lyrics,
             version.Styles,
             With(VersionInputRules.ToJson(version.Inputs), VersionLineageInputs.ToJson(version.Lineage)),
-            WithWorkspace(
-                With(
-                    VersionInputRules.Effective(CreateFieldInventory.Embedded, version.Inputs, version.Lyrics, version.Styles),
-                    VersionLineageInputs.Effective(version.Lineage, version.Inputs)),
-                version.Workspace),
+            VersionEffectiveInputs.Of(version),
             ImportedInputsResponse.From(version.Imported));
     }
 
     /// <summary>The key of <c>effectiveInputs</c> that reports the Song's Suno workspace (the inventory's <c>workspace</c>, #129).</summary>
-    public const string WorkspaceKey = "workspace";
-
-    /// <summary>
-    /// <paramref name="effective"/> with the Song's Suno workspace under <see cref="WorkspaceKey"/>
-    /// (<c>{ id, name, state }</c>, the ID being Suno's) when it has one: where Generate on Suno saves
-    /// the result, for every kind and mode. It is the Song's, not an input of the Version, so it is
-    /// never in <c>inputs</c> and never frozen.
-    /// </summary>
-    private static JsonObject WithWorkspace(JsonObject effective, SunoWorkspace? workspace)
-    {
-        if (workspace is not null)
-        {
-            effective[WorkspaceKey] = new JsonObject
-            {
-                ["id"] = workspace.SunoId,
-                ["name"] = workspace.Name,
-                ["state"] = SunoWorkspaceRules.NameOf(workspace.State),
-            };
-        }
-
-        return effective;
-    }
+    public const string WorkspaceKey = VersionEffectiveInputs.WorkspaceKey;
 
     /// <summary><paramref name="options"/> followed by the lineage keys in <paramref name="lineage"/>.</summary>
     private static JsonObject With(JsonObject options, JsonObject lineage)

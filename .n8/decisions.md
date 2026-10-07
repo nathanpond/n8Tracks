@@ -3434,3 +3434,46 @@ Story #142 (built in parallel; merged into the milestone branch):
 - **Decision:** On the web, the Class filter gains "Suno state changes (N)" (`?class=remote-state`), which lists the rows in `suno/RemoteStateChanges.tsx` with an "Apply: <title>" checkbox each. Generation rows and the panel gain an "In Suno Trash" badge (`in-suno-trash`).
   **Why:** The story's key_link names the class filter. The badge covers the truth "User sees in n8Tracks which outputs they have trashed in Suno"; Remote Missing already had one.
   **Issue:** #142
+- **Decision:** The Generate on Suno routes:
+  - `POST /api/v1/versions/{reference}/generation-requests` (`versions.write`) makes a request.
+  - `GET /api/v1/versions/{reference}/generation-request` (`catalog.read`, no snapshot) is what the page polls.
+  - `GET`, `POST .../claim`, and `PATCH /api/v1/suno/generation-requests/{id}` need `suno.generate`; the snapshot is answered only here.
+  - `POST .../cancel` needs `versions.write`.
+
+  A session that claims gets 403 `credential_required`.
+  **Why:** The story fixes the PATCH path and the scopes, but not the create or read paths. Hanging creation off the Version reuses reference binding, the 404/deleted answers, and the reference guard. A session claim would bind no credential, so it is refused.
+  **Issue:** #144
+- **Decision:** `suno_generation_requests` (migration `20261007060000_AddSunoGenerationRequests`) names the Version and the claiming credential without foreign keys. It is listed as not catalog in the invariant 3 guard's `OtherTables`.
+  **Why:** A cascade from `versions` would interfere with retention and restore. A request only needs to read as cancelled once its Version is gone, and the settle-on-read does that. The story's Discretion allows the table.
+  **Issue:** #144
+- **Decision:** Requests are settled lazily on every read (page poll, extension read, claim, report, cancel, create). Unclaimed after 15 s it becomes stopped. With no report for 1 h it becomes expired. When the Version's content key differs it becomes cancelled as stale; a Version that is gone also makes it cancelled. There is no background sweep.
+  **Why:** State is only ever observed through reads, so a sweep adds nothing. The content key is a hash of kind, mode, entries, unsupported values, file inputs, and source targets. It leaves out the name, notes, workspace, and availability, so freezing at an observed Create (#149) and a rename do not cancel a request (Discretion: workspace and availability changes do not cancel). Comparing the revision instead would have cancelled on every freeze.
+  **Issue:** #144
+- **Decision:** `effectiveInputs` is now built in one place, `Application.Songs.VersionEffectiveInputs.Of`. The Version answer and the snapshot both use it.
+  **Why:** The test plan says the snapshot equals `effectiveInputs`. One builder makes that true by construction rather than by two copies kept in step.
+  **Issue:** #144
+- **Decision:** The snapshot shape is the Discretion's, with these details:
+  - The entries are keyed `<tab>.<mode>.<inventory field>`. `AdapterFieldMap.Entries` in code is checked against `docs/suno-adapter-field-map.md` by `AdapterFieldMapTests`, so the Docker image needs no Markdown.
+  - In Simple mode, the added lyrics or styles are the value of `simple_add_lyrics`/`simple_add_styles` (null when not added).
+  - The workspace is only the top-level `workspace`.
+  - Each source has `{key, group, position, typeId, sunoAction, target{kind,id,sunoId}, title, shortcode, availability, continueAtSeconds, secondaryIds}`. The Suno ID comes from the Generation.
+  - `unsupported` holds `{key, value}`.
+  **Why:** The field map gives Simple mode no lyrics entry ("fills it from the Version's lyrics"). The extension (#146, #148) needs the clip's Suno ID to open a source.
+  **Issue:** #144
+- **Decision:** Every effective source with availability deleted, trashed, or missing blocks the request with 422 `sources_unavailable` (`sources[{group, position, title, shortcode, availability}]`, `lastSyncAt`). This covers Song targets too, and Generation sources deleted into an external "Deleted" reference. `lastSyncAt` is the newest committed export's `captured_utc`. Remix sources that are never sent do not block.
+  **Why:** The Discretion says every source that points at a Generation is required. "Deleted" covers a missing Song target just as well, and the page needs a time for "as of the last confirmed sync".
+  **Issue:** #144
+- **Decision:** The web flow:
+  - `web/src/extension/bridge.ts` pings with a 500 ms timeout and gives absent, disconnected (with status), incompatible, no-scope, or ready.
+  - Nothing is made unless the answer is ready.
+  - When the relay answered, a button "Open the extension's options" sends a new page message, `open-options`. The service worker opens the options page.
+  - If the extension does not answer `generate-accepted`, the page cancels the request it just made and shows the extension's words.
+  - The Generate button is disabled while a request is active; Cancel is beside the progress line.
+  **Why:** A web page cannot link to a `chrome-extension://` options page, so Demo step 2's "links to its options" goes through the relay. When the relay is absent (the extension is not installed, or the page was loaded before Disconnect, which unregisters the relay), the page can only say so and explain. Cancelling a refused hand-off avoids a 15 s pending request that nobody will claim.
+  **Issue:** #144
+- **Decision:** On the extension side:
+  - `messages.ts` gains `PageRequest` (`generate`, `open-options`), `GenerateFailure`, the widened `RelayReply`, and `GenerationHandOff`.
+  - `background/generate.ts` (`GenerateCoordinator`) handles them. It takes a fresh handshake, checks that the sender's origin is the paired address, then compatibility, then `suno.generate`. It then claims through `Connection.call` and keeps only `{requestId, claimedAt}` in `chrome.storage.session` under `generation`.
+  - `route(...)` gains a seventh, optional `generate` argument. Relay page messages reach it only from a tab that is not on suno.com.
+  **Why:** This follows the one typed message union and the tab-bound pattern from the M4 notes. The snapshot holds lyrics and prompts, so it is never stored; the Suno steps (#145+) read the request again before each step, as the Discretion requires.
+  **Issue:** #144

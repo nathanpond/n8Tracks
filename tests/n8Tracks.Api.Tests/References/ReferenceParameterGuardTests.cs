@@ -45,6 +45,10 @@ public sealed class ReferenceParameterGuardTests
         "PATCH /api/v1/suno/exports/{id:guid}/remote-states: id",
         "PUT /api/v1/suno/exports/{id:guid}/artwork/{sunoId}: id",
         "POST /api/v1/suno/exports/{id:guid}/commit: id",
+        "GET /api/v1/suno/generation-requests/{id:guid}: id",
+        "POST /api/v1/suno/generation-requests/{id:guid}/claim: id",
+        "PATCH /api/v1/suno/generation-requests/{id:guid}: id",
+        "POST /api/v1/suno/generation-requests/{id:guid}/cancel: id",
         "PATCH /api/v1/genres/{id:guid}: id",
         "POST /api/v1/genres/{id:guid}/merge: id",
         "DELETE /api/v1/genres/{id:guid}: id",
@@ -120,6 +124,10 @@ public sealed class ReferenceParameterGuardTests
         ["PATCH /api/v1/versions/{reference}"] = static async (c, _, version) =>
             await c.SendAsync(HttpMethod.Patch, $"versions/{version}", "{}", await c.VersionRevisionAsync()),
         ["GET /api/v1/versions/{reference}/next-numbers"] = static (c, _, version) => c.SendAsync(HttpMethod.Get, $"versions/{version}/next-numbers"),
+
+        // 201: a Generate on Suno request is made (#144), replacing the one before; nothing in the catalog changes.
+        ["POST /api/v1/versions/{reference}/generation-requests"] = static (c, _, version) => c.SendAsync(HttpMethod.Post, $"versions/{version}/generation-requests", "{}"),
+        ["GET /api/v1/versions/{reference}/generation-request"] = static (c, _, version) => c.SendAsync(HttpMethod.Get, $"versions/{version}/generation-request"),
 
         // 200: the text is the newest snapshot's already, so nothing new is kept.
         ["POST /api/v1/versions/{reference}/snapshots"] = static (c, _, version) =>

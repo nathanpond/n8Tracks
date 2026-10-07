@@ -56,6 +56,8 @@ import { LeaveGuard } from '../editor/LeaveGuard';
 import { useAutosave, type AutosaveStatus, type Edit } from '../editor/useAutosave';
 import { useSnapshots, type EditorText } from '../editor/useSnapshots';
 import { VersionInputs } from '../editor/VersionInputs';
+import { GenerateOnSunoButton, GenerateOnSunoStatus } from '../versions/GenerateOnSuno';
+import { useGenerateOnSuno, type GenerateOnSunoController } from '../versions/useGenerateOnSuno';
 import { SourcesSection } from '../versions/SourcesSection';
 import { OptionsPanel } from './inputs/OptionsPanel';
 import { choiceLabel } from './inputs/optionFormat';
@@ -337,7 +339,11 @@ function VersionHeader({
   version,
   actions,
   busy,
-}: Omit<DetailsProps, 'onVersion' | 'onDeletedElsewhere'>) {
+  generate,
+}: Omit<DetailsProps, 'onVersion' | 'onDeletedElsewhere'> & {
+  /** Generate on Suno for this Version: held by the panel, so it outlives the switch from loading to loaded. */
+  generate: GenerateOnSunoController;
+}) {
   return (
     <>
       <Group gap="sm" align="center" wrap="wrap">
@@ -363,6 +369,7 @@ function VersionHeader({
         >
           Create New Version From {version.number}
         </Button>
+        <GenerateOnSunoButton controller={generate} />
         {!version.current && (
           <Button
             variant="default"
@@ -395,6 +402,7 @@ function VersionHeader({
         </Button>
       </Group>
       <ShortcodeBadge shortcode={version.shortcode} testId="version-shortcode" />
+      <GenerateOnSunoStatus controller={generate} />
     </>
   );
 }
@@ -422,14 +430,28 @@ export function VersionDetails(props: DetailsProps) {
     }
   }, [missing, onDeletedElsewhere, version]);
 
+  const generate = useGenerateOnSuno(props.version.id);
+
   if (state.phase === 'ready' && fieldsState.phase === 'ready') {
-    return <LoadedVersionDetails {...props} loaded={state.data} createFields={fieldsState.data} />;
+    return (
+      <LoadedVersionDetails
+        {...props}
+        loaded={state.data}
+        createFields={fieldsState.data}
+        generate={generate}
+      />
+    );
   }
 
   return (
     <Paper p="md" withBorder component="section" aria-labelledby="version-heading">
       <Stack gap="sm">
-        <VersionHeader version={props.version} actions={props.actions} busy={props.busy} />
+        <VersionHeader
+          version={props.version}
+          actions={props.actions}
+          busy={props.busy}
+          generate={generate}
+        />
         {state.phase === 'loading' ||
         (state.phase === 'ready' && fieldsState.phase === 'loading') ? (
           <Group gap="sm">
@@ -472,7 +494,12 @@ function LoadedVersionDetails({
   busy,
   loaded,
   createFields,
-}: DetailsProps & { loaded: VersionDetail; createFields: CreateFields }) {
+  generate,
+}: DetailsProps & {
+  loaded: VersionDetail;
+  createFields: CreateFields;
+  generate: GenerateOnSunoController;
+}) {
   const timeZone = useConfiguredTimeZone();
   const [record, setRecord] = useState(loaded);
   const latest = useRef(loaded);
@@ -828,7 +855,7 @@ function LoadedVersionDetails({
   return (
     <Paper p="md" withBorder component="section" aria-labelledby="version-heading" ref={panel}>
       <Stack gap="sm">
-        <VersionHeader version={shown} actions={paneActions} busy={busy} />
+        <VersionHeader version={shown} actions={paneActions} busy={busy} generate={generate} />
         <AutosaveIndicator
           status={autosave.status}
           onRetry={autosave.retry}

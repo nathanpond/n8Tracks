@@ -100,6 +100,8 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
 
     public DbSet<ProviderTombstoneRecord> ProviderTombstones => Set<ProviderTombstoneRecord>();
 
+    public DbSet<SunoGenerationRequestRecord> SunoGenerationRequests => Set<SunoGenerationRequestRecord>();
+
     public DbSet<SunoExportRecord> SunoExports => Set<SunoExportRecord>();
 
     public DbSet<SunoExportPartRecord> SunoExportParts => Set<SunoExportPartRecord>();
@@ -564,6 +566,22 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                 table.HasCheckConstraint("ck_provider_tombstones_kind", $"kind IN ('{ProviderTombstoneRecord.ClipKind}')");
             });
             tombstone.HasKey(record => record.SunoId);
+        });
+
+        // Generate on Suno requests (#144): not catalog tables. The Version and the claiming credential
+        // are named without foreign keys; the newest request of a Version is found by the index.
+        modelBuilder.Entity<SunoGenerationRequestRecord>(request =>
+        {
+            request.ToTable("suno_generation_requests", static table =>
+            {
+                table.HasCheckConstraint(
+                    "ck_suno_generation_requests_state",
+                    $"state IN ({string.Join(", ", GenerationRequestRules.StateNames.Select(static name => $"'{name}'"))})");
+                table.HasCheckConstraint("ck_suno_generation_requests_step", $"step IS NULL OR length(step) BETWEEN 1 AND {GenerationRequestRules.MaximumStepLength}");
+                table.HasCheckConstraint("ck_suno_generation_requests_message", $"message IS NULL OR length(message) BETWEEN 1 AND {GenerationRequestRules.MaximumMessageLength}");
+            });
+            request.HasKey(record => record.Id);
+            request.HasIndex(record => new { record.VersionId, record.CreatedUtc });
         });
 
         // Suno export staging (#131): staging tables, not catalog tables. The rows of an export go with it

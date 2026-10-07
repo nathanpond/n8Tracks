@@ -46,7 +46,7 @@ public sealed class SunoExportStagingGuardTests
     public static readonly IReadOnlyList<string> OtherTables =
     [
         "__EFMigrationsHistory", "__EFMigrationsLock", "administrators", "app_metadata", "assets", "credentials", "jobs", "sessions",
-        "suno_export_parts", "suno_export_record_playlists", "suno_export_records", "suno_exports", "suno_workspaces",
+        "suno_export_parts", "suno_export_record_playlists", "suno_export_records", "suno_exports", "suno_generation_requests", "suno_workspaces",
     ];
 
     [Fact]

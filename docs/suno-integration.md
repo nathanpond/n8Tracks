@@ -123,6 +123,31 @@ Raw objects are sent as Suno returned them. It is uploaded in parts: `POST /api/
     - `POST /api/v1/suno/ignored/remove` (session only) takes `{ sunoIds }` (1 to 1,000), skips unknown IDs, and answers `{ removed, unknown }`. Nothing is imported; a ready export's records are reclassified, so a removed one is `new` there. More than 1,000 is 422 `too_many_items`.
     - The web screen is Ignored Suno items, at `/suno/ignored`, in the sidebar after Suno import.
 
+## Generate on Suno
+
+- **A request (#144):** Generate on Suno on a Version, mutable or frozen, makes a request in `suno_generation_requests`. The request holds a snapshot of what the Version is to be generated with. It is not a Generation: making one attaches nothing, freezes nothing, and changes nothing else in the catalog.
+- **Endpoints:**
+  - `POST /api/v1/versions/{reference}/generation-requests` (`versions.write`) makes the request.
+  - `GET /api/v1/versions/{reference}/generation-request` (`catalog.read`) answers the newest request, without its snapshot.
+  - `GET /api/v1/suno/generation-requests/{id}` (`suno.generate`) answers it with its snapshot.
+  - `POST .../claim` (`suno.generate`) lets the extension take the request; a session gets 403 `credential_required`. The claim binds the request to that credential, and only it may report.
+  - `PATCH` (`suno.generate`, no If-Match) takes the claimer's progress, `{ state: opening | workspace | filling | waiting | done | stopped, step, message }`; a stop says why.
+  - `POST .../cancel` (`versions.write`) cancels it.
+  - Refusals: 409 `request_ended` out of a terminal state, 409 `request_claimed` for another credential's claim (403 on a report), 409 `request_not_claimed` for a report before the claim.
+- **Snapshot:** `{ schemaVersion: 1, kind, mode, entries: [{ key, value }], sources, fileInputs, workspace: { sunoId, name } | null, song: { title, shortcode }, version: { shortcode }, unsupported }`. It is built from the same `effectiveInputs` the Version answer shows.
+  - Each entry is keyed by its adapter field-map entry (`docs/suno-adapter-field-map.md`). A value with no entry is listed under `unsupported`.
+  - In Simple mode, the added lyrics and styles are the value of `songs.simple.simple_add_lyrics` and `songs.simple.simple_add_styles` (null when not added).
+  - Each source carries its entry, group, position, Suno action, target (`{ kind, id, sunoId }`), title, shortcode, and availability.
+  - The snapshot is on the redaction list.
+- **Blocking:** a source the Version needs that is deleted, in Suno's Trash, or Remote Missing blocks the request with 422 `sources_unavailable`. The answer names each source and gives `lastSyncAt`, the capture time of the last committed export (Trash and missing are as of then). A Suno clip never imported does not block, and neither does a file input.
+- **States:** `pending`, `claimed`, `opening`, `workspace`, `filling`, and `waiting` are active; `done`, `stopped`, `cancelled`, and `expired` are terminal. One request per Version is active: a new one cancels the active one as replaced. A request is settled whenever it is read:
+  - Unclaimed 15 seconds after it was made, it is `stopped` with "The extension did not respond".
+  - With no report for an hour, it is `expired`.
+  - When the Version's effective content has changed since it was made, it is `cancelled` and the user is told to start again. A name, notes, the Song's workspace, or a source's availability do not count.
+- **The web app:** the button sits beside Create New Version From. It pings the relay first and makes nothing unless the extension answers connected, compatible, and with `suno.generate`. Otherwise the page says which, and when the relay answered, it offers to open the extension's options (`open-options`).
+  - It then makes the request and posts `{ type: "generate", requestId }`. The extension checks its connection afresh, claims the request, and answers `generate-accepted`. A refused hand-off cancels the request.
+  - The page reads the request every two seconds while it is active and offers Cancel.
+
 ## Extension structure
 
 - A service worker holds state and is the only part that calls the n8Tracks API.

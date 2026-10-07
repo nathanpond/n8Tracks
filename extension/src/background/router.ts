@@ -9,6 +9,7 @@ import {
   type ResponseFor,
 } from '../messages.ts';
 import type { Connection } from './connection.ts';
+import type { GenerateCoordinator } from './generate.ts';
 import type { SyncCoordinator } from './sync.ts';
 
 /** Who sent a message, as `chrome.runtime.onMessage` reports it. */
@@ -67,6 +68,7 @@ export async function route(
   extensionId: string,
   diagnostics?: Diagnostics,
   sync?: SyncCoordinator,
+  generate?: GenerateCoordinator,
 ): Promise<ResponseFor[Request['type']] | Refusal> {
   if (sender.id !== extensionId || !isRequest(message)) {
     return { refused: 'not a request this extension answers' };
@@ -103,7 +105,13 @@ export async function route(
         ? { refused: 'diagnostics are not kept here' }
         : diagnostics.report();
     case 'relay': {
-      // No page message is handled yet; later stories add theirs here.
+      // Generate on Suno (#144): only from the relay, a content script in a tab that is not on Suno.
+      if (generate !== undefined && sender.tab !== undefined && !onSuno(sender)) {
+        const answer = await generate.handle(message.message, sender.url);
+        if (answer !== null) {
+          return answer;
+        }
+      }
       const reply: RelayReply = {
         type: 'error',
         error: 'unknown_type',

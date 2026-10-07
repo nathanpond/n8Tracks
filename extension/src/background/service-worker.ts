@@ -3,6 +3,7 @@ import { ADAPTER_WORKFLOWS } from '../adapter/workflows/index.ts';
 import { browserVersion, Diagnostics, type UserAgentData } from '../diagnostics/report.ts';
 import { displayVersion } from '../version-label.ts';
 import { Connection } from './connection.ts';
+import { GenerateCoordinator } from './generate.ts';
 import { route } from './router.ts';
 import { SyncCoordinator } from './sync.ts';
 
@@ -31,6 +32,15 @@ const sync = new SyncCoordinator({
   },
 });
 
+// Generate on Suno (#144): the request this extension claimed, in session storage.
+const generate = new GenerateCoordinator({
+  connection,
+  browser: {
+    session: chrome.storage.session,
+    openOptions: () => chrome.runtime.openOptionsPage(),
+  },
+});
+
 // The diagnostic report's step log: in session storage only, cleared on Disconnect, never sent.
 const diagnostics = new Diagnostics({
   storage: chrome.storage.session,
@@ -45,7 +55,9 @@ const diagnostics = new Diagnostics({
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  void route(connection, message, sender, chrome.runtime.id, diagnostics, sync).then(sendResponse);
+  void route(connection, message, sender, chrome.runtime.id, diagnostics, sync, generate).then(
+    sendResponse,
+  );
   return true;
 });
 

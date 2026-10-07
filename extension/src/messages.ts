@@ -64,11 +64,54 @@ export interface PageMessage {
   [field: string]: unknown;
 }
 
+/**
+ * The page messages the extension handles (#144), as the relay passes them on: Generate on Suno hands
+ * over the ID of a request n8Tracks made, which the extension claims with its own token; the page
+ * may also ask the extension to open its options.
+ */
+export type PageRequest = { type: 'generate'; requestId: string } | { type: 'open-options' };
+
+/** Why the extension did not take a generation request, for the page to say. */
+export type GenerateFailure =
+  | 'invalid_request'
+  | 'wrong_origin'
+  | 'not_connected'
+  | 'incompatible'
+  | 'no_scope'
+  | 'unreachable'
+  | 'refused';
+
 /** What the service worker answers a message the relay passes on. */
-export interface RelayReply {
-  type: 'error';
-  error: 'unknown_type';
-  message: string;
+export type RelayReply =
+  | { type: 'error'; error: 'unknown_type' | GenerateFailure; message: string }
+  /** The request is claimed: the extension has it, bound to its credential. */
+  | { type: 'generate-accepted'; requestId: string }
+  | { type: 'options-opened' };
+
+/**
+ * A generation request the extension has claimed (#144), kept in session storage for the steps that
+ * follow (#145): only its ID and when it was claimed; the snapshot is read again before each step.
+ */
+export interface GenerationHandOff {
+  requestId: string;
+  claimedAt: number;
+}
+
+/** A request ID as n8Tracks writes it: a UUID. */
+const REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The page message as one the extension handles, or null for any other type or a malformed one. */
+export function pageRequestOf(message: PageMessage): PageRequest | null {
+  switch (message.type) {
+    case 'generate':
+      return typeof message.requestId === 'string' && REQUEST_ID_PATTERN.test(message.requestId)
+        ? { type: 'generate', requestId: message.requestId }
+        : null;
+    case 'open-options':
+      return { type: 'open-options' };
+    default:
+      return null;
+  }
 }
 
 /** What a sync reads (#134): the whole library, chosen workspaces, or chosen playlists. */

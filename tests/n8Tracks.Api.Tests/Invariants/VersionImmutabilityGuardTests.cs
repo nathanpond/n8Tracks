@@ -21,6 +21,7 @@ using n8Tracks.Application.References;
 using n8Tracks.Application.Retention;
 using n8Tracks.Application.Songs;
 using n8Tracks.Application.Suno;
+using n8Tracks.Application.Suno.Generate;
 using n8Tracks.Application.Suno.Import;
 using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
@@ -149,6 +150,7 @@ public sealed class VersionImmutabilityGuardTests
         typeof(GenerationArtworkService).Namespace, // n8Tracks.Application.Artwork (#121)
         typeof(ImportCommitService).Namespace, // n8Tracks.Application.Suno.Import (#140: the import commit attaches to Versions)
         typeof(ExternalReferenceResolver).Namespace, // n8Tracks.Application.Suno (#140: the resolver the commit calls takes the import's lineage)
+        typeof(GenerationRequestService).Namespace, // n8Tracks.Application.Suno.Generate (#144: Generate on Suno reads a Version into a request)
     ];
 
     /// <summary>The same, with the domain namespace of the catalog entities: types no service elsewhere may take.</summary>
@@ -594,6 +596,15 @@ public sealed class VersionImmutabilityGuardTests
                 }
             },
             ChangesInputs: true),
+        ["POST /api/v1/versions/{reference}/generation-requests"] = new(async target =>
+        {
+            // A request is a snapshot of the Version (#144): made from a frozen Version too, and the inputs sent alongside are not read.
+            foreach (var reference in new[] { target.VersionId.ToString(), target.VersionShortcode })
+            {
+                using var response = await SongApi.SendJsonAsync(target.Client, HttpMethod.Post, new Uri($"/api/v1/versions/{reference}/generation-requests", UriKind.Relative), await target.InputsJsonAsync("{", "}"));
+                Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            }
+        }),
         ["POST /api/v1/versions/{reference}/snapshots"] = new(async target =>
         {
             using var response = await SongApi.SendJsonAsync(target.Client, HttpMethod.Post, new Uri($"/api/v1/versions/{target.VersionShortcode}/snapshots", UriKind.Relative), await target.InputsJsonAsync("{", "}"));
@@ -915,6 +926,9 @@ public sealed class VersionImmutabilityGuardTests
         ["PATCH /api/v1/suno/exports/{id:guid}/remote-states"] = "sets Suno state changes (#142) to apply or Skip, on the staged export (suno_exports); the catalog is not touched until the commit, which changes only a Generation's remote state, state, and archiver",
         ["PUT /api/v1/suno/exports/{id:guid}/artwork/{sunoId}"] = "stores an image as an asset held by a staged record (#131); no Generation or Version is touched until the commit",
         ["POST /api/v1/suno/ignored/remove"] = "removes Suno IDs from the ignore list (suno_ignored_items, #143) and reclassifies a ready export; nothing is imported and no Version is touched",
+        ["POST /api/v1/suno/generation-requests/{id:guid}/claim"] = "binds a generation request (suno_generation_requests, #144) to the extension's credential; the Version is only read",
+        ["PATCH /api/v1/suno/generation-requests/{id:guid}"] = "records the extension's progress on a generation request (suno_generation_requests, #144); the Version is only read",
+        ["POST /api/v1/suno/generation-requests/{id:guid}/cancel"] = "cancels a generation request (suno_generation_requests, #144); the Version is only read",
     };
 
     /// <summary>How each public method of a catalog service is called, each creation input touched in turn.</summary>
@@ -923,6 +937,20 @@ public sealed class VersionImmutabilityGuardTests
         ["VersionService.NextNumbersAsync(Guid, CancellationToken)"] = Service<VersionService>(static (service, target) => service.NextNumbersAsync(target.VersionId, default)),
         ["VersionService.ListAsync(String, CancellationToken)"] = Service<VersionService>(static (service, target) => service.ListAsync(target.SongShortcode, default)),
         ["VersionService.FindAsync(Guid, CancellationToken)"] = Service<VersionService>(static (service, target) => service.FindAsync(target.VersionId, default)),
+        ["GenerationRequestService.CreateAsync(Guid, CancellationToken)"] = Service<GenerationRequestService>(static (service, target) => service.CreateAsync(target.VersionId, default)),
+        ["GenerationRequestService.CurrentForVersionAsync(Guid, CancellationToken)"] = Service<GenerationRequestService>(static (service, target) => service.CurrentForVersionAsync(target.VersionId, default)),
+        ["GenerationRequestService.FindAsync(Guid, CancellationToken)"] = Service<GenerationRequestService>(static async (service, target) =>
+            Assert.NotNull(await service.FindAsync(await GenerationRequestOfAsync(service, target), default))),
+        ["GenerationRequestService.ClaimAsync(Guid, Guid, CancellationToken)"] = Service<GenerationRequestService>(static async (service, target) =>
+            await service.ClaimAsync(await GenerationRequestOfAsync(service, target), GuardCredential, default)),
+        ["GenerationRequestService.ReportAsync(Guid, Nullable`1, GenerationProgress, CancellationToken)"] = Service<GenerationRequestService>(static async (service, target) =>
+        {
+            var id = await GenerationRequestOfAsync(service, target);
+            await service.ClaimAsync(id, GuardCredential, default);
+            Assert.IsType<GenerationRequestChangeOutcome.Changed>(await service.ReportAsync(id, GuardCredential, new GenerationProgress(GenerationRequestState.Waiting, "fill", null), default));
+        }),
+        ["GenerationRequestService.CancelAsync(Guid, CancellationToken)"] = Service<GenerationRequestService>(static async (service, target) =>
+            await service.CancelAsync(await GenerationRequestOfAsync(service, target), default)),
         ["VersionService.SetCurrentAsync(String, String, CancellationToken)"] = Service<VersionService>(static (service, target) => service.SetCurrentAsync(target.SongShortcode, target.VersionShortcode, default)),
         ["VersionService.CreateFromAsync(Guid, VersionCreateRequest, CancellationToken)"] = Service<VersionService>(static async (service, target) =>
         {
@@ -1364,6 +1392,13 @@ public sealed class VersionImmutabilityGuardTests
         using var document = JsonDocument.Parse(options.ToJsonString());
         return document.RootElement.EnumerateObject().ToDictionary(static option => option.Name, static option => option.Value.Clone(), StringComparer.Ordinal);
     }
+
+    /// <summary>The credential the guard claims generation requests with (#144); no such row is needed.</summary>
+    private static readonly Guid GuardCredential = Guid.CreateVersion7();
+
+    /// <summary>A new generation request made from the target Version (#144).</summary>
+    private static async Task<Guid> GenerationRequestOfAsync(GenerationRequestService service, Target target) =>
+        Assert.IsType<GenerationRequestCreateOutcome.Created>(await service.CreateAsync(target.VersionId, default)).Request.Id;
 
     private static Exerciser Service<TService>(Func<TService, Target, Task> call)
         where TService : notnull =>

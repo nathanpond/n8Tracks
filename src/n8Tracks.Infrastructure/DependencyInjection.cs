@@ -16,6 +16,7 @@ using n8Tracks.Application.Retention;
 using n8Tracks.Application.Setup;
 using n8Tracks.Application.Songs;
 using n8Tracks.Application.Suno;
+using n8Tracks.Application.Suno.Generate;
 using n8Tracks.Application.Suno.Import;
 using n8Tracks.Infrastructure.Assets;
 using n8Tracks.Infrastructure.Backups;
@@ -87,6 +88,7 @@ public static class DependencyInjection
         services.AddScoped<ISunoIgnoreListStore, SunoIgnoreListStore>();
         services.AddScoped<ISongWorkspaceStore, SunoWorkspaceStore>();
         services.AddScoped<IRemoteStateStore, RemoteStateStore>();
+        services.AddScoped<IGenerationRequestStore, SunoGenerationRequestStore>();
         services.AddScoped<IVersionDefaultsStore, VersionDefaultsStore>();
         services.AddSingleton<IBackupStorage, BackupFolders>();
         services.AddSingleton<IBackupWriter, BackupWriter>();
