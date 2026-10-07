@@ -186,15 +186,12 @@ export function planSources(job: FormJob): SourcePlan {
   return { stop: null, load: { source: first, sunoId, route } };
 }
 
-/**
- * Why one source is left to the user, as a step of the summary's note: naming the source by its
- * title, or with `named` false generically, as n8Tracks stores the note (#340).
- */
-function byHandStep(source: FormSource, load: LoadedSource | null, named: boolean): string | null {
+/** Why one source is left to the user, as a step of the panel's note: the source by its title. */
+function byHandStep(source: FormSource, load: LoadedSource | null): string | null {
   if (load?.source === source) {
     return null;
   }
-  const name = named ? sourceName(source) : 'the source';
+  const name = sourceName(source);
   if (source.group === 'inspiration') {
     return `add ${name} as Inspiration (${INSPIRATION_ROUTE.item}) by hand: no snapshot shows that form yet`;
   }
@@ -211,10 +208,100 @@ function byHandStep(source: FormSource, load: LoadedSource | null, named: boolea
 }
 
 /**
+ * The same step as n8Tracks stores it (#340): written text only, the source named generically and
+ * an action the extension does not know left unnamed, so it carries none of the Version's text by
+ * construction (the source guard in `test/verification-note-source.test.ts`, #379).
+ */
+function reportedByHandStep(source: FormSource, load: LoadedSource | null): string | null {
+  if (load?.source === source) {
+    return null;
+  }
+  if (source.group === 'inspiration') {
+    return `add the source as Inspiration (${INSPIRATION_ROUTE.item}) by hand: no snapshot shows that form yet`;
+  }
+  if (source.sunoId === null || source.sunoId === undefined || source.sunoId === '') {
+    return 'load the source by hand: it is a Song in n8Tracks, not a Suno clip';
+  }
+  if (source.sunoAction === null) {
+    return 'load the source by hand: its relationship type names no Suno action';
+  }
+  const route = SOURCE_ROUTES[source.sunoAction];
+  return route === undefined
+    ? 'load the source by hand: the extension does not know its Suno action'
+    : `load the source with ${route.menu} › ${route.item} by hand: no snapshot shows Suno’s form after ${route.item} yet`;
+}
+
+/** Why the extension cannot set a voice or a playlist entry. */
+function blockedWhy(key: string): string {
+  return SOURCES_BLOCKED_ON_CAPTURE[key] ?? 'the extension cannot set it';
+}
+
+function isStep(step: string | null): step is string {
+  return step !== null;
+}
+
+/**
+ * Everything of a source entry left to the user, as steps of the panel's note: the sources by their
+ * titles, a file with its note, the voice and playlist by their names.
+ */
+function namedSteps(key: string, job: FormJob, load: LoadedSource | null): string[] {
+  const value = job.entries[key];
+  const name = quoted(nameOf(value), 'the Version names');
+  return [
+    ...job.sources
+      .filter((source) => source.key === key)
+      .map((source) => byHandStep(source, load))
+      .filter(isStep),
+    ...job.fileInputs
+      .filter((file) => file.key === key)
+      .map(
+        (file) =>
+          `attach the audio file by hand${file.description === null ? '' : ` (${file.description})`}`,
+      ),
+    ...(value === undefined || value === null
+      ? []
+      : [
+          key.endsWith('.voice')
+            ? `choose the voice ${name} from + Voice by hand (${blockedWhy(key)})`
+            : `add the playlist ${name} from + Inspo by hand (${blockedWhy(key)})`,
+        ]),
+  ];
+}
+
+/**
+ * The same steps as n8Tracks stores them (#340): written text only, with the sources, the file note,
+ * the voice and the playlist named generically.
+ */
+function reportedSteps(key: string, job: FormJob, load: LoadedSource | null): string[] {
+  const value = job.entries[key];
+  return [
+    ...job.sources
+      .filter((source) => source.key === key)
+      .map((source) => reportedByHandStep(source, load))
+      .filter(isStep),
+    ...job.fileInputs
+      .filter((file) => file.key === key)
+      .map((file) =>
+        file.description === null
+          ? 'attach the audio file by hand'
+          : 'attach the audio file by hand (the Version’s file note says which)',
+      ),
+    ...(value === undefined || value === null
+      ? []
+      : [
+          key.endsWith('.voice')
+            ? `choose the voice the Version names from + Voice by hand (${blockedWhy(key)})`
+            : `add the playlist the Version names from + Inspo by hand (${blockedWhy(key)})`,
+        ]),
+  ];
+}
+
+/**
  * The summary line of each source entry of the request's mode (`audio`, `voice`, `inspiration`,
  * `simple_add_playlist`): the loaded source's own outcome (`loaded`, from the verification), and
- * everything else of the entry as to do by hand, named (the voice and playlist by their names, a
- * file only the user can attach with its note). An entry with nothing is not applicable.
+ * everything else of the entry as to do by hand, named in the panel's `note` (the voice and
+ * playlist by their names, a file only the user can attach with its note) and generically in the
+ * `reportNote` n8Tracks stores. An entry with nothing is not applicable.
  */
 export function sourceEntryResult(
   key: string,
@@ -222,39 +309,8 @@ export function sourceEntryResult(
   loaded: EntryResult | null = null,
 ): EntryResult {
   const plan = planSources(job);
-  const stepsOf = (named: boolean): string[] => {
-    const steps = [
-      ...job.sources
-        .filter((source) => source.key === key)
-        .map((source) => byHandStep(source, plan.load, named))
-        .filter((step): step is string => step !== null),
-      ...job.fileInputs
-        .filter((file) => file.key === key)
-        .map(
-          (file) =>
-            `attach the audio file by hand${
-              file.description === null
-                ? ''
-                : named
-                  ? ` (${file.description})`
-                  : ' (the Version’s file note says which)'
-            }`,
-        ),
-    ];
-    const value = job.entries[key];
-    if (value !== undefined && value !== null) {
-      const why = SOURCES_BLOCKED_ON_CAPTURE[key] ?? 'the extension cannot set it';
-      const name = named ? quoted(nameOf(value), 'the Version names') : 'the Version names';
-      steps.push(
-        key.endsWith('.voice')
-          ? `choose the voice ${name} from + Voice by hand (${why})`
-          : `add the playlist ${name} from + Inspo by hand (${why})`,
-      );
-    }
-    return steps;
-  };
-  const steps = stepsOf(true);
-  const reported = stepsOf(false);
+  const steps = namedSteps(key, job, plan.load);
+  const reported = reportedSteps(key, job, plan.load);
   const own = loaded !== null && loaded.key === key ? loaded : null;
   if (own !== null) {
     return steps.length === 0
@@ -275,9 +331,8 @@ export function sourceEntryResult(
 
 /** Steps as one note: the first capitalised, joined by semicolons, ending with a full stop. */
 function sentenceOf(steps: readonly string[]): string {
-  const [first, ...rest] = steps;
-  const sentence = [first === undefined ? '' : first.charAt(0).toUpperCase() + first.slice(1)];
-  return `${[...sentence, ...rest].join('; ')}.`;
+  const sentence = steps.join('; ');
+  return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}.`;
 }
 
 // ---- The clip's page and its menus (TS-003: `page.clip-remix-menu.html`, `page.clip-edit-menu.html`).

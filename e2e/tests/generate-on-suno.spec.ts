@@ -280,7 +280,8 @@ test.describe('Generate on Suno', () => {
    * #146's Demo as n8Tracks sees it: the extension (standing in through the API with its own
    * token) fills Suno's form and reports the verification summary, which the Version page shows;
    * after the user changes Weirdness in Suno and checks again, the page marks it as differing.
-   * Filling the form on Suno and the Create click are the owner's, on the live site.
+   * Filling the form on Suno and the Create click are the owner's, on the live site. The Song is
+   * titled with a word of the extension's own Duration note, which n8Tracks once refused (#379).
    */
   test('shows the extension’s verification summary of Suno’s form, and its Check again', async ({
     page,
@@ -300,7 +301,7 @@ test.describe('Generate on Suno', () => {
     try {
       const created = await page.request.post(new URL('api/v1/songs', base).toString(), {
         headers: ANTIFORGERY_HEADERS,
-        data: { title: `Verified on Suno ${stamp}` },
+        data: { title: 'Duration' },
       });
       expect(created.status()).toBe(201);
       const song = (await created.json()) as { shortcode: string; currentVersion: { id: string } };
