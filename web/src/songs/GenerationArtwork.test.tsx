@@ -61,6 +61,30 @@ describe('a Song’s artwork from its Generations', () => {
     expect(within(group).queryByRole('button', { name: 'Crop artwork' })).toBeNull();
   });
 
+  it('shows the newest Generation’s image while no Generation is selected, as an imported Song does (#318)', async () => {
+    const user = userEvent.setup();
+    const { server } = songServer({
+      ...baseSong,
+      artwork: { ...OTHER_IMAGE, source: 'newestGeneration' },
+      hasSelectedGeneration: false,
+      selectedGeneration: null,
+    });
+    server.generations = [
+      testGeneration('1', 1, { artwork: SELECTED_IMAGE }),
+      testGeneration('1', 2, { artwork: OTHER_IMAGE }),
+    ];
+    const group = await openArtwork(user);
+
+    expect(within(group).getByRole('img', { name: ALT })).toHaveAttribute(
+      'src',
+      OTHER_IMAGE.squareUrls['320'],
+    );
+    expect(within(group).getByTestId('artwork-inherited')).toHaveTextContent(
+      'Showing the image of the newest Generation that has one until a Generation is selected or the Song has artwork of its own.',
+    );
+    expect(within(group).queryByRole('button', { name: 'Remove artwork' })).toBeNull();
+  });
+
   it('copies the chosen Generation’s image to the Song as its own', async () => {
     const user = userEvent.setup();
     const server = defaultedSong();

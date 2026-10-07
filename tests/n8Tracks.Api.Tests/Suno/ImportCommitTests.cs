@@ -66,6 +66,73 @@ public sealed class ImportCommitTests
         Assert.Equal("2", TestDatabase.Scalar(factory.DataPath, "SELECT count(*) FROM generation_event_links;"));
     }
 
+    /// <summary>
+    /// #318 (#121's truth "a Song imported from Suno shows a cover without the user doing anything"):
+    /// the import selects no Generation, so the new Song shows its newest Generation's image, on the
+    /// Song and in the Songs list, and nothing is stored on the Song. Selecting a Generation takes over
+    /// (one with no image shows none, as #121 AC 3 says); clearing the selection falls back again.
+    /// </summary>
+    [Fact]
+    public async Task ASongImportedFromSunoShowsAGenerationsCoverWithNothingSelected()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var token = await SunoWorkspaceApi.ExtensionTokenAsync(factory);
+        await SunoWorkspaceApi.ReportAsync(client, token, complete: false, SunoWorkspaceApi.Project("studio", "Studio"));
+        var at = ProposalApi.At;
+        var (id, _) = await ProposalApi.ExportAsync(
+            client,
+            token,
+            ProposalApi.Clip("cover-1", "studio", at, 0, "Cover words", "Covered"),
+            ProposalApi.Clip("cover-2", "studio", at, 1, "Cover words", "Covered, take two"));
+        await ImportCommitApi.StageImageAsync(client, token, id, "cover-1");
+
+        var result = await ImportCommitApi.CommitAsync(client, id);
+
+        var shortcode = Assert.Single(result.GetProperty("songs").EnumerateArray()).GetProperty("shortcode").GetString()!;
+        var song = await SetupApi.JsonAsync(await client.GetAsync(SongApi.Song(shortcode)));
+        Assert.False(song.GetProperty("hasSelectedGeneration").GetBoolean());
+        var generations = (await SetupApi.JsonAsync(await client.GetAsync(new Uri($"/api/v1/songs/{shortcode}/generations", UriKind.Relative)))).GetProperty("items").EnumerateArray().ToList();
+        var image = generations[0].GetProperty("artwork").GetProperty("assetId").GetGuid();
+        var artwork = song.GetProperty("artwork");
+        Assert.Equal("newestGeneration", artwork.GetProperty("source").GetString());
+        Assert.Equal(image, artwork.GetProperty("assetId").GetGuid());
+        Assert.Equal(JsonValueKind.Null, artwork.GetProperty("crop").ValueKind);
+        var listed = Assert.Single((await SongApi.ListAsync(client)).GetProperty("items").EnumerateArray(), item => item.GetProperty("shortcode").GetString() == shortcode);
+        Assert.Equal(image, listed.GetProperty("artwork").GetProperty("assetId").GetGuid());
+        Assert.Equal("0", TestDatabase.Scalar(factory.DataPath, "SELECT count(*) FROM artwork_attachments WHERE owner_type = 'song';"));
+
+        // Selecting the Generation with no image shows none; clearing the selection shows the cover again.
+        var revision = song.GetProperty("revision").GetInt32();
+        using (var selected = await WithRevisionAsync(client, HttpMethod.Put, $"/api/v1/songs/{shortcode}/selected-generation", $$"""{"generation":"{{shortcode}}-v1-g2"}""", revision))
+        {
+            Assert.True(selected.StatusCode == HttpStatusCode.OK, await selected.Content.ReadAsStringAsync());
+            var answer = await SetupApi.JsonAsync(selected);
+            Assert.Equal(JsonValueKind.Null, answer.GetProperty("artwork").ValueKind);
+            revision = answer.GetProperty("revision").GetInt32();
+        }
+
+        using (var cleared = await WithRevisionAsync(client, HttpMethod.Delete, $"/api/v1/songs/{shortcode}/selected-generation", null, revision))
+        {
+            Assert.True(cleared.StatusCode == HttpStatusCode.OK, await cleared.Content.ReadAsStringAsync());
+            Assert.Equal("newestGeneration", (await SetupApi.JsonAsync(cleared)).GetProperty("artwork").GetProperty("source").GetString());
+        }
+    }
+
+    /// <summary>Sends <paramref name="json"/> (or no body) as the signed-in user, at the Song's <paramref name="revision"/>.</summary>
+    private static async Task<HttpResponseMessage> WithRevisionAsync(HttpClient client, HttpMethod method, string path, string? json, int revision)
+    {
+        using var request = new HttpRequestMessage(method, new Uri(path, UriKind.Relative));
+        if (json is not null)
+        {
+            request.Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+        }
+
+        request.Headers.Add(SessionApi.AntiforgeryHeader, "1");
+        Assert.True(request.Headers.TryAddWithoutValidation("If-Match", SongApi.Quoted(revision)));
+        return await client.SendAsync(request);
+    }
+
     [Fact]
     public async Task ANewSongIsCreditedToNoArtistEvenWithADefaultArtist()
     {

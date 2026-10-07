@@ -605,7 +605,8 @@ internal sealed record SongWorkspaceResponse(string Id, string Name, string Stat
 /// The artwork a Song shows (#121), as <see cref="AttachedArtworkResponse"/> with where it comes from:
 /// <c>source</c> is <c>own</c> for the Song's own artwork (uploaded, or picked from a Generation and
 /// so copied), or <c>selectedGeneration</c> for its Selected Generation's image, which it shows while
-/// it has none of its own, centred and uncropped. Worked out when the Song is read.
+/// it has none of its own, centred and uncropped; or, with no Selected Generation either,
+/// <c>newestGeneration</c> for its newest Generation's image (#318). Worked out when the Song is read.
 /// </summary>
 internal sealed record SongArtworkResponse(
     Guid AssetId,
@@ -618,8 +619,12 @@ internal sealed record SongArtworkResponse(
 {
     public const string Own = "own";
     public const string SelectedGeneration = "selectedGeneration";
+    public const string NewestGeneration = "newestGeneration";
 
-    /// <summary>What <paramref name="song"/> shows, or null when it has no artwork and no Selected Generation's image.</summary>
+    /// <summary>
+    /// What <paramref name="song"/> shows: its own artwork, else its Selected Generation's image, else
+    /// (with no Selected Generation) its newest Generation's; null when there is none of these.
+    /// </summary>
     public static SongArtworkResponse? From(SongSummary song, PathString pathBase)
     {
         ArgumentNullException.ThrowIfNull(song);
@@ -629,8 +634,13 @@ internal sealed record SongArtworkResponse(
             return Of(AttachedArtworkResponse.From(own, pathBase), Own);
         }
 
-        return song.SelectedGenerationArtwork is { } defaulted
-            ? Of(AttachedArtworkResponse.From(defaulted with { Crop = null }, pathBase), SelectedGeneration)
+        if (song.SelectedGenerationArtwork is { } defaulted)
+        {
+            return Of(AttachedArtworkResponse.From(defaulted with { Crop = null }, pathBase), SelectedGeneration);
+        }
+
+        return song.SelectedGeneration is null && song.NewestGenerationArtwork is { } newest
+            ? Of(AttachedArtworkResponse.From(newest with { Crop = null }, pathBase), NewestGeneration)
             : null;
     }
 

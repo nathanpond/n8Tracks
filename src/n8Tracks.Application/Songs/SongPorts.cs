@@ -38,6 +38,11 @@ namespace n8Tracks.Application.Songs;
 /// The Suno workspace it lives in (#129), as last seen, or null when it is in none. Part of the Song,
 /// not of a Version: it is not a creation input and never freezes.
 /// </param>
+/// <param name="NewestGenerationArtwork">
+/// While it has no artwork of its own and no Selected Generation, the image of its newest Generation
+/// that has one (an active one first; #318), which it shows then: an imported Song shows Suno's cover
+/// without the user selecting anything. Null otherwise, or when no Generation has an image.
+/// </param>
 public sealed record SongSummary(
     Guid Id,
     long ShortcodeNumber,
@@ -61,7 +66,8 @@ public sealed record SongSummary(
     AttachedArtwork? Artwork,
     SelectedGenerationSummary? SelectedGeneration,
     AttachedArtwork? SelectedGenerationArtwork = null,
-    SunoWorkspace? SunoWorkspace = null)
+    SunoWorkspace? SunoWorkspace = null,
+    AttachedArtwork? NewestGenerationArtwork = null)
 {
 
     public string Shortcode => Shortcodes.ForSong(ShortcodeNumber);
