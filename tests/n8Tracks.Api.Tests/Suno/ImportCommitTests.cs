@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
+using n8Tracks.Api.Tests.Assets;
 using n8Tracks.Api.Tests.Auth;
 using n8Tracks.Api.Tests.Generations;
 using n8Tracks.Api.Tests.Invariants;
@@ -257,10 +258,15 @@ public sealed class ImportCommitTests
         var original = await SongApi.AttachGenerationAsync(factory, "n8-1-v1", clip.ToJsonString());
         await ImportCommitApi.RateAndCommentAsync(client, "n8-1-v1-g1", 4, "Keep the piano");
         await ImportCommitApi.UploadImageAsync(client, "n8-1-v1-g1");
+        string Artwork() => TestDatabase.Scalar(factory.DataPath, $"SELECT coalesce(artwork_asset_id, 'none') FROM generations WHERE id = '{original.Generation.Id.ToString().ToUpperInvariant()}';");
+        var own = Artwork();
+        Assert.NotEqual("none", own);
         await ProposalApi.DeleteGenerationAsync(client, "n8-1-v1-g1");
 
+        // The export stages another cover with the clip (#338): the restored Generation keeps its own.
         var (id, records) = await ProposalApi.ExportAsync(client, token, clip);
         Assert.Equal("deleted", records["back-1"].GetProperty("class").GetString());
+        await ImportCommitApi.StageImageAsync(client, token, id, "back-1", ArtworkImages.Red);
         await ProposalApi.ChangedAsync(client, id, 1, ProposalApi.Change(ProposalApi.Import(new JsonObject { ["kind"] = "newSong", ["key"] = "new:5", ["title"] = "Back again" }), "back-1"));
 
         var result = await ImportCommitApi.CommitAsync(client, id);
@@ -272,6 +278,8 @@ public sealed class ImportCommitTests
         Assert.Equal(4, generation.GetProperty("rating").GetInt32());
         Assert.Equal("Keep the piano", Assert.Single(generation.GetProperty("comments").EnumerateArray()).GetProperty("text").GetString());
         Assert.NotEqual(JsonValueKind.Null, generation.GetProperty("artwork").ValueKind);
+        Assert.Equal(own, Artwork());
+        Assert.Equal(own, generation.GetProperty("artwork").GetProperty("assetId").GetGuid().ToString().ToUpperInvariant());
         Assert.Equal("0", TestDatabase.Scalar(factory.DataPath, "SELECT count(*) FROM provider_tombstones;"));
         Assert.Equal("0", TestDatabase.Scalar(factory.DataPath, "SELECT count(*) FROM songs WHERE title = 'Back again';"));
     }

@@ -127,19 +127,26 @@ public sealed class ProvisionalCompletionTests
         Assert.Equal(before, Snapshot(factory));
     }
 
+    /// <summary>
+    /// A Generation an import review decided about is never completed, its reviewed fields kept: one whose
+    /// change was declined, one whose conflict was kept, and (#348) one still generating at a sync whose
+    /// Changed diff the user applied, every field accepted, so only its raw clip, now the export's, says so.
+    /// </summary>
     [Fact]
     public async Task AGenerationAnImportReviewDecidedAboutIsNeverCompleted()
     {
         using var factory = SongApi.Host();
         using var client = await SessionApi.SignedInClientAsync(factory);
-        var observed = await ProvisionalCompletionApi.ObservedAsync(factory, client, "Completion after review", "review-1", "review-2");
+        var observed = await ProvisionalCompletionApi.ObservedAsync(factory, client, "Completion after review", "review-1", "review-2", "review-3");
         var declined = observed.Generations["review-1"].Id.ToString().ToUpperInvariant();
         var kept = observed.Generations["review-2"].Id.ToString().ToUpperInvariant();
         TestDatabase.Execute(factory.DataPath, $"UPDATE generations SET declined_hash = 'declined' WHERE id = '{declined}';");
         TestDatabase.Execute(factory.DataPath, $"UPDATE generations SET kept_inputs_hash = 'kept' WHERE id = '{kept}';");
+        await ProvisionalCompletionApi.ReviewedFromAnExportAsync(factory, client, observed.Generations["review-3"].Id, "review-3");
+        Assert.Equal("Retitled in Suno", (await ProvisionalCompletionApi.GenerationAsync(client, observed.Generations["review-3"].Shortcode)).GetProperty("title").GetString());
         var before = Snapshot(factory);
 
-        foreach (var sunoId in new[] { "review-1", "review-2" })
+        foreach (var sunoId in new[] { "review-1", "review-2", "review-3" })
         {
             await ProvisionalCompletionApi.ExpectAsync(
                 await ProvisionalCompletionApi.PostAsync(client, observed.Token, observed.RequestId, ProvisionalCompletionApi.Finished(sunoId)),

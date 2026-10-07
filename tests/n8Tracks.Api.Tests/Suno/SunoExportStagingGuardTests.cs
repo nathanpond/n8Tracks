@@ -14,10 +14,11 @@ namespace n8Tracks.Api.Tests.Suno;
 /// <summary>
 /// Guard for invariant 3, first half (#131, #138): receiving, classifying, and proposing a Suno export,
 /// and changing its choices, never change catalog data. Every catalog table is snapshotted, whole rows,
-/// before an export is uploaded and after it is classified and proposed (with every class present, its
-/// records read, an image staged, choices changed by ID and by filter, the review's summary, targets, and
-/// current export read (#139), and an earlier export discarded), and the two must be
-/// identical. The catalog tables are named explicitly, and so are the
+/// before the first export is uploaded and after a second is classified and proposed (with every class
+/// present, Conflict included, its records read, an image staged, choices changed by ID and by filter, the
+/// review's summary, targets, and current export read (#139), the resolution choices of a Changed and a
+/// Conflict record made (#141), a Suno state change set to Skip and back (#142), and the earlier export
+/// discarded), and the two must be identical. The catalog tables are named explicitly, and so are the
 /// tables that are not catalog data; a new table in neither list fails the guard until it is placed.
 /// The commit story (#140) extends this to the commit itself.
 /// <para>
@@ -133,8 +134,9 @@ public sealed class SunoExportStagingGuardTests
 
     /// <summary>
     /// Builds a catalog with something in every class's way (Generations, a tombstone, an ignored clip, a
-    /// workspace a Song is in), snapshots it, then uploads, completes, reads, stages an image, and replaces
-    /// an earlier export; returns the catalog tables whose rows differ.
+    /// workspace a Song is in, a Generation whose clip is in Suno's Trash), snapshots it, then uploads an
+    /// export, uploads, completes, reads, stages an image for, and makes every kind of choice on a second
+    /// that replaces it; returns the catalog tables whose rows differ.
     /// </summary>
     private static async Task<List<string>> ChangedTablesAsync(N8TracksApiFactory factory)
     {
@@ -157,8 +159,19 @@ public sealed class SunoExportStagingGuardTests
         }
 
         SunoExportApi.Ignore(factory, SunoExportApi.IdOf(library[3]));
-        var (earlier, _) = await SunoExportApi.UploadAsync(client, token, SunoExportApi.Header(), SunoExportApi.Part(1, [library[0]]));
+
+        // #141: a Generation whose clip now has other lyrics in Suno (Conflict). #142: one whose clip is in Suno's Trash.
+        var conflict = ProposalApi.Clip("conflict-1", null, ProposalApi.At, 0, "Conflict words");
+        await ImportedVersions.AttachAsync(factory, song, "4", conflict);
+        var conflictNow = conflict.DeepClone();
+        conflictNow["metadata"]!["prompt"] = "Other conflict words";
+        var trashed = ProposalApi.Clip("trashed-1", null, ProposalApi.At.AddHours(1), 0, "Trashed words");
+        await ImportedVersions.AttachAsync(factory, song, "5", trashed);
+
+        // The catalog as it is before the first upload: a write every upload or classification makes the
+        // same way would already be in place by a later snapshot.
         var before = Snapshot(factory.DataPath);
+        var (earlier, _) = await SunoExportApi.UploadAsync(client, token, SunoExportApi.Header(), SunoExportApi.Part(1, [library[0]]));
 
         var retitled = library[1].DeepClone();
         retitled["title"] = "Changed in Suno";
@@ -169,10 +182,10 @@ public sealed class SunoExportStagingGuardTests
                 workspaces: [SunoWorkspaceApi.Project("studio", "Studio, renamed"), SunoWorkspaceApi.Project("elsewhere", "Elsewhere")],
                 workspacesComplete: true,
                 playlists: [SunoExportApi.Playlist("favourites", "Favourites", SunoExportApi.IdOf(library[0]))]),
-            SunoExportApi.Part(2, [library[2], library[3]], trash),
-            SunoExportApi.Part(1, [library[0], retitled, JsonNode.Parse(Clips.Minimal("brand-new"))!]));
+            SunoExportApi.Part(2, [library[2], library[3]], [.. trash, trashed]),
+            SunoExportApi.Part(1, [library[0], retitled, JsonNode.Parse(Clips.Minimal("brand-new"))!, conflictNow]));
         Assert.Equal("ready", export.GetProperty("state").GetString());
-        foreach (var recordClass in new[] { "new", "linked", "changed", "ignored", "deleted" })
+        foreach (var recordClass in new[] { "new", "linked", "changed", "conflict", "ignored", "deleted" })
         {
             Assert.True(SunoExportApi.Count(export, recordClass) > 0, recordClass);
         }
@@ -199,6 +212,16 @@ public sealed class SunoExportStagingGuardTests
         await ImportReviewApi.SummaryAsync(client, id);
         await ImportReviewApi.TargetsAsync(client, id, "brand-new", "?song=n8-1&parent=n8-1-v2");
         await ImportReviewApi.CurrentAsync(client);
+
+        // The resolution choices of a Changed and a Conflict record (#141) write none of it.
+        await ProposalApi.ChangedAsync(client, id, 4, ProposalApi.Change(new JsonObject { ["action"] = "apply", ["acceptFields"] = new JsonArray("title") }, SunoExportApi.IdOf(retitled)));
+        await ProposalApi.ChangedAsync(client, id, 5, ProposalApi.Change(new JsonObject { ["action"] = "moveToNewVersion" }, "conflict-1"));
+        await ProposalApi.ChangedAsync(client, id, 6, ProposalApi.Change(new JsonObject { ["action"] = "keep" }, "conflict-1"));
+
+        // Nor does setting a Suno state change to Skip and back (#142).
+        Assert.Equal("trashed", (await RemoteStateApi.RowsAsync(client, id))["trashed-1"].GetProperty("change").GetString());
+        await RemoteStateApi.SetAsync(client, id, false, "trashed-1");
+        await RemoteStateApi.SetAsync(client, id, true, "trashed-1");
 
         // Provider state did change (a complete list), so the run reached it; the catalog did not.
         Assert.Equal("Studio, renamed", (await SunoWorkspaceApi.OneAsync(client, "studio")).GetProperty("name").GetString());
