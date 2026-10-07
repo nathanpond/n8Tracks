@@ -132,6 +132,40 @@ public sealed class ExternalReferenceResolverTests
         Assert.Equal(1, ReferenceCount(factory, ParentId));
     }
 
+    /// <summary>
+    /// Remix sources (#122 AC 10): a clip whose task n8Tracks does not recognise imports its roots as
+    /// sources of the general Remix type, kept in <c>inputs.sources</c>, but never automated, so
+    /// <c>effectiveInputs</c> (what Generate on Suno sends) carries no <c>sources</c>, before or after
+    /// one of them resolves to an imported Generation.
+    /// </summary>
+    [Fact]
+    public async Task RemixSourcesAreKeptInTheInputsButNeverInTheEffectiveInputs()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var remix = Clip(ChildId);
+        remix["metadata"] = new JsonObject { ["task"] = "a_task_from_the_future" };
+        remix["clip_roots"] = new JsonObject { ["clips"] = new JsonArray(new JsonObject { ["id"] = ParentId }, new JsonObject { ["id"] = OtherParentId }) };
+
+        var child = await ImportedVersions.ImportAsync(factory, await SongApi.CreateAsync(client, "Remixed"), "2", remix);
+
+        void AssertRemixKeptButNotEffective(JsonElement version)
+        {
+            var sources = version.GetProperty("inputs").GetProperty("sources").EnumerateArray().ToList();
+            Assert.Equal(2, sources.Count);
+            Assert.All(sources, static source => Assert.Equal(SystemRelationshipTypes.Remix.Id, source.GetProperty("typeId").GetGuid()));
+            Assert.False(version.GetProperty("effectiveInputs").TryGetProperty("sources", out _), version.GetProperty("effectiveInputs").GetRawText());
+        }
+
+        AssertRemixKeptButNotEffective(await GetAsync(client, child.VersionId));
+
+        // One root imported later: the source is now its Generation, and still not effective.
+        await ImportedVersions.ImportAsync(factory, await SongApi.CreateAsync(client, "Remix root"), "2", Clip(ParentId));
+        var resolved = await GetAsync(client, child.VersionId);
+        Assert.Equal("ok", resolved.GetProperty("inputs").GetProperty("sources")[0].GetProperty("availability").GetString());
+        AssertRemixKeptButNotEffective(resolved);
+    }
+
     private static JsonObject Clip(string sunoId) => new() { ["id"] = sunoId, ["status"] = "complete", ["title"] = "Clip " + sunoId[^2..] };
 
     private static JsonObject Cover(string sunoId, string sourceId)
