@@ -377,7 +377,11 @@ describe('Generate on Suno', () => {
           adapterVersion: 5,
           mode: 'simple',
           checkedAt: '2026-10-07T09:02:00Z',
-          entries: [{ key: 'songs.simple.model', outcome: 'set', expected: 'v6-mini' }],
+          entries: [
+            { key: 'songs.simple.model', outcome: 'set', expected: 'v6-mini' },
+            // A source the extension loaded and saw on the form (#148).
+            { key: 'songs.simple.audio', outcome: 'verified', note: 'On the form.' },
+          ],
         },
       }),
     });
@@ -386,6 +390,7 @@ describe('Generate on Suno', () => {
     expect(await screen.findByTestId('verification-review')).toHaveTextContent(
       'Every entry is as the Version says',
     );
+    expect(screen.getByTestId('verification-counts')).toHaveTextContent('1 set, 1 verified');
     expect(screen.getByText(/Verification of Suno’s form \(Simple\)/)).toBeInTheDocument();
   });
 

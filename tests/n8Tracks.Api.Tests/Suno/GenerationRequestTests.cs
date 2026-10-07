@@ -590,7 +590,7 @@ public sealed class GenerationRequestTests
         Assert.Equal("0", TestDatabase.Scalar(factory.DataPath, "SELECT count(*) FROM suno_workspaces;"));
     }
 
-    /// <summary>A summary as the extension sends it (#146): lyrics as length and hash only.</summary>
+    /// <summary>A summary as the extension sends it (#146): lyrics as length and hash only; a source verified on the form (#148).</summary>
     private const string Verification = """
         {"adapterVersion":5,"mode":"advanced","checkedAt":"2026-10-07T12:00:00.000Z","entries":[
           {"key":"songs.advanced.lyrics","outcome":"set","expected":{"length":11,"sha256":"5f6955e3e1f2c0a0d1b3b1e3b2b0c4b6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2"}},
@@ -598,7 +598,8 @@ public sealed class GenerationRequestTests
           {"key":"songs.advanced.max_mode","outcome":"set","expected":false},
           {"key":"songs.advanced.model","outcome":"unavailable","expected":"v6-wild","note":"Suno’s model menu does not offer this model."},
           {"key":"songs.advanced.audio","outcome":"manual","note":"Attach the file by hand: the demo."},
-          {"key":"songs.advanced.crop","outcome":"unsupported"}
+          {"key":"songs.advanced.crop","outcome":"unsupported"},
+          {"key":"songs.advanced.audio","outcome":"verified","note":"The source is on the form."}
         ]}
         """;
 
@@ -626,7 +627,7 @@ public sealed class GenerationRequestTests
         Assert.Equal("advanced", verification.GetProperty("mode").GetString());
         Assert.Equal("2026-10-07T12:00:00.0000000+00:00", verification.GetProperty("checkedAt").GetString());
         var entries = verification.GetProperty("entries").EnumerateArray().ToList();
-        Assert.Equal(["set", "failed", "set", "unavailable", "manual", "unsupported"], entries.Select(static entry => entry.GetProperty("outcome").GetString()));
+        Assert.Equal(["set", "failed", "set", "unavailable", "manual", "unsupported", "verified"], entries.Select(static entry => entry.GetProperty("outcome").GetString()));
         Assert.Equal(11, entries[0].GetProperty("expected").GetProperty("length").GetInt32());
         Assert.Equal(65, entries[1].GetProperty("found").GetInt32());
         Assert.False(entries[2].GetProperty("expected").GetBoolean());
@@ -639,7 +640,7 @@ public sealed class GenerationRequestTests
             Assert.Equal(HttpStatusCode.OK, step.StatusCode);
         }
 
-        Assert.Equal(6, (await CurrentAsync(client, versionId)).GetProperty("verification").GetProperty("entries").GetArrayLength());
+        Assert.Equal(7, (await CurrentAsync(client, versionId)).GetProperty("verification").GetProperty("entries").GetArrayLength());
         using (var again = await ReportAsync(client, extension, id, """{"state":"waiting","step":"check form","verification":{"adapterVersion":5,"mode":"advanced","checkedAt":"2026-10-07T12:05:00Z","entries":[{"key":"songs.advanced.weirdness","outcome":"set","expected":70}]}}"""))
         {
             Assert.Equal(HttpStatusCode.OK, again.StatusCode);

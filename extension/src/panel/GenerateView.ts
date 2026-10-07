@@ -37,6 +37,11 @@ export type GenerateViewState =
    * The request goes on waiting for further Creates.
    */
   | { kind: 'recorded'; recorded: boolean; message: string }
+  /**
+   * The source on Suno's form is not the Version's (#148): nothing else is filled until the user
+   * loads it by hand and presses Continue, which checks it again.
+   */
+  | { kind: 'source'; message: string }
   | { kind: 'stopped'; message: string };
 
 export interface GenerateViewOptions {
@@ -46,6 +51,8 @@ export interface GenerateViewOptions {
   pick(option: WorkspaceOption): void;
   /** "Check again" in the verification summary (#146). */
   checkAgain?(): void;
+  /** "Continue" once the user loaded the source by hand (#148). */
+  continueSource?(): void;
 }
 
 function nameOrUnnamed(name: string): string {
@@ -184,6 +191,27 @@ export class GenerateView {
           ),
         );
         return;
+      case 'source': {
+        const go = this.button('Continue', () => {
+          this.options.continueSource?.();
+        });
+        go.setAttribute('aria-describedby', 'n8-generate-source');
+        this.firstControl = go;
+        this.body.append(
+          this.make(
+            'p',
+            { role: 'alert', class: 'generate-source', id: 'n8-generate-source' },
+            this.state.message,
+          ),
+          this.make(
+            'p',
+            { class: 'detail' },
+            'Load the source on Suno’s form by hand, then press Continue: the extension checks it again before filling anything else.',
+          ),
+          go,
+        );
+        return;
+      }
       case 'choose':
         this.renderChoice(this.state.title, this.state.reason, this.state.options);
         return;

@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   ANY_SUNO_PAGE,
   isSunoAddress,
+  songOfAddress,
   sunoListAddress,
   sunoPage,
   sunoPageOf,
   sunoPages,
+  sunoSongAddress,
 } from './addresses.ts';
 
 describe('Suno addresses', () => {
@@ -16,7 +18,8 @@ describe('Suno addresses', () => {
     ['https://suno.com/me/trash', 'trash'],
     ['https://suno.com/me/workspaces', 'workspaces'],
     ['https://suno.com/playlist/00000000-0000-4000-8000-000000000101', 'playlist'],
-    ['https://suno.com/song/00000000-0000-4000-8000-000000000101', 'other'],
+    ['https://suno.com/song/00000000-0000-4000-8000-000000000101', 'song'],
+    ['https://suno.com/song/00000000-0000-4000-8000-000000000101/extra', 'other'],
     ['https://suno.com/', 'other'],
   ])('reads %s as %s', (address, kind) => {
     expect(sunoPageOf(new URL(address))).toBe(kind);
@@ -46,6 +49,14 @@ describe('Suno addresses', () => {
     const playlist = sunoListAddress({ page: 'playlist', id: '../a b' });
     expect(playlist.href).toBe('https://suno.com/playlist/..%2Fa%20b');
     expect(sunoPageOf(playlist)).toBe('playlist');
+  });
+
+  it('builds a clip’s song page and reads the clip back from it (#148)', () => {
+    const song = sunoSongAddress('../a b');
+    expect(song.href).toBe('https://suno.com/song/..%2Fa%20b');
+    expect(sunoPageOf(song)).toBe('song');
+    expect(songOfAddress(song)).toBe('../a b');
+    expect(songOfAddress(new URL('https://suno.com/create'))).toBeNull();
   });
 
   it('matches any of several kinds of page', () => {

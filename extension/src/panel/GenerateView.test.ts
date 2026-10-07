@@ -14,6 +14,7 @@ function view() {
   const options = {
     create: vi.fn<() => void>(),
     pick: vi.fn<(option: WorkspaceOption) => void>(),
+    continueSource: vi.fn<() => void>(),
   };
   const generate = new GenerateView(document, options);
   const main = document.createElement('main');
@@ -125,6 +126,23 @@ describe('Generate on Suno in the panel', () => {
       'Not recorded; a sync will bring them in.',
     );
     await expectNoAxeViolations(document);
+  });
+
+  it('asks the user to load the source by hand, and Continue asks for it to be checked again (#148)', async () => {
+    const { generate, options, button } = view();
+
+    generate.show({
+      kind: 'source',
+      message: 'The source on Suno’s form is not the Version’s “Night Drive”.',
+    });
+
+    expect(generate.element.querySelector('[role="alert"]')?.textContent).toBe(
+      'The source on Suno’s form is not the Version’s “Night Drive”.',
+    );
+    expect(document.activeElement?.textContent).toBe('Continue');
+    await expectNoAxeViolations(document);
+    button('Continue')?.click();
+    expect(options.continueSource).toHaveBeenCalledOnce();
   });
 
   it('describes a workspace by the Songs in it', () => {

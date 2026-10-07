@@ -9,7 +9,8 @@ export const SUNO_ORIGIN_PATTERN = 'https://suno.com/*';
 const SUNO_ORIGIN = 'https://suno.com';
 
 /** The kinds of Suno page a workflow can start on, by address (TS-003 snapshots). */
-export type SunoPage = 'create' | 'library' | 'trash' | 'workspaces' | 'playlist' | 'other';
+export type SunoPage =
+  'create' | 'library' | 'trash' | 'workspaces' | 'playlist' | 'song' | 'other';
 
 /** A set of Suno pages a workflow starts on, with plain words for the panel. */
 export interface PagePattern {
@@ -44,6 +45,9 @@ export function sunoPageOf(address: URL): SunoPage | null {
   if (/^\/playlist\/[^/]+$/.test(path)) {
     return 'playlist';
   }
+  if (/^\/song\/[^/]+$/.test(path)) {
+    return 'song';
+  }
   return 'other';
 }
 
@@ -59,6 +63,7 @@ const PAGE_WORDS: Record<Exclude<SunoPage, 'other'>, string> = {
   trash: 'the Library trash',
   workspaces: "the Library's workspace list",
   playlist: 'a playlist page',
+  song: 'a song page',
 };
 
 /** One kind of Suno page. */
@@ -94,6 +99,27 @@ export function sunoListAddress(
       return new URL('/me/workspaces', SUNO_ORIGIN);
     case 'playlist':
       return new URL(`/playlist/${encodeURIComponent(list.id)}`, SUNO_ORIGIN);
+  }
+}
+
+/**
+ * A clip's own page (`/song/<clip id>`, as the Library's song links address it, TS-003), where a
+ * source clip's menu is opened (#148). A clip ID is Suno's, so it is encoded as one path segment.
+ */
+export function sunoSongAddress(clipId: string): URL {
+  return new URL(`/song/${encodeURIComponent(clipId)}`, SUNO_ORIGIN);
+}
+
+/** The clip a song page shows, or null when `address` is not a song page. */
+export function songOfAddress(address: URL): string | null {
+  if (sunoPageOf(address) !== 'song') {
+    return null;
+  }
+  const segment = address.pathname.replace(/\/+$/, '').split('/').at(-1) ?? '';
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return null;
   }
 }
 

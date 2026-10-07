@@ -3674,3 +3674,42 @@ Story #146 (PARTIAL: D9):
 - **Decision:** On the web, `VersionDetails` takes an optional `onRecorded`. When the request's `observed` count grows, it reloads the Version and calls `onRecorded`, and `SongVersions` then re-reads the Versions, the Song and the Generations. A branch makes the new Version current, so the e2e opens the requested Version by its number (`/v/1`), whose page lists what each Create came to.
   **Why:** Without this, the Generations would not appear "at once" until another read. A Version page opened at `/songs/<sc>` follows the Song's current Version, so it switches to the new branch. That Version carries the note.
   **Issue:** #149
+
+Story #148 (built in parallel; merged into the milestone branch):
+
+- **Decision:** Applied D10 to #148. Cover and Reuse Prompt are loaded from the clip's Remix menu and verified; the TS-003 snapshots back them (the menus, a loaded Cover in Advanced and Simple, and the Overwrite dialog). Extend, Mashup, Sample this song, a single Inspiration song, the Inspo playlist pick, and Voice selection are listed in the summary as to do by hand, with the source, playlist, or voice named. AC 1, 2, 4, 5 and 9 are left unticked, and the story is labelled `blocked` + `needs-owner-action` with the capture list.
+  **Why:** No snapshot shows the form after those actions, a chosen voice or playlist, or an unopenable or trashed clip page. Inventing that structure would risk a false "verified".
+  **Issue:** #148
+- **Decision:** The source clip is opened by address at `/song/<clip id>`, the address shape of the Library's song links. Its menu button is found by the name "More options", and only when the page has exactly one; anything else stops at step 'clip menu' as "could not open source".
+  **Why:** The clip page itself was not captured. Every captured Suno list names a clip's menu button "More options". Requiring exactly one, with verification of the thumbnail's clip ID afterwards, means a wrong guess can only stop the run; it never loads the wrong source. The owner's capture list includes the clip page.
+  **Issue:** #148
+- **Decision:** Added the outcome `verified` to the verification summary in four places: `GenerationVerification.Outcomes`, the web `VerificationOutcome` and labels, the extension's `EntryOutcome`, and its panel labels. No migration.
+  **Why:** The story's source outcomes are verified / set / manual / unavailable / failed, and the summary must say a source was seen on the form. The change is additive, because the stored JSON is validated by a list.
+  **Issue:** #148
+- **Decision:** `switch-form` now always runs, before any source is loaded. This reverses #146's skip when the Version has sources.
+  **Why:** TS-002 found that a source applies only in the mode active when its action was chosen, and the Discretion says to switch to the Version's mode first.
+  **Issue:** #148
+- **Decision:** The source phase is kept across page loads by the service worker, through a new tab-bound message `generate-source {source: {phase: opening|chosen, sunoId} | null}`. It resets the tab's load count. `GenerateJob.source` carries the phase to the next load.
+  **Why:** Opening the clip's page is a page load, and choosing the action may load Create anew. The content script cannot survive either.
+  **Issue:** #148
+- **Decision:** A verification mismatch does not end the request. It stays `filling` at step `load source by hand`, with a message, and the panel shows a new `source` state with a Continue button. Continue verifies the source again, as often as needed.
+  **Why:** AC 3 and the Discretion: the user may load the source by hand and continue, and a mismatch blocks again.
+  **Issue:** #148
+- **Decision:** In Simple mode the source is verified only by the chip thumbnail's clip ID, because Suno's chip does not name the action (`page.create-source-simple.html`).
+  **Why:** The snapshot shows no action label on the chip. The action was the one the extension itself pressed.
+  **Issue:** #148
+- **Decision:** The Inspo dialog stays unrecognised and refused by the forbidden-control matcher.
+  **Why:** Its snapshot shows no title. The orchestrator's rule is to recognise it only if a snapshot shows a title.
+  **Issue:** #148
+- **Decision:** The extension also checks n8Tracks' availability of every source (`trashed`, `missing`, `deleted`) before it changes the form, and stops naming each one, even though `POST .../generation-requests` already answers 422 `sources_unavailable`. It also refuses more than four Inspiration songs.
+  **Why:** The Discretion says availability known to n8Tracks is checked for every source before starting. A snapshot read later could change, and five Inspiration songs are impossible by construction, which is asserted on the request.
+  **Issue:** #148
+- **Decision:** `ADAPTER_VERSION` is now 6. The five new workflows are appended at the end of `ADAPTER_WORKFLOWS`, and the source targets are in `adapter/sources.ts`.
+  **Why:** New addresses (`/song/<id>`) and workflow steps mean a new adapter version. Appending keeps the merge with parallel #147 additive.
+  **Issue:** #148
+- **Decision (blocker):** #148 is PARTIAL and waits on an owner capture session. The page states needed are listed on the issue.
+  **Why:** D10.
+  **Issue:** #148
+- **Decision:** On the merge of #148 with #147 and #149, the source skip is reconciled: the kind's `open` workflow (switch-form, switch-speech-form, or switch-sounds-form) always runs first, for every kind and whether or not the Version has sources. A source is loaded after it only when the kind loads sources. `FormWorkflows.sourcesDecideForm` is renamed `loadsSources` (Songs true; Speech and Sounds false), and `sunoGenerate.fill()` reads `workflows.loadsSources && plan.load !== null`. `fillRest` fills with the kind's `fill` workflow, with the loaded source's result. A new test in `sunoGenerate.test.ts` pins both halves: a Song with a Cover runs `switch-form` and then goes to the clip's page without filling, and a Speech Version with a source runs `switch-speech-form` and `fill-speech-advanced` in place. `ADAPTER_VERSION` is now **8**: #147 set 6, #149 set 7, and #148 set 6. Every test reads the constant.
+  **Why:** TS-002 says a source applies only in the mode active when its action was chosen, so #148 needs the switch before the source. That reverses #146's skip, which #147 had narrowed to Songs. Speech and Sounds have no source step, so for them the switch always ran under #147 and still does. The rename says what the flag now decides. Each of the three stories changed the adapter, so the version takes the next number after the highest.
+  **Issue:** #148, #147

@@ -1,6 +1,7 @@
 import { isSunoAddress, sunoCreateAddress } from '../adapter/addresses.ts';
 import type { FormJob, VerificationReport } from '../adapter/fill.ts';
 import {
+  isSourcePhase,
   pageRequestOf,
   type ChosenWorkspace,
   type ConnectionState,
@@ -15,6 +16,7 @@ import {
   type RelayReply,
   type RequestWorkspace,
   type ResponseFor,
+  type SourcePhase,
 } from '../messages.ts';
 import { DisconnectedError, type Connection } from './connection.ts';
 
@@ -94,6 +96,8 @@ interface GenerationTab {
   chosen: RequestWorkspace | null;
   /** How many of the user's Creates n8Tracks has recorded (#149). */
   created: number;
+  /** Where loading the Version's source has got to (#148), or null. */
+  source: SourcePhase | null;
 }
 
 const DISCONNECTED = 'The extension is not connected to n8Tracks; reconnect it in the options.';
@@ -272,7 +276,14 @@ export class GenerateCoordinator {
       if (tabId === undefined) {
         throw new Error('The browser gave the new tab no ID.');
       }
-      const tab: GenerationTab = { requestId, tabId, loads: 0, chosen: null, created: 0 };
+      const tab: GenerationTab = {
+        requestId,
+        tabId,
+        loads: 0,
+        chosen: null,
+        created: 0,
+        source: null,
+      };
       await this.browser.session.set({ [GENERATION_TAB_KEY]: tab });
     } catch {
       await this.report(
@@ -311,7 +322,21 @@ export class GenerateCoordinator {
         return this.resolve(tab, request.workspace);
       case 'generate-observed':
         return this.observed(tab, request.response, request.submitted);
+      case 'generate-source':
+        return this.source(tab, request.source);
     }
+  }
+
+  /**
+   * Keeps where loading the source has got to for the tab's next page load (#148). The tab's loads
+   * count again from here, since reaching the source's page and coming back to Create take loads
+   * of their own.
+   */
+  private async source(tab: GenerationTab, source: SourcePhase | null): Promise<GenerateReply> {
+    await this.browser.session.set({
+      [GENERATION_TAB_KEY]: { ...tab, loads: 0, source },
+    });
+    return { ok: true };
   }
 
   /** The Suno tab of a generation was closed: the request stops, saying so. */
@@ -335,6 +360,7 @@ export class GenerateCoordinator {
           loads: stored.loads,
           chosen: workspaceOf(stored.chosen),
           created: typeof stored.created === 'number' ? stored.created : 0,
+          source: isSourcePhase(stored.source) ? stored.source : null,
         }
       : null;
   }
@@ -378,6 +404,7 @@ export class GenerateCoordinator {
       loads,
       form: formOf(snapshot),
       created: tab.created,
+      source: tab.source,
     };
   }
 
@@ -625,11 +652,20 @@ export function formOf(snapshot: Record<string, unknown>): FormJob | null {
     entries,
     sources: records(snapshot.sources)
       .filter((source) => typeof source.key === 'string')
-      .map((source) => ({
-        key: source.key as string,
-        title: textOrNull(source.title) ?? textOrNull(source.shortcode),
-        sunoAction: textOrNull(source.sunoAction),
-      })),
+      .map((source) => {
+        const target = isRecord(source.target) ? source.target : {};
+        return {
+          key: source.key as string,
+          title: textOrNull(source.title) ?? textOrNull(source.shortcode),
+          sunoAction: textOrNull(source.sunoAction),
+          group: textOrNull(source.group) ?? 'audio',
+          position: typeof source.position === 'number' ? source.position : 0,
+          sunoId: textOrNull(target.sunoId),
+          availability: textOrNull(source.availability),
+          continueAtSeconds:
+            typeof source.continueAtSeconds === 'number' ? source.continueAtSeconds : null,
+        };
+      }),
     fileInputs: records(snapshot.fileInputs)
       .filter((file) => typeof file.key === 'string')
       .map((file) => ({ key: file.key as string, description: textOrNull(file.description) })),

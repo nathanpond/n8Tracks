@@ -16,6 +16,13 @@ import {
 } from './fillSpeech.ts';
 import { loadMore } from './loadMore.ts';
 import { recogniseSuno } from './recognise.ts';
+import {
+  answerOverwrite,
+  chooseSourceAction,
+  openSourceMenu,
+  verifySourceAdvanced,
+  verifySourceSimple,
+} from './sources.ts';
 import { createWorkspace, moreWorkspaces, openWorkspaces, selectWorkspace } from './workspace.ts';
 
 /**
@@ -40,14 +47,23 @@ export const ADAPTER_WORKFLOWS: readonly Workflow[] = [
   switchSoundsForm,
   fillSounds,
   checkSoundsForm,
+  openSourceMenu,
+  chooseSourceAction,
+  answerOverwrite,
+  verifySourceAdvanced,
+  verifySourceSimple,
 ];
 
 /** The workflows that fill one kind of Version in one mode (#147). */
 export interface FormWorkflows {
   /** Makes the Create form the kind's form in the mode. */
   open: Workflow<SwitchFormContext>;
-  /** Whether a source the source story loaded decides the form, so `open` is skipped with one. */
-  sourcesDecideForm: boolean;
+  /**
+   * Whether the kind loads the Version's source after `open` (#148; Songs only). `open` always runs
+   * first, with or without a source: a source applies only in the mode active when its action was
+   * chosen (TS-002).
+   */
+  loadsSources: boolean;
   fill: Workflow<FillContext>;
   /** Check again: reads every entry without changing anything. */
   check: Workflow<FillContext>;
@@ -57,31 +73,31 @@ export interface FormWorkflows {
 export const FORM_WORKFLOWS: Readonly<Record<string, FormWorkflows>> = {
   'song.simple': {
     open: switchForm,
-    sourcesDecideForm: true,
+    loadsSources: true,
     fill: fillSongsSimple,
     check: checkSongsForm,
   },
   'song.advanced': {
     open: switchForm,
-    sourcesDecideForm: true,
+    loadsSources: true,
     fill: fillSongsAdvanced,
     check: checkSongsForm,
   },
   'speech.simple': {
     open: switchSpeechForm,
-    sourcesDecideForm: false,
+    loadsSources: false,
     fill: fillSpeechSimple,
     check: checkSpeechForm,
   },
   'speech.advanced': {
     open: switchSpeechForm,
-    sourcesDecideForm: false,
+    loadsSources: false,
     fill: fillSpeechAdvanced,
     check: checkSpeechForm,
   },
   'sound.single': {
     open: switchSoundsForm,
-    sourcesDecideForm: false,
+    loadsSources: false,
     fill: fillSounds,
     check: checkSoundsForm,
   },

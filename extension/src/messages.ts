@@ -123,6 +123,18 @@ export interface GenerateJob {
    * watches for further Creates, and anywhere else the request is done.
    */
   created?: number;
+  /** Where loading the Version's source has got to across page loads (#148); null before it. */
+  source?: SourcePhase | null;
+}
+
+/**
+ * Loading a source spans page loads (#148): the tab goes to the source clip's page (`opening`),
+ * chooses the action there (`chosen`), and Suno opens the Create form with the source.
+ */
+export interface SourcePhase {
+  phase: 'opening' | 'chosen';
+  /** The source clip's Suno ID. */
+  sunoId: string;
 }
 
 /** What an observed Create came to in n8Tracks (#149), in plain words for the panel. */
@@ -291,7 +303,9 @@ export type Request =
       type: 'generate-observed';
       response: Record<string, unknown>;
       submitted: Record<string, unknown> | null;
-    };
+    }
+  /** Where loading the source has got to, kept for the next page load; null once loaded (#148). */
+  | { type: 'generate-source'; source: SourcePhase | null };
 
 export interface ResponseFor {
   state: ConnectionState;
@@ -317,6 +331,7 @@ export interface ResponseFor {
   'generate-workspaces': GenerateReply<{ songCounts: Record<string, number> }>;
   'generate-resolve': GenerateReply;
   'generate-observed': GenerateReply<{ recorded: ObservedSummary }>;
+  'generate-source': GenerateReply;
 }
 
 export type Response<T extends Request> = ResponseFor[T['type']];
@@ -356,6 +371,7 @@ export const GENERATE_TYPES = [
   'generate-workspaces',
   'generate-resolve',
   'generate-observed',
+  'generate-source',
 ] as const satisfies readonly Request['type'][];
 
 export type GenerateRequest = Extract<Request, { type: (typeof GENERATE_TYPES)[number] }>;
@@ -373,6 +389,16 @@ const GENERATE_STATES: readonly string[] = [
   'done',
   'stopped',
 ] satisfies GenerateState[];
+
+/** Whether `value` is a source phase as the Suno tab sends it. */
+export function isSourcePhase(value: unknown): value is SourcePhase {
+  return (
+    isRecord(value) &&
+    (value.phase === 'opening' || value.phase === 'chosen') &&
+    typeof value.sunoId === 'string' &&
+    value.sunoId !== ''
+  );
+}
 
 function isChosenWorkspace(value: unknown): value is ChosenWorkspace {
   return (
@@ -527,6 +553,8 @@ export function isRequest(value: unknown): value is Request {
       return isChosenWorkspace(value.workspace);
     case 'generate-observed':
       return isRecord(value.response) && (value.submitted === null || isRecord(value.submitted));
+    case 'generate-source':
+      return value.source === null || isSourcePhase(value.source);
     default:
       return false;
   }

@@ -153,6 +153,11 @@ describe('the service worker router', () => {
         { id: 'switch-sounds-form', state: 'not_checked' },
         { id: 'fill-sounds', state: 'not_checked' },
         { id: 'check-sounds-form', state: 'not_checked' },
+        { id: 'open-source-menu', state: 'not_checked' },
+        { id: 'choose-source-action', state: 'not_checked' },
+        { id: 'answer-overwrite', state: 'not_checked' },
+        { id: 'verify-source-advanced', state: 'not_checked' },
+        { id: 'verify-source-simple', state: 'not_checked' },
       ],
       steps: [{ workflow: 'recognise-suno', step: 'navigation', ms: 3 }],
     });

@@ -57,6 +57,7 @@ export function modeLabel(mode: string): string {
 
 export const OUTCOME_LABELS: Readonly<Record<VerificationOutcome, string>> = {
   set: 'Set',
+  verified: 'Verified',
   failed: 'Differs',
   unavailable: 'Unavailable',
   manual: 'To do by hand',
@@ -66,6 +67,7 @@ export const OUTCOME_LABELS: Readonly<Record<VerificationOutcome, string>> = {
 
 const OUTCOME_ORDER: readonly VerificationOutcome[] = [
   'set',
+  'verified',
   'failed',
   'unavailable',
   'manual',

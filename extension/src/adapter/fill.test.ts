@@ -566,8 +566,9 @@ describe('the summary’s other entries', () => {
     expect(notes.get('songs.simple.simple_add_image')?.note).toBe(
       'Attach the file by hand: the cover photo.',
     );
-    expect(notes.get('songs.simple.audio')?.note).toContain('load “Origin” as cover');
-    expect(notes.get('songs.simple.voice')?.note).toContain('choose the voice “Ada”');
+    // No Suno ID: a Song-level source, which only the user can load (#148).
+    expect(notes.get('songs.simple.audio')?.note).toContain('Load “Origin” by hand');
+    expect(notes.get('songs.simple.voice')?.note).toContain('Choose the voice “Ada”');
     expect(notes.get('songs.simple.simple_add_lyrics')?.note).toMatch(/cannot add Simple’s Lyrics/);
   });
 

@@ -186,6 +186,9 @@ export function startSunoContent(options: SunoContentOptions): SunoContent {
     checkAgain: () => {
       void generate?.checkAgain();
     },
+    continueSource: () => {
+      generate?.continueSource();
+    },
   });
 
   const panel = new Panel(page, {
