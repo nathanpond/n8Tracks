@@ -72,12 +72,16 @@ export interface ExportSink {
   part(part: ExportPart): Promise<void>;
 }
 
-export interface LegContext {
+/** What reading one list needs: Suno's responses, a way to ask for more, and the cancel signal. */
+export interface ListContext {
   observations: Observations;
   /** Makes the page ask for more of its list (the `load-more` workflow); throws a {@link ReadStop}. */
   more(step: string): Promise<void>;
-  sink: ExportSink;
   signal: AbortSignal;
+}
+
+export interface LegContext extends ListContext {
+  sink: ExportSink;
   /** Counts so far, after each page. */
   progress(counts: SyncCounts): void;
   /** The versions the export reports. */
@@ -262,7 +266,7 @@ function playlistSpec(id: string): ListSpec {
 async function readList(
   spec: ListSpec,
   step: string,
-  context: LegContext,
+  context: ListContext,
   take: (records: Raw[]) => Promise<void>,
 ): Promise<number> {
   const keys = new Set<string>();
@@ -488,4 +492,23 @@ export async function readLeg(
     }
   }
   return { leg: start.leg + 1, attempt: 0, partNumber, counts, workspaces };
+}
+
+/** The step the Download view (#215) names when reading the library stops. */
+export const LIBRARY_STEP = 'Read the library';
+
+/**
+ * Reads Library › Songs to its end for the Download view (#215): the same list, read the same way,
+ * as a sync's library leg (every workspace's clips; Suno leaves trashed clips out). Each page's new
+ * records go to `take` as they come. Nothing is sent anywhere. Throws {@link ReadStop} or
+ * {@link ReadCancelled}; the records taken before then stay with the caller.
+ */
+export async function readLibrary(
+  context: ListContext,
+  take: (records: readonly Record<string, unknown>[]) => void,
+): Promise<number> {
+  return readList(LIBRARY, LIBRARY_STEP, context, (records) => {
+    take(records);
+    return Promise.resolve();
+  });
 }

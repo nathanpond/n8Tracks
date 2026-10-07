@@ -72,3 +72,33 @@ describe('the observation feed, listening for the page observer', () => {
     expect(feed.listedWorkspaces()).toEqual([]);
   });
 });
+
+describe("the plan's download allowance (#215)", () => {
+  const billing = (body: unknown): ObservedMessage => ({
+    source: OBSERVER_SOURCE,
+    type: 'observed',
+    kind: 'billing',
+    request: { cursor: null, page: null, filters: null, feedId: null },
+    body,
+  });
+
+  it('keeps the latest counts the page read, tells the listener, and queues nothing', async () => {
+    const { feed, message } = page();
+    const heard: unknown[] = [];
+    feed.onDownloadUsage((usage) => heard.push(usage));
+    expect(feed.downloadUsage()).toBeNull();
+
+    message(
+      billing({
+        download_usage: { current_period_downloads_used: 2, current_period_downloads_limit: 60 },
+      }),
+    );
+    // Not counts: kept as before.
+    message(billing({}));
+
+    expect(feed.downloadUsage()).toEqual({ used: 2, limit: 60, additional: 0 });
+    expect(heard).toEqual([{ used: 2, limit: 60, additional: 0 }]);
+    const controller = new AbortController();
+    expect(await feed.next('billing', () => true, 10, controller.signal)).toBeNull();
+  });
+});

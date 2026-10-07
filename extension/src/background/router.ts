@@ -1,7 +1,9 @@
 import { isSunoAddress } from '../adapter/addresses.ts';
 import type { Diagnostics } from '../diagnostics/report.ts';
 import {
+  DOWNLOAD_TYPES,
   GENERATE_TYPES,
+  isDownloadRequest,
   isGenerateRequest,
   isRequest,
   isSyncRequest,
@@ -11,6 +13,7 @@ import {
   type ResponseFor,
 } from '../messages.ts';
 import type { Connection } from './connection.ts';
+import type { DownloadCoordinator } from './download.ts';
 import type { GenerateCoordinator } from './generate.ts';
 import type { SyncCoordinator } from './sync.ts';
 
@@ -48,8 +51,8 @@ function onSuno(sender: Sender): boolean {
 }
 
 /**
- * Messages a content script (the relay on the n8Tracks page, the panel on Suno) may send. The sync
- * and generate messages are for the Suno content script's own tab only.
+ * Messages a content script (the relay on the n8Tracks page, the panel on Suno) may send. The sync,
+ * generate, and download messages are for the Suno content script's own tab only.
  */
 const CONTENT_SCRIPT_TYPES: readonly Request['type'][] = [
   'state',
@@ -58,6 +61,7 @@ const CONTENT_SCRIPT_TYPES: readonly Request['type'][] = [
   'diagnostic-report',
   ...SYNC_TYPES,
   ...GENERATE_TYPES,
+  ...DOWNLOAD_TYPES,
 ];
 
 /**
@@ -72,6 +76,7 @@ export async function route(
   diagnostics?: Diagnostics,
   sync?: SyncCoordinator,
   generate?: GenerateCoordinator,
+  download?: DownloadCoordinator,
 ): Promise<ResponseFor[Request['type']] | Refusal> {
   if (sender.id !== extensionId || !isRequest(message)) {
     return { refused: 'not a request this extension answers' };
@@ -92,6 +97,13 @@ export async function route(
       return { refused: `${message.type} is only for the Suno content script in a tab` };
     }
     return generate.handleTab(message, tabId);
+  }
+  if (isDownloadRequest(message)) {
+    const tabId = sender.tab?.id;
+    if (tabId === undefined || download === undefined || !onSuno(sender)) {
+      return { refused: `${message.type} is only for the Suno content script in a tab` };
+    }
+    return download.handle(message, tabId);
   }
   switch (message.type) {
     case 'state':

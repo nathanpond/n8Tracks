@@ -26,7 +26,7 @@ Shared design the M4 stories refer to as "the Suno integration design". A story'
 
 Two scopes join the list from #56:
 
-- `suno.sync`: create and upload an export, upload Generation artwork for it, read the state of exports this credential created, and report workspace discovery.
+- `suno.sync`: create and upload an export, upload Generation artwork for it, read the state of exports this credential created, report workspace discovery, and look up which Suno clips are Generations for the Download view (#215).
 - `suno.generate`: claim and read a pending generation request, report its progress, report Suno's workspace list as it reads it, record the workspace the user chose for the Song, and report an observed Create and its finished clips (which attaches Generations to the requested Version, or to a new child Version when the submitted inputs differ) with their artwork.
 
 Committing an import, resolving diffs, managing the ignore list, deleting Generations, and reassigning workspaces are session-only. Rating, commenting, archiving, and selecting use `generations.evaluate`.
@@ -165,6 +165,23 @@ Raw objects are sent as Suno returned them. It is uploaded in parts: `POST /api/
 - **The web app:** the button sits beside Create New Version From. It pings the relay first and makes nothing unless the extension answers connected, compatible, and with `suno.generate`. Otherwise the page says which, and when the relay answered, it offers to open the extension's options (`open-options`).
   - It then makes the request and posts `{ type: "generate", requestId }`. The extension checks its connection afresh, claims the request, and answers `generate-accepted`. A refused hand-off cancels the request.
   - The page reads the request every two seconds while it is active and offers Cancel.
+
+## Download from Suno (#215)
+
+The panel on Suno has a Download view. The user loads the library, narrows it by workspace and by text in the title, selects clips, and chooses formats from WAV, MP3, M4A, and M4A (streaming quality). They see what would be downloaded before anything is fetched. The view lists, selects, and plans only; downloading the files is #216.
+
+- **Reading:** Load library and Refresh first ask the service worker (`download-begin`). It refuses while a sync or Generate on Suno runs, and says why. Then Library › Songs (`/me`) is opened again, and on that page load (`download-resume`) the library feed is read to its end with the reader a sync uses (`libraryReader.ts` `readLibrary`, scrolling with `load-more`). The list covers every workspace. Suno leaves trashed clips out of the feed, and a clip marked trashed is shown disabled. The selection is carried across the page load. A read that stops or is cancelled keeps what it read under an "incomplete" banner, and Select all stays off.
+- **What each clip shows:** title ("Untitled" when blank), duration, created date, workspace, whether it is unlocked for download on Suno (`is_download_unlocked`), and whether n8Tracks has it.
+  - A clip that is still generating, has failed, is in the Trash, or has no audio is shown disabled with the reason.
+  - A hidden clip can be selected.
+- **Already in n8Tracks:** `POST /api/v1/suno/clips/lookup` (`suno.sync`, 1 to 500 Suno IDs; the extension sends batches) answers `{ items: [{ sunoId, generation { id, shortcode } | null, artist, deleted, downloadedFormats }] }`.
+  - `generation` is the live Generation holding the clip, archived or not.
+  - `artist` is the Song's primary Artist.
+  - `deleted` is true for a provider tombstone. An ignored clip has no Generation and is not deleted.
+  - `downloadedFormats` is empty until #222.
+  - The lookup changes nothing. When the extension is not connected, or lacks `suno.sync`, the column says it is unavailable and why. When the lookup fails while connected, the column shows unknown with a Retry.
+- **Unlocks:** the summary counts the selected clips not yet unlocked when WAV, MP3, or M4A is chosen. One unlock covers all three formats, and the stream needs none. The allowance comes from the page's own `GET /api/billing/info/`, which the page requests when a clip's Download dialog opens. The observer forwards only its `download_usage` counts. Start is refused, with the reason, when the run needs more unlocks than remain or when no reading has been seen yet.
+- **Plan handed to #216:** `[{ sunoId, title, displayName, artist, format, unlocked }]`, with formats `wav`, `mp3`, `m4a`, and `m4a-stream`. The stream is offered only for a clip whose data has `media_urls[0]`. The formats chosen are remembered in `chrome.storage.local`. Until #216, Start is shown disabled.
 
 ## Extension structure
 

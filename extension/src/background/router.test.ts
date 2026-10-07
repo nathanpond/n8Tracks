@@ -4,6 +4,7 @@ import { Diagnostics, DIAGNOSTICS_KEY } from '../diagnostics/report.ts';
 import { fakeBrowser } from '../testing/fakeBrowser.ts';
 import { Connection } from './connection.ts';
 import { route } from './router.ts';
+import type { DownloadCoordinator } from './download.ts';
 import type { SyncCoordinator } from './sync.ts';
 
 const ID = 'abcdefghijklmnopabcdefghijklmnop';
@@ -102,6 +103,34 @@ describe('the service worker router', () => {
         await route(connection(), { type: 'sync-images' }, sender, ID, undefined, sync),
       ).toHaveProperty('refused');
     }
+    expect(handled).toHaveLength(2);
+  });
+
+  it('passes a Download message from the Suno content script to the Download view, with its tab (#215)', async () => {
+    const handled: [unknown, number][] = [];
+    const download = {
+      handle: (message: unknown, tabId: number) => {
+        handled.push([message, tabId]);
+        return Promise.resolve({ load: null });
+      },
+    } as unknown as DownloadCoordinator;
+    const suno = { id: ID, url: 'https://suno.com/me', tab: { id: 9 } };
+    const send = (message: unknown, sender: typeof suno | typeof PAGE | typeof CONTENT_SCRIPT) =>
+      route(connection(), message, sender, ID, undefined, undefined, undefined, download);
+
+    expect(await send({ type: 'download-resume' }, suno)).toEqual({ load: null });
+    expect(await send({ type: 'download-lookup', sunoIds: ['a'] }, suno)).toEqual({ load: null });
+    expect(handled).toEqual([
+      [{ type: 'download-resume' }, 9],
+      [{ type: 'download-lookup', sunoIds: ['a'] }, 9],
+    ]);
+
+    // Not from the relay on n8Tracks or an extension page; a malformed one is not a request.
+    for (const sender of [CONTENT_SCRIPT, PAGE]) {
+      expect(await send({ type: 'download-resume' }, sender)).toHaveProperty('refused');
+    }
+    expect(await send({ type: 'download-lookup', sunoIds: [] }, suno)).toHaveProperty('refused');
+    expect(await send({ type: 'download-begin', selected: [3] }, suno)).toHaveProperty('refused');
     expect(handled).toHaveLength(2);
   });
 
