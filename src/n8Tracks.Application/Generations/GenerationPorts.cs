@@ -99,6 +99,16 @@ public interface IGenerationStore
     Task RefreshClipFieldsAsync(Guid generationId, ClipFields incoming, IReadOnlyCollection<string> fields, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Fills in the Generation with <paramref name="generationId"/> once Suno finished its clip (#154): every
+    /// clip column but the Suno ID, from <paramref name="finished"/>, touching no other column: not its
+    /// rating, state, archiver, revision, comments, or artwork. Only while the Generation has never been
+    /// complete: its stored status is not final, no change of it was declined or conflict kept, and its raw
+    /// clip did not come from an export (an import review decided about it). False, with nothing written,
+    /// otherwise. Only inside a transaction.
+    /// </summary>
+    Task<bool> TryCompleteClipAsync(Guid generationId, ClipFields finished, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Sets the remembered declined change of the Generation with <paramref name="generationId"/> (#141: the
     /// hash of Suno's values the user left declined, or null when nothing is), touching no other column:
     /// not its clip columns, rating, state, or revision. Only inside a transaction.

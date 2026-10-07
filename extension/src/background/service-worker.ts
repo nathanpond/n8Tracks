@@ -2,6 +2,7 @@ import { ADAPTER_VERSION } from '../adapter/version.ts';
 import { ADAPTER_WORKFLOWS } from '../adapter/workflows/index.ts';
 import { browserVersion, Diagnostics, type UserAgentData } from '../diagnostics/report.ts';
 import { displayVersion } from '../version-label.ts';
+import { CompletionWatch } from './completion.ts';
 import { Connection } from './connection.ts';
 import { GenerateCoordinator } from './generate.ts';
 import { route } from './router.ts';
@@ -32,6 +33,13 @@ const sync = new SyncCoordinator({
   },
 });
 
+// The completion watch (#154): a recorded Create's Generations, filled in when Suno finishes them;
+// in session storage, with an alarm for the end of their ten minutes.
+const completion = new CompletionWatch({
+  connection,
+  browser: { session: chrome.storage.session, alarms: chrome.alarms },
+});
+
 // Generate on Suno (#144, #145): the request this extension claimed and its Suno tab, in session
 // storage.
 const generate = new GenerateCoordinator({
@@ -41,6 +49,7 @@ const generate = new GenerateCoordinator({
     openOptions: () => chrome.runtime.openOptionsPage(),
     tabs: chrome.tabs,
   },
+  completion,
 });
 
 // The diagnostic report's step log: in session storage only, cleared on Disconnect, never sent.
@@ -66,8 +75,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // A sync's Suno tab that is closed, or taken off suno.com, ends the sync and discards its export.
 chrome.tabs.onRemoved.addListener((tabId) => {
   void sync.tabRemoved(tabId).catch(() => undefined);
-  // A generation's Suno tab that is closed stops its request, saying so.
+  // A generation's Suno tab that is closed stops its request, saying so, and ends its watch.
   void generate.tabRemoved(tabId).catch(() => undefined);
+  void completion.tabRemoved(tabId).catch(() => undefined);
+});
+chrome.alarms.onAlarm.addListener((alarm) => {
+  void completion.alarm(alarm.name).catch(() => undefined);
 });
 chrome.tabs.onUpdated.addListener((tabId, change) => {
   void sync.tabUpdated(tabId, change.url).catch(() => undefined);

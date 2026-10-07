@@ -9,6 +9,7 @@ using n8Tracks.Application.Credentials;
 using n8Tracks.Application.References;
 using n8Tracks.Application.Songs;
 using n8Tracks.Application.Suno.Generate;
+using n8Tracks.Domain.Songs;
 using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Api.Endpoints;
@@ -17,7 +18,8 @@ namespace n8Tracks.Api.Endpoints;
 /// Generate on Suno requests (#144). The web app makes a request from a Version (<c>versions.write</c>)
 /// and hands its ID to the extension, which claims it with its own token and reports each step
 /// (<c>suno.generate</c>); the Version page follows it and may cancel it (<c>versions.write</c>). A
-/// request is not a Generation: nothing here attaches one, freezes a Version, or changes the catalog.
+/// request is not a Generation: only the extension's reports of the user's own Create (#149) attach
+/// Generations, and of their finished clips (#154) fill them in once.
 /// The snapshot (lyrics, styles, prompts) is answered only to <c>suno.generate</c> and never logged
 /// (invariant 6); a step's message is never logged either.
 /// </summary>
@@ -30,6 +32,7 @@ internal static class SunoGenerationRequestsEndpoints
     public const string ClaimPath = RequestPath + "/claim";
     public const string CancelPath = RequestPath + "/cancel";
     public const string ObservedCreatePath = RequestPath + "/observed-create";
+    public const string ClipsPath = RequestPath + "/clips";
 
     public const string SourcesUnavailableCode = "sources_unavailable";
     public const string RequestEndedCode = "request_ended";
@@ -38,6 +41,8 @@ internal static class SunoGenerationRequestsEndpoints
     public const string CredentialRequiredCode = "credential_required";
     public const string WorkspaceAlreadySetCode = "workspace_already_set";
     public const string CreateNotRecordedCode = "create_not_recorded";
+    public const string AlreadyCompleteCode = "already_complete";
+    public const string NotProvisionalCode = "not_provisional";
 
     public static IEndpointRouteBuilder MapSunoGenerationRequests(this IEndpointRouteBuilder endpoints)
     {
@@ -98,6 +103,18 @@ internal static class SunoGenerationRequestsEndpoints
             .WithSummary("The claiming extension reports the user's own Create click in Suno (#149; the extension never clicks Create): { response: Suno's Create response { id, clips }, request: the values the page sent at the import field map's createRequest paths, or null when they could not be read }. Each clip's inputs are mapped as import maps them (the response's values, else the request's, else the Version's, listed as assumed) and compared with the requested Version: the same, and the clips are attached to it as Generations, which freezes it; different, and a new child Version holding what was submitted (note \"Created from what was submitted to Suno\") becomes the Song's current Version and takes them, the requested Version unchanged. One Generation Event links the clips. A clip whose Suno ID a live Generation holds, or whose Generation was deleted from n8Tracks, is skipped and reported. Sending the same Create again answers what it came to. The request stays waiting; its observed list says what each Create came to. 403 credential_required for a session, request_claimed for another credential; 409 request_not_claimed, request_ended, create_not_recorded (nothing stored; a sync brings the clips in); 422 validation_failed.")
             .RequireScope(CredentialScopes.SunoGenerate)
             .Produces<GenerationRequestResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        endpoints.MapPost(ClipsPath, CompleteClipAsync)
+            .WithName("CompleteObservedClip")
+            .WithSummary("The claiming extension reports a clip of an observed Create once Suno has finished it (#154): { clip: the clip object as Suno's feed returned it, status complete or error }. The Generation that Create made is filled in once: every clip column (status, title, duration, model, tempo, key, addresses) and its raw clip, never its rating, comments, state, revision, or artwork (the cover goes through PUT /generations/{reference}/artwork). A clip that ended in error is recorded as failed. The request may have ended. Only a Generation this request's observed Creates made, and only while it has never been complete: anything later is an ordinary change for the import review. 200 { outcome: completed | failed, generation: { id, shortcode, sunoId, providerStatus } }. 403 credential_required for a session, request_claimed for another credential; 404 when the request or the clip's Generation is not there; 409 request_not_claimed, already_complete (nothing changed), not_provisional (a Generation made by import, or one an import review decided about; nothing changed); 422 validation_failed (not a finished clip).")
+            .RequireScope(CredentialScopes.SunoGenerate)
+            .Produces<CompletedClipResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
@@ -329,6 +346,58 @@ internal static class SunoGenerationRequestsEndpoints
         return Refusal(context, outcome);
     }
 
+    /// <summary>200 with the completed Generation; 400, 403, 404, 409, or 422 otherwise.</summary>
+    private static async Task<Results<Ok<CompletedClipResponse>, ProblemHttpResult>> CompleteClipAsync(
+        Guid id,
+        CompletedClipRequest? body,
+        ProvisionalCompletionService completion,
+        HttpContext context,
+        ILoggerFactory loggers,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        if (CredentialOf(context.User) is not { } credentialId)
+        {
+            return ApiProblem.For(context, StatusCodes.Status403Forbidden, CredentialRequiredCode, "Only the extension reports a finished clip, with its own credential.");
+        }
+
+        if (body is null)
+        {
+            return ApiProblem.For(context, StatusCodes.Status400BadRequest, ApiProblem.InvalidRequestCode, "Send { clip }.");
+        }
+
+        var raw = body.Clip.ValueKind == JsonValueKind.Object ? body.Clip.GetRawText() : null;
+        var outcome = await completion.CompleteAsync(id, credentialId, raw, cancellationToken);
+        switch (outcome)
+        {
+            case ProvisionalCompletionOutcome.Completed completed:
+                // Which Generation and how it ended, never the clip's content (invariant 6).
+                Log(loggers).LogInformation(
+                    "Generation request {GenerationRequestId} completed Generation {GenerationId}: {CompletionOutcome}",
+                    id,
+                    completed.Generation.Generation.Id,
+                    completed.Failed ? CompletedClipResponse.Failed : CompletedClipResponse.Completed);
+                return TypedResults.Ok(CompletedClipResponse.From(completed));
+            case ProvisionalCompletionOutcome.RequestNotFound:
+                return NoSuchRequest(context);
+            case ProvisionalCompletionOutcome.ClaimedByAnother:
+                return ApiProblem.For(context, StatusCodes.Status403Forbidden, RequestClaimedCode, "Another credential has claimed this generation request.");
+            case ProvisionalCompletionOutcome.NotClaimed:
+                return ApiProblem.For(context, StatusCodes.Status409Conflict, RequestNotClaimedCode, "Claim this generation request before reporting on it.");
+            case ProvisionalCompletionOutcome.Invalid invalid:
+                return ApiProblem.ValidationFailed(context, invalid.Errors);
+            case ProvisionalCompletionOutcome.GenerationNotFound:
+                return ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "No Generation holds this clip.");
+            case ProvisionalCompletionOutcome.AlreadyComplete:
+                return ApiProblem.For(context, StatusCodes.Status409Conflict, AlreadyCompleteCode, "This Generation is complete already; a later change of its clip arrives through a sync, for the import review.");
+            case ProvisionalCompletionOutcome.NotProvisional:
+                return ApiProblem.For(context, StatusCodes.Status409Conflict, NotProvisionalCode, "This Generation was not made by this request's observed Create, or an import review has decided about it; a sync brings Suno's changes, for the import review.");
+            default:
+                throw new InvalidOperationException("Unknown completion outcome.");
+        }
+    }
+
     /// <summary>200 with the cancelled request; 404 or 409 otherwise.</summary>
     private static async Task<Results<Ok<GenerationRequestResponse>, ProblemHttpResult>> CancelAsync(
         Guid id,
@@ -443,6 +512,32 @@ internal static class SunoGenerationRequestsEndpoints
 
     private static ILogger Log(ILoggerFactory loggers) => loggers.CreateLogger(typeof(SunoGenerationRequestsEndpoints));
 }
+
+/// <summary>A finished clip as sent, read as raw JSON (#154).</summary>
+internal sealed record CompletedClipRequest(JsonElement Clip);
+
+/// <summary>A Generation filled in from its finished clip (#154): how it ended, and which Generation.</summary>
+internal sealed record CompletedClipResponse(string Outcome, CompletedGenerationResponse Generation)
+{
+    public const string Completed = "completed";
+    public const string Failed = "failed";
+
+    public static CompletedClipResponse From(ProvisionalCompletionOutcome.Completed completed)
+    {
+        ArgumentNullException.ThrowIfNull(completed);
+
+        var summary = completed.Generation;
+        return new(
+            completed.Failed ? Failed : Completed,
+            new CompletedGenerationResponse(
+                summary.Generation.Id,
+                Shortcodes.ForGeneration(summary.SongShortcodeNumber, summary.VersionNumber, summary.Generation.Ordinal),
+                summary.Generation.SunoId!,
+                summary.Generation.ProviderStatus));
+    }
+}
+
+internal sealed record CompletedGenerationResponse(Guid Id, string Shortcode, string SunoId, string? ProviderStatus);
 
 /// <summary>An observed Create as sent: Suno's response and the request values, read as raw JSON.</summary>
 internal sealed record ObservedCreateRequest(JsonElement Response, JsonElement Request);

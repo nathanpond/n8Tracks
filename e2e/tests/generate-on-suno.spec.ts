@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { expect, test, type Page } from '@playwright/test';
 import { expectAccessibleInLightAndDark } from '../support/a11y.ts';
+import { solidPng } from '../support/images.ts';
 import { ANTIFORGERY_HEADERS } from '../support/session.ts';
 
 /** What the stand-in relay answers, changed by the test between steps. */
@@ -121,6 +122,47 @@ function createResponse(weirdness = 0.7): { id: string; clips: Record<string, un
 async function appBase(page: Page): Promise<URL> {
   await page.goto('./songs');
   return new URL('.', page.url());
+}
+
+/** Suno's finished clip (TS-001, `feed-v3.completed-clip`) as `id`, with `status`. */
+function finishedClip(id: string, status = 'complete'): Record<string, unknown> {
+  const feed = JSON.parse(
+    readFileSync(
+      new URL(
+        '../../extension/fixtures/suno/feed-v3.completed-clip.response.json',
+        import.meta.url,
+      ),
+      'utf8',
+    ),
+  ) as { clips: Record<string, unknown>[] };
+  return { ...feed.clips[0], id, status };
+}
+
+/** A Generation an observed Create made, as n8Tracks answers it. */
+interface MadeGeneration {
+  id: string;
+  shortcode: string;
+  sunoId: string;
+}
+
+/** The two Generations an observed Create made. */
+function twoGenerations(made: MadeGeneration[] | undefined): [MadeGeneration, MadeGeneration] {
+  const [first, second] = made ?? [];
+  if (first === undefined || second === undefined) {
+    throw new Error('The observed Create made no two Generations.');
+  }
+  return [first, second];
+}
+
+/** Opens a Version's Generations in the Versions table unless they are open already. */
+async function openGenerationsOf(page: Page, number: string): Promise<void> {
+  const chevron = page
+    .getByRole('region', { name: 'Versions and Generations' })
+    .getByRole('button', { name: `Generations of Version ${number}` });
+  await expect(chevron).toBeVisible();
+  if ((await chevron.getAttribute('aria-expanded')) !== 'true') {
+    await chevron.click();
+  }
 }
 
 /**
@@ -471,6 +513,119 @@ test.describe('Generate on Suno', () => {
         )
       ).json()) as { number: string; isFrozen: boolean; inputs: { weirdness: number } };
       expect(child).toMatchObject({ number: '1.1', isFrozen: true, inputs: { weirdness: 40 } });
+    } finally {
+      await extension.dispose();
+    }
+  });
+
+  test('fills in the Generations when Suno finishes them, and shows a clip that ended in error as Failed', async ({
+    page,
+    playwright,
+  }, testInfo) => {
+    const stamp = `${String(Date.now()).slice(-7)}${testInfo.project.name}`;
+    const base = await appBase(page);
+    const credential = await page.request.post(new URL('api/v1/credentials', base).toString(), {
+      headers: ANTIFORGERY_HEADERS,
+      data: { name: `Completion stub ${stamp}`, kind: 'extension', scopes: ['suno.generate'] },
+    });
+    expect(credential.status()).toBe(201);
+    const { token } = (await credential.json()) as { token: string };
+    const extension = await playwright.request.newContext({ storageState: undefined });
+    const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+
+    try {
+      const created = await page.request.post(new URL('api/v1/songs', base).toString(), {
+        headers: ANTIFORGERY_HEADERS,
+        data: { title: `Completed Create ${stamp}` },
+      });
+      expect(created.status()).toBe(201);
+      const song = (await created.json()) as { shortcode: string; currentVersion: { id: string } };
+      const versionPath = new URL(`api/v1/versions/${song.currentVersion.id}`, base).toString();
+      const made = await page.request.post(`${versionPath}/generation-requests`, {
+        headers: ANTIFORGERY_HEADERS,
+        data: {},
+      });
+      expect(made.status()).toBe(201);
+      const { id } = (await made.json()) as { id: string };
+      const request = new URL(`api/v1/suno/generation-requests/${id}`, base).toString();
+      expect((await extension.post(`${request}/claim`, { headers })).status()).toBe(200);
+      expect(
+        (
+          await extension.patch(request, {
+            headers,
+            data: { state: 'waiting', step: 'review and create' },
+          })
+        ).status(),
+      ).toBe(200);
+
+      // 1. (The owner's step: Create clicked in Suno.) The observed Create's two Generations are Generating.
+      const response = createResponse();
+      const recorded = await extension.post(`${request}/observed-create`, {
+        headers,
+        data: { response, request: forwardedRequest() },
+      });
+      expect(recorded.status(), await recorded.text()).toBe(200);
+      const { observed } = (await recorded.json()) as {
+        observed: {
+          version: { number: string };
+          generations: { id: string; shortcode: string; sunoId: string }[];
+        }[];
+      };
+      const [made1, made2] = twoGenerations(observed[0]?.generations);
+      await page.goto(`./songs/${song.shortcode}`);
+      await openGenerationsOf(page, observed[0]?.version.number ?? '1');
+      const first = page.locator(`tr[data-generation="${made1.shortcode}"]`);
+      const second = page.locator(`tr[data-generation="${made2.shortcode}"]`);
+      await expect(first.getByTestId('generation-duration')).toHaveText('Generating');
+
+      // 2. Suno finishes them: the extension reports the finished clips, and the first one's cover.
+      const completed = await extension.post(`${request}/clips`, {
+        headers,
+        data: { clip: finishedClip(made1.sunoId) },
+      });
+      expect(completed.status(), await completed.text()).toBe(200);
+      expect(await completed.json()).toMatchObject({
+        outcome: 'completed',
+        generation: { id: made1.id, shortcode: made1.shortcode, providerStatus: 'complete' },
+      });
+      const cover = await extension.put(
+        new URL(`api/v1/generations/${made1.id}/artwork`, base).toString(),
+        {
+          headers,
+          multipart: {
+            file: {
+              name: 'cover.png',
+              mimeType: 'image/png',
+              buffer: solidPng(64, 64, `${stamp} cover`, [200, 120, 40]),
+            },
+          },
+        },
+      );
+      expect(cover.status(), await cover.text()).toBe(200);
+      const failed = await extension.post(`${request}/clips`, {
+        headers,
+        data: { clip: finishedClip(made2.sunoId, 'error') },
+      });
+      expect(failed.status(), await failed.text()).toBe(200);
+      expect(await failed.json()).toMatchObject({ outcome: 'failed' });
+
+      // Without reloading, the page reads the Generations again while one is Generating.
+      await expect(first.getByTestId('generation-duration')).toHaveText('2:24', {
+        timeout: 15_000,
+      });
+      await expect(
+        first.getByRole('img', { name: `Artwork for ${made1.shortcode}` }),
+      ).toBeVisible();
+      await expect(second.getByTestId('generation-failed')).toHaveText('Failed');
+      await expectAccessibleInLightAndDark(page);
+
+      // A second report changes nothing: anything later is the import review's.
+      const again = await extension.post(`${request}/clips`, {
+        headers,
+        data: { clip: { ...finishedClip(made1.sunoId), title: 'Changed later' } },
+      });
+      expect(again.status()).toBe(409);
+      expect(await again.json()).toMatchObject({ code: 'already_complete' });
     } finally {
       await extension.dispose();
     }

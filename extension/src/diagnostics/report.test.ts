@@ -324,6 +324,7 @@ describe('the diagnostic report', () => {
       { id: 'answer-overwrite', state: 'not_checked', step: null },
       { id: 'verify-source-advanced', state: 'not_checked', step: null },
       { id: 'verify-source-simple', state: 'not_checked', step: null },
+      { id: 'refresh-library', state: 'not_checked', step: null },
       { id: 'fill-test', state: 'not_working', step: 'workspace' },
       { id: 'missing-test', state: 'not_checked', step: null },
       { id: 'missing-on-suno-test', state: 'not_checked', step: null },

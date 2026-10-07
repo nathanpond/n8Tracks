@@ -5,12 +5,13 @@ export type Manifest = Record<string, unknown>;
 export const extensionName = 'n8Tracks';
 /**
  * Exactly what the extension may ask for (the Suno integration design). `scripting` registers the
- * relay on the paired n8Tracks origin; `tabs` lets the extension find the Suno tab. The optional
+ * relay on the paired n8Tracks origin; `tabs` lets the extension find the Suno tab; `alarms` ends the
+ * completion watch of a Create's clips after ten minutes (#154). The optional
  * hosts are only the ceiling of what may be requested: at pairing the extension requests exactly
  * `https://suno.com/*` and the one n8Tracks origin entered. Widening this list is a deliberate
  * change, and anything not on it fails validation (`downloads` waits for its own story).
  */
-export const allowedPermissions: readonly string[] = ['storage', 'scripting', 'tabs'];
+export const allowedPermissions: readonly string[] = ['storage', 'scripting', 'tabs', 'alarms'];
 export const allowedOptionalHosts: readonly string[] = [
   'https://suno.com/*',
   'https://*/*',

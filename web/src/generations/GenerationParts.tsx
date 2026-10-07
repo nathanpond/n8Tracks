@@ -1,5 +1,5 @@
 import { ActionIcon, Anchor, Badge, Group, Menu, Text, VisuallyHidden } from '@mantine/core';
-import { sunoSongUrl, type Generation } from '../api/generations';
+import { isFailed, sunoSongUrl, type Generation } from '../api/generations';
 import type { SelectedGeneration } from '../api/songs';
 import { selectionActionLabel, stateActionLabel } from './evaluationRules';
 import { formatDateTime } from '../api/timeZone';
@@ -10,7 +10,8 @@ export const REMOTE_MISSING_DETAIL =
   'Suno no longer lists this clip: it was not found the last time n8Tracks looked.';
 
 /**
- * A Generation's state as badges: Active or Archived, In Suno Trash when its clip is in Suno's Trash
+ * A Generation's state as badges: Active or Archived, Failed when Suno's clip ended in error (#154),
+ * In Suno Trash when its clip is in Suno's Trash
  * (#142: a sync archives it), Remote Missing when Suno no longer lists the clip (with a tooltip saying
  * so), and Selected on the Song's Selected Generation.
  */
@@ -20,6 +21,11 @@ export function GenerationStateBadges({ generation }: { generation: Generation }
       <Badge size="sm" variant="default" radius="sm" tt="none">
         {generation.state === 'archived' ? 'Archived' : 'Active'}
       </Badge>
+      {isFailed(generation) && (
+        <Badge size="sm" variant="default" radius="sm" tt="none" data-testid="generation-failed">
+          Failed
+        </Badge>
+      )}
       {generation.remoteState === 'trashed' && (
         <Badge size="sm" variant="default" radius="sm" tt="none" data-testid="in-suno-trash">
           In Suno Trash

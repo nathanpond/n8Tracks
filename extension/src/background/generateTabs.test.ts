@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { PageMessage } from '../messages.ts';
 import { fakeBrowser, jsonResponse } from '../testing/fakeBrowser.ts';
 import type { Fetch } from './apiClient.ts';
+import { CompletionWatch } from './completion.ts';
 import { Connection } from './connection.ts';
 import {
   GENERATION_TAB_KEY,
@@ -104,6 +105,9 @@ async function setup(tabs: GenerateTab[] = []) {
     if (path === `${REQUEST_PATH}/observed-create` && method === 'POST') {
       return Promise.resolve(observedCreate());
     }
+    if (path === `${REQUEST_PATH}/clips` && method === 'POST') {
+      return Promise.resolve(jsonResponse(200, { outcome: 'completed' }));
+    }
     return Promise.resolve(jsonResponse(404, {}));
   });
   const connection = new Connection({
@@ -127,6 +131,18 @@ async function setup(tabs: GenerateTab[] = []) {
     update: vi.fn(() => Promise.resolve({})),
     create: vi.fn(() => Promise.resolve({ id: 42 })),
   };
+  const alarms = new Map<string, number>();
+  const completion = new CompletionWatch({
+    connection,
+    browser: {
+      session: storage.browser.storage,
+      alarms: {
+        create: (name: string, info: { when: number }) =>
+          Promise.resolve(alarms.set(name, info.when)),
+        clear: (name: string) => Promise.resolve(alarms.delete(name)),
+      },
+    },
+  });
   const generate = new GenerateCoordinator({
     connection,
     browser: {
@@ -134,6 +150,7 @@ async function setup(tabs: GenerateTab[] = []) {
       openOptions: () => Promise.resolve(),
       tabs: browserTabs,
     },
+    completion,
   });
   const handOff = async () =>
     generate.handle(
@@ -439,6 +456,50 @@ describe('Generate on Suno: the Suno tab', () => {
       await generate.handleTab({ type: 'generate-observed', response, submitted: null }, 7),
     ).toMatchObject({ ok: false, ended: true });
     expect(calls.filter((call) => call.path.endsWith('/observed-create'))).toHaveLength(1);
+  });
+
+  it('watches the Generations of a recorded Create for completion, past the request, in that tab only (#154)', async () => {
+    const { handOff, generate, calls, answerObserved } = await setup();
+    await handOff();
+    answerObserved(() =>
+      jsonResponse(200, {
+        id: REQUEST,
+        state: 'waiting',
+        message: '2 Generations recorded on n8-1-v1.',
+        observed: [
+          {
+            outcome: 'attached',
+            generations: [
+              { id: 'g-1', shortcode: 'n8-1-v1-g1', sunoId: 'clip-1' },
+              { id: 'g-2', shortcode: 'n8-1-v1-g2', sunoId: 'clip-2' },
+            ],
+          },
+        ],
+      }),
+    );
+    const response = { id: 'suno-request', clips: [{ id: 'clip-1' }, { id: 'clip-2' }] };
+    await generate.handleTab({ type: 'generate-observed', response, submitted: null }, 42);
+
+    expect(await generate.handleTab({ type: 'generate-resume' }, 42)).toMatchObject({
+      watching: ['clip-1', 'clip-2'],
+    });
+    expect(await generate.handleTab({ type: 'generate-resume' }, 7)).toEqual({ job: null });
+
+    const finished = { id: 'clip-1', status: 'complete' };
+    expect(
+      await generate.handleTab({ type: 'generate-completion', clips: [finished] }, 42),
+    ).toEqual({ ok: true, watching: ['clip-2'] });
+    expect(calls.filter((call) => call.path.endsWith('/clips'))).toEqual([
+      { method: 'POST', path: `${REQUEST_PATH}/clips`, body: { clip: finished } },
+    ]);
+    // Another tab's report sends nothing.
+    expect(
+      await generate.handleTab(
+        { type: 'generate-completion', clips: [{ id: 'clip-2', status: 'complete' }] },
+        7,
+      ),
+    ).toEqual({ ok: true, watching: [] });
+    expect(calls.filter((call) => call.path.endsWith('/clips'))).toHaveLength(1);
   });
 
   it('sends a Create again while n8Tracks cannot answer, and says when it was not recorded', async () => {

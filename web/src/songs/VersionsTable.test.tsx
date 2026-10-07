@@ -1,7 +1,7 @@
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import { GENERATING_REFRESH_MS } from '../api/generations';
+import { COMPLETION_WATCH_MS, GENERATING_REFRESH_MS, STILL_GENERATING } from '../api/generations';
 import { advanceTimers, fakeTimeouts, jsonResponse, renderApp } from '../test/helpers';
 import { testComment, testGeneration, testVersion, versionServer } from '../test/versionServer';
 
@@ -399,8 +399,16 @@ describe('the Versions table', () => {
     const user = userEvent.setup({ advanceTimers });
     const { server } = versionServer([ONE]);
     server.generations = [
-      testGeneration('1', 1, { providerStatus: 'streaming', durationSeconds: null }),
-      testGeneration('1', 2, { providerStatus: 'submitted', durationSeconds: null }),
+      testGeneration('1', 1, {
+        providerStatus: 'streaming',
+        durationSeconds: null,
+        createdAt: new Date().toISOString(),
+      }),
+      testGeneration('1', 2, {
+        providerStatus: 'submitted',
+        durationSeconds: null,
+        createdAt: new Date().toISOString(),
+      }),
     ];
 
     await openSong();
@@ -435,6 +443,29 @@ describe('the Versions table', () => {
       advanceTimers(GENERATING_REFRESH_MS * 3);
     });
     expect(server.generationReads).toBe(2);
+  });
+
+  it('shows a clip that ended in error as Failed, and one still generating ten minutes after it was recorded as needing a sync (#154)', async () => {
+    const { server } = versionServer([ONE]);
+    server.generations = [
+      testGeneration('1', 1, { providerStatus: 'error', durationSeconds: null }),
+      testGeneration('1', 2, {
+        providerStatus: 'submitted',
+        durationSeconds: null,
+        createdAt: new Date(Date.now() - COMPLETION_WATCH_MS).toISOString(),
+      }),
+    ];
+
+    await openSong();
+    await userEvent.click(expander('1'));
+
+    const failed = generationRow('n8-7-v1-g1');
+    expect(within(failed).getByTestId('generation-failed')).toHaveTextContent('Failed');
+    expect(within(failed).getByTestId('generation-duration')).toHaveTextContent('Unknown');
+
+    const late = generationRow('n8-7-v1-g2');
+    expect(within(late).getByTestId('generation-duration')).toHaveTextContent(STILL_GENERATING);
+    expect(within(late).queryByTestId('generation-failed')).toBeNull();
   });
 
   it('keeps the list it shows when a read again fails, and offers to try a failed first read again', async () => {

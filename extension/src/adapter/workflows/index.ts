@@ -16,6 +16,7 @@ import {
 } from './fillSpeech.ts';
 import { loadMore } from './loadMore.ts';
 import { recogniseSuno } from './recognise.ts';
+import { refreshLibrary } from './watchCompletion.ts';
 import {
   answerOverwrite,
   chooseSourceAction,
@@ -52,6 +53,7 @@ export const ADAPTER_WORKFLOWS: readonly Workflow[] = [
   answerOverwrite,
   verifySourceAdvanced,
   verifySourceSimple,
+  refreshLibrary,
 ];
 
 /** The workflows that fill one kind of Version in one mode (#147). */

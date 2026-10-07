@@ -15,9 +15,9 @@ import {
 const manifest = JSON.parse(readFileSync(join(distDirectory, 'manifest.json'), 'utf8')) as Manifest;
 
 describe('the built manifest', () => {
-  it('is Manifest V3 and asks only for storage, scripting, and tabs', () => {
+  it('is Manifest V3 and asks only for storage, scripting, tabs, and alarms', () => {
     expect(manifest.manifest_version).toBe(3);
-    expect(manifest.permissions).toEqual(['storage', 'scripting', 'tabs']);
+    expect(manifest.permissions).toEqual(['storage', 'scripting', 'tabs', 'alarms']);
     expect(manifest).not.toHaveProperty('optional_permissions');
   });
 
@@ -33,7 +33,7 @@ describe('the built manifest', () => {
     expect(manifest).not.toHaveProperty('externally_connectable');
   });
 
-  it('fails validation with host_permissions or any permission beyond storage, scripting, and tabs', () => {
+  it('fails validation with host_permissions or any permission beyond storage, scripting, tabs, and alarms', () => {
     expect(validateManifest({ ...manifest, host_permissions: ['https://suno.com/*'] })).toEqual([
       'host_permissions must be absent.',
     ]);

@@ -305,7 +305,12 @@ export type Request =
       submitted: Record<string, unknown> | null;
     }
   /** Where loading the source has got to, kept for the next page load; null once loaded (#148). */
-  | { type: 'generate-source'; source: SourcePhase | null };
+  | { type: 'generate-source'; source: SourcePhase | null }
+  /**
+   * The completion watch (#154): the clips of the user's Creates that a feed answer the page got
+   * shows finished (none, to ask only what is still watched), as Suno's feed returned them.
+   */
+  | { type: 'generate-completion'; clips: Record<string, unknown>[] };
 
 export interface ResponseFor {
   state: ConnectionState;
@@ -325,13 +330,15 @@ export interface ResponseFor {
   'sync-images': { images: ImageProgress | null };
   'diagnostics-record': { recorded: true };
   'diagnostic-report': DiagnosticReport;
-  'generate-resume': { job: GenerateJob | null };
+  /** `watching`: the Suno IDs of this tab's clips still watched for completion (#154). */
+  'generate-resume': { job: GenerateJob | null; watching?: string[] };
   'generate-progress': GenerateReply;
   /** n8Tracks' Song count of each workspace, by Suno ID, after the report. */
   'generate-workspaces': GenerateReply<{ songCounts: Record<string, number> }>;
   'generate-resolve': GenerateReply;
   'generate-observed': GenerateReply<{ recorded: ObservedSummary }>;
   'generate-source': GenerateReply;
+  'generate-completion': GenerateReply<{ watching: string[] }>;
 }
 
 export type Response<T extends Request> = ResponseFor[T['type']];
@@ -372,6 +379,7 @@ export const GENERATE_TYPES = [
   'generate-resolve',
   'generate-observed',
   'generate-source',
+  'generate-completion',
 ] as const satisfies readonly Request['type'][];
 
 export type GenerateRequest = Extract<Request, { type: (typeof GENERATE_TYPES)[number] }>;
@@ -555,6 +563,8 @@ export function isRequest(value: unknown): value is Request {
       return isRecord(value.response) && (value.submitted === null || isRecord(value.submitted));
     case 'generate-source':
       return value.source === null || isSourcePhase(value.source);
+    case 'generate-completion':
+      return Array.isArray(value.clips) && value.clips.every(isRecord);
     default:
       return false;
   }

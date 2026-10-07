@@ -18,6 +18,7 @@ import {
   type ResponseFor,
   type SourcePhase,
 } from '../messages.ts';
+import type { CompletionWatch, ObservedGeneration } from './completion.ts';
 import { DisconnectedError, type Connection } from './connection.ts';
 
 /**
@@ -108,6 +109,8 @@ export interface GenerateCoordinatorOptions {
   connection: Connection;
   browser: GenerateBrowser;
   now?: () => number;
+  /** The completion watch (#154): a recorded Create's Generations are watched until Suno finishes them. */
+  completion?: CompletionWatch;
 }
 
 function failure(error: GenerateFailure, message: string): RelayReply {
@@ -151,11 +154,13 @@ export class GenerateCoordinator {
   private readonly connection: Connection;
   private readonly browser: GenerateBrowser;
   private readonly now: () => number;
+  private readonly completion: CompletionWatch | undefined;
 
   constructor(options: GenerateCoordinatorOptions) {
     this.connection = options.connection;
     this.browser = options.browser;
     this.now = options.now ?? (() => Date.now());
+    this.completion = options.completion;
   }
 
   /**
@@ -300,9 +305,17 @@ export class GenerateCoordinator {
     request: GenerateRequest,
     tabId: number,
   ): Promise<ResponseFor[GenerateRequest['type']]> {
+    if (request.type === 'generate-completion') {
+      // The watch outlives the request (the user may have left the Create page): it is the tab's own.
+      return this.completion === undefined
+        ? { ok: true, watching: [] }
+        : this.completion.report(tabId, request.clips);
+    }
     const tab = await this.tab();
     if (request.type === 'generate-resume') {
-      return { job: tab?.tabId === tabId ? await this.resume(tab) : null };
+      const job = tab?.tabId === tabId ? await this.resume(tab) : null;
+      const watching = (await this.completion?.watching(tabId)) ?? [];
+      return watching.length > 0 ? { job, watching } : { job };
     }
     if (tab?.tabId !== tabId) {
       return { ok: false, ended: true, message: 'This tab is not generating anything.' };
@@ -555,6 +568,7 @@ export class GenerateCoordinator {
         await this.browser.session.set({
           [GENERATION_TAB_KEY]: { ...tab, created: tab.created + 1 },
         });
+        await this.completion?.watch(tab.requestId, tab.tabId, generationsOf(last));
         return {
           ok: true,
           recorded: {
@@ -684,6 +698,19 @@ function workspaceOf(value: unknown): RequestWorkspace | null {
         state: value.state === 'unavailable' ? 'unavailable' : 'available',
       }
     : null;
+}
+
+/** The Generations an observed Create made, as n8Tracks answered it (#149). */
+function generationsOf(result: unknown): ObservedGeneration[] {
+  const generations =
+    isRecord(result) && Array.isArray(result.generations) ? result.generations : [];
+  return generations.flatMap((generation: unknown) =>
+    isRecord(generation) &&
+    typeof generation.id === 'string' &&
+    typeof generation.sunoId === 'string'
+      ? [{ id: generation.id, sunoId: generation.sunoId }]
+      : [],
+  );
 }
 
 async function bodyOf(response: Response): Promise<unknown> {

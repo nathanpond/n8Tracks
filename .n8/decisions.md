@@ -3713,3 +3713,41 @@ Story #148 (built in parallel; merged into the milestone branch):
 - **Decision:** On the merge of #148 with #147 and #149, the source skip is reconciled: the kind's `open` workflow (switch-form, switch-speech-form, or switch-sounds-form) always runs first, for every kind and whether or not the Version has sources. A source is loaded after it only when the kind loads sources. `FormWorkflows.sourcesDecideForm` is renamed `loadsSources` (Songs true; Speech and Sounds false), and `sunoGenerate.fill()` reads `workflows.loadsSources && plan.load !== null`. `fillRest` fills with the kind's `fill` workflow, with the loaded source's result. A new test in `sunoGenerate.test.ts` pins both halves: a Song with a Cover runs `switch-form` and then goes to the clip's page without filling, and a Speech Version with a source runs `switch-speech-form` and `fill-speech-advanced` in place. `ADAPTER_VERSION` is now **8**: #147 set 6, #149 set 7, and #148 set 6. Every test reads the constant.
   **Why:** TS-002 says a source applies only in the mode active when its action was chosen, so #148 needs the switch before the source. That reverses #146's skip, which #147 had narrowed to Songs. Speech and Sounds have no source step, so for them the switch always ran under #147 and still does. The rename says what the flag now decides. Each of the three stories changed the adapter, so the version takes the next number after the highest.
   **Issue:** #148, #147
+
+Story #154:
+
+- **Decision:** "Never been complete" is decided without a migration. A Generation is completed only when all of these hold:
+  - it is listed among the Generations of this request's `observed_json`;
+  - its stored status is not `complete` or `error`;
+  - `declined_hash` and `kept_inputs_hash` are null;
+  - its provider record has no `export_id`.
+  `IGenerationStore.TryCompleteClipAsync` writes every clip column but the Suno ID in one conditional `UPDATE`. The service then replaces the provider record with the finished clip (`export_id` null). It refuses with 409 `already_complete` when the stored status is final, and with 409 `not_provisional` for a Generation that is not this request's (one made by import) or that an import review decided about.
+  **Why:** n8Tracks writes a Generation's status only at attach and by this completion (`RefreshClipFieldsAsync` never writes it), so a non-final status means never complete in n8Tracks. A review that declined, kept, or applied Suno's data has decided about it, so completion must not override that (invariant 3, AC 1). A column such as `completed_utc` would need shape 7 and an upgrader for no extra guarantee.
+  **Issue:** #154
+- **Decision:** The route is `POST /api/v1/suno/generation-requests/{id}/clips` with one clip per call, `{ clip }`. It answers 200 `{ outcome: completed | failed, generation: { id, shortcode, sunoId, providerStatus } }` and is accepted after the request has ended (done or expired), from the claiming credential only. 404 means no request, or no live Generation holds the clip; 422 means the clip is not finished.
+  **Why:** Clips finish independently (TS-001), and the test plan wants a second report refused with 409, which a batch answer could not say per clip. The user leaving the Create page ends the request (#149) while its clips are still generating.
+  **Issue:** #154
+- **Decision:** The cover goes through the existing `PUT /api/v1/generations/{id}/artwork` (#121), with the extension's `suno.generate` token. The service worker sends it after a completed report and reads the image with `adapter/imageReader.ts`, the only image request site. `artwork_exists` is left as it is.
+  **Why:** This is the story's key link, and it is the only path that writes `artwork_asset_id` (the #121 note). Completion itself never writes artwork.
+  **Issue:** #154
+- **Decision:** The timers are split.
+  - **The ten-minute end** is a service-worker `chrome.alarms` alarm (`n8tracks-completion`) over the watched clips in session storage. A clip whose ten minutes are up is dropped on every read as well. This adds `alarms` to the manifest allow-list (validator, `dist.test.ts`, `manifest.test.ts`, `docs/suno-integration.md`).
+  - **The 15-second refresh prompts** are paced by the Suno tab's own clock. The tab also stops by itself after 11 minutes.
+
+  **Why:** The Discretion says the timers are service-worker alarms, but Chrome's alarms fire at most every 30 seconds, so a 15-second prompt cannot be one. The prompt is a page action anyway, so it lives with the page. The alarm still bounds the watch when the service worker stops.
+  **Issue:** #154
+- **Decision:** The refresh prompt is a new read-only workflow, `refresh-library`, in `adapter/workflows/watchCompletion.ts`. It opens the workspace list by its breadcrumb if closed and presses the Song's workspace row, which makes the library pane ask for the workspace's songs. No library filter is toggled, so the TS-003 rule about restoring a toggled filter has nothing to restore. It runs only on the Create page and only when the workspace name is known; elsewhere the watch only listens. It is in `RUN_RECIPES`, and `ADAPTER_VERSION` is now 9.
+  **Why:** No TS-003 snapshot shows the /create library pane's filters or page buttons, and inventing that structure is ruled out (D9/D10). The workspace row is in `page.workspace-selector.html`, and #145 relies on its press making the pane request the feed. Whether pressing the already-selected row requests the feed again is for the owner's Demo. If it does not, the clips arrive through the next sync, as the AC allows.
+  **Issue:** #154
+- **Decision:** The watch outlives the request and is bound to the tab. `generate-resume` answers `watching` (Suno IDs) even when the tab has no job. `generate-completion` is answered before the generation-tab check. Closing the tab ends that tab's watch.
+  **Why:** After a recorded Create, leaving the Create page marks the request done (#149), but the clips are still generating. The completion watch reads the feed of whatever Suno page the tab shows.
+  **Issue:** #154
+- **Decision:** On the web, a Generation with status `error` shows a `Failed` badge (testid `generation-failed`), and deletion is the existing #124 path. A Generation still generating 10 minutes after `createdAt` shows "Still generating in Suno: sync to update" in its duration cell (`COMPLETION_WATCH_MS`, `isStillGenerating`, `isFailed` in `api/generations.ts`). The request's result on the Version page is unchanged.
+  **Why:** AC 3 and AC 4 name the row. The time is the Generation's own, so no extension report is needed.
+  **Issue:** #154
+- **Decision:** `ProvisionalCompletionService.CompleteAsync` is in the invariant 1 guard with an API exerciser and a service exerciser. The invariant 3 guard (`ImportNeverOverwritesGuardTests`) gains `CompletionChangesOnlyAnObservedGenerationThatWasNeverComplete` and the bite test `TheGuardFailsWhenCompletionTouchesAGenerationThatWasEverComplete`. Completion does not touch the Song's updated time.
+  **Why:** These are the test plan's guard and bite. A Song timestamp or revision change while the user edits the Song would surprise them, and the Generations list re-reads by itself.
+  **Issue:** #154
+- **Decision:** Filed #314, out of scope: a sync never updates a linked Generation's Suno status, so a clip still `submitted` after the watch stays Generating after its diff is applied.
+  **Why:** #141's diff excludes `status` by design. Changing that is a reviewed-change rule for invariant 3, not this story's path.
+  **Issue:** #154

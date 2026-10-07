@@ -21,6 +21,8 @@ import {
   NO_FORM,
   NOT_EXPECTED,
   NOT_SIGNED_IN,
+  COMPLETION_LIMIT_MS,
+  COMPLETION_PROMPT_MS,
   SAME_NAME,
   SunoGenerate,
 } from './sunoGenerate.ts';
@@ -87,6 +89,12 @@ interface Options {
   selectsCreated?: boolean;
   /** The service worker's answer to an observed Create (#149). */
   observedReply?: (request: Extract<Request, { type: 'generate-observed' }>) => unknown;
+  /** The clips the service worker says the tab still watches for completion, on resume (#154). */
+  watching?: string[];
+  /** The service worker's answer to a completion report (#154). */
+  completionReply?: (request: Extract<Request, { type: 'generate-completion' }>) => unknown;
+  /** What the library pane asks Suno for when a workspace row is pressed. */
+  feedOnRow?: (workspaceId: string) => ObservedMessage;
 }
 
 afterEach(() => {
@@ -154,7 +162,7 @@ function start(options: Options = {}) {
       }
       const project = PROJECTS.find((item) => name.startsWith(`${item.name} `));
       if (project !== undefined) {
-        feed.take(feedFor(project.id));
+        feed.take((options.feedOnRow ?? feedFor)(project.id));
       }
     },
     { capture: true },
@@ -166,7 +174,12 @@ function start(options: Options = {}) {
     asked.push(structuredClone(request));
     switch (request.type) {
       case 'generate-resume':
-        return Promise.resolve({ job: options.job === undefined ? job() : options.job });
+        return Promise.resolve({
+          job: options.job === undefined ? job() : options.job,
+          ...(options.watching === undefined ? {} : { watching: options.watching }),
+        });
+      case 'generate-completion':
+        return Promise.resolve(options.completionReply?.(request));
       case 'generate-progress':
         return Promise.resolve(options.progress?.(request) ?? { ok: true });
       case 'generate-workspaces':
@@ -216,6 +229,10 @@ function start(options: Options = {}) {
     goTo: (next: string) => {
       address = next;
     },
+    clock,
+    /** The completion reports the tab sent (#154). */
+    completions: () =>
+      asked.flatMap((request) => (request.type === 'generate-completion' ? [request.clips] : [])),
   };
 }
 
@@ -848,6 +865,111 @@ describe('Generate on Suno in the Suno tab: the user’s Create (#149)', () => {
     await ended.generate.resume();
     await until(() => ended.last()?.kind === 'stopped');
     expect(ended.types().filter((type) => type === 'generate-observed')).toHaveLength(1);
+  });
+});
+
+// ---- Filling in the Generations when Suno finishes them (#154).
+
+/** Suno's finished clip (TS-001, `feed-v3.completed-clip`) as `id`, with `status`. */
+function finishedClip(id: string, status = 'complete'): Record<string, unknown> {
+  const [clip] = sunoObject('feed-v3.completed-clip.response').clips as Record<string, unknown>[];
+  return { ...clip, id, status };
+}
+
+/** A feed answer the page got holding `clips`. */
+function feedOf(...clips: Record<string, unknown>[]) {
+  return observed('library-feed', { clips, has_more: false });
+}
+
+/** A service worker that watches `ids` until the tab reports each finished, as the real one does. */
+function watchingUntilFinished(ids: string[]) {
+  const watched = new Set(ids);
+  return (request: Extract<Request, { type: 'generate-completion' }>) => {
+    for (const clip of request.clips) {
+      watched.delete(clip.id as string);
+    }
+    return { ok: true, watching: [...watched] };
+  };
+}
+
+describe('Generate on Suno in the Suno tab: the completion watch (#154)', () => {
+  it('reports the watched clips a feed answer shows finished, matched by clip ID, and only those', async () => {
+    const tab = start({
+      job: job({ workspace: ON_MY_WORKSPACE, created: 1 }),
+      watching: ['clip-1', 'clip-2'],
+      completionReply: watchingUntilFinished(['clip-1', 'clip-2']),
+    });
+    tab.feed.take(
+      feedOf(finishedClip('clip-1'), finishedClip('clip-2', 'streaming'), finishedClip('other')),
+    );
+    tab.feed.take(feedOf(finishedClip('clip-2', 'error')));
+
+    await tab.generate.resume();
+    await until(() => !tab.generate.watchingCompletion);
+
+    const reported = tab.completions();
+    expect(
+      reported.slice(0, 2).map((clips) => clips.map((clip) => [clip.id, clip.status])),
+    ).toEqual([[['clip-1', 'complete']], [['clip-2', 'error']]]);
+    // Reported as Suno's feed returned them.
+    expect(reported[0]?.[0]).toEqual(finishedClip('clip-1'));
+    // Invariant 4: the user clicks Create; the extension never does.
+    expect(tab.pressed.filter((name) => FORBIDDEN_WORDS.test(name))).toEqual([]);
+  });
+
+  it('prompts the Create page to read its library pane when no feed answer names the clips for 15 seconds, pressing only the workspace row', async () => {
+    const tab = start({
+      job: job({ workspace: ON_MY_WORKSPACE, created: 1 }),
+      watching: ['clip-1'],
+      completionReply: watchingUntilFinished(['clip-1']),
+      // The pane asks Suno for the workspace's songs again: the clip has finished meanwhile.
+      feedOnRow: () => feedOf(finishedClip('clip-1')),
+    });
+    const standIn = standInForSuno(document);
+    try {
+      await tab.generate.resume();
+      await until(() => !tab.generate.watchingCompletion);
+    } finally {
+      standIn.stop();
+    }
+
+    expect(tab.clock.now()).toBeGreaterThanOrEqual(COMPLETION_PROMPT_MS);
+    // The prompt: the Song's workspace row, which only chooses what the pane shows.
+    expect(tab.pressed.length).toBeGreaterThan(0);
+    expect(tab.pressed.every((name) => name.startsWith('My Workspace'))).toBe(true);
+    expect(tab.completions().at(-1)).toEqual([finishedClip('clip-1')]);
+  });
+
+  it('carries on after a page load with no request, prompting nothing, and stops at ten minutes', async () => {
+    const tab = start({
+      job: null,
+      address: 'https://suno.com/me',
+      watching: ['clip-1'],
+      // A service worker that never says the watch is over.
+      completionReply: () => ({ ok: true, watching: ['clip-1'] }),
+    });
+
+    await tab.generate.resume();
+    await until(() => !tab.generate.watchingCompletion);
+
+    expect(tab.clock.now()).toBeGreaterThanOrEqual(COMPLETION_LIMIT_MS);
+    expect(tab.clock.now()).toBeLessThan(COMPLETION_LIMIT_MS + COMPLETION_PROMPT_MS + 1_000);
+    expect(tab.completions().length).toBe(Math.ceil(COMPLETION_LIMIT_MS / COMPLETION_PROMPT_MS));
+    expect(tab.completions().every((clips) => clips.length === 0)).toBe(true);
+    expect(tab.pressed).toEqual([]);
+  });
+
+  it('ends the watch when the service worker says nothing is watched any more', async () => {
+    const tab = start({
+      job: null,
+      watching: ['clip-1'],
+      completionReply: () => ({ ok: true, watching: [] }),
+    });
+
+    await tab.generate.resume();
+    await until(() => !tab.generate.watchingCompletion);
+
+    expect(tab.completions()).toEqual([[]]);
   });
 });
 

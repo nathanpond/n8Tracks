@@ -158,6 +158,7 @@ describe('the service worker router', () => {
         { id: 'answer-overwrite', state: 'not_checked' },
         { id: 'verify-source-advanced', state: 'not_checked' },
         { id: 'verify-source-simple', state: 'not_checked' },
+        { id: 'refresh-library', state: 'not_checked' },
       ],
       steps: [{ workflow: 'recognise-suno', step: 'navigation', ms: 3 }],
     });

@@ -206,10 +206,35 @@ export function formatDuration(seconds: number): string {
     : `${String(minutes)}:${rest}`;
 }
 
-/** A clip's length, "Generating" while Suno is still making it, or "Unknown" when Suno gave none. */
-export function generationDuration(generation: Generation): string {
+/**
+ * How long after it was recorded the extension watches a Generation for Suno to finish it (#154):
+ * ten minutes. One still generating after that is filled in by the next sync.
+ */
+export const COMPLETION_WATCH_MS = 10 * 60_000;
+
+/** What a Generation still generating after the completion watch says (#154). */
+export const STILL_GENERATING = 'Still generating in Suno: sync to update';
+
+/**
+ * Whether the Generation is still generating ten minutes after it was recorded, when the extension
+ * no longer watches for it (#154): a sync brings its clip.
+ */
+export function isStillGenerating(generation: Generation, now: number = Date.now()): boolean {
+  return isGenerating(generation) && now - Date.parse(generation.createdAt) >= COMPLETION_WATCH_MS;
+}
+
+/** Whether Suno's clip ended in error (#154): the Generation shows as Failed, and can be deleted. */
+export function isFailed(generation: Generation): boolean {
+  return generation.providerStatus === 'error';
+}
+
+/**
+ * A clip's length: "Generating" while Suno is still making it ("Still generating in Suno: sync to
+ * update" ten minutes after it was recorded), or "Unknown" when Suno gave none.
+ */
+export function generationDuration(generation: Generation, now: number = Date.now()): string {
   if (isGenerating(generation)) {
-    return 'Generating';
+    return isStillGenerating(generation, now) ? STILL_GENERATING : 'Generating';
   }
   return generation.durationSeconds === null
     ? 'Unknown'

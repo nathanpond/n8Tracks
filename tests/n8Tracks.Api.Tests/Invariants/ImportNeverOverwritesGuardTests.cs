@@ -36,7 +36,9 @@ namespace n8Tracks.Api.Tests.Invariants;
 /// commit with every record (Changed and Conflict included) and every Suno state change set to Skip, and an export uploaded, classified,
 /// proposed, and discarded, change nothing at all; and the guard bites when the commit retitles an
 /// existing Generation, when it applies a Suno state change set to Skip, and when a declined change
-/// writes a clip column. The guard does not cover
+/// writes a clip column. The one change no review confirms (#154): completing a Generation an observed
+/// Create made, which may change only that Generation's clip columns and raw clip, and only while it was
+/// never complete; the guard bites when a completion touches one that was. The guard does not cover
 /// portable import (M8, #263).
 /// </summary>
 public sealed class ImportNeverOverwritesGuardTests
@@ -283,6 +285,100 @@ public sealed class ImportNeverOverwritesGuardTests
         var declined = ImportCommitApi.Records(result)["declined-1"].GetProperty("generation").GetProperty("id").GetGuid();
         Assert.Contains($"generations: changed {Upper(declined)}", Unexplained(factory, scenario, result, Rows(factory.DataPath)));
         scenario.Client.Dispose();
+    }
+
+    /// <summary>
+    /// The one change to a Generation that no import review confirms (#154): completing a Generation an
+    /// observed Create made once Suno finishes its clip. Over a catalog holding such Generations, one made by
+    /// import (complete, and one still streaming), one already completed, and one an import review declined a
+    /// change of, a finished clip is reported for every one of them: only the Generations that were never
+    /// complete change, and then only in their clip columns and raw clip. Every other catalog row is byte for
+    /// byte the same.
+    /// </summary>
+    [Fact]
+    public async Task CompletionChangesOnlyAnObservedGenerationThatWasNeverComplete()
+    {
+        using var factory = SongApi.Host();
+        var completion = await CompletionScenarioAsync(factory);
+
+        await completion.ReportEveryClipAsync();
+
+        Assert.Empty(CompletionUnexplained(completion.Before, Rows(factory.DataPath), completion.Provisional));
+        completion.Client.Dispose();
+    }
+
+    /// <summary>
+    /// The completion guard bites: with the database made to write a Generation that was complete whenever
+    /// the provisional one is completed, that Generation is reported as unexplained.
+    /// </summary>
+    [Fact]
+    public async Task TheGuardFailsWhenCompletionTouchesAGenerationThatWasEverComplete()
+    {
+        using var factory = SongApi.Host();
+        var completion = await CompletionScenarioAsync(factory);
+        TestDatabase.Execute(
+            factory.DataPath,
+            $"""
+            CREATE TRIGGER tr_test_completion_overwrites AFTER UPDATE OF provider_status ON generations
+            WHEN NEW.id = '{Upper(completion.Provisional.Single())}'
+            BEGIN UPDATE generations SET duration_seconds = 1 WHERE id = '{Upper(completion.EverComplete)}'; END;
+            """);
+
+        await completion.ReportEveryClipAsync();
+
+        Assert.Contains($"generations: changed {Upper(completion.EverComplete)}", CompletionUnexplained(completion.Before, Rows(factory.DataPath), completion.Provisional));
+        completion.Client.Dispose();
+    }
+
+    /// <summary>
+    /// The catalog the completion tests report on: an observed Create's three Generations (one to complete,
+    /// one completed already, one whose change an import review declined), and two Generations made by
+    /// import (one complete, one still streaming). The rows are read once the first completion is done.
+    /// </summary>
+    private static async Task<CompletionScenario> CompletionScenarioAsync(N8TracksApiFactory factory)
+    {
+        var client = await SessionApi.SignedInClientAsync(factory);
+        var observed = await ProvisionalCompletionApi.ObservedAsync(factory, client, "Guard completion", "guard-open", "guard-done", "guard-declined");
+        await ProvisionalCompletionApi.CompleteAsync(client, observed.Token, observed.RequestId, ProvisionalCompletionApi.Finished("guard-done"));
+        TestDatabase.Execute(factory.DataPath, $"UPDATE generations SET declined_hash = 'declined' WHERE id = '{Upper(observed.Generations["guard-declined"].Id)}';");
+        var imported = await SongApi.CreateAsync(client, "Guard imported");
+        var version = imported.GetProperty("currentVersion").GetProperty("id").GetGuid().ToString();
+        var complete = await SongApi.AttachGenerationAsync(factory, version, Clips.Minimal("guard-imported"));
+        await SongApi.AttachGenerationAsync(factory, version, Clips.Minimal("guard-imported-streaming", "streaming"));
+        return new CompletionScenario(client, observed, [observed.Generations["guard-open"].Id], complete.Generation.Id, Rows(factory.DataPath));
+    }
+
+    /// <summary>
+    /// Every catalog row a completion changed that it may not: anything but the clip columns of the
+    /// <paramref name="completed"/> Generations and their raw clips.
+    /// </summary>
+    private static List<string> CompletionUnexplained(
+        Dictionary<string, Dictionary<string, Row>> before,
+        Dictionary<string, Dictionary<string, Row>> after,
+        IReadOnlyCollection<Guid> completed)
+    {
+        string[] clipColumns =
+        [
+            "provider_status", "suno_title", "duration_seconds", "model_version", "model_name", "model_label", "style_tags",
+            "minimum_bpm", "maximum_bpm", "average_bpm", "musical_key", "suno_created_utc", "audio_url", "image_url", "workspace_id", "batch_index",
+        ];
+        var keys = completed.Select(Upper).ToHashSet(StringComparer.Ordinal);
+        var unexplained = new List<string>();
+        foreach (var (table, kind, key, row) in Differences(before, after))
+        {
+            var explained = kind == 'C' && keys.Contains(key) && table switch
+            {
+                "generations" => before[table][key].SameExcept(row, clipColumns),
+                "provider_records" => before[table][key].SameExcept(row, "payload", "captured_utc"),
+                _ => false,
+            };
+            if (!explained)
+            {
+                unexplained.Add($"{table}: {(kind == 'A' ? "added" : kind == 'C' ? "changed" : "removed")} {key}");
+            }
+        }
+
+        return unexplained;
     }
 
     /// <summary>
@@ -631,6 +727,24 @@ public sealed class ImportNeverOverwritesGuardTests
     private static string Upper(Guid id) => id.ToString().ToUpperInvariant();
 
     /// <summary>One row: its values by column, and all of them as one text.</summary>
+    /// <summary>The completion guard's catalog: the client, the observed Create, the Generations a completion may change, one that was complete, and the rows before.</summary>
+    private sealed record CompletionScenario(
+        HttpClient Client,
+        ProvisionalCompletionApi.Observed Observed,
+        IReadOnlyCollection<Guid> Provisional,
+        Guid EverComplete,
+        Dictionary<string, Dictionary<string, Row>> Before)
+    {
+        /// <summary>Reports a finished clip for every Generation of the scenario; only the provisional one is completed.</summary>
+        public async Task ReportEveryClipAsync()
+        {
+            foreach (var sunoId in new[] { "guard-open", "guard-done", "guard-declined", "guard-imported", "guard-imported-streaming" })
+            {
+                using var _ = await ProvisionalCompletionApi.PostAsync(Client, Observed.Token, Observed.RequestId, ProvisionalCompletionApi.Finished(sunoId));
+            }
+        }
+    }
+
     internal sealed class Row(Dictionary<string, string?> values)
     {
         public string Text { get; } = string.Join('|', values.Select(static pair => $"{pair.Key}={pair.Value ?? "<null>"}"));

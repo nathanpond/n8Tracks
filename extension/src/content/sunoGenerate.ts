@@ -6,6 +6,7 @@ import {
 } from '../adapter/addresses.ts';
 import { realClock, type Clock } from '../adapter/clock.ts';
 import { verificationReport, type EntryResult, type FormJob } from '../adapter/fill.ts';
+import { isFinished, watchedClipsOf } from '../adapter/finished.ts';
 import { PAGE_RETRIES, PAGE_WAIT_MS, type Observations } from '../adapter/libraryReader.ts';
 import type { ObservedMessage } from '../adapter/observed.ts';
 import type { Page } from '../adapter/primitives.ts';
@@ -28,6 +29,7 @@ import {
   verifySourceAdvanced,
   verifySourceSimple,
 } from '../adapter/workflows/sources.ts';
+import { refreshLibrary } from '../adapter/workflows/watchCompletion.ts';
 import {
   createWorkspace,
   moreWorkspaces,
@@ -174,6 +176,18 @@ export const AFTER_LAST_CREATE_MS = 30 * 60_000;
 /** How long the watch goes on before the first Create (n8Tracks lets a request idle an hour). */
 export const BEFORE_FIRST_CREATE_MS = 60 * 60_000;
 
+/**
+ * How long the completion watch waits for a feed answer naming an unfinished clip before it prompts
+ * the page to read its library pane again (#154).
+ */
+export const COMPLETION_PROMPT_MS = 15_000;
+
+/**
+ * The longest the tab watches for clips to finish (#154): the service worker ends each Create's watch
+ * after ten minutes (an alarm); the tab stops by itself a minute later should it not hear so.
+ */
+export const COMPLETION_LIMIT_MS = 11 * 60_000;
+
 /** How the panel names each step while it runs. */
 const STEP_TEXT: Readonly<Record<GenerateStep, string>> = {
   'open Suno': 'Opening Suno’s Create page',
@@ -240,6 +254,9 @@ export class SunoGenerate {
   private created = 0;
   /** Waiting for the user to load the source by hand and press Continue (#148). */
   private waitingSource: (() => void) | null = null;
+  /** Whether the completion watch is running (#154), and the Suno IDs it watches. */
+  private completing = false;
+  private watchedClips = new Set<string>();
 
   constructor(options: SunoGenerateOptions) {
     this.options = options;
@@ -258,6 +275,11 @@ export class SunoGenerate {
   /** "Use …" in the panel. */
   pick(option: WorkspaceOption): void {
     this.answer({ kind: 'pick', option });
+  }
+
+  /** Whether the completion watch is running (#154). */
+  get watchingCompletion(): boolean {
+    return this.completing;
   }
 
   /** Whether the panel is waiting for the user to load the source by hand. */
@@ -288,10 +310,19 @@ export class SunoGenerate {
     }
     const job =
       isRecord(answer) && isRecord(answer.job) ? (answer.job as unknown as GenerateJob) : null;
+    if (job !== null) {
+      this.job = job;
+    }
+    // Clips of the user's Creates this tab still watches for completion (#154), with or without a
+    // request: the watch outlives the request when the user leaves the Create page.
+    const watching =
+      isRecord(answer) && Array.isArray(answer.watching)
+        ? answer.watching.filter((id): id is string => typeof id === 'string')
+        : [];
+    void this.watchCompletion(watching);
     if (job === null) {
       return;
     }
-    this.job = job;
     const { page } = this.options;
     this.created = job.created ?? 0;
     if (this.created > 0) {
@@ -881,7 +912,66 @@ export class SunoGenerate {
     }
     this.created += 1;
     this.options.show({ kind: 'recorded', recorded: true, message: answer.recorded.message });
+    void this.watchCompletion(
+      clips.flatMap((clip) => (isRecord(clip) && typeof clip.id === 'string' ? [clip.id] : [])),
+    );
     return true;
+  }
+
+  /**
+   * Watches for the clips `sunoIds` of the user's Creates to finish (#154), alongside any it already
+   * watches: every feed answer the page gets is read for them, and the finished ones go to the service
+   * worker, which sends them to n8Tracks; it answers which clips are still watched. When no feed answer
+   * has named one for 15 seconds, the Create page is prompted to read its library pane again
+   * (`refresh-library`: the Song's workspace row; it changes nothing in Suno). Ends when no clip is
+   * watched any more (all finished, or their ten minutes up), or when n8Tracks cannot be told.
+   */
+  private async watchCompletion(sunoIds: readonly string[]): Promise<void> {
+    for (const sunoId of sunoIds) {
+      this.watchedClips.add(sunoId);
+    }
+    if (this.completing || this.watchedClips.size === 0) {
+      return;
+    }
+    this.completing = true;
+    const clock = this.options.clock ?? realClock;
+    const signal = new AbortController().signal;
+    const started = clock.now();
+    try {
+      while (this.watchedClips.size > 0 && clock.now() - started < COMPLETION_LIMIT_MS) {
+        const message = await this.options.observations.next(
+          'library-feed',
+          (seen) => watchedClipsOf(seen.body, this.watchedClips).length > 0,
+          COMPLETION_PROMPT_MS,
+          signal,
+        );
+        if (message === null) {
+          await this.promptRefresh();
+        }
+        const clips =
+          message === null
+            ? []
+            : watchedClipsOf(message.body, this.watchedClips).filter((clip) => isFinished(clip));
+        const answer = reply<{ watching: string[] }>(
+          await this.options.send({ type: 'generate-completion', clips }).catch(() => undefined),
+        );
+        if (!answer.ok) {
+          return;
+        }
+        this.watchedClips = new Set(answer.watching);
+      }
+    } finally {
+      this.completing = false;
+    }
+  }
+
+  /** Prompts the Create page to read its library pane again; on any other page, nothing (#154). */
+  private async promptRefresh(): Promise<void> {
+    const workspaceName = this.job?.workspace?.name ?? this.filled?.workspace ?? null;
+    if (workspaceName === null || sunoPageOf(this.options.page.address()) !== 'create') {
+      return;
+    }
+    await this.options.session.run(refreshLibrary, { workspaceName }, this.runOptions());
   }
 
   /** The tab left the Create page after a recorded Create: the request is done. */

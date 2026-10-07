@@ -55,6 +55,7 @@ public static class DependencyInjection
         services.AddScoped<RemoteStateService>();
         services.AddScoped<GenerationRequestService>();
         services.AddScoped<ObservedCreateService>();
+        services.AddScoped<ProvisionalCompletionService>();
         services.AddJobHandler<ExportClassifyJobHandler>(ExportStagingService.ClassifyJobType);
         services.AddScoped<ImportCommitService>();
         services.AddScoped<ImportTargetWriter>();

@@ -19,7 +19,7 @@ function validManifest(): Manifest {
     icons: { ...icons },
     action: { default_title: 'n8Tracks', default_popup: 'popup/popup.html', default_icon: icons },
     background: { service_worker: 'service-worker.js', type: 'module' },
-    permissions: ['storage', 'scripting', 'tabs'],
+    permissions: ['storage', 'scripting', 'tabs', 'alarms'],
     optional_host_permissions: ['https://suno.com/*', 'https://*/*', 'http://*/*'],
     options_ui: { page: 'options/options.html', open_in_tab: true },
   };

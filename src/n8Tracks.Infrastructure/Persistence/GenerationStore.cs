@@ -14,7 +14,9 @@ namespace n8Tracks.Infrastructure.Persistence;
 /// written only by <see cref="VersionStore.TryAttachGenerationAsync"/>, with the freeze; afterwards
 /// only its rating, state, and revision are, by <see cref="TryUpdateAsync"/>, its cover image, by
 /// <see cref="SetArtworkAsync"/>, and its place (Version, Song, ordinal) and revision by a move,
-/// <see cref="VersionStore.TryMoveGenerationAsync"/> (#123).
+/// <see cref="VersionStore.TryMoveGenerationAsync"/> (#123). Its clip columns change only by an import
+/// review's accepted fields (<see cref="RefreshClipFieldsAsync"/>, #141) and, once, by the completion of
+/// a Generation an observed Create made (<see cref="TryCompleteClipAsync"/>, #154).
 /// </summary>
 internal sealed class GenerationStore(N8TracksDbContext context) : IGenerationStore, IArtworkAttachments
 {
@@ -50,6 +52,42 @@ internal sealed class GenerationStore(N8TracksDbContext context) : IGenerationSt
                 _ => throw new ArgumentException($"'{field}' is not a field a diff writes.", nameof(fields)),
             };
         }
+    }
+
+    public async Task<bool> TryCompleteClipAsync(Guid generationId, ClipFields finished, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(finished);
+
+        var created = finished.SunoCreatedUtc is { } at ? UtcText.From(at) : null;
+        var written = await context.Generations
+            .Where(generation => generation.Id == generationId
+                && generation.SunoId == finished.SunoId
+                && (generation.ProviderStatus == null
+                    || (generation.ProviderStatus != ProvisionalCompletionRules.Complete && generation.ProviderStatus != ProvisionalCompletionRules.Error))
+                && generation.DeclinedHash == null
+                && generation.KeptInputsHash == null
+                && !context.ProviderRecords.Any(record => record.GenerationId == generation.Id && record.ExportId != null))
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(static generation => generation.ProviderStatus, finished.Status)
+                    .SetProperty(static generation => generation.SunoTitle, finished.Title)
+                    .SetProperty(static generation => generation.DurationSeconds, finished.DurationSeconds)
+                    .SetProperty(static generation => generation.ModelVersion, finished.ModelVersion)
+                    .SetProperty(static generation => generation.ModelName, finished.ModelName)
+                    .SetProperty(static generation => generation.ModelLabel, finished.ModelLabel)
+                    .SetProperty(static generation => generation.StyleTags, finished.StyleTags)
+                    .SetProperty(static generation => generation.MinimumBpm, finished.MinimumBpm)
+                    .SetProperty(static generation => generation.MaximumBpm, finished.MaximumBpm)
+                    .SetProperty(static generation => generation.AverageBpm, finished.AverageBpm)
+                    .SetProperty(static generation => generation.MusicalKey, finished.Key)
+                    .SetProperty(static generation => generation.SunoCreatedUtc, created)
+                    .SetProperty(static generation => generation.AudioUrl, finished.AudioUrl)
+                    .SetProperty(static generation => generation.ImageUrl, finished.ImageUrl)
+                    .SetProperty(static generation => generation.WorkspaceId, finished.WorkspaceId)
+                    .SetProperty(static generation => generation.BatchIndex, finished.BatchIndex),
+                cancellationToken)
+            .ConfigureAwait(false);
+        return written == 1;
     }
 
     public Task RememberDeclinedAsync(Guid generationId, string? declinedHash, CancellationToken cancellationToken) =>

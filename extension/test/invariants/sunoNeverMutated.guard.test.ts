@@ -73,6 +73,9 @@ const RUN_RECIPES: Readonly<Record<string, RunRecipe>> = {
   'answer-overwrite': { values: {} },
   'verify-source-advanced': { values: { load: coverOf('00000000-0000-4000-8000-000000000104') } },
   'verify-source-simple': { values: { load: coverOf('00000000-0000-4000-8000-000000000109') } },
+  // The completion watch's refresh prompt (#154): the breadcrumb and the Song's workspace row, which
+  // only choose what the library pane shows; nothing else is pressed.
+  'refresh-library': { values: { workspaceName: 'My Workspace' } },
 };
 
 /** A Speech or Sound fill's values, other than the snapshots' own, so every filler acts. */
