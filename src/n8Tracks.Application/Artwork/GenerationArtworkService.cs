@@ -292,6 +292,44 @@ public sealed class GenerationArtworkService(
             cancellationToken);
 
     /// <summary>
+    /// Replaces the image of the Generation <paramref name="generationId"/> with the cover image staged
+    /// with its record (#141), in a transaction of its own: only for a diff whose image address the user
+    /// accepted, an explicit choice, so the old image may go (it leaves the store at once unless something
+    /// else uses it, as a replaced upload does). The same image is a no-op; an image that has gone is not
+    /// attached and the Generation keeps its own.
+    /// </summary>
+    internal Task<StagedArtworkOutcome> ReplaceWithStagedAsync(Guid generationId, Guid assetId, CancellationToken cancellationToken) =>
+        transaction.RunAsync(
+            async ct =>
+            {
+                if (await store.FindAsync(generationId, ct).ConfigureAwait(false) is not { } generation)
+                {
+                    return StagedArtworkOutcome.GenerationMissing;
+                }
+
+                if (await assets.FindAsync(assetId, ct).ConfigureAwait(false) is not { } asset || !artwork.HasOriginal(asset))
+                {
+                    return StagedArtworkOutcome.ImageMissing;
+                }
+
+                var previous = generation.Artwork?.AssetId;
+                if (previous == assetId)
+                {
+                    return StagedArtworkOutcome.Attached;
+                }
+
+                await store.SetArtworkAsync(generationId, assetId, ct).ConfigureAwait(false);
+                await store.TouchSongAsync(generation.Generation.SongId, time.GetUtcNow(), ct).ConfigureAwait(false);
+                if (previous is { } replaced)
+                {
+                    await artwork.RemoveNowIfUnusedAsync(replaced, ct).ConfigureAwait(false);
+                }
+
+                return StagedArtworkOutcome.Attached;
+            },
+            cancellationToken);
+
+    /// <summary>
     /// Inside the caller's transaction: the files of the images of <paramref name="generationIds"/>,
     /// which a deletion retaining those Generations lists in its group, so the images are kept for as
     /// long as the group is and a restore finds them.

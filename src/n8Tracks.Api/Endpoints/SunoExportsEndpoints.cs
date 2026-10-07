@@ -162,6 +162,8 @@ internal static class SunoExportsEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        endpoints.MapSunoExportDiff();
+
         endpoints.MapPost(CommitPath, CommitAsync)
             .WithName("CommitSunoExport")
             .WithSummary("Confirms a ready export (#140), with If-Match on its revision and no body: it becomes committing and a background job (jobId; follow it at GET /api/v1/jobs/{id}) applies the choices saved on it: new Songs, new Versions with the clips' inputs, Generations attached to the chosen Versions, workspaces of new Songs, and staged artwork; Skip and Don't copy store nothing. Each target is created whole or not at all; one that fails is reported in the job's result ({ records: [{ sunoId, outcome: created | linked | skipped | ignored | failed, reason?, generation? }], created: { songs, versions, generations }, songs }) and undoes nothing else. The export then becomes committed, whatever failed. 202 with the export. 409 export_not_ready unless ready, import_in_progress while it or another export is being committed, export_committed once committed (an export is committed once), revision_conflict when its choices changed since. Session-only: a token gets 403 session_required.")
@@ -968,7 +970,8 @@ internal sealed record SunoExportSummaryResponse(
     IReadOnlyList<SunoExportFacetResponse> Workspaces,
     IReadOnlyList<SunoExportFacetResponse> Playlists,
     IReadOnlyList<string> LibraryExcluded,
-    int Revision)
+    int Revision,
+    int Resolved)
 {
     public static SunoExportSummaryResponse From(ImportReviewSummary summary)
     {
@@ -990,7 +993,8 @@ internal sealed record SunoExportSummaryResponse(
             [.. summary.Workspaces.Select(static facet => new SunoExportFacetResponse(facet.Id, facet.Name, facet.Count))],
             [.. summary.Playlists.Select(static facet => new SunoExportFacetResponse(facet.Id, facet.Name, facet.Count))],
             summary.LibraryExcluded,
-            summary.Export.Export.Revision);
+            summary.Export.Export.Revision,
+            summary.Resolved);
     }
 }
 

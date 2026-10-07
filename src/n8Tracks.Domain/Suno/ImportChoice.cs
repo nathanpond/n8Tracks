@@ -13,6 +13,15 @@ public enum ImportAction
 
     /// <summary>Don't copy it, and put it on the ignore list at the commit (#143).</summary>
     Ignore,
+
+    /// <summary>A Changed record (#141): write the accepted fields (<see cref="ImportChoice.AcceptFields"/>) to its Generation; the rest are declined.</summary>
+    Apply,
+
+    /// <summary>A Conflict record (#141): move its Generation to a new child Version holding the clip's inputs, with any accepted fields.</summary>
+    MoveToNewVersion,
+
+    /// <summary>A Conflict record (#141): keep its Generation where it is, with any accepted fields.</summary>
+    Keep,
 }
 
 /// <summary>
@@ -48,9 +57,16 @@ public abstract record ImportTarget
     };
 }
 
-/// <summary>A record's choice: its action and, for <see cref="ImportAction.Import"/> only, its target.</summary>
-public sealed record ImportChoice(ImportAction Action, ImportTarget? Target)
+/// <summary>
+/// A record's choice: its action and, for <see cref="ImportAction.Import"/> only, its target; for the
+/// choices of a Changed or Conflict record (#141), the provider fields the user accepted from Suno
+/// (of <see cref="SunoExportRules.ComparedFields"/>; none when null).
+/// </summary>
+public sealed record ImportChoice(ImportAction Action, ImportTarget? Target, IReadOnlyList<string>? AcceptFields = null)
 {
+    /// <summary>Whether the action resolves a Changed or Conflict record (#141).</summary>
+    public bool Resolves => Action is ImportAction.Apply or ImportAction.MoveToNewVersion or ImportAction.Keep;
+
     public static ImportChoice Skip { get; } = new(ImportAction.Skip, null);
 
     public static ImportChoice Ignore { get; } = new(ImportAction.Ignore, null);
@@ -91,6 +107,15 @@ public static class ImportChoiceRules
 
     /// <summary>Basis: a Generation holds its Suno ID already (linked, changed, or conflict): left alone here.</summary>
     public const string LinkedBasis = "linked";
+
+    /// <summary>Refused (#141): <c>apply</c> is a choice of a Changed record only.</summary>
+    public const string NotChanged = "not_changed";
+
+    /// <summary>Refused (#141): <c>moveToNewVersion</c> and <c>keep</c> are choices of a Conflict record only.</summary>
+    public const string NotConflict = "not_conflict";
+
+    /// <summary>Refused (#141): an accepted field is not one in which Suno's data differs.</summary>
+    public const string FieldNotChanged = "field_not_changed";
 
     /// <summary>Basis: it is on the ignore list.</summary>
     public const string IgnoredBasis = "ignored";

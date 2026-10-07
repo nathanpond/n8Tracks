@@ -10,7 +10,8 @@ namespace n8Tracks.Application.Suno.Import;
 /// (<c>generations.suno_id</c>, any state), provider tombstones, and the ignore list; titles and names
 /// never decide it. A live Generation decides first, then a tombstone, then the ignore list.
 /// <para>
-/// "Changed" compares the normalized fields in <see cref="SunoExportRules.ChangedFields"/>. "Conflict"
+/// "Changed" compares the normalized fields in <see cref="SunoExportRules.ChangedFields"/>; a Conflict
+/// keeps its changed fields too, the metadata diff shown beneath it (#141). "Conflict"
 /// is a linked clip whose creation inputs, mapped by <see cref="ClipInputMapper"/> (#135), differ from
 /// its Version's on an option Suno returns. A model the clip reports that is not on the model list is
 /// only proposed by the mapping, never added here. The classifier only reads: it writes nothing
@@ -55,7 +56,7 @@ public sealed class RecordClassifier(ISunoClipLookup lookup, TombstoneService to
                 changed,
                 tombstoned.Contains(record.SunoId),
                 ignored.Contains(record.SunoId));
-            classifications.Add(new RecordClassification(record.SunoId, recordClass, generationId, recordClass == SunoRecordClass.Changed ? changed : []));
+            classifications.Add(new RecordClassification(record.SunoId, recordClass, generationId, recordClass is SunoRecordClass.Changed or SunoRecordClass.Conflict ? changed : []));
         }
 
         return classifications;

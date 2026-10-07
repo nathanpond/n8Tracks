@@ -53,7 +53,8 @@ internal static class ImportCommitApi
     public static async Task<JsonElement> CommitAsync(HttpClient client, Guid exportId)
     {
         var started = await StartAsync(client, exportId);
-        Assert.Equal("committing", started.GetProperty("state").GetString());
+        // A quick job (every record Skip) may have finished before the export was read back for the answer.
+        Assert.Contains(started.GetProperty("state").GetString(), new[] { "committing", "committed" });
         var job = await TestJobs.WaitForAsync(
             client,
             started.GetProperty("jobId").GetGuid(),

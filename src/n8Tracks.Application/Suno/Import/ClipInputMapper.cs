@@ -325,7 +325,15 @@ public static class ClipInputMapper
     /// The lineage takes no part here: a linked clip whose lineage differs from its Version's is the
     /// diff story's Conflict (#137's discretion), compared against the Version's stored sources.
     /// </summary>
-    public static bool Differs(MappedClipInputs clip, string lyrics, string styles, VersionInputs inputs, ImportedInputMarks? marks)
+    public static bool Differs(MappedClipInputs clip, string lyrics, string styles, VersionInputs inputs, ImportedInputMarks? marks) =>
+        DifferingInputs(clip, lyrics, styles, inputs, marks).Count > 0;
+
+    /// <summary>
+    /// The creation inputs in which <paramref name="clip"/> differs from a Version (#141, a Conflict's
+    /// diff), compared as <see cref="Differs"/> does: each with the Version's value and the clip's, as
+    /// compared (JSON text; a value the Version kept raw starts <c>raw:</c>), in the clip's key order.
+    /// </summary>
+    public static IReadOnlyList<(string Key, string Version, string Clip)> DifferingInputs(MappedClipInputs clip, string lyrics, string styles, VersionInputs inputs, ImportedInputMarks? marks)
     {
         ArgumentNullException.ThrowIfNull(clip);
         ArgumentNullException.ThrowIfNull(lyrics);
@@ -333,16 +341,20 @@ public static class ClipInputMapper
         ArgumentNullException.ThrowIfNull(inputs);
 
         var json = VersionInputRules.ToJson(inputs);
-        var version = new Dictionary<string, string>(StringComparer.Ordinal);
+        var differing = new List<(string Key, string Version, string Clip)>();
         foreach (var key in clip.Compared.Keys.Where(key => marks?.NotReturned.Contains(key, StringComparer.Ordinal) != true))
         {
-            version[key] = marks?.RawValues.TryGetValue(key, out var rawValue) == true ? "raw:" + rawValue
+            var version = marks?.RawValues.TryGetValue(key, out var rawValue) == true ? "raw:" + rawValue
                 : key == VersionInputRules.LyricsField ? Compare(JsonValue.Create(lyrics))
                 : key == VersionInputRules.StylesField ? Compare(JsonValue.Create(styles))
                 : Compare(json[key]);
+            if (!string.Equals(clip.Compared[key], version, StringComparison.Ordinal))
+            {
+                differing.Add((key, version, clip.Compared[key]));
+            }
         }
 
-        return !SameOn(clip.Compared, version);
+        return differing;
     }
 
     /// <summary>

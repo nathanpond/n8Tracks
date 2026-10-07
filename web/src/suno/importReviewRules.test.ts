@@ -1,14 +1,18 @@
 import { describe, expect, it } from 'vitest';
+import type { ImportChoice } from '../api/sunoImports';
 import { testRecord, toNewSong } from '../test/importServer';
 import {
   choiceText,
   commitReasonText,
   createdText,
+  diffValueText,
   durationText,
   excludedKindsText,
+  fieldsText,
   filterFrom,
   groupRecords,
   outcomesText,
+  reasonText,
   reasonsText,
   targetText,
 } from './importReviewRules';
@@ -114,5 +118,43 @@ describe('the result of a confirmed import (#140)', () => {
     expect(commitReasonText('invalid_clip')).toMatch(/could not keep/);
     expect(commitReasonText('inputs_differ')).toMatch(/no longer match/);
     expect(commitReasonText('target_missing')).toBe('the Song or Version chosen no longer exists');
+  });
+});
+
+describe('Changed and Conflict records (#141)', () => {
+  it('says what a resolution choice will do', () => {
+    const changed = (choice: ImportChoice) =>
+      choiceText(testRecord('c', { class: 'changed', choice }));
+    expect(changed({ action: 'skip' })).toBe('Left as it is');
+    expect(changed({ action: 'apply', acceptFields: [] })).toBe('Keep n8Tracks’ data');
+    expect(changed({ action: 'apply', acceptFields: ['title', 'tags', 'key'] })).toBe(
+      'Take Title, Style tags and Key from Suno',
+    );
+    const conflict = testRecord('k', {
+      class: 'conflict',
+      choice: { action: 'moveToNewVersion', acceptFields: ['title'] },
+    });
+    expect(choiceText(conflict)).toBe('Move to a new Version, and take Title from Suno');
+    expect(choiceText({ ...conflict, choice: { action: 'keep', acceptFields: [] } })).toBe(
+      'Keep it where it is',
+    );
+  });
+
+  it('writes diffed values and outcomes in words', () => {
+    expect(diffValueText('duration', 125)).toBe('2:05');
+    expect(diffValueText('averageBpm', 120.5)).toBe('120.5');
+    expect(diffValueText('title', null)).toBe('None');
+    expect(fieldsText(['imageUrl'])).toBe('Cover image');
+    expect(
+      outcomesText([
+        { outcome: 'updated' },
+        { outcome: 'declined' },
+        { outcome: 'kept' },
+        { outcome: 'moved' },
+      ]),
+    ).toBe(
+      '1 record updated from Suno, 1 record kept as they were, 1 record kept on their Version, 1 record moved to a new Version.',
+    );
+    expect(reasonText('field_not_changed')).toMatch(/does not differ/);
   });
 });

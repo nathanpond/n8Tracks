@@ -36,6 +36,7 @@ import { formatDateTime, useConfiguredTimeZone } from '../api/timeZone';
 import { Notice } from '../components/Notice';
 import { ChoiceEditor } from './ChoiceEditor';
 import { ImportCommitView } from './ImportCommitView';
+import { RecordDiff } from './RecordDiff';
 import {
   CLASS_LABELS,
   choiceNote,
@@ -45,6 +46,7 @@ import {
   excludedKindsText,
   filterFrom,
   groupRecords,
+  hasDiff,
   isReviewable,
   reasonsText,
   recordCountText,
@@ -199,6 +201,8 @@ function LoadedReview({ id, onEnded }: { id: string; onEnded: () => void }) {
   const [confirming, setConfirming] = useState(false);
   const [confirmMessage, setConfirmMessage] = useState<string>();
   const [committing, setCommitting] = useState(false);
+  // The Changed or Conflict record whose differences are open (#141).
+  const [diffOf, setDiffOf] = useState<ImportRecord>();
   // A new editor, its unsaved choice dropped, after each change and each reload.
   const [editorKey, setEditorKey] = useState(0);
   const ended =
@@ -286,11 +290,12 @@ function LoadedReview({ id, onEnded }: { id: string; onEnded: () => void }) {
     });
   };
 
-  const apply = async (choice: ImportChoice) => {
+  const apply = async (choice: ImportChoice, named?: RecordSelection) => {
     const chosen: RecordSelection =
-      selection.kind === 'ids'
+      named ??
+      (selection.kind === 'ids'
         ? { kind: 'ids', sunoIds: selection.ids }
-        : { kind: 'filter', filter: selection.filter, except: selection.except };
+        : { kind: 'filter', filter: selection.filter, except: selection.except });
     if (chosen.kind === 'ids' && chosen.sunoIds.length > MAXIMUM_NAMED_RECORDS) {
       setMessage(
         `Choose at most ${String(MAXIMUM_NAMED_RECORDS)} records one by one, or select all that match instead.`,
@@ -304,7 +309,10 @@ function LoadedReview({ id, onEnded }: { id: string; onEnded: () => void }) {
     setBusy(false);
     switch (result.kind) {
       case 'changed':
-        setSelection(NONE);
+        if (named === undefined) {
+          setSelection(NONE);
+        }
+        setDiffOf(undefined);
         setEditorKey((key) => key + 1);
         setMessage('The choice was saved.');
         reloadAll();
@@ -570,6 +578,21 @@ function LoadedReview({ id, onEnded }: { id: string; onEnded: () => void }) {
         />
       )}
 
+      {diffOf !== undefined && (
+        <RecordDiff
+          key={diffOf.sunoId}
+          exportId={id}
+          record={diffOf}
+          busy={busy}
+          onClose={() => {
+            setDiffOf(undefined);
+          }}
+          onSave={(choice) => {
+            void apply(choice, { kind: 'ids', sunoIds: [diffOf.sunoId] });
+          }}
+        />
+      )}
+
       {records.total === 0 ? (
         <Text data-testid="no-records">No record matches these filters.</Text>
       ) : (
@@ -580,6 +603,7 @@ function LoadedReview({ id, onEnded }: { id: string; onEnded: () => void }) {
           refusals={refusals}
           workspaceLabel={workspaceLabel}
           timeZone={timeZone}
+          onReviewDiff={setDiffOf}
           onToggle={toggle}
           onTogglePage={(checked) => {
             setSelection(
@@ -704,6 +728,11 @@ function SummaryNumbers({ summary, testId }: { summary: ImportSummary; testId?: 
       <Text data-testid={testId === undefined ? 'summary-skipped' : undefined}>
         Leave {recordCountText(summary.skipped)} for a later sync (Skip this time).
       </Text>
+      {(summary.resolved ?? 0) > 0 && (
+        <Text data-testid={testId === undefined ? 'summary-resolved' : undefined}>
+          Settle {recordCountText(summary.resolved ?? 0)} whose Suno data differs, as you chose.
+        </Text>
+      )}
     </Stack>
   );
 }
@@ -758,6 +787,7 @@ function RecordTable({
   refusals,
   workspaceLabel,
   timeZone,
+  onReviewDiff,
   onToggle,
   onTogglePage,
 }: {
@@ -767,6 +797,7 @@ function RecordTable({
   refusals: Record<string, string[]>;
   workspaceLabel: (id: string | null) => string;
   timeZone: string;
+  onReviewDiff: (record: ImportRecord) => void;
   onToggle: (record: ImportRecord, checked: boolean) => void;
   onTogglePage: (checked: boolean) => void;
 }) {
@@ -858,6 +889,19 @@ function RecordTable({
                       <Text size="xs" data-testid="record-note">
                         {note}
                       </Text>
+                    )}
+                    {hasDiff(record) && (
+                      <Button
+                        variant="default"
+                        size="compact-xs"
+                        mt={4}
+                        aria-label={`Review the differences for ${title}`}
+                        onClick={() => {
+                          onReviewDiff(record);
+                        }}
+                      >
+                        Review differences
+                      </Button>
                     )}
                     {invalid !== undefined && (
                       <Text size="xs" fw={700} data-testid="record-invalid">

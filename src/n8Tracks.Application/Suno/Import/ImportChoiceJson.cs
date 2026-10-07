@@ -10,7 +10,7 @@ namespace n8Tracks.Application.Suno.Import;
 /// and, to import, the target with each reference as text (an ID or a shortcode, or a temporary key for
 /// a new Song).
 /// </summary>
-public sealed record ImportChoiceRequest(ImportAction Action, ImportTargetRequest? Target);
+public sealed record ImportChoiceRequest(ImportAction Action, ImportTargetRequest? Target, IReadOnlyList<string>? AcceptFields = null);
 
 /// <summary>A target as sent: its kind (<c>newSong</c>, <c>newVersion</c>, or <c>version</c>) and the fields that kind takes.</summary>
 public sealed record ImportTargetRequest(
@@ -53,7 +53,10 @@ public abstract record ChoiceChangeReading
 /// <item><c>{ "action": "skip" }</c> and <c>{ "action": "ignore" }</c>;</item>
 /// <item><c>{ "action": "import", "target": { "kind": "newSong", "key": "new:1", "title", "workspaceId" } }</c>;</item>
 /// <item><c>{ "action": "import", "target": { "kind": "newVersion", "key": "new:2", "song": "&lt;Song ID&gt;" | "new:1", "parentVersion": "&lt;Version ID&gt;" | null, "number": "3" } }</c>;</item>
-/// <item><c>{ "action": "import", "target": { "kind": "version", "version": "&lt;Version ID&gt;" } }</c>.</item>
+/// <item><c>{ "action": "import", "target": { "kind": "version", "version": "&lt;Version ID&gt;" } }</c>;</item>
+/// <item>for a Changed record (#141), <c>{ "action": "apply", "acceptFields": [ "title", ... ] }</c>, and for a
+/// Conflict record <c>{ "action": "moveToNewVersion" }</c> or <c>{ "action": "keep" }</c>, each with an
+/// optional <c>acceptFields</c> (the metadata diff beneath the conflict).</item>
 /// </list>
 /// A proposal is <c>{ "choice", "basis", "group", "freezesVersion" }</c>. A change of choices is
 /// <c>{ "sunoIds": [...], "choice": { ... } }</c>, where a Song or Version may also be named by shortcode.
@@ -63,6 +66,9 @@ public static class ImportChoiceJson
     public const string ImportName = "import";
     public const string SkipName = "skip";
     public const string IgnoreName = "ignore";
+    public const string ApplyName = "apply";
+    public const string MoveToNewVersionName = "moveToNewVersion";
+    public const string KeepName = "keep";
     public const string NewSongKind = "newSong";
     public const string NewVersionKind = "newVersion";
     public const string VersionKind = "version";
@@ -118,7 +124,7 @@ public static class ImportChoiceJson
 
         if (action != ImportAction.Import)
         {
-            return new ImportChoice(action, null);
+            return new ImportChoice(action, null, AcceptedOf(root));
         }
 
         var target = root.TryGetProperty("target", out var value) ? value : default;
@@ -251,15 +257,16 @@ public static class ImportChoiceJson
 
     private static ImportChoiceRequest? ReadChoice(JsonElement choice, Dictionary<string, string[]> errors)
     {
-        Unknown(choice, "choice.", errors, "action", "target");
+        Unknown(choice, "choice.", errors, "action", "target", "acceptFields");
         var action = ActionOf(choice);
         if (action is null)
         {
-            errors["choice.action"] = ["action is import, skip, or ignore."];
+            errors["choice.action"] = ["action is import, skip, ignore, apply, moveToNewVersion, or keep."];
             return null;
         }
 
         var hasTarget = choice.TryGetProperty("target", out var target) && target.ValueKind != JsonValueKind.Null;
+        var accepted = ReadAccepted(choice, action.Value, errors);
         if (action != ImportAction.Import)
         {
             if (hasTarget)
@@ -267,7 +274,7 @@ public static class ImportChoiceJson
                 errors["choice.target"] = ["Only an import has a target."];
             }
 
-            return new ImportChoiceRequest(action.Value, null);
+            return new ImportChoiceRequest(action.Value, null, accepted);
         }
 
         if (!hasTarget || target.ValueKind != JsonValueKind.Object)
@@ -330,11 +337,50 @@ public static class ImportChoiceJson
         return errors.Count == before ? new ImportChoiceRequest(ImportAction.Import, request) : null;
     }
 
+    /// <summary>
+    /// The <c>acceptFields</c> of a choice as sent (#141): distinct names of
+    /// <see cref="SunoExportRules.ComparedFields"/>, only on <c>apply</c>, <c>moveToNewVersion</c>, or
+    /// <c>keep</c>; empty when absent.
+    /// </summary>
+    private static List<string>? ReadAccepted(JsonElement choice, ImportAction action, Dictionary<string, string[]> errors)
+    {
+        if (!choice.TryGetProperty("acceptFields", out var list) || list.ValueKind == JsonValueKind.Null)
+        {
+            return action is ImportAction.Apply or ImportAction.MoveToNewVersion or ImportAction.Keep ? [] : null;
+        }
+
+        if (action is not (ImportAction.Apply or ImportAction.MoveToNewVersion or ImportAction.Keep))
+        {
+            errors["choice.acceptFields"] = ["Only apply, moveToNewVersion, and keep accept fields."];
+            return null;
+        }
+
+        if (list.ValueKind != JsonValueKind.Array
+            || list.EnumerateArray().Any(static item => item.ValueKind != JsonValueKind.String || !SunoExportRules.ComparedFields.Contains(item.GetString()!, StringComparer.Ordinal)))
+        {
+            errors["choice.acceptFields"] = ["Send a list of field names: " + string.Join(", ", SunoExportRules.ComparedFields) + "."];
+            return null;
+        }
+
+        return [.. list.EnumerateArray().Select(static item => item.GetString()!).Distinct(StringComparer.Ordinal)];
+    }
+
+    /// <summary>The stored <c>acceptFields</c> of a choice; null when it has none.</summary>
+    private static List<string>? AcceptedOf(JsonElement choice) =>
+        choice.TryGetProperty("acceptFields", out var list) && list.ValueKind == JsonValueKind.Array
+            ? [.. list.EnumerateArray().Where(static item => item.ValueKind == JsonValueKind.String).Select(static item => item.GetString()!)]
+            : null;
+
     private static JsonObject Node(ImportChoice choice)
     {
         ArgumentNullException.ThrowIfNull(choice);
 
         var node = new JsonObject { ["action"] = NameOf(choice.Action) };
+        if (choice.AcceptFields is { } accepted)
+        {
+            node["acceptFields"] = new JsonArray([.. accepted.Select(static field => (JsonNode?)JsonValue.Create(field))]);
+        }
+
         if (choice.Target is { } target)
         {
             node["target"] = target switch
@@ -366,6 +412,9 @@ public static class ImportChoiceJson
     {
         ImportAction.Import => ImportName,
         ImportAction.Skip => SkipName,
+        ImportAction.Apply => ApplyName,
+        ImportAction.MoveToNewVersion => MoveToNewVersionName,
+        ImportAction.Keep => KeepName,
         _ => IgnoreName,
     };
 
@@ -374,6 +423,9 @@ public static class ImportChoiceJson
         ImportName => ImportAction.Import,
         SkipName => ImportAction.Skip,
         IgnoreName => ImportAction.Ignore,
+        ApplyName => ImportAction.Apply,
+        MoveToNewVersionName => ImportAction.MoveToNewVersion,
+        KeepName => ImportAction.Keep,
         _ => null,
     };
 

@@ -25,8 +25,10 @@ namespace n8Tracks.Api.Tests.Invariants;
 /// new Songs, their Versions and Generations, a new Version of an existing Song, the Versions clips were
 /// attached to (a mutable one is frozen), Generation Events of groups, provider records, the workspace of
 /// a new Song, a model the clips report that no entry matched, the Reimport's restored Generation (its
-/// retention group and tombstone go), and the shortcode and number counters. Every other row is byte for
-/// byte the same. Complements: a commit with every record set to Skip, and an export uploaded, classified,
+/// retention group and tombstone go), the shortcode and number counters, and (#141) the one clip column a
+/// Changed record's accepted field names, the move of a Conflict's Generation to a new child Version with
+/// its alias and raw clip (its old Version and its rating untouched). Every other row is byte for
+/// byte the same. Complements: a commit with every record set to Skip (Changed and Conflict included), and an export uploaded, classified,
 /// proposed, and discarded, change nothing at all; and the guard bites when the commit retitles an
 /// existing Generation. The guard does not cover portable import (M8, #263).
 /// </summary>
@@ -128,8 +130,21 @@ public sealed class ImportNeverOverwritesGuardTests
         await ImportedVersions.AddAsync(factory, songId, "3", mutable);
         await SongApi.AttachGenerationAsync(factory, "n8-1-v1", deleted.ToJsonString());
         await ProposalApi.DeleteGenerationAsync(client, "n8-1-v1-g1");
-        await SongApi.CreateAsync(client, "Bystander");
+        var bystanderSong = await SongApi.CreateAsync(client, "Bystander");
         var bystander = await SongApi.AttachGenerationAsync(factory, "n8-2-v1", Clips.Minimal("bystander-1"));
+
+        // #141: a Generation whose clip Suno retitled and retagged (Changed), rated and commented on, and
+        // one whose clip now has other lyrics (Conflict).
+        var changedClip = ProposalApi.Clip("changed-1", null, at.AddHours(9), 0, "Changed words", "Before");
+        var conflictClip = ProposalApi.Clip("conflict-1", null, at.AddHours(10), 0, "Conflict words");
+        await ImportedVersions.AttachAsync(factory, bystanderSong, "2", changedClip);
+        await ImportedVersions.AttachAsync(factory, bystanderSong, "3", conflictClip);
+        await ImportCommitApi.RateAndCommentAsync(client, "n8-2-v2-g1", 4, "Stays as it is");
+        var changedNow = changedClip.DeepClone();
+        changedNow["title"] = "After";
+        changedNow["metadata"]!["tags"] = "retagged on Suno";
+        var conflictNow = conflictClip.DeepClone();
+        conflictNow["metadata"]!["prompt"] = "Other conflict words";
 
         JsonNode NewSongClip(string id, int batch)
         {
@@ -148,6 +163,8 @@ public sealed class ImportNeverOverwritesGuardTests
             ProposalApi.Clip("skipped-1", null, at.AddHours(7), 0, "Skipped words"),
             ProposalApi.Clip("ignored-1", null, at.AddHours(8), 0, "Ignored words"),
             deleted,
+            changedNow,
+            conflictNow,
         };
         var (exportId, records) = await ProposalApi.ExportAsync(client, token, clips);
         Assert.Equal("deleted", records["deleted-1"].GetProperty("class").GetString());
@@ -171,6 +188,8 @@ public sealed class ImportNeverOverwritesGuardTests
             await ChooseAsync(new JsonObject { ["action"] = "skip" }, "skipped-1");
             await ChooseAsync(new JsonObject { ["action"] = "ignore" }, "ignored-1");
             await ChooseAsync(ProposalApi.Import(new JsonObject { ["kind"] = "newSong", ["key"] = "new:91", ["title"] = "Reimported" }), "deleted-1");
+            await ChooseAsync(new JsonObject { ["action"] = "apply", ["acceptFields"] = new JsonArray("title") }, "changed-1");
+            await ChooseAsync(new JsonObject { ["action"] = "moveToNewVersion" }, "conflict-1");
             Assert.Equal("newSong", ProposalApi.Text(ProposalApi.Target(records["new-a1"]), "kind"));
         }
 
@@ -213,22 +232,42 @@ public sealed class ImportNeverOverwritesGuardTests
         Assert.Equal(1, ImportCommitApi.GenerationCount(factory, "deleted-1"));
         Assert.Equal(0, ImportCommitApi.GenerationCount(factory, "skipped-1") + ImportCommitApi.GenerationCount(factory, "ignored-1"));
 
+        // #141: the Changed record took only its accepted title; the Conflict's Generation moved to a new
+        // child Version of its own, leaving its Version (not named below) as it was.
+        Assert.Equal(("updated", "moved"), (ImportCommitApi.Outcome(records["changed-1"]), ImportCommitApi.Outcome(records["conflict-1"])));
+        var changedGeneration = GenerationOf("changed-1");
+        var movedGeneration = GenerationOf("conflict-1");
+        var childVersion = VersionIdOf(movedGeneration);
+        Assert.Equal("3.1", Number(childVersion));
+        var songB = after["versions"][childVersion]["song_id"]!;
+        var resolvedColumns = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal)
+        {
+            [changedGeneration] = ["suno_title"],
+            [movedGeneration] = ["version_id", "ordinal", "revision"],
+        };
+
         var createdSongs = Set(newSong);
-        var createdVersions = Set(newSongVersion, newVersion);
+        var createdVersions = Set(newSongVersion, newVersion, childVersion);
         var createdGenerations = Set([.. new[] { "new-a1", "new-a2", "new-v", "same-mutable", "same-frozen", "deleted-1" }.Select(GenerationOf)]);
-        var namedSongs = Set(songA, newSong);
+        var namedSongs = Set(songA, newSong, songB);
         var namedVersions = Set(versionTwo, versionThree, restoredVersion);
         var restoredGroups = Set([.. before["retention_records"].Values.Where(row => row["original_id"] == restored).Select(static row => row["group_id"]!)]);
 
         bool In(HashSet<string> set, string? value) => value is not null && set.Contains(value.ToUpperInvariant());
+
+        // A resolved Generation (#141) may change only in the columns its choice names: never its rating.
+        bool OnlyResolvedColumns(Row row) =>
+            resolvedColumns.TryGetValue(row["id"]!, out var allowed)
+            && before["generations"][row["id"]!].Columns.Where(column => before["generations"][row["id"]!][column] != row[column]).All(allowed.Contains);
 
         // What each table may have had added (A), changed (C), or removed (R), and only that.
         var rules = new Dictionary<string, Func<char, Row, bool>>(StringComparer.Ordinal)
         {
             ["songs"] = (kind, row) => kind == 'A' ? In(createdSongs, row["id"]) : kind == 'C' && In(namedSongs, row["id"]),
             ["versions"] = (kind, row) => kind == 'A' ? In(createdVersions, row["id"]) : kind == 'C' && In(namedVersions, row["id"]),
-            ["generations"] = (kind, row) => kind == 'A' && In(createdGenerations, row["id"]),
-            ["provider_records"] = (kind, row) => kind == 'A' && In(createdGenerations, row["generation_id"]),
+            ["generations"] = (kind, row) => kind == 'A' ? In(createdGenerations, row["id"]) : kind == 'C' && OnlyResolvedColumns(row),
+            ["provider_records"] = (kind, row) => kind == 'A' ? In(createdGenerations, row["generation_id"]) : kind == 'C' && resolvedColumns.ContainsKey(row["generation_id"]!),
+            ["shortcode_aliases"] = (kind, row) => kind == 'A' && row["generation_id"] == movedGeneration,
             ["generation_comments"] = (kind, row) => kind == 'A' && row["generation_id"] == restored,
             ["generation_events"] = static (kind, _) => kind == 'A',
             ["generation_event_links"] = (kind, row) => kind == 'A' && In(createdGenerations, row["generation_id"]),
@@ -253,7 +292,7 @@ public sealed class ImportNeverOverwritesGuardTests
         // The group's event, and the counted changes the result reports.
         Assert.Equal(1, Differences(before, after).Count(static change => change.Table == "generation_events"));
         var created = result.GetProperty("created");
-        Assert.Equal((1, 2, 6), (created.GetProperty("songs").GetInt32(), created.GetProperty("versions").GetInt32(), created.GetProperty("generations").GetInt32()));
+        Assert.Equal((1, 3, 6), (created.GetProperty("songs").GetInt32(), created.GetProperty("versions").GetInt32(), created.GetProperty("generations").GetInt32()));
         return unexplained;
     }
 
@@ -348,6 +387,9 @@ public sealed class ImportNeverOverwritesGuardTests
     internal sealed class Row(Dictionary<string, string?> values)
     {
         public string Text { get; } = string.Join('|', values.Select(static pair => $"{pair.Key}={pair.Value ?? "<null>"}"));
+
+        /// <summary>The row's column names.</summary>
+        public IEnumerable<string> Columns => values.Keys;
 
         public string? this[string column] => values.TryGetValue(column, out var value)
             ? value

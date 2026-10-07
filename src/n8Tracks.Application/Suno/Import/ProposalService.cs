@@ -543,7 +543,12 @@ public sealed class ProposalService(
             {
                 Refuse(sunoId, ImportChoiceRules.RecordNotFound);
             }
-            else if (request.Action != ImportAction.Skip && state.Class is not (SunoRecordClass.New or SunoRecordClass.Ignored or SunoRecordClass.Deleted))
+            else if (ResolutionRefusal(request, state) is { } refusal)
+            {
+                Refuse(sunoId, refusal);
+            }
+            else if (request.Action is not (ImportAction.Skip or ImportAction.Apply or ImportAction.MoveToNewVersion or ImportAction.Keep)
+                && state.Class is not (SunoRecordClass.New or SunoRecordClass.Ignored or SunoRecordClass.Deleted))
             {
                 Refuse(sunoId, ImportChoiceRules.AlreadyLinked);
             }
@@ -580,6 +585,27 @@ public sealed class ProposalService(
         }
 
         return (choice, reasons);
+    }
+
+    /// <summary>
+    /// Why a Changed or Conflict choice (#141) does not fit the record, or null: <c>apply</c> is a Changed
+    /// record's, <c>moveToNewVersion</c> and <c>keep</c> a Conflict's, and each accepted field must be one
+    /// that differs.
+    /// </summary>
+    private static string? ResolutionRefusal(ImportChoiceRequest request, RecordChoiceState state)
+    {
+        switch (request.Action)
+        {
+            case ImportAction.Apply when state.Class != SunoRecordClass.Changed:
+                return ImportChoiceRules.NotChanged;
+            case ImportAction.MoveToNewVersion or ImportAction.Keep when state.Class != SunoRecordClass.Conflict:
+                return ImportChoiceRules.NotConflict;
+            case ImportAction.Apply or ImportAction.MoveToNewVersion or ImportAction.Keep:
+                var changed = state.ChangedFields ?? [];
+                return (request.AcceptFields ?? []).All(field => changed.Contains(field, StringComparer.Ordinal)) ? null : ImportChoiceRules.FieldNotChanged;
+            default:
+                return null;
+        }
     }
 
     /// <summary>
@@ -648,7 +674,7 @@ public sealed class ProposalService(
     {
         if (request.Action != ImportAction.Import)
         {
-            return (new ImportChoice(request.Action, null), null);
+            return (new ImportChoice(request.Action, null, request.AcceptFields), null);
         }
 
         var target = request.Target!;

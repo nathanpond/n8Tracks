@@ -47,6 +47,18 @@ public static class ImportCommitOutcomes
     public const string Skipped = "skipped";
     public const string Ignored = "ignored";
     public const string Failed = "failed";
+
+    /// <summary>#141: the accepted fields of a Changed or Conflict record were written to its Generation.</summary>
+    public const string Updated = "updated";
+
+    /// <summary>#141: every field of a Changed record was declined; nothing changed.</summary>
+    public const string Declined = "declined";
+
+    /// <summary>#141: a Conflict's Generation was kept where it is, no field accepted; nothing changed.</summary>
+    public const string Kept = "kept";
+
+    /// <summary>#141: a Conflict's Generation moved to a new child Version holding the clip's inputs.</summary>
+    public const string Moved = "moved";
 }
 
 /// <summary>The fixed reasons a record was not imported as chosen, or a note on how it was (<see cref="NumberTaken"/>).</summary>
@@ -259,7 +271,7 @@ internal sealed class ImportCommitJob(
     {
         var results = new Dictionary<string, RecordResult>(StringComparer.Ordinal);
         var plan = CommitPlan.Of(await store.CommitRecordsAsync(export.Id, cancellationToken).ConfigureAwait(false), results);
-        var total = Math.Max(1, plan.Restores.Count + plan.Units.Count);
+        var total = Math.Max(1, plan.Restores.Count + plan.Units.Count + plan.Resolutions.Count);
         var done = 0;
         void Progress()
         {
@@ -355,6 +367,32 @@ internal sealed class ImportCommitJob(
             Progress();
         }
 
+        // Changed and Conflict records the user decided (#141), each in its own transaction.
+        var replacedImages = new List<(CommitClip Clip, Guid GenerationId)>();
+        foreach (var clip in plan.Resolutions)
+        {
+            ChangeResolution resolution;
+            try
+            {
+                resolution = await InScopeAsync<ChangeResolutionWriter, ChangeResolution>(
+                    resolver => resolver.ResolveAsync(export.Id, clip, cancellationToken)).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                // As a target's: this record only fails, and is offered again at the next sync.
+                resolution = new ChangeResolution(RecordResult.Failed(ImportCommitReasons.InvalidClip), false, null);
+            }
+
+            results[clip.SunoId] = resolution.Result;
+            created.Versions += resolution.CreatedVersion ? 1 : 0;
+            if (resolution.ArtworkFor is { } generationId)
+            {
+                replacedImages.Add((clip, generationId));
+            }
+
+            Progress();
+        }
+
         await RecordEventsAsync(attached, cancellationToken).ConfigureAwait(false);
 
         foreach (var (clip, generationId) in attached)
@@ -366,6 +404,16 @@ internal sealed class ImportCommitJob(
 
             var outcome = await InScopeAsync<GenerationArtworkService, StagedArtworkOutcome>(
                 artwork => artwork.AttachStagedAsync(generationId, assetId, cancellationToken)).ConfigureAwait(false);
+            if (outcome == StagedArtworkOutcome.ImageMissing)
+            {
+                results[clip.SunoId] = results[clip.SunoId] with { Note = RecordResult.ArtworkMissingNote };
+            }
+        }
+
+        foreach (var (clip, generationId) in replacedImages)
+        {
+            var outcome = await InScopeAsync<GenerationArtworkService, StagedArtworkOutcome>(
+                artwork => artwork.ReplaceWithStagedAsync(generationId, clip.Record.ArtworkAssetId!.Value, cancellationToken)).ConfigureAwait(false);
             if (outcome == StagedArtworkOutcome.ImageMissing)
             {
                 results[clip.SunoId] = results[clip.SunoId] with { Note = RecordResult.ArtworkMissingNote };
@@ -436,6 +484,9 @@ internal sealed class CommitPlan
     /// <summary>The Reimports, tried first as restores.</summary>
     public List<CommitClip> Restores { get; } = [];
 
+    /// <summary>The Changed and Conflict records the user decided (#141), resolved after the targets.</summary>
+    public List<CommitClip> Resolutions { get; } = [];
+
     /// <summary>The targets of the records imported but not restored, as <see cref="UnitsWith"/> builds them before any restore.</summary>
     public IReadOnlyList<CommitUnit> Units => UnitsWith([]);
 
@@ -461,7 +512,11 @@ internal sealed class CommitPlan
             }
 
             var clip = new CommitClip(record, choice, ClipReader.Read(record.RawJson) as ClipReading.Read, ImportChoiceJson.GroupOf(record.ProposalJson));
-            if (clip.IsReimport)
+            if (choice.Resolves)
+            {
+                plan.Resolutions.Add(clip);
+            }
+            else if (clip.IsReimport)
             {
                 plan.Restores.Add(clip);
             }
@@ -740,7 +795,7 @@ internal sealed class ImportTargetWriter(
     /// clips' inputs, the model list extended for a model no entry matches) and the lineage
     /// <paramref name="clip"/> reads, linked to the Generations already imported (#137).
     /// </summary>
-    private async Task<(SongVersion Version, SongLink Song, string? NewSongKey, bool NumberTaken)> CreateAsync(
+    internal async Task<(SongVersion Version, SongLink Song, string? NewSongKey, bool NumberTaken)> CreateAsync(
         ImportTarget target,
         CommitClip clip,
         MappedClipInputs mapped,

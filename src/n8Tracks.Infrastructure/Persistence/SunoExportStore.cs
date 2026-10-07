@@ -282,10 +282,10 @@ internal sealed class SunoExportStore(N8TracksDbContext context) : ISunoExportSt
         var read = await context.StagedClips.AsNoTracking()
             .Where(row => row.ExportId == exportId)
             .OrderBy(static row => row.SunoId)
-            .Select(static row => new { row.SunoId, row.Class, row.ChoiceJson })
+            .Select(static row => new { row.SunoId, row.Class, row.ChoiceJson, row.ChangedFields })
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
-        return [.. read.Select(static row => new RecordChoiceState(row.SunoId, SunoExportRules.ClassOf(row.Class), row.ChoiceJson))];
+        return [.. read.Select(static row => new RecordChoiceState(row.SunoId, SunoExportRules.ClassOf(row.Class), row.ChoiceJson, FlagsOf(row.ChangedFields)))];
     }
 
     public async Task<bool> TrySetChoicesAsync(Guid exportId, int revision, IReadOnlyCollection<string> sunoIds, string choiceJson, CancellationToken cancellationToken)

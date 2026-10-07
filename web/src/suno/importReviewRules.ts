@@ -56,6 +56,12 @@ export function reasonText(reason: string): string {
       return 'a Generation already holds it';
     case 'record_not_found':
       return 'the record is no longer in this import';
+    case 'not_changed':
+      return 'only a Changed record takes Suno’s fields';
+    case 'not_conflict':
+      return 'only a Conflict record can move to a new Version or be kept';
+    case 'field_not_changed':
+      return 'Suno’s data does not differ in a field chosen';
     default:
       return reason;
   }
@@ -93,6 +99,10 @@ export function outcomesText(records: readonly { outcome: string }[]): string {
     ['linked', 'already linked'],
     ['skipped', 'left for a later sync'],
     ['ignored', 'not copied'],
+    ['updated', 'updated from Suno'],
+    ['declined', 'kept as they were'],
+    ['kept', 'kept on their Version'],
+    ['moved', 'moved to a new Version'],
     ['failed', 'failed'],
   ];
   const parts = labels.flatMap(([outcome, label]) => {
@@ -131,9 +141,73 @@ export function targetText(target: NamedTarget): string {
   }
 }
 
+/** How each diffed provider field is named (#141). */
+export const FIELD_LABELS: Record<string, string> = {
+  title: 'Title',
+  tags: 'Style tags',
+  duration: 'Length',
+  modelVersion: 'Model version',
+  modelName: 'Model name',
+  minimumBpm: 'Lowest BPM',
+  maximumBpm: 'Highest BPM',
+  averageBpm: 'Average BPM',
+  key: 'Key',
+  imageUrl: 'Cover image',
+};
+
+/** A diffed field's name in plain words. */
+export function fieldLabel(field: string): string {
+  return FIELD_LABELS[field] ?? field;
+}
+
+/** A diffed value in plain words: "None" when absent, a length as minutes and seconds. */
+export function diffValueText(field: string, value: string | number | null): string {
+  if (value === null || value === '') {
+    return 'None';
+  }
+  if (typeof value === 'number') {
+    return field === 'duration' ? durationText(value) : String(value);
+  }
+  return value;
+}
+
+/** The fields named, in plain words: "Title and Style tags". */
+export function fieldsText(fields: readonly string[]): string {
+  const labels = fields.map(fieldLabel);
+  return labels.length <= 1
+    ? (labels[0] ?? '')
+    : `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1] ?? ''}`;
+}
+
+/** Whether a record's diff can be reviewed: a Changed or Conflict record (#141). */
+export function hasDiff(record: ImportRecord): boolean {
+  return record.class === 'changed' || record.class === 'conflict';
+}
+
+/** What will happen to a Changed or Conflict record as its choice stands (#141). */
+function resolutionText(record: ImportRecord): string {
+  const choice = record.choice;
+  if (choice === null || !('acceptFields' in choice)) {
+    return 'Left as it is';
+  }
+  const taken =
+    choice.acceptFields.length === 0 ? '' : `take ${fieldsText(choice.acceptFields)} from Suno`;
+  switch (choice.action) {
+    case 'moveToNewVersion':
+      return `Move to a new Version${taken === '' ? '' : `, and ${taken}`}`;
+    case 'keep':
+      return `Keep it where it is${taken === '' ? '' : `, and ${taken}`}`;
+    default:
+      return taken === '' ? 'Keep n8Tracks’ data' : `T${taken.slice(1)}`;
+  }
+}
+
 /** What will happen to a record as its choice stands, in plain words. */
 export function choiceText(record: ImportRecord): string {
   const choice = record.choice;
+  if (hasDiff(record)) {
+    return resolutionText(record);
+  }
   if (!isReviewable(record)) {
     return record.class === 'linked' ? 'Already in n8Tracks' : 'Left as it is';
   }
@@ -156,8 +230,11 @@ export function choiceNote(record: ImportRecord): string | undefined {
   if (record.class === 'deleted' && record.choice?.action !== 'import') {
     return 'Its Generation was deleted in n8Tracks.';
   }
-  if (record.class === 'changed' || record.class === 'conflict') {
-    return 'Comparing it with n8Tracks comes in a later update.';
+  if (record.class === 'changed') {
+    return 'Suno’s data for it changed. Review the differences to choose what to take.';
+  }
+  if (record.class === 'conflict') {
+    return 'It was made with other inputs than its Version. Review the differences to choose.';
   }
   return undefined;
 }

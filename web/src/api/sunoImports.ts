@@ -72,9 +72,46 @@ export type ImportTargetChoice =
     }
   | { kind: 'version'; version: string };
 
-/** What the user wants done with a record: import it to a target, Skip this time, or Don't copy (`ignore`). */
+/**
+ * What the user wants done with a record: import it to a target, Skip this time, or Don't copy
+ * (`ignore`). A Changed record may `apply` the fields accepted from Suno; a Conflict record may
+ * `moveToNewVersion` or `keep`, each with the fields accepted from the metadata diff beneath (#141).
+ */
 export type ImportChoice =
-  { action: 'import'; target: ImportTargetChoice } | { action: 'skip' } | { action: 'ignore' };
+  | { action: 'import'; target: ImportTargetChoice }
+  | { action: 'skip' }
+  | { action: 'ignore' }
+  | { action: 'apply' | 'moveToNewVersion' | 'keep'; acceptFields: string[] };
+
+/** The provider fields a diff compares, in the order it lists them (#141). */
+export const DIFF_FIELDS = [
+  'title',
+  'tags',
+  'duration',
+  'modelVersion',
+  'modelName',
+  'minimumBpm',
+  'maximumBpm',
+  'averageBpm',
+  'key',
+  'imageUrl',
+] as const;
+
+/** One field in which Suno's copy differs: n8Tracks' value and Suno's. */
+export interface FieldDiff {
+  field: string;
+  current: string | number | null;
+  incoming: string | number | null;
+}
+
+/** How a Changed or Conflict record differs (#141): its fields, and for a Conflict the creation inputs. */
+export interface RecordDiff {
+  sunoId: string;
+  class: 'changed' | 'conflict';
+  generationId: string;
+  fields: FieldDiff[];
+  inputs: { field: string; current: string; incoming: string }[];
+}
 
 /** A Song a choice names: an existing one (ID, shortcode, title; the title null once gone) or a new one (its key and title). */
 export interface TargetSong {
@@ -115,6 +152,8 @@ export interface ImportRecord {
   proposal: { choice: ImportChoice; basis: string; group: number | null } | null;
   choice: ImportChoice | null;
   flags: string[];
+  /** The provider fields a Changed or Conflict record differs in (#141). */
+  changedFields?: string[];
   generationId: string | null;
   target: NamedTarget | null;
   generation: { id: string; shortcode: string; songShortcode: string } | null;
@@ -143,6 +182,8 @@ export interface ImportSummary {
   reimports: number;
   ignored: number;
   skipped: number;
+  /** Changed and Conflict records whose differences the user decided (#141). */
+  resolved?: number;
   valid: boolean;
   invalidCount: number;
   /** The reasons each invalid choice cannot be made now, by Suno ID (codes such as `inputs_differ`). */
@@ -238,7 +279,11 @@ function isChoice(value: unknown): value is ImportChoice {
     isRecord(value) &&
     (value.action === 'skip' ||
       value.action === 'ignore' ||
-      (value.action === 'import' && isRecord(value.target)))
+      (value.action === 'import' && isRecord(value.target)) ||
+      ((value.action === 'apply' ||
+        value.action === 'moveToNewVersion' ||
+        value.action === 'keep') &&
+        isStringList(value.acceptFields)))
   );
 }
 
@@ -401,6 +446,51 @@ export async function readImportTargets(
   }
 }
 
+function isDiffValue(value: unknown): value is string | number | null {
+  return value === null || typeof value === 'string' || typeof value === 'number';
+}
+
+function isRecordDiff(value: unknown): value is RecordDiff {
+  return (
+    isRecord(value) &&
+    typeof value.sunoId === 'string' &&
+    (value.class === 'changed' || value.class === 'conflict') &&
+    Array.isArray(value.fields) &&
+    value.fields.every(
+      (field) =>
+        isRecord(field) &&
+        typeof field.field === 'string' &&
+        isDiffValue(field.current) &&
+        isDiffValue(field.incoming),
+    ) &&
+    Array.isArray(value.inputs) &&
+    value.inputs.every(
+      (input) =>
+        isRecord(input) &&
+        typeof input.field === 'string' &&
+        typeof input.current === 'string' &&
+        typeof input.incoming === 'string',
+    )
+  );
+}
+
+/** Reads how a Changed or Conflict record differs (#141); undefined when it cannot be read. */
+export async function readRecordDiff(
+  id: string,
+  sunoId: string,
+  signal?: AbortSignal,
+): Promise<RecordDiff | undefined> {
+  try {
+    const response = await apiFetch(exportPath(id, `/records/${encodeURIComponent(sunoId)}/diff`), {
+      signal,
+    });
+    const answer = await body(response);
+    return response.ok && isRecordDiff(answer) ? answer : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Which records a change of choices names: these Suno IDs, or every record the review can change matching a filter but those left out. */
 export type RecordSelection =
   { kind: 'ids'; sunoIds: string[] } | { kind: 'filter'; filter: ImportFilter; except: string[] };
@@ -484,7 +574,17 @@ export async function discardImport(id: string): Promise<'discarded' | 'too-late
 /** What happened to one record when the import was confirmed (#140). */
 export interface CommittedRecord {
   sunoId: string;
-  outcome: 'created' | 'linked' | 'skipped' | 'ignored' | 'failed';
+  /** `updated`, `declined`, `kept`, and `moved` settle a Changed or Conflict record (#141). */
+  outcome:
+    | 'created'
+    | 'linked'
+    | 'skipped'
+    | 'ignored'
+    | 'failed'
+    | 'updated'
+    | 'declined'
+    | 'kept'
+    | 'moved';
   /** Why it was not imported as chosen (`inputs_differ`…), or `number_taken` for a Version renumbered. */
   reason?: string;
   generation?: { id: string; shortcode: string; songId: string };

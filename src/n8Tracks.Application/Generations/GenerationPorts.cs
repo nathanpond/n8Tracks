@@ -1,5 +1,6 @@
 using n8Tracks.Application.Songs;
 using n8Tracks.Domain.Songs;
+using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Application.Generations;
 
@@ -86,6 +87,15 @@ public interface IGenerationStore
     /// <paramref name="assetId"/> (#121), touching no other column: not its revision. Only inside a transaction.
     /// </summary>
     Task SetArtworkAsync(Guid generationId, Guid assetId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Writes the clip columns named by <paramref name="fields"/> (names of
+    /// <c>SunoExportRules.ComparedFields</c>; the image address with its query string) from
+    /// <paramref name="incoming"/> to the Generation with <paramref name="generationId"/> (#141: a diff the
+    /// user accepted), touching no other column: not its rating, state, revision, or artwork. Only
+    /// inside a transaction.
+    /// </summary>
+    Task RefreshClipFieldsAsync(Guid generationId, ClipFields incoming, IReadOnlyCollection<string> fields, CancellationToken cancellationToken);
 
     /// <summary>The distinct assets the cover images of <paramref name="generationIds"/> are, for those that have one.</summary>
     Task<IReadOnlyList<Guid>> ArtworkAssetIdsAsync(IReadOnlyCollection<Guid> generationIds, CancellationToken cancellationToken);

@@ -68,8 +68,11 @@ public sealed record ClassifiedRecord(string SunoId, string RawJson, SunoRecordC
 /// </summary>
 public sealed record CommitRecord(string SunoId, string RawJson, SunoRecordClass? Class, string? ChoiceJson, string? ProposalJson, Guid? ArtworkAssetId);
 
-/// <summary>A staged record's class and current choice (JSON), as a change of choices checks the whole export (#138).</summary>
-public sealed record RecordChoiceState(string SunoId, SunoRecordClass? Class, string? ChoiceJson);
+/// <summary>
+/// A staged record's class and current choice (JSON), as a change of choices checks the whole export
+/// (#138), and the provider fields in which a Changed or Conflict record differs (#141).
+/// </summary>
+public sealed record RecordChoiceState(string SunoId, SunoRecordClass? Class, string? ChoiceJson, IReadOnlyList<string>? ChangedFields = null);
 
 /// <summary>A record's proposal and the choice it starts with, both as JSON (<see cref="ImportChoiceJson"/>).</summary>
 public sealed record RecordProposalRow(string SunoId, string ProposalJson, string ChoiceJson);

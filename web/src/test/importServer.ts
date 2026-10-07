@@ -7,6 +7,7 @@ import type {
   ImportSummary,
   ImportTargets,
   NamedTarget,
+  RecordDiff,
   SunoImport,
 } from '../api/sunoImports';
 import { healthyReport, jsonResponse, requestPath, stubFetch } from './helpers';
@@ -235,6 +236,8 @@ export function importServer(records: ImportRecord[], exported: Partial<SunoImpo
     patches: [] as ReceivedPatch[],
     recordQueries: [] as string[],
     targetQueries: [] as string[],
+    /** The diff of each Changed or Conflict record by Suno ID (#141); any other answers 422. */
+    diffs: {} as Record<string, RecordDiff>,
     discards: 0,
     nextPatch: undefined as (() => Response) | undefined,
     invalid: {} as Record<string, string[]>,
@@ -298,6 +301,9 @@ export function importServer(records: ImportRecord[], exported: Partial<SunoImpo
       (record) => record.choice?.action === 'ignore' && record.class !== 'ignored',
     ).length;
     const invalidCount = Object.keys(server.invalid).length;
+    const resolved = server.records.filter(
+      (record) => record.choice !== null && 'acceptFields' in record.choice,
+    ).length;
     return {
       export: counted(),
       songs: keys('newSong'),
@@ -305,11 +311,12 @@ export function importServer(records: ImportRecord[], exported: Partial<SunoImpo
       generations: imports.length,
       reimports: imports.filter((record) => record.class === 'deleted').length,
       ignored,
-      skipped: server.records.length - imports.length - ignored,
+      skipped: server.records.length - imports.length - ignored - resolved,
+      resolved,
       valid: invalidCount === 0,
       invalidCount,
       invalid: server.invalid,
-      nothingToDo: imports.length === 0 && newlyIgnored === 0,
+      nothingToDo: imports.length === 0 && newlyIgnored === 0 && resolved === 0,
       nextKey: 'new:90',
       workspaces: server.workspaces.map((workspace) => ({
         ...workspace,
@@ -400,6 +407,15 @@ export function importServer(records: ImportRecord[], exported: Partial<SunoImpo
       server.discards += 1;
       server.export = { ...server.export, state: 'discarded', endedAt: '2026-10-06T13:00:00Z' };
       return Promise.resolve(jsonResponse(200, counted()));
+    }
+    const diff = /^\/records\/([^/]+)\/diff$/.exec(rest);
+    if (diff !== null) {
+      const found = server.diffs[decodeURIComponent(diff[1] ?? '')];
+      return Promise.resolve(
+        found === undefined
+          ? jsonResponse(422, { code: 'record_not_changed' })
+          : jsonResponse(200, found),
+      );
     }
     const target = /^\/records\/([^/]+)\/targets$/.exec(rest);
     if (target !== null) {

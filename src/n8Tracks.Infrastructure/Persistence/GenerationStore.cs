@@ -27,6 +27,31 @@ internal sealed class GenerationStore(N8TracksDbContext context) : IGenerationSt
             .Where(generation => generation.Id == generationId)
             .ExecuteUpdateAsync(setters => setters.SetProperty(static generation => generation.ArtworkAssetId, assetId), cancellationToken);
 
+    public async Task RefreshClipFieldsAsync(Guid generationId, ClipFields incoming, IReadOnlyCollection<string> fields, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(incoming);
+        ArgumentNullException.ThrowIfNull(fields);
+
+        var row = context.Generations.Where(generation => generation.Id == generationId);
+        foreach (var field in fields)
+        {
+            _ = field switch
+            {
+                "title" => await row.ExecuteUpdateAsync(setters => setters.SetProperty(static generation => generation.SunoTitle, incoming.Title), cancellationToken).ConfigureAwait(false),
+                "tags" => await row.ExecuteUpdateAsync(setters => setters.SetProperty(static generation => generation.StyleTags, incoming.StyleTags), cancellationToken).ConfigureAwait(false),
+                "duration" => await row.ExecuteUpdateAsync(setters => setters.SetProperty(static generation => generation.DurationSeconds, incoming.DurationSeconds), cancellationToken).ConfigureAwait(false),
+                "modelVersion" => await row.ExecuteUpdateAsync(setters => setters.SetProperty(static generation => generation.ModelVersion, incoming.ModelVersion), cancellationToken).ConfigureAwait(false),
+                "modelName" => await row.ExecuteUpdateAsync(setters => setters.SetProperty(static generation => generation.ModelName, incoming.ModelName), cancellationToken).ConfigureAwait(false),
+                "minimumBpm" => await row.ExecuteUpdateAsync(setters => setters.SetProperty(static generation => generation.MinimumBpm, incoming.MinimumBpm), cancellationToken).ConfigureAwait(false),
+                "maximumBpm" => await row.ExecuteUpdateAsync(setters => setters.SetProperty(static generation => generation.MaximumBpm, incoming.MaximumBpm), cancellationToken).ConfigureAwait(false),
+                "averageBpm" => await row.ExecuteUpdateAsync(setters => setters.SetProperty(static generation => generation.AverageBpm, incoming.AverageBpm), cancellationToken).ConfigureAwait(false),
+                "key" => await row.ExecuteUpdateAsync(setters => setters.SetProperty(static generation => generation.MusicalKey, incoming.Key), cancellationToken).ConfigureAwait(false),
+                "imageUrl" => await row.ExecuteUpdateAsync(setters => setters.SetProperty(static generation => generation.ImageUrl, incoming.ImageUrl), cancellationToken).ConfigureAwait(false),
+                _ => throw new ArgumentException($"'{field}' is not a field a diff writes.", nameof(fields)),
+            };
+        }
+    }
+
     public async Task<IReadOnlyList<Guid>> ArtworkAssetIdsAsync(IReadOnlyCollection<Guid> generationIds, CancellationToken cancellationToken) =>
         await context.Generations.AsNoTracking()
             .Where(generation => generationIds.Contains(generation.Id) && generation.ArtworkAssetId != null)

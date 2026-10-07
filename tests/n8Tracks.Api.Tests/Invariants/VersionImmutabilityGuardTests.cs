@@ -1174,6 +1174,7 @@ public sealed class VersionImmutabilityGuardTests
         ["ProposalService.ValidateAsync(Guid, CancellationToken)"] = "reads only: the stored choices checked against the catalog",
         ["ProposalService.TargetsAsync(Guid, String, String, String, CancellationToken)"] = "reads only: the Versions a record may go to",
         ["ImportReviewService.CurrentAsync(CancellationToken)"] = "reads only",
+        ["ChangeResolutionService.DiffAsync(Guid, String, CancellationToken)"] = "reads only: a Changed or Conflict record's diff (#141); the commit, exercised above, is what moves a Conflict's Generation",
         ["ImportReviewService.RecordsAsync(Guid, StagedRecordQuery, CancellationToken)"] = "reads only",
         ["ImportReviewService.SummaryAsync(Guid, CancellationToken)"] = "reads only",
         ["RecordClassifier.ClassifyAsync(IReadOnlyList`1, CancellationToken)"] = "reads only: classes records by Suno ID",
@@ -1573,6 +1574,32 @@ public sealed class VersionImmutabilityGuardTests
         var record = ImportCommitApi.Records(job.GetProperty("result"))[sunoId];
         Assert.Equal(("failed", "inputs_differ"), (ImportCommitApi.Outcome(record), ImportCommitApi.Reason(record)));
         Assert.Equal(0, ImportCommitApi.GenerationCount(target.Factory, sunoId));
+
+        await MoveConflictOffAsync(target, token, commit);
+    }
+
+    /// <summary>
+    /// #141: a Generation of the target's Version whose clip Suno now reports with other lyrics (a
+    /// Conflict), resolved by moving it to a new Version: committed by <paramref name="commit"/>, the
+    /// Generation moves to a new child Version holding the clip's inputs, and the Version it leaves keeps
+    /// its own (the guard compares them after).
+    /// </summary>
+    private static async Task MoveConflictOffAsync(Target target, string token, Func<Guid, Task<Guid>> commit)
+    {
+        var sunoId = "guard-" + Guid.NewGuid().ToString("N");
+        var clip = ProposalApi.Clip(sunoId, null, ProposalApi.At, 0, "Guard conflict words");
+        await SongApi.AttachGenerationAsync(target.Factory, target.VersionId.ToString(), clip.ToJsonString());
+        var (exportId, records) = await ProposalApi.ExportAsync(target.Client, token, clip);
+        Assert.Equal("conflict", records[sunoId].GetProperty("class").GetString());
+        TestDatabase.Execute(target.Factory.DataPath, $$"""UPDATE suno_export_records SET choice_json = '{"action":"moveToNewVersion"}' WHERE suno_id = '{{sunoId}}';""");
+
+        var job = await TestJobs.WaitForStatusAsync(target.Client, await commit(exportId), "succeeded");
+        var record = ImportCommitApi.Records(job.GetProperty("result"))[sunoId];
+        Assert.Equal("moved", ImportCommitApi.Outcome(record));
+        var generationId = record.GetProperty("generation").GetProperty("id").GetGuid().ToString().ToUpperInvariant();
+        var moved = Guid.Parse(TestDatabase.Scalar(target.Factory.DataPath, $"SELECT version_id FROM generations WHERE id = '{generationId}';"));
+        Assert.NotEqual(target.VersionId, moved);
+        Assert.StartsWith(Convert.ToHexString(System.Text.Encoding.UTF8.GetBytes("Guard conflict words")) + "|", Stored(target.Factory, moved), StringComparison.Ordinal);
     }
 
     /// <summary>
