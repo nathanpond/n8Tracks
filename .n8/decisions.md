@@ -3525,3 +3525,36 @@ Story #153 (built in parallel; merged into the milestone branch):
 - **Decision:** The invariant 3 extension is a separate guard test, `ThePlaylistsAndPersonasChangeOnlyWithTheClipsImported`. It covers an all-Skip/Don't-copy commit (no change) and a one-import commit (exactly its Voice and the listed playlist holding it are added, and pre-existing rows are untouched). The shared scenario and `Unexplained` rules are not edited.
   **Why:** The shared scenario has no lineage, so its rules need no new table, and #142 edits that scenario in parallel. A separate test avoids a merge conflict.
   **Issue:** #153
+
+Story #145 (built in parallel; merged into the milestone branch):
+
+- **Decision:** `PUT /api/v1/suno/workspaces/discovered` now takes `suno.sync` or `suno.generate` (`RequireAnyScope`).
+  **Why:** The story's key link has Generate on Suno report Suno's complete workspace list, and that report is what makes n8Tracks mark a missing workspace Unavailable. A generate-only credential could not send it. The change only widens the endpoint: suno.sync callers are unaffected. The scope test now names both scopes.
+  **Issue:** #145
+- **Decision:** `resolvedWorkspace` on the progress PATCH sets the Song's workspace in the same transaction as the report, through `ISongWorkspaceStore.MoveAsync`, and only when the Song has none or an Unavailable one. Otherwise it answers 409 `workspace_already_set` with `workspaceId`. Resending the Song's own workspace is accepted and changes nothing (no revision bump). An unknown workspace is recorded as Available from a minimal raw project; an Unavailable one is refused with 422 `validation_failed` on `resolvedWorkspace`.
+  **Why:** The story says the report is retried after a failure, never the creation, so a retry after a lost answer must not be refused. The workspace record needs a row before the Song's FK can point at it. A choice of an Unavailable workspace matches the Song PATCH rule. No migration.
+  **Issue:** #145
+- **Decision:** The snapshot's `workspace` carries `state` (`available` or `unavailable`). The content key is unchanged.
+  **Why:** The story requires the request snapshot to carry the Song's workspace state. The workspace never made a request stale (#144), and it still does not.
+  **Issue:** #145
+- **Decision:** Not signed in is detected without a sign-in snapshot. The `open-workspaces` workflow's first step requires Suno's profile menu button (`data-testid="profile-menu-button"`, present on every signed-in TS-003 page snapshot). The tab also stops when it is not on /create after two loads (a sign-in redirect). The test stands in for the signed-out page by taking the button out of the selector snapshot.
+  **Why:** The m4-plan risk for #145 says the not-signed-in page has no snapshot, so the story relies on fallback detection. Absence-based detection invents no page structure.
+  **Issue:** #145
+- **Decision:** The "Workspaces" breadcrumb that opens the list is found as `role=button` named exactly "Workspaces". When the list is already open (the "Search workspaces" box is there), nothing is pressed.
+  **Why:** No TS-003 snapshot shows the closed state, only the open list. The role is unverified, so the owner's live Demo checks it. Matching the exact name never presses the workspace-name (rename) breadcrumb.
+  **Issue:** #145
+- **Decision:** Suno's rows carry no ID, so a workspace's row is found by `^<name>( |$)` on the row's accessible name. The name is the one Suno's complete list (`/api/project/me`) gives for the ID. If that list holds another workspace of the same name, the tab stops (`SAME_NAME`) without pressing. A prefix overlap makes `find` ambiguous, which also stops. Selection is verified by Suno's library pane requesting `/api/feed/v3` with `filters.workspace.workspaceId` equal to the ID; a workspace the pane already shows is not pressed.
+  **Why:** This follows the Discretion note "the ID is matched against the IDs in Suno's workspace list response". A workspace with the same name and another ID is never selected automatically (test plan complement). The feed filter is the TS-003-documented signal of the selected workspace.
+  **Issue:** #145
+- **Decision:** A created workspace's name is the Song's title with whitespace collapsed and no cut ("Untitled" for a blank title). The new ID is read from the observed `POST /api/project` answer (a new observer kind, `workspace-created`). If Suno does not select the new workspace within 5 s, its row is pressed.
+  **Why:** The create-row snapshot shows no `maxlength`, so there is no limit to cut to (Discretion: "cut … if the dialog shows one"). TS-003 does not say whether Suno selects a new workspace by itself.
+  **Issue:** #145
+- **Decision:** In the extension ESLint config, the click restriction now matches only a zero-argument `click()` (the DOM's) in the page-context folders, so a workflow can call the primitive `page.click(found)`. `test/dom-access-lint.test.ts` keeps the native-click samples failing and adds one that the primitive passes.
+  **Why:** The old selector refused every `.click(...)` call, the click primitive included, so no workflow could press anything (#145 is the first that needs to). Type-aware enforcement stays in the invariant 4 source scan, which refuses DOM clicks by symbol. This is not a suppression; `check-suppressions.sh` and `check-canaries.sh` pass.
+  **Issue:** #145
+- **Decision:** This story ends the request in state `workspace` with step `workspace selected`; #146 continues from there. A closed generation tab reports `stopped` ("The Suno tab was closed."). The web shows `workspace` with step `choose workspace` as "Waiting for you in Suno: choose the Song's workspace in the extension's panel".
+  **Why:** The filling steps are #146's. The Discretion note requires the Version page to show "Waiting for you in Suno" during the choice.
+  **Issue:** #145
+- **Decision:** `ADAPTER_VERSION` is 4. Four workflows are registered in `adapter/workflows/workspace.ts` (`open-workspaces`, `more-workspaces`, `select-workspace`, `create-workspace`), each with a guard recipe; `create-workspace` has `exceptions: ['create-workspace']`. The runtime guard test's timeout is raised to 60 s.
+  **Why:** Selectors and an observed request changed (#133/#134 rule). The guard runs every workflow on every snapshot; with six workflows it takes about 8 s, past vitest's 5 s default. No check was weakened.
+  **Issue:** #145
