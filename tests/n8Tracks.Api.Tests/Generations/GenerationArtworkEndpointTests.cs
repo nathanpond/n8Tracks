@@ -55,8 +55,8 @@ public sealed class GenerationArtworkEndpointTests
         Assert.Equal(red.GetProperty("assetId").GetString(), (await ListedAsync(client, "n8-1-v1-g1")).GetProperty("artwork").GetProperty("assetId").GetString());
         await AssertOriginalAsync(client, red, Red);
 
-        // With no Selected Generation the Song shows nothing.
-        Assert.Equal(JsonValueKind.Null, songAfterUpload.GetProperty("artwork").ValueKind);
+        // With no Selected Generation the Song shows its newest Generation's image (#318), stored nowhere.
+        AssertShows(songAfterUpload, red, "newestGeneration");
 
         // Select g1: the Song shows its image, centred and uncropped, in its answer and in the list.
         var selected = await SelectAsync(client, "n8-1-v1-g1");
@@ -77,9 +77,10 @@ public sealed class GenerationArtworkEndpointTests
         var cleared = await ClearAsync(client);
         AssertShows(cleared, blue, "own");
 
-        // 4. Remove the Song's own artwork: it shows its Selected Generation's again (none while cleared).
+        // 4. Remove the Song's own artwork: it shows its Selected Generation's again (while cleared, its
+        // newest Generation's with an image, g2's, #318).
         var removed = await SongApi.EditAsync(client, "n8-1", cleared.GetProperty("revision").GetInt32(), """{"artworkAssetId":null}""");
-        Assert.Equal(JsonValueKind.Null, removed.GetProperty("artwork").ValueKind);
+        AssertShows(removed, blue, "newestGeneration");
         AssertShows(await SelectAsync(client, "n8-1-v1-g1"), red, "selectedGeneration");
 
         // A Selected Generation without an image gives nothing.

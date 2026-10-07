@@ -74,6 +74,12 @@ export interface EntryResult {
   text?: boolean;
   /** Plain words for the user: why, or what to do by hand. */
   note?: string;
+  /**
+   * The note as n8Tracks stores it when `note` quotes the Version's own text (a source's title, a
+   * file note, a Voice or playlist name): the same words naming those generically. n8Tracks keeps
+   * only the adapter's words and refuses a note that carries the Version's text (#340).
+   */
+  reportNote?: string;
 }
 
 /** A source of the request, as the summary names it and the source story (#148) loads it. */
@@ -600,14 +606,14 @@ function manualResult(key: string, job: FormJob): EntryResult {
     return { key, outcome: 'not_applicable' };
   }
   const notes = files.map((file) => file.description).filter((note) => note !== null);
-  return {
-    key,
-    outcome: 'manual',
-    note:
-      notes.length === 0
-        ? 'Attach the file by hand.'
-        : `Attach the file by hand: ${notes.join('; ')}.`,
-  };
+  return notes.length === 0
+    ? { key, outcome: 'manual', note: 'Attach the file by hand.' }
+    : {
+        key,
+        outcome: 'manual',
+        note: `Attach the file by hand: ${notes.join('; ')}.`,
+        reportNote: 'Attach the file by hand: the Version’s file note says which.',
+      };
 }
 
 /** An entry blocked on a capture (D9): never set by the adapter, so told to the user. */
@@ -857,7 +863,8 @@ async function reported(value: FormValue, text: boolean): Promise<ReportedValue>
 
 /**
  * The summary for n8Tracks: text values (lyrics, styles, prompts, titles) only as length and hash
- * (invariant 6), everything else as it is; notes are the adapter's own words.
+ * (invariant 6), everything else as it is; notes are the adapter's own words, never the Version's
+ * text (`reportNote` where the panel's note quotes it, #340).
  */
 export async function verificationReport(
   results: readonly EntryResult[],
@@ -874,8 +881,9 @@ export async function verificationReport(
     if (result.found !== undefined) {
       entry.found = await reported(result.found, result.text === true);
     }
-    if (result.note !== undefined) {
-      entry.note = result.note;
+    const note = result.reportNote ?? result.note;
+    if (note !== undefined) {
+      entry.note = note;
     }
     entries.push(entry);
   }

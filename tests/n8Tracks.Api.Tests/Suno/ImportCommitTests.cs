@@ -67,6 +67,73 @@ public sealed class ImportCommitTests
         Assert.Equal("2", TestDatabase.Scalar(factory.DataPath, "SELECT count(*) FROM generation_event_links;"));
     }
 
+    /// <summary>
+    /// #318 (#121's truth "a Song imported from Suno shows a cover without the user doing anything"):
+    /// the import selects no Generation, so the new Song shows its newest Generation's image, on the
+    /// Song and in the Songs list, and nothing is stored on the Song. Selecting a Generation takes over
+    /// (one with no image shows none, as #121 AC 3 says); clearing the selection falls back again.
+    /// </summary>
+    [Fact]
+    public async Task ASongImportedFromSunoShowsAGenerationsCoverWithNothingSelected()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var token = await SunoWorkspaceApi.ExtensionTokenAsync(factory);
+        await SunoWorkspaceApi.ReportAsync(client, token, complete: false, SunoWorkspaceApi.Project("studio", "Studio"));
+        var at = ProposalApi.At;
+        var (id, _) = await ProposalApi.ExportAsync(
+            client,
+            token,
+            ProposalApi.Clip("cover-1", "studio", at, 0, "Cover words", "Covered"),
+            ProposalApi.Clip("cover-2", "studio", at, 1, "Cover words", "Covered, take two"));
+        await ImportCommitApi.StageImageAsync(client, token, id, "cover-1");
+
+        var result = await ImportCommitApi.CommitAsync(client, id);
+
+        var shortcode = Assert.Single(result.GetProperty("songs").EnumerateArray()).GetProperty("shortcode").GetString()!;
+        var song = await SetupApi.JsonAsync(await client.GetAsync(SongApi.Song(shortcode)));
+        Assert.False(song.GetProperty("hasSelectedGeneration").GetBoolean());
+        var generations = (await SetupApi.JsonAsync(await client.GetAsync(new Uri($"/api/v1/songs/{shortcode}/generations", UriKind.Relative)))).GetProperty("items").EnumerateArray().ToList();
+        var image = generations[0].GetProperty("artwork").GetProperty("assetId").GetGuid();
+        var artwork = song.GetProperty("artwork");
+        Assert.Equal("newestGeneration", artwork.GetProperty("source").GetString());
+        Assert.Equal(image, artwork.GetProperty("assetId").GetGuid());
+        Assert.Equal(JsonValueKind.Null, artwork.GetProperty("crop").ValueKind);
+        var listed = Assert.Single((await SongApi.ListAsync(client)).GetProperty("items").EnumerateArray(), item => item.GetProperty("shortcode").GetString() == shortcode);
+        Assert.Equal(image, listed.GetProperty("artwork").GetProperty("assetId").GetGuid());
+        Assert.Equal("0", TestDatabase.Scalar(factory.DataPath, "SELECT count(*) FROM artwork_attachments WHERE owner_type = 'song';"));
+
+        // Selecting the Generation with no image shows none; clearing the selection shows the cover again.
+        var revision = song.GetProperty("revision").GetInt32();
+        using (var selected = await WithRevisionAsync(client, HttpMethod.Put, $"/api/v1/songs/{shortcode}/selected-generation", $$"""{"generation":"{{shortcode}}-v1-g2"}""", revision))
+        {
+            Assert.True(selected.StatusCode == HttpStatusCode.OK, await selected.Content.ReadAsStringAsync());
+            var answer = await SetupApi.JsonAsync(selected);
+            Assert.Equal(JsonValueKind.Null, answer.GetProperty("artwork").ValueKind);
+            revision = answer.GetProperty("revision").GetInt32();
+        }
+
+        using (var cleared = await WithRevisionAsync(client, HttpMethod.Delete, $"/api/v1/songs/{shortcode}/selected-generation", null, revision))
+        {
+            Assert.True(cleared.StatusCode == HttpStatusCode.OK, await cleared.Content.ReadAsStringAsync());
+            Assert.Equal("newestGeneration", (await SetupApi.JsonAsync(cleared)).GetProperty("artwork").GetProperty("source").GetString());
+        }
+    }
+
+    /// <summary>Sends <paramref name="json"/> (or no body) as the signed-in user, at the Song's <paramref name="revision"/>.</summary>
+    private static async Task<HttpResponseMessage> WithRevisionAsync(HttpClient client, HttpMethod method, string path, string? json, int revision)
+    {
+        using var request = new HttpRequestMessage(method, new Uri(path, UriKind.Relative));
+        if (json is not null)
+        {
+            request.Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+        }
+
+        request.Headers.Add(SessionApi.AntiforgeryHeader, "1");
+        Assert.True(request.Headers.TryAddWithoutValidation("If-Match", SongApi.Quoted(revision)));
+        return await client.SendAsync(request);
+    }
+
     [Fact]
     public async Task ANewSongIsCreditedToNoArtistEvenWithADefaultArtist()
     {
@@ -336,6 +403,48 @@ public sealed class ImportCommitTests
         var source = Assert.Single(coverVersion.GetProperty("inputs").GetProperty("sources").EnumerateArray());
         Assert.Equal("ok", source.GetProperty("availability").GetString());
         Assert.Equal(outcomes[parentId].GetProperty("generation").GetProperty("id").GetGuid().ToString(), source.GetProperty("generation").GetProperty("id").GetString(), StringComparer.OrdinalIgnoreCase);
+        Assert.Equal("1", TestDatabase.Scalar(factory.DataPath, "SELECT count(*) FROM song_relationships;"));
+    }
+
+    /// <summary>
+    /// The other order (#137): the cover is older than its parent, so its new Song is created first,
+    /// before the parent's Generation exists. Its source is stored as a "Not imported" reference, and
+    /// the parent's attach in the same commit resolves it to the parent's Generation: one Generation
+    /// for the parent's Suno ID, at most one reference, and the Songs related once.
+    /// </summary>
+    [Fact]
+    public async Task ACoverImportedBeforeItsParentInTheSameCommitStillHoldsTheParentsGeneration()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var token = await SunoWorkspaceApi.ExtensionTokenAsync(factory);
+        const string parentId = "00000000-0000-4000-8000-0000000000e1";
+        const string coverId = "00000000-0000-4000-8000-0000000000e2";
+        var cover = new JsonObject
+        {
+            ["id"] = coverId,
+            ["status"] = "complete",
+            ["title"] = "The early cover",
+            ["created_at"] = "2026-10-01T10:00:00.000Z",
+            ["metadata"] = new JsonObject { ["task"] = "cover", ["cover_clip_id"] = parentId, ["edited_clip_id"] = parentId },
+        };
+        var parent = new JsonObject { ["id"] = parentId, ["status"] = "complete", ["title"] = "The late parent", ["created_at"] = "2026-10-01T11:00:00.000Z" };
+        var (id, records) = await ProposalApi.ExportAsync(client, token, parent, cover);
+
+        // The cover's new Song comes first in the commit.
+        Assert.Equal("new:1", ProposalApi.Target(records[coverId]).GetProperty("key").GetString());
+        Assert.Equal("new:2", ProposalApi.Target(records[parentId]).GetProperty("key").GetString());
+
+        var result = await ImportCommitApi.CommitAsync(client, id);
+
+        var outcomes = ImportCommitApi.Records(result);
+        Assert.All(outcomes.Values, static record => Assert.Equal("created", ImportCommitApi.Outcome(record)));
+        var parentGeneration = outcomes[parentId].GetProperty("generation").GetProperty("id").GetGuid().ToString().ToUpperInvariant();
+        var coverVersion = TestDatabase.Scalar(factory.DataPath, $"SELECT version_id FROM generations WHERE suno_id = '{coverId}';");
+        Assert.Equal(parentGeneration, TestDatabase.Scalar(factory.DataPath, $"SELECT COALESCE(generation_id, 'none') FROM version_sources WHERE version_id = '{coverVersion}';"));
+        Assert.Equal(string.Empty, TestDatabase.Scalar(factory.DataPath, $"SELECT COALESCE(external_reference_id, '') FROM version_sources WHERE version_id = '{coverVersion}';"));
+        Assert.Equal("1", TestDatabase.Scalar(factory.DataPath, $"SELECT count(*) FROM generations WHERE suno_id = '{parentId}';"));
+        Assert.True(int.Parse(TestDatabase.Scalar(factory.DataPath, $"SELECT count(*) FROM external_suno_references WHERE suno_id = '{parentId}';"), System.Globalization.CultureInfo.InvariantCulture) <= 1);
         Assert.Equal("1", TestDatabase.Scalar(factory.DataPath, "SELECT count(*) FROM song_relationships;"));
     }
 

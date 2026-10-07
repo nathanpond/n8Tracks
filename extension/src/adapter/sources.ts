@@ -164,12 +164,15 @@ export function planSources(job: FormJob): SourcePlan {
   return { stop: null, load: { source: first, sunoId, route } };
 }
 
-/** Why one source is left to the user, as a step of the summary's note. */
-function byHandStep(source: FormSource, load: LoadedSource | null): string | null {
+/**
+ * Why one source is left to the user, as a step of the summary's note: naming the source by its
+ * title, or with `named` false generically, as n8Tracks stores the note (#340).
+ */
+function byHandStep(source: FormSource, load: LoadedSource | null, named: boolean): string | null {
   if (load?.source === source) {
     return null;
   }
-  const name = sourceName(source);
+  const name = named ? sourceName(source) : 'the source';
   if (source.group === 'inspiration') {
     return `add ${name} as Inspiration (${INSPIRATION_ROUTE.item}) by hand: no snapshot shows that form yet`;
   }
@@ -197,39 +200,62 @@ export function sourceEntryResult(
   loaded: EntryResult | null = null,
 ): EntryResult {
   const plan = planSources(job);
-  const steps = [
-    ...job.sources
-      .filter((source) => source.key === key)
-      .map((source) => byHandStep(source, plan.load))
-      .filter((step): step is string => step !== null),
-    ...job.fileInputs
-      .filter((file) => file.key === key)
-      .map(
-        (file) =>
-          `attach the audio file by hand${file.description === null ? '' : ` (${file.description})`}`,
-      ),
-  ];
-  const value = job.entries[key];
-  if (value !== undefined && value !== null) {
-    const why = SOURCES_BLOCKED_ON_CAPTURE[key] ?? 'the extension cannot set it';
-    steps.push(
-      key.endsWith('.voice')
-        ? `choose the voice ${quoted(nameOf(value), 'the Version names')} from + Voice by hand (${why})`
-        : `add the playlist ${quoted(nameOf(value), 'the Version names')} from + Inspo by hand (${why})`,
-    );
-  }
+  const stepsOf = (named: boolean): string[] => {
+    const steps = [
+      ...job.sources
+        .filter((source) => source.key === key)
+        .map((source) => byHandStep(source, plan.load, named))
+        .filter((step): step is string => step !== null),
+      ...job.fileInputs
+        .filter((file) => file.key === key)
+        .map(
+          (file) =>
+            `attach the audio file by hand${
+              file.description === null
+                ? ''
+                : named
+                  ? ` (${file.description})`
+                  : ' (the Version’s file note says which)'
+            }`,
+        ),
+    ];
+    const value = job.entries[key];
+    if (value !== undefined && value !== null) {
+      const why = SOURCES_BLOCKED_ON_CAPTURE[key] ?? 'the extension cannot set it';
+      const name = named ? quoted(nameOf(value), 'the Version names') : 'the Version names';
+      steps.push(
+        key.endsWith('.voice')
+          ? `choose the voice ${name} from + Voice by hand (${why})`
+          : `add the playlist ${name} from + Inspo by hand (${why})`,
+      );
+    }
+    return steps;
+  };
+  const steps = stepsOf(true);
+  const reported = stepsOf(false);
   const own = loaded !== null && loaded.key === key ? loaded : null;
   if (own !== null) {
     return steps.length === 0
       ? own
-      : { ...own, note: [own.note, `Also ${steps.join('; ')}.`].filter(Boolean).join(' ') };
+      : {
+          ...own,
+          note: [own.note, `Also ${steps.join('; ')}.`].filter(Boolean).join(' '),
+          reportNote: [own.reportNote ?? own.note, `Also ${reported.join('; ')}.`]
+            .filter(Boolean)
+            .join(' '),
+        };
   }
   if (steps.length === 0) {
     return { key, outcome: 'not_applicable' };
   }
+  return { key, outcome: 'manual', note: sentenceOf(steps), reportNote: sentenceOf(reported) };
+}
+
+/** Steps as one note: the first capitalised, joined by semicolons, ending with a full stop. */
+function sentenceOf(steps: readonly string[]): string {
   const [first, ...rest] = steps;
   const sentence = [first === undefined ? '' : first.charAt(0).toUpperCase() + first.slice(1)];
-  return { key, outcome: 'manual', note: `${[...sentence, ...rest].join('; ')}.` };
+  return `${[...sentence, ...rest].join('; ')}.`;
 }
 
 // ---- The clip's page and its menus (TS-003: `page.clip-remix-menu.html`, `page.clip-edit-menu.html`).

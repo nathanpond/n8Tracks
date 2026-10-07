@@ -208,6 +208,15 @@ test.describe('Import commit', () => {
       ).items;
       expect(generations.map((generation) => generation.title)).toEqual([title, `${title} (2)`]);
       expect(generations.every((generation) => generation.artwork !== null)).toBe(true);
+      // With no Generation selected, the Song shows its newest Generation's cover (#318).
+      const imported = (await (
+        await page.request.get(new URL(`api/v1/songs/${shortcode}`, base).toString())
+      ).json()) as { selectedGeneration: unknown; artwork: { source: string } | null };
+      expect(imported.selectedGeneration).toBeNull();
+      expect(imported.artwork?.source).toBe('newestGeneration');
+      await expect(
+        page.getByTestId('song-header-artwork').getByRole('img', { name: `Artwork for ${title}` }),
+      ).toBeVisible();
       await expectAccessibleInLightAndDark(page);
 
       // 3. The same export again: every record is already linked, and there is nothing to import.

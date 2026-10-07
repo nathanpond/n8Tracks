@@ -703,6 +703,7 @@ export class SunoGenerate {
         key: load.source.key,
         outcome: 'set',
         note: `${load.route.item} copied the inputs of ${name} into the form; the Version’s own values were filled over them.`,
+        reportNote: `${load.route.item} copied the inputs of the source into the form; the Version’s own values were filled over them.`,
       };
     } else {
       const verify = form.mode === 'simple' ? verifySourceSimple : verifySourceAdvanced;
@@ -722,6 +723,10 @@ export class SunoGenerate {
           form.mode === 'simple'
             ? `${name} is on the form: the source chip’s thumbnail is the source clip’s (Suno’s Simple chip does not name the action).`
             : `${name} is on the form: the Audio section names ${load.route.label} and its thumbnail is the source clip’s.`,
+        reportNote:
+          form.mode === 'simple'
+            ? 'The source is on the form: the source chip’s thumbnail is the source clip’s (Suno’s Simple chip does not name the action).'
+            : `The source is on the form: the Audio section names ${load.route.label} and its thumbnail is the source clip’s.`,
       };
     }
     if (!(await this.keepSource(null))) {

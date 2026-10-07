@@ -90,6 +90,52 @@ public sealed class VersionSourcesEndpointTests
         Assert.Equal("""{"sources":[],"inspiration":null,"voice":null,"fileInputs":[]}""", Lineage(cleared.GetProperty("inputs")).ToJsonString());
     }
 
+    /// <summary>
+    /// #320: an image note kept, and hidden, from Simple mode never refuses an Advanced-mode change of
+    /// the audio note beside it. The editor sends the whole list, the image included, exactly as held;
+    /// only a note sent new or changed is checked against the mode.
+    /// </summary>
+    [Fact]
+    public async Task AnImageNoteKeptFromSimpleModeLetsTheAudioNoteChangeInAdvancedMode()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var id = VersionId(await SongApi.CreateAsync(client, "Kept image"));
+
+        await EditAsync(client, id, """{"inputs":{"songMode":"simple","fileInputs":[{"kind":"image","description":"art"}]}}""");
+        await EditAsync(client, id, """{"inputs":{"songMode":"advanced"}}""");
+
+        // Add an audio note, sending the kept image back as the editor does.
+        var added = await EditAsync(client, id, """{"inputs":{"fileInputs":[{"kind":"image","description":"art"},{"kind":"audio","description":"hum"}]}}""");
+        Assert.Equal("""[{"kind":"audio","description":"hum"},{"kind":"image","description":"art"}]""", Sorted(added));
+        Assert.Equal("audio", Assert.Single(added.GetProperty("effectiveInputs").GetProperty("fileInputs").EnumerateArray()).GetProperty("kind").GetString());
+
+        // Edit it, then remove it: the image stays stored and hidden.
+        var edited = await EditAsync(client, id, """{"inputs":{"fileInputs":[{"kind":"image","description":"art"},{"kind":"audio","description":"hummed tune"}]}}""");
+        Assert.Equal("""[{"kind":"audio","description":"hummed tune"},{"kind":"image","description":"art"}]""", Sorted(edited));
+        var removed = await EditAsync(client, id, """{"inputs":{"fileInputs":[{"kind":"image","description":"art"}]}}""");
+        Assert.Equal("""[{"kind":"image","description":"art"}]""", Sorted(removed));
+        Assert.False(removed.GetProperty("effectiveInputs").TryGetProperty("fileInputs", out _));
+
+        // Complement: in Advanced mode the image itself cannot be changed, nor a video added.
+        foreach (var body in new[]
+        {
+            """{"inputs":{"fileInputs":[{"kind":"image","description":"new art"}]}}""",
+            """{"inputs":{"fileInputs":[{"kind":"image","description":"art"},{"kind":"video","description":"clip"}]}}""",
+        })
+        {
+            var refused = await EditAsync(client, id, body, expectFailure: true);
+            Assert.Contains(VersionLineageRules.FileInputSimpleOnly, Rules(refused).Values.SelectMany(static rules => rules));
+        }
+
+        Assert.Equal("""[{"kind":"image","description":"art"}]""", Sorted(await GetAsync(client, id)));
+
+        static string Sorted(JsonElement version) =>
+            new JsonArray([.. version.GetProperty("inputs").GetProperty("fileInputs").EnumerateArray()
+                .OrderBy(static file => file.GetProperty("kind").GetString(), StringComparer.Ordinal)
+                .Select(static file => JsonNode.Parse(file.GetRawText()))]).ToJsonString();
+    }
+
     [Fact]
     public async Task EffectiveInputsHoldOnlyWhatAppliesToTheKindAndMode()
     {

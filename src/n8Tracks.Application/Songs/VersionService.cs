@@ -621,7 +621,8 @@ public sealed class VersionService(
             inputs.SongMode,
             LineageCheck.Write,
             LineageOrigin.Edit,
-            target => target.GenerationId is { } id && generations.TryGetValue(id, out var facts) ? facts.DurationSeconds : null);
+            target => target.GenerationId is { } id && generations.TryGetValue(id, out var facts) ? facts.DurationSeconds : null,
+            held.FileInputs);
         foreach (var error in broken.Where(error => Reads(error, edit)))
         {
             errors.TryAdd(error.Field, [error.Message]);

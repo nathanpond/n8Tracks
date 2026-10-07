@@ -113,13 +113,17 @@ export function useWorkspaceSongs(id: string, page: number) {
   return useResource(`api/v1/songs?${parameters.toString()}`, acceptSongPage);
 }
 
-/** Which of a workspace's Songs a bulk move takes: these Songs (by ID), or every one. */
-export type WorkspaceSongSelection = { songIds: string[] } | { all: true };
+/**
+ * Which of a workspace's Songs a bulk move takes: these Songs (by ID), or every one, with the count
+ * the user confirmed (#346), so the move is refused if the workspace holds another number by then.
+ */
+export type WorkspaceSongSelection = { songIds: string[] } | { all: true; expectedCount: number };
 
 /**
  * How a bulk move ended: `moved` (how many); `invalid` with the errors by field (the target is no
  * longer an Available other workspace, say); `not-in-workspace` with the Songs, as sent, that are no
- * longer in it; `too-many` past the limit; `gone` when the workspace is not known; `failed`
+ * longer in it; `too-many` past the limit; `count-changed` when an "all" move found another number of
+ * Songs than confirmed (with the number now there); `gone` when the workspace is not known; `failed`
  * otherwise. Nothing moved unless the kind is `moved`: a move is all or nothing.
  */
 export type MoveSongsResult =
@@ -127,6 +131,7 @@ export type MoveSongsResult =
   | { kind: 'invalid'; errors: Record<string, string[]> }
   | { kind: 'not-in-workspace'; songs: string[] }
   | { kind: 'too-many'; limit: number }
+  | { kind: 'count-changed'; count: number }
   | { kind: 'gone' }
   | { kind: 'failed' };
 
@@ -151,6 +156,14 @@ export async function moveWorkspaceSongs(
     }
     if (response.status === 404) {
       return { kind: 'gone' };
+    }
+    if (
+      response.status === 409 &&
+      isRecord(answer) &&
+      answer.code === 'song_count_changed' &&
+      typeof answer.count === 'number'
+    ) {
+      return { kind: 'count-changed', count: answer.count };
     }
     if (response.status === 422 && isRecord(answer)) {
       if (answer.code === 'song_not_in_workspace' && Array.isArray(answer.songs)) {

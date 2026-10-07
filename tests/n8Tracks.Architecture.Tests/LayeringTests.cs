@@ -158,6 +158,39 @@ public class LayeringTests
     }
 
     /// <summary>
+    /// The only types of the server (Domain, Application, Infrastructure, Api) that may make an
+    /// outbound request: the container health check's self-request to the server's own address.
+    /// </summary>
+    private static readonly string[] AllowedOutboundClients = ["n8Tracks.Api.Endpoints.HealthCheckCommand"];
+
+    /// <summary>
+    /// The client namespaces an outbound request needs. Raw sockets are left out: the server binds its
+    /// own listening port with them (<c>ListenPortProbe</c>), which reaches nowhere.
+    /// </summary>
+    private static readonly string[] OutboundClientNamespaces = ["System.Net.Http", "System.Net.WebSockets"];
+
+    /// <summary>
+    /// #121 AC 2 (#319): n8Tracks never fetches anything from Suno, a Generation's cover image above all:
+    /// the extension uploads it. No type of the server may depend on the network client namespaces
+    /// but the health check's self-request, so a Suno fetch cannot be added without failing here.
+    /// </summary>
+    [Fact]
+    public void TheServerMakesNoOutboundRequestButItsOwnHealthCheck()
+    {
+        var clients = Types.InAssemblies([Domain, Application, Infrastructure, Api])
+            .That()
+            .HaveDependencyOnAny(OutboundClientNamespaces)
+            .GetTypes()
+            .Select(static type => OuterName(type.FullName))
+            .ToHashSet(StringComparer.Ordinal);
+
+        Assert.Empty(clients.Except(AllowedOutboundClients, StringComparer.Ordinal).Order(StringComparer.Ordinal));
+
+        // Complement: the rule sees the one client that exists, so an empty answer above is not blindness.
+        Assert.Equal(AllowedOutboundClients, clients.Order(StringComparer.Ordinal));
+    }
+
+    /// <summary>
     /// Every product type <paramref name="root"/> can reach through constructor parameters: a class's
     /// own, and for an interface or abstract class, those of each of its implementations in the
     /// Application and Infrastructure assemblies.

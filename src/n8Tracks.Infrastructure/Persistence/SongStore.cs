@@ -355,6 +355,30 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
             .ToDictionaryAsync(static generation => generation.Id, cancellationToken)
             .ConfigureAwait(false);
 
+        // A Song with no artwork of its own and no Selected Generation shows its newest Generation's
+        // image (#318): an imported Song has Generations with Suno's covers but no selection, which is
+        // the user's to make. Read only, never stored: selecting a Generation or adding artwork takes over.
+        var unselected = records.Where(song => song.SelectedGenerationId is null && !artwork.ContainsKey(song.Id)).Select(static song => song.Id).ToList();
+        var newest = unselected.Count == 0
+            ? []
+            : (await (
+                    from generation in context.Generations.AsNoTracking()
+                    where unselected.Contains(generation.SongId) && generation.ArtworkAssetId != null
+                    join image in context.Assets on generation.ArtworkAssetId equals (Guid?)image.Id
+                    select new { generation.SongId, generation.State, generation.CreatedUtc, generation.Ordinal, generation.Id, ImageId = image.Id, image.Width, image.Height })
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false))
+            .GroupBy(static generation => generation.SongId)
+            .ToDictionary(
+                static group => group.Key,
+                static group => group
+                    .OrderByDescending(static generation => generation.State == GenerationRecord.Active)
+                    .ThenByDescending(static generation => generation.CreatedUtc, StringComparer.Ordinal)
+                    .ThenByDescending(static generation => generation.Ordinal)
+                    .ThenByDescending(static generation => generation.Id.ToString(), StringComparer.Ordinal)
+                    .Select(static generation => new AttachedArtwork(generation.ImageId, null, generation.Width, generation.Height))
+                    .First());
+
         var workspaces = await SunoWorkspaceStore.ForIdsAsync(
                 context,
                 [.. records.Select(static song => song.SunoWorkspaceId).OfType<string>().Distinct(StringComparer.Ordinal)],
@@ -421,7 +445,8 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
                 song.SelectedGenerationId is { } shownId && selected.TryGetValue(shownId, out var shown) && shown.ImageId is { } image
                     ? new AttachedArtwork(image, null, shown.ImageWidth, shown.ImageHeight)
                     : null,
-                song.SunoWorkspaceId is { } workspaceId ? workspaces[workspaceId] : null);
+                song.SunoWorkspaceId is { } workspaceId ? workspaces[workspaceId] : null,
+                newest.GetValueOrDefault(song.Id));
         })];
     }
 }
