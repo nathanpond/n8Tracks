@@ -3,9 +3,11 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { jsonResponse, renderApp } from '../test/helpers';
 import {
+  COMMIT_JOB_ID,
   EXPORT_ID,
   importServer,
   TARGET_SONG,
+  testCommitResult,
   testImport,
   testRecord,
   toNewSong,
@@ -362,8 +364,8 @@ describe('the import review page', () => {
     );
     expect(screen.getByTestId('choices-valid')).toHaveTextContent('Every choice is valid.');
     const confirm = screen.getByRole('button', { name: 'Confirm import' });
-    expect(confirm).toBeDisabled();
-    expect(confirm).toHaveAccessibleDescription(/later update/);
+    expect(confirm).toBeEnabled();
+    expect(confirm).toHaveAccessibleDescription(/You are asked once more first/);
     expect(screen.getByTestId('library-excluded')).toHaveTextContent(
       'Suno’s library filters left out disliked songs, stems: they are not in this import.',
     );
@@ -444,6 +446,122 @@ describe('the import review page', () => {
       expect(screen.queryByRole('button', { name: 'Discard import' })).not.toBeInTheDocument();
     },
   );
+});
+
+describe('confirming an import (#140)', () => {
+  it('asks once more with the same numbers, then follows the job to what it created', async () => {
+    const server = importServer(everyClass());
+    const user = userEvent.setup();
+    await openReview();
+
+    await user.click(screen.getByRole('button', { name: 'Confirm import' }));
+    const asked = await screen.findByRole('dialog', { name: 'Confirm this import?' });
+    expect(within(asked).getByTestId('confirm-summary')).toHaveTextContent(
+      'Create 1 Song, 1 Version, and 2 Generations.',
+    );
+    expect(within(asked).getByTestId('confirm-summary')).toHaveTextContent(
+      'Leave 3 records for a later sync',
+    );
+    await user.click(within(asked).getByRole('button', { name: 'Keep reviewing' }));
+    expect(server.commits).toHaveLength(0);
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Confirm import' }));
+    await user.click(
+      within(await screen.findByRole('dialog', { name: 'Confirm this import?' })).getByRole(
+        'button',
+        { name: 'Confirm import' },
+      ),
+    );
+
+    expect(
+      await screen.findByRole('heading', { name: 'This import is being confirmed' }),
+    ).toBeVisible();
+    expect(server.commits).toEqual(['"1"']);
+    expect(screen.getByRole('progressbar', { name: 'Import progress' })).toBeInTheDocument();
+    expect(await screen.findByTestId('import-progress-text')).toHaveTextContent('1 of 2 targets');
+    expect(screen.getByText(/You can leave this page/)).toBeVisible();
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+
+    server.finishCommit(testCommitResult());
+    expect(
+      await screen.findByRole('heading', { name: 'This import was confirmed' }, { timeout: 4000 }),
+    ).toBeVisible();
+    expect(screen.getByTestId('commit-created')).toHaveTextContent(
+      'Created 1 Song, 1 Version, and 2 Generations.',
+    );
+    expect(screen.getByTestId('commit-outcomes')).toHaveTextContent(
+      '2 records imported, 1 record left for a later sync, 1 record failed.',
+    );
+    expect(screen.getByRole('link', { name: 'n8-9 “Morning Light”' })).toHaveAttribute(
+      'href',
+      expect.stringContaining('/songs/n8-9') as string,
+    );
+    const notes = screen.getByTestId('commit-notes');
+    expect(within(notes).getByText(/no longer match that Version/)).toBeVisible();
+    expect(within(notes).queryByText('a')).not.toBeInTheDocument();
+  });
+
+  it('keeps Confirm disabled while a choice is invalid', async () => {
+    const server = importServer(everyClass());
+    server.invalid = { a: ['inputs_differ'] };
+    await openReview();
+
+    const confirm = screen.getByRole('button', { name: 'Confirm import' });
+    expect(confirm).toBeDisabled();
+    expect(confirm).toHaveAccessibleDescription('Change the marked choices first.');
+  });
+
+  it('offers a reload instead when the choices changed before the confirmation', async () => {
+    const server = importServer(everyClass());
+    const user = userEvent.setup();
+    await openReview();
+
+    server.changeElsewhere();
+    await user.click(screen.getByRole('button', { name: 'Confirm import' }));
+    await user.click(
+      within(await screen.findByRole('dialog', { name: 'Confirm this import?' })).getByRole(
+        'button',
+        { name: 'Confirm import' },
+      ),
+    );
+
+    expect(await screen.findByText('This import changed elsewhere')).toBeVisible();
+    expect(server.export.state).toBe('ready');
+  });
+
+  it('shows what a confirmed import did when it is opened again later', async () => {
+    const server = importServer(everyClass(), { state: 'committed', jobId: COMMIT_JOB_ID });
+    server.finishCommit(testCommitResult({ records: [], songs: [] }));
+    renderApp(PAGE);
+
+    expect(await screen.findByRole('heading', { name: 'This import was confirmed' })).toBeVisible();
+    expect(await screen.findByTestId('commit-created')).toHaveTextContent('Created 1 Song');
+    expect(screen.queryByRole('button', { name: 'Confirm import' })).not.toBeInTheDocument();
+  });
+
+  it('goes back to the review when the import stopped part way', async () => {
+    const server = importServer(everyClass(), { state: 'committing', jobId: COMMIT_JOB_ID });
+    server.job = {
+      id: COMMIT_JOB_ID,
+      status: 'running',
+      progress: 40,
+      message: '1 of 2 targets',
+      error: null,
+      result: null,
+    };
+    renderApp(PAGE);
+
+    expect(
+      await screen.findByRole('heading', { name: 'This import is being confirmed' }),
+    ).toBeVisible();
+    server.finishCommit(null);
+    expect(
+      await screen.findByRole('button', { name: 'Confirm import' }, { timeout: 4000 }),
+    ).toBeVisible();
+  });
 });
 
 describe('the Suno import entry', () => {

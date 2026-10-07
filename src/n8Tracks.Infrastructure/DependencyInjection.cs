@@ -138,6 +138,9 @@ public static class DependencyInjection
         services.TryAddSingleton(new DailyTaskSchedulerOptions());
         services.AddHostedService<BackupStartupCleanup>();
         services.AddHostedService<RestoreHousekeeping>();
+
+        // Before the worker: a commit it was running when the process stopped is still marked running.
+        services.AddHostedService<ImportCommitRecovery>();
         services.AddHostedService<JobWorker>();
         services.AddHostedService<DailyTaskScheduler>();
 

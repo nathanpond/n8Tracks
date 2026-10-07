@@ -160,71 +160,85 @@ public sealed class GenerationService(
             }
         }
 
-        return await transaction.RunAsync<GenerationAttachOutcome>(
-            async ct =>
-            {
-                if (await ReferenceResolver.VersionIdAsync(versions, CatalogReference.Parse(versionReference), ct).ConfigureAwait(false) is not { } id
-                    || await versions.FindAsync(id, ct).ConfigureAwait(false) is not { } version)
-                {
-                    return new GenerationAttachOutcome.VersionNotFound();
-                }
-
-                // Inside the transaction no other writer can take the Suno ID between this check and
-                // the insert; the partial unique index on generations.suno_id is the last line.
-                if (clip is not null && await generations.FindBySunoIdAsync(clip.Fields.SunoId, ct).ConfigureAwait(false) is { } existing)
-                {
-                    return new GenerationAttachOutcome.SunoIdExists(existing);
-                }
-
-                // A clip the user deleted stays deleted unless they chose Reimport for it (invariant 3).
-                var tombstone = clip is null ? null : await tombstones.FindAsync(clip.Fields.SunoId, ct).ConfigureAwait(false);
-                if (tombstone is not null && !options.Reimport)
-                {
-                    return new GenerationAttachOutcome.SunoIdTombstoned(tombstone);
-                }
-
-                if (options.EventId is { } eventId && !await generations.EventExistsAsync(eventId, ct).ConfigureAwait(false))
-                {
-                    return new GenerationAttachOutcome.EventNotFound();
-                }
-
-                if (await IncompleteSourcesAsync(version, ct).ConfigureAwait(false) is { Count: > 0 } incomplete)
-                {
-                    return new GenerationAttachOutcome.IncompleteSources(incomplete);
-                }
-
-                var now = time.GetUtcNow();
-                var (frozen, attached) = version.AttachGeneration(Guid.CreateVersion7(now), now);
-                var generation = attached with { Clip = clip?.Fields };
-
-                // Inside the transaction nothing can change the Version between the read and the write.
-                if (!await versions.TryAttachGenerationAsync(frozen, generation, version.Revision, ct).ConfigureAwait(false))
-                {
-                    throw new InvalidOperationException("The Version just read changed inside the transaction.");
-                }
-
-                if (clip is not null)
-                {
-                    await generations.SaveProviderRecordAsync(
-                        new ProviderRecord(generation.Id, clip.Fields.SunoId, ProviderRecord.ClipKind, clip.Raw, now, options.ExportId),
-                        ct).ConfigureAwait(false);
-                }
-
-                if (options.EventId is { } linked)
-                {
-                    await generations.LinkAsync(linked, [generation.Id], ct).ConfigureAwait(false);
-                }
-
-                if (tombstone is not null)
-                {
-                    await tombstones.RemoveAsync(tombstone.SunoId, ct).ConfigureAwait(false);
-                }
-
-                var stored = await generations.FindAsync(generation.Id, ct).ConfigureAwait(false)
-                    ?? throw new InvalidOperationException("The Generation just attached cannot be read back.");
-                return new GenerationAttachOutcome.Attached(stored);
-            },
+        return await transaction.RunAsync(
+            async ct => await ReferenceResolver.VersionIdAsync(versions, CatalogReference.Parse(versionReference), ct).ConfigureAwait(false) is { } id
+                ? await AttachWithinAsync(id, clip, options, ct).ConfigureAwait(false)
+                : new GenerationAttachOutcome.VersionNotFound(),
             cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// What <see cref="AttachAsync"/> does, inside the caller's transaction (the import commit's, #140,
+    /// which creates a target's Song and Version and attaches its clips as one unit): the one attach path,
+    /// so the freeze, the ordinal, and the Suno ID's uniqueness are enforced here whoever calls.
+    /// </summary>
+    internal async Task<GenerationAttachOutcome> AttachWithinAsync(
+        Guid versionId,
+        ClipReading.Read? clip,
+        GenerationAttachOptions options,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        if (await versions.FindAsync(versionId, ct).ConfigureAwait(false) is not { } version)
+        {
+            return new GenerationAttachOutcome.VersionNotFound();
+        }
+
+        // Inside the transaction no other writer can take the Suno ID between this check and
+        // the insert; the partial unique index on generations.suno_id is the last line.
+        if (clip is not null && await generations.FindBySunoIdAsync(clip.Fields.SunoId, ct).ConfigureAwait(false) is { } existing)
+        {
+            return new GenerationAttachOutcome.SunoIdExists(existing);
+        }
+
+        // A clip the user deleted stays deleted unless they chose Reimport for it (invariant 3).
+        var tombstone = clip is null ? null : await tombstones.FindAsync(clip.Fields.SunoId, ct).ConfigureAwait(false);
+        if (tombstone is not null && !options.Reimport)
+        {
+            return new GenerationAttachOutcome.SunoIdTombstoned(tombstone);
+        }
+
+        if (options.EventId is { } eventId && !await generations.EventExistsAsync(eventId, ct).ConfigureAwait(false))
+        {
+            return new GenerationAttachOutcome.EventNotFound();
+        }
+
+        if (await IncompleteSourcesAsync(version, ct).ConfigureAwait(false) is { Count: > 0 } incomplete)
+        {
+            return new GenerationAttachOutcome.IncompleteSources(incomplete);
+        }
+
+        var now = time.GetUtcNow();
+        var (frozen, attached) = version.AttachGeneration(Guid.CreateVersion7(now), now);
+        var generation = attached with { Clip = clip?.Fields };
+
+        // Inside the transaction nothing can change the Version between the read and the write.
+        if (!await versions.TryAttachGenerationAsync(frozen, generation, version.Revision, ct).ConfigureAwait(false))
+        {
+            throw new InvalidOperationException("The Version just read changed inside the transaction.");
+        }
+
+        if (clip is not null)
+        {
+            await generations.SaveProviderRecordAsync(
+                new ProviderRecord(generation.Id, clip.Fields.SunoId, ProviderRecord.ClipKind, clip.Raw, now, options.ExportId),
+                ct).ConfigureAwait(false);
+        }
+
+        if (options.EventId is { } linked)
+        {
+            await generations.LinkAsync(linked, [generation.Id], ct).ConfigureAwait(false);
+        }
+
+        if (tombstone is not null)
+        {
+            await tombstones.RemoveAsync(tombstone.SunoId, ct).ConfigureAwait(false);
+        }
+
+        var stored = await generations.FindAsync(generation.Id, ct).ConfigureAwait(false)
+            ?? throw new InvalidOperationException("The Generation just attached cannot be read back.");
+        return new GenerationAttachOutcome.Attached(stored);
     }
 
     /// <summary>

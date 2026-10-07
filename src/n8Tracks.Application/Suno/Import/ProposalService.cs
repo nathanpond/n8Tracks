@@ -342,6 +342,30 @@ public sealed class ProposalService(
         return new ImportTargetsOutcome.Found(new ImportTargetSong(song.Id, Shortcodes.ForSong(song.ShortcodeNumber), song.Title), matching, all, parent, numbers);
     }
 
+    /// <summary>
+    /// What a raw clip maps to (#135-#137), as proposals and the commit (#140) read it; null when it is
+    /// not a JSON object.
+    /// </summary>
+    internal static MappedClipInputs? Map(string rawJson, IReadOnlyCollection<SunoModel> models)
+    {
+        using var document = JsonDocument.Parse(rawJson);
+        return document.RootElement.ValueKind == JsonValueKind.Object ? ClipInputMapper.Map(document.RootElement, models) : null;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="clip"/>'s inputs are <paramref name="version"/>'s, as a choice of an
+    /// existing Version is checked: the options compared (<see cref="ClipInputMapper.Differs"/>) and the
+    /// same lineage comparison key, a source Generation counting by its Suno ID. The commit (#140) asks
+    /// again inside each target's transaction. Reads only.
+    /// </summary>
+    internal async Task<bool> MatchesAsync(MappedClipInputs? clip, SongVersion version, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(version);
+
+        var catalog = new CatalogView(versions, songs, []);
+        return catalog.Matches(clip, version, await catalog.LineageKeyAsync(version, cancellationToken).ConfigureAwait(false));
+    }
+
     /// <summary>The change itself: the records chosen inside the transaction by <paramref name="select"/>, checked, then stored.</summary>
     private Task<ChoiceChangeOutcome> ChangeAsync(
         Guid exportId,

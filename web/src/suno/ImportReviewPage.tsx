@@ -18,6 +18,7 @@ import { Link, useParams, useSearchParams } from 'react-router';
 import type { LoadState } from '../api/songs';
 import {
   changeImportChoices,
+  commitImport,
   discardImport,
   MAXIMUM_NAMED_RECORDS,
   RECORD_CLASSES,
@@ -34,6 +35,7 @@ import {
 import { formatDateTime, useConfiguredTimeZone } from '../api/timeZone';
 import { Notice } from '../components/Notice';
 import { ChoiceEditor } from './ChoiceEditor';
+import { ImportCommitView } from './ImportCommitView';
 import {
   CLASS_LABELS,
   choiceNote,
@@ -120,7 +122,8 @@ function ImportStateNotice({ state }: { state: SunoImport['state'] }) {
  * The review page of one Suno export (#139), at `/suno/imports/<id>`: everything the sync found, what
  * n8Tracks proposes for each record, and the choices to change before confirming. Nothing in the
  * catalog changes here: choices are saved on the export as they are made, and only Confirm (#140)
- * applies them. An export that is not ready shows its state only.
+ * applies them, in a background job whose progress and result the page then shows. An export that is
+ * not ready shows its state only.
  */
 export function ImportReviewPage() {
   const { id = '' } = useParams();
@@ -161,9 +164,14 @@ export function ImportReviewPage() {
           </div>
         </Notice>
       )}
-      {state.phase === 'ready' && state.data.state !== 'ready' && (
-        <ImportStateNotice state={state.data.state} />
-      )}
+      {state.phase === 'ready' &&
+        (state.data.state === 'committing' || state.data.state === 'committed') && (
+          <ImportCommitView exported={state.data} onChanged={reload} />
+        )}
+      {state.phase === 'ready' &&
+        state.data.state !== 'ready' &&
+        state.data.state !== 'committing' &&
+        state.data.state !== 'committed' && <ImportStateNotice state={state.data.state} />}
       {state.phase === 'ready' && state.data.state === 'ready' && (
         <LoadedReview id={id} onEnded={reload} />
       )}
@@ -188,6 +196,9 @@ function LoadedReview({ id, onEnded }: { id: string; onEnded: () => void }) {
   const [conflict, setConflict] = useState(false);
   const [discarding, setDiscarding] = useState(false);
   const [discardMessage, setDiscardMessage] = useState<string>();
+  const [confirming, setConfirming] = useState(false);
+  const [confirmMessage, setConfirmMessage] = useState<string>();
+  const [committing, setCommitting] = useState(false);
   // A new editor, its unsaved choice dropped, after each change and each reload.
   const [editorKey, setEditorKey] = useState(0);
   const ended =
@@ -329,6 +340,28 @@ function LoadedReview({ id, onEnded }: { id: string; onEnded: () => void }) {
     setDiscardMessage(FAILED_MESSAGE);
   };
 
+  const confirm = async () => {
+    setConfirmMessage(undefined);
+    setCommitting(true);
+    const result = await commitImport(id, summary.revision);
+    setCommitting(false);
+    switch (result.kind) {
+      case 'started':
+      case 'committed':
+      case 'in-progress':
+      case 'not-ready':
+        setConfirming(false);
+        onEnded();
+        return;
+      case 'conflict':
+        setConfirming(false);
+        setConflict(true);
+        return;
+      default:
+        setConfirmMessage(`Nothing was imported. ${FAILED_MESSAGE}`);
+    }
+  };
+
   const exported = summary.export;
   const excluded = excludedKindsText(summary.libraryExcluded);
 
@@ -376,6 +409,10 @@ function LoadedReview({ id, onEnded }: { id: string; onEnded: () => void }) {
 
       <ImportSummaryPanel
         summary={summary}
+        onConfirm={() => {
+          setConfirmMessage(undefined);
+          setConfirming(true);
+        }}
         onDiscard={() => {
           setDiscarding(true);
         }}
@@ -567,6 +604,48 @@ function LoadedReview({ id, onEnded }: { id: string; onEnded: () => void }) {
       )}
 
       <Modal
+        opened={confirming}
+        onClose={() => {
+          setConfirming(false);
+        }}
+        title="Confirm this import?"
+        centered
+        closeButtonProps={{ 'aria-label': 'Close' }}
+      >
+        <Stack gap="md">
+          <SummaryNumbers summary={summary} testId="confirm-summary" />
+          <Text size="sm">
+            The records are copied into your catalog in the background. You can leave the page while
+            it runs; nothing changes in Suno.
+          </Text>
+          {confirmMessage !== undefined && (
+            <Text size="sm" role="alert" c="var(--mantine-color-error)">
+              {confirmMessage}
+            </Text>
+          )}
+          <Group gap="sm" justify="flex-end">
+            <Button
+              variant="default"
+              data-autofocus
+              onClick={() => {
+                setConfirming(false);
+              }}
+            >
+              Keep reviewing
+            </Button>
+            <Button
+              loading={committing}
+              onClick={() => {
+                void confirm();
+              }}
+            >
+              Confirm import
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      <Modal
         opened={discarding}
         onClose={() => {
           setDiscarding(false);
@@ -610,42 +689,54 @@ function LoadedReview({ id, onEnded }: { id: string; onEnded: () => void }) {
   );
 }
 
+/** What confirming will do, in numbers: the same text on the page and in the confirmation. */
+function SummaryNumbers({ summary, testId }: { summary: ImportSummary; testId?: string }) {
+  return (
+    <Stack gap={4} data-testid={testId}>
+      <Text data-testid={testId === undefined ? 'summary-creates' : undefined}>
+        Create {countText(summary.songs, 'Song')}, {countText(summary.versions, 'Version')}, and{' '}
+        {countText(summary.generations, 'Generation')}
+        {summary.reimports > 0 && ` (${String(summary.reimports)} of them reimported)`}.
+      </Text>
+      <Text data-testid={testId === undefined ? 'summary-ignored' : undefined}>
+        Not copy {recordCountText(summary.ignored)} (Don’t copy: on the ignore list).
+      </Text>
+      <Text data-testid={testId === undefined ? 'summary-skipped' : undefined}>
+        Leave {recordCountText(summary.skipped)} for a later sync (Skip this time).
+      </Text>
+    </Stack>
+  );
+}
+
 /** What confirming will do, whether every choice is valid, the Confirm control (#140), and Discard. */
 function ImportSummaryPanel({
   summary,
+  onConfirm,
   onDiscard,
 }: {
   summary: ImportSummary;
+  onConfirm: () => void;
   onDiscard: () => void;
 }) {
+  const canConfirm = summary.valid && !summary.nothingToDo;
   const confirmNote = summary.nothingToDo
     ? 'There is nothing to do: no record is set to be imported or added to the ignore list.'
     : !summary.valid
       ? 'Change the marked choices first.'
-      : 'Confirming arrives in a later update of n8Tracks; until then nothing changes in your catalog.';
+      : 'Confirming copies the chosen records into your catalog. You are asked once more first.';
   return (
     <Stack gap="xs" component="section" aria-labelledby="import-summary-title">
       <Title order={3} id="import-summary-title">
         What confirming will do
       </Title>
-      <Text data-testid="summary-creates">
-        Create {countText(summary.songs, 'Song')}, {countText(summary.versions, 'Version')}, and{' '}
-        {countText(summary.generations, 'Generation')}
-        {summary.reimports > 0 && ` (${String(summary.reimports)} of them reimported)`}.
-      </Text>
-      <Text data-testid="summary-ignored">
-        Not copy {recordCountText(summary.ignored)} (Don’t copy: on the ignore list).
-      </Text>
-      <Text data-testid="summary-skipped">
-        Leave {recordCountText(summary.skipped)} for a later sync (Skip this time).
-      </Text>
+      <SummaryNumbers summary={summary} />
       <Text data-testid="choices-valid" fw={600}>
         {summary.valid
           ? 'Every choice is valid.'
           : `${recordCountText(summary.invalidCount)} cannot be imported as chosen; the reasons are on the rows.`}
       </Text>
       <Group gap="sm">
-        <Button disabled aria-describedby="confirm-note">
+        <Button disabled={!canConfirm} aria-describedby="confirm-note" onClick={onConfirm}>
           Confirm import
         </Button>
         <Button variant="default" onClick={onDiscard}>

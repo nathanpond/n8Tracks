@@ -84,6 +84,23 @@ public static class ImportChoiceJson
         }.ToJsonString();
     }
 
+    /// <summary>The group (Create request) number of a stored proposal (#138); null for a clip alone, or for none.</summary>
+    public static int? GroupOf(string? proposalJson)
+    {
+        if (proposalJson is null)
+        {
+            return null;
+        }
+
+        using var document = JsonDocument.Parse(proposalJson);
+        return document.RootElement.ValueKind == JsonValueKind.Object
+            && document.RootElement.TryGetProperty("group", out var group)
+            && group.ValueKind == JsonValueKind.Number
+            && group.TryGetInt32(out var number)
+                ? number
+                : null;
+    }
+
     /// <summary>A stored choice; null for none, or for text that is not one (never written by n8Tracks).</summary>
     public static ImportChoice? ReadStored(string? json)
     {

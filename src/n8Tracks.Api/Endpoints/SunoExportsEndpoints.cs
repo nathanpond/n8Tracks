@@ -31,6 +31,7 @@ internal static class SunoExportsEndpoints
     public const string CurrentPath = ExportsPath + "/current";
     public const string SummaryPath = ExportPath + "/summary";
     public const string TargetsPath = RecordsPath + "/{sunoId}/targets";
+    public const string CommitPath = ExportPath + "/commit";
 
     /// <summary>The records list's query parameters.</summary>
     public const string ClassParameter = "class";
@@ -160,6 +161,18 @@ internal static class SunoExportsEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        endpoints.MapPost(CommitPath, CommitAsync)
+            .WithName("CommitSunoExport")
+            .WithSummary("Confirms a ready export (#140), with If-Match on its revision and no body: it becomes committing and a background job (jobId; follow it at GET /api/v1/jobs/{id}) applies the choices saved on it: new Songs, new Versions with the clips' inputs, Generations attached to the chosen Versions, workspaces of new Songs, and staged artwork; Skip and Don't copy store nothing. Each target is created whole or not at all; one that fails is reported in the job's result ({ records: [{ sunoId, outcome: created | linked | skipped | ignored | failed, reason?, generation? }], created: { songs, versions, generations }, songs }) and undoes nothing else. The export then becomes committed, whatever failed. 202 with the export. 409 export_not_ready unless ready, import_in_progress while it or another export is being committed, export_committed once committed (an export is committed once), revision_conflict when its choices changed since. Session-only: a token gets 403 session_required.")
+            .SessionOnly()
+            .Produces<SunoExportResponse>(StatusCodes.Status202Accepted)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
         endpoints.MapPut(ArtworkPath, StageArtworkAsync)
             .WithName("StageSunoExportArtwork")
@@ -494,6 +507,64 @@ internal static class SunoExportsEndpoints
                     new Dictionary<string, string[]>(StringComparer.Ordinal) { ["filter"] = ["No new, ignored, or deleted record matches this filter."] });
             default:
                 throw new InvalidOperationException("Unknown choice outcome.");
+        }
+    }
+
+    /// <summary>
+    /// 202 with the export, now committing, naming the commit job; 404; 409 when it is not ready, is or was
+    /// being committed, or is at another revision; 400 or 428 for a missing or malformed If-Match.
+    /// </summary>
+    private static async Task<Results<Accepted<SunoExportResponse>, ProblemHttpResult>> CommitAsync(
+        Guid id,
+        ImportCommitService commits,
+        ExportStagingService exports,
+        HttpContext context,
+        ILoggerFactory loggers,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        var (revision, revisionProblem) = Revisions.Read(context);
+        if (revisionProblem is not null)
+        {
+            return revisionProblem;
+        }
+
+        switch (await commits.CommitAsync(id, revision!.Value, cancellationToken))
+        {
+            case ImportCommitOutcome.Started started:
+                Log(loggers).LogInformation("Suno export commit started: {ExportId} by job {JobId}", id, started.View.Export.JobId);
+                Revisions.SetETag(context, started.View.Export.Revision);
+                return TypedResults.Accepted(
+                    started.View.Export.JobId is { } jobId ? $"{ApiProblem.VersionPrefix}/jobs/{jobId}" : (string?)null,
+                    SunoExportResponse.From(started.View));
+            case ImportCommitOutcome.NotFound:
+                return NoSuchExport(context);
+            case ImportCommitOutcome.NotReady notReady:
+                return ApiProblem.For(
+                    context,
+                    StatusCodes.Status409Conflict,
+                    ExportStagingService.NotReadyCode,
+                    "Only an export ready for review can be confirmed.",
+                    [new("state", SunoExportRules.NameOf(notReady.Export.State))]);
+            case ImportCommitOutcome.InProgress inProgress:
+                return ApiProblem.For(
+                    context,
+                    StatusCodes.Status409Conflict,
+                    ExportStagingService.ImportInProgressCode,
+                    "An import is being committed; wait for it to finish.",
+                    [new("exportId", inProgress.Committing.Id), new("jobId", inProgress.Committing.JobId)]);
+            case ImportCommitOutcome.AlreadyCommitted committed:
+                return ApiProblem.For(
+                    context,
+                    StatusCodes.Status409Conflict,
+                    ImportCommitService.CommittedCode,
+                    "This import was confirmed already: an import is confirmed once.",
+                    [new("jobId", committed.Export.JobId)]);
+            case ImportCommitOutcome.Stale:
+                return Revisions.Conflict(context, SunoExportResponse.From((await exports.FindAsync(id, null, cancellationToken))!));
+            default:
+                throw new InvalidOperationException("Unknown commit outcome.");
         }
     }
 

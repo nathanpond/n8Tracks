@@ -554,6 +554,41 @@ public sealed class ExportStagingService(
         }
     }
 
+    /// <summary>
+    /// Classifies a ready export's records again (#140: after an interrupted commit, so what it imported
+    /// is now linked). A record a Generation now holds is proposed Skip, as linked records are, and its
+    /// choice becomes Skip: it cannot be imported again. Every other choice stays as the user left it.
+    /// </summary>
+    internal async Task ReclassifyAsync(Guid id, CancellationToken cancellationToken)
+    {
+        string? after = null;
+        while (true)
+        {
+            var records = await store.RecordsAfterAsync(id, after, ClassificationBatch, cancellationToken).ConfigureAwait(false);
+            if (records.Count == 0)
+            {
+                break;
+            }
+
+            var classes = await classifier.ClassifyAsync(records, cancellationToken).ConfigureAwait(false);
+            await transaction.RunAsync(
+                async ct =>
+                {
+                    await store.ClassifyAsync(id, classes, ct).ConfigureAwait(false);
+                    var held = classes.Where(static item => !ProposalService.ReviewableClasses.Contains(item.Class)).Select(static item => item.SunoId).ToHashSet(StringComparer.Ordinal);
+                    var skip = new ImportProposal(ImportChoice.Skip, ImportChoiceRules.LinkedBasis, null, false);
+                    var rows = (await store.ChoicesAsync(id, ct).ConfigureAwait(false))
+                        .Where(state => held.Contains(state.SunoId) && ImportChoiceJson.ReadStored(state.ChoiceJson)?.Action is not (null or ImportAction.Skip))
+                        .Select(state => new RecordProposalRow(state.SunoId, ImportChoiceJson.Write(skip), ImportChoiceJson.Write(ImportChoice.Skip)))
+                        .ToList();
+                    await store.ProposeAsync(id, rows, ct).ConfigureAwait(false);
+                    return true;
+                },
+                cancellationToken).ConfigureAwait(false);
+            after = records[^1].SunoId;
+        }
+    }
+
     private static bool Due(DateTimeOffset? since, TimeSpan lifetime, DateTimeOffset now) => since is { } start && start + lifetime <= now;
 
     private static bool Visible(SunoExport? export, Guid? credentialId) =>

@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { apiFetch } from './client';
 import { ifMatch } from './saves';
 import { body, isErrorMap, isRecord, useResource } from './songs';
@@ -54,6 +55,8 @@ export interface SunoImport {
   revision: number;
   /** The kinds of clip Suno's library filters left out, by filter name (`disliked`, `stem`…). */
   libraryExcluded: string[];
+  /** The background job last run for it: classifying a large export, or committing it (#140). */
+  jobId?: string | null;
 }
 
 /** A new Song, a new Version of a Song, or an existing Version, as stored in a choice. */
@@ -476,4 +479,182 @@ export async function discardImport(id: string): Promise<'discarded' | 'too-late
   } catch {
     return 'failed';
   }
+}
+
+/** What happened to one record when the import was confirmed (#140). */
+export interface CommittedRecord {
+  sunoId: string;
+  outcome: 'created' | 'linked' | 'skipped' | 'ignored' | 'failed';
+  /** Why it was not imported as chosen (`inputs_differ`…), or `number_taken` for a Version renumbered. */
+  reason?: string;
+  generation?: { id: string; shortcode: string; songId: string };
+  /** The deleted Generation came back from Recently deleted. */
+  restored?: boolean;
+  /** `artwork_missing` when its cover image had gone. */
+  note?: string;
+}
+
+/** A Song the import created or added to, to link to. */
+export interface CommittedSong {
+  id: string;
+  shortcode: string;
+  title: string;
+  created: boolean;
+}
+
+/** The commit job's result: every record's outcome, what was created, and the Songs touched. */
+export interface CommitResult {
+  records: CommittedRecord[];
+  created: { songs: number; versions: number; generations: number };
+  songs: CommittedSong[];
+}
+
+/** The commit job as `GET /api/v1/jobs/{id}` answers it, the fields the page reads. */
+export interface CommitJob {
+  id: string;
+  status: 'queued' | 'running' | 'succeeded' | 'failed';
+  progress: number;
+  message: string | null;
+  error: string | null;
+  result: CommitResult | null;
+}
+
+/** How often the page reads the commit job while it runs. */
+export const COMMIT_POLL_MS = 1000;
+
+function isCommitResult(value: unknown): value is CommitResult {
+  return (
+    isRecord(value) &&
+    Array.isArray(value.records) &&
+    value.records.every(
+      (record) =>
+        isRecord(record) && typeof record.sunoId === 'string' && typeof record.outcome === 'string',
+    ) &&
+    isRecord(value.created) &&
+    Array.isArray(value.songs)
+  );
+}
+
+export function isCommitJob(value: unknown): value is CommitJob {
+  return (
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    (value.status === 'queued' ||
+      value.status === 'running' ||
+      value.status === 'succeeded' ||
+      value.status === 'failed') &&
+    typeof value.progress === 'number' &&
+    isNullableString(value.message) &&
+    (value.result === null || value.result === undefined || isCommitResult(value.result))
+  );
+}
+
+/**
+ * How asking to confirm ended: `started` with the commit job; `conflict` when the choices changed since
+ * they were read; `in-progress` while this or another import is being confirmed; `committed` when it
+ * was confirmed already; `not-ready` when it is no longer open for review; `failed`.
+ */
+export type CommitImportResult =
+  | { kind: 'started'; jobId: string }
+  | { kind: 'conflict' }
+  | { kind: 'in-progress' }
+  | { kind: 'committed' }
+  | { kind: 'not-ready' }
+  | { kind: 'failed' };
+
+/** Confirms the import at `revision`: the server applies the choices saved on it in a background job. */
+export async function commitImport(id: string, revision: number): Promise<CommitImportResult> {
+  try {
+    const response = await apiFetch(exportPath(id, '/commit'), {
+      method: 'POST',
+      headers: { 'If-Match': ifMatch(revision) },
+    });
+    const answer = await body(response);
+    if (response.status === 202 && isSunoImport(answer) && typeof answer.jobId === 'string') {
+      return { kind: 'started', jobId: answer.jobId };
+    }
+    const code = isRecord(answer) ? answer.code : undefined;
+    if (response.status === 409) {
+      switch (code) {
+        case 'revision_conflict':
+          return { kind: 'conflict' };
+        case 'import_in_progress':
+          return { kind: 'in-progress' };
+        case 'export_committed':
+          return { kind: 'committed' };
+        default:
+          return { kind: 'not-ready' };
+      }
+    }
+    return { kind: 'failed' };
+  } catch {
+    return { kind: 'failed' };
+  }
+}
+
+/**
+ * Follows the commit job `jobId` (null for none): reads it every {@link COMMIT_POLL_MS} until it has
+ * succeeded or failed, then calls `onFinished` once. A read that fails is tried again at the next tick.
+ * `gone` is true when the job no longer exists (finished jobs are pruned after 30 days).
+ */
+export function useCommitJob(
+  jobId: string | null,
+  onFinished: (job: CommitJob) => void,
+): { job: CommitJob | null; gone: boolean } {
+  // Kept with the job it belongs to, so a new jobId never shows the previous job.
+  const [seen, setSeen] = useState<{ jobId: string; job: CommitJob | null; gone: boolean } | null>(
+    null,
+  );
+  const finished = useRef(onFinished);
+  useEffect(() => {
+    finished.current = onFinished;
+  }, [onFinished]);
+
+  useEffect(() => {
+    if (jobId === null) {
+      return;
+    }
+
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      try {
+        const response = await apiFetch(`api/v1/jobs/${encodeURIComponent(jobId)}`, {
+          signal: controller.signal,
+        });
+        const answer = await body(response);
+        if (controller.signal.aborted) {
+          return;
+        }
+        if (response.status === 404) {
+          setSeen({ jobId, job: null, gone: true });
+          return;
+        }
+        if (response.ok && isCommitJob(answer)) {
+          setSeen({ jobId, job: answer, gone: false });
+          if (answer.status === 'succeeded' || answer.status === 'failed') {
+            finished.current(answer);
+            return;
+          }
+        }
+      } catch {
+        if (controller.signal.aborted) {
+          return;
+        }
+      }
+      timer = setTimeout(() => {
+        void poll();
+      }, COMMIT_POLL_MS);
+    };
+    void poll();
+
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [jobId]);
+
+  return seen !== null && seen.jobId === jobId
+    ? { job: seen.job, gone: seen.gone }
+    : { job: null, gone: false };
 }

@@ -62,6 +62,12 @@ public sealed record StagedRecord(
 /// <summary>A classified staged record as proposals read it (#138): its Suno ID, raw clip, class, and the Generation holding its Suno ID.</summary>
 public sealed record ClassifiedRecord(string SunoId, string RawJson, SunoRecordClass? Class, Guid? GenerationId);
 
+/// <summary>
+/// A staged record as the commit (#140) reads it: its raw clip, class, choice and proposal (JSON), and
+/// the cover image staged for it.
+/// </summary>
+public sealed record CommitRecord(string SunoId, string RawJson, SunoRecordClass? Class, string? ChoiceJson, string? ProposalJson, Guid? ArtworkAssetId);
+
 /// <summary>A staged record's class and current choice (JSON), as a change of choices checks the whole export (#138).</summary>
 public sealed record RecordChoiceState(string SunoId, SunoRecordClass? Class, string? ChoiceJson);
 
@@ -138,6 +144,9 @@ public interface ISunoExportStore
 
     /// <summary>Writes each record's proposal and the choice it starts with (#138).</summary>
     Task ProposeAsync(Guid exportId, IReadOnlyList<RecordProposalRow> proposals, CancellationToken cancellationToken);
+
+    /// <summary>Every staged record as the commit reads it (#140), by Suno ID (ordinal).</summary>
+    Task<IReadOnlyList<CommitRecord>> CommitRecordsAsync(Guid exportId, CancellationToken cancellationToken);
 
     /// <summary>Every staged record's class and choice.</summary>
     Task<IReadOnlyList<RecordChoiceState>> ChoicesAsync(Guid exportId, CancellationToken cancellationToken);

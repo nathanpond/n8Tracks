@@ -69,6 +69,20 @@ public sealed class RetentionService(
     }
 
     /// <summary>
+    /// The newest unpruned group holding a record of <paramref name="recordType"/> whose stored
+    /// <paramref name="column"/> is <paramref name="value"/>: how a Reimport (#140) finds the retained
+    /// Generation of a Suno ID. Reads only.
+    /// </summary>
+    internal Task<RetentionGroup?> FindByStoredValueAsync(string recordType, string column, string value, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(recordType);
+        ArgumentException.ThrowIfNullOrWhiteSpace(column);
+        ArgumentNullException.ThrowIfNull(value);
+
+        return store.FindByStoredValueAsync(recordType, column, value, cancellationToken);
+    }
+
+    /// <summary>
     /// The identifying fields <paramref name="columns"/> of every record of <paramref name="recordType"/>
     /// in the group with <paramref name="groupId"/>, as stored text (see <see cref="IRetentionStore.RecordFieldsAsync"/>).
     /// Only internal callers, which ask for IDs, numbers, and titles, never for lyrics or prompts.

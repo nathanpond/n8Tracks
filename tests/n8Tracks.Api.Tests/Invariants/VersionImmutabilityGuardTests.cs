@@ -12,6 +12,8 @@ using n8Tracks.Api.Tests.Persistence;
 using n8Tracks.Api.Tests.Setup;
 using n8Tracks.Api.Tests.Songs;
 using n8Tracks.Api.Tests.Generations;
+using n8Tracks.Api.Tests.Jobs;
+using n8Tracks.Api.Tests.Suno;
 using n8Tracks.Application.Artwork;
 using n8Tracks.Application.Auth;
 using n8Tracks.Application.Generations;
@@ -19,6 +21,7 @@ using n8Tracks.Application.References;
 using n8Tracks.Application.Retention;
 using n8Tracks.Application.Songs;
 using n8Tracks.Application.Suno;
+using n8Tracks.Application.Suno.Import;
 using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
 using n8Tracks.Domain.Suno;
@@ -144,6 +147,8 @@ public sealed class VersionImmutabilityGuardTests
         typeof(RetentionService).Namespace, // n8Tracks.Application.Retention
         typeof(GenerationService).Namespace, // n8Tracks.Application.Generations (#117)
         typeof(GenerationArtworkService).Namespace, // n8Tracks.Application.Artwork (#121)
+        typeof(ImportCommitService).Namespace, // n8Tracks.Application.Suno.Import (#140: the import commit attaches to Versions)
+        typeof(ExternalReferenceResolver).Namespace, // n8Tracks.Application.Suno (#140: the resolver the commit calls takes the import's lineage)
     ];
 
     /// <summary>The same, with the domain namespace of the catalog entities: types no service elsewhere may take.</summary>
@@ -742,6 +747,15 @@ public sealed class VersionImmutabilityGuardTests
         }),
         ["POST /api/v1/generations/{reference}/comments"] = new(static async target => await target.CommentAsync()),
 
+        // The Suno import commit (#140): a choice attaching a clip whose inputs are not the Version's
+        // (as if the Version changed after the choice was made) fails its target; the Version is untouched.
+        ["POST /api/v1/suno/exports/{id:guid}/commit"] = new(static target => CommitDifferingClipAsync(target, async exportId =>
+        {
+            using var response = await ImportCommitApi.SendAsync(target.Client, exportId, "\"1\"");
+            Assert.True(response.StatusCode == HttpStatusCode.Accepted, await response.Content.ReadAsStringAsync());
+            return (await SetupApi.JsonAsync(response)).GetProperty("jobId").GetGuid();
+        })),
+
         // Creating a new Song from a Generation (#123): a fresh Generation of the frozen Version moves
         // into a new Song whose Version 1 is a copy; the Version it leaves keeps its inputs. The inputs
         // sent alongside are not read.
@@ -961,6 +975,29 @@ public sealed class VersionImmutabilityGuardTests
             Assert.IsType<SongDeleteOutcome.Deleted>(
                 await InScopeAsync<SongDeletionService, SongDeleteOutcome>(target, service => service.DeleteAsync(target.SongId, revision, title, default)));
         })),
+        // The Suno import commit (#140), through the service: the same differing clip fails its target.
+        ["ImportCommitService.CommitAsync(Guid, Int32, CancellationToken)"] = new(static target => CommitDifferingClipAsync(target, async exportId =>
+            Assert.IsType<ImportCommitOutcome.Started>(await InScopeAsync<ImportCommitService, ImportCommitOutcome>(target, service => service.CommitAsync(exportId, 1, default)))
+                .View.Export.JobId!.Value)),
+        ["ImportCommitService.RecoverInterruptedAsync(CancellationToken)"] = Service<ImportCommitService>(static (service, _) => service.RecoverInterruptedAsync(default)),
+
+        // What the commit calls in Application.Suno (#140): resolving a Suno ID rewrites only pointers of
+        // sources that name it, never a frozen source's identity; renaming or deleting the model a Version
+        // names is refused, as the model's API is.
+        ["ExternalReferenceResolver.ResolveAsync(String, CancellationToken)"] = Service<ExternalReferenceResolver>(static async (service, target) =>
+            await service.ResolveAsync((await SongApi.AttachGenerationAsync(target.Factory, target.VersionId.ToString(), Clips.Minimal("guard-resolve-" + Guid.NewGuid().ToString("N")))).Generation.SunoId!, default)),
+        ["ModelCatalogService.UpdateAsync(Guid, SunoModelEdit, Int32, CancellationToken)"] = new(static async target =>
+        {
+            var (id, revision) = await target.ModelAsync();
+            Assert.IsType<ModelChangeOutcome.InUse>(await InScopeAsync<ModelCatalogService, ModelChangeOutcome>(target, service =>
+                service.UpdateAsync(id, new SunoModelEdit("renamed by the guard", null, null), revision, default)));
+        }),
+        ["ModelCatalogService.DeleteAsync(Guid, Int32, CancellationToken)"] = new(static async target =>
+        {
+            var (id, revision) = await target.ModelAsync();
+            Assert.IsType<ModelChangeOutcome.InUse>(await InScopeAsync<ModelCatalogService, ModelChangeOutcome>(target, service => service.DeleteAsync(id, revision, default)));
+        }),
+
         // Generations (#117): attaching one, with Suno data and without, is the one way one is made;
         // it freezes the Version and never writes its inputs.
         ["GenerationService.AttachAsync(String, String, GenerationAttachOptions, CancellationToken)"] = new(static async target =>
@@ -1121,6 +1158,49 @@ public sealed class VersionImmutabilityGuardTests
         ["RetentionService.IsManagedFilePath(String)"] = "pure path check",
         ["DeletedItemsService.ListAsync(Boolean, CancellationToken)"] = "reads only: the recovery listing",
         ["RetentionPruneTask.TickAsync(CancellationToken)"] = "queues the prune job; the prune itself is RetentionService.PruneAsync, exercised above",
+
+        // The Suno import (#131-#139): everything before the commit stages, reads, or maps, and changes no
+        // catalog row (invariant 3: SunoExportStagingGuardTests); the commit itself is exercised above.
+        ["ExportStagingService.CreateAsync(SunoExportHeader, Nullable`1, CancellationToken)"] = "writes only the staging tables (suno_exports and their records, #131) and Suno's own workspace records; no catalog row, so no Version (SunoExportStagingGuardTests)",
+        ["ExportStagingService.ReceivePartAsync(Guid, Nullable`1, Read, String, CancellationToken)"] = "writes only the staging tables (suno_exports and their records, #131) and Suno's own workspace records; no catalog row, so no Version (SunoExportStagingGuardTests)",
+        ["ExportStagingService.CompleteAsync(Guid, Nullable`1, CancellationToken)"] = "writes only the staging tables (suno_exports and their records, #131) and Suno's own workspace records; no catalog row, so no Version (SunoExportStagingGuardTests)",
+        ["ExportStagingService.DiscardAsync(Guid, Nullable`1, CancellationToken)"] = "writes only the staging tables (suno_exports and their records, #131) and Suno's own workspace records; no catalog row, so no Version (SunoExportStagingGuardTests)",
+        ["ExportStagingService.ExpireAsync(CancellationToken)"] = "writes only the staging tables (suno_exports and their records, #131) and Suno's own workspace records; no catalog row, so no Version (SunoExportStagingGuardTests)",
+        ["ExportStagingService.StageArtworkAsync(Guid, Nullable`1, String, ReadOnlyMemory`1, CancellationToken)"] = "stores an image as an asset held by a staged record; no Generation or Version is touched until the commit",
+        ["ExportStagingService.FindAsync(Guid, Nullable`1, CancellationToken)"] = "reads only",
+        ["ExportStagingService.RecordsAsync(Guid, StagedRecordQuery, CancellationToken)"] = "reads only",
+        ["ProposalService.ChangeChoicesAsync(Guid, Int32, IReadOnlyList`1, ImportChoiceRequest, CancellationToken)"] = "a choice only names a Version, stored on the staged record; the commit, exercised above, is what attaches",
+        ["ProposalService.ChangeChoicesAsync(Guid, Int32, ChoiceFilter, ImportChoiceRequest, CancellationToken)"] = "a choice only names a Version, stored on the staged record; the commit, exercised above, is what attaches",
+        ["ProposalService.ValidateAsync(Guid, CancellationToken)"] = "reads only: the stored choices checked against the catalog",
+        ["ProposalService.TargetsAsync(Guid, String, String, String, CancellationToken)"] = "reads only: the Versions a record may go to",
+        ["ImportReviewService.CurrentAsync(CancellationToken)"] = "reads only",
+        ["ImportReviewService.RecordsAsync(Guid, StagedRecordQuery, CancellationToken)"] = "reads only",
+        ["ImportReviewService.SummaryAsync(Guid, CancellationToken)"] = "reads only",
+        ["RecordClassifier.ClassifyAsync(IReadOnlyList`1, CancellationToken)"] = "reads only: classes records by Suno ID",
+        ["ImportFieldMap.Capture(String, String)"] = "pure: the import field map",
+        ["ImportFieldMap.Find(String)"] = "pure: the import field map",
+        ["ImportFieldMap.Parse(String)"] = "pure: the import field map",
+        ["ImportFieldMap.Read(JsonElement, String)"] = "pure: the import field map",
+        ["ExternalReferenceResolver.LinkAsync(ImportedLineage, CancellationToken)"] = "reads only: a clip's lineage pointed at the Generations already imported, for a new Version",
+        ["ModelCatalogService.AddAsync(String, String, Int32, CancellationToken)"] = "adds a model to the list; a Version's model is not touched",
+        ["ModelCatalogService.EnsureReportedAsync(String, CancellationToken)"] = "adds a model the list lacks, inside the commit, before a new Version names it; an existing Version's model is not touched",
+        ["ModelCatalogService.ReorderAsync(IReadOnlyList`1, Int32, CancellationToken)"] = "reorders the model list; a Version's model is not touched",
+        ["ModelCatalogService.ListAsync(CancellationToken)"] = "reads only",
+        ["ModelCatalogService.ListWithUsageAsync(CancellationToken)"] = "reads only",
+        ["ModelCatalogService.OfferedAsync(CancellationToken)"] = "reads only",
+        ["CreateFieldInventory.Find(String)"] = "pure: the Create field inventory",
+        ["CreateFieldInventory.Get(String)"] = "pure: the Create field inventory",
+        ["CreateFieldInventory.Parse(String)"] = "pure: the Create field inventory",
+        ["SunoLibraryService.PersonasAsync(CancellationToken)"] = "reads only",
+        ["SunoLibraryService.PlaylistsAsync(CancellationToken)"] = "reads only",
+        ["SunoWorkspaceService.ListAsync(CancellationToken)"] = "reads only",
+        ["SunoWorkspaceService.ReadReport(JsonElement)"] = "pure: reads a workspace report",
+        ["SunoWorkspaceService.ReportAsync(IReadOnlyList`1, Boolean, CancellationToken)"] = "writes Suno's own workspace records (provider state); no Song or Version",
+        ["TombstoneService.FindAsync(String, CancellationToken)"] = "reads only",
+        ["TombstoneService.TombstonedAsync(IReadOnlyCollection`1, CancellationToken)"] = "reads only",
+        ["VersionDefaultsService.GetAsync(CancellationToken)"] = "reads only: the user's defaults",
+        ["VersionDefaultsService.NewVersionInputsAsync(String, CancellationToken)"] = "reads only: the inputs a new, mutable Version starts with",
+        ["VersionDefaultsService.UpdateAsync(IReadOnlyDictionary`2, Int32, CancellationToken)"] = "the user's defaults for new Versions; an existing Version is not touched",
     };
 
     /// <summary>
@@ -1472,6 +1552,27 @@ public sealed class VersionImmutabilityGuardTests
         using var added = await SendAsync(target.Client, HttpMethod.Post, new Uri($"/api/v1/playlists/{id}/songs", UriKind.Relative), SongApi.Quoted(1), $$"""{"songId":"{{target.SongId}}"}""");
         Assert.Equal(HttpStatusCode.OK, added.StatusCode);
         return (id, 2);
+    }
+
+    /// <summary>
+    /// A Suno export of one clip whose choice attaches it to the target's Version although its inputs are
+    /// not the Version's (written on the staged record, as if the Version had changed after the choice
+    /// was made), committed by <paramref name="commit"/> (which answers the job): the target fails with
+    /// <c>inputs_differ</c> and no Generation is attached.
+    /// </summary>
+    private static async Task CommitDifferingClipAsync(Target target, Func<Guid, Task<Guid>> commit)
+    {
+        var token = await SunoWorkspaceApi.ExtensionTokenAsync(target.Factory);
+        var sunoId = "guard-" + Guid.NewGuid().ToString("N");
+        var (exportId, _) = await ProposalApi.ExportAsync(target.Client, token, JsonNode.Parse(Clips.Minimal(sunoId))!);
+        TestDatabase.Execute(
+            target.Factory.DataPath,
+            $$$"""UPDATE suno_export_records SET choice_json = '{"action":"import","target":{"kind":"version","version":"{{{target.VersionId}}}"}}' WHERE suno_id = '{{{sunoId}}}';""");
+
+        var job = await TestJobs.WaitForStatusAsync(target.Client, await commit(exportId), "succeeded");
+        var record = ImportCommitApi.Records(job.GetProperty("result"))[sunoId];
+        Assert.Equal(("failed", "inputs_differ"), (ImportCommitApi.Outcome(record), ImportCommitApi.Reason(record)));
+        Assert.Equal(0, ImportCommitApi.GenerationCount(target.Factory, sunoId));
     }
 
     /// <summary>

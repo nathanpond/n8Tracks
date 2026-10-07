@@ -273,7 +273,7 @@ test.describe('Import review', () => {
           'Leave 2 records for a later sync (Skip this time).',
         );
         await expect(page.getByTestId('choices-valid')).toHaveText('Every choice is valid.');
-        await expect(page.getByRole('button', { name: 'Confirm import' })).toBeDisabled();
+        await expect(page.getByRole('button', { name: 'Confirm import' })).toBeEnabled();
         await expect(row(page, morning).getByTestId('record-choice')).toHaveText(
           `New Song “${morning}”`,
         );

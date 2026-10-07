@@ -7,6 +7,22 @@ using n8Tracks.Domain.Assets;
 
 namespace n8Tracks.Application.Artwork;
 
+/// <summary>How giving a Generation the cover image staged with its export record ended (#140).</summary>
+public enum StagedArtworkOutcome
+{
+    /// <summary>The Generation shows the staged image (now, or it already did).</summary>
+    Attached,
+
+    /// <summary>The Generation already had another image, which it keeps: an import never overwrites.</summary>
+    Kept,
+
+    /// <summary>The staged image (or its original file) is gone: the Generation is imported without it.</summary>
+    ImageMissing,
+
+    /// <summary>The Generation is gone.</summary>
+    GenerationMissing,
+}
+
 /// <summary>How uploading a Generation's image ended. Only <see cref="Stored"/> may have stored anything.</summary>
 public abstract record GenerationArtworkUploadOutcome
 {
@@ -239,6 +255,39 @@ public sealed class GenerationArtworkService(
                 return new GenerationArtworkCopyOutcome.Copied(
                     await songs.FindAsync(current.Id, ct).ConfigureAwait(false)
                         ?? throw new InvalidOperationException("The Song just changed cannot be read back."));
+            },
+            cancellationToken);
+
+    /// <summary>
+    /// Gives the Generation <paramref name="generationId"/> the cover image staged with its record in a
+    /// Suno export (#140, #152), in a transaction of its own after the import's target is committed. The
+    /// image is already in the managed store, checked as any upload is when it was staged, so nothing is
+    /// written there. As an import never overwrites (invariant 3), a Generation that already shows an
+    /// image keeps it; the same image is a no-op. An asset that has gone, or whose original has, is not
+    /// attached: the Generation is imported without it.
+    /// </summary>
+    internal Task<StagedArtworkOutcome> AttachStagedAsync(Guid generationId, Guid assetId, CancellationToken cancellationToken) =>
+        transaction.RunAsync(
+            async ct =>
+            {
+                if (await store.FindAsync(generationId, ct).ConfigureAwait(false) is not { } generation)
+                {
+                    return StagedArtworkOutcome.GenerationMissing;
+                }
+
+                if (await assets.FindAsync(assetId, ct).ConfigureAwait(false) is not { } asset || !artwork.HasOriginal(asset))
+                {
+                    return StagedArtworkOutcome.ImageMissing;
+                }
+
+                if (generation.Artwork is { } held)
+                {
+                    return held.AssetId == assetId ? StagedArtworkOutcome.Attached : StagedArtworkOutcome.Kept;
+                }
+
+                await store.SetArtworkAsync(generationId, assetId, ct).ConfigureAwait(false);
+                await store.TouchSongAsync(generation.Generation.SongId, time.GetUtcNow(), ct).ConfigureAwait(false);
+                return StagedArtworkOutcome.Attached;
             },
             cancellationToken);
 

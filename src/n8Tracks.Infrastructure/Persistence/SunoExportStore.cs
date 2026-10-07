@@ -249,6 +249,17 @@ internal sealed class SunoExportStore(N8TracksDbContext context) : ISunoExportSt
         return [.. read.Select(static row => new ClassifiedRecord(row.SunoId, row.RawJson, SunoExportRules.ClassOf(row.Class), row.GenerationId))];
     }
 
+    public async Task<IReadOnlyList<CommitRecord>> CommitRecordsAsync(Guid exportId, CancellationToken cancellationToken)
+    {
+        var read = await context.StagedClips.AsNoTracking()
+            .Where(row => row.ExportId == exportId)
+            .OrderBy(static row => row.SunoId)
+            .Select(static row => new { row.SunoId, row.RawJson, row.Class, row.ChoiceJson, row.ProposalJson, row.ArtworkAssetId })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return [.. read.Select(static row => new CommitRecord(row.SunoId, row.RawJson, SunoExportRules.ClassOf(row.Class), row.ChoiceJson, row.ProposalJson, row.ArtworkAssetId))];
+    }
+
     public async Task ProposeAsync(Guid exportId, IReadOnlyList<RecordProposalRow> proposals, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(proposals);

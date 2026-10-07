@@ -51,6 +51,9 @@ public static class DependencyInjection
         services.AddScoped<ExportStagingService>();
         services.AddScoped<ImportReviewService>();
         services.AddJobHandler<ExportClassifyJobHandler>(ExportStagingService.ClassifyJobType);
+        services.AddScoped<ImportCommitService>();
+        services.AddScoped<ImportTargetWriter>();
+        services.AddJobHandler<ImportCommitJob>(ImportCommitService.JobType);
         services.AddScoped<GenreService>();
         services.AddScoped<TagService>();
         services.AddScoped<ArtistService>();

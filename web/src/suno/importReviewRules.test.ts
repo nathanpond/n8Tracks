@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { testRecord, toNewSong } from '../test/importServer';
 import {
   choiceText,
+  commitReasonText,
+  createdText,
   durationText,
   excludedKindsText,
   filterFrom,
   groupRecords,
+  outcomesText,
   reasonsText,
   targetText,
 } from './importReviewRules';
@@ -85,5 +88,31 @@ describe('the review rules', () => {
     expect(reasonsText(['invalid_number', 'something_new'])).toBe(
       'that Version number is taken or not allowed; something_new',
     );
+  });
+});
+
+describe('the result of a confirmed import (#140)', () => {
+  it('says what was created, with plurals', () => {
+    expect(createdText({ songs: 1, versions: 2, generations: 3 })).toBe(
+      'Created 1 Song, 2 Versions, and 3 Generations.',
+    );
+    expect(createdText({ songs: 0, versions: 0, generations: 0 })).toBe(
+      'Created 0 Songs, 0 Versions, and 0 Generations.',
+    );
+  });
+
+  it('counts the outcomes, leaving out those no record had', () => {
+    expect(
+      outcomesText([{ outcome: 'created' }, { outcome: 'created' }, { outcome: 'linked' }]),
+    ).toBe('2 records imported, 1 record already linked.');
+    expect(outcomesText([])).toBe('No records.');
+  });
+
+  it('words each commit reason, falling back to the review’s words', () => {
+    expect(commitReasonText('tombstoned')).toMatch(/deleted from n8Tracks/);
+    expect(commitReasonText('number_taken')).toMatch(/took the next one/);
+    expect(commitReasonText('invalid_clip')).toMatch(/could not keep/);
+    expect(commitReasonText('inputs_differ')).toMatch(/no longer match/);
+    expect(commitReasonText('target_missing')).toBe('the Song or Version chosen no longer exists');
   });
 });

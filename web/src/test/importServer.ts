@@ -1,4 +1,6 @@
 import type {
+  CommitJob,
+  CommitResult,
   ImportChoice,
   ImportFilter,
   ImportRecord,
@@ -11,6 +13,47 @@ import { healthyReport, jsonResponse, requestPath, stubFetch } from './helpers';
 import { baseSong } from './songServer';
 
 export const EXPORT_ID = '0199c000-0000-7000-8000-000000000001';
+
+/** The commit job the fake starts. */
+export const COMMIT_JOB_ID = '0199c300-0000-7000-8000-000000000001';
+
+/** A commit's result: one new Song with two Generations, one record skipped, one failed. */
+export function testCommitResult(change: Partial<CommitResult> = {}): CommitResult {
+  return {
+    records: [
+      {
+        sunoId: 'a',
+        outcome: 'created',
+        generation: {
+          id: '0199c400-0000-7000-8000-000000000001',
+          shortcode: 'n8-9-v1-g1',
+          songId: '0199c400-0000-7000-8000-0000000000aa',
+        },
+      },
+      {
+        sunoId: 'b',
+        outcome: 'created',
+        generation: {
+          id: '0199c400-0000-7000-8000-000000000002',
+          shortcode: 'n8-9-v1-g2',
+          songId: '0199c400-0000-7000-8000-0000000000aa',
+        },
+      },
+      { sunoId: 'linked', outcome: 'skipped' },
+      { sunoId: 'changed', outcome: 'failed', reason: 'inputs_differ' },
+    ],
+    created: { songs: 1, versions: 1, generations: 2 },
+    songs: [
+      {
+        id: '0199c400-0000-7000-8000-0000000000aa',
+        shortcode: 'n8-9',
+        title: 'Morning Light',
+        created: true,
+      },
+    ],
+    ...change,
+  };
+}
 
 /** A ready export with the counts given. */
 export function testImport(change: Partial<SunoImport> = {}): SunoImport {
@@ -201,6 +244,24 @@ export function importServer(records: ImportRecord[], exported: Partial<SunoImpo
     ],
     playlists: [] as { id: string; name: string | null; count: number }[],
     current: undefined as { waiting: SunoImport | null; last: SunoImport | null } | undefined,
+    /** The If-Match of each commit request. */
+    commits: [] as (string | null)[],
+    nextCommit: undefined as (() => Response) | undefined,
+    /** The commit job as the jobs endpoint answers it; null answers 404 (pruned). */
+    job: null as CommitJob | null,
+    jobReads: 0,
+    /** The job ends: succeeded with `result` (the export committed), or failed (the export back to ready). */
+    finishCommit(result: CommitResult | null) {
+      server.job = {
+        id: COMMIT_JOB_ID,
+        status: result === null ? 'failed' : 'succeeded',
+        progress: result === null ? 40 : 100,
+        message: '2 of 2 targets',
+        error: result === null ? 'interrupted by restart' : null,
+        result,
+      };
+      server.export = { ...server.export, state: result === null ? 'ready' : 'committed' };
+    },
     changeElsewhere() {
       server.export = { ...server.export, revision: server.export.revision + 1 };
     },
@@ -293,6 +354,14 @@ export function importServer(records: ImportRecord[], exported: Partial<SunoImpo
         jsonResponse(200, { items: [TARGET_SONG], page: 1, pageSize: 10, total: 1 }),
       );
     }
+    if (path.includes(`/api/v1/jobs/${COMMIT_JOB_ID}`)) {
+      server.jobReads += 1;
+      return Promise.resolve(
+        server.job === null
+          ? jsonResponse(404, { code: 'not_found' })
+          : jsonResponse(200, server.job),
+      );
+    }
     if (!path.includes(base)) {
       return Promise.resolve(jsonResponse(404, { code: 'not_found' }));
     }
@@ -302,6 +371,30 @@ export function importServer(records: ImportRecord[], exported: Partial<SunoImpo
     }
     if (rest === '/summary') {
       return Promise.resolve(jsonResponse(200, summary()));
+    }
+    if (rest === '/commit' && method === 'POST') {
+      const headers = new Headers(init?.headers);
+      server.commits.push(headers.get('If-Match'));
+      const next = server.nextCommit;
+      if (next !== undefined) {
+        server.nextCommit = undefined;
+        return Promise.resolve(next());
+      }
+      if (headers.get('If-Match') !== `"${String(server.export.revision)}"`) {
+        return Promise.resolve(
+          jsonResponse(409, { code: 'revision_conflict', current: counted() }),
+        );
+      }
+      server.export = { ...server.export, state: 'committing', jobId: COMMIT_JOB_ID };
+      server.job = {
+        id: COMMIT_JOB_ID,
+        status: 'running',
+        progress: 50,
+        message: '1 of 2 targets',
+        error: null,
+        result: null,
+      };
+      return Promise.resolve(jsonResponse(202, counted()));
     }
     if (rest === '/discard' && method === 'POST') {
       server.discards += 1;

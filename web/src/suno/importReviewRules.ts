@@ -61,6 +61,47 @@ export function reasonText(reason: string): string {
   }
 }
 
+/** Why a record was not imported as chosen when the import was confirmed (#140), in plain words. */
+export function commitReasonText(reason: string): string {
+  switch (reason) {
+    case 'tombstoned':
+      return 'its Generation was deleted from n8Tracks after the review was opened';
+    case 'invalid_clip':
+      return 'n8Tracks could not keep this clip as a Generation';
+    case 'number_taken':
+      return 'its Version number was taken meanwhile, so the Version took the next one';
+    case 'inputs_differ':
+      return 'its creation inputs no longer match that Version’s';
+    default:
+      return reasonText(reason);
+  }
+}
+
+/** What confirming created: "Created 1 Song, 2 Versions, and 3 Generations." */
+export function createdText(created: {
+  songs: number;
+  versions: number;
+  generations: number;
+}): string {
+  return `Created ${countText(created.songs, 'Song')}, ${countText(created.versions, 'Version')}, and ${countText(created.generations, 'Generation')}.`;
+}
+
+/** How many records ended each way, in plain words, leaving out the outcomes none had. */
+export function outcomesText(records: readonly { outcome: string }[]): string {
+  const labels: [string, string][] = [
+    ['created', 'imported'],
+    ['linked', 'already linked'],
+    ['skipped', 'left for a later sync'],
+    ['ignored', 'not copied'],
+    ['failed', 'failed'],
+  ];
+  const parts = labels.flatMap(([outcome, label]) => {
+    const count = records.filter((record) => record.outcome === outcome).length;
+    return count === 0 ? [] : [`${recordCountText(count)} ${label}`];
+  });
+  return parts.length === 0 ? 'No records.' : `${parts.join(', ')}.`;
+}
+
 /** All the reasons in one sentence. */
 export function reasonsText(reasons: readonly string[]): string {
   return reasons.map(reasonText).join('; ');

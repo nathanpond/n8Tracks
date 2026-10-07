@@ -237,6 +237,30 @@ internal sealed class RetentionStore(N8TracksDbContext context, RetainedTypeRegi
         return group is null ? null : await WithRecordsAsync(group, cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<RetentionGroup?> FindByStoredValueAsync(string recordType, string column, string value, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(column);
+        if (column.Any(static character => !(char.IsAsciiLetterLower(character) || char.IsAsciiDigit(character) || character == '_')))
+        {
+            throw new ArgumentException("A column name is lower-case letters, digits, and underscores.", nameof(column));
+        }
+
+        // The document is read in the database, never here: only the group's ID leaves the query.
+        var rows = await QueryAsync(
+            """
+            SELECT r.group_id AS group_id FROM retention_records AS r
+            JOIN retention_groups AS g ON g.id = r.group_id
+            WHERE r.record_type = $p0 AND json_extract(r.document, $p1) = $p2
+            ORDER BY g.deleted_utc DESC, g.id DESC
+            LIMIT 1;
+            """,
+            [recordType, "$." + column, value],
+            cancellationToken).ConfigureAwait(false);
+        return rows is [var row] && Guid.TryParse(Convert.ToString(row["group_id"], CultureInfo.InvariantCulture), out var groupId)
+            ? await FindAsync(groupId, cancellationToken).ConfigureAwait(false)
+            : null;
+    }
+
     public async Task<IReadOnlyList<RetentionGroup>> ListAsync(CancellationToken cancellationToken)
     {
         var groups = await context.RetentionGroups.AsNoTracking()

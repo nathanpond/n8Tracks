@@ -108,6 +108,13 @@ Raw objects are sent as Suno returned them. It is uploaded in parts: `POST /api/
 - **Expiry:** the daily retention job's second step expires a ready export after seven days. It discards an export still receiving after 24 hours, and removes a committed export's staged rows after 24 hours.
 - **Reading:** `GET /api/v1/suno/exports/{id}` returns the state and the counts per class. `GET .../records` lists the records, filtered by `class`, `workspace`, and `playlist`, and paged (`page`, `pageSize`, at most 200). The records list is session-only. A credential reaches only the exports it created.
 - **Cover images:** `PUT /api/v1/suno/exports/{id}/artwork/{sunoId}` stages a cover image with a record of a ready export. The image is checked like any artwork, and the commit gives it to the Generation.
+- **Commit (#140):** `POST /api/v1/suno/exports/{id}/commit` (session-only, If-Match on the export's revision, no body) moves a ready export to `committing` and queues the `suno-import-commit` job, which applies the choices saved on it and then marks it `committed` (once; 409 `export_committed` after, `import_in_progress` during).
+    - Each target is one transaction: a new Song with its Version 1 and Generations, a new Version, or the Generations attached to an existing Version. It is created whole or not at all; a failing target is reported and undoes nothing else.
+    - Every choice is checked again. A record a Generation holds now is reported linked and skipped; a clip goes to an existing Version only while its inputs are still that Version's (`inputs_differ` otherwise); a taken Version number becomes the next valid one (`number_taken`).
+    - New Versions hold the clip's mapped inputs and its lineage (#137), with sources already imported linked; once attached, references to the clip elsewhere resolve to it. New Songs get the clip's workspace and no Artist.
+    - A Reimport restores the deleted Generation from retention while its group (a Generation deleted alone) is retained; otherwise it attaches afresh. Its tombstone goes either way.
+    - Afterwards: one Generation Event per group of two or more clips attached, then staged cover images, which never replace an image a Generation already has.
+    - The job's result lists each record's `outcome` (`created`, `linked`, `skipped`, `ignored`, `failed`) and `reason`, what was created, and the Songs. A commit interrupted by a restart returns the export to `ready`, reclassified.
 
 ## Extension structure
 
