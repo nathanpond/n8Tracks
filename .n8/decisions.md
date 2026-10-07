@@ -3886,3 +3886,31 @@ Track b (#322 #327 #328 #329 #330 #331 #332 #335 #339 #341 #342 #343 #344):
 - **Change:** Imported Songs, and any Song with no artwork of its own and no Selected Generation, now show their newest Generation's image, computed at read time (#318). This narrows #121 AC 3 ("shows nothing when it has no Selected Generation") to Songs whose Generations have no image.
   **Why:** Verification of #121 found that the must-have truth "a Song imported from Suno shows a cover without the user doing anything" failed. The owner's decision on the AC wording is pending.
   **Affects:** M4 #121 (closed), epic #11 AC 4; future milestones that list or display Song artwork — plans may be stale.
+
+## /n8-exec M4 fix pass 2 — 2026-10-07
+
+## M4 fix pass 2 decisions
+
+- **Decision:** The design is construction, not content matching. The server no longer compares notes with the Version's text: `GenerationVerification.NotesCarryingText` and its 8-character floor are removed. A note now only has to fit a bounded shape (`GenerationVerification.IsNote`): one line of at most 1000 characters, with no control characters and no line or paragraph separators. A note with any other shape gets 422 and nothing is stored. The extension guarantees that notes carry none of the Version's text. A new source guard, `extension/test/verification-note-source.test.ts`, which sits next to the diagnostics literal-only guard (#150/#344), checks every note that can reach n8Tracks in `src/adapter/**` and `src/content/sunoGenerate.ts`:
+  - each `reportNote`;
+  - each `note` that has no `reportNote` beside it;
+  - each assignment to `.note` or `.reportNote`;
+  - each filler `unavailable` reason.
+
+  Each of these must be text written in the source. A template may hold only the adapter's own constants: a filler's `control`, a route's `menu`, `item` or `label`, or a SCREAMING_CASE constant. It may also hold a `const` of the same file that holds such text, or the answer of a function in the same file whose every return is such text.
+
+  **Why:** #379 AC 1 says the extension's fixed notes are accepted "whatever the Version's title, names or text entries say". Any server-side match against user text breaks that rule:
+  - Matching titles and names refuses Songs titled "Duration", "Selected" or "workspace".
+  - Matching only whole lyric, styles or prompt lines still refuses a fixed note whenever such a line is part of it (for example styles "Duration is Auto").
+  - Checking against a server-side catalogue of note templates would tie the server to each adapter version, which #340 already rejected.
+
+  Construction meets AC 3 ("impossible by construction"). The one-line rule still refuses a pasted block of lyrics or a prompt from any client. Trade-off: a non-extension client holding a `suno.generate` token can now store one line of free text as a note. Before, that was refused only when the line matched the Version's text. Notes are shown only on the owner's own Version page, and a token is the owner's own credential.
+  **Issue:** #379 (#340)
+
+- **Decision:** In `extension/src/adapter/sources.ts`, the panel's named steps and the generic steps n8Tracks stores are now separate functions: `byHandStep`/`namedSteps` and `reportedByHandStep`/`reportedSteps`. Before, one `stepsOf(named)` produced both. When the extension does not know a source's Suno action, the stored note now says "the extension does not know its Suno action" without the action key. The panel still names the key. `sentenceOf` capitalises the joined steps; its output is unchanged. In `fill.ts`, `unavailable()` takes the writer's `{ unavailable }` answer instead of a bare string.
+  **Why:** A static guard can only show that a note is written text if the generic text is built separately from the named text. The action key comes from the API (a relationship type's mapping), not from the adapter, so it is left out of the stored note.
+  **Issue:** #379
+
+- **Decision:** The e2e verification Demo (`generate-on-suno.spec.ts`) now titles its Song "Duration". That word is part of the extension's Duration note sent in the same report.
+  **Why:** It reproduces #379 against the built image. With the old check, that report got 422.
+  **Issue:** #379
