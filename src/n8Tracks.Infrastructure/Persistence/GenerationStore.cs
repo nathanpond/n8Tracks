@@ -52,6 +52,16 @@ internal sealed class GenerationStore(N8TracksDbContext context) : IGenerationSt
         }
     }
 
+    public Task RememberDeclinedAsync(Guid generationId, string? declinedHash, CancellationToken cancellationToken) =>
+        context.Generations
+            .Where(generation => generation.Id == generationId)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(static generation => generation.DeclinedHash, declinedHash), cancellationToken);
+
+    public Task RememberKeptInputsAsync(Guid generationId, string? keptInputsHash, CancellationToken cancellationToken) =>
+        context.Generations
+            .Where(generation => generation.Id == generationId)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(static generation => generation.KeptInputsHash, keptInputsHash), cancellationToken);
+
     public async Task<IReadOnlyList<Guid>> ArtworkAssetIdsAsync(IReadOnlyCollection<Guid> generationIds, CancellationToken cancellationToken) =>
         await context.Generations.AsNoTracking()
             .Where(generation => generationIds.Contains(generation.Id) && generation.ArtworkAssetId != null)

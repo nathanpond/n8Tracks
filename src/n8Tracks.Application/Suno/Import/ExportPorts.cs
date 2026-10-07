@@ -20,8 +20,12 @@ public sealed record StagedRecordRaw(string SunoId, string RawJson);
 /// <param name="ChangedFields">The compared fields that differ from that Generation's (empty otherwise).</param>
 public sealed record RecordClassification(string SunoId, SunoRecordClass Class, Guid? GenerationId, IReadOnlyList<string> ChangedFields);
 
-/// <summary>A live Generation holding a Suno ID: its ID, the normalized fields it keeps, and its Version's creation inputs.</summary>
-public sealed record LinkedClip(Guid GenerationId, ClipFields Stored, LinkedVersionInputs? Version = null);
+/// <summary>
+/// A live Generation holding a Suno ID: its ID, the normalized fields it keeps, its Version's creation
+/// inputs, and what the user decided on an earlier sync (#141): the hash of Suno's values a declined
+/// change named, and of the clip's inputs a kept conflict named (<see cref="RememberedChoiceRules"/>).
+/// </summary>
+public sealed record LinkedClip(Guid GenerationId, ClipFields Stored, LinkedVersionInputs? Version = null, string? DeclinedHash = null, string? KeptInputsHash = null);
 
 /// <summary>The creation inputs of a linked Generation's Version, which a clip's mapped inputs are compared with (#135).</summary>
 public sealed record LinkedVersionInputs(string Lyrics, string Styles, VersionInputs Inputs, ImportedInputMarks? Imported);
@@ -63,10 +67,10 @@ public sealed record StagedRecord(
 public sealed record ClassifiedRecord(string SunoId, string RawJson, SunoRecordClass? Class, Guid? GenerationId);
 
 /// <summary>
-/// A staged record as the commit (#140) reads it: its raw clip, class, choice and proposal (JSON), and
-/// the cover image staged for it.
+/// A staged record as the commit (#140) reads it: its raw clip, class, choice and proposal (JSON), the
+/// cover image staged for it, and whether it came from Suno's Trash.
 /// </summary>
-public sealed record CommitRecord(string SunoId, string RawJson, SunoRecordClass? Class, string? ChoiceJson, string? ProposalJson, Guid? ArtworkAssetId);
+public sealed record CommitRecord(string SunoId, string RawJson, SunoRecordClass? Class, string? ChoiceJson, string? ProposalJson, Guid? ArtworkAssetId, bool Trashed = false);
 
 /// <summary>
 /// A staged record's class and current choice (JSON), as a change of choices checks the whole export

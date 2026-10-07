@@ -261,6 +261,19 @@ public sealed class GenerationRecord
     /// refresh of the clip columns, and replacing it removes the old asset unless something else uses it.
     /// </summary>
     public Guid? ArtworkAssetId { get; set; }
+
+    /// <summary>
+    /// A diff the user declined (#141): the SHA-256 of Suno's incoming values of the compared fields when
+    /// the user left at least one of them declined; while a later sync brings the same values, the clip is
+    /// Already linked. Null when nothing is declined. Never shown, never logged.
+    /// </summary>
+    public string? DeclinedHash { get; set; }
+
+    /// <summary>
+    /// A Conflict the user chose to keep (#141): the SHA-256 of the clip's mapped creation inputs; while a
+    /// later sync brings the same inputs, the clip is not a Conflict. Null when none was kept.
+    /// </summary>
+    public string? KeptInputsHash { get; set; }
 }
 
 /// <summary>

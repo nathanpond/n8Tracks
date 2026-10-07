@@ -98,6 +98,20 @@ public interface IGenerationStore
     /// </summary>
     Task RefreshClipFieldsAsync(Guid generationId, ClipFields incoming, IReadOnlyCollection<string> fields, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Sets the remembered declined change of the Generation with <paramref name="generationId"/> (#141: the
+    /// hash of Suno's values the user left declined, or null when nothing is), touching no other column:
+    /// not its clip columns, rating, state, or revision. Only inside a transaction.
+    /// </summary>
+    Task RememberDeclinedAsync(Guid generationId, string? declinedHash, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Sets the remembered kept conflict of the Generation with <paramref name="generationId"/> (#141: the
+    /// hash of the clip's creation inputs the user chose to keep apart from its Version, or null), touching
+    /// no other column. Only inside a transaction.
+    /// </summary>
+    Task RememberKeptInputsAsync(Guid generationId, string? keptInputsHash, CancellationToken cancellationToken);
+
     /// <summary>The distinct assets the cover images of <paramref name="generationIds"/> are, for those that have one.</summary>
     Task<IReadOnlyList<Guid>> ArtworkAssetIdsAsync(IReadOnlyCollection<Guid> generationIds, CancellationToken cancellationToken);
 

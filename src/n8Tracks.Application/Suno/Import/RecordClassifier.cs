@@ -14,7 +14,13 @@ namespace n8Tracks.Application.Suno.Import;
 /// keeps its changed fields too, the metadata diff shown beneath it (#141). "Conflict"
 /// is a linked clip whose creation inputs, mapped by <see cref="ClipInputMapper"/> (#135), differ from
 /// its Version's on an option Suno returns. A model the clip reports that is not on the model list is
-/// only proposed by the mapping, never added here. The classifier only reads: it writes nothing
+/// only proposed by the mapping, never added here.
+/// </para>
+/// <para>
+/// A decision the user made on an earlier sync is remembered (#141): a linked clip whose incoming values
+/// hash to the Generation's declined hash is not Changed, and one whose mapped inputs hash to its kept
+/// hash is not a Conflict (<see cref="RememberedChoiceRules"/>), until Suno's data changes again. The
+/// classifier only reads: it writes nothing
 /// anywhere, the catalog and the model list included (invariant 3).
 /// </para>
 /// </summary>
@@ -44,10 +50,9 @@ public sealed class RecordClassifier(ISunoClipLookup lookup, TombstoneService to
             if (live.TryGetValue(record.SunoId, out var linked))
             {
                 generationId = linked.GenerationId;
-                changed = ClipReader.Read(record.RawJson) is ClipReading.Read read
-                    ? SunoExportRules.ChangedFields(linked.Stored, read.Fields)
-                    : [];
-                inputsDiffer = linked.Version is { } version && InputsDiffer(record.RawJson, version, modelList);
+                changed = ClipReader.Read(record.RawJson) is ClipReading.Read read ? ChangedFieldsOf(linked, read.Fields) : [];
+
+                inputsDiffer = linked.Version is { } version && InputsDiffer(record.RawJson, version, linked.KeptInputsHash, modelList);
             }
 
             var recordClass = SunoExportRules.Classify(
@@ -62,8 +67,25 @@ public sealed class RecordClassifier(ISunoClipLookup lookup, TombstoneService to
         return classifications;
     }
 
-    /// <summary>Whether the clip's mapped creation inputs differ from its Version's; a clip that is not a JSON object is not compared.</summary>
-    private static bool InputsDiffer(string rawJson, LinkedVersionInputs version, IReadOnlyCollection<SunoModel> modelList)
+    /// <summary>
+    /// The compared fields in which <paramref name="incoming"/> differs from the Generation of
+    /// <paramref name="linked"/>; none while Suno still has the values the user declined (#141), so a
+    /// declined change is neither a class nor a diff again until Suno's data changes.
+    /// </summary>
+    internal static IReadOnlyList<string> ChangedFieldsOf(LinkedClip linked, ClipFields incoming)
+    {
+        ArgumentNullException.ThrowIfNull(linked);
+        ArgumentNullException.ThrowIfNull(incoming);
+
+        var changed = SunoExportRules.ChangedFields(linked.Stored, incoming);
+        return changed.Count > 0 && RememberedChoiceRules.Remembers(linked.DeclinedHash, RememberedChoiceRules.DeclinedHash(incoming)) ? [] : changed;
+    }
+
+    /// <summary>
+    /// Whether the clip's mapped creation inputs differ from its Version's, unless the user kept a conflict
+    /// over these very inputs (<paramref name="keptHash"/>); a clip that is not a JSON object is not compared.
+    /// </summary>
+    private static bool InputsDiffer(string rawJson, LinkedVersionInputs version, string? keptHash, IReadOnlyCollection<SunoModel> modelList)
     {
         using var document = JsonDocument.Parse(rawJson);
         if (document.RootElement.ValueKind != JsonValueKind.Object)
@@ -72,6 +94,7 @@ public sealed class RecordClassifier(ISunoClipLookup lookup, TombstoneService to
         }
 
         var mapped = ClipInputMapper.Map(document.RootElement, modelList);
-        return ClipInputMapper.Differs(mapped, version.Lyrics, version.Styles, version.Inputs, version.Imported);
+        return ClipInputMapper.Differs(mapped, version.Lyrics, version.Styles, version.Inputs, version.Imported)
+            && !RememberedChoiceRules.Remembers(keptHash, RememberedChoiceRules.KeptInputsHash(mapped.Compared));
     }
 }
