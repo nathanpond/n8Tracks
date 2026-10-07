@@ -3,7 +3,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using n8Tracks.Application.Configuration;
 using n8Tracks.Application.Jobs;
-using n8Tracks.Infrastructure.Health;
+using n8Tracks.Application.Media;
+using n8Tracks.Infrastructure.Media;
 using n8Tracks.Infrastructure.Jobs;
 using n8Tracks.Infrastructure.Persistence;
 
@@ -52,10 +53,14 @@ internal sealed class FaultInjectingConnectionFactory : IDatabaseConnectionFacto
     }
 }
 
-/// <summary>A media probe a test can switch between readable, unreadable, and hanging.</summary>
-internal sealed class SwitchableMediaProbe : IMediaMountProbe, IDisposable
+/// <summary>
+/// A media mount whose <see cref="IMediaMount.Probe"/> a test can switch between readable,
+/// unreadable, and hanging; listing, looking at, and opening files are the real reader's.
+/// </summary>
+internal sealed class SwitchableMediaProbe : IMediaMount, IDisposable
 {
     private readonly ManualResetEventSlim released = new(initialState: true);
+    private IMediaMount? inner;
 
     public bool Readable { get; set; } = true;
 
@@ -67,17 +72,27 @@ internal sealed class SwitchableMediaProbe : IMediaMountProbe, IDisposable
 
     public void Register(IServiceCollection services)
     {
-        services.RemoveAll<IMediaMountProbe>();
-        services.AddSingleton<IMediaMountProbe>(this);
+        services.RemoveAll<IMediaMount>();
+        services.AddSingleton<IMediaMount>(provider =>
+        {
+            inner = new MediaMountReader(provider.GetRequiredService<N8TracksOptions>());
+            return this;
+        });
     }
 
-    public bool IsReadable(string path)
+    public bool Probe()
     {
         Calls++;
         released.Wait();
 
         return Readable;
     }
+
+    public IReadOnlyList<MediaEntry> List(string relativeDirectory) => inner!.List(relativeDirectory);
+
+    public MediaFileStat? Stat(string relativePath) => inner!.Stat(relativePath);
+
+    public Stream OpenRead(string relativePath) => inner!.OpenRead(relativePath);
 
     public void Dispose()
     {

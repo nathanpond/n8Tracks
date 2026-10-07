@@ -43,8 +43,9 @@ public static class MediaScanTriggers
 /// What a scan counted. <see cref="Seen"/> is supported audio files found; <see cref="New"/>,
 /// <see cref="Changed"/>, and <see cref="Unchanged"/> partition it; <see cref="Unreadable"/> counts the
 /// files in <see cref="Seen"/> whose header could not be read (zero-byte files included);
-/// <see cref="Skipped"/> is every other entry (other files, and links, which #203 does not follow);
-/// <see cref="UnreadableDirectories"/> is subdirectories that could not be listed.
+/// <see cref="Skipped"/> is every other entry (other files, and the links that were not followed,
+/// which <see cref="SkippedLinks"/> counts again by reason); <see cref="UnreadableDirectories"/> is
+/// subdirectories that could not be listed.
 /// <see cref="Associated"/> is files the Suno ID matcher associated at the end of the scan, and
 /// <see cref="Unmatched"/> every record left without an association (Missing and user-unassociated
 /// ones included); both are 0 for a scan that did not complete (#206).
@@ -67,6 +68,21 @@ public sealed record MediaScanCounts(
     /// scan is dropped from the jobs list). #207 adds files gone missing to this test.
     /// </summary>
     public bool FoundNothing => New == 0 && Changed == 0;
+
+    /// <summary>The links not followed (#205), by reason; each is in <see cref="Skipped"/> as well.</summary>
+    public MediaSkippedLinks SkippedLinks { get; init; } = MediaSkippedLinks.None;
+}
+
+/// <summary>
+/// Links a scan did not follow, by reason: <see cref="Escaping"/> resolve outside the mount root,
+/// <see cref="Cycle"/> lead back to a directory the walk is already inside (or round a chain of links
+/// that never resolves), and <see cref="Dangling"/> lead to nothing.
+/// </summary>
+public sealed record MediaSkippedLinks(int Escaping, int Cycle, int Dangling)
+{
+    public static MediaSkippedLinks None { get; } = new(0, 0, 0);
+
+    public int Total => Escaping + Cycle + Dangling;
 }
 
 /// <summary>What a scan that succeeded reports.</summary>

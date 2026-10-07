@@ -86,6 +86,7 @@ public sealed class MediaScanTests
         Assert.Equal(3, result.GetProperty("skipped").GetInt32());
         Assert.Equal(2, result.GetProperty("unreadable").GetInt32());
         Assert.Equal(0, result.GetProperty("unreadableDirectories").GetInt32());
+        Assert.Equal("""{"escaping":0,"cycle":0,"dangling":0}""", result.GetProperty("skippedLinks").GetRawText());
         Assert.True(result.GetProperty("elapsedSeconds").GetDecimal() >= 0);
         Assert.Equal(100, job.GetProperty("progress").GetInt32());
         Assert.Contains("9 of 9 files", job.GetProperty("message").GetString(), StringComparison.Ordinal);
@@ -353,24 +354,22 @@ public sealed class MediaScanTests
         }
     }
 
-    [UnixFact]
-    public async Task LinksAreNotFollowed()
+    [Fact]
+    public async Task ASummaryWrittenBeforeLinksWereCountedReadsAsNoneSkipped()
     {
-        using var outside = new TemporaryDirectory();
-        File.Copy(MediaApi.Fixture("mp3"), Path.Combine(outside.Path, "sentinel.mp3"));
         using var factory = MediaApi.Host();
         using var client = await SessionApi.SignedInClientAsync(factory);
-        MediaApi.Place(factory, "real.mp3", "mp3");
-        File.CreateSymbolicLink(MediaApi.FullPath(factory, "file-link.mp3"), Path.Combine(outside.Path, "sentinel.mp3"));
-        Directory.CreateSymbolicLink(MediaApi.FullPath(factory, "folder-link"), outside.Path);
-        File.CreateSymbolicLink(MediaApi.FullPath(factory, "inside-link.mp3"), MediaApi.FullPath(factory, "real.mp3"));
+        TestDatabase.Execute(
+            factory.DataPath,
+            """
+            INSERT INTO settings (key, value) VALUES ('media.lastScan', '{"jobId":"0192f1a4-0000-7000-8000-000000000001","trigger":"manual","outcome":"succeeded","startedUtc":"2026-10-08T10:00:00.000Z","finishedUtc":"2026-10-08T10:00:01.000Z","counts":{"seen":1,"new":1,"changed":0,"unchanged":0,"skipped":2,"unreadable":0,"unreadableDirectories":0}}')
+            ON CONFLICT (key) DO UPDATE SET value = excluded.value;
+            """);
 
-        var result = MediaApi.Result(await MediaApi.ScanAsync(client));
-        Assert.Equal(1, result.GetProperty("seen").GetInt32());
-        Assert.Equal(3, result.GetProperty("skipped").GetInt32());
-        var (items, _) = await MediaApi.ListAsync(client);
-        Assert.Equal("real.mp3", Assert.Single(items).GetProperty("path").GetString());
-        Assert.Equal(1, MediaApi.Mount(factory).Opens);
+        using var scope = factory.Services.CreateScope();
+        var summary = await scope.ServiceProvider.GetRequiredService<MediaScanService>().LastScanAsync(CancellationToken.None);
+        Assert.Equal(new MediaScanCounts(1, 1, 0, 0, 2, 0, 0), summary?.Counts);
+        Assert.Equal(MediaSkippedLinks.None, summary?.Counts.SkippedLinks);
     }
 
     [Fact]

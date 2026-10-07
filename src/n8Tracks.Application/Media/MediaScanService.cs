@@ -10,8 +10,11 @@ namespace n8Tracks.Application.Media;
 /// supported audio file it finds, without touching it. It runs as a <c>media-scan</c> job, one at a
 /// time. A walk is two passes: a quick one that only lists names, which gives the progress bar its
 /// total, then one that looks at each audio file, compares it with its record, reads the header of a
-/// new or changed file, and writes the records in batches. A walk that completes ends with the
-/// Suno ID matcher (#206) over every unassociated record.
+/// new or changed file, and writes the records in batches. A link that stays inside the mount is
+/// followed and its files are cataloged under the link's own path; one that leads outside, to nothing,
+/// or back to a directory the walk is already inside is skipped, counted by reason, and logged once
+/// per scan (#205). A walk that completes ends with the Suno ID matcher (#206) over every
+/// unassociated record.
 /// </summary>
 public sealed class MediaScanService(
     IMediaMount mount,
@@ -19,6 +22,7 @@ public sealed class MediaScanService(
     IAudioFileStore files,
     IMediaScanSummaryStore summaries,
     SunoIdMatcher matcher,
+    IMediaScanLog log,
     IJobStore jobs,
     IJobQueue queue,
     MediaScanStartLock startLock,
@@ -93,6 +97,7 @@ public sealed class MediaScanService(
         {
             previous = await summaries.FindAsync(cancellationToken).ConfigureAwait(false);
             var counts = await ScanAsync(started, tally, report, cancellationToken).ConfigureAwait(false);
+            LogSkippedLinks(tally);
             await ForgetAsync(previous, jobId).ConfigureAwait(false);
             await summaries.WriteAsync(
                 new MediaScanSummary(jobId, trigger, MediaScanOutcome.Succeeded, started, time.GetUtcNow(), counts, null),
@@ -101,6 +106,7 @@ public sealed class MediaScanService(
         }
         catch (Exception exception)
         {
+            LogSkippedLinks(tally);
             var error = exception switch
             {
                 MediaFolderUnavailableException => MediaFolderUnavailableException.Text,
@@ -132,12 +138,15 @@ public sealed class MediaScanService(
     {
         report(0, "Listing the media folder");
 
-        // Pass 1: names only. The root must be listable at the start and again at the end.
+        // Pass 1: names only. The root must be listable at the start and again at the end. Each
+        // directory carries the real paths of the directories above it, so a link back to one of them
+        // ends that branch instead of walking it again.
         var found = new List<(string Path, string Name, string Format)>();
-        var directories = new Stack<string>();
-        directories.Push(string.Empty);
-        while (directories.TryPop(out var directory))
+        var directories = new Stack<(string Path, Ancestry Ancestry)>();
+        directories.Push((string.Empty, new Ancestry(string.Empty, null)));
+        while (directories.TryPop(out var next))
         {
+            var (directory, ancestry) = next;
             cancellationToken.ThrowIfCancellationRequested();
 
             IReadOnlyList<MediaEntry> entries;
@@ -161,8 +170,14 @@ public sealed class MediaScanService(
                 var path = directory.Length == 0 ? entry.Name : $"{directory}/{entry.Name}";
                 switch (entry.Kind)
                 {
+                    case MediaEntryKind.Directory when entry.RealPath is { } real && ancestry.Contains(real):
+                        tally.SkipLink(path, MediaEntryKind.LoopingLink);
+                        break;
                     case MediaEntryKind.Directory:
-                        directories.Push(path);
+                        directories.Push((path, new Ancestry(entry.RealPath ?? (ancestry.RealPath.Length == 0 ? entry.Name : $"{ancestry.RealPath}/{entry.Name}"), ancestry)));
+                        break;
+                    case MediaEntryKind.EscapingLink or MediaEntryKind.DanglingLink or MediaEntryKind.LoopingLink:
+                        tally.SkipLink(path, entry.Kind);
                         break;
                     case MediaEntryKind.File when AudioFormats.FormatOf(entry.Name) is { } format:
                         found.Add((path, entry.Name, format));
@@ -315,6 +330,15 @@ public sealed class MediaScanService(
         }
     }
 
+    /// <summary>One Warning per scan for the links it did not follow: the count and the first few relative paths.</summary>
+    private void LogSkippedLinks(Tally tally)
+    {
+        if (tally.SkippedLinkPaths.Count > 0)
+        {
+            log.SkippedLinks(tally.Links.Total, tally.SkippedLinkPaths);
+        }
+    }
+
     /// <summary>Observes the exception of a worker that is no longer waited for.</summary>
     private static void Observe(Task task) =>
         _ = task.ContinueWith(static finished => _ = finished.Exception, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
@@ -325,6 +349,23 @@ public sealed class MediaScanService(
         return string.Create(
             CultureInfo.InvariantCulture,
             $"{done} of {total} files: {counts.New} new, {counts.Changed} changed, {counts.Unchanged} unchanged, {counts.Unreadable} unreadable, {counts.Skipped} skipped");
+    }
+
+    /// <summary>The real paths (relative to the mount root's) of a directory and every directory above it on the walk.</summary>
+    private sealed record Ancestry(string RealPath, Ancestry? Parent)
+    {
+        public bool Contains(string realPath)
+        {
+            for (var step = this; step is not null; step = step.Parent)
+            {
+                if (string.Equals(step.RealPath, realPath, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
     }
 
     /// <summary>
@@ -344,6 +385,26 @@ public sealed class MediaScanService(
 
         public int UnreadableDirectories { get; set; }
 
+        public MediaSkippedLinks Links { get; private set; } = MediaSkippedLinks.None;
+
+        /// <summary>The first few skipped links' relative paths, for the one Warning.</summary>
+        public List<string> SkippedLinkPaths { get; } = [];
+
+        public void SkipLink(string path, MediaEntryKind kind)
+        {
+            Skipped++;
+            Links = kind switch
+            {
+                MediaEntryKind.EscapingLink => Links with { Escaping = Links.Escaping + 1 },
+                MediaEntryKind.DanglingLink => Links with { Dangling = Links.Dangling + 1 },
+                _ => Links with { Cycle = Links.Cycle + 1 },
+            };
+            if (SkippedLinkPaths.Count < IMediaScanLog.MaximumPaths)
+            {
+                SkippedLinkPaths.Add(path);
+            }
+        }
+
         public void Pending(bool added = false, bool changed = false, bool unchanged = false, bool unreadable = false) =>
             pending.Add((added, changed, unchanged, unreadable));
 
@@ -361,7 +422,7 @@ public sealed class MediaScanService(
         }
 
         public MediaScanCounts Counts() =>
-            new(added + changed + unchanged, added, changed, unchanged, Skipped, unreadable, UnreadableDirectories);
+            new(added + changed + unchanged, added, changed, unchanged, Skipped, unreadable, UnreadableDirectories) { SkippedLinks = Links };
     }
 }
 
@@ -395,6 +456,12 @@ public sealed class MediaScanJobHandler(MediaScanService scans) : IJobHandler
             unreadableDirectories = counts.UnreadableDirectories,
             associated = counts.Associated,
             unmatched = counts.Unmatched,
+            skippedLinks = new
+            {
+                escaping = counts.SkippedLinks.Escaping,
+                cycle = counts.SkippedLinks.Cycle,
+                dangling = counts.SkippedLinks.Dangling,
+            },
             elapsedSeconds = Math.Round((decimal)result.Elapsed.TotalSeconds, 3),
         });
     }
