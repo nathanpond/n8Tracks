@@ -587,6 +587,7 @@ describe('the summary’s other entries', () => {
       key: entry,
       outcome: 'manual',
       note: 'Attach the file by hand: the note.',
+      reportNote: 'Attach the file by hand: the Version’s file note says which.',
     });
   });
 
@@ -883,5 +884,51 @@ describe('the verification report', () => {
       ],
     });
     expect(JSON.stringify(report)).not.toContain('"abc"');
+  });
+
+  it('sends the adapter’s words only: no source title, file note, or voice name the panel shows (#340)', async () => {
+    load(SIMPLE);
+    const simple = job(
+      'simple',
+      { ...SIMPLE_VALUES, voice: { name: 'Private Voice Name' } },
+      {
+        sources: [
+          { key: 'songs.simple.audio', title: 'Private Source Title', sunoAction: 'cover' },
+        ],
+        fileInputs: [
+          { key: 'songs.simple.simple_add_image', description: 'private cover photo note' },
+          { key: 'songs.simple.audio', description: 'private bass take note' },
+        ],
+      },
+    );
+    const results = await verifyForm(page, simple, 'My Workspace', true);
+    const privateText = [
+      'Private Voice Name',
+      'Private Source Title',
+      'private cover photo note',
+      'private bass take note',
+    ];
+
+    // The panel names them, so the user knows what to do by hand ...
+    const shown = results.map((result) => result.note ?? '').join(' ');
+    for (const text of privateText) {
+      expect(shown).toContain(text);
+    }
+
+    // ... and n8Tracks gets the same steps naming them generically.
+    const report = await verificationReport(results, 'simple', 5, new Date('2026-10-07T12:00:00Z'));
+    const sent = JSON.stringify(report);
+    for (const text of privateText) {
+      expect(sent).not.toContain(text);
+    }
+    const notes = new Map(report.entries.map((entry) => [entry.key, entry.note]));
+    expect(notes.get('songs.simple.simple_add_image')).toBe(
+      'Attach the file by hand: the Version’s file note says which.',
+    );
+    expect(notes.get('songs.simple.audio')).toContain('Load the source by hand');
+    expect(notes.get('songs.simple.audio')).toContain(
+      'attach the audio file by hand (the Version’s file note says which)',
+    );
+    expect(notes.get('songs.simple.voice')).toContain('Choose the voice the Version names');
   });
 });

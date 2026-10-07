@@ -173,6 +173,8 @@ describe('the summary lines of the source entries (#148)', () => {
       key: 'songs.advanced.audio',
       outcome: 'manual',
       note: 'Load “Night Drive (demo)” with Edit › Extend by hand: no snapshot shows Suno’s form after Extend yet.',
+      reportNote:
+        'Load the source with Edit › Extend by hand: no snapshot shows Suno’s form after Extend yet.',
     });
     expect(sourceEntryResult('songs.advanced.inspiration', job)).toMatchObject({
       outcome: 'manual',
@@ -183,6 +185,8 @@ describe('the summary lines of the source entries (#148)', () => {
       key: 'songs.advanced.voice',
       outcome: 'manual',
       note: 'Choose the voice “Velvet” from + Voice by hand (no snapshot shows the form with a voice chosen).',
+      reportNote:
+        'Choose the voice the Version names from + Voice by hand (no snapshot shows the form with a voice chosen).',
     });
   });
 
@@ -198,6 +202,13 @@ describe('the summary lines of the source entries (#148)', () => {
 
     expect(sourceEntryResult('songs.simple.audio', simple).note).toBe(
       'Load “Demo Song” by hand: it is a Song in n8Tracks, not a Suno clip; attach the audio file by hand (the bass take).',
+    );
+    // n8Tracks keeps the same steps without the Version's text (#340).
+    expect(sourceEntryResult('songs.simple.audio', simple).reportNote).toBe(
+      'Load the source by hand: it is a Song in n8Tracks, not a Suno clip; attach the audio file by hand (the Version’s file note says which).',
+    );
+    expect(sourceEntryResult('songs.simple.simple_add_playlist', simple).reportNote).toMatch(
+      /^Add the playlist the Version names from \+ Inspo by hand/,
     );
     expect(sourceEntryResult('songs.simple.simple_add_playlist', simple)).toMatchObject({
       outcome: 'manual',

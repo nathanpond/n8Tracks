@@ -9,9 +9,11 @@ namespace n8Tracks.Application.Suno.Generate;
 /// The verification summary the extension reports once it has filled Suno's Create form (#146):
 /// <c>{ adapterVersion, mode, checkedAt, entries: [{ key, outcome, expected?, found?, note? }] }</c>.
 /// Each entry is one field-map entry of the Version's mode (or a value with no entry, as
-/// <c>unsupported</c>). Text values (lyrics, styles, prompts, titles) arrive only as
-/// <c>{ length, sha256 }</c>, never as text; anything else is a number, a boolean, a short choice such
-/// as a model label, or null. A later report replaces the stored summary.
+/// <c>unsupported</c>). Text values (lyrics, styles, prompts, titles: <see cref="TextKeys"/>) arrive
+/// only as <c>{ length, sha256 }</c>, never as text, and a plain value for one is refused (#340);
+/// anything else is a number, a boolean, a short choice such as a model label, or null. A note is the
+/// adapter's own words: one that carries the Version's text is refused (<see cref="NotesCarryingText"/>).
+/// A later report replaces the stored summary.
 /// </summary>
 public static partial class GenerationVerification
 {
@@ -33,6 +35,32 @@ public static partial class GenerationVerification
 
     /// <summary>The longest a text value a hash stands for may be.</summary>
     public const int MaximumHashedLength = 100_000;
+
+    /// <summary>
+    /// The entries whose values are the user's text (the Create form's text boxes and the lyrics
+    /// editor, as the extension's fillers mark them): their <c>expected</c> and <c>found</c> are only
+    /// ever <c>{ length, sha256 }</c> or null.
+    /// </summary>
+    public static IReadOnlySet<string> TextKeys { get; } = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "songs.simple.simple_prompt",
+        "songs.simple.simple_add_lyrics",
+        "songs.simple.simple_add_styles",
+        "songs.advanced.lyrics",
+        "songs.advanced.styles",
+        "songs.advanced.exclude_styles",
+        "songs.advanced.title",
+        "speech.simple.speech_prompt",
+        "speech.advanced.speech_script",
+        "speech.advanced.speech_tone",
+        "sounds.single.sound_description",
+    };
+
+    /// <summary>
+    /// The shortest line of the Version's text a note is checked for: shorter ones (a one-word title)
+    /// are too likely to be words the adapter uses itself.
+    /// </summary>
+    public const int ShortestCheckedText = 8;
 
     private static readonly HashSet<string> TopLevel = new(StringComparer.Ordinal) { "adapterVersion", "mode", "checkedAt", "entries" };
 
@@ -156,9 +184,11 @@ public static partial class GenerationVerification
                 continue;
             }
 
-            if (!IsValue(value))
+            if (key is not null && TextKeys.Contains(key) ? !IsHashedOrNull(value) : !IsValue(value))
             {
-                problems.Add($"{where}: {name} is null, a number, true or false, a short choice, or {{ length, sha256 }} for text.");
+                problems.Add(key is not null && TextKeys.Contains(key)
+                    ? $"{where}: {name} of a text entry is null or {{ length, sha256 }}, never the text."
+                    : $"{where}: {name} is null, a number, true or false, a short choice, or {{ length, sha256 }} for text.");
                 continue;
             }
 
@@ -172,6 +202,80 @@ public static partial class GenerationVerification
 
         return result;
     }
+
+    /// <summary>
+    /// The entries of <paramref name="summary"/> (as <see cref="Read"/> rebuilt it) whose note carries a
+    /// line of the Version's own text as <paramref name="snapshotJson"/> (the request's snapshot) holds
+    /// it: a text entry's value, or a title, description, or name (a source, a file note, a Voice, a
+    /// playlist, the Song). The adapter's notes name such things generically, so a note that quotes
+    /// one is user text sent where only the adapter's words belong.
+    /// </summary>
+    public static IReadOnlyList<string> NotesCarryingText(JsonObject summary, string snapshotJson)
+    {
+        ArgumentNullException.ThrowIfNull(summary);
+
+        var texts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (JsonNode.Parse(snapshotJson) is { } snapshot)
+        {
+            CollectText(snapshot, texts);
+        }
+
+        var problems = new List<string>();
+        if (texts.Count == 0 || summary["entries"] is not JsonArray entries)
+        {
+            return problems;
+        }
+
+        for (var index = 0; index < entries.Count; index++)
+        {
+            if (Text(entries[index]?["note"]) is { } note && texts.Any(text => note.Contains(text, StringComparison.OrdinalIgnoreCase)))
+            {
+                problems.Add($"entries[{index.ToString(CultureInfo.InvariantCulture)}]: note is the extension's own words, never the Version's text.");
+            }
+        }
+
+        return problems;
+    }
+
+    /// <summary>Every line, long enough to check, of the user's text in a snapshot.</summary>
+    private static void CollectText(JsonNode node, HashSet<string> texts)
+    {
+        switch (node)
+        {
+            case JsonObject item:
+                foreach (var (name, value) in item)
+                {
+                    var isText = name is "title" or "description" or "name"
+                        || (name == "value" && Text(item["key"]) is { } key && TextKeys.Contains(key));
+                    if (isText && Text(value) is { } text)
+                    {
+                        foreach (var line in text.Split('\n'))
+                        {
+                            if (line.Trim() is { Length: >= ShortestCheckedText } kept)
+                            {
+                                texts.Add(kept);
+                            }
+                        }
+                    }
+                    else if (value is not null)
+                    {
+                        CollectText(value, texts);
+                    }
+                }
+
+                break;
+            case JsonArray list:
+                foreach (var value in list.OfType<JsonNode>())
+                {
+                    CollectText(value, texts);
+                }
+
+                break;
+        }
+    }
+
+    /// <summary>Whether <paramref name="value"/> is null or text as its length and hash.</summary>
+    private static bool IsHashedOrNull(JsonNode? value) => value is null or JsonObject && IsValue(value);
 
     /// <summary>Whether <paramref name="value"/> is a value the summary may hold (text only as length and hash).</summary>
     private static bool IsValue(JsonNode? value)
