@@ -358,6 +358,21 @@ public sealed class GenerationMoveEndpointTests
         Refused(Move(originSong, 2));
         Refused(Move(targetSong, 3));
 
+        // Never into a Version that is not frozen (invariant 1): its inputs could still change under
+        // the Generation. A mutable Version of a third Song, giving its next ordinal, is still refused.
+        await SongApi.CreateAsync(client, "Mutable");
+        var mutable = TestDatabase.Scalar(factory.DataPath, "SELECT id FROM versions WHERE song_id = (SELECT id FROM songs WHERE shortcode_number = 3);");
+        var mutableSong = TestDatabase.Scalar(factory.DataPath, "SELECT id FROM songs WHERE shortcode_number = 3;");
+        Assert.Equal("0", TestDatabase.Scalar(factory.DataPath, $"SELECT is_frozen FROM versions WHERE id = '{mutable}';"));
+        TestDatabase.Execute(factory.DataPath, $"UPDATE versions SET last_generation_ordinal = 1 WHERE id = '{mutable}';");
+        Refused($"UPDATE generations SET version_id = '{mutable}', song_id = '{mutableSong}', ordinal = 1 WHERE id = '{g2}';");
+
+        // Never onto a shortcode that is another Generation's alias (here one whose Generation is
+        // gone): while the target's next shortcode is reserved, the move is refused.
+        TestDatabase.Execute(factory.DataPath, $"INSERT INTO shortcode_aliases (alias, generation_id, created_utc) VALUES ('n8-2-v1-g2', '{Upper(Guid.CreateVersion7())}', '2026-10-06T00:00:00.000Z');");
+        Refused(Move(targetSong, 2));
+        TestDatabase.Execute(factory.DataPath, "DELETE FROM shortcode_aliases WHERE alias = 'n8-2-v1-g2';");
+
         // Complement: with the alias recorded and the target's next ordinal given, the move goes through.
         TestDatabase.Execute(factory.DataPath, Move(targetSong, 2));
         Assert.Equal("n8-2-v1-g2", (await GenerationAsync(client, "n8-1-v1-g2")).GetProperty("shortcode").GetString());
