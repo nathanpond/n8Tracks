@@ -256,9 +256,9 @@ describe('cover images of a sync', () => {
       failed: 3,
     });
     // An image on a host that is not listed is never requested, nor counted.
-    expect(context.reads.mock.calls.some(([address]) => address.includes('example.com'))).toBe(
-      false,
-    );
+    expect(
+      context.reads.mock.calls.some(([address]) => new URL(address).hostname === 'example.com'),
+    ).toBe(false);
   });
 
   it('waits for n8Tracks to get the export ready before sending', async () => {

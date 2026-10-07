@@ -707,8 +707,10 @@ public sealed class LogRedactionGuardTests
         var logger = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("n8Tracks.Tests.Probe");
 
         var body = await JsonSerializer.DeserializeAsync<JsonElement>(context.Request.Body, cancellationToken: context.RequestAborted);
-        var headers = context.Request.Headers.ToDictionary(header => header.Key, header => header.Value.ToString(), StringComparer.Ordinal);
-        var query = context.Request.Query.ToDictionary(pair => pair.Key, pair => pair.Value.ToString(), StringComparer.Ordinal);
+        // Line breaks are taken out of what the request sent, so the probe cannot forge a log line of
+        // its own; the sentinels have none, and what redaction must hide is left as it came.
+        var headers = context.Request.Headers.ToDictionary(header => OneLine(header.Key), header => OneLine(header.Value.ToString()), StringComparer.Ordinal);
+        var query = context.Request.Query.ToDictionary(pair => OneLine(pair.Key), pair => OneLine(pair.Value.ToString()), StringComparer.Ordinal);
 
         using (logger.BeginScope(new Dictionary<string, object> { ["Style"] = ScopeSentinel }))
         {
@@ -733,6 +735,9 @@ public sealed class LogRedactionGuardTests
         context.Response.Headers.Append("Set-Cookie", $"session={SetCookieSentinel}; HttpOnly");
         await context.Response.WriteAsync("ok", context.RequestAborted);
     }
+
+    /// <summary>The text with each carriage return and line feed made a space.</summary>
+    private static string OneLine(string text) => text.Replace('\r', ' ').Replace('\n', ' ');
 
     private sealed record ProbeSong(string Title, string Password, string Lyrics, string RawPayload);
 }
