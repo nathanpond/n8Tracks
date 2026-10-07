@@ -163,7 +163,9 @@ describe('invariant 4: the extension never presses a forbidden control on Suno',
     expect(ADAPTER_WORKFLOWS.length).toBeGreaterThan(0);
     expect(await exerciseWorkflows(ADAPTER_WORKFLOWS, { recipes: RUN_RECIPES })).toEqual([]);
     // Every workflow on every snapshot, each failing step polled to its timeout on a fake clock.
-  }, 60_000);
+    // The adapter's lookups read jsdom's computed styles, which is slow: about 12 s here and an
+    // expected 40 s on a GitHub runner, so the limit is three times that.
+  }, 120_000);
 
   it('takes every Suno action through the clip menus without reaching Publish or Move to Trash (#148)', async () => {
     // Each action's route, on the snapshot of the menu it is in: every step must run there.

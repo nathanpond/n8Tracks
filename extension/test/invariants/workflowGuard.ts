@@ -98,6 +98,48 @@ export function forbiddenControls(document: Document): Spied[] {
   return spied;
 }
 
+/** A snapshot's spied controls, by their place among the body's elements in document order. */
+interface SpiedPlaces {
+  elements: number;
+  places: { index: number; localName: string; words: string; exception: ExceptionName | null }[];
+}
+
+const spiedBySnapshot = new Map<string, SpiedPlaces>();
+
+/**
+ * {@link forbiddenControls} on a snapshot just loaded into `document`. Each snapshot is parsed
+ * afresh for every workflow, and the matcher's verdicts on that same markup are the same each
+ * time, so they are worked out once per snapshot (the matcher reads computed styles, which jsdom
+ * makes slow) and found again by place. A load that does not match the first one fails loudly.
+ */
+function spiedOnSnapshot(snapshot: string, document: Document): Spied[] {
+  const all = [...document.body.querySelectorAll('*')];
+  let known = spiedBySnapshot.get(snapshot);
+  if (known === undefined) {
+    const indexOf = new Map(all.map((element, index) => [element, index]));
+    known = {
+      elements: all.length,
+      places: forbiddenControls(document).map((control) => ({
+        index: indexOf.get(control.element) ?? -1,
+        localName: control.element.localName,
+        words: control.words,
+        exception: control.exception,
+      })),
+    };
+    spiedBySnapshot.set(snapshot, known);
+  }
+  if (all.length !== known.elements) {
+    throw new Error(`The snapshot ${snapshot} loaded differently from its first load.`);
+  }
+  return known.places.map((place) => {
+    const element = all[place.index];
+    if (element?.localName !== place.localName) {
+      throw new Error(`The snapshot ${snapshot} loaded differently from its first load.`);
+    }
+    return { element, words: place.words, exception: place.exception };
+  });
+}
+
 /** Records activations of the spied controls, and Enter and submissions anywhere, until stopped. */
 function watch(document: Document, spied: readonly Spied[]) {
   const activations: { words: string; event: string; exception: ExceptionName | null }[] = [];
@@ -176,7 +218,7 @@ export async function exerciseWorkflows(
     for (const snapshot of snapshots) {
       const clock = fakeClock();
       const page = loadSnapshot(snapshot, (recipe.address ?? snapshotAddress)(snapshot), clock);
-      const watching = watch(document, forbiddenControls(document));
+      const watching = watch(document, spiedOnSnapshot(snapshot, document));
       let result;
       try {
         result = await runWorkflow(workflow, page, recipe.values, { clock, pollMs: 1000 });

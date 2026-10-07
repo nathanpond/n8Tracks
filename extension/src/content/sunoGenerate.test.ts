@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ObservationFeed } from '../adapter/observations.ts';
 import { OBSERVER_SOURCE, type ObservedMessage } from '../adapter/observed.ts';
 import { nameOf, Page } from '../adapter/primitives.ts';
@@ -96,6 +96,11 @@ interface Options {
   /** What the library pane asks Suno for when a workspace row is pressed. */
   feedOnRow?: (workspaceId: string) => ObservedMessage;
 }
+
+// Each test fills or checks Suno's form on a full snapshot, and the adapter's lookups read jsdom's
+// computed styles, which is slow: up to about 2 s a test here and about five times that on a
+// GitHub runner, past vitest's default 5 s. The limit is three times that CI time.
+vi.setConfig({ testTimeout: 30_000 });
 
 afterEach(() => {
   document.body.innerHTML = '';

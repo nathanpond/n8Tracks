@@ -136,7 +136,9 @@ describe('the forbidden-control matcher, on the TS-003 snapshots', () => {
       'create-workspace-dialog: Confirm',
       'workspace-selector: Create new workspace',
     ]);
-  });
+    // The matcher's verdict on every element of every snapshot reads jsdom's computed styles: about
+    // 2.5 s here and over 5 s on a GitHub runner, so the limit is three times a CI run's ~10 s.
+  }, 30_000);
 
   it('recognises only the Overwrite dialog and the Voice picker, by their titles', () => {
     expect(RECOGNISED_DIALOGS.map((dialog) => [dialog.title, dialog.allows])).toEqual([
