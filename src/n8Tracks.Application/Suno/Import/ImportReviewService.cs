@@ -16,7 +16,8 @@ public sealed record ImportFacet(string Id, string? Name, int Count);
 /// the ignore list (Don't copy; a record on the list already stays there unless it is imported), how many
 /// would be left for a later sync (Skip this time), and whether confirming would do nothing at all; which choices are invalid now, by Suno ID (at most
 /// <see cref="ImportReviewService.MaximumInvalidListed"/>, with the full count); the next free temporary
-/// key; the workspaces and playlists to filter by; and which kinds of clip Suno's library filters left out.
+/// key; the workspaces and playlists to filter by; which kinds of clip Suno's library filters left out; and
+/// how many remote-state rows (#142) confirming would apply, of how many.
 /// </summary>
 public sealed record ImportReviewSummary(
     ExportView Export,
@@ -33,7 +34,9 @@ public sealed record ImportReviewSummary(
     IReadOnlyList<ImportFacet> Workspaces,
     IReadOnlyList<ImportFacet> Playlists,
     IReadOnlyList<string> LibraryExcluded,
-    int Resolved = 0);
+    int Resolved = 0,
+    int RemoteChanges = 0,
+    int RemoteChangesTotal = 0);
 
 /// <summary>A Song a choice names: an existing one (ID, shortcode, title; the title is null once it is gone) or a new one (its key and title).</summary>
 public sealed record ImportSongView(Guid? Id, string? Key, string? Shortcode, string? Title);
@@ -72,6 +75,7 @@ public sealed class ImportReviewService(
     ISunoExportStore exports,
     ExportStagingService staging,
     ProposalService proposals,
+    RemoteStateService remoteStates,
     SunoWorkspaceService workspaces,
     ISongStore songs,
     IVersionStore versions)
@@ -150,6 +154,9 @@ public sealed class ImportReviewService(
         // Changed and Conflict records the user decided (#141): something the commit does.
         var resolved = validation.Choices.Count(static pair => pair.Value?.Resolves == true);
 
+        // Following Suno (#142): rows left to apply are something to do, whatever the records' choices.
+        var (remoteChanges, remoteChangesTotal) = await remoteStates.CountsAsync(view.Export, cancellationToken).ConfigureAwait(false);
+
         var highestKey = validation.Choices.Values
             .Select(static choice => choice?.Target?.KeyOf())
             .OfType<string>()
@@ -165,14 +172,16 @@ public sealed class ImportReviewService(
             reimports,
             ignored,
             validation.Choices.Count - targets.Count - ignored - resolved,
-            targets.Count == 0 && newlyIgnored == 0 && resolved == 0,
+            targets.Count == 0 && newlyIgnored == 0 && resolved == 0 && remoteChanges == 0,
             validation.Invalid.OrderBy(static pair => pair.Key, StringComparer.Ordinal).Take(MaximumInvalidListed).ToDictionary(static pair => pair.Key, static pair => pair.Value, StringComparer.Ordinal),
             validation.Invalid.Count,
             ImportChoiceRules.Key(highestKey + 1),
             await WorkspaceFacetsAsync(view.Export, facets, cancellationToken).ConfigureAwait(false),
             await PlaylistFacetsAsync(view.Export, facets, cancellationToken).ConfigureAwait(false),
             ExportReader.ExcludedKinds(view.Export.Header.LibraryFiltersJson),
-            resolved);
+            resolved,
+            remoteChanges,
+            remoteChangesTotal);
     }
 
     /// <summary>The workspaces the records are in, named from the export's own list and then from the workspaces n8Tracks knows.</summary>

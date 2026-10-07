@@ -191,8 +191,14 @@ public sealed class GenerationServiceTests
         var shape4 = RetainedTypes.GenerationShape3To4(shape3);
         Assert.Null(shape4["artwork_asset_id"]);
         Assert.Equal(27, shape4.Count);
-        Assert.Equal(4, RetainedTypes.Generation.ShapeVersion);
         Assert.True(RetainedTypes.Generation.Upgraders.ContainsKey(3));
+
+        // Shape 5 (#142) adds who archived it: an earlier Generation restores with none.
+        var shape5 = RetainedTypes.GenerationShape4To5(shape4);
+        Assert.Null(shape5["archived_by"]);
+        Assert.Equal(28, shape5.Count);
+        Assert.Equal(5, RetainedTypes.Generation.ShapeVersion);
+        Assert.True(RetainedTypes.Generation.Upgraders.ContainsKey(4));
     }
 
     [Fact]

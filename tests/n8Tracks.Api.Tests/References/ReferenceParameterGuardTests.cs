@@ -41,6 +41,8 @@ public sealed class ReferenceParameterGuardTests
         "GET /api/v1/suno/exports/{id:guid}/summary: id",
         "GET /api/v1/suno/exports/{id:guid}/records/{sunoId}/targets: id",
         "GET /api/v1/suno/exports/{id:guid}/records/{sunoId}/diff: id",
+        "GET /api/v1/suno/exports/{id:guid}/remote-states: id",
+        "PATCH /api/v1/suno/exports/{id:guid}/remote-states: id",
         "PUT /api/v1/suno/exports/{id:guid}/artwork/{sunoId}: id",
         "POST /api/v1/suno/exports/{id:guid}/commit: id",
         "PATCH /api/v1/genres/{id:guid}: id",

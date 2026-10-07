@@ -10,9 +10,9 @@ export const REMOTE_MISSING_DETAIL =
   'Suno no longer lists this clip: it was not found the last time n8Tracks looked.';
 
 /**
- * A Generation's state as badges: Active or Archived (the user's own choice), Remote Missing when
- * Suno no longer lists the clip (with a tooltip saying so), and Selected on the Song's Selected
- * Generation.
+ * A Generation's state as badges: Active or Archived, In Suno Trash when its clip is in Suno's Trash
+ * (#142: a sync archives it), Remote Missing when Suno no longer lists the clip (with a tooltip saying
+ * so), and Selected on the Song's Selected Generation.
  */
 export function GenerationStateBadges({ generation }: { generation: Generation }) {
   return (
@@ -20,6 +20,11 @@ export function GenerationStateBadges({ generation }: { generation: Generation }
       <Badge size="sm" variant="default" radius="sm" tt="none">
         {generation.state === 'archived' ? 'Archived' : 'Active'}
       </Badge>
+      {generation.remoteState === 'trashed' && (
+        <Badge size="sm" variant="default" radius="sm" tt="none" data-testid="in-suno-trash">
+          In Suno Trash
+        </Badge>
+      )}
       {generation.remoteState === 'missing' && (
         <WithDetail detail={REMOTE_MISSING_DETAIL}>
           <Badge size="sm" variant="default" radius="sm" tt="none" component="span">

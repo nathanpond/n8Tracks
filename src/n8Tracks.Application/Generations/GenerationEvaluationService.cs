@@ -136,13 +136,17 @@ public sealed class GenerationEvaluationService(
 
                 var rating = edit.Rating.IsSent ? edit.Rating.Value : generation.Rating;
                 var state = edit.State ?? generation.State;
-                if (rating == generation.Rating && state == generation.State)
+
+                // Archiving by hand makes the archive the user's own, even of one a sync archived (#142):
+                // a restore in Suno then leaves it archived. Reactivating clears it.
+                var archiver = edit.State is not null ? GenerationStates.ArchiverOf(state, GenerationArchiver.User) : GenerationStates.ArchiverOf(generation.State, generation.ArchivedBy);
+                if (rating == generation.Rating && state == generation.State && archiver == GenerationStates.ArchiverOf(generation.State, generation.ArchivedBy))
                 {
                     return new GenerationUpdateOutcome.Updated(current);
                 }
 
                 // Inside the transaction nothing can change the Generation between the read and the write.
-                if (!await generations.TryUpdateAsync(generation.Id, rating, state, revision, ct).ConfigureAwait(false))
+                if (!await generations.TryUpdateAsync(generation.Id, rating, state, archiver, revision, ct).ConfigureAwait(false))
                 {
                     throw new InvalidOperationException("The Generation just read changed inside the transaction.");
                 }

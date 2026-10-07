@@ -11,6 +11,7 @@ using n8Tracks.Api.Tests.Persistence;
 using n8Tracks.Api.Tests.Songs;
 using n8Tracks.Api.Tests.Suno;
 using n8Tracks.Application.Suno;
+using n8Tracks.Application.Suno.Import;
 using n8Tracks.Domain.Suno;
 using n8Tracks.Infrastructure.Persistence;
 
@@ -28,9 +29,12 @@ namespace n8Tracks.Api.Tests.Invariants;
 /// retention group and tombstone go), the shortcode and number counters, and (#141) the one clip column a
 /// Changed record's accepted field names, the move of a Conflict's Generation to a new child Version with
 /// its alias and raw clip (its old Version and its rating untouched). Every other row is byte for
-/// byte the same. Complements: a commit with every record set to Skip (Changed and Conflict included), and an export uploaded, classified,
+/// byte the same. Following Suno (#142): an existing Generation may also change for a Suno state change left
+/// selected at Confirm, and then only in its remote state, state, archiver, and revision. Complements: a
+/// commit with every record (Changed and Conflict included) and every Suno state change set to Skip, and an export uploaded, classified,
 /// proposed, and discarded, change nothing at all; and the guard bites when the commit retitles an
-/// existing Generation. The guard does not cover portable import (M8, #263).
+/// existing Generation, and when it applies a Suno state change set to Skip. The guard does not cover
+/// portable import (M8, #263).
 /// </summary>
 public sealed class ImportNeverOverwritesGuardTests
 {
@@ -57,6 +61,7 @@ public sealed class ImportNeverOverwritesGuardTests
 
         Assert.Equal(0, result.GetProperty("created").GetProperty("generations").GetInt32());
         Assert.All(ImportCommitApi.Records(result).Values, static record => Assert.Equal("skipped", ImportCommitApi.Outcome(record)));
+        Assert.All(RemoteStateApi.Results(result).Values, static row => Assert.Equal("skipped", row.GetProperty("outcome").GetString()));
         Assert.Empty(Differences(scenario.Before, Rows(factory.DataPath)));
         scenario.Client.Dispose();
     }
@@ -171,12 +176,43 @@ public sealed class ImportNeverOverwritesGuardTests
     }
 
     /// <summary>
+    /// The guard bites on following Suno (#142): with the commit made to forget which Suno state changes
+    /// were set to Skip, the bystander's Remote Missing, which the user skipped, is reported as unexplained.
+    /// </summary>
+    [Fact]
+    public async Task TheGuardFailsWhenTheCommitAppliesASunoStateChangeSetToSkip()
+    {
+        var bite = new BiteSwitch();
+        using var factory = new N8TracksApiFactory
+        {
+            TestServices = services =>
+            {
+                services.AddSingleton(bite);
+                services.RemoveAll<IRemoteStateStore>();
+                services.AddScoped<IRemoteStateStore>(provider => new ForgettingSkips(
+                    ActivatorUtilities.CreateInstance<RemoteStateStore>(provider),
+                    provider.GetRequiredService<BiteSwitch>()));
+            },
+        };
+        var scenario = await ScenarioAsync(factory);
+        bite.GenerationId = scenario.Bystander;
+
+        var result = await ImportCommitApi.CommitAsync(scenario.Client, scenario.ExportId);
+
+        var unexplained = Unexplained(factory, scenario, result, Rows(factory.DataPath), checkRemoteStates: false);
+        Assert.Contains($"generations: changed {Upper(scenario.Bystander)}", unexplained);
+        scenario.Client.Dispose();
+    }
+
+    /// <summary>
     /// The catalog and the export the tests commit: a Song with a frozen Version (one Generation), a
     /// mutable Version holding a clip's inputs, a Generation deleted alone (tombstoned, retained), and a
     /// bystander Song with a Generation no choice names; then an export whose choices make a new Song (two
     /// clips of one group, in a workspace, with a staged image and a model the list lacks), a new Version
-    /// of the existing Song, a clip for each existing Version, a Reimport, a Skip, and a Don't copy. The
-    /// rows are read once every choice is saved.
+    /// of the existing Song, a clip for each existing Version, a Reimport, a Skip, and a Don't copy. It is a
+    /// whole-library sync (#142) with the frozen Version's clip in Suno's Trash (a Suno state change left
+    /// to apply) and the bystander's clip in neither list (Remote Missing, set to Skip). The rows are read
+    /// once every choice is saved.
     /// </summary>
     private static async Task<Scenario> ScenarioAsync(N8TracksApiFactory factory, bool everythingSkipped = false)
     {
@@ -231,7 +267,8 @@ public sealed class ImportNeverOverwritesGuardTests
             changedNow,
             conflictNow,
         };
-        var (exportId, records) = await ProposalApi.ExportAsync(client, token, clips);
+        var (exportId, _) = await SunoExportApi.UploadAsync(client, token, RemoteStateApi.Header(), SunoExportApi.Part(1, clips, trashed: [frozen]));
+        var records = await SunoExportApi.RecordsByIdAsync(client, exportId);
         Assert.Equal("deleted", records["deleted-1"].GetProperty("class").GetString());
         await ImportCommitApi.StageImageAsync(client, token, exportId, "new-a1");
 
@@ -242,6 +279,7 @@ public sealed class ImportNeverOverwritesGuardTests
         if (everythingSkipped)
         {
             await ChooseAsync(new JsonObject { ["action"] = "skip" }, [.. records.Keys]);
+            await RemoteStateApi.SetAsync(client, exportId, false, [.. (await RemoteStateApi.RowsAsync(client, exportId)).Keys]);
         }
         else
         {
@@ -256,9 +294,15 @@ public sealed class ImportNeverOverwritesGuardTests
             await ChooseAsync(new JsonObject { ["action"] = "apply", ["acceptFields"] = new JsonArray("title") }, "changed-1");
             await ChooseAsync(new JsonObject { ["action"] = "moveToNewVersion" }, "conflict-1");
             Assert.Equal("newSong", ProposalApi.Text(ProposalApi.Target(records["new-a1"]), "kind"));
+            await RemoteStateApi.SetAsync(client, exportId, false, "bystander-1");
         }
 
-        return new Scenario(client, token, exportId, songId, bystander.Generation.Id, Rows(factory.DataPath));
+        // The Suno state changes left to apply at Confirm.
+        var remote = await RemoteStateApi.RowsAsync(client, exportId);
+        Assert.Equal(["bystander-1", "frozen-1"], remote.Keys.Order(StringComparer.Ordinal));
+        var applied = remote.Where(static row => row.Value.GetProperty("apply").GetBoolean()).Select(static row => Upper(row.Value.GetProperty("generation").GetProperty("id").GetGuid())).ToHashSet(StringComparer.Ordinal);
+
+        return new Scenario(client, token, exportId, songId, bystander.Generation.Id, Rows(factory.DataPath), applied);
     }
 
     /// <summary>
@@ -266,7 +310,7 @@ public sealed class ImportNeverOverwritesGuardTests
     /// empty when the commit did exactly what was confirmed. The choices of <see cref="ScenarioAsync"/> are
     /// checked against the result first: each created record went where its choice named.
     /// </summary>
-    private static List<string> Unexplained(N8TracksApiFactory factory, Scenario scenario, JsonElement result, Dictionary<string, Dictionary<string, Row>> after)
+    private static List<string> Unexplained(N8TracksApiFactory factory, Scenario scenario, JsonElement result, Dictionary<string, Dictionary<string, Row>> after, bool checkRemoteStates = true)
     {
         var records = ImportCommitApi.Records(result);
         Assert.Equal(["created", "created", "created", "created", "created", "skipped", "ignored", "created"], new[] { "new-a1", "new-a2", "new-v", "same-mutable", "same-frozen", "skipped-1", "ignored-1", "deleted-1" }.Select(id => ImportCommitApi.Outcome(records[id])));
@@ -325,12 +369,29 @@ public sealed class ImportNeverOverwritesGuardTests
             resolvedColumns.TryGetValue(row["id"]!, out var allowed)
             && before["generations"][row["id"]!].Columns.Where(column => before["generations"][row["id"]!][column] != row[column]).All(allowed.Contains);
 
+        // Following Suno (#142): the result applied exactly the Suno state changes left selected, and an
+        // existing Generation changes only for one of them, only in its remote state, state, archiver, and revision.
+        var remoteApplied = RemoteStateApi.Results(result).Values
+            .Where(static row => row.GetProperty("outcome").GetString() == "applied")
+            .Select(static row => Upper(row.GetProperty("generation").GetProperty("id").GetGuid()))
+            .ToHashSet(StringComparer.Ordinal);
+        if (checkRemoteStates)
+        {
+            Assert.Equal(scenario.RemoteApplied.Order(StringComparer.Ordinal), remoteApplied.Order(StringComparer.Ordinal));
+            var frozenGeneration = Assert.Single(scenario.RemoteApplied);
+            Assert.Equal(("archived", "trashed", "sync"), (after["generations"][frozenGeneration]["state"], after["generations"][frozenGeneration]["remote_state"], after["generations"][frozenGeneration]["archived_by"]));
+        }
+
+        bool FollowsSuno(Row row) =>
+            scenario.RemoteApplied.Contains(row["id"]!.ToUpperInvariant())
+            && before["generations"][row["id"]!].SameExcept(row, "remote_state", "state", "archived_by", "revision");
+
         // What each table may have had added (A), changed (C), or removed (R), and only that.
         var rules = new Dictionary<string, Func<char, Row, bool>>(StringComparer.Ordinal)
         {
             ["songs"] = (kind, row) => kind == 'A' ? In(createdSongs, row["id"]) : kind == 'C' && In(namedSongs, row["id"]),
             ["versions"] = (kind, row) => kind == 'A' ? In(createdVersions, row["id"]) : kind == 'C' && In(namedVersions, row["id"]),
-            ["generations"] = (kind, row) => kind == 'A' ? In(createdGenerations, row["id"]) : kind == 'C' && OnlyResolvedColumns(row),
+            ["generations"] = (kind, row) => kind == 'A' ? In(createdGenerations, row["id"]) : kind == 'C' && (OnlyResolvedColumns(row) || FollowsSuno(row)),
             ["provider_records"] = (kind, row) => kind == 'A' ? In(createdGenerations, row["generation_id"]) : kind == 'C' && resolvedColumns.ContainsKey(row["generation_id"]!),
             ["shortcode_aliases"] = (kind, row) => kind == 'A' && row["generation_id"] == movedGeneration,
             ["generation_comments"] = (kind, row) => kind == 'A' && row["generation_id"] == restored,
@@ -460,9 +521,13 @@ public sealed class ImportNeverOverwritesGuardTests
         public string? this[string column] => values.TryGetValue(column, out var value)
             ? value
             : throw new KeyNotFoundException($"No column {column}: {string.Join(", ", values.Keys)}.");
+
+        /// <summary>Whether <paramref name="other"/> has the same values in every column but <paramref name="columns"/>.</summary>
+        public bool SameExcept(Row other, params string[] columns) =>
+            values.All(pair => columns.Contains(pair.Key, StringComparer.Ordinal) || string.Equals(pair.Value, other[pair.Key], StringComparison.Ordinal));
     }
 
-    private sealed record Scenario(HttpClient Client, string Token, Guid ExportId, Guid SongId, Guid Bystander, Dictionary<string, Dictionary<string, Row>> Before);
+    private sealed record Scenario(HttpClient Client, string Token, Guid ExportId, Guid SongId, Guid Bystander, Dictionary<string, Dictionary<string, Row>> Before, HashSet<string> RemoteApplied);
 
     /// <summary>Which existing Generation the overwriting store retitles; none until the scenario is built.</summary>
     private sealed class BiteSwitch
@@ -493,5 +558,22 @@ public sealed class ImportNeverOverwritesGuardTests
         public Task SaveAsync(IReadOnlyCollection<ProviderTombstone> tombstones, CancellationToken cancellationToken) => inner.SaveAsync(tombstones, cancellationToken);
 
         public Task<bool> RemoveAsync(string sunoId, CancellationToken cancellationToken) => inner.RemoveAsync(sunoId, cancellationToken);
+    }
+
+    /// <summary>The remote-state store, made to forget the Suno state changes set to Skip once the bite is armed, as the commit must never do.</summary>
+    private sealed class ForgettingSkips(IRemoteStateStore inner, BiteSwitch bite) : IRemoteStateStore
+    {
+        public Task<IReadOnlyList<RemoteStateCandidate>> ListedAsync(Guid exportId, CancellationToken cancellationToken) => inner.ListedAsync(exportId, cancellationToken);
+
+        public Task<IReadOnlyList<RemoteStateCandidate>> UnlistedAsync(Guid exportId, CancellationToken cancellationToken) => inner.UnlistedAsync(exportId, cancellationToken);
+
+        public async Task<IReadOnlyList<string>> SkipsAsync(Guid exportId, CancellationToken cancellationToken) =>
+            bite.GenerationId is null ? await inner.SkipsAsync(exportId, cancellationToken) : [];
+
+        public Task<bool> TrySetSkipsAsync(Guid exportId, int revision, IReadOnlyCollection<string> skips, CancellationToken cancellationToken) =>
+            inner.TrySetSkipsAsync(exportId, revision, skips, cancellationToken);
+
+        public Task<bool> TryApplyAsync(Guid generationId, int revision, RemoteStateTransition transition, CancellationToken cancellationToken) =>
+            inner.TryApplyAsync(generationId, revision, transition, cancellationToken);
     }
 }

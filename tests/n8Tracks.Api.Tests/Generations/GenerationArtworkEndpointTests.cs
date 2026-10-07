@@ -259,7 +259,6 @@ public sealed class GenerationArtworkEndpointTests
 
         Assert.True(shape4.ContainsKey("artwork_asset_id"));
         Assert.Null(shape4["artwork_asset_id"]);
-        Assert.Equal(4, RetainedTypes.Generation.ShapeVersion);
         Assert.True(RetainedTypes.Generation.Upgraders.ContainsKey(3));
     }
 

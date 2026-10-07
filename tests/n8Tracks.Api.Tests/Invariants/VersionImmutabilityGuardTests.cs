@@ -912,6 +912,7 @@ public sealed class VersionImmutabilityGuardTests
         ["POST /api/v1/suno/exports/{id:guid}/complete"] = "classifies a staged export (suno_export_records, #131) and applies a complete workspace list (provider state); no Song, Version, or Generation is touched",
         ["POST /api/v1/suno/exports/{id:guid}/discard"] = "removes a staged export's rows (#131); the catalog is not touched",
         ["PATCH /api/v1/suno/exports/{id:guid}/records"] = "changes the choices of a staged export's records (suno_export_records, #138); a choice only names a Version, and the catalog is not touched until the commit (#140), which the guard extends to",
+        ["PATCH /api/v1/suno/exports/{id:guid}/remote-states"] = "sets Suno state changes (#142) to apply or Skip, on the staged export (suno_exports); the catalog is not touched until the commit, which changes only a Generation's remote state, state, and archiver",
         ["PUT /api/v1/suno/exports/{id:guid}/artwork/{sunoId}"] = "stores an image as an asset held by a staged record (#131); no Generation or Version is touched until the commit",
         ["POST /api/v1/suno/ignored/remove"] = "removes Suno IDs from the ignore list (suno_ignored_items, #143) and reclassifies a ready export; nothing is imported and no Version is touched",
     };
@@ -1178,6 +1179,8 @@ public sealed class VersionImmutabilityGuardTests
         ["ChangeResolutionService.DiffAsync(Guid, String, CancellationToken)"] = "reads only: a Changed or Conflict record's diff (#141); the commit, exercised above, is what moves a Conflict's Generation",
         ["ImportReviewService.RecordsAsync(Guid, StagedRecordQuery, CancellationToken)"] = "reads only",
         ["ImportReviewService.SummaryAsync(Guid, CancellationToken)"] = "reads only",
+        ["RemoteStateService.ListAsync(Guid, String, Int32, Int32, CancellationToken)"] = "reads only: the Suno state changes of an export (#142)",
+        ["RemoteStateService.SetAppliedAsync(Guid, Int32, IReadOnlyCollection`1, Boolean, CancellationToken)"] = "writes only which Suno state changes are skipped, on the staged export (suno_exports, #142); the commit, exercised above, applies them, and changes only a Generation's remote state, state, and archiver, never a Version",
         ["RecordClassifier.ClassifyAsync(IReadOnlyList`1, CancellationToken)"] = "reads only: classes records by Suno ID",
         ["ImportFieldMap.Capture(String, String)"] = "pure: the import field map",
         ["ImportFieldMap.Find(String)"] = "pure: the import field map",

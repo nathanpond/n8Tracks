@@ -174,15 +174,17 @@ internal sealed class GenerationStore(N8TracksDbContext context) : IGenerationSt
         }
     }
 
-    public async Task<bool> TryUpdateAsync(Guid id, int? rating, GenerationState state, int revision, CancellationToken cancellationToken)
+    public async Task<bool> TryUpdateAsync(Guid id, int? rating, GenerationState state, GenerationArchiver? archiver, int revision, CancellationToken cancellationToken)
     {
         var stateName = GenerationStates.NameOf(state);
+        var archivedBy = GenerationStates.ArchiverOf(state, archiver) is { } by ? GenerationStates.NameOf(by) : null;
         return await context.Generations
             .Where(generation => generation.Id == id && generation.Revision == revision)
             .ExecuteUpdateAsync(
                 setters => setters
                     .SetProperty(static generation => generation.Rating, rating)
                     .SetProperty(static generation => generation.State, stateName)
+                    .SetProperty(static generation => generation.ArchivedBy, archivedBy)
                     .SetProperty(static generation => generation.Revision, static generation => generation.Revision + 1),
                 cancellationToken)
             .ConfigureAwait(false) == 1;
@@ -346,6 +348,7 @@ internal static class GenerationRows
             CreatedUtc = UtcText.From(generation.CreatedUtc),
             State = GenerationStates.NameOf(generation.State),
             RemoteState = GenerationStates.NameOf(generation.RemoteState),
+            ArchivedBy = generation.ArchivedBy is { } archivedBy ? GenerationStates.NameOf(archivedBy) : null,
             Revision = generation.Revision,
             Rating = generation.Rating,
             SunoId = clip?.SunoId,
@@ -373,6 +376,7 @@ internal static class GenerationRows
         {
             State = GenerationStates.StateOf(record.State),
             RemoteState = GenerationStates.RemoteStateOf(record.RemoteState),
+            ArchivedBy = GenerationStates.ArchiverOf(record.ArchivedBy),
             Revision = record.Revision,
             Rating = record.Rating,
             Clip = record.SunoId is { } sunoId
