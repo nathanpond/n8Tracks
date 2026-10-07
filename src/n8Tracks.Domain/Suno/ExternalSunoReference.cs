@@ -39,6 +39,9 @@ public static class ExternalSunoReferenceRules
     /// <summary>The label of a reference that replaced a Generation deleted from the catalog.</summary>
     public const string DeletedLabel = "Deleted";
 
+    /// <summary>The label of a reference to a source an imported clip names that n8Tracks has not imported (#137).</summary>
+    public const string NotImportedLabel = "Not imported";
+
     /// <summary>
     /// Whether <paramref name="sunoId"/> can be a Suno ID: 1 to <see cref="SunoIdMaximumLength"/>
     /// characters with no white space or control characters (Suno's IDs are UUIDs; n8Tracks does not

@@ -231,6 +231,55 @@ public sealed class VersionImmutabilityGuardTests
         }
 
         Assert.Contains("(SELECT suno_id FROM generations WHERE id = OLD.generation_id)", update, StringComparison.Ordinal);
+
+        // And the reverse rewrite, an imported clip resolving a reference (#137), checks the Suno ID too.
+        Assert.Contains("(SELECT suno_id FROM generations WHERE id = NEW.generation_id)", update, StringComparison.Ordinal);
+        Assert.Contains("(SELECT suno_id FROM external_suno_references WHERE id = OLD.external_reference_id AND kind = 'clip')", update, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Resolving an external reference (#137) is the one write besides a deletion's that may touch a
+    /// frozen Version's sources: it points the source at the Generation imported with the same Suno ID,
+    /// and the Version's stored inputs, sources compared by Suno ID, are byte-identical afterwards. The
+    /// database refuses the same rewrite to a Generation with another Suno ID.
+    /// </summary>
+    [Fact]
+    public async Task ResolvingAnExternalReferenceLeavesAFrozenVersionsInputsByteIdentical()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var frozen = await TargetAsync(factory, client, "Resolve guard", frozen: true);
+        var version = frozen.VersionId.ToString().ToUpperInvariant();
+        var held = "held-Resolve-guard";
+        Assert.Equal(held, TestDatabase.Scalar(factory.DataPath, $"SELECT e.suno_id FROM version_sources AS s JOIN external_suno_references AS e ON e.id = s.external_reference_id WHERE s.version_id = '{version}';"));
+
+        // A Generation with another Suno ID is refused as the source's new target.
+        var other = await SongApi.CreateAsync(client, "Resolve guard other");
+        var wrong = await SongApi.AttachGenerationAsync(factory, other.GetProperty("currentVersion").GetProperty("id").GetString()!, Clips.Minimal("not-the-held-clip"));
+        var before = Stored(factory, frozen.VersionId);
+        var refused = Assert.Throws<Microsoft.Data.Sqlite.SqliteException>(() => TestDatabase.Execute(
+            factory.DataPath,
+            $"UPDATE version_sources SET external_reference_id = NULL, generation_id = '{wrong.Generation.Id.ToString().ToUpperInvariant()}' WHERE version_id = '{version}';"));
+        Assert.Contains("never change", refused.Message, StringComparison.Ordinal);
+        Assert.True(before == Stored(factory, frozen.VersionId));
+
+        // So is one to an ID no Generation has: a comparison the database cannot make is a change.
+        Assert.Throws<Microsoft.Data.Sqlite.SqliteException>(() => TestDatabase.Execute(
+            factory.DataPath,
+            $"UPDATE version_sources SET external_reference_id = NULL, generation_id = '{Guid.NewGuid().ToString().ToUpperInvariant()}' WHERE version_id = '{version}';"));
+        Assert.True(before == Stored(factory, frozen.VersionId));
+
+        // The clip itself, imported into another Song, resolves the reference.
+        var parent = await SongApi.CreateAsync(client, "Resolve guard parent");
+        var imported = await SongApi.AttachGenerationAsync(factory, parent.GetProperty("currentVersion").GetProperty("id").GetString()!, Clips.Minimal(held));
+        var resolution = await InScopeAsync<ExternalReferenceResolver, ReferenceResolution>(frozen, service => service.ResolveAsync(held, default));
+
+        Assert.Equal(new ReferenceResolution(1, 1), resolution);
+        Assert.True(before == Stored(factory, frozen.VersionId), "Resolving a reference changed a frozen Version's inputs.");
+        Assert.Equal(
+            imported.Generation.Id.ToString().ToUpperInvariant(),
+            TestDatabase.Scalar(factory.DataPath, $"SELECT generation_id FROM version_sources WHERE version_id = '{version}' AND source_group = 'audio';"));
+        Assert.Equal("1", TestDatabase.Scalar(factory.DataPath, $"SELECT count(*) FROM external_suno_references WHERE suno_id = '{held}';"));
     }
 
     /// <summary>

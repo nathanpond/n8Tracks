@@ -32,6 +32,10 @@ public sealed record ClipKind(VersionKind Kind, bool Determined);
 /// <param name="Model">The model it reports, or null when it reports none.</param>
 /// <param name="Compared">What two clips' inputs are compared by: the kind, its mode, and each option of its tab Suno returned, normalised.</param>
 /// <param name="KindUnknown">Whether the kind could not be determined, so the clip mapped as a Song (<see cref="ClipKind.Determined"/>).</param>
+/// <param name="Lineage">
+/// What the clip says it was made from (#137, <see cref="LineageReader"/>), its sources naming their clips
+/// by Suno ID; null only for inputs not read from a clip, which then compare as having none.
+/// </param>
 public sealed record MappedClipInputs(
     string Lyrics,
     string Styles,
@@ -39,7 +43,8 @@ public sealed record MappedClipInputs(
     ImportedInputMarks Marks,
     ClipModel? Model,
     IReadOnlyDictionary<string, string> Compared,
-    bool KindUnknown = false);
+    bool KindUnknown = false,
+    ImportedLineage? Lineage = null);
 
 /// <summary>
 /// Turns what Suno says about a clip into the creation inputs of an n8Tracks Version (#135, #136), by the
@@ -68,8 +73,8 @@ public static class ClipInputMapper
 {
     /// <summary>
     /// The fields this mapper leaves to other stories, all on the Songs tab, though the map says where they are: the
-    /// references and files (sources, Voice, Inspiration, playlist) are read by the lineage story
-    /// (#137), and the workspace by the commit (#140).
+    /// references and files (sources, Voice, Inspiration, playlist, image, video) are read by
+    /// <see cref="LineageReader"/> (#137, <see cref="LineageReader.Captures"/>), and the workspace by the commit (#140).
     /// </summary>
     public static IReadOnlySet<string> ReadElsewhere { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -290,26 +295,35 @@ public static class ClipInputMapper
             new ImportedInputMarks(notReturned, outOfRange, raw),
             model,
             compared,
-            KindUnknown: !kind.Determined);
+            KindUnknown: !kind.Determined,
+            Lineage: LineageReader.Read(clip, LineageReader.Rules, map));
     }
 
     /// <summary>
     /// Whether two clips have the same inputs: every option both returned is equal once text has its
-    /// line endings made <c>\n</c> and trailing whitespace removed (each line's and the end's). An
-    /// option either does not return takes no part, and neither does Suno's title (<see cref="NotCompared"/>).
+    /// line endings made <c>\n</c> and trailing whitespace removed (each line's and the end's), and so
+    /// are their lineages' comparison keys (#137, <see cref="LineageReader.ComparisonKeyOf"/>), so two
+    /// clips with the same settings made from different sources differ. An option either does not
+    /// return takes no part, and neither does Suno's title (<see cref="NotCompared"/>).
     /// </summary>
     public static bool SameInputs(MappedClipInputs first, MappedClipInputs second)
     {
         ArgumentNullException.ThrowIfNull(first);
         ArgumentNullException.ThrowIfNull(second);
 
-        return SameOn(first.Compared, second.Compared);
+        return SameOn(first.Compared, second.Compared)
+            && string.Equals(
+                (first.Lineage ?? ImportedLineage.None).ComparisonKey,
+                (second.Lineage ?? ImportedLineage.None).ComparisonKey,
+                StringComparison.Ordinal);
     }
 
     /// <summary>
     /// Whether <paramref name="clip"/>'s inputs differ from a Version's (its lyrics, styles, options,
     /// and any import marks), compared as <see cref="SameInputs"/> does: on each option the clip returned
     /// and the Version does not list as not returned. What decides a <c>conflict</c> in a sync review.
+    /// The lineage takes no part here: a linked clip whose lineage differs from its Version's is the
+    /// diff story's Conflict (#137's discretion), compared against the Version's stored sources.
     /// </summary>
     public static bool Differs(MappedClipInputs clip, string lyrics, string styles, VersionInputs inputs, ImportedInputMarks? marks)
     {
