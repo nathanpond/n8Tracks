@@ -52,14 +52,6 @@ export function warningFor(state: ConnectionState): string | null {
   return state.status === 'connected' ? mismatchWarning(state.compatibility) : null;
 }
 
-export function element(page: Document, id: string): HTMLElement {
-  const found = page.getElementById(id);
-  if (found === null) {
-    throw new Error(`The page has no #${id} element.`);
-  }
-  return found;
-}
-
 /** Shows `text` in the element, or hides the element when there is none. */
 export function showText(target: HTMLElement, text: string | null): void {
   target.textContent = text ?? '';

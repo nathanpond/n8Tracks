@@ -171,6 +171,17 @@ export class AdapterSession {
     return result;
   }
 
+  /**
+   * Forgets how the last run of a workflow stopped ("Try again" in the panel), so its state comes
+   * from the self-check again. Its step log is kept for the diagnostic report.
+   */
+  forget(workflowId: string): void {
+    const last = this.lastRuns.get(workflowId);
+    if (last !== undefined) {
+      this.lastRuns.set(workflowId, { failure: null, log: last.log });
+    }
+  }
+
   /** The step log of the last run of a workflow, for the diagnostic report. */
   stepLog(workflowId: string): readonly StepLogEntry[] {
     return this.lastRuns.get(workflowId)?.log ?? [];

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { fakeClock, loadSnapshot } from '../testing/snapshots.ts';
 import {
   findProblem,
+  ForbiddenControlError,
   nameOf,
   Page,
   PANEL_HOST_ATTRIBUTE,
@@ -183,6 +184,13 @@ describe('accessible names', () => {
       'By placeholder',
     ]);
   });
+
+  it('names a hidden input without failing (its labels are null)', () => {
+    document.body.innerHTML = '<input type="hidden" id="h" title="Hidden" />';
+    const hidden = document.getElementById('h');
+
+    expect(hidden && nameOf(hidden)).toBe('Hidden');
+  });
 });
 
 describe('set', () => {
@@ -346,5 +354,92 @@ describe('wait', () => {
 
     expect(await page.wait(() => false, 250)).toBe(false);
     expect(clock.slept).toEqual([100, 100, 50]);
+  });
+});
+
+describe('the forbidden-control check (invariant 4)', () => {
+  const CREATE: Target = { role: 'button', name: 'Create song', description: 'the Create button' };
+
+  it('refuses to click Create before any event, and the handle then changes nothing more', () => {
+    const page = loadSnapshot('create-songs-simple');
+    const events = recordEvents('pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click');
+    const create = found(page.find(CREATE));
+    const clear = found(
+      page.find({ role: 'button', name: 'Add Voice', description: 'the Add Voice button' }),
+    );
+
+    expect(() => {
+      page.click(create);
+    }).toThrow(ForbiddenControlError);
+    expect(events).toEqual([]);
+    expect(page.refusal()).toMatchObject({
+      control: 'the Create button',
+      reason: 'it is the Create button (Songs and Sounds)',
+    });
+    // There is no override: an allowed control on the same handle is refused too.
+    expect(() => {
+      page.click(clear);
+    }).toThrow(ForbiddenControlError);
+    expect(events).toEqual([]);
+  });
+
+  it('refuses to choose a forbidden menu item, the same check behind choose', () => {
+    const page = loadSnapshot('clip-remix-menu');
+    const events = recordEvents('click');
+    const cover = found(
+      page.find({ role: 'menuitem', name: 'Cover', description: 'the Cover item' }),
+    );
+    const group = document.querySelector(
+      '[role="menuitem"][aria-label="Move to Trash"]',
+    )?.parentElement;
+    group?.setAttribute('role', 'menu');
+    group?.setAttribute('aria-label', 'Danger');
+    const danger = found(page.find({ role: 'menu', name: 'Danger', description: 'the menu' }));
+
+    expect(() => {
+      page.choose(danger, 'Move to Trash');
+    }).toThrow(ForbiddenControlError);
+    expect(events).toEqual([]);
+    expect(page.read(cover).enabled).toBe(true);
+  });
+
+  it('clicks the create-workspace controls only through their own primitive', () => {
+    const page = loadSnapshot('create-workspace-dialog');
+    const events = recordEvents('click');
+    const confirm = found(page.find({ role: 'button', name: 'Confirm', description: 'Confirm' }));
+
+    expect(() => {
+      new Page(document).click(confirm);
+    }).toThrow(ForbiddenControlError);
+    expect(events).toEqual([]);
+
+    page.createWorkspaceClick(confirm);
+    expect(events).toEqual(['click']);
+  });
+
+  it('refuses the create-workspace primitive on anything else, without poisoning the handle', () => {
+    const page = loadSnapshot(ADVANCED);
+    const events = recordEvents('click');
+    const clear = found(
+      page.find({ role: 'button', name: 'Clear styles', description: 'Clear styles' }),
+    );
+
+    expect(() => {
+      page.createWorkspaceClick(clear);
+    }).toThrow("Clear styles to be Suno's create-workspace control");
+    expect(events).toEqual([]);
+    expect(page.refusal()).toBeNull();
+  });
+
+  it('gives each run its own handle: a refusal in one run does not stop the page', () => {
+    const page = loadSnapshot('create-songs-simple');
+    const run = page.withSignal(new AbortController().signal);
+    const create = found(run.find(CREATE));
+
+    expect(() => {
+      run.click(create);
+    }).toThrow(ForbiddenControlError);
+    expect(run.refusal()).not.toBeNull();
+    expect(page.refusal()).toBeNull();
   });
 });

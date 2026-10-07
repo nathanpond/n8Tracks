@@ -64,16 +64,18 @@ function mount() {
   document.documentElement.lang = 'en';
   document.title = 'Suno';
   const onCheckAgain = vi.fn();
+  const onTryAgain = vi.fn();
   const panel = new Panel(document, {
     versions: { extension: '0.1.0', adapter: 1 },
     onCheckAgain,
+    onTryAgain,
   });
   const root = panel.host.shadowRoot;
   if (root === null) {
     throw new Error('The panel has no open shadow root.');
   }
   const text = (selector: string) => root.querySelector(selector)?.textContent ?? '';
-  return { panel, root, text, onCheckAgain };
+  return { panel, root, text, onCheckAgain, onTryAgain };
 }
 
 afterEach(() => {
@@ -171,6 +173,38 @@ describe('the panel on Suno', () => {
     expect(root.querySelector('.workflow-state')?.textContent).toBe(
       "Stopped: Fill: step 'styles' expected x. The page may be partly changed.",
     );
+  });
+
+  it('offers Try again on a run the forbidden-control matcher refused', async () => {
+    const { panel, root, onTryAgain } = mount();
+    panel.render({
+      connection: CONNECTED,
+      workflows: [
+        status({
+          id: 'fill-songs',
+          title: 'Fill Songs form',
+          state: 'not-working',
+          stopped: true,
+          step: 'create',
+          message:
+            "Fill Songs form: step 'create' refused: forbidden control (the Create button: its name starts with Create, Publish, Delete, Trash, or Remove)",
+        }),
+        status({}),
+      ],
+    });
+    panel.open();
+
+    expect(root.querySelector('[data-workflow="fill-songs"] .workflow-state')?.textContent).toBe(
+      "Stopped: Fill Songs form: step 'create' refused: forbidden control (the Create button: its name starts with Create, Publish, Delete, Trash, or Remove)",
+    );
+    const again = root.querySelectorAll<HTMLButtonElement>('.try-again');
+    // Complement: only the stopped workflow offers it.
+    expect(again).toHaveLength(1);
+    expect(again[0]?.getAttribute('aria-label')).toBe('Try again: Fill Songs form');
+    await expectNoAxeViolations(document);
+
+    again[0]?.click();
+    expect(onTryAgain).toHaveBeenCalledWith('fill-songs');
   });
 
   it('passes the accessibility checks when open, with every group named', async () => {

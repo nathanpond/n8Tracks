@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ANY_SUNO_PAGE } from '../adapter/addresses.ts';
+import { WorkflowRegistry } from '../adapter/registry.ts';
+import { OK, present, type Workflow } from '../adapter/workflow.ts';
 import type { ConnectedState, Request } from '../messages.ts';
 import { snapshotHtml } from '../testing/snapshots.ts';
 import { startSunoContent, type SunoContent } from './suno.ts';
@@ -21,8 +24,12 @@ const CONNECTED: ConnectedState = {
 
 let content: SunoContent | null = null;
 
-function start(address: { current: string }, answer: () => Promise<unknown>) {
-  document.body.innerHTML = snapshotHtml('library-list');
+function start(
+  address: { current: string },
+  answer: () => Promise<unknown>,
+  page = { snapshot: 'library-list', registry: undefined as WorkflowRegistry | undefined },
+) {
+  document.body.innerHTML = snapshotHtml(page.snapshot);
   const sent: Request[] = [];
   content = startSunoContent({
     document,
@@ -33,6 +40,7 @@ function start(address: { current: string }, answer: () => Promise<unknown>) {
     extensionVersion: '0.1.0',
     address: () => address.current,
     watchMs: 50,
+    ...(page.registry ? { registry: page.registry } : {}),
   });
   const root = content.panel.host.shadowRoot;
   const text = (selector: string) => root?.querySelector(selector)?.textContent ?? '';
@@ -108,5 +116,60 @@ describe('the Suno content script', () => {
     address.current = 'https://suno.com/me';
     await vi.advanceTimersByTimeAsync(200);
     expect(sent).toHaveLength(2);
+  });
+
+  it('shows a refused press as stopped, and Try again checks the page afresh', async () => {
+    const create = {
+      role: 'button',
+      name: 'Create song',
+      description: 'the Create button',
+    } as const;
+    const pressCreate: Workflow = {
+      id: 'press-create',
+      title: 'Press Create (test only)',
+      feature: 'generate',
+      startsOn: ANY_SUNO_PAGE,
+      needs: [{ step: 'create', check: (page) => present(page, create) }],
+      steps: [
+        {
+          name: 'create',
+          expect: ({ page }) => present(page, create),
+          act: ({ page }) => {
+            const result = page.find(create);
+            if (result.kind === 'found') {
+              page.click(result.found);
+            }
+          },
+          verify: () => OK,
+        },
+      ],
+      fixtures: ['create-songs-simple'],
+    };
+    const registry = new WorkflowRegistry([pressCreate]);
+    const { content: started, text } = start(
+      { current: 'https://suno.com/create' },
+      () => Promise.resolve(CONNECTED),
+      { snapshot: 'create-songs-simple', registry },
+    );
+    const clicks: EventTarget[] = [];
+    document.addEventListener('click', (event) => clicks.push(event.target ?? document), {
+      capture: true,
+    });
+
+    const result = await started.session.run(pressCreate, {});
+    await started.toggle();
+
+    expect(result.ok).toBe(false);
+    expect(clicks).toEqual([]);
+    expect(text('[data-workflow="press-create"] .workflow-state')).toBe(
+      "Stopped: Press Create (test only): step 'create' refused: forbidden control (the Create button: it is the Create button (Songs and Sounds)). The page may be partly changed.",
+    );
+
+    started.panel.host.shadowRoot?.querySelector<HTMLButtonElement>('.try-again')?.click();
+    await vi.waitFor(() => {
+      expect(text('[data-workflow="press-create"] .workflow-state')).toBe('Ready');
+    });
+    // Try again pressed nothing on the page.
+    expect(clicks.filter((target) => target !== started.panel.host)).toEqual([]);
   });
 });

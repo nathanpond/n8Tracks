@@ -1,6 +1,6 @@
 import { isSunoAddress } from '../adapter/addresses.ts';
 import type { ConnectionState, Request, ResponseFor } from '../messages.ts';
-import { element } from '../ui/connectionView.ts';
+import { element } from '../ui/element.ts';
 import type { ManifestIdentity } from '../version-label.ts';
 import { renderConnection, renderPopup } from './render.ts';
 

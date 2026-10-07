@@ -1,6 +1,7 @@
 import { pairingOrigins, parseAddress, type N8TracksAddress } from '../address.ts';
 import type { ConnectResult, ConnectionState, Request, ResponseFor } from '../messages.ts';
-import { describeConnection, element, showText, warningFor } from '../ui/connectionView.ts';
+import { describeConnection, showText, warningFor } from '../ui/connectionView.ts';
+import { element } from '../ui/element.ts';
 import { displayVersion, versionLabel, type ManifestIdentity } from '../version-label.ts';
 
 export interface OptionsPageOptions {

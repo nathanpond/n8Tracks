@@ -16,6 +16,11 @@ export interface PanelOptions {
   versions: { extension: string; adapter: number };
   /** "Check again": re-runs the self-check, which only reads the page. */
   onCheckAgain: () => void;
+  /**
+   * "Try again" on a workflow whose run stopped (a refused press among them): forgets the stop
+   * and checks the page again. Nothing is pressed for the user.
+   */
+  onTryAgain: (workflowId: string) => void;
 }
 
 /** The panel's groups, in order, and their headings. */
@@ -52,6 +57,7 @@ export class Panel {
   private readonly warning: HTMLElement;
   private readonly features: HTMLElement;
   private readonly workflowList: HTMLElement;
+  private readonly onTryAgain: (workflowId: string) => void;
   private returnFocus: Element | null = null;
 
   constructor(page: Document, options: PanelOptions) {
@@ -70,6 +76,7 @@ export class Panel {
       return element;
     };
 
+    this.onTryAgain = options.onTryAgain;
     this.host = page.createElement('n8tracks-panel');
     this.host.setAttribute(PANEL_HOST_ATTRIBUTE, '');
     this.host.hidden = true;
@@ -186,6 +193,18 @@ export class Panel {
         state.className = 'workflow-state';
         state.textContent = stateText(status);
         item.append(name, ': ', state);
+        if (status.stopped) {
+          const again = page.createElement('button');
+          again.type = 'button';
+          again.className = 'try-again';
+          again.textContent = 'Try again';
+          again.setAttribute('aria-label', `Try again: ${status.title}`);
+          const id = status.id;
+          again.addEventListener('click', () => {
+            this.onTryAgain(id);
+          });
+          item.append(' ', again);
+        }
         list.append(item);
       }
       this.workflowList.append(heading, list);

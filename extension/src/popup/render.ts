@@ -3,11 +3,11 @@ import type { ConnectionState } from '../messages.ts';
 import {
   NOT_CONNECTED_TEXT,
   describeConnection,
-  element,
   renderFeatures,
   showText,
   warningFor,
 } from '../ui/connectionView.ts';
+import { element } from '../ui/element.ts';
 import { displayVersion, versionLabel, type ManifestIdentity } from '../version-label.ts';
 
 export const notConnectedText = NOT_CONNECTED_TEXT;

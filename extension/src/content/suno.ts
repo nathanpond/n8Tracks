@@ -66,6 +66,10 @@ export function startSunoContent(options: SunoContentOptions): SunoContent {
     onCheckAgain: () => {
       void refresh();
     },
+    onTryAgain: (workflowId) => {
+      session.forget(workflowId);
+      void refresh();
+    },
   });
 
   const watch = () => {

@@ -1,4 +1,11 @@
 import { poll, POLL_MS, realClock, type Clock } from './clock.ts';
+import {
+  classify,
+  forbiddenItself,
+  type ControlFacts,
+  type ExceptionName,
+  type Verdict,
+} from './forbidden.ts';
 
 /**
  * The only code in the extension that touches Suno's page. A workflow finds, reads, sets, chooses,
@@ -90,6 +97,23 @@ export class PrimitiveError extends Error {
     super(`Expected ${expected}.`);
     this.name = 'PrimitiveError';
     this.expected = expected;
+  }
+}
+
+/**
+ * The forbidden-control matcher refused a press (invariant 4). The page handle that refused it
+ * changes nothing more, and the run stops with the step reported as "refused: forbidden control".
+ * `control` and `reason` are the adapter's own words, never text from the page.
+ */
+export class ForbiddenControlError extends PrimitiveError {
+  readonly control: string;
+  readonly reason: string;
+
+  constructor(control: string, reason: string) {
+    super(`${control} not to be a forbidden control (refused: ${reason})`);
+    this.name = 'ForbiddenControlError';
+    this.control = control;
+    this.reason = reason;
   }
 }
 
@@ -265,8 +289,12 @@ const NAME_FROM_CONTENT = new Set([
 ]);
 
 function labelsOf(element: Element): string {
-  const labels = (element as HTMLInputElement).labels as NodeListOf<HTMLLabelElement> | undefined;
-  return labels === undefined ? '' : [...labels].map((label) => textOf(label, true)).join(' ');
+  // `labels` is undefined on elements that cannot be labelled, and null on a hidden input.
+  const labels = (element as HTMLInputElement).labels as
+    NodeListOf<HTMLLabelElement> | null | undefined;
+  return labels === undefined || labels === null
+    ? ''
+    : [...labels].map((label) => textOf(label, true)).join(' ');
 }
 
 /** The element's accessible name, white space collapsed (a working subset of the ARIA rules). */
@@ -389,6 +417,109 @@ export function findProblem(result: Exclude<FindResult, { kind: 'found' }>): str
   return result.kind === 'not_found'
     ? result.missing.description
     : `${result.target.description} (found ${String(result.count)}, so none was chosen)`;
+}
+
+const DIALOG_ROLES = new Set(['dialog', 'alertdialog']);
+
+function isTextField(element: Element): boolean {
+  return roleOf(element) === 'textbox' && !isHidden(element);
+}
+
+/** A form the element would submit when pressed, or null. */
+function submitsForm(element: Element): boolean {
+  const tag = element.localName;
+  const type = (element.getAttribute('type') ?? '').toLowerCase();
+  const submitter =
+    (tag === 'button' && (type === '' || type === 'submit')) ||
+    (tag === 'input' && (type === 'submit' || type === 'image'));
+  return submitter && (element as HTMLButtonElement).form !== null;
+}
+
+/**
+ * The facts of `element` on its own, without the dialog or container it sits in. The names are
+ * read only when the matcher asks for them, since reading a name walks the element's subtree.
+ */
+function ownFacts(element: Element, dialog: ControlFacts['dialog'] = null): ControlFacts {
+  let name: string | undefined;
+  let otherNames: readonly string[] | undefined;
+  return {
+    role: roleOf(element),
+    get name() {
+      name ??= nameOf(element);
+      return name;
+    },
+    get otherNames() {
+      otherNames ??= [
+        collapse(element.getAttribute('aria-label') ?? ''),
+        collapse(textOf(element, true)),
+        collapse(element.getAttribute('title') ?? ''),
+      ].filter((other) => other !== '');
+      return otherNames;
+    },
+    matches: (selector) => element.matches(selector),
+    dialog,
+    inlineField: () => (dialog === null ? inlineFieldOf(element) : null),
+    submitsForm: submitsForm(element),
+  };
+}
+
+/** A dialog's title: its accessible name, else its first heading's. */
+export function dialogTitleOf(dialog: Element): string {
+  const title = nameOf(dialog);
+  if (title !== '') {
+    return title;
+  }
+  const heading = elementsUnder(dialog).find((inner) => roleOf(inner) === 'heading');
+  return heading === undefined ? '' : nameOf(heading);
+}
+
+/** Whether the element is a dialog (`role=dialog` or `alertdialog`, or a `<dialog>`). */
+export function isDialog(element: Element): boolean {
+  return DIALOG_ROLES.has(roleOf(element) ?? '');
+}
+
+/** The dialog `element` is in, by title, or null. */
+function dialogOf(element: Element): ControlFacts['dialog'] {
+  for (let current = parentOf(element); current !== null; current = parentOf(current)) {
+    if (isDialog(current)) {
+      return { title: dialogTitleOf(current) };
+    }
+  }
+  return null;
+}
+
+/** The label of the text field in the nearest container of `element` that has one. */
+function inlineFieldOf(element: Element): string | null {
+  for (let current = parentOf(element); current !== null; current = parentOf(current)) {
+    const field = elementsUnder(current).find(isTextField);
+    if (field !== undefined) {
+      return nameOf(field);
+    }
+  }
+  return null;
+}
+
+/** What the forbidden-control matcher needs to know about `element`. */
+export function controlFacts(element: Element): ControlFacts {
+  return ownFacts(element, dialogOf(element));
+}
+
+/**
+ * The matcher's verdict on pressing `element`: the element itself, then every element it sits
+ * in, since a click reaches those too.
+ */
+export function verdictOf(element: Element): Verdict {
+  const verdict = classify(controlFacts(element));
+  if (verdict.kind === 'forbidden') {
+    return verdict;
+  }
+  for (let current = parentOf(element); current !== null; current = parentOf(current)) {
+    const reason = forbiddenItself(ownFacts(current));
+    if (reason !== null) {
+      return { kind: 'forbidden', reason: `it is inside a control: ${reason}` };
+    }
+  }
+  return verdict;
 }
 
 export interface PageOptions {
@@ -521,6 +652,8 @@ export class Page {
   private readonly clock: Clock;
   private readonly signal: AbortSignal | undefined;
   private readonly location: () => string;
+  /** The press the matcher refused on this handle, after which it changes nothing more. */
+  private refused: ForbiddenControlError | null = null;
 
   constructor(document: Document, options: PageOptions = {}) {
     this.document = document;
@@ -624,12 +757,34 @@ export class Page {
           : `${found.target.description} to offer "${option}" once (found ${String(choices.length)})`,
       );
     }
-    this.press(choice, found.target.description);
+    this.press(choice, found.target.description, null);
   }
 
-  /** Clicks the element, with the pointer events a user's click sends first. */
+  /**
+   * Clicks the element, with the pointer events a user's click sends first. The forbidden-control
+   * matcher is asked first, on every call: a forbidden control or a named exception is refused.
+   */
   click(found: Found): void {
-    this.press(this.changeable(found), found.target.description);
+    this.press(this.changeable(found), found.target.description, null);
+  }
+
+  /**
+   * Clicks one of the controls of invariant 4's one permitted change, creating a workspace, and
+   * nothing else. Only the workspace workflow (`adapter/workflows/workspace.ts`) may call it; the
+   * invariant 4 guard's static scan fails on any other caller.
+   */
+  createWorkspaceClick(found: Found): void {
+    const element = this.changeable(found);
+    // A different exception, once there is one, is refused by `press` as not the one allowed.
+    if (verdictOf(element).kind !== 'exception') {
+      throw new PrimitiveError(`${found.target.description} to be Suno's create-workspace control`);
+    }
+    this.press(element, found.target.description, 'create-workspace');
+  }
+
+  /** The refusal that stopped this handle, if the matcher refused a press on it. */
+  refusal(): ForbiddenControlError | null {
+    return this.refused;
   }
 
   /** Waits until `condition` holds, reading it every 100 ms; false when `timeoutMs` passed first. */
@@ -639,6 +794,9 @@ export class Page {
   }
 
   private changeable(found: Found): Element {
+    if (this.refused !== null) {
+      throw this.refused;
+    }
     if (this.signal?.aborted === true) {
       throw new StoppedError();
     }
@@ -652,14 +810,33 @@ export class Page {
     return element;
   }
 
-  private press(element: Element, description: string): void {
+  /**
+   * The one place a press reaches the page. The matcher is asked before any event, with no way to
+   * skip it: only an allowed control, or the named exception `allow`, is pressed.
+   */
+  private press(element: Element, description: string, allow: ExceptionName | null): void {
+    if (this.refused !== null) {
+      throw this.refused;
+    }
     if (this.signal?.aborted === true) {
       throw new StoppedError();
+    }
+    const verdict = verdictOf(element);
+    if (
+      verdict.kind === 'forbidden' ||
+      (verdict.kind === 'exception' && verdict.exception !== allow)
+    ) {
+      this.refused = new ForbiddenControlError(
+        description,
+        verdict.kind === 'forbidden'
+          ? verdict.reason
+          : `it is the named exception '${verdict.exception}', pressed only by its own primitive`,
+      );
+      throw this.refused;
     }
     if (!isEnabled(element)) {
       throw new PrimitiveError(`${description} to be enabled`);
     }
-    // The invariant 4 story (#133) checks the forbidden-control matcher here, before any event.
     const view = viewOf(element);
     const init = { bubbles: true, cancelable: true, composed: true, button: 0 };
     element.dispatchEvent(new view.PointerEvent('pointerdown', init));

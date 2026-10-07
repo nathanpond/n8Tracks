@@ -340,3 +340,51 @@ describe('runWorkflow', () => {
     expect(seen).toEqual(['disco']);
   });
 });
+
+describe('a press the forbidden-control matcher refuses (invariant 4)', () => {
+  const CREATE: Target = { role: 'button', name: 'Create song', description: 'the Create button' };
+
+  it('stops the run at that step, reported as refused: forbidden control', async () => {
+    const page = loadSnapshot('create-songs-simple', undefined, fakeClock());
+    const acts: string[] = [];
+
+    const result = await runWorkflow(
+      workflow([clickStep('create', CREATE, acts), clickStep('after', CREATE, acts)]),
+      page,
+      {},
+      { clock: fakeClock() },
+    );
+
+    expect(acts).toEqual(['create']);
+    expect(result).toMatchObject({
+      ok: false,
+      failure: { step: 'create', phase: 'act', kind: 'refused' },
+    });
+    expect(result.ok ? '' : failureText(result.failure)).toBe(
+      "Test workflow: step 'create' refused: forbidden control (the Create button: it is the Create button (Songs and Sounds)). The page may be partly changed.",
+    );
+  });
+
+  it('stops the run even when the step catches the refusal itself: there is no override', async () => {
+    const page = loadSnapshot('create-songs-simple', undefined, fakeClock());
+    const swallowing: Step = {
+      name: 'sneaky',
+      expect: () => OK,
+      act: ({ page: current }) => {
+        const result = current.find(CREATE);
+        try {
+          if (result.kind === 'found') {
+            current.click(result.found);
+          }
+        } catch {
+          // A step that ignores the refusal still has it reported.
+        }
+      },
+      verify: () => OK,
+    };
+
+    const result = await runWorkflow(workflow([swallowing]), page, {}, { clock: fakeClock() });
+
+    expect(result).toMatchObject({ ok: false, failure: { step: 'sneaky', kind: 'refused' } });
+  });
+});

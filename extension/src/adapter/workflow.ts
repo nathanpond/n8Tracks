@@ -1,6 +1,12 @@
 import type { PagePattern } from './addresses.ts';
 import { poll, POLL_MS, realClock, type Clock } from './clock.ts';
-import { findProblem, PrimitiveError, type Page, type Target } from './primitives.ts';
+import {
+  findProblem,
+  ForbiddenControlError,
+  PrimitiveError,
+  type Page,
+  type Target,
+} from './primitives.ts';
 
 /**
  * Workflows and the step runner. A workflow is a list of named steps, and each step is data:
@@ -70,8 +76,12 @@ export interface StepFailure {
   workflow: string;
   step: string;
   phase: 'expect' | 'act' | 'verify';
-  /** `check`: the page did not look as expected in time; `timeout`: `act` did not finish; `error`: `act` failed. */
-  kind: 'check' | 'timeout' | 'error';
+  /**
+   * `check`: the page did not look as expected in time; `timeout`: `act` did not finish; `error`:
+   * `act` failed; `refused`: the forbidden-control matcher refused a press (invariant 4).
+   */
+  kind: 'check' | 'timeout' | 'error' | 'refused';
+  /** What was expected; for `refused`, the control and why it is forbidden, in the adapter's words. */
   expected: string;
   /** An earlier or this step acted, so the page may be partly changed (nothing is rolled back). */
   pageMayBeChanged: boolean;
@@ -91,7 +101,10 @@ export type RunResult =
 
 /** The report of a failure, as the panel shows it. */
 export function failureText(failure: StepFailure): string {
-  const text = `${failure.workflow}: step '${failure.step}' expected ${failure.expected}`;
+  const text =
+    failure.kind === 'refused'
+      ? `${failure.workflow}: step '${failure.step}' refused: forbidden control (${failure.expected})`
+      : `${failure.workflow}: step '${failure.step}' expected ${failure.expected}`;
   return failure.pageMayBeChanged ? `${text}. The page may be partly changed.` : text;
 }
 
@@ -119,6 +132,10 @@ export interface RunOptions {
 }
 
 const TIMED_OUT = Symbol('timed out');
+
+function refusedText(refusal: ForbiddenControlError): string {
+  return `${refusal.control}: ${refusal.reason}`;
+}
 
 /**
  * Runs `workflow` on `page`, step by step: `expect` is read every 100 ms until it holds or the
@@ -199,6 +216,10 @@ export async function runWorkflow<C extends StepContext>(
             }, timeoutMs);
           }),
         ]);
+        const refusedMeanwhile = context.page.refusal();
+        if (outcome === TIMED_OUT && refusedMeanwhile !== null) {
+          return stop(step, 'act', 'refused', refusedText(refusedMeanwhile));
+        }
         if (outcome === TIMED_OUT) {
           return stop(
             step,
@@ -208,6 +229,15 @@ export async function runWorkflow<C extends StepContext>(
           );
         }
       } catch (error) {
+        const refusal = context.page.refusal();
+        if (refusal !== null || error instanceof ForbiddenControlError) {
+          return stop(
+            step,
+            'act',
+            'refused',
+            refusedText(refusal ?? (error as ForbiddenControlError)),
+          );
+        }
         return stop(
           step,
           'act',
@@ -216,6 +246,11 @@ export async function runWorkflow<C extends StepContext>(
         );
       } finally {
         clearTimeout(timer);
+      }
+      // A refusal the step caught itself still stops the run: there is no override.
+      const refusal = context.page.refusal();
+      if (refusal !== null) {
+        return stop(step, 'act', 'refused', refusedText(refusal));
       }
       record(step.name, 'act', 'ok');
 

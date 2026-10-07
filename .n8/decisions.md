@@ -3015,3 +3015,36 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** `SUNO_ORIGIN_PATTERN` moved to `src/adapter/addresses.ts`. `src/address.ts` re-exports it, so existing imports still work.
   **Why:** AC 1 says every Suno address pattern is inside the adapter.
   **Issue:** #132
+- **Decision:** The guard lives in `extension/test/invariants/` (D7), not the `extension/tests/invariants/` path the story names: `sunoNeverMutated.guard.test.ts` (runtime and static), with the harness `workflowGuard.ts` and the TypeScript-compiler-API scan `sourceScan.ts` (tested in `sourceScan.test.ts` against fixture files in `test/invariants/fixtures/*.ts.txt`, which no build, lint, or format step reads).
+  **Why:** Vitest only includes `src/**`, `scripts/**`, and `test/**`. Keeping the scan and the harness as separate tested modules follows the plan's risk note.
+  **Issue:** #133
+- **Decision:** `tsconfig.node.json` gains the `DOM` and `DOM.Iterable` libs and the `chrome` and `vite/client` types, rather than a separate tsconfig for `test/invariants`.
+  **Why:** The runtime guard imports the adapter and the snapshot loader, which need DOM and `import.meta.glob` types. A separate project would need `test/invariants` excluded from the node project, and `scripts/check-suppressions.sh` rightly refuses any `exclude` except build output. Adding libs strengthens nothing and weakens nothing; strict settings are unchanged.
+  **Issue:** #133
+- **Decision:** The matcher (`src/adapter/forbidden.ts`) is pure: it classifies `ControlFacts` that `primitives.ts` gathers (role, accessible name plus `aria-label`, text, and `title`, a CSS-selector test, the nearest dialog's title, the inline field label, form submission). Names are read lazily, because reading one walks the subtree. The press check covers the element and every element it sits in, since the click reaches them too.
+  **Why:** Only `primitives.ts` touches the page (the ESLint rule from #132). Classifying every element of a 160 KB snapshot was about 50 s with eager names and about 1 s with lazy ones.
+  **Issue:** #133
+- **Decision:** The create-workspace exception covers two controls: the inline row's Confirm (recognised by the row's "New workspace name" field, the inline "dialog's" title, not by its own text), and the list's "Create new workspace" entry that opens the row. Only `Page.createWorkspaceClick` presses them. The static scan allows that primitive only in `src/adapter/workflows/workspace.ts`, the file #145 plans. The runtime guard allows an exception's activation only for a workflow whose recipe names it.
+  **Why:** TS-003 shows the create-workspace "dialog" is an inline row with no `role=dialog`, and `POST /api/project` came "from the inline row". The opener is part of the same permitted change, and #145 cannot reach Confirm without it. Its name starts with "Create", so without the exception the matcher would refuse it.
+  **Issue:** #133
+- **Decision:** Every dialog except "Overwrite Lyrics & Styles?" fails closed. In that dialog only Overwrite and Keep Current may be pressed; its Close is refused. So the Voice and Inspo pickers and the Download dialog are refused for now: #146 must add the pickers to `RECOGNISED_DIALOGS` with their allowed controls, and #216 adds the Download dialog through its own primitive.
+  **Why:** The discretion says an unrecognised dialog title fails closed, and the TS-003 replan recognises only the create-workspace row and the Overwrite dialog. The AC names Overwrite and Keep Current only.
+  **Issue:** #133
+- **Decision:** A refusal is a new `StepFailure.kind`, `refused`. `failureText` reads "<title>: step '<name>' refused: forbidden control (<target description>: <reason>)". The refusal poisons the run's page handle, and the runner checks it after `act` and on timeout, so a step that catches the refusal itself is still stopped. Report words are the adapter's own, never the page's: control names can hold a song title.
+  **Why:** The discretion says "refused: forbidden control" and "there is no override". Invariant 6 forbids page values in reports.
+  **Issue:** #133
+- **Decision:** "Try again" in the panel appears on a stopped workflow. It calls `AdapterSession.forget(id)` and re-runs the self-check. It does not re-run the workflow.
+  **Why:** Workflows run with values that come from n8Tracks (#134, #145+), and the panel has none to give. Forgetting the stop returns the workflow to its self-check state, and the user starts it again from where it was started. Re-running from the panel can come with the stories that start runs.
+  **Issue:** #133
+- **Decision:** The static scan resolves symbols with the type checker. It flags a reference only when it is declared by the browser's or a package's types, so the `fetch` option of `Connection` is not flagged. Page context is the `adapter/`, `page/`, and `panel/` folders, `content/suno*`, and everything they import. The scan names `apiClient.ts` (paired origin), `adapter/imageReader.ts` (#152's credential-less read, the one Suno exemption), and `page/observe.ts` (#134; wraps only: no address literal, `Request`, or `URL` of its own). It also flags any use of `chrome.downloads`, which #216 adds.
+  **Why:** These are the file names #152 and #134 plan. Resolving symbols catches aliases (`globalThis.fetch`, `window['fetch']`, destructuring) that a text search misses. The string `'submit'` is left to the reference check, because it is also an input type and an event name.
+  **Issue:** #133
+- **Decision:** Rule 1: `labelsOf` in `primitives.ts` failed with "labels is not iterable" on a hidden input, whose `labels` is null rather than undefined. It now treats null as no labels. Regression test: "names a hidden input without failing".
+  **Why:** The matcher names every element of every snapshot, and the playlist and library snapshots have hidden inputs.
+  **Issue:** #133
+- **Decision:** Rule 3: `element(page, id)` moved from `ui/connectionView.ts` to a new `ui/element.ts`. Only the popup and the options page import it.
+  **Why:** `connectionView.ts` is built into the Suno content script, through the panel. Its `getElementById` was a way to query Suno's page from page-context code, and the static scan rightly found it.
+  **Issue:** #133
+- **Decision:** CLAUDE.md is unchanged. Invariant 4's line keeps "guard: #133 (planned)".
+  **Why:** In CLAUDE.md, a guard reads "(merged)" only once it is on main, and #122's guard, done on this branch, still reads "(planned)". The milestone merge updates it.
+  **Issue:** #133

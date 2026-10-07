@@ -1,0 +1,7 @@
+// A fixture for the invariant 4 guard's static scan: the credential-less cover-image read (#152),
+// allowed only in the file the exemption names. Scanned as if it were that file; never built or
+// shipped.
+export async function readImage(address: string): Promise<Blob> {
+  const response = await fetch(address, { credentials: 'omit' });
+  return response.blob();
+}

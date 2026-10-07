@@ -262,4 +262,27 @@ describe('a session', () => {
       stopped: false,
     });
   });
+
+  it('forgets a stop on Try again, keeping the step log', async () => {
+    const page = loadSnapshot(ADVANCED, 'https://suno.com/create');
+    const session = new AdapterSession(new WorkflowRegistry([fillSongsForm]), page);
+    const textarea = document.querySelector('[data-testid="create-form-styles-wrapper"] textarea');
+    textarea?.remove();
+    await session.run(
+      { ...fillSongsForm, steps: fillSongsForm.steps.map((s) => ({ ...s, timeoutMs: 200 })) },
+      {},
+      { clock: fakeClock() },
+    );
+    expect(byId(session.statuses())['test-fill-songs']?.stopped).toBe(true);
+
+    session.forget('test-fill-songs');
+    session.forget('never-ran');
+
+    // The self-check again: the Styles box is still gone, so not working, but not a stop.
+    expect(byId(session.statuses())['test-fill-songs']).toMatchObject({
+      state: 'not-working',
+      stopped: false,
+    });
+    expect(session.stepLog('test-fill-songs')).not.toEqual([]);
+  });
 });
