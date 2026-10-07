@@ -27,6 +27,7 @@ public sealed class ReferenceParameterGuardTests
     {
         "GET /api/v1/jobs/{id:guid}: id",
         "GET /api/v1/audio-files/{id:guid}: id",
+        "GET,HEAD /api/v1/audio-files/{id:guid}/content: id",
         "PATCH /api/v1/credentials/{id:guid}: id",
         "POST /api/v1/credentials/{id:guid}/revoke: id",
         "PATCH /api/v1/workflow-states/{id:guid}: id",

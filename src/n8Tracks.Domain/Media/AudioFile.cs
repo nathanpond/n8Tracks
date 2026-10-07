@@ -173,6 +173,22 @@ public static class AudioFormats
         return All.Contains(extension, StringComparer.Ordinal) ? extension : null;
     }
 
+    /// <summary>
+    /// The media type audio of <paramref name="format"/> is served as (#217): <c>audio/wav</c>,
+    /// <c>audio/mp4</c>, <c>audio/mpeg</c>, <c>audio/flac</c>, <c>audio/ogg</c> (Ogg and Opus, both in
+    /// an Ogg container), and <c>audio/aac</c>.
+    /// </summary>
+    public static string MediaType(string format) => format switch
+    {
+        "wav" => "audio/wav",
+        "m4a" => "audio/mp4",
+        "mp3" => "audio/mpeg",
+        "flac" => "audio/flac",
+        "ogg" or "opus" => "audio/ogg",
+        "aac" => "audio/aac",
+        _ => throw new ArgumentOutOfRangeException(nameof(format), format, "Unknown audio format."),
+    };
+
     /// <summary>The text of <paramref name="status"/>, as stored and answered.</summary>
     public static string StatusText(AudioFileStatus status) => status switch
     {

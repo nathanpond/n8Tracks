@@ -182,4 +182,68 @@ internal sealed class CountingMount(IMediaMount inner) : IMediaMount
 
         return inner.OpenRead(relativePath);
     }
+
+    /// <summary>The files opened with their stat (#217) and not yet closed.</summary>
+    public int OpenHandles => Volatile.Read(ref openHandles);
+
+    public OpenedMediaFile OpenWithStat(string relativePath)
+    {
+        opened.AddOrUpdate(relativePath, 1, static (_, count) => count + 1);
+        var file = inner.OpenWithStat(relativePath);
+        Interlocked.Increment(ref openHandles);
+        return new OpenedMediaFile(new ClosingStream(file, () => Interlocked.Decrement(ref openHandles)), file.Stat);
+    }
+
+    private int openHandles;
+
+    /// <summary>The opened file's stream, telling when it is closed (once).</summary>
+    private sealed class ClosingStream(OpenedMediaFile file, Action closed) : Stream
+    {
+        private int disposed;
+
+        public override bool CanRead => file.Content.CanRead;
+
+        public override bool CanSeek => file.Content.CanSeek;
+
+        public override bool CanWrite => false;
+
+        public override long Length => file.Content.Length;
+
+        public override long Position
+        {
+            get => file.Content.Position;
+            set => file.Content.Position = value;
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => file.Content.Read(buffer, offset, count);
+
+        public override int Read(Span<byte> buffer) => file.Content.Read(buffer);
+
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            file.Content.ReadAsync(buffer, offset, count, cancellationToken);
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            file.Content.ReadAsync(buffer, cancellationToken);
+
+        public override long Seek(long offset, SeekOrigin origin) => file.Content.Seek(offset, origin);
+
+        public override void Flush()
+        {
+        }
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && Interlocked.Exchange(ref disposed, 1) == 0)
+            {
+                file.Dispose();
+                closed();
+            }
+
+            base.Dispose(disposing);
+        }
+    }
 }

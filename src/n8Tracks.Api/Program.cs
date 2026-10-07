@@ -324,6 +324,7 @@ public sealed class Program
             app.MapResolve();
             app.MapSuno();
             app.MapMedia();
+            app.MapAudioContent();
             app.MapBackups();
             app.MapSettings();
             app.MapRestores();

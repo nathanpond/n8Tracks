@@ -77,10 +77,12 @@ public partial class MediaMountAccessTests
     /// The files that name <c>IMediaMount</c>: its declaration, its one implementation, its
     /// registration, the scan (which names only paths it listed), the one media probe (#207, which
     /// health, the availability monitor, and the scheduler ask instead of the mount), and setup (which
-    /// only probes). #217 adds the audio content service, which names only stored paths.
+    /// only probes), and the audio content service (#217), which opens only the stored path of a
+    /// cataloged file named by its ID.
     /// </summary>
     private static readonly string[] MediaMountUsers =
     [
+        "src/n8Tracks.Application/Media/AudioContentService.cs",
         "src/n8Tracks.Application/Media/MediaPorts.cs",
         "src/n8Tracks.Application/Media/MediaScanService.cs",
         "src/n8Tracks.Infrastructure/DependencyInjection.cs",
@@ -270,6 +272,17 @@ public partial class MediaMountAccessTests
         Assert.True(calls.Count == 0, "Health and setup only probe the media mount:" + Environment.NewLine + string.Join(Environment.NewLine, calls));
     }
 
+    [Theory]
+    [InlineData("var entries = mount.List(string.Empty);", true)]
+    [InlineData("var stat = mount.Stat(path);", true)]
+    [InlineData("using var stream = mount.OpenRead(path);", true)]
+    [InlineData("await using var file = mount.OpenWithStat(path);", true)]
+    [InlineData("return mount.Probe();", false)]
+    public void TheProbeOnlyRuleFindsEveryOtherMember(string line, bool found)
+    {
+        Assert.Equal(found, CallsBeyondProbe().IsMatch(line));
+    }
+
     /// <summary>The tag library is given the stream the reader opened, never a path, and the media adapters never save tags.</summary>
     [Fact]
     public void TheTagLibraryIsGivenAStreamAndNeverSaves()
@@ -312,7 +325,7 @@ public partial class MediaMountAccessTests
     [GeneratedRegex(@"\bIMediaMount\b")]
     private static partial Regex NamesMediaMount();
 
-    [GeneratedRegex(@"\.\s*(List|Stat|OpenRead)\s*\(")]
+    [GeneratedRegex(@"\.\s*(List|Stat|OpenRead|OpenWithStat)\s*\(")]
     private static partial Regex CallsBeyondProbe();
 
     [GeneratedRegex(@"\bnew\s+(ATL\s*\.\s*)?Track\s*\(")]

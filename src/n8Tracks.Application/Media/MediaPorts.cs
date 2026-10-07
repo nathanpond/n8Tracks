@@ -37,6 +37,32 @@ public interface IMediaMount
     /// <exception cref="IOException">The file cannot be opened.</exception>
     /// <exception cref="UnauthorizedAccessException">The file may not be read.</exception>
     Stream OpenRead(string relativePath);
+
+    /// <summary>
+    /// As <see cref="OpenRead"/>, with the opened handle's size and last-modified time, which can be
+    /// asked again while the file is open (#217 serves by them and stops when they change).
+    /// </summary>
+    /// <exception cref="MediaPathOutsideException">The path resolves outside the mount root (no byte is read).</exception>
+    /// <exception cref="IOException">The file cannot be opened.</exception>
+    /// <exception cref="UnauthorizedAccessException">The file may not be read.</exception>
+    OpenedMediaFile OpenWithStat(string relativePath);
+}
+
+/// <summary>
+/// A file the mount opened for reading only: its <see cref="Content"/>, and <see cref="Stat"/>, which
+/// reads the size and last-modified time from the open handle each time it is asked (not from the
+/// path, which may lead elsewhere by then). Disposing it closes the handle.
+/// </summary>
+public sealed class OpenedMediaFile(Stream content, Func<MediaFileStat> stat) : IDisposable, IAsyncDisposable
+{
+    public Stream Content { get; } = content ?? throw new ArgumentNullException(nameof(content));
+
+    /// <summary>The open handle's size and last-modified time, now.</summary>
+    public MediaFileStat Stat() => stat();
+
+    public void Dispose() => Content.Dispose();
+
+    public ValueTask DisposeAsync() => Content.DisposeAsync();
 }
 
 /// <summary>One entry of a listed directory.</summary>
