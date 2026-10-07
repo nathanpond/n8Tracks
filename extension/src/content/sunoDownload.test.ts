@@ -3,10 +3,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FeedWindow } from '../adapter/observations.ts';
 import { OBSERVER_SOURCE, type ObservedMessage } from '../adapter/observed.ts';
 import type { ClipLookupReply, ClipLookupRow, ConnectedState, Request } from '../messages.ts';
-import { START_NOT_YET } from '../panel/DownloadView.ts';
+import { ASK_WHERE_TO_SAVE, DESTINATION, PAGE_COPY } from '../panel/DownloadView.ts';
 import { expectNoAxeViolations } from '../testing/a11y.ts';
 import { fakeClock, snapshotHtml } from '../testing/snapshots.ts';
 import { sunoObject } from '../testing/sunoResponses.ts';
+import type { DownloadRun } from '../download/downloader.ts';
 import { startSunoContent, type SunoContent } from './suno.ts';
 
 /**
@@ -34,6 +35,8 @@ const OTHERS = new Set([
   'diagnostic-report',
   'sync-resume',
   'generate-resume',
+  // The download queue as it stands, read on every page load that reads no library (#216).
+  'download-run',
 ]);
 
 const LIBRARY_FILTERS = (sunoObject('feed-v3.library-page-1.request') as { filters: unknown })
@@ -109,6 +112,8 @@ function worker(
     begin?: { ok: true } | { ok: false; message: string };
     lookup?: (sunoIds: string[]) => ClipLookupReply;
     formats?: string[];
+    start?: { ok: true } | { ok: false; message: string };
+    run?: DownloadRun | null;
   } = {},
 ) {
   const asked: Request[] = [];
@@ -135,6 +140,10 @@ function worker(
           formats = request.formats;
         }
         return Promise.resolve({ formats });
+      case 'download-start':
+        return Promise.resolve(options.start ?? { ok: true });
+      case 'download-run':
+        return Promise.resolve({ run: options.run ?? null });
       case 'download-lookup':
         return Promise.resolve(
           (options.lookup ?? ((ids) => ({ ok: true, rows: ids.map((id) => lookupRow(id)) })))(
@@ -483,8 +492,8 @@ describe('the list, its filters, and the selection', () => {
     expect(summary()[0]).toBe('Selected: 2 clips.');
   });
 
-  it('summarises clips, formats, files, unlocks, and where the files go, and Start stays disabled', async () => {
-    const { button, summary, format, text, sw, window } = await loaded();
+  it('summarises clips, formats, files, unlocks, and where the files go; Start waits for the unlocks to be confirmed', async () => {
+    const { button, summary, format, text, sw, window, view, box } = await loaded();
 
     button('Select all shown')?.click();
     expect(summary()[0]).toBe('Selected: 5 clips.');
@@ -497,7 +506,9 @@ describe('the list, its filters, and the selection', () => {
       'Formats: WAV, MP3.',
       'Files: 10.',
       "This run uses 4 Suno download unlocks (selected clips not yet unlocked). How many remain this period is not known yet: Suno sends it when a clip's Download dialog opens. Open any clip's More options › Download on this page, then close the dialog without downloading.",
-      "The files go to the browser's download folder. Copy them into the n8Tracks media folder yourself.",
+      DESTINATION,
+      ASK_WHERE_TO_SAVE,
+      PAGE_COPY,
     ]);
     expect(text('.dl-start-why')).toBe(
       'This run needs 4 Suno download unlocks, and how many remain is not known yet.',
@@ -509,8 +520,21 @@ describe('the list, its filters, and the selection', () => {
     expect(summary()[3]).toBe(
       'This run uses 4 Suno download unlocks (selected clips not yet unlocked). 60 remain this period.',
     );
-    expect(text('.dl-start-why')).toBe(START_NOT_YET);
+    // The unlocks are confirmed by ticking their count; until then Start waits.
+    expect(text('.dl-start-why')).toBe('Confirm the 4 Suno download unlocks this run uses.');
     expect(button('Start download')?.disabled).toBe(true);
+    const confirm = view()?.querySelector<HTMLInputElement>('.dl-confirm input');
+    expect(view()?.querySelector('.dl-confirm')?.textContent).toBe(
+      ' Use 4 Suno download unlocks for this run',
+    );
+    tick(confirm);
+    expect(text('.dl-start-why')).toBe('');
+    expect(button('Start download')?.disabled).toBe(false);
+    // A change to the count asks again.
+    tick(box(FIRST), false);
+    expect(confirm?.checked).toBe(false);
+    expect(text('.dl-start-why')).toBe('Confirm the 3 Suno download unlocks this run uses.');
+    tick(box(FIRST));
 
     window.deliver(
       observed('billing', {
@@ -530,7 +554,9 @@ describe('the list, its filters, and the selection', () => {
     tick(format('mp3'), false);
     tick(format('m4a-stream'));
     expect(summary()).not.toContain(expect.stringContaining('unlock'));
-    expect(text('.dl-start-why')).toBe(START_NOT_YET);
+    expect(view()?.querySelector<HTMLElement>('.dl-confirm')?.hidden).toBe(true);
+    expect(text('.dl-start-why')).toBe('');
+    expect(button('Start download')?.disabled).toBe(false);
 
     button('Clear selection')?.click();
     expect(summary()[0]).toBe('Selected: 0 clips.');
@@ -590,5 +616,152 @@ describe('the list, its filters, and the selection', () => {
       expect(rows()[0]?.text).toContain('Not in n8Tracks');
     });
     expect(sw.own().filter((type) => type === 'download-lookup')).toHaveLength(2);
+  });
+});
+
+describe('Start and the run (#216)', () => {
+  async function ready(options: Parameters<typeof worker>[0] = {}) {
+    const sw = worker({
+      load: { selected: [] },
+      lookup: (ids) => ({
+        ok: true,
+        rows: ids.map((id) =>
+          id === FIRST
+            ? lookupRow(id, {
+                generation: { id: 'g1', shortcode: 'n8-1-v1-g1' },
+                artist: 'The Artist',
+              })
+            : id === SECOND
+              ? lookupRow(id, { artist: 'Not a Generation' })
+              : lookupRow(id),
+        ),
+      }),
+      ...options,
+    });
+    const started = start({
+      address: 'https://suno.com/me',
+      snapshot: null,
+      worker: sw,
+      seen: [observed('library-feed', everyKindPage())],
+    });
+    await started.content.downloading;
+    return { ...started, sw };
+  }
+
+  it('hands the plan to the queue, the Artist from n8Tracks only for a clip that is a Generation there', async () => {
+    const { button, box, format, sw } = await ready();
+    tick(box(FIRST));
+    tick(box(SECOND));
+    tick(format('m4a-stream'));
+
+    button('Start download')?.click();
+
+    await vi.waitFor(() => {
+      expect(sw.own()).toContain('download-start');
+    });
+    const request = sw.asked.find((asked) => asked.type === 'download-start');
+    expect(request).toMatchObject({ type: 'download-start', unlocks: 0 });
+    if (request?.type !== 'download-start') {
+      throw new Error('Start was not sent.');
+    }
+    const files = request.files;
+    expect(files.map((file) => [file.sunoId, file.artist, file.format])).toEqual([
+      [FIRST, 'The Artist', 'm4a-stream'],
+      [SECOND, null, 'm4a-stream'],
+    ]);
+    expect(files[0]?.streamAddress).toMatch(/^https:\/\//);
+    // Nothing on Suno's page is pressed by Start itself, and n8Tracks is asked nothing more.
+    expect(sw.own().filter((type) => type === 'download-lookup')).toHaveLength(1);
+  });
+
+  it('says why the queue refused to start', async () => {
+    const { button, box, format, text } = await ready({
+      start: { ok: false, message: 'A sync to n8Tracks is running.' },
+    });
+    tick(box(FIRST));
+    tick(format('m4a-stream'));
+
+    button('Start download')?.click();
+
+    await vi.waitFor(() => {
+      expect(text('.dl-run-message')).toBe('A sync to n8Tracks is running.');
+    });
+  });
+
+  it('shows the queue on a page load, and its news as the service worker sends it', async () => {
+    const queued: DownloadRun = {
+      files: [],
+      tabId: 7,
+      unlocks: { confirmed: [], spent: [] },
+    };
+    const sw = worker({ run: queued });
+    const { content: started, text } = start({ address: 'https://suno.com/me', worker: sw });
+    await started.downloading;
+    expect(started.downloadView.runState).toEqual(queued);
+
+    started.download.progress({
+      ...queued,
+      files: [
+        {
+          key: `${FIRST}:wav`,
+          sunoId: FIRST,
+          title: 'Morning light',
+          displayName: 'maker',
+          artist: null,
+          format: 'wav',
+          unlocked: true,
+          streamAddress: null,
+          fileName: `Morning light (suno-${FIRST}).wav`,
+          state: 'saved',
+          paused: null,
+          downloadId: 1,
+          received: 10,
+          total: 10,
+          reason: null,
+          savedName: `Morning light (suno-${FIRST}).wav`,
+          renamed: false,
+          renameToM4a: false,
+          fetchedAgain: false,
+        },
+      ],
+    });
+    expect(text('.dl-run-status')).toBe('1 of 1 file saved.');
+  });
+
+  it('prepares a file only on the Library page, and stops at the step that does not match, naming it', async () => {
+    const elsewhere = start({
+      address: 'https://suno.com/create',
+      snapshot: null,
+      worker: worker(),
+    });
+    expect(await elsewhere.content.download.prepareFile({ sunoId: FIRST, format: 'wav' })).toEqual({
+      ok: false,
+      scope: 'page',
+      reason: 'the Suno tab is not showing your Library',
+      pressed: false,
+    });
+    elsewhere.content.stop();
+    content = null;
+
+    // On the Library snapshot the row's menu does not open (no Suno code runs here): the next step
+    // stops the format, and only More options was pressed.
+    const clicks: string[] = [];
+    document.addEventListener(
+      'click',
+      (event) => {
+        clicks.push((event.target as Element).getAttribute('aria-label') ?? '');
+      },
+      true,
+    );
+    const library = start({ address: 'https://suno.com/me', worker: worker() });
+    const outcome = await library.content.download.prepareFile({
+      sunoId: '00000000-0000-4000-8000-000000000102',
+      format: 'wav',
+    });
+    expect(outcome).toMatchObject({ ok: false, scope: 'format', pressed: false });
+    expect(outcome.ok ? '' : outcome.reason).toContain(
+      "Choose Download in a clip's menu: step 'download item' expected",
+    );
+    expect(clicks).toEqual(['More options']);
   });
 });

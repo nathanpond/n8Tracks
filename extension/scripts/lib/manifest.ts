@@ -6,12 +6,20 @@ export const extensionName = 'n8Tracks';
 /**
  * Exactly what the extension may ask for (the Suno integration design). `scripting` registers the
  * relay on the paired n8Tracks origin; `tabs` lets the extension find the Suno tab; `alarms` ends the
- * completion watch of a Create's clips after ten minutes (#154). The optional
+ * completion watch of a Create's clips after ten minutes (#154); `downloads` lets the download
+ * queue hand a listed Suno audio address to the browser's downloads interface (#216: required,
+ * since the panel is a content script and cannot show a permission prompt). The optional
  * hosts are only the ceiling of what may be requested: at pairing the extension requests exactly
  * `https://suno.com/*` and the one n8Tracks origin entered. Widening this list is a deliberate
- * change, and anything not on it fails validation (`downloads` waits for its own story).
+ * change, and anything not on it fails validation.
  */
-export const allowedPermissions: readonly string[] = ['storage', 'scripting', 'tabs', 'alarms'];
+export const allowedPermissions: readonly string[] = [
+  'storage',
+  'scripting',
+  'tabs',
+  'alarms',
+  'downloads',
+];
 export const allowedOptionalHosts: readonly string[] = [
   'https://suno.com/*',
   'https://*/*',

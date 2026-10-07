@@ -113,6 +113,17 @@ export class ObservationFeed implements Observations {
       }
       return;
     }
+    if (
+      message.kind === 'download-clip' &&
+      (message.download === undefined ||
+        message.download === null ||
+        !isRecord(message.body) ||
+        message.body.status !== 'ready' ||
+        typeof message.body.download_url !== 'string')
+    ) {
+      // A prepared download is queued only once it is ready (#216): the page polls until then.
+      return;
+    }
     if (message.kind === 'workspaces' && isRecord(message.body)) {
       for (const item of listed(message.body.projects)) {
         this.workspaces.set(item.id, item.name);

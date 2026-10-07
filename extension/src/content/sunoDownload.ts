@@ -1,6 +1,12 @@
 import { sunoListAddress, sunoPageOf } from '../adapter/addresses.ts';
 import type { Clock } from '../adapter/clock.ts';
 import {
+  DOWNLOAD_DIALOG_TARGET,
+  prepareDownload,
+  type PrepareJob,
+  type PrepareOutcome,
+} from '../adapter/downloadSteps.ts';
+import {
   readLibrary,
   ReadCancelled,
   ReadStop,
@@ -12,7 +18,14 @@ import type { AdapterSession } from '../adapter/registry.ts';
 import { loadMore } from '../adapter/workflows/loadMore.ts';
 import { clipOf, type DownloadClip } from '../download/clips.ts';
 import { isDownloadFormat } from '../download/selection.ts';
-import type { ClipLookupReply, ClipLookupRow, Request, ResponseFor } from '../messages.ts';
+import type { DownloadRun } from '../download/downloader.ts';
+import type {
+  ClipLookupReply,
+  ClipLookupRow,
+  DownloadAction,
+  Request,
+  ResponseFor,
+} from '../messages.ts';
 import type { DownloadView } from '../panel/DownloadView.ts';
 
 /**
@@ -20,8 +33,12 @@ import type { DownloadView } from '../panel/DownloadView.ts';
  * worker, which refuses while a sync or Generate on Suno runs, and opens Library › Songs again; on
  * that page load the library is read the way a sync reads it (`readLibrary`, the same reader and
  * observer), with counts as it reads and Cancel. Then n8Tracks is asked which clips it has, the
- * one call the view makes to n8Tracks. Nothing is pressed on the page: reading only scrolls the
+ * one call the view makes to n8Tracks. Reading presses nothing on the page: it only scrolls the
  * list (the `load-more` workflow), and nothing is sent to Suno or imported into n8Tracks.
+ *
+ * Start (#216) hands the plan to the service worker's download queue. The queue asks this tab to
+ * prepare each WAV, MP3, and M4A on the page (`adapter/downloadSteps.ts`), one at a time, and
+ * tells it how the run is getting on, which the view shows.
  */
 
 export interface SunoDownloadOptions {
@@ -45,6 +62,8 @@ export class SunoDownload {
   private readonly options: SunoDownloadOptions;
   private controller: AbortController | null = null;
   private prepared = false;
+  /** The file being prepared on the page, if any; Cancel stops waiting for it. */
+  private preparing: AbortController | null = null;
 
   constructor(options: SunoDownloadOptions) {
     this.options = options;
@@ -116,6 +135,7 @@ export class SunoDownload {
       ResponseFor['download-resume'] | undefined;
     const load = isRecord(answer) && isRecord(answer.load) ? answer.load : null;
     if (load === null) {
+      await this.showRun();
       return;
     }
     const { view, page } = this.options;
@@ -135,6 +155,113 @@ export class SunoDownload {
   /** Retry after the lookup failed. */
   async retryLookup(): Promise<void> {
     await this.lookUp();
+  }
+
+  /**
+   * The name of the Song's primary Artist in n8Tracks for a clip that is a Generation there, from
+   * the lookup; null otherwise, and the Suno display name is used.
+   */
+  private artistOf(sunoId: string): string | null {
+    const lookup = this.options.view.lookupState;
+    if (lookup.kind !== 'found') {
+      return null;
+    }
+    const row = lookup.rows.get(sunoId);
+    return row?.generation != null ? row.artist : null;
+  }
+
+  /** Start: the plan, with the unlocks the user confirmed, goes to the download queue. */
+  async start(unlocks: number): Promise<void> {
+    const { view } = this.options;
+    const files = view.selection.plan((sunoId) => this.artistOf(sunoId));
+    if (files.length === 0) {
+      return;
+    }
+    let answer: unknown;
+    try {
+      answer = await this.options.send({ type: 'download-start', files, unlocks });
+    } catch {
+      answer = undefined;
+    }
+    if (!isRecord(answer) || answer.ok !== true) {
+      view.setRunMessage(
+        isRecord(answer) && typeof answer.message === 'string' ? answer.message : NO_ANSWER,
+      );
+      return;
+    }
+    view.setRunMessage(null);
+    await this.showRun();
+  }
+
+  /** Cancel the downloads, Retry failed downloads, or Resume, in this tab. */
+  async control(action: DownloadAction): Promise<void> {
+    if (action === 'cancel') {
+      this.preparing?.abort();
+    }
+    const answer = await this.options
+      .send({ type: 'download-control', action })
+      .catch(() => undefined);
+    if (!isRecord(answer) || answer.ok !== true) {
+      this.options.view.setRunMessage(
+        isRecord(answer) && typeof answer.message === 'string' ? answer.message : NO_ANSWER,
+      );
+      return;
+    }
+    await this.showRun();
+  }
+
+  /** Reads the download queue into the view: on a page load, and after each control. */
+  async showRun(): Promise<void> {
+    const answer = (await this.options.send({ type: 'download-run' }).catch(() => undefined)) as
+      ResponseFor['download-run'] | undefined;
+    const run = isRecord(answer) && isRecord(answer.run) ? (answer.run as DownloadRun) : null;
+    this.options.view.setRun(run);
+  }
+
+  /** The queue's news, pushed by the service worker. */
+  progress(run: DownloadRun): void {
+    this.options.view.setRun(run);
+  }
+
+  /**
+   * Prepares one file on this page for the queue: only on the Library page, and not while the
+   * library is being read here. Answers its address, or why not.
+   */
+  async prepareFile(job: PrepareJob): Promise<PrepareOutcome> {
+    const { page } = this.options;
+    if (sunoPageOf(page.address()) !== 'library') {
+      return {
+        ok: false,
+        scope: 'page',
+        reason: 'the Suno tab is not showing your Library',
+        pressed: false,
+      };
+    }
+    if (this.running || this.preparing !== null) {
+      return {
+        ok: false,
+        scope: 'page',
+        reason: 'the Suno tab is busy reading the library',
+        pressed: false,
+      };
+    }
+    const controller = new AbortController();
+    this.preparing = controller;
+    try {
+      return await prepareDownload(
+        {
+          session: this.options.session,
+          next: (kind, accept, timeoutMs, signal) =>
+            this.options.observations.next(kind, accept, timeoutMs, signal),
+          dialogOpen: () => page.find(DOWNLOAD_DIALOG_TARGET).kind === 'found',
+          ...(this.options.clock === undefined ? {} : { clock: this.options.clock }),
+        },
+        job,
+        controller.signal,
+      );
+    } finally {
+      this.preparing = null;
+    }
   }
 
   private async read(): Promise<void> {

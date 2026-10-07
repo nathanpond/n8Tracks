@@ -50,7 +50,7 @@ export interface Probe {
 }
 
 /** The part of the extension a workflow belongs to, which the panel groups by. */
-export type Feature = 'page' | 'sync' | 'generate';
+export type Feature = 'page' | 'sync' | 'generate' | 'download';
 
 export interface Workflow<C extends StepContext = StepContext> {
   /** Stable, for the registry and the guard tests: `recognise-suno`. */

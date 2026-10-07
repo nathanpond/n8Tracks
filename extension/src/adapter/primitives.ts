@@ -105,6 +105,11 @@ export interface Target {
   testId?: string;
   /** The kind of popup the element opens (`aria-haspopup`): "menu" for a menu button. */
   popup?: string;
+  /**
+   * For a link: the path of the address it leads to, compared exactly (`/song/<clip ID>`, as the
+   * Library's song links address a clip, TS-003). Reads only the link's own `href`.
+   */
+  address?: string;
   /** Look only inside this element or region, which must itself be found exactly once. */
   within?: Target | Scope | Region;
   /** Plain words for a report, read after "expected": "a text box labelled Styles". */
@@ -434,11 +439,25 @@ function isTarget(value: Wanted): value is Target {
   return 'role' in value;
 }
 
+/** The path of the address a link leads to, without its query or fragment; null for no `href`. */
+function linkPathOf(element: Element): string | null {
+  const href = element.getAttribute('href');
+  if (href === null) {
+    return null;
+  }
+  try {
+    return new URL(href, element.ownerDocument.baseURI).pathname;
+  } catch {
+    return href.replace(/[?#].*$/, '');
+  }
+}
+
 function matchesTarget(element: Element, target: Target): boolean {
   return (
     roleOf(element) === target.role &&
     (target.testId === undefined || element.getAttribute('data-testid') === target.testId) &&
     (target.popup === undefined || element.getAttribute('aria-haspopup') === target.popup) &&
+    (target.address === undefined || linkPathOf(element) === target.address) &&
     nameMatches(element, target.name) &&
     !isHidden(element)
   );
@@ -1154,6 +1173,20 @@ export class Page {
       throw new PrimitiveError(`${found.target.description} to be Suno's create-workspace control`);
     }
     this.press(element, found.target, 'create-workspace');
+  }
+
+  /**
+   * Clicks one of the Download dialog's controls the download exception names (a format, "Unlock &
+   * Download", Close), and nothing else. Only the download workflows
+   * (`adapter/workflows/download.ts`) may call it; the invariant 4 guard's static scan fails on any
+   * other caller.
+   */
+  downloadDialogClick(found: Found): void {
+    const element = this.reachable(found);
+    if (this.judge(element, found.target, 'download-clip').kind !== 'exception') {
+      throw new PrimitiveError(`${found.target.description} to be in Suno's Download dialog`);
+    }
+    this.press(element, found.target, 'download-clip');
   }
 
   /**

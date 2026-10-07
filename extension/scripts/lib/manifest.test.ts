@@ -19,7 +19,7 @@ function validManifest(): Manifest {
     icons: { ...icons },
     action: { default_title: 'n8Tracks', default_popup: 'popup/popup.html', default_icon: icons },
     background: { service_worker: 'service-worker.js', type: 'module' },
-    permissions: ['storage', 'scripting', 'tabs', 'alarms'],
+    permissions: ['storage', 'scripting', 'tabs', 'alarms', 'downloads'],
     optional_host_permissions: ['https://suno.com/*', 'https://*/*', 'http://*/*'],
     options_ui: { page: 'options/options.html', open_in_tab: true },
   };
@@ -60,7 +60,12 @@ describe('validateManifest', () => {
   const bad: [string, Manifest, string][] = [
     [
       'an additional permission',
-      { permissions: ['storage', 'scripting', 'tabs', 'downloads'] },
+      { permissions: ['storage', 'scripting', 'tabs', 'alarms', 'downloads', 'webRequest'] },
+      'permissions',
+    ],
+    [
+      'the permissions without downloads',
+      { permissions: ['storage', 'scripting', 'tabs', 'alarms'] },
       'permissions',
     ],
     [
@@ -161,7 +166,7 @@ describe('validateManifest', () => {
   it('reports every problem, not only the first', () => {
     const problems = validateManifest({
       ...validManifest(),
-      permissions: ['storage', 'scripting', 'tabs', 'downloads'],
+      permissions: ['storage', 'scripting', 'tabs', 'alarms', 'downloads', 'cookies'],
       host_permissions: ['<all_urls>'],
     });
 

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   ANY_SUNO_PAGE,
+  audioAddressOf,
+  SUNO_AUDIO_HOSTS,
   isSunoAddress,
   songOfAddress,
   sunoListAddress,
@@ -64,5 +66,35 @@ describe('Suno addresses', () => {
     expect(lists.description).toBe('the Library, the Library trash');
     expect(lists.matches(new URL('https://suno.com/me/trash'))).toBe(true);
     expect(lists.matches(new URL('https://suno.com/create'))).toBe(false);
+  });
+});
+
+describe("Suno's audio hosts (#216, TS-004)", () => {
+  it('lists the signed-download host and the playback-stream host', () => {
+    expect(SUNO_AUDIO_HOSTS).toEqual([
+      'suno-data-uploads.s3.amazonaws.com',
+      'd2lwuy8qc234o3.cloudfront.net',
+    ]);
+  });
+
+  it.each([
+    'https://suno-data-uploads.s3.amazonaws.com/studio/uploads/x.wav?Expires=1&Signature=y',
+    'https://d2lwuy8qc234o3.cloudfront.net/1/clip/x.m4a',
+  ])('accepts %s', (address) => {
+    expect(audioAddressOf(address)).toBe(address);
+  });
+
+  it.each([
+    'http://suno-data-uploads.s3.amazonaws.com/x.wav',
+    'https://suno-data-uploads.s3.amazonaws.com:8443/x.wav',
+    'https://user:secret@d2lwuy8qc234o3.cloudfront.net/x.m4a',
+    'https://evil-suno-data-uploads.s3.amazonaws.com/x.wav',
+    'https://cdn1.suno.ai/x.mp3',
+    'https://suno.com/x.wav',
+    'not an address',
+    42,
+    null,
+  ])('refuses %s', (address) => {
+    expect(audioAddressOf(address)).toBeNull();
   });
 });

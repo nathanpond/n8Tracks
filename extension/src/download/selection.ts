@@ -51,6 +51,8 @@ export interface PlanEntry {
   format: DownloadFormat;
   /** Whether the clip is already unlocked for download on Suno. */
   unlocked: boolean;
+  /** The playback stream's address, which `m4a-stream` is downloaded from; null when unknown. */
+  streamAddress: string | null;
 }
 
 /** What the list is narrowed to: a workspace (null for every one) and text in the title. */
@@ -244,6 +246,7 @@ export class DownloadSelection {
         artist: artistOf(clip.sunoId),
         format,
         unlocked: clip.unlocked,
+        streamAddress: clip.streamAddress ?? null,
       })),
     );
   }

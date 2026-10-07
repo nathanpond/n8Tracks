@@ -1,6 +1,9 @@
 import type { Compatibility } from './compatibility.ts';
 import type { FormJob, VerificationReport } from './adapter/fill.ts';
 import type { DiagnosticReport } from './diagnostics/report.ts';
+import type { PrepareJob, PrepareOutcome } from './adapter/downloadSteps.ts';
+import type { DownloadRun } from './download/downloader.ts';
+import { isDownloadFormat, type PlanEntry } from './download/selection.ts';
 
 /** A feature of the extension and the scope it needs. */
 export interface FeatureState {
@@ -348,7 +351,21 @@ export type Request =
   /** Which of these clips n8Tracks has as Generations (#215). */
   | { type: 'download-lookup'; sunoIds: string[] }
   /** The formats last chosen (#215); with `formats`, remembers those first. */
-  | { type: 'download-formats'; formats?: string[] };
+  | { type: 'download-formats'; formats?: string[] }
+  /**
+   * Start in the Download view (#216): the plan's files, and the Suno unlocks the user confirmed
+   * for it. Files already queued are not added twice.
+   */
+  | { type: 'download-start'; files: PlanEntry[]; unlocks: number }
+  /** Cancel the downloads, Retry failed downloads, or Resume a queue waiting for its tab (#216). */
+  | { type: 'download-control'; action: DownloadAction }
+  /** The download queue as it stands, for the panel on a page load (#216). */
+  | { type: 'download-run' };
+
+/** What the Download view's run controls ask of the queue (#216). */
+export type DownloadAction = 'cancel' | 'retry' | 'resume';
+
+const DOWNLOAD_ACTIONS: readonly DownloadAction[] = ['cancel', 'retry', 'resume'];
 
 export interface ResponseFor {
   state: ConnectionState;
@@ -381,6 +398,9 @@ export interface ResponseFor {
   'download-resume': { load: DownloadLoad | null };
   'download-lookup': ClipLookupReply;
   'download-formats': { formats: string[] };
+  'download-start': DownloadReply;
+  'download-control': DownloadReply;
+  'download-run': { run: DownloadRun | null };
 }
 
 export type Response<T extends Request> = ResponseFor[T['type']];
@@ -396,6 +416,34 @@ export interface TabMessage {
 /** Whether `value` is a message for the Suno content script. */
 export function isTabMessage(value: unknown): value is TabMessage {
   return isRecord(value) && value.type === 'toggle-panel';
+}
+
+/**
+ * What the service worker's download queue (#216) sends the run's Suno tab
+ * (`chrome.tabs.sendMessage`): prepare one file on the page, answered with a `PrepareOutcome`, or
+ * the queue as it now stands, for the panel.
+ */
+export type DownloadTabMessage =
+  { type: 'download-prepare'; job: PrepareJob } | { type: 'download-progress'; run: DownloadRun };
+
+/** The answer to `download-prepare`. */
+export type DownloadPrepareReply = PrepareOutcome;
+
+/** Whether `value` is a message from the download queue for the Suno content script. */
+export function isDownloadTabMessage(value: unknown): value is DownloadTabMessage {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (value.type === 'download-prepare') {
+    return (
+      isRecord(value.job) &&
+      typeof value.job.sunoId === 'string' &&
+      ['wav', 'mp3', 'm4a'].includes(value.job.format as string)
+    );
+  }
+  return (
+    value.type === 'download-progress' && isRecord(value.run) && Array.isArray(value.run.files)
+  );
 }
 
 /** The sync messages, which only the Suno content script sends, each for its own tab. */
@@ -432,6 +480,9 @@ export const DOWNLOAD_TYPES = [
   'download-resume',
   'download-lookup',
   'download-formats',
+  'download-start',
+  'download-control',
+  'download-run',
 ] as const satisfies readonly Request['type'][];
 
 export type DownloadRequest = Extract<Request, { type: (typeof DOWNLOAD_TYPES)[number] }>;
@@ -504,6 +555,21 @@ function isTextList(value: unknown): value is string[] {
 
 function isCount(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0;
+}
+
+/** A file of the Download view's plan (#216), member by member. */
+function isPlanEntry(value: unknown): value is PlanEntry {
+  return (
+    isRecord(value) &&
+    typeof value.sunoId === 'string' &&
+    value.sunoId !== '' &&
+    typeof value.title === 'string' &&
+    typeof value.displayName === 'string' &&
+    (value.artist === null || typeof value.artist === 'string') &&
+    isDownloadFormat(value.format) &&
+    typeof value.unlocked === 'boolean' &&
+    (value.streamAddress === null || typeof value.streamAddress === 'string')
+  );
 }
 
 function isSyncScope(value: unknown): value is SyncScope {
@@ -633,6 +699,17 @@ export function isRequest(value: unknown): value is Request {
         value.formats === undefined ||
         (Array.isArray(value.formats) && value.formats.every((item) => typeof item === 'string'))
       );
+    case 'download-start':
+      return (
+        Array.isArray(value.files) &&
+        value.files.length > 0 &&
+        value.files.every(isPlanEntry) &&
+        isCount(value.unlocks)
+      );
+    case 'download-control':
+      return DOWNLOAD_ACTIONS.includes(value.action as DownloadAction);
+    case 'download-run':
+      return true;
     default:
       return false;
   }

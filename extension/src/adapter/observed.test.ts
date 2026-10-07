@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { sunoFixture } from '../testing/sunoResponses.ts';
 import {
+  downloadRequestOf,
   forwardedBody,
   isObservedMessage,
   isObserverReady,
@@ -231,5 +232,45 @@ describe('what the observer forwards of the billing answer (#215)', () => {
 
   it('forwards every other kind whole, less the secrets', () => {
     expect(forwardedBody('trash', { clips: [], token: 't' })).toEqual({ clips: [] });
+  });
+});
+
+describe("a prepared download's answer (#216, TS-004)", () => {
+  it.each([
+    [`${API}/api/download/clip/abc?format=wav`, 'GET', 'download-clip'],
+    [`${API}/api/download/clip/abc/?format=mp3`, 'GET', 'download-clip'],
+    [`${API}/api/download/clip/abc?format=m4a`, 'POST', null],
+    [`${API}/api/download/clip/abc/more?format=wav`, 'GET', null],
+    [`${API}/api/download/authorize`, 'POST', null],
+    ['https://example.com/api/download/clip/abc?format=wav', 'GET', null],
+  ])('%s (%s) is %s', (address, method, kind) => {
+    expect(observedKindOf(address, method, PAGE)).toBe(kind);
+  });
+
+  it('names the clip and format from the address, only for a format Suno prepares', () => {
+    expect(downloadRequestOf(`${API}/api/download/clip/AbC-1?format=wav`, PAGE)).toEqual({
+      clipId: 'AbC-1',
+      format: 'wav',
+    });
+    expect(downloadRequestOf(`${API}/api/download/clip/x?format=mp4`, PAGE)).toBeNull();
+    expect(downloadRequestOf(`${API}/api/download/clip/x`, PAGE)).toBeNull();
+  });
+
+  it('forwards only the status and the address', () => {
+    expect(
+      forwardedBody('download-clip', {
+        ok: true,
+        status: 'ready',
+        download_url: 'https://suno-data-uploads.s3.amazonaws.com/x.wav',
+        token: 'T',
+      }),
+    ).toEqual({
+      status: 'ready',
+      download_url: 'https://suno-data-uploads.s3.amazonaws.com/x.wav',
+    });
+    expect(
+      forwardedBody('download-clip', sunoFixture('download-clip.wav.processing.response')),
+    ).toEqual({ status: 'processing' });
+    expect(forwardedBody('download-clip', 'not json')).toEqual({});
   });
 });

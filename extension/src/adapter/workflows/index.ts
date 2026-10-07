@@ -14,6 +14,12 @@ import {
   fillSpeechSimple,
   switchSpeechForm,
 } from './fillSpeech.ts';
+import {
+  chooseDownload,
+  chooseDownloadFormat,
+  closeDownloadDialog,
+  openClipMenu,
+} from './download.ts';
 import { loadMore } from './loadMore.ts';
 import { recogniseSuno } from './recognise.ts';
 import { refreshLibrary } from './watchCompletion.ts';
@@ -54,6 +60,10 @@ export const ADAPTER_WORKFLOWS: readonly Workflow[] = [
   verifySourceAdvanced,
   verifySourceSimple,
   refreshLibrary,
+  openClipMenu,
+  chooseDownload,
+  chooseDownloadFormat,
+  closeDownloadDialog,
 ];
 
 /** The workflows that fill one kind of Version in one mode (#147). */

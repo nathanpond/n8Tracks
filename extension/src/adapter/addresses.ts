@@ -145,3 +145,43 @@ export function isSunoImageAddress(address: URL): boolean {
     SUNO_IMAGE_HOSTS.includes(address.hostname)
   );
 }
+
+/**
+ * The hosts Suno serves audio from (TS-004): signed downloads (`download_url` from the page's own
+ * `GET /api/download/clip/<id>?format=…`) and the playback stream (`media_urls[0]`). Both answered a
+ * request with no cookies or credentials. The downloader (#216) hands the browser's downloads
+ * interface nothing else.
+ */
+export const SUNO_AUDIO_HOSTS: readonly string[] = [
+  'suno-data-uploads.s3.amazonaws.com',
+  'd2lwuy8qc234o3.cloudfront.net',
+];
+
+/**
+ * An address on a listed Suno audio host, checked by {@link audioAddressOf}: the only kind of
+ * address the downloader may hand to the browser's downloads interface.
+ */
+export type AudioAddress = string & { readonly sunoAudioAddress: true };
+
+/**
+ * `text` as an {@link AudioAddress} when it is HTTPS on a listed Suno audio host, on its own port,
+ * with no user name or password in it; null otherwise.
+ */
+export function audioAddressOf(text: unknown): AudioAddress | null {
+  if (typeof text !== 'string') {
+    return null;
+  }
+  let address: URL;
+  try {
+    address = new URL(text);
+  } catch {
+    return null;
+  }
+  const listed =
+    address.protocol === 'https:' &&
+    address.port === '' &&
+    address.username === '' &&
+    address.password === '' &&
+    SUNO_AUDIO_HOSTS.includes(address.hostname);
+  return listed ? (address.href as AudioAddress) : null;
+}
