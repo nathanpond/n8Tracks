@@ -19,6 +19,9 @@ namespace n8Tracks.Domain.Media;
 /// <param name="Duration">Its duration from its header; null when the header could not be read.</param>
 /// <param name="Title">The title tag in its header, when it has one.</param>
 /// <param name="Artist">The artist tag in its header, when it has one.</param>
+/// <param name="Link">The Song (and Generation) it is associated with, and how; null when unassociated (#206).</param>
+/// <param name="UnmatchedReason">Why an unassociated file was left unmatched, when there is a reason; always null when <paramref name="Link"/> is set.</param>
+/// <param name="Revision">Raised by every change of its association, so a user acting on a stale row gets a conflict.</param>
 public sealed record AudioFile(
     Guid Id,
     string Path,
@@ -32,7 +35,102 @@ public sealed record AudioFile(
     bool MetadataReadable,
     TimeSpan? Duration,
     string? Title,
-    string? Artist);
+    string? Artist,
+    AudioFileLink? Link = null,
+    UnmatchedReason? UnmatchedReason = null,
+    int Revision = 1);
+
+/// <summary>
+/// An audio file's association (#206): exactly one Song, and at most one Generation, which belongs to
+/// that Song. The database refuses anything else (a check and a composite foreign key).
+/// </summary>
+/// <param name="Song">The Song.</param>
+/// <param name="Generation">The Generation, or null for a file associated with the Song only (#210).</param>
+/// <param name="Origin">How the association was made.</param>
+public sealed record AudioFileLink(CatalogLink Song, CatalogLink? Generation, AssociationOrigin Origin);
+
+/// <summary>A Song or Generation an audio file names: its ID and its current shortcode.</summary>
+public sealed record CatalogLink(Guid Id, string Shortcode);
+
+/// <summary>How an audio file's association was made.</summary>
+public enum AssociationOrigin
+{
+    /// <summary>By a scan, because the file name carries the Generation's complete Suno ID (#206).</summary>
+    SunoId,
+
+    /// <summary>By the user (#210).</summary>
+    User,
+}
+
+/// <summary>
+/// Why an unassociated audio file was left unmatched. <see cref="GenerationDeleted"/>,
+/// <see cref="MultipleSunoIds"/>, and <see cref="SongDeleted"/> are recomputed by each completed scan;
+/// <see cref="UnassociatedByUser"/> stays until the user associates the file again (#210).
+/// </summary>
+public enum UnmatchedReason
+{
+    /// <summary>The Suno ID in its name belongs to a Generation that was deleted in n8Tracks.</summary>
+    GenerationDeleted,
+
+    /// <summary>Its name carries the Suno IDs of two or more live Generations.</summary>
+    MultipleSunoIds,
+
+    /// <summary>The user removed its association (#210); scans never match it again.</summary>
+    UnassociatedByUser,
+
+    /// <summary>Its Song was deleted (#213).</summary>
+    SongDeleted,
+}
+
+/// <summary>The stored and answered text of association origins and unmatched reasons.</summary>
+public static class AudioFileAssociations
+{
+    public const string SunoIdOrigin = "suno-id";
+    public const string UserOrigin = "user";
+
+    public const string GenerationDeletedReason = "generation_deleted";
+    public const string MultipleSunoIdsReason = "multiple_suno_ids";
+    public const string UnassociatedByUserReason = "unassociated_by_user";
+    public const string SongDeletedReason = "song_deleted";
+
+    /// <summary>Every origin text, as the check lists them.</summary>
+    public static IReadOnlyList<string> Origins { get; } = [SunoIdOrigin, UserOrigin];
+
+    /// <summary>Every reason code, as the check lists them.</summary>
+    public static IReadOnlyList<string> Reasons { get; } = [GenerationDeletedReason, MultipleSunoIdsReason, UnassociatedByUserReason, SongDeletedReason];
+
+    public static string Text(AssociationOrigin origin) => origin switch
+    {
+        AssociationOrigin.SunoId => SunoIdOrigin,
+        AssociationOrigin.User => UserOrigin,
+        _ => throw new ArgumentOutOfRangeException(nameof(origin), origin, "Unknown association origin."),
+    };
+
+    public static AssociationOrigin? ParseOrigin(string? text) => text switch
+    {
+        SunoIdOrigin => AssociationOrigin.SunoId,
+        UserOrigin => AssociationOrigin.User,
+        _ => null,
+    };
+
+    public static string Text(UnmatchedReason reason) => reason switch
+    {
+        UnmatchedReason.GenerationDeleted => GenerationDeletedReason,
+        UnmatchedReason.MultipleSunoIds => MultipleSunoIdsReason,
+        UnmatchedReason.UnassociatedByUser => UnassociatedByUserReason,
+        UnmatchedReason.SongDeleted => SongDeletedReason,
+        _ => throw new ArgumentOutOfRangeException(nameof(reason), reason, "Unknown unmatched reason."),
+    };
+
+    public static UnmatchedReason? ParseReason(string? text) => text switch
+    {
+        GenerationDeletedReason => UnmatchedReason.GenerationDeleted,
+        MultipleSunoIdsReason => UnmatchedReason.MultipleSunoIds,
+        UnassociatedByUserReason => UnmatchedReason.UnassociatedByUser,
+        SongDeletedReason => UnmatchedReason.SongDeleted,
+        _ => null,
+    };
+}
 
 /// <summary>
 /// An audio file's stored status. A scan writes <see cref="Available"/>; <see cref="Missing"/> is

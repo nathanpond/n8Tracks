@@ -45,8 +45,20 @@ public static class MediaScanTriggers
 /// files in <see cref="Seen"/> whose header could not be read (zero-byte files included);
 /// <see cref="Skipped"/> is every other entry (other files, and links, which #203 does not follow);
 /// <see cref="UnreadableDirectories"/> is subdirectories that could not be listed.
+/// <see cref="Associated"/> is files the Suno ID matcher associated at the end of the scan, and
+/// <see cref="Unmatched"/> every record left without an association (Missing and user-unassociated
+/// ones included); both are 0 for a scan that did not complete (#206).
 /// </summary>
-public sealed record MediaScanCounts(int Seen, int New, int Changed, int Unchanged, int Skipped, int Unreadable, int UnreadableDirectories)
+public sealed record MediaScanCounts(
+    int Seen,
+    int New,
+    int Changed,
+    int Unchanged,
+    int Skipped,
+    int Unreadable,
+    int UnreadableDirectories,
+    int Associated = 0,
+    int Unmatched = 0)
 {
     public static MediaScanCounts None { get; } = new(0, 0, 0, 0, 0, 0, 0);
 }

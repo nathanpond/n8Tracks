@@ -194,8 +194,11 @@ internal sealed record AudioFileListResponse(AudioFileResponse[] Items, int Tota
 
 /// <summary>
 /// An audio file as the API answers it. The path is relative to the media folder, never absolute.
-/// <c>song</c>, <c>generation</c>, <c>associationOrigin</c>, and <c>unmatchedReason</c> are always
-/// null until #206 brings associations.
+/// Its association (#206): <c>song</c> and <c>generation</c> as <c>{id, shortcode}</c> or null,
+/// <c>associationOrigin</c> (<c>suno-id</c> or <c>user</c>) while associated, and
+/// <c>unmatchedReason</c> (a code: <c>generation_deleted</c>, <c>multiple_suno_ids</c>,
+/// <c>unassociated_by_user</c>, <c>song_deleted</c>) or null. <c>revision</c> rises with every change
+/// of the association.
 /// </summary>
 internal sealed record AudioFileResponse(
     Guid Id,
@@ -211,10 +214,11 @@ internal sealed record AudioFileResponse(
     decimal? DurationSeconds,
     string? Title,
     string? Artist,
-    object? Song,
-    object? Generation,
+    AudioFileLinkResponse? Song,
+    AudioFileLinkResponse? Generation,
     string? AssociationOrigin,
-    string? UnmatchedReason)
+    string? UnmatchedReason,
+    int Revision)
 {
     public static AudioFileResponse From(AudioFile file)
     {
@@ -234,9 +238,13 @@ internal sealed record AudioFileResponse(
             file.Duration is { } duration ? Math.Round((decimal)duration.TotalMilliseconds / 1000m, 3) : null,
             file.Title,
             file.Artist,
-            null,
-            null,
-            null,
-            null);
+            file.Link is { } link ? new AudioFileLinkResponse(link.Song.Id, link.Song.Shortcode) : null,
+            file.Link?.Generation is { } generation ? new AudioFileLinkResponse(generation.Id, generation.Shortcode) : null,
+            file.Link is { } origin ? AudioFileAssociations.Text(origin.Origin) : null,
+            file.UnmatchedReason is { } reason ? AudioFileAssociations.Text(reason) : null,
+            file.Revision);
     }
 }
+
+/// <summary>The Song or Generation an audio file is associated with.</summary>
+internal sealed record AudioFileLinkResponse(Guid Id, string Shortcode);

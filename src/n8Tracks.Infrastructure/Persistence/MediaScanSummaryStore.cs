@@ -7,7 +7,7 @@ namespace n8Tracks.Infrastructure.Persistence;
 
 /// <summary>
 /// The last scan's summary (#203) in the <c>settings</c> row <see cref="Key"/>, as
-/// <c>{"jobId", "trigger", "outcome", "startedUtc", "finishedUtc", "counts": {...}, "error"}</c>.
+/// <c>{"jobId", "trigger", "outcome", "startedUtc", "finishedUtc", "counts": {...}, "error"}</c>, the counts including <c>associated</c> and <c>unmatched</c> since #206.
 /// Kept outside the jobs table, which is pruned after 30 days.
 /// </summary>
 internal sealed class MediaScanSummaryStore(N8TracksDbContext context) : IMediaScanSummaryStore
@@ -47,7 +47,7 @@ internal sealed class MediaScanSummaryStore(N8TracksDbContext context) : IMediaS
             value.Outcome == "succeeded" ? MediaScanOutcome.Succeeded : MediaScanOutcome.Failed,
             UtcText.Parse(value.StartedUtc),
             UtcText.Parse(value.FinishedUtc),
-            new MediaScanCounts(counts.Seen, counts.New, counts.Changed, counts.Unchanged, counts.Skipped, counts.Unreadable, counts.UnreadableDirectories),
+            new MediaScanCounts(counts.Seen, counts.New, counts.Changed, counts.Unchanged, counts.Skipped, counts.Unreadable, counts.UnreadableDirectories, counts.Associated, counts.Unmatched),
             value.Error);
     }
 
@@ -63,7 +63,7 @@ internal sealed class MediaScanSummaryStore(N8TracksDbContext context) : IMediaS
                 summary.Outcome == MediaScanOutcome.Succeeded ? "succeeded" : "failed",
                 UtcText.From(summary.StartedUtc),
                 UtcText.From(summary.FinishedUtc),
-                new CountsValue(counts.Seen, counts.New, counts.Changed, counts.Unchanged, counts.Skipped, counts.Unreadable, counts.UnreadableDirectories),
+                new CountsValue(counts.Seen, counts.New, counts.Changed, counts.Unchanged, counts.Skipped, counts.Unreadable, counts.UnreadableDirectories, counts.Associated, counts.Unmatched),
                 summary.Error),
             Json);
 
@@ -74,5 +74,6 @@ internal sealed class MediaScanSummaryStore(N8TracksDbContext context) : IMediaS
 
     private sealed record SummaryValue(Guid JobId, string? Trigger, string? Outcome, string? StartedUtc, string? FinishedUtc, CountsValue? Counts, string? Error);
 
-    private sealed record CountsValue(int Seen, int New, int Changed, int Unchanged, int Skipped, int Unreadable, int UnreadableDirectories);
+    /// <summary>The counts; <c>associated</c> and <c>unmatched</c> (#206) read as 0 from a summary written before them.</summary>
+    private sealed record CountsValue(int Seen, int New, int Changed, int Unchanged, int Skipped, int Unreadable, int UnreadableDirectories, int Associated = 0, int Unmatched = 0);
 }

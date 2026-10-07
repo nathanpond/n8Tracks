@@ -87,13 +87,19 @@ public abstract record AudioFileWrite
 /// <param name="Limit">How many to return at most.</param>
 public sealed record AudioFileQuery(AudioFileStatus? Status, AudioFileAssociation Association, bool? MetadataReadable, int Offset, int Limit);
 
-/// <summary>The association filter. Associations arrive in #206; until then every file has none.</summary>
+/// <summary>The association filter (#206): every file, only those associated with a Song, or only those with none.</summary>
 public enum AudioFileAssociation
 {
     Any,
     Associated,
     None,
 }
+
+/// <summary>An unassociated audio file as the Suno ID matcher reads it: its name, and why it is unmatched now.</summary>
+public sealed record UnassociatedAudioFile(Guid Id, string FileName, UnmatchedReason? Reason);
+
+/// <summary>A live Generation that has one of the Suno IDs asked for (lower case), and its Song.</summary>
+public sealed record SunoIdOwner(string SunoId, Guid GenerationId, Guid SongId);
 
 /// <summary>One page of the audio file list.</summary>
 public sealed record AudioFilePage(IReadOnlyList<AudioFile> Items, int Total);
@@ -112,6 +118,46 @@ public interface IAudioFileStore
 
     /// <summary>The file with <paramref name="id"/>, or null.</summary>
     Task<AudioFile?> FindAsync(Guid id, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Every record with no association that a scan may match: Missing ones included, those the user
+    /// unassociated (<see cref="UnmatchedReason.UnassociatedByUser"/>) left out. In path order.
+    /// </summary>
+    Task<IReadOnlyList<UnassociatedAudioFile>> MatchableAsync(CancellationToken cancellationToken);
+
+    /// <summary>How many records have no association, whatever their status or reason.</summary>
+    Task<int> UnassociatedCountAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The live Generations whose Suno ID is one of <paramref name="sunoIds"/> (lower case), compared
+    /// without regard to letter case.
+    /// </summary>
+    Task<IReadOnlyList<SunoIdOwner>> LiveOwnersAsync(IReadOnlyCollection<string> sunoIds, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Those of <paramref name="sunoIds"/> (lower case) that the deleted-clip record (#130, provider
+    /// tombstones) holds, compared without regard to letter case.
+    /// </summary>
+    Task<IReadOnlySet<string>> DeletedSunoIdsAsync(IReadOnlyCollection<string> sunoIds, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// One conditional write: associates the file with the Generation and that Generation's Song, origin
+    /// <c>suno-id</c>, clearing its reason and raising its revision, only while the file is still
+    /// unassociated, was not unassociated by the user, and the Generation is still live. False when any
+    /// of these no longer holds (nothing is written).
+    /// </summary>
+    Task<bool> TryAssociateBySunoIdAsync(Guid fileId, Guid generationId, CancellationToken cancellationToken);
+
+    /// <summary>One conditional write: the reason of a file that is still unassociated and still has <paramref name="from"/>.</summary>
+    Task<bool> TrySetReasonAsync(Guid fileId, UnmatchedReason? from, UnmatchedReason? to, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Inside the deleting transaction: removes the association of every file associated with one of
+    /// <paramref name="generationIds"/> (reason <see cref="UnmatchedReason.GenerationDeleted"/>) or with
+    /// one of <paramref name="songIds"/> (reason <see cref="UnmatchedReason.SongDeleted"/>), raising
+    /// each one's revision. Returns how many changed.
+    /// </summary>
+    Task<int> UnassociateAsync(IReadOnlyCollection<Guid> generationIds, IReadOnlyCollection<Guid> songIds, CancellationToken cancellationToken);
 }
 
 /// <summary>Where the last scan's summary is kept (outside the jobs table, which is pruned).</summary>

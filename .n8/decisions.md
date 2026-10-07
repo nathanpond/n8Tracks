@@ -3948,3 +3948,45 @@ Track b (#322 #327 #328 #329 #330 #331 #332 #335 #339 #341 #342 #343 #344):
 - **Decision:** The `association` filter accepts `any`, `associated`, and `none`. Until #206, `associated` answers an empty page. `status` accepts `available` and `missing`. `metadataReadable` accepts `true` and `false`. `offset` defaults to 0 and `limit` to 200 (range 1–200). Any other value, or a repeated parameter, answers 422 `validation_failed` keyed by the parameter. `audio_files` counts as catalog data in the invariant 3 guard. `POST /media/scans` is in the invariant 1 table of endpoints that touch no Version. `Application.Media` takes no catalog type, so it is not in `CatalogServiceNamespaces`.
   **Why:** These follow the story's JSON-shape discretion and the M5 orchestrator rules for new tables and namespaces.
   **Issue:** #203
+
+- **Decision:** Migration `20261008020000_AddAudioFileAssociations` gives `audio_files` five new columns: `song_id`, `generation_id`, `association_origin` (`suno-id`/`user`), `unmatched_reason` (all four codes: `generation_deleted`, `multiple_suno_ids`, `unassociated_by_user`, `song_deleted`) and `revision`.
+  - Enforcement: a check `ck_audio_files_association`, a RESTRICT FK to `songs`, and a composite FK `(generation_id, song_id) → generations (id, song_id)` with ON DELETE RESTRICT and ON UPDATE CASCADE.
+  - `generations` gains only the unique index `ix_generations_id_song_id`, as the composite key's parent, with no rebuild.
+  - `audio_files` is rebuilt by hand inside the migration's transaction. It has no triggers and no referrers.
+  - The composite FK is not modelled in EF (the Song FK and both indexes are).
+  **Why:**
+  - The planner's trigger premise is stale (m5-plan 3b). A composite FK makes the database refuse a Generation of another Song.
+  - The update cascade means a move (#123/#141 change `generations.song_id`) takes the Generation's files along, instead of failing.
+  - EF would model the parent as an alternate key, which it refuses to change, and its SQLite rebuild switches foreign keys off outside the transaction.
+  - `revision` and every reason code are declared now, so #210 and #213 need no rebuild.
+  **Issue:** #206
+
+- **Decision:** Rule 1 (minimal retention handling): a new `Application.Media.AudioFileLifecycle.ReleaseAsync` (internal) is called by the Generation, Version and Song deletion services inside their transaction, just before `RetainWithinAsync`.
+  - It unassociates the files of the deleted Generations (reason `generation_deleted`) or every file of the deleted Song (reason `song_deleted`), and raises each one's revision.
+  - Associations are not retained.
+  - #213 adds the counts, the move warning, and the restore notes on this class.
+  **Why:** With the new RESTRICT keys, `RetentionStore` refuses to delete a Song or Generation that a file still names (the test proves a 500 without the hook). The branch must never have a broken delete path (orchestrator).
+  **Issue:** #206
+
+- **Decision:** `SunoIdMatcher` (`Application.Media`) finds Suno IDs in the file name only, never in the directory. The pattern is `(?<![\p{L}\p{N}])` UUID `(?![\p{L}\p{N}])`, any case, deduplicated, lower-cased.
+  - Lookup: live Generations and provider tombstones are compared with `lower(suno_id)`.
+  - Exactly one live Generation → associate. Two or more → `multiple_suno_ids`. Otherwise `generation_deleted` when a found ID is tombstoned, or no reason.
+  - When it runs: at the end of a completed scan, over every unassociated record except `unassociated_by_user`. Each file gets its own IMMEDIATE transaction: the Generation is read, then one conditional UPDATE (still unassociated, not user-removed) raises `revision`.
+  - A recomputed reason replaces `generation_deleted` and `multiple_suno_ids`. `song_deleted` is kept unless the file now matches or carries several live IDs.
+  **Why:**
+  - This follows the story's discretion.
+  - Suno IDs are stored as Suno sends them (lower case), but a hand-attached one could differ in case.
+  - Keeping `song_deleted` honours #213's "files of a deleted Song show song_deleted": the Song's Generations are tombstoned too, so a plain recompute would turn it into `generation_deleted`. #213 owns clearing it on a Song restore.
+  **Issue:** #206
+
+- **Decision:** The scan result, the `media.lastScan` summary counts and `MediaScanCounts` gain `associated` (associated by this scan) and `unmatched` (every unassociated record after the scan, Missing and user-removed included). A summary written before reads both as 0. The API's `AudioFileResponse` fills `song`/`generation` as `{id, shortcode}` (current shortcodes, read at answer time), `associationOrigin` and `unmatchedReason`, and adds `revision`. `association=associated|none` is now real.
+  **Why:** This follows the story's discretion on the API shape and the scan counts. `revision` is what #210's If-Match will use.
+  **Issue:** #206
+
+- **Decision:** The shared fixture `extension/fixtures/filenames.json` holds 14 example names, each with the Suno IDs expected in it. It covers the PRD example, browser numbering, the stream name, bare `<id>.wav` and `<id>_lyrics.mp3`, and negatives. The server's matcher test reads it, copied into the test output as `Media/Fixtures/filenames.json`.
+  **Why:** #216's key link: the extension's downloader test reads the same file, so the names it produces are proven to match.
+  **Issue:** #206
+
+- **Decision:** `Application.Media` stays out of `CatalogServiceNamespaces`. `SunoIdMatcher` and `AudioFileLifecycle` take only IDs, strings and `Domain.Media` types; the deletion hook is `internal`. `audio_files` stays classified as catalog in `SunoExportStagingGuardTests`, and no new table was added.
+  **Why:** This is the orchestrator rule: a namespace joins the guard only if it takes catalog types.
+  **Issue:** #206

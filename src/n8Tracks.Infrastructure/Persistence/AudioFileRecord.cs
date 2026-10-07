@@ -2,7 +2,9 @@ namespace n8Tracks.Infrastructure.Persistence;
 
 /// <summary>
 /// One row of <c>audio_files</c> (#203): an audio file under the media mount, as the last scan that
-/// saw it recorded it. Keyed by ID; the relative path is unique.
+/// saw it recorded it. Keyed by ID; the relative path is unique. Since #206 it carries its
+/// association: one Song or none, and at most one Generation, which must belong to that Song (a check,
+/// and a composite foreign key to <c>generations (id, song_id)</c> written in the migration).
 /// </summary>
 public sealed class AudioFileRecord
 {
@@ -43,4 +45,19 @@ public sealed class AudioFileRecord
     public string? Title { get; set; }
 
     public string? Artist { get; set; }
+
+    /// <summary>The Song it is associated with, or null (#206).</summary>
+    public Guid? SongId { get; set; }
+
+    /// <summary>The Generation it is associated with, which belongs to <see cref="SongId"/>; null for none or a Song-level file.</summary>
+    public Guid? GenerationId { get; set; }
+
+    /// <summary><c>suno-id</c> or <c>user</c> while associated; null otherwise.</summary>
+    public string? AssociationOrigin { get; set; }
+
+    /// <summary>Why an unassociated file is unmatched (a code), or null; always null while associated.</summary>
+    public string? UnmatchedReason { get; set; }
+
+    /// <summary>Raised by every change of the association.</summary>
+    public int Revision { get; set; } = 1;
 }

@@ -34,6 +34,11 @@
     <None Update="Media\Fixtures\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- File names and the Suno IDs in them, shared with the extension's downloader (#206, #216). -->
+  <ItemGroup>
+    <None Include="..\..\extension\fixtures\filenames.json" Link="Media\Fixtures\filenames.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <!-- Suno's clip responses as the spikes captured them (sanitized), for the clip reader's tests. -->
   <ItemGroup>
     <None Include="..\..\extension\fixtures\suno\feed-v3.*.response.json;..\..\extension\fixtures\suno\generate-v2-web*.json;..\..\extension\fixtures\suno\project-me.*.response.json;..\..\extension\fixtures\suno\clips-trashed-v2.response.json;..\..\extension\fixtures\suno\playlist-me.response.json;..\..\extension\fixtures\suno\lineage-metadata.examples.json" LinkBase="SunoFixtures" CopyToOutputDirectory="PreserveNewest" />

@@ -135,7 +135,8 @@ public sealed class MediaScanTests
         Assert.Equal(job.GetProperty("id").GetGuid(), summary.JobId);
         Assert.Equal(MediaScanTrigger.Manual, summary.Trigger);
         Assert.Equal(MediaScanOutcome.Succeeded, summary.Outcome);
-        Assert.Equal(new MediaScanCounts(9, 9, 0, 0, 3, 2, 0), summary.Counts);
+        // Nothing carries a Suno ID, so all nine stay unmatched (#206).
+        Assert.Equal(new MediaScanCounts(9, 9, 0, 0, 3, 2, 0, Associated: 0, Unmatched: 9), summary.Counts);
         Assert.Null(summary.Error);
     }
 

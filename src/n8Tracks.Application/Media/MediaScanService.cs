@@ -10,13 +10,15 @@ namespace n8Tracks.Application.Media;
 /// supported audio file it finds, without touching it. It runs as a <c>media-scan</c> job, one at a
 /// time. A walk is two passes: a quick one that only lists names, which gives the progress bar its
 /// total, then one that looks at each audio file, compares it with its record, reads the header of a
-/// new or changed file, and writes the records in batches.
+/// new or changed file, and writes the records in batches. A walk that completes ends with the
+/// Suno ID matcher (#206) over every unassociated record.
 /// </summary>
 public sealed class MediaScanService(
     IMediaMount mount,
     IAudioMetadataReader metadata,
     IAudioFileStore files,
     IMediaScanSummaryStore summaries,
+    SunoIdMatcher matcher,
     IJobStore jobs,
     IJobQueue queue,
     MediaScanStartLock startLock,
@@ -172,7 +174,10 @@ public sealed class MediaScanService(
             tally.Written(batch);
         }
 
-        return tally.Counts();
+        // Only a walk that completed matches, over every unassociated record, earlier scans' included.
+        report(99, Progress(found.Count, found.Count, tally) + "; matching Suno IDs");
+        var matched = await matcher.MatchAllAsync(cancellationToken).ConfigureAwait(false);
+        return tally.Counts() with { Associated = matched.Associated, Unmatched = matched.Unmatched };
     }
 
     /// <summary>What to write about one found file, counted as new, changed, or unchanged, and as unreadable when its header could not be read.</summary>
@@ -354,6 +359,8 @@ public sealed class MediaScanJobHandler(MediaScanService scans) : IJobHandler
             skipped = counts.Skipped,
             unreadable = counts.Unreadable,
             unreadableDirectories = counts.UnreadableDirectories,
+            associated = counts.Associated,
+            unmatched = counts.Unmatched,
             elapsedSeconds = Math.Round((decimal)result.Elapsed.TotalSeconds, 3),
         });
     }

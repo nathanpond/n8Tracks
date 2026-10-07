@@ -1,5 +1,6 @@
 using n8Tracks.Application.Artwork;
 using n8Tracks.Application.Auth;
+using n8Tracks.Application.Media;
 using n8Tracks.Application.References;
 using n8Tracks.Application.Retention;
 using n8Tracks.Application.Songs;
@@ -99,6 +100,7 @@ public sealed class GenerationDeletionService(
     IGenerationStore generationRows,
     GenerationArtworkService artwork,
     TombstoneService tombstones,
+    AudioFileLifecycle audioFiles,
     RetentionService retention,
     IExclusiveTransaction transaction,
     TimeProvider time)
@@ -183,6 +185,9 @@ public sealed class GenerationDeletionService(
                 // brings it back unasked (#130).
                 await versions.RewriteSourcesOfDeletedGenerationsAsync(ids, [], now, ct).ConfigureAwait(false);
                 await tombstones.RecordForAsync(ids, now, ct).ConfigureAwait(false);
+
+                // Its audio files stay on disk, unassociated (#206; associations are not retained).
+                await audioFiles.ReleaseAsync(ids, [], ct).ConfigureAwait(false);
                 var group = await retention.RetainWithinAsync(
                     new RetentionRequest(
                         RetainedRecordTypes.Generation,

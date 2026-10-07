@@ -244,6 +244,24 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
         OnMediaCreating(modelBuilder);
     }
 
+    /// <summary>An audio file's association origin (#206): one of the origins, or none.</summary>
+    internal const string AudioFileAssociationOriginCheck = "association_origin IS NULL OR association_origin IN ('suno-id', 'user')";
+
+    /// <summary>An unmatched reason (#206): one of the codes, or none.</summary>
+    internal const string AudioFileUnmatchedReasonCheck =
+        "unmatched_reason IS NULL OR unmatched_reason IN ('generation_deleted', 'multiple_suno_ids', 'unassociated_by_user', 'song_deleted')";
+
+    /// <summary>
+    /// An audio file's association (#206): an origin exactly when it has a Song; a Generation only with
+    /// a Song (the composite foreign key then makes it that Song's); a <c>suno-id</c> association always
+    /// names a Generation; and a reason only while it has no Song.
+    /// </summary>
+    internal const string AudioFileAssociationCheck =
+        "(song_id IS NULL) = (association_origin IS NULL) "
+        + "AND (generation_id IS NULL OR song_id IS NOT NULL) "
+        + "AND (association_origin IS NOT 'suno-id' OR generation_id IS NOT NULL) "
+        + "AND (unmatched_reason IS NULL OR song_id IS NULL)";
+
     /// <summary>
     /// The audio file catalog (#203): one row per distinct path under the media mount, unique by its
     /// relative path (compared byte for byte, so letter case and Unicode form make distinct rows).
@@ -265,10 +283,28 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                 table.HasCheckConstraint("ck_audio_files_metadata_readable", "metadata_readable = (duration_ms IS NOT NULL)");
                 table.HasCheckConstraint("ck_audio_files_title", $"title IS NULL OR length(title) BETWEEN 1 AND {AudioFormats.MaximumTagLength}");
                 table.HasCheckConstraint("ck_audio_files_artist", $"artist IS NULL OR length(artist) BETWEEN 1 AND {AudioFormats.MaximumTagLength}");
+                table.HasCheckConstraint("ck_audio_files_association_origin", AudioFileAssociationOriginCheck);
+                table.HasCheckConstraint("ck_audio_files_unmatched_reason", AudioFileUnmatchedReasonCheck);
+                table.HasCheckConstraint("ck_audio_files_association", AudioFileAssociationCheck);
+                table.HasCheckConstraint("ck_audio_files_revision", "revision >= 1");
             });
             file.HasKey(record => record.Id);
             file.HasIndex(record => record.Path).IsUnique();
             file.HasIndex(record => record.Status);
+            file.Property(record => record.Revision).HasDefaultValue(1);
+
+            // Its association (#206). The Song by a plain foreign key; the Generation by a composite one,
+            // (generation_id, song_id) to generations (id, song_id), written by hand in the migration and
+            // not modelled here: EF Core would make (id, song_id) an alternate key of the Generation,
+            // which it then refuses to change, and a move changes a Generation's Song. The composite key
+            // cascades on update, so a moved Generation's files follow it to its new Song. Neither key
+            // cascades on delete: a deletion releases the files first (AudioFileLifecycle).
+            file.HasIndex(record => record.SongId);
+            file.HasIndex(record => new { record.GenerationId, record.SongId });
+            file.HasOne<SongRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.SongId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
     }
 
@@ -537,6 +573,11 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
             generation.HasKey(record => record.Id);
             generation.HasIndex(record => new { record.VersionId, record.Ordinal }).IsUnique();
             generation.HasIndex(record => record.SongId);
+
+            // The parent key of an audio file's (generation_id, song_id) foreign key (#206): an index, not
+            // an alternate key, so it is added without rebuilding the table and a move may still change
+            // the Song.
+            generation.HasIndex(record => new { record.Id, record.SongId }).IsUnique();
             generation.Property(record => record.State).HasDefaultValue(GenerationRecord.Active);
             generation.Property(record => record.RemoteState).HasDefaultValue(GenerationRecord.Present);
             generation.Property(record => record.Revision).HasDefaultValue(1);
