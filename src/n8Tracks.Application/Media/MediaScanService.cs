@@ -61,18 +61,20 @@ public sealed class MediaScanService(
     public Task<MediaScanSummary?> LastScanAsync(CancellationToken cancellationToken) => summaries.FindAsync(cancellationToken);
 
     /// <summary>
-    /// Whether the media folder's root can be listed now, within the listing limit: what a scan
-    /// needs first. The scheduler (#204) queues nothing while it cannot.
+    /// Whether the media folder's root is there and can be read now, within the listing limit: what a
+    /// scan needs first. It asks the mount's own <see cref="IMediaMount.Probe"/> (#205), the check
+    /// health and setup use. The scheduler (#204) queues nothing while it cannot.
     /// </summary>
     public async Task<bool> IsFolderAvailableAsync(CancellationToken cancellationToken)
     {
+        var probe = Task.Run(mount.Probe, CancellationToken.None);
         try
         {
-            _ = await ListAsync(string.Empty, cancellationToken).ConfigureAwait(false);
-            return true;
+            return await probe.WaitAsync(options.DirectoryListTimeout, time, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
+            Observe(probe);
             return false;
         }
     }
