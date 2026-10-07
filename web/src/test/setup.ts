@@ -3,6 +3,7 @@ import { cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, vi } from 'vitest';
 import { clearMaintenance } from '../api/maintenance';
 import { resetSnapshots } from '../editor/useSnapshots';
+import { endFakeTimeouts } from './fakeClock';
 
 // jsdom has neither of these, and Mantine needs both.
 class ResizeObserverStub implements ResizeObserver {
@@ -49,12 +50,15 @@ beforeEach(() => {
   }));
 });
 
-afterEach(() => {
+afterEach(async () => {
   cleanup();
   // Snapshots not yet sent are held for the whole page, so one test's would reach the next.
   resetSnapshots();
   // Maintenance, once reported, is held for the whole page until the maintenance page clears it.
   clearMaintenance();
+  // A test that timed out keeps running; its fake clock refuses to move from here on, so what is
+  // left of it stops instead of moving the next test's clock (fakeClock.ts).
+  await endFakeTimeouts();
   vi.useRealTimers();
   vi.unstubAllGlobals();
   window.localStorage.clear();

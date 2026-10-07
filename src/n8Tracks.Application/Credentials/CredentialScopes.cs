@@ -17,7 +17,16 @@ public static class CredentialScopes
     public const string ArtworkWrite = "artwork.write";
     public const string CatalogBulkWrite = "catalog.bulk-write";
 
-    /// <summary>Every scope, in the order the PRD lists them.</summary>
+    /// <summary>
+    /// The browser extension's library sync: staging exports, their artwork, and workspace
+    /// discovery. It cannot commit an export: that is session-only.
+    /// </summary>
+    public const string SunoSync = "suno.sync";
+
+    /// <summary>The browser extension's Generate on Suno: claiming requests and reporting what Suno made.</summary>
+    public const string SunoGenerate = "suno.generate";
+
+    /// <summary>Every scope, in the order the PRD lists them, then the extension's two (Suno integration design).</summary>
     public static IReadOnlyList<string> All { get; } =
     [
         CatalogRead,
@@ -27,6 +36,8 @@ public static class CredentialScopes
         GenerationsEvaluate,
         ArtworkWrite,
         CatalogBulkWrite,
+        SunoSync,
+        SunoGenerate,
     ];
 
     /// <summary>Whether <paramref name="scope"/> is one of <see cref="All"/>, spelled exactly.</summary>

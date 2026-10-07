@@ -31,6 +31,14 @@ public interface IRetentionStore
     /// </summary>
     Task<RetentionGroup?> FindByRecordAsync(string recordType, Guid id, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// The newest group holding a record of <paramref name="recordType"/> whose stored column
+    /// <paramref name="column"/> is the text <paramref name="value"/> (a retained Generation by its Suno
+    /// ID, #140); null when there is none. <paramref name="column"/> is a column name the caller names in
+    /// code, never one from input.
+    /// </summary>
+    Task<RetentionGroup?> FindByStoredValueAsync(string recordType, string column, string value, CancellationToken cancellationToken);
+
     /// <summary>Every group, newest first.</summary>
     Task<IReadOnlyList<RetentionGroup>> ListAsync(CancellationToken cancellationToken);
 

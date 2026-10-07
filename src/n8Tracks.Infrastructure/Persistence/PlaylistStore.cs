@@ -53,7 +53,7 @@ internal sealed class PlaylistStore(N8TracksDbContext context) : IPlaylistStore
                 join song in context.Songs.AsNoTracking() on entry.SongId equals song.Id
                 join state in context.WorkflowStates.AsNoTracking() on song.WorkflowStateId equals state.Id
                 orderby entry.Position
-                select new { song.Id, song.ShortcodeNumber, song.Title, StateId = state.Id, StateName = state.Name, state.Colour })
+                select new { song.Id, song.ShortcodeNumber, song.Title, StateId = state.Id, StateName = state.Name, state.Colour, song.SelectedGenerationId })
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
 
@@ -64,9 +64,7 @@ internal sealed class PlaylistStore(N8TracksDbContext context) : IPlaylistStore
             row.Title,
             credits.GetValueOrDefault(row.Id)?.Primary is { } primary ? new PlaylistSongArtist(primary.Id, primary.Name) : null,
             new PlaylistSongState(row.StateId, row.StateName, row.Colour),
-
-            // Selected Generations arrive in M4; until then no Song has one.
-            HasSelectedGeneration: false)).ToList();
+            HasSelectedGeneration: row.SelectedGenerationId != null)).ToList();
 
         var artwork = await ArtworkAttachmentStore.ForOwnersAsync(context, ArtworkOwnerTypes.Playlist, [id], cancellationToken).ConfigureAwait(false);
         return new PlaylistDetails(Summary(record, songs.Count, artwork.GetValueOrDefault(id)), songs);

@@ -1,6 +1,7 @@
 import { Anchor, Button, Group, Loader, Stack, Text, Title } from '@mantine/core';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router';
+import { ownArtwork } from '../api/artwork';
 import { deletedSongOf, type DeletedSong } from '../api/songDeletion';
 import type { FieldValue } from '../api/saves';
 import {
@@ -11,6 +12,7 @@ import {
   type Song,
   type SongEdit,
 } from '../api/songs';
+import { SUNO_WORKSPACE_KEY } from '../api/sunoWorkspaces';
 import { formatDateTime, useConfiguredTimeZone } from '../api/timeZone';
 import { useSongVersions } from '../api/versions';
 import { ARTWORK_CROP_KEY, ARTWORK_KEY, cropOf, cropValue } from '../common/artworkField';
@@ -20,6 +22,7 @@ import { useRevisionedSave, type SavedField } from '../common/useRevisionedSave'
 import { Notice } from '../components/Notice';
 import { DeleteSongDialog, type DeletedSongNotice } from './DeleteSongDialog';
 import { DetailsPanel, SongDetails } from './DetailsPanel';
+import { WorkspaceValue } from './details/WorkspaceSection';
 import { CREDITS_KEY, creditsOf, creditsText, creditsValue } from './creditsField';
 import { DETAILS_PANEL_ID, useDetailsPanel } from './detailsPanelState';
 import {
@@ -159,17 +162,24 @@ function LoadedSong({ loaded }: { loaded: Song }) {
         merge: mergeTags,
       },
       { key: 'notes', label: 'Notes', read: (record) => record.notes, show: showText },
+      {
+        key: SUNO_WORKSPACE_KEY,
+        label: 'Suno workspace',
+        read: (record) => record.sunoWorkspace?.id ?? null,
+        show: (value) => <WorkspaceValue id={value} />,
+      },
       ...RELEASE_FIELDS,
       {
         key: ARTWORK_KEY,
         label: 'Artwork',
-        read: (record) => record.artwork?.assetId ?? null,
+        // Only the Song's own artwork is its field: a Selected Generation's image it shows is not.
+        read: (record) => ownArtwork(record.artwork)?.assetId ?? null,
         show: (value) => <ConflictValue value={value === null ? null : 'An uploaded image'} />,
       },
       {
         key: ARTWORK_CROP_KEY,
         label: 'Artwork crop',
-        read: (record) => cropValue(record.artwork?.crop ?? null),
+        read: (record) => cropValue(ownArtwork(record.artwork)?.crop ?? null),
         show: (value) => {
           const crop = cropOf(value);
           return <ConflictValue value={crop === null ? 'Centred' : cropText(crop)} />;

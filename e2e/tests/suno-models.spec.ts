@@ -101,7 +101,7 @@ test.describe('Settings → Suno', { tag: '@root-only' }, () => {
 
     // 1. In Settings → Suno, add "v7", move it to the top, and retire "v6-mini".
     await page.goto(`${FRESH_URL}settings/account`);
-    await page.getByRole('link', { name: 'Suno' }).click();
+    await page.getByRole('link', { name: 'Suno', exact: true }).click();
     await expect(page.getByRole('heading', { level: 2, name: 'Suno' })).toBeVisible();
     await expect(models(page)).toBeVisible();
     expect(await modelNames(page)).toEqual(['v6', 'v6-wild', 'v6-mini']);

@@ -111,7 +111,7 @@ test.describe('the Version tree', () => {
     await expect(page.getByRole('button', { name: 'Make current' })).toBeHidden();
     // 2 is archived and no longer current: hidden until "Show archived" is on.
     await expect(node(page, '2')).toHaveCount(0);
-    await page.getByRole('switch', { name: 'Show archived' }).click();
+    await page.getByRole('switch', { name: 'Show archived', exact: true }).click();
     await expect(node(page, '2')).toBeVisible();
     await expect(node(page, '2')).toHaveAttribute('data-archived', 'true');
     await expect(node(page, '2')).not.toContainText('Current');
@@ -177,11 +177,11 @@ test.describe('naming, annotating, and archiving Versions', () => {
     );
     await expect(node(page, '2')).toHaveCount(0);
     await expectAccessibleInLightAndDark(page);
-    await page.getByRole('switch', { name: 'Show archived' }).click();
+    await page.getByRole('switch', { name: 'Show archived', exact: true }).click();
     await expect(page.getByRole('treeitem', { name: 'Version 2, archived' })).toBeVisible();
     await expect(node(page, '2')).toHaveAttribute('data-archived', 'true');
     await expectAccessibleInLightAndDark(page);
-    await page.getByRole('switch', { name: 'Show archived' }).click();
+    await page.getByRole('switch', { name: 'Show archived', exact: true }).click();
     await expect(node(page, '2')).toHaveCount(0);
 
     // 3. Archive the current Version (1): it stays drawn, dimmed and marked current, 1.1 under it.
@@ -200,7 +200,7 @@ test.describe('naming, annotating, and archiving Versions', () => {
 
     // 4. Keyboard only: from the "Show archived" switch, Tab into the tree, move, select, and
     //    open the selected Version's actions.
-    await page.getByRole('switch', { name: 'Show archived' }).focus();
+    await page.getByRole('switch', { name: 'Show archived', exact: true }).focus();
     await page.keyboard.press('Tab');
     await expect(node(page, '1')).toBeFocused();
     await page.keyboard.press('ArrowDown');

@@ -1,10 +1,11 @@
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { EditorView } from '@codemirror/view';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { Snapshot } from '../api/snapshots';
 import { formatDateTime } from '../api/timeZone';
-import { advanceTimers, fakeTimeouts, jsonResponse, renderApp } from '../test/helpers';
+import { fakeTimeouts, type FakeClock } from '../test/fakeClock';
+import { jsonResponse, renderApp } from '../test/helpers';
 import { testVersion, versionServer } from '../test/versionServer';
 import { FROZEN_NOTICE_TEXT } from './FrozenNotice';
 
@@ -12,9 +13,9 @@ const STORED = { lyrics: '[Verse]\nGenerated line\n', styles: 'synthwave' };
 const FROZEN = testVersion('1', { current: true, isFrozen: true, revision: 3, ...STORED });
 const MUTABLE = testVersion('1', { current: true, ...STORED });
 
-async function openVersion(path = '/songs/n8-7') {
+async function openVersion(path = '/songs/n8-7', clock?: FakeClock) {
   // On the fake clock (fakeTimeouts), user-event's own pauses must move it too.
-  const user = userEvent.setup(vi.isFakeTimers() ? { advanceTimers } : {});
+  const user = userEvent.setup(clock ? { advanceTimers: clock.advanceTimers } : {});
   const rendered = renderApp(path);
   await screen.findByRole('textbox', { name: 'Lyrics' });
   return { user, ...rendered };
@@ -196,9 +197,9 @@ describe('History on a frozen Version', () => {
 // commit and its effects, and a wait could end on the notice before the editor's text was put back.
 describe('a Version that freezes while its editor is open', () => {
   it('on a 409 whose current Version is frozen: no conflict dialog, the notice, and the unsaved text carried to a new Version', async () => {
-    fakeTimeouts();
+    const clock = fakeTimeouts();
     const { server } = versionServer([MUTABLE]);
-    const { user } = await openVersion();
+    const { user } = await openVersion(undefined, clock);
     // A Generation is attached elsewhere: the revision moves and the Version is frozen.
     server.changeElsewhere('1', { isFrozen: true });
 
@@ -245,9 +246,9 @@ describe('a Version that freezes while its editor is open', () => {
   }, 10_000);
 
   it('keeps saving the name and notes typed with the text that could not go in', async () => {
-    fakeTimeouts();
+    const clock = fakeTimeouts();
     const { server } = versionServer([MUTABLE]);
-    const { user } = await openVersion();
+    const { user } = await openVersion(undefined, clock);
     server.changeElsewhere('1', { isFrozen: true });
 
     await user.type(screen.getByRole('textbox', { name: 'Name' }), 'Kept name');
@@ -262,9 +263,9 @@ describe('a Version that freezes while its editor is open', () => {
   }, 10_000);
 
   it('on a 409 version_frozen on its own revision: the notice too, and the text carried', async () => {
-    fakeTimeouts();
+    const clock = fakeTimeouts();
     const { server } = versionServer([MUTABLE]);
-    await openVersion();
+    await openVersion(undefined, clock);
     server.next = () => jsonResponse(409, { code: 'version_frozen', versionId: MUTABLE.id });
 
     typeLyrics('Too late');
@@ -279,9 +280,9 @@ describe('a Version that freezes while its editor is open', () => {
   });
 
   it('complement: on a mutable Version the same 409 is the ordinary conflict dialog', async () => {
-    fakeTimeouts();
+    const clock = fakeTimeouts();
     const { server } = versionServer([MUTABLE]);
-    await openVersion();
+    await openVersion(undefined, clock);
     server.changeElsewhere('1', { lyrics: 'Theirs' });
 
     typeLyrics('Mine');

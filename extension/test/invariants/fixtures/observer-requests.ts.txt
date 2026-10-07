@@ -1,0 +1,10 @@
+// A fixture for the invariant 4 guard's static scan: an observer that does more than wrap. Scanned
+// as if it were src/page/observe.ts; never built or shipped.
+const original = window.fetch;
+
+window.fetch = async (...args: Parameters<typeof fetch>) => {
+  const response = await original(...args);
+  await original('/api/feed/v3', { method: 'POST' });
+  await original(new Request('https://studio-api-prod.suno.com/api/clip'));
+  return response;
+};

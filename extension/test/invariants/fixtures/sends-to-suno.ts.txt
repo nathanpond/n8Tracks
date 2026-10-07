@@ -1,0 +1,28 @@
+// A fixture for the invariant 4 guard's static scan: every way here of sending a request must be
+// found. Scanned as if it were the file the test names; never built or shipped.
+export async function sendToSuno(): Promise<void> {
+  await fetch('https://studio-api-prod.suno.com/api/generate/v2-web/', { method: 'POST' });
+  await globalThis.fetch('/api/feed/v3');
+  const request = new XMLHttpRequest();
+  request.open('POST', '/api/project');
+  navigator.sendBeacon('/api/clip/trash');
+  const socket = new WebSocket('wss://suno.com/socket');
+  socket.close();
+  const events = new EventSource('/api/stream');
+  events.close();
+  const alias = window['fetch'];
+  await alias('/api/x');
+  const { fetch: borrowed } = globalThis;
+  await borrowed('/api/y');
+  const named = Reflect.get(window, 'fetch') as typeof fetch;
+  await named('/api/z');
+}
+
+export function submitForm(form: HTMLFormElement): void {
+  form.requestSubmit();
+  form.submit();
+}
+
+export function download(): void {
+  void chrome.downloads.download({ url: 'https://cdn1.suno.ai/a.mp3' });
+}

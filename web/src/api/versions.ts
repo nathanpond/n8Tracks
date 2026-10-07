@@ -91,18 +91,61 @@ export const SONG_MODE_OPTION = 'songMode';
 /** The option that says which form a Speech is described in: `simple` or `advanced`. */
 export const SPEECH_MODE_OPTION = 'speechMode';
 
-/** A Version with its creation inputs, exactly as stored: empty strings when there are none. */
+/**
+ * What import recorded about a Version created from a Suno clip (#135), each option named as the
+ * API spells it (`lyrics`, `styles`, or a key of `inputs`): the options Suno does not return (they
+ * hold the default), the returned values outside n8Tracks' limits (kept as Suno returned them), and
+ * each unknown choice as Suno returned it, as JSON text.
+ */
+export interface ImportedInputs {
+  notReturned: string[];
+  outOfRange: string[];
+  rawValues: Readonly<Record<string, string>>;
+}
+
+/**
+ * A Version with its creation inputs, exactly as stored: empty strings when there are none.
+ * `imported` is null (or absent) for a Version made in n8Tracks.
+ */
 export interface VersionDetail extends Version {
   lyrics: string;
   styles: string;
   inputs: VersionOptions;
+  imported?: ImportedInputs | null;
+}
+
+const isStrings = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === 'string');
+
+function isImportedInputs(value: unknown): value is ImportedInputs {
+  return (
+    isRecord(value) &&
+    isStrings(value.notReturned) &&
+    isStrings(value.outOfRange) &&
+    isRecord(value.rawValues) &&
+    Object.values(value.rawValues).every((raw) => typeof raw === 'string')
+  );
+}
+
+/**
+ * The keys of `inputs` that hold a Version's lineage (#122: its sources, Inspiration, Voice, and
+ * file inputs) rather than a Suno option. They are not options: the options editor and the conflict
+ * view leave them out, and the sources editor (#125) reads them.
+ */
+export const LINEAGE_KEYS: readonly string[] = ['sources', 'inspiration', 'voice', 'fileInputs'];
+
+/** Whether a key of `inputs` is one of the lineage keys rather than a Suno option. */
+export function isLineageKey(key: string): boolean {
+  return LINEAGE_KEYS.includes(key);
 }
 
 function isOptions(value: unknown): value is VersionOptions {
   return (
     isRecord(value) &&
-    Object.values(value).every(
-      (option) => option === null || ['string', 'number', 'boolean'].includes(typeof option),
+    Object.entries(value).every(([key, option]) =>
+      isLineageKey(key)
+        ? option === null || typeof option === 'object'
+        : option === null || ['string', 'number', 'boolean'].includes(typeof option),
     )
   );
 }
@@ -113,7 +156,8 @@ export function isVersionDetail(value: unknown): value is VersionDetail {
     isRecord(value) &&
     typeof value.lyrics === 'string' &&
     typeof value.styles === 'string' &&
-    isOptions(value.inputs)
+    isOptions(value.inputs) &&
+    (value.imported === undefined || value.imported === null || isImportedInputs(value.imported))
   );
 }
 

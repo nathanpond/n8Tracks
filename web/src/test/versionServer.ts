@@ -1,3 +1,6 @@
+import type { Generation, GenerationComment } from '../api/generations';
+import type { LineageSource, SunoPersona, SunoPlaylist } from '../api/lineage';
+import type { RelationshipType } from '../api/relationships';
 import type { Snapshot } from '../api/snapshots';
 import type { Song } from '../api/songs';
 import {
@@ -8,7 +11,7 @@ import {
 } from '../api/versions';
 import { CREATE_FIELDS, DEFAULT_INPUTS } from './createFieldsFixture';
 import { healthyReport, jsonResponse, requestPath, stubFetch } from './helpers';
-import { baseSong, STATES } from './songServer';
+import { baseSong, STATES, SYSTEM_TYPES } from './songServer';
 
 /** A Version of `baseSong` numbered `number`, with an ID built from the number and no lyrics or styles. */
 export function testVersion(number: string, change: Partial<VersionDetail> = {}): VersionDetail {
@@ -33,6 +36,63 @@ export function testVersion(number: string, change: Partial<VersionDetail> = {})
     kind: isVersionKind(inputs.kind) ? inputs.kind : 'song',
     ...change,
   };
+}
+
+/**
+ * Generation `ordinal` of the Version of `baseSong` numbered `number`: an Active, complete clip of
+ * 2:05 with a Suno ID built from the shortcode, unrated and without comments.
+ */
+export function testGeneration(
+  number: string,
+  ordinal: number,
+  change: Partial<Generation> = {},
+): Generation {
+  const version = testVersion(number);
+  const shortcode = `${version.shortcode}-g${String(ordinal)}`;
+  return {
+    id: `0199b1a0-6000-7000-9000-${`${number.replace(/\./g, '0')}0${String(ordinal)}`.padStart(12, '0')}`,
+    shortcode,
+    ordinal,
+    song: { id: baseSong.id, shortcode: baseSong.shortcode },
+    version: { id: version.id, shortcode: version.shortcode },
+    sunoId: `suno-${shortcode}`,
+    providerStatus: 'complete',
+    state: 'active',
+    remoteState: 'present',
+    title: `Take ${String(ordinal)}`,
+    durationSeconds: 125,
+    modelVersion: 'chirp-v5',
+    modelName: null,
+    modelLabel: 'v5',
+    sunoCreatedAt: '2026-10-01T09:30:00Z',
+    isSelected: false,
+    createdAt: '2026-10-01T09:31:00Z',
+    revision: 1,
+    rating: null,
+    comments: [],
+    artwork: null,
+    ...change,
+  };
+}
+
+/** Comment `n` (from 1) on a Generation, written at 10:0n and never edited. */
+export function testComment(n: number, change: Partial<GenerationComment> = {}): GenerationComment {
+  return {
+    id: `0199b1a0-7000-7000-9000-${String(n).padStart(12, '0')}`,
+    text: `Comment ${String(n)}`,
+    createdAt: `2026-10-01T10:0${String(n % 10)}:00Z`,
+    editedAt: null,
+    revision: 1,
+    ...change,
+  };
+}
+
+/** A write to a Generation (its rating) or to one of its comments, as the fake API received it. */
+export interface GenerationWrite {
+  method: string;
+  path: string;
+  ifMatch: string | null;
+  body: Record<string, unknown>;
 }
 
 /** A Version as the list answers it: without its lyrics, styles, and options. */
@@ -141,8 +201,66 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     songDeletes: [] as { ifMatch: string | null; body: Record<string, unknown> }[],
     /** When set, answers the next Song deletion (once) instead of the fake API. */
     nextSongDelete: undefined as (() => Response | Promise<Response>) | undefined,
-    /** Generations counted by the deletion impact (the fake keeps none of its own). */
+    /** Generations counted by the deletion impact (apart from {@link generations}). */
     generationCount: 0,
+    /** The Song's Generations, as its Generation list answers them (Version order, then ordinal). */
+    generations: [] as Generation[],
+    /** How many times the Song's Generation list was read. */
+    generationReads: 0,
+    /** When set, answers the next read of the Generation list (once) instead of the fake API. */
+    nextGenerations: undefined as (() => Response | Promise<Response>) | undefined,
+    /** Every rating and comment write received, in order (a refused one included). */
+    generationWrites: [] as GenerationWrite[],
+    /** When set, answers the next rating or comment write (once) instead of the fake API. */
+    nextGenerationWrite: undefined as (() => Response | Promise<Response>) | undefined,
+    /** Every Selected Generation write received (PUT to choose, DELETE to clear), in order. */
+    selectionWrites: [] as {
+      method: string;
+      ifMatch: string | null;
+      body: Record<string, unknown>;
+    }[],
+    /** When set, answers the next Selected Generation write (once) instead of the fake API. */
+    nextSelectionWrite: undefined as (() => Response | Promise<Response>) | undefined,
+    /** Every "Create new Song from Generation" request (#123), in order: its Generation, If-Match, and body. */
+    moves: [] as { reference: string; ifMatch: string | null; body: Record<string, unknown> }[],
+    /** When set, answers the next move (once) instead of the fake API. */
+    nextMove: undefined as (() => Response | Promise<Response>) | undefined,
+    /** Every Generation deletion request (#124), in order: its Generation, If-Match, and body (null when none). */
+    generationDeletes: [] as {
+      reference: string;
+      ifMatch: string | null;
+      body: Record<string, unknown> | null;
+    }[],
+    /** When set, answers the next Generation deletion (once) instead of the fake API. */
+    nextGenerationDelete: undefined as (() => Response | Promise<Response>) | undefined,
+    /** How many Versions use each Generation (by ID) as a source, as its deletion impact counts them. */
+    sourceVersionCounts: new Map<string, number>(),
+    /** The relationship types served (#125's audio actions are the system ones). */
+    relationshipTypes: [...SYSTEM_TYPES] as RelationshipType[],
+    /** The Suno playlists seen in imports (#125), served by name. */
+    playlists: [] as SunoPlaylist[],
+    /** The Suno personas seen in imported clips (#125). */
+    personas: [] as SunoPersona[],
+    /** The Not imported sources put on the ignore list (#153), by Suno ID, in order. */
+    ignoredSources: [] as string[],
+    /** Other Songs the search finds (#125's source picker), besides the Song itself. */
+    otherSongs: [] as Song[],
+    /** The Generations of {@link otherSongs}, each naming its Song. */
+    otherGenerations: [] as Generation[],
+    /** Old shortcodes of moved Generations (#123), each with the Song and shortcode it has now: they resolve as `moved`. */
+    moved: new Map<string, { song: string; shortcode: string }>(),
+    /** Plays another client editing the Song: its revision goes up. */
+    touchSongElsewhere() {
+      server.song = { ...server.song, revision: server.song.revision + 1 };
+    },
+    /** Plays another client rating the Generation `id`: its rating changes and its revision goes up. */
+    rateElsewhere(id: string, rating: number | null) {
+      server.generations = server.generations.map((generation) =>
+        generation.id === id
+          ? { ...generation, rating, revision: generation.revision + 1 }
+          : generation,
+      );
+    },
     /** Every number the Song has used, deleted Versions' included. */
     usedNumbers: new Set(versions.map((version) => version.number)),
     /** Plays another client deleting the Version numbered `number` (no current Version moves). */
@@ -349,6 +467,18 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
   const answerResolve = (reference: string) => {
     const key = reference.toLowerCase();
     const song = server.song;
+    const moved = server.moved.get(key);
+    if (moved !== undefined) {
+      return jsonResponse(200, {
+        entityType: 'generation',
+        id: '0199b1a0-6000-7000-9000-0000000000ff',
+        shortcode: moved.shortcode,
+        status: 'moved',
+        canonicalShortcode: moved.shortcode,
+        song: { id: '0199b1a0-1000-7000-9000-0000000000ff', shortcode: moved.song },
+        version: { id: '0199b1a0-2000-7000-9000-0000000000ff', shortcode: `${moved.song}-v1` },
+      });
+    }
     const generation = /^(.+)-g([1-9][0-9]*)$/.exec(key);
     const generated = server.versions.find((candidate) => candidate.shortcode === generation?.[1]);
     if (generation && generated) {
@@ -414,6 +544,102 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     };
   };
 
+  // A source as the API reads it back: its Generation or Song looked up (a pasted Suno ID n8Tracks
+  // has is that Generation), with titles, shortcodes, and availability.
+  const readSource = (sent: Record<string, unknown>, withType: boolean): LineageSource => {
+    const all = [...server.generations, ...server.otherGenerations];
+    const songs = [server.song, ...server.otherSongs];
+    const typeId = typeof sent.typeId === 'string' ? sent.typeId : undefined;
+    const typed = withType
+      ? {
+          typeId,
+          sunoAction:
+            server.relationshipTypes.find((type) => type.id === typeId)?.sunoAction ?? null,
+          continueAtSeconds:
+            typeof sent.continueAtSeconds === 'number' ? sent.continueAtSeconds : null,
+          secondaryIds: null,
+        }
+      : {};
+    const idOf = (value: unknown) =>
+      typeof value === 'string'
+        ? value
+        : typeof value === 'object' && value !== null && 'id' in value
+          ? String(value.id)
+          : undefined;
+    const external =
+      typeof sent.external === 'object' && sent.external !== null
+        ? (sent.external as Record<string, unknown>)
+        : undefined;
+    const generation = all.find(
+      (candidate) =>
+        candidate.id === idOf(sent.generation) ||
+        (external?.sunoId !== undefined && candidate.sunoId === external.sunoId),
+    );
+    if (generation !== undefined) {
+      return {
+        ...typed,
+        generation: {
+          id: generation.id,
+          shortcode: generation.shortcode,
+          songId: generation.song.id,
+          songShortcode: generation.song.shortcode,
+          songTitle: songs.find((song) => song.id === generation.song.id)?.title ?? null,
+          title: generation.title,
+          durationSeconds: generation.durationSeconds,
+          missing: false,
+        },
+        availability:
+          generation.remoteState === 'present'
+            ? 'ok'
+            : generation.remoteState === 'trashed'
+              ? 'trashed'
+              : 'missing',
+      };
+    }
+    const song = songs.find((candidate) => candidate.id === idOf(sent.song));
+    if (song !== undefined) {
+      return {
+        ...typed,
+        song: { id: song.id, shortcode: song.shortcode, title: song.title, missing: false },
+        availability: 'ok',
+      };
+    }
+    return {
+      ...typed,
+      external: {
+        sunoId: typeof external?.sunoId === 'string' ? external.sunoId : '',
+        title: typeof external?.title === 'string' ? external.title : null,
+        address: typeof external?.address === 'string' ? external.address : null,
+        label: null,
+      },
+      availability: 'not_imported',
+    };
+  };
+  const readLineage = (sent: Record<string, unknown>): Record<string, unknown> => {
+    const read: Record<string, unknown> = { ...sent };
+    if ('sources' in sent) {
+      read.sources = Array.isArray(sent.sources)
+        ? sent.sources.map((source) => readSource(source as Record<string, unknown>, true))
+        : [];
+    }
+    if ('inspiration' in sent) {
+      const inspiration = sent.inspiration as Record<string, unknown> | null;
+      read.inspiration =
+        inspiration === null
+          ? null
+          : Array.isArray(inspiration.sources) && inspiration.sources.length > 0
+            ? {
+                sources: inspiration.sources.map((source) =>
+                  readSource(source as Record<string, unknown>, false),
+                ),
+              }
+            : inspiration.playlist
+              ? { playlist: inspiration.playlist }
+              : null;
+    }
+    return read;
+  };
+
   const mock = stubFetch();
   mock.mockImplementation(async (input, init) => {
     const path = requestPath(input);
@@ -426,6 +652,26 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     }
     if (path.endsWith('/api/v1/suno/create-fields')) {
       return jsonResponse(200, CREATE_FIELDS);
+    }
+    if (path.endsWith('/api/v1/relationship-types')) {
+      return jsonResponse(200, { items: server.relationshipTypes });
+    }
+    if (path.endsWith('/api/v1/suno/playlists')) {
+      return jsonResponse(200, { items: server.playlists });
+    }
+    if (path.endsWith('/api/v1/suno/personas')) {
+      return jsonResponse(200, { items: server.personas });
+    }
+    if (path.endsWith('/api/v1/suno/ignored') && method === 'POST') {
+      const sent = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as {
+        sunoId?: string;
+      };
+      const sunoId = sent.sunoId ?? '';
+      const added = !server.ignoredSources.includes(sunoId);
+      if (added) {
+        server.ignoredSources.push(sunoId);
+      }
+      return jsonResponse(200, { sunoId, added });
     }
     const resolve = /\/api\/v1\/resolve\/([^/]+)$/.exec(path);
     if (resolve) {
@@ -513,7 +759,7 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
       }
       const options =
         typeof body.inputs === 'object' && body.inputs !== null
-          ? (body.inputs as VersionDetail['inputs'])
+          ? (readLineage(body.inputs as Record<string, unknown>) as VersionDetail['inputs'])
           : {};
       const inputs = { ...version.inputs, ...options };
       if (
@@ -539,8 +785,378 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
       return jsonResponse(200, changed);
     }
 
+    const move = /\/api\/v1\/generations\/([^/]+)\/move-to-new-song$/.exec(path);
+    if (move && method === 'POST') {
+      const reference = decodeURIComponent(move[1] ?? '').toLowerCase();
+      const ifMatch = new Headers(init?.headers).get('If-Match');
+      const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as Record<
+        string,
+        unknown
+      >;
+      server.moves.push({ reference, ifMatch, body });
+      const nextMove = server.nextMove;
+      if (nextMove) {
+        server.nextMove = undefined;
+        return nextMove();
+      }
+      const generation = server.generations.find(
+        (candidate) =>
+          candidate.id.toLowerCase() === reference ||
+          candidate.shortcode.toLowerCase() === reference,
+      );
+      if (generation === undefined) {
+        return jsonResponse(404, { code: 'not_found' });
+      }
+      if (ifMatch !== `"${String(generation.revision)}"`) {
+        return jsonResponse(409, { code: 'revision_conflict', current: generation });
+      }
+      const title = typeof body.title === 'string' ? body.title.trim() : '';
+      if (title === '') {
+        return jsonResponse(422, {
+          code: 'validation_failed',
+          errors: { title: ['Enter a title.'] },
+        });
+      }
+      const choice = body.replacementGeneration ?? body.workflowState;
+      if (generation.isSelected && choice === undefined) {
+        return jsonResponse(422, { code: 'selection_choice_required' });
+      }
+      const newSong = {
+        ...baseSong,
+        id: '0199b1a0-1000-7000-9000-0000000000ff',
+        shortcode: 'n8-8',
+        title,
+      };
+      const moved = {
+        ...generation,
+        shortcode: 'n8-8-v1-g1',
+        ordinal: 1,
+        song: { id: newSong.id, shortcode: newSong.shortcode },
+        version: { id: '0199b1a0-2000-7000-9000-0000000000ff', shortcode: 'n8-8-v1' },
+        isSelected: true,
+        revision: generation.revision + 1,
+      };
+      server.generations = server.generations.filter((other) => other.id !== generation.id);
+      server.moved.set(generation.shortcode, {
+        song: newSong.shortcode,
+        shortcode: moved.shortcode,
+      });
+      return jsonResponse(201, {
+        song: newSong,
+        version: { id: moved.version.id, shortcode: moved.version.shortcode },
+        generation: moved,
+        alias: generation.shortcode,
+      });
+    }
+
+    const generationDeletion = /\/api\/v1\/generations\/([^/]+)(\/deletion-impact)?$/.exec(path);
+    if (
+      generationDeletion &&
+      ((generationDeletion[2] !== undefined && method === 'GET') ||
+        (generationDeletion[2] === undefined && method === 'DELETE'))
+    ) {
+      const reference = decodeURIComponent(generationDeletion[1] ?? '').toLowerCase();
+      const generation = server.generations.find(
+        (candidate) =>
+          candidate.id.toLowerCase() === reference ||
+          candidate.shortcode.toLowerCase() === reference,
+      );
+      if (method === 'GET') {
+        return generation === undefined
+          ? jsonResponse(404, { code: 'not_found' })
+          : jsonResponse(200, {
+              id: generation.id,
+              shortcode: generation.shortcode,
+              isSelected: generation.isSelected,
+              replacements: generation.isSelected
+                ? server.generations.filter((other) => other.id !== generation.id)
+                : [],
+              commentCount: generation.comments.length,
+              artworkCount: generation.artwork === null ? 0 : 1,
+              sourceVersionCount: server.sourceVersionCounts.get(generation.id) ?? 0,
+              revision: generation.revision,
+            });
+      }
+      const ifMatch = new Headers(init?.headers).get('If-Match');
+      const body =
+        typeof init?.body === 'string' ? (JSON.parse(init.body) as Record<string, unknown>) : null;
+      server.generationDeletes.push({ reference, ifMatch, body });
+      const nextGenerationDelete = server.nextGenerationDelete;
+      if (nextGenerationDelete) {
+        server.nextGenerationDelete = undefined;
+        return nextGenerationDelete();
+      }
+      if (generation === undefined) {
+        return jsonResponse(404, { code: 'not_found' });
+      }
+      if (ifMatch !== `"${String(generation.revision)}"`) {
+        return jsonResponse(409, { code: 'revision_conflict', current: generation });
+      }
+      const replacement = body?.replacementGeneration;
+      const stateId = body?.workflowState;
+      if (generation.isSelected && replacement === undefined && stateId === undefined) {
+        return jsonResponse(422, { code: 'selection_choice_required' });
+      }
+      const chosen = server.generations.find(
+        (other) => other.id === replacement && other.id !== generation.id,
+      );
+      const state = STATES.find((candidate) => candidate.id === stateId);
+      if (
+        (replacement !== undefined || stateId !== undefined) &&
+        (!generation.isSelected ||
+          (replacement !== undefined) === (stateId !== undefined) ||
+          (replacement !== undefined && chosen === undefined) ||
+          (stateId !== undefined && state === undefined))
+      ) {
+        return jsonResponse(422, {
+          code: 'invalid_replacement',
+          errors: { replacementGeneration: ['Choose another Generation of this Song.'] },
+        });
+      }
+      if (chosen !== undefined || state !== undefined) {
+        server.song = {
+          ...server.song,
+          hasSelectedGeneration: chosen !== undefined,
+          selectedGeneration:
+            chosen === undefined
+              ? null
+              : {
+                  id: chosen.id,
+                  shortcode: chosen.shortcode,
+                  state: chosen.state,
+                  remoteState: chosen.remoteState,
+                },
+          state:
+            state === undefined
+              ? server.song.state
+              : { id: state.id, name: state.name, colour: state.colour },
+          revision: server.song.revision + 1,
+        };
+      }
+      server.generations = server.generations
+        .filter((other) => other.id !== generation.id)
+        .map((other) => ({
+          ...other,
+          isSelected: other.id === chosen?.id || (other.isSelected && chosen === undefined),
+        }));
+      return jsonResponse(200, { song: server.song });
+    }
+
+    const generationWrite = /\/api\/v1\/generations\/([^/]+)(?:\/comments(?:\/([^/]+))?)?$/.exec(
+      path,
+    );
+    if (generationWrite && method !== 'GET') {
+      const reference = decodeURIComponent(generationWrite[1] ?? '').toLowerCase();
+      const commentId =
+        generationWrite[2] === undefined ? undefined : decodeURIComponent(generationWrite[2]);
+      const isComments = path.includes('/comments');
+      const ifMatch = new Headers(init?.headers).get('If-Match');
+      const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as Record<
+        string,
+        unknown
+      >;
+      server.generationWrites.push({ method, path, ifMatch, body });
+      const nextGenerationWrite = server.nextGenerationWrite;
+      if (nextGenerationWrite) {
+        server.nextGenerationWrite = undefined;
+        return nextGenerationWrite();
+      }
+      const generation = server.generations.find(
+        (candidate) =>
+          candidate.id.toLowerCase() === reference ||
+          candidate.shortcode.toLowerCase() === reference,
+      );
+      if (generation === undefined) {
+        return jsonResponse(404, { code: 'not_found' });
+      }
+      const store = (changed: Generation) => {
+        server.generations = server.generations.map((other) =>
+          other.id === changed.id ? changed : other,
+        );
+      };
+      const textOf = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
+      const invalidText = (text: string) =>
+        text === '' || text.length > 2000
+          ? jsonResponse(422, {
+              code: 'validation_failed',
+              errors: { text: ['Write a comment of up to 2000 characters.'] },
+            })
+          : undefined;
+      if (!isComments && method === 'PATCH') {
+        if (ifMatch !== `"${String(generation.revision)}"`) {
+          return jsonResponse(409, { code: 'revision_conflict', current: generation });
+        }
+        const rating = body.rating === undefined ? generation.rating : body.rating;
+        const state =
+          body.state === undefined
+            ? generation.state
+            : body.state === 'active' || body.state === 'archived'
+              ? body.state
+              : undefined;
+        if (state === undefined) {
+          return jsonResponse(422, {
+            code: 'validation_failed',
+            errors: { state: ['Send active or archived.'] },
+          });
+        }
+        if (rating === generation.rating && state === generation.state) {
+          return jsonResponse(200, generation);
+        }
+        if (
+          rating !== null &&
+          (typeof rating !== 'number' || !Number.isInteger(rating) || rating < 1 || rating > 5)
+        ) {
+          return jsonResponse(422, {
+            code: 'validation_failed',
+            errors: { rating: ['1 to 5 stars, or null.'] },
+          });
+        }
+        const changed = { ...generation, rating, state, revision: generation.revision + 1 };
+        store(changed);
+        const chosen = server.song.selectedGeneration;
+        if (chosen?.id === changed.id) {
+          server.song = { ...server.song, selectedGeneration: { ...chosen, state } };
+        }
+        return jsonResponse(200, changed);
+      }
+      if (isComments && commentId === undefined && method === 'POST') {
+        const text = textOf(body.text);
+        const refused = invalidText(text);
+        if (refused) {
+          return refused;
+        }
+        const comment = testComment(generation.comments.length + 1, {
+          id: `0199b1a0-7000-7000-9000-${String(server.generationWrites.length).padStart(12, '0')}`,
+          text,
+          createdAt: '2026-10-02T09:00:00Z',
+        });
+        store({ ...generation, comments: [...generation.comments, comment] });
+        return jsonResponse(201, comment);
+      }
+      const comment = generation.comments.find((candidate) => candidate.id === commentId);
+      if (comment === undefined) {
+        return jsonResponse(404, { code: 'not_found' });
+      }
+      if (ifMatch !== `"${String(comment.revision)}"`) {
+        return jsonResponse(409, { code: 'revision_conflict', current: comment });
+      }
+      if (method === 'DELETE') {
+        store({
+          ...generation,
+          comments: generation.comments.filter((other) => other !== comment),
+        });
+        return new Response(null, { status: 204 });
+      }
+      const text = textOf(body.text);
+      const refused = invalidText(text);
+      if (refused) {
+        return refused;
+      }
+      if (text === comment.text) {
+        return jsonResponse(200, comment);
+      }
+      const edited = {
+        ...comment,
+        text,
+        editedAt: '2026-10-02T09:30:00Z',
+        revision: comment.revision + 1,
+      };
+      store({
+        ...generation,
+        comments: generation.comments.map((other) => (other === comment ? edited : other)),
+      });
+      return jsonResponse(200, edited);
+    }
+
+    const songGenerations = /\/api\/v1\/songs\/([^/]+)\/generations$/.exec(path);
+    if (songGenerations && method === 'GET') {
+      server.generationReads++;
+      const nextGenerations = server.nextGenerations;
+      if (nextGenerations) {
+        server.nextGenerations = undefined;
+        return nextGenerations();
+      }
+      const named = decodeURIComponent(songGenerations[1] ?? '');
+      const other = server.otherSongs.find((song) => song.id === named || song.shortcode === named);
+      if (other !== undefined) {
+        return jsonResponse(200, {
+          items: server.otherGenerations.filter((generation) => generation.song.id === other.id),
+        });
+      }
+      if (named !== server.song.id && named !== server.song.shortcode) {
+        return jsonResponse(404, { code: 'not_found' });
+      }
+      const numberOf = (generation: Generation) =>
+        generation.version.shortcode.slice(`${server.song.shortcode}-v`.length);
+      const items = [...server.generations].sort(
+        (left, right) =>
+          byNumber(testVersion(numberOf(left)), testVersion(numberOf(right))) ||
+          left.ordinal - right.ordinal,
+      );
+      return jsonResponse(200, { items });
+    }
+
+    const selection = /\/api\/v1\/songs\/([^/]+)\/selected-generation$/.exec(path);
+    if (selection && (method === 'PUT' || method === 'DELETE')) {
+      const ifMatch = new Headers(init?.headers).get('If-Match');
+      const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as Record<
+        string,
+        unknown
+      >;
+      server.selectionWrites.push({ method, ifMatch, body });
+      const nextSelectionWrite = server.nextSelectionWrite;
+      if (nextSelectionWrite) {
+        server.nextSelectionWrite = undefined;
+        return nextSelectionWrite();
+      }
+      if (ifMatch !== `"${String(server.song.revision)}"`) {
+        return jsonResponse(409, { code: 'revision_conflict', current: server.song });
+      }
+      const chosen =
+        method === 'DELETE'
+          ? null
+          : server.generations.find(
+              (candidate) =>
+                candidate.id === body.generation || candidate.shortcode === body.generation,
+            );
+      if (chosen === undefined) {
+        return jsonResponse(404, { code: 'not_found' });
+      }
+      if ((server.song.selectedGeneration?.id ?? null) !== (chosen?.id ?? null)) {
+        server.song = {
+          ...server.song,
+          hasSelectedGeneration: chosen !== null,
+          selectedGeneration:
+            chosen === null
+              ? null
+              : {
+                  id: chosen.id,
+                  shortcode: chosen.shortcode,
+                  state: chosen.state,
+                  remoteState: chosen.remoteState,
+                },
+          revision: server.song.revision + 1,
+        };
+        server.generations = server.generations.map((generation) => ({
+          ...generation,
+          isSelected: generation.id === chosen?.id,
+        }));
+      }
+      return jsonResponse(200, server.song);
+    }
+
     if (path.endsWith('/api/v1/songs') && method === 'GET') {
-      const items = server.songDeletedAt === undefined ? [server.song] : [];
+      const url = input instanceof Request ? input.url : input.toString();
+      const search = new URL(url, document.baseURI).searchParams.get('q')?.toLowerCase();
+      const live = server.songDeletedAt === undefined ? [server.song] : [];
+      const items =
+        search === undefined
+          ? live
+          : [...live, ...server.otherSongs].filter(
+              (song) =>
+                song.title.toLowerCase().includes(search) ||
+                song.shortcode.toLowerCase().startsWith(search),
+            );
       return jsonResponse(200, { items, page: 1, pageSize: 50, total: items.length });
     }
     const deletion = /\/api\/v1\/songs\/([^/]+)(\/deletion-impact)?$/.exec(path);

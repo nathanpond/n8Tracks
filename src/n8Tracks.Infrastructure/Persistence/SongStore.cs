@@ -140,6 +140,11 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
             songs = songs.Where(song => song.Id != excludeId);
         }
 
+        if (query.SunoWorkspaceId is { } sunoWorkspaceId)
+        {
+            songs = songs.Where(song => song.SunoWorkspaceId == sunoWorkspaceId);
+        }
+
         var total = await songs.CountAsync(cancellationToken).ConfigureAwait(false);
 
         // Times are fixed-width UTC text, so text order is time order; the shortcode number breaks ties.
@@ -171,6 +176,7 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
         var stateId = details.StateId;
         var release = details.Release;
         var explicitContent = SongReleaseRules.ExplicitText(release.Explicit);
+        var workspaceId = details.SunoWorkspaceId;
         var updated = UtcText.From(updatedUtc);
 
         // One conditional statement: the revision check and the write cannot be split by another writer.
@@ -191,6 +197,7 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
                     .SetProperty(song => song.Publishing, release.Publishing)
                     .SetProperty(song => song.Isrc, release.Isrc)
                     .SetProperty(song => song.Language, release.Language)
+                    .SetProperty(song => song.SunoWorkspaceId, workspaceId)
                     .SetProperty(song => song.UpdatedUtc, updated)
                     .SetProperty(song => song.Revision, song => song.Revision + 1),
                 cancellationToken)
@@ -220,6 +227,22 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
         }
 
         return true;
+    }
+
+    public async Task<bool> TrySelectGenerationAsync(Guid id, Guid? generationId, int revision, DateTimeOffset updatedUtc, CancellationToken cancellationToken)
+    {
+        var updated = UtcText.From(updatedUtc);
+
+        // One conditional statement: the revision check and the write cannot be split by another writer.
+        return await context.Songs
+            .Where(song => song.Id == id && song.Revision == revision)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(static song => song.SelectedGenerationId, generationId)
+                    .SetProperty(static song => song.UpdatedUtc, updated)
+                    .SetProperty(static song => song.Revision, static song => song.Revision + 1),
+                cancellationToken)
+            .ConfigureAwait(false) == 1;
     }
 
     /// <summary>
@@ -309,6 +332,34 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
                 .ToListAsync(cancellationToken)
                 .ConfigureAwait(false))
             .ToLookup(static link => link.SongId);
+        var selectedIds = records.Select(static song => song.SelectedGenerationId).OfType<Guid>().ToList();
+        // With each Selected Generation, its image (#121), which a Song without its own shows: joined
+        // in the same query, so a page of Songs reads its defaults at once.
+        var selected = await (
+                from generation in context.Generations.AsNoTracking()
+                where selectedIds.Contains(generation.Id)
+                join version in context.Versions on generation.VersionId equals version.Id
+                join asset in context.Assets on generation.ArtworkAssetId equals (Guid?)asset.Id into images
+                from image in images.DefaultIfEmpty()
+                select new
+                {
+                    generation.Id,
+                    generation.Ordinal,
+                    generation.State,
+                    generation.RemoteState,
+                    version.Number,
+                    ImageId = image == null ? (Guid?)null : image.Id,
+                    ImageWidth = image == null ? 0 : image.Width,
+                    ImageHeight = image == null ? 0 : image.Height,
+                })
+            .ToDictionaryAsync(static generation => generation.Id, cancellationToken)
+            .ConfigureAwait(false);
+
+        var workspaces = await SunoWorkspaceStore.ForIdsAsync(
+                context,
+                [.. records.Select(static song => song.SunoWorkspaceId).OfType<string>().Distinct(StringComparer.Ordinal)],
+                cancellationToken)
+            .ConfigureAwait(false);
 
         // Retention does not exist yet: the Song deletion story must leave Songs in retention out here.
         var isrcs = records.Where(static song => song.Isrc is not null).Select(static song => song.Isrc!).Distinct(StringComparer.Ordinal).ToList();
@@ -359,7 +410,18 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
                 song.Isrc is { } isrc
                     ? [.. sameIsrc[isrc].Where(other => other.Id != song.Id).Select(static other => new RelatedSong(other.Id, Shortcodes.ForSong(other.ShortcodeNumber), other.Title))]
                     : [],
-                artwork.GetValueOrDefault(song.Id));
+                artwork.GetValueOrDefault(song.Id),
+                song.SelectedGenerationId is { } selectedId && selected.TryGetValue(selectedId, out var chosen)
+                    ? new SelectedGenerationSummary(
+                        chosen.Id,
+                        Shortcodes.ForGeneration(song.ShortcodeNumber, chosen.Number, chosen.Ordinal),
+                        GenerationStates.StateOf(chosen.State),
+                        GenerationStates.RemoteStateOf(chosen.RemoteState))
+                    : null,
+                song.SelectedGenerationId is { } shownId && selected.TryGetValue(shownId, out var shown) && shown.ImageId is { } image
+                    ? new AttachedArtwork(image, null, shown.ImageWidth, shown.ImageHeight)
+                    : null,
+                song.SunoWorkspaceId is { } workspaceId ? workspaces[workspaceId] : null);
         })];
     }
 }

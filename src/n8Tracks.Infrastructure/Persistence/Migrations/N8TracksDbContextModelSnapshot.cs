@@ -478,6 +478,18 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("kind");
 
+                    b.Property<string>("LastAdapterVersion")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("last_adapter_version");
+
+                    b.Property<string>("LastExtensionVersion")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("last_extension_version");
+
+                    b.Property<string>("LastSeenAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("last_seen_at");
+
                     b.Property<string>("LastUsedUtc")
                         .HasColumnType("TEXT")
                         .HasColumnName("last_used_utc");
@@ -573,7 +585,58 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                     b.ToTable("editor_revisions", (string)null);
                 });
 
-            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.GenerationRecord", b =>
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.ExternalSunoReferenceRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Address")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("address");
+
+                    b.Property<string>("CreatedUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_utc");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("kind");
+
+                    b.Property<string>("Label")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("label");
+
+                    b.Property<string>("SunoId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("suno_id");
+
+                    b.Property<string>("Title")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("title");
+
+                    b.HasKey("Id")
+                        .HasName("pk_external_suno_references");
+
+                    b.HasIndex("SunoId", "Kind")
+                        .IsUnique()
+                        .HasDatabaseName("ix_external_suno_references_suno_id_kind");
+
+                    b.ToTable("external_suno_references", null, t =>
+                        {
+                            t.HasTrigger("tr_external_suno_references_identity_never_changes");
+
+                            t.HasCheckConstraint("ck_external_suno_references_kind", "kind IN ('clip', 'playlist', 'persona')");
+
+                            t.HasCheckConstraint("ck_external_suno_references_suno_id", "length(suno_id) BETWEEN 1 AND 100");
+                        });
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.GenerationCommentRecord", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -585,23 +648,246 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("created_utc");
 
+                    b.Property<string>("EditedUtc")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("edited_utc");
+
+                    b.Property<Guid>("GenerationId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("generation_id");
+
+                    b.Property<int>("Revision")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(1)
+                        .HasColumnName("revision");
+
+                    b.Property<string>("Text")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("text");
+
+                    b.HasKey("Id")
+                        .HasName("pk_generation_comments");
+
+                    b.HasIndex("GenerationId", "CreatedUtc", "Id")
+                        .HasDatabaseName("ix_generation_comments_generation_id_created_utc_id");
+
+                    b.ToTable("generation_comments", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_generation_comments_revision", "revision >= 1");
+
+                            t.HasCheckConstraint("ck_generation_comments_text", "length(text) BETWEEN 1 AND 2000");
+                        });
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.GenerationEventLinkRecord", b =>
+                {
+                    b.Property<Guid>("GenerationId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("generation_id");
+
+                    b.Property<Guid>("EventId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("event_id");
+
+                    b.HasKey("GenerationId")
+                        .HasName("pk_generation_event_links");
+
+                    b.HasIndex("EventId")
+                        .HasDatabaseName("ix_generation_event_links_event_id");
+
+                    b.ToTable("generation_event_links", (string)null);
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.GenerationEventRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<int>("BatchSize")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("batch_size");
+
+                    b.Property<string>("Confidence")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("confidence");
+
+                    b.Property<string>("OccurredUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("occurred_utc");
+
+                    b.Property<string>("ProviderRequestId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("provider_request_id");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("source");
+
+                    b.HasKey("Id")
+                        .HasName("pk_generation_events");
+
+                    b.ToTable("generation_events", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_generation_events_batch_size", "batch_size >= 1");
+
+                            t.HasCheckConstraint("ck_generation_events_confidence", "confidence IN ('high', 'medium')");
+
+                            t.HasCheckConstraint("ck_generation_events_source", "source IN ('observed', 'inferred', 'user')");
+                        });
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.GenerationRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ArchivedBy")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("archived_by");
+
+                    b.Property<Guid?>("ArtworkAssetId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("artwork_asset_id");
+
+                    b.Property<string>("AudioUrl")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("audio_url");
+
+                    b.Property<double?>("AverageBpm")
+                        .HasColumnType("REAL")
+                        .HasColumnName("average_bpm");
+
+                    b.Property<int?>("BatchIndex")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("batch_index");
+
+                    b.Property<string>("CreatedUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_utc");
+
+                    b.Property<string>("DeclinedHash")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("declined_hash");
+
+                    b.Property<double?>("DurationSeconds")
+                        .HasColumnType("REAL")
+                        .HasColumnName("duration_seconds");
+
+                    b.Property<string>("ImageUrl")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("image_url");
+
+                    b.Property<string>("KeptInputsHash")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("kept_inputs_hash");
+
+                    b.Property<double?>("MaximumBpm")
+                        .HasColumnType("REAL")
+                        .HasColumnName("maximum_bpm");
+
+                    b.Property<double?>("MinimumBpm")
+                        .HasColumnType("REAL")
+                        .HasColumnName("minimum_bpm");
+
+                    b.Property<string>("ModelLabel")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("model_label");
+
+                    b.Property<string>("ModelName")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("model_name");
+
+                    b.Property<string>("ModelVersion")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("model_version");
+
+                    b.Property<string>("MusicalKey")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("musical_key");
+
                     b.Property<int>("Ordinal")
                         .HasColumnType("INTEGER")
                         .HasColumnName("ordinal");
+
+                    b.Property<string>("ProviderStatus")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("provider_status");
+
+                    b.Property<int?>("Rating")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("rating");
+
+                    b.Property<string>("RemoteState")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("present")
+                        .HasColumnName("remote_state");
+
+                    b.Property<int>("Revision")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(1)
+                        .HasColumnName("revision");
 
                     b.Property<Guid>("SongId")
                         .HasColumnType("TEXT")
                         .HasColumnName("song_id");
 
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("active")
+                        .HasColumnName("state");
+
+                    b.Property<string>("StyleTags")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("style_tags");
+
+                    b.Property<string>("SunoCreatedUtc")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("suno_created_utc");
+
+                    b.Property<string>("SunoId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("suno_id");
+
+                    b.Property<string>("SunoTitle")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("suno_title");
+
                     b.Property<Guid>("VersionId")
                         .HasColumnType("TEXT")
                         .HasColumnName("version_id");
 
+                    b.Property<string>("WorkspaceId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("workspace_id");
+
                     b.HasKey("Id")
                         .HasName("pk_generations");
 
+                    b.HasIndex("ArtworkAssetId")
+                        .HasDatabaseName("ix_generations_artwork_asset_id");
+
                     b.HasIndex("SongId")
                         .HasDatabaseName("ix_generations_song_id");
+
+                    b.HasIndex("SunoId")
+                        .IsUnique()
+                        .HasDatabaseName("ix_generations_suno_id")
+                        .HasFilter("suno_id IS NOT NULL");
 
                     b.HasIndex("VersionId", "Ordinal")
                         .IsUnique()
@@ -609,9 +895,23 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
 
                     b.ToTable("generations", null, t =>
                         {
-                            t.HasTrigger("tr_generations_identity_never_changes");
+                            t.HasTrigger("tr_generations_aliases_stay_reserved");
+
+                            t.HasTrigger("tr_generations_move_only_leaving_an_alias");
+
+                            t.HasCheckConstraint("ck_generations_archived_by", "archived_by IS NULL OR archived_by IN ('user', 'sync')");
 
                             t.HasCheckConstraint("ck_generations_ordinal", "ordinal >= 1");
+
+                            t.HasCheckConstraint("ck_generations_rating", "rating IS NULL OR rating BETWEEN 1 AND 5");
+
+                            t.HasCheckConstraint("ck_generations_remote_state", "remote_state IN ('present', 'trashed', 'missing')");
+
+                            t.HasCheckConstraint("ck_generations_revision", "revision >= 1");
+
+                            t.HasCheckConstraint("ck_generations_state", "state IN ('active', 'archived')");
+
+                            t.HasCheckConstraint("ck_generations_suno_id", "suno_id IS NULL OR length(suno_id) > 0");
                         });
                 });
 
@@ -805,6 +1105,78 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.ProviderRecordRecord", b =>
+                {
+                    b.Property<Guid>("GenerationId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("generation_id");
+
+                    b.Property<string>("CapturedUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("captured_utc");
+
+                    b.Property<Guid?>("ExportId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("export_id");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("kind");
+
+                    b.Property<string>("Payload")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("payload");
+
+                    b.Property<string>("SunoId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("suno_id");
+
+                    b.HasKey("GenerationId")
+                        .HasName("pk_provider_records");
+
+                    b.ToTable("provider_records", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_provider_records_kind", "kind IN ('clip')");
+
+                            t.HasCheckConstraint("ck_provider_records_payload_json", "json_valid(payload) AND json_type(payload) = 'object'");
+                        });
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.ProviderTombstoneRecord", b =>
+                {
+                    b.Property<string>("SunoId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("suno_id");
+
+                    b.Property<string>("DeletedUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("deleted_utc");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("kind");
+
+                    b.Property<string>("Title")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("title");
+
+                    b.HasKey("SunoId")
+                        .HasName("pk_provider_tombstones");
+
+                    b.ToTable("provider_tombstones", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_provider_tombstones_kind", "kind IN ('clip')");
+
+                            t.HasCheckConstraint("ck_provider_tombstones_suno_id", "length(suno_id) > 0");
+                        });
+                });
+
             modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.RelationshipTypeRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -859,7 +1231,7 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("ck_song_relationship_types_names", "length(name) > 0 AND length(reverse_name) > 0");
 
-                            t.HasCheckConstraint("ck_song_relationship_types_suno_action", "suno_action IS NULL OR is_system = 1");
+                            t.HasCheckConstraint("ck_song_relationship_types_suno_action", "suno_action IS NULL OR is_system = 1 OR suno_action IN ('cover', 'extend', 'mashup', 'sample', 'reuse_prompt')");
                         });
 
                     b.HasData(
@@ -1015,6 +1387,33 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                     b.ToTable("settings", null, t =>
                         {
                             t.HasCheckConstraint("ck_settings_value_json", "json_valid(value)");
+                        });
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.ShortcodeAliasRecord", b =>
+                {
+                    b.Property<string>("Alias")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("alias");
+
+                    b.Property<string>("CreatedUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_utc");
+
+                    b.Property<Guid?>("GenerationId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("generation_id");
+
+                    b.HasKey("Alias")
+                        .HasName("pk_shortcode_aliases");
+
+                    b.HasIndex("GenerationId")
+                        .HasDatabaseName("ix_shortcode_aliases_generation_id");
+
+                    b.ToTable("shortcode_aliases", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_shortcode_aliases_alias", "length(alias) > 0 AND alias = lower(alias)");
                         });
                 });
 
@@ -1184,9 +1583,17 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         .HasColumnType("INTEGER")
                         .HasColumnName("revision");
 
+                    b.Property<Guid?>("SelectedGenerationId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("selected_generation_id");
+
                     b.Property<long>("ShortcodeNumber")
                         .HasColumnType("INTEGER")
                         .HasColumnName("shortcode_number");
+
+                    b.Property<string>("SunoWorkspaceId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("suno_workspace_id");
 
                     b.Property<string>("Title")
                         .IsRequired()
@@ -1221,9 +1628,15 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                     b.HasIndex("Isrc")
                         .HasDatabaseName("ix_songs_isrc");
 
+                    b.HasIndex("SelectedGenerationId")
+                        .HasDatabaseName("ix_songs_selected_generation_id");
+
                     b.HasIndex("ShortcodeNumber")
                         .IsUnique()
                         .HasDatabaseName("ix_songs_shortcode_number");
+
+                    b.HasIndex("SunoWorkspaceId")
+                        .HasDatabaseName("ix_songs_suno_workspace_id");
 
                     b.HasIndex("TitleKey")
                         .HasDatabaseName("ix_songs_title_key");
@@ -1308,6 +1721,373 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                     b.ToTable("song_tags", (string)null);
                 });
 
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.StagedClipPlaylistRecord", b =>
+                {
+                    b.Property<Guid>("ExportId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("export_id");
+
+                    b.Property<string>("SunoId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("suno_id");
+
+                    b.Property<string>("PlaylistId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("playlist_id");
+
+                    b.HasKey("ExportId", "SunoId", "PlaylistId")
+                        .HasName("pk_suno_export_record_playlists");
+
+                    b.HasIndex("ExportId", "PlaylistId")
+                        .HasDatabaseName("ix_suno_export_record_playlists_export_id_playlist_id");
+
+                    b.ToTable("suno_export_record_playlists", (string)null);
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.StagedClipRecord", b =>
+                {
+                    b.Property<Guid>("ExportId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("export_id");
+
+                    b.Property<string>("SunoId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("suno_id");
+
+                    b.Property<Guid?>("ArtworkAssetId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("artwork_asset_id");
+
+                    b.Property<string>("ChangedFields")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("[]")
+                        .HasColumnName("changed_fields");
+
+                    b.Property<string>("ChoiceJson")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("choice_json");
+
+                    b.Property<string>("Class")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("class");
+
+                    b.Property<double?>("DurationSeconds")
+                        .HasColumnType("REAL")
+                        .HasColumnName("duration_seconds");
+
+                    b.Property<string>("Flags")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("[]")
+                        .HasColumnName("flags");
+
+                    b.Property<Guid?>("GenerationId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("generation_id");
+
+                    b.Property<string>("ProposalJson")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("proposal_json");
+
+                    b.Property<string>("RawJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("raw_json");
+
+                    b.Property<string>("SunoCreatedUtc")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("suno_created_utc");
+
+                    b.Property<string>("Title")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("title");
+
+                    b.Property<bool>("Trashed")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("trashed");
+
+                    b.Property<string>("WorkspaceId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("workspace_id");
+
+                    b.HasKey("ExportId", "SunoId")
+                        .HasName("pk_suno_export_records");
+
+                    b.HasIndex("ArtworkAssetId")
+                        .HasDatabaseName("ix_suno_export_records_artwork_asset_id");
+
+                    b.HasIndex("ExportId", "Class")
+                        .HasDatabaseName("ix_suno_export_records_export_id_class");
+
+                    b.HasIndex("ExportId", "SunoCreatedUtc")
+                        .HasDatabaseName("ix_suno_export_records_export_id_suno_created_utc");
+
+                    b.ToTable("suno_export_records", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_suno_export_records_class", "class IS NULL OR class IN ('new', 'linked', 'changed', 'conflict', 'ignored', 'deleted')");
+
+                            t.HasCheckConstraint("ck_suno_export_records_suno_id", "length(suno_id) > 0");
+                        });
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.SunoExportPartRecord", b =>
+                {
+                    b.Property<Guid>("ExportId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("export_id");
+
+                    b.Property<int>("PartNumber")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("part_number");
+
+                    b.Property<string>("Body")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("body");
+
+                    b.Property<int>("ClipCount")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("clip_count");
+
+                    b.Property<string>("ReceivedUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("received_utc");
+
+                    b.HasKey("ExportId", "PartNumber")
+                        .HasName("pk_suno_export_parts");
+
+                    b.ToTable("suno_export_parts", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_suno_export_parts_part_number", "part_number >= 1");
+                        });
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.SunoExportRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AdapterVersion")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("adapter_version");
+
+                    b.Property<string>("CapturedUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("captured_utc");
+
+                    b.Property<string>("CompletedUtc")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("completed_utc");
+
+                    b.Property<string>("CreatedUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_utc");
+
+                    b.Property<Guid?>("CredentialId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("credential_id");
+
+                    b.Property<string>("EndedUtc")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("ended_utc");
+
+                    b.Property<string>("ExtensionVersion")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("extension_version");
+
+                    b.Property<Guid?>("JobId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("job_id");
+
+                    b.Property<bool>("LibraryComplete")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("library_complete");
+
+                    b.Property<string>("LibraryFiltersJson")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("library_filters_json");
+
+                    b.Property<string>("PlaylistsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("playlists_json");
+
+                    b.Property<string>("ReadyUtc")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("ready_utc");
+
+                    b.Property<string>("RemoteSkipsJson")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("remote_skips_json");
+
+                    b.Property<int>("Revision")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(1)
+                        .HasColumnName("revision");
+
+                    b.Property<string>("Scope")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("scope");
+
+                    b.Property<string>("ScopeIds")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("scope_ids");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("state");
+
+                    b.Property<bool>("TrashedComplete")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("trashed_complete");
+
+                    b.Property<bool>("WorkspacesComplete")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("workspaces_complete");
+
+                    b.Property<string>("WorkspacesJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("workspaces_json");
+
+                    b.HasKey("Id")
+                        .HasName("pk_suno_exports");
+
+                    b.HasIndex("State")
+                        .HasDatabaseName("ix_suno_exports_state");
+
+                    b.ToTable("suno_exports", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_suno_exports_scope", "scope IN ('library', 'workspaces', 'playlists', 'clips')");
+
+                            t.HasCheckConstraint("ck_suno_exports_state", "state IN ('receiving', 'classifying', 'ready', 'committing', 'committed', 'discarded', 'failed', 'expired')");
+                        });
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.SunoGenerationRequestRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ContentKey")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("content_key");
+
+                    b.Property<string>("CreatedUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_utc");
+
+                    b.Property<Guid?>("CredentialId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("credential_id");
+
+                    b.Property<string>("EndedUtc")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("ended_utc");
+
+                    b.Property<string>("Message")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("message");
+
+                    b.Property<string>("ObservedJson")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("observed_json");
+
+                    b.Property<string>("SnapshotJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("snapshot_json");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("state");
+
+                    b.Property<string>("Step")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("step");
+
+                    b.Property<string>("UpdatedUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("updated_utc");
+
+                    b.Property<string>("VerificationJson")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("verification_json");
+
+                    b.Property<Guid>("VersionId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_suno_generation_requests");
+
+                    b.HasIndex("VersionId", "CreatedUtc")
+                        .HasDatabaseName("ix_suno_generation_requests_version_id_created_utc");
+
+                    b.ToTable("suno_generation_requests", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_suno_generation_requests_message", "message IS NULL OR length(message) BETWEEN 1 AND 1000");
+
+                            t.HasCheckConstraint("ck_suno_generation_requests_state", "state IN ('pending', 'claimed', 'opening', 'workspace', 'filling', 'waiting', 'done', 'stopped', 'cancelled', 'expired')");
+
+                            t.HasCheckConstraint("ck_suno_generation_requests_step", "step IS NULL OR length(step) BETWEEN 1 AND 200");
+                        });
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.SunoIgnoredItemRecord", b =>
+                {
+                    b.Property<string>("SunoId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("suno_id");
+
+                    b.Property<string>("IgnoredUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("ignored_utc");
+
+                    b.Property<string>("LastSeenUtc")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("last_seen_utc");
+
+                    b.Property<string>("LastStatus")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("last_status");
+
+                    b.Property<string>("Title")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("title");
+
+                    b.Property<string>("WorkspaceId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("workspace_id");
+
+                    b.HasKey("SunoId")
+                        .HasName("pk_suno_ignored_items");
+
+                    b.ToTable("suno_ignored_items", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_suno_ignored_items_suno_id", "length(suno_id) > 0");
+                        });
+                });
+
             modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.SunoModelRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1336,6 +2116,10 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                     b.Property<int>("Position")
                         .HasColumnType("INTEGER")
                         .HasColumnName("position");
+
+                    b.Property<string>("ReportedAs")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("reported_as");
 
                     b.Property<bool>("Retired")
                         .HasColumnType("INTEGER")
@@ -1385,7 +2169,110 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                             Name = "v6-mini",
                             NameKey = "V6-MINI",
                             Position = 3,
+                            ReportedAs = "V6-MINI",
                             Retired = false
+                        });
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.SunoPersonaRecord", b =>
+                {
+                    b.Property<string>("SunoId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("suno_id");
+
+                    b.Property<string>("LastSeenUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("last_seen_utc");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("name");
+
+                    b.HasKey("SunoId")
+                        .HasName("pk_suno_personas");
+
+                    b.ToTable("suno_personas", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_suno_personas_suno_id", "length(suno_id) BETWEEN 1 AND 100");
+                        });
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.SunoPlaylistRecord", b =>
+                {
+                    b.Property<string>("SunoId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("suno_id");
+
+                    b.Property<string>("ClipIds")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("clip_ids");
+
+                    b.Property<string>("LastSeenUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("last_seen_utc");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("name");
+
+                    b.HasKey("SunoId")
+                        .HasName("pk_suno_playlists");
+
+                    b.ToTable("suno_playlists", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_suno_playlists_suno_id", "length(suno_id) BETWEEN 1 AND 100");
+                        });
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.SunoWorkspaceRecord", b =>
+                {
+                    b.Property<string>("SunoId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("suno_id");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("description");
+
+                    b.Property<string>("FirstSeenUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("first_seen_utc");
+
+                    b.Property<string>("LastSeenUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("last_seen_utc");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("name");
+
+                    b.Property<string>("RawJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("raw_json");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("state");
+
+                    b.HasKey("SunoId")
+                        .HasName("pk_suno_workspaces");
+
+                    b.ToTable("suno_workspaces", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_suno_workspaces_state", "state IN ('available', 'unavailable')");
+
+                            t.HasCheckConstraint("ck_suno_workspaces_suno_id", "length(suno_id) BETWEEN 1 AND 100");
                         });
                 });
 
@@ -1449,6 +2336,78 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.VersionFileInputRecord", b =>
+                {
+                    b.Property<Guid>("VersionId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version_id");
+
+                    b.Property<string>("Kind")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("kind");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("description");
+
+                    b.HasKey("VersionId", "Kind")
+                        .HasName("pk_version_file_inputs");
+
+                    b.ToTable("version_file_inputs", null, t =>
+                        {
+                            t.HasTrigger("tr_version_file_inputs_frozen_delete");
+
+                            t.HasTrigger("tr_version_file_inputs_frozen_insert");
+
+                            t.HasTrigger("tr_version_file_inputs_frozen_update");
+
+                            t.HasCheckConstraint("ck_version_file_inputs_description", "length(description) BETWEEN 1 AND 500");
+
+                            t.HasCheckConstraint("ck_version_file_inputs_kind", "kind IN ('audio', 'image', 'video')");
+                        });
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.VersionInspirationPlaylistRecord", b =>
+                {
+                    b.Property<Guid>("VersionId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version_id");
+
+                    b.Property<string>("ClipIds")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("clip_ids");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("name");
+
+                    b.Property<string>("SunoPlaylistId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("suno_playlist_id");
+
+                    b.HasKey("VersionId")
+                        .HasName("pk_version_inspiration_playlists");
+
+                    b.ToTable("version_inspiration_playlists", null, t =>
+                        {
+                            t.HasTrigger("tr_version_inspiration_playlists_frozen_delete");
+
+                            t.HasTrigger("tr_version_inspiration_playlists_frozen_insert");
+
+                            t.HasTrigger("tr_version_inspiration_playlists_frozen_update");
+
+                            t.HasCheckConstraint("ck_version_inspiration_playlists_clip_ids", "json_valid(clip_ids) AND json_type(clip_ids) = 'array' AND json_array_length(clip_ids) <= 500");
+
+                            t.HasCheckConstraint("ck_version_inspiration_playlists_id", "length(suno_playlist_id) BETWEEN 1 AND 100");
+
+                            t.HasCheckConstraint("ck_version_inspiration_playlists_name", "length(name) <= 200");
+                        });
+                });
+
             modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.VersionRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1460,6 +2419,10 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT")
                         .HasColumnName("created_utc");
+
+                    b.Property<string>("ImportedInputs")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("imported_inputs");
 
                     b.Property<string>("Inputs")
                         .IsRequired()
@@ -1554,6 +2517,126 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("ck_versions_revision", "revision >= 1");
 
                             t.HasCheckConstraint("ck_versions_visibility", "visibility IN ('active', 'archived')");
+                        });
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.VersionSourceRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<long?>("ContinueAtHundredths")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("continue_at_hundredths");
+
+                    b.Property<Guid?>("ExternalReferenceId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("external_reference_id");
+
+                    b.Property<Guid?>("GenerationId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("generation_id");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("position");
+
+                    b.Property<string>("SecondaryIds")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("secondary_ids");
+
+                    b.Property<Guid?>("SongId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("song_id");
+
+                    b.Property<string>("SourceGroup")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("source_group");
+
+                    b.Property<string>("SunoAction")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("suno_action");
+
+                    b.Property<Guid>("TypeId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("type_id");
+
+                    b.Property<Guid>("VersionId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_version_sources");
+
+                    b.HasIndex("ExternalReferenceId")
+                        .HasDatabaseName("ix_version_sources_external_reference_id");
+
+                    b.HasIndex("GenerationId")
+                        .HasDatabaseName("ix_version_sources_generation_id");
+
+                    b.HasIndex("SongId")
+                        .HasDatabaseName("ix_version_sources_song_id");
+
+                    b.HasIndex("TypeId")
+                        .HasDatabaseName("ix_version_sources_type_id");
+
+                    b.HasIndex("VersionId", "SourceGroup", "Position")
+                        .IsUnique()
+                        .HasDatabaseName("ix_version_sources_version_id_source_group_position");
+
+                    b.ToTable("version_sources", null, t =>
+                        {
+                            t.HasTrigger("tr_version_sources_frozen_delete");
+
+                            t.HasTrigger("tr_version_sources_frozen_insert");
+
+                            t.HasTrigger("tr_version_sources_frozen_update");
+
+                            t.HasCheckConstraint("ck_version_sources_continue_at", "continue_at_hundredths IS NULL OR continue_at_hundredths >= 0");
+
+                            t.HasCheckConstraint("ck_version_sources_group", "source_group IN ('audio', 'inspiration')");
+
+                            t.HasCheckConstraint("ck_version_sources_one_target", "(generation_id IS NOT NULL) + (song_id IS NOT NULL) + (external_reference_id IS NOT NULL) = 1");
+
+                            t.HasCheckConstraint("ck_version_sources_position", "position >= 0");
+
+                            t.HasCheckConstraint("ck_version_sources_secondary_ids", "secondary_ids IS NULL OR (json_valid(secondary_ids) AND json_type(secondary_ids) = 'object')");
+                        });
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.VersionVoiceRecord", b =>
+                {
+                    b.Property<Guid>("VersionId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version_id");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("name");
+
+                    b.Property<string>("PersonaId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("persona_id");
+
+                    b.HasKey("VersionId")
+                        .HasName("pk_version_voices");
+
+                    b.ToTable("version_voices", null, t =>
+                        {
+                            t.HasTrigger("tr_version_voices_frozen_delete");
+
+                            t.HasTrigger("tr_version_voices_frozen_insert");
+
+                            t.HasTrigger("tr_version_voices_frozen_update");
+
+                            t.HasCheckConstraint("ck_version_voices_name", "length(name) <= 200");
+
+                            t.HasCheckConstraint("ck_version_voices_persona_id", "length(persona_id) BETWEEN 1 AND 100");
                         });
                 });
 
@@ -1870,8 +2953,41 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         .HasConstraintName("fk_editor_revisions_versions_version_id");
                 });
 
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.GenerationCommentRecord", b =>
+                {
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.GenerationRecord", null)
+                        .WithMany()
+                        .HasForeignKey("GenerationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_generation_comments_generations_generation_id");
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.GenerationEventLinkRecord", b =>
+                {
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.GenerationEventRecord", null)
+                        .WithMany()
+                        .HasForeignKey("EventId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_generation_event_links_generation_events_event_id");
+
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.GenerationRecord", null)
+                        .WithOne()
+                        .HasForeignKey("n8Tracks.Infrastructure.Persistence.GenerationEventLinkRecord", "GenerationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_generation_event_links_generations_generation_id");
+                });
+
             modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.GenerationRecord", b =>
                 {
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.AssetRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ArtworkAssetId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_generations_assets_artwork_asset_id");
+
                     b.HasOne("n8Tracks.Infrastructure.Persistence.SongRecord", null)
                         .WithMany()
                         .HasForeignKey("SongId")
@@ -1902,6 +3018,16 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_playlist_songs_songs_song_id");
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.ProviderRecordRecord", b =>
+                {
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.GenerationRecord", null)
+                        .WithOne()
+                        .HasForeignKey("n8Tracks.Infrastructure.Persistence.ProviderRecordRecord", "GenerationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_provider_records_generations_generation_id");
                 });
 
             modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.SessionRecord", b =>
@@ -1966,6 +3092,18 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("fk_songs_versions_current_version_id");
 
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.GenerationRecord", null)
+                        .WithMany()
+                        .HasForeignKey("SelectedGenerationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_songs_generations_selected_generation_id");
+
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.SunoWorkspaceRecord", null)
+                        .WithMany()
+                        .HasForeignKey("SunoWorkspaceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_songs_suno_workspaces_suno_workspace_id");
+
                     b.HasOne("n8Tracks.Infrastructure.Persistence.WorkflowStateRecord", null)
                         .WithMany()
                         .HasForeignKey("WorkflowStateId")
@@ -2015,6 +3153,42 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         .HasConstraintName("fk_song_tags_tags_tag_id");
                 });
 
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.StagedClipPlaylistRecord", b =>
+                {
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.StagedClipRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ExportId", "SunoId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_suno_export_record_playlists_suno_export_records_export_id_suno_id");
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.StagedClipRecord", b =>
+                {
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.AssetRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ArtworkAssetId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_suno_export_records_assets_artwork_asset_id");
+
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.SunoExportRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ExportId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_suno_export_records_suno_exports_export_id");
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.SunoExportPartRecord", b =>
+                {
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.SunoExportRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ExportId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_suno_export_parts_suno_exports_export_id");
+                });
+
             modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.UsedVersionNumberRecord", b =>
                 {
                     b.HasOne("n8Tracks.Infrastructure.Persistence.SongRecord", null)
@@ -2025,6 +3199,26 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         .HasConstraintName("fk_used_version_numbers_songs_song_id");
                 });
 
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.VersionFileInputRecord", b =>
+                {
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.VersionRecord", null)
+                        .WithMany()
+                        .HasForeignKey("VersionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_version_file_inputs_versions_version_id");
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.VersionInspirationPlaylistRecord", b =>
+                {
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.VersionRecord", null)
+                        .WithOne()
+                        .HasForeignKey("n8Tracks.Infrastructure.Persistence.VersionInspirationPlaylistRecord", "VersionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_version_inspiration_playlists_versions_version_id");
+                });
+
             modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.VersionRecord", b =>
                 {
                     b.HasOne("n8Tracks.Infrastructure.Persistence.SongRecord", null)
@@ -2033,6 +3227,39 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_versions_songs_song_id");
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.VersionSourceRecord", b =>
+                {
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.ExternalSunoReferenceRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ExternalReferenceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_version_sources_external_suno_references_external_reference_id");
+
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.RelationshipTypeRecord", null)
+                        .WithMany()
+                        .HasForeignKey("TypeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_version_sources_song_relationship_types_type_id");
+
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.VersionRecord", null)
+                        .WithMany()
+                        .HasForeignKey("VersionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_version_sources_versions_version_id");
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.VersionVoiceRecord", b =>
+                {
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.VersionRecord", null)
+                        .WithOne()
+                        .HasForeignKey("n8Tracks.Infrastructure.Persistence.VersionVoiceRecord", "VersionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_version_voices_versions_version_id");
                 });
 
             modelBuilder.Entity("n8Tracks.Infrastructure.Retention.RetentionRecordRecord", b =>

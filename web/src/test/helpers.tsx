@@ -118,22 +118,3 @@ export function renderApp(path = '/') {
   });
   return { ...render(<RouterProvider router={router} />), router };
 }
-
-/**
- * Puts timeouts on a fake clock for a test that waits on the app's own timers (autosave, retries),
- * so how long a step takes depends on the app's timers and not on how loaded the machine is.
- * Testing Library is told, so its waits (`findBy…`, `waitFor`, the act drain after each step) move
- * the fake clock instead of waiting in real time: their `timeout` is then fake time too. Real
- * intervals and animation frames are left alone. A user-event session needs
- * `userEvent.setup({ advanceTimers })` with {@link advanceTimers}. Undone after each test.
- */
-export function fakeTimeouts(): void {
-  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-  // Testing Library recognises fake timers by a global `jest`; this is all of it that it calls.
-  vi.stubGlobal('jest', { advanceTimersByTime: advanceTimers });
-}
-
-/** Moves the fake clock on by `milliseconds`, running the timeouts that fall due. */
-export function advanceTimers(milliseconds: number): void {
-  vi.advanceTimersByTime(milliseconds);
-}

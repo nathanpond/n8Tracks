@@ -32,7 +32,7 @@ public sealed record AlbumDetails(
 /// <param name="Disc">The disc it is on, from 1.</param>
 /// <param name="Track">Its track number on that disc, from 1.</param>
 /// <param name="HasSelectedGeneration">
-/// Whether it has a Selected Generation. Always false until Generations can be selected (M4); a
+/// Whether its Song has a Selected Generation (#120); a
 /// track without one is marked incomplete.
 /// </param>
 public sealed record AlbumTrack(Guid SongId, string Shortcode, string Title, AlbumNamed? PrimaryArtist, AlbumTrackState State, int Disc, int Track, bool HasSelectedGeneration)

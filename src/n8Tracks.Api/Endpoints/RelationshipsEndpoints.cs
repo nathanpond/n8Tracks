@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
@@ -14,6 +15,9 @@ namespace n8Tracks.Api.Endpoints;
 /// How Songs relate. Relationship types: every type, system types first (<c>catalog.read</c>), and
 /// adding, renaming, and deleting the user's own (Settings → Relationships, session-only, each under
 /// the type's revision in <c>If-Match</c>); a system type refuses both with 409 <c>system_type</c>.
+/// A user type's <c>sunoAction</c> (one of the five audio actions, or null) is set on its PATCH and
+/// makes it usable as a Version source's type (#126); it cannot change, nor the type be deleted,
+/// while a Version source is of the type.
 /// A Song's relationships are embedded in the Song (<see cref="SongResponse"/>) and are added and
 /// removed from either Song (<c>songs.write</c>); neither moves a Song's revision, only both Songs'
 /// last-updated times, so no revision is sent. Every answer is <c>no-store</c>.
@@ -28,6 +32,8 @@ internal static class RelationshipsEndpoints
     public const string SystemTypeCode = "system_type";
     public const string InUseCode = "relationship_type_in_use";
     public const string ExistsCode = "relationship_exists";
+    public const string MappingInUseCode = "mapping_in_use";
+    public const string SourcesUseCode = "type_in_use";
 
     public static IEndpointRouteBuilder MapRelationships(this IEndpointRouteBuilder endpoints)
     {
@@ -52,7 +58,7 @@ internal static class RelationshipsEndpoints
 
         endpoints.MapPatch(TypePath, UpdateTypeAsync)
             .WithName("UpdateRelationshipType")
-            .WithSummary("Renames a user-defined relationship type (name and/or reverseName), given its revision in If-Match. System types are 409 system_type. No Song changes.")
+            .WithSummary("Renames a user-defined relationship type (name and/or reverseName) or sets the Suno action it stands for (sunoAction: cover, extend, mashup, sample, or reuse_prompt; null clears it; omitted leaves it), given its revision in If-Match. System types are 409 system_type. A different sunoAction is 409 mapping_in_use with versionCount while any Version source is of the type. No Song changes.")
             .SessionOnly()
             .Produces<RelationshipTypeResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
@@ -65,7 +71,7 @@ internal static class RelationshipsEndpoints
 
         endpoints.MapDelete(TypePath, DeleteTypeAsync)
             .WithName("DeleteRelationshipType")
-            .WithSummary("Deletes a user-defined relationship type, given its revision in If-Match. One in use needs removeRelationships=true, and its relationships go with it. System types are 409 system_type.")
+            .WithSummary("Deletes a user-defined relationship type, given its revision in If-Match. One in use needs removeRelationships=true, and its relationships go with it. System types are 409 system_type. One that a Version source is of (counting deleted Versions that can still be restored) is 409 type_in_use with versionCount.")
             .SessionOnly()
             .Produces(StatusCodes.Status204NoContent)
             .ProducesProblem(StatusCodes.Status400BadRequest)
@@ -138,13 +144,14 @@ internal static class RelationshipsEndpoints
     }
 
     /// <summary>
-    /// 200 with the type renamed (unchanged when nothing differs); 404 when there is no such type;
-    /// 409 <c>system_type</c> for a system type, or <c>revision_conflict</c> with <c>current</c>; 422
-    /// on a wrong or taken name, or when neither name is sent.
+    /// 200 with the type renamed or remapped (unchanged when nothing differs); 404 when there is no
+    /// such type; 409 <c>system_type</c> for a system type, <c>revision_conflict</c> with
+    /// <c>current</c>, or <c>mapping_in_use</c> with <c>versionCount</c>; 422 on a wrong or taken
+    /// name, an action outside the five, or when nothing is sent.
     /// </summary>
     private static async Task<Results<Ok<RelationshipTypeResponse>, ProblemHttpResult>> UpdateTypeAsync(
         Guid id,
-        RelationshipTypeRequest? request,
+        UpdateRelationshipTypeRequest? request,
         RelationshipService relationships,
         HttpContext context,
         ILoggerFactory loggers,
@@ -161,17 +168,33 @@ internal static class RelationshipsEndpoints
         var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
         var name = Text(request?.Name, RelationshipService.NameField, errors);
         var reverseName = Text(request?.ReverseName, RelationshipService.ReverseNameField, errors);
+        SunoActionChange? sunoAction = null;
+        switch (request?.SunoAction)
+        {
+            case null or { ValueKind: JsonValueKind.Undefined }:
+                break;
+            case { ValueKind: JsonValueKind.Null }:
+                sunoAction = new SunoActionChange(null);
+                break;
+            case { ValueKind: JsonValueKind.String } action:
+                sunoAction = new SunoActionChange(action.GetString());
+                break;
+            default:
+                errors[RelationshipService.SunoActionField] = ["Send an action's key as text, or null for none."];
+                break;
+        }
+
         if (errors.Count > 0)
         {
             return ApiProblem.ValidationFailed(context, errors);
         }
 
-        var outcome = await relationships.UpdateTypeAsync(id, name, reverseName, revision!.Value, cancellationToken);
+        var outcome = await relationships.UpdateTypeAsync(id, name, reverseName, sunoAction, revision!.Value, cancellationToken);
         if (outcome is RelationshipTypeOutcome.Saved saved)
         {
             if (saved.Type.Revision != revision)
             {
-                Log(loggers).LogInformation("Relationship type renamed: {RelationshipTypeId}", id);
+                Log(loggers).LogInformation("Relationship type changed: {RelationshipTypeId}", id);
             }
 
             Revisions.SetETag(context, saved.Type.Revision);
@@ -185,7 +208,8 @@ internal static class RelationshipsEndpoints
     /// 204 when the type is deleted; 404 when there is no such type; 409 <c>system_type</c>,
     /// <c>revision_conflict</c> with <c>current</c>, or <c>relationship_type_in_use</c> with
     /// <c>relationshipCount</c> when relationships use it and <c>removeRelationships=true</c> was not
-    /// sent; 422 on a wrong <c>removeRelationships</c>.
+    /// sent, or <c>type_in_use</c> with <c>versionCount</c> when a Version source is of it; 422 on a
+    /// wrong <c>removeRelationships</c>.
     /// </summary>
     private static async Task<Results<NoContent, ProblemHttpResult>> DeleteTypeAsync(
         Guid id,
@@ -362,21 +386,43 @@ internal static class RelationshipsEndpoints
                 InUseCode,
                 "Relationships use this type. Confirm that they are removed with it (removeRelationships=true) to delete it.",
                 [new("relationshipCount", inUse.RelationshipCount)]),
+            RelationshipTypeOutcome.MappingInUse mapping => ApiProblem.For(
+                context,
+                StatusCodes.Status409Conflict,
+                MappingInUseCode,
+                $"{Versions(mapping.VersionCount)} a source of this type, so the Suno action it stands for cannot change.",
+                [new("versionCount", mapping.VersionCount)]),
+            RelationshipTypeOutcome.UsedBySources sources => ApiProblem.For(
+                context,
+                StatusCodes.Status409Conflict,
+                SourcesUseCode,
+                $"{Versions(sources.VersionCount)} a source of this type (counting deleted Versions that can still be restored), so it cannot be deleted.",
+                [new("versionCount", sources.VersionCount)]),
             _ => throw new InvalidOperationException("Unknown relationship type outcome."),
         };
+
+    private static string Versions(int count) =>
+        count == 1 ? "1 Version has" : string.Create(CultureInfo.InvariantCulture, $"{count} Versions have");
 
     private static ILogger Log(ILoggerFactory loggers) => loggers.CreateLogger(typeof(RelationshipsEndpoints));
 }
 
-/// <summary>A new type, or a rename: each name read as raw JSON, so a wrong type is a field error.</summary>
+/// <summary>A new type: each name read as raw JSON, so a wrong type is a field error.</summary>
 internal sealed record RelationshipTypeRequest(JsonElement? Name, JsonElement? ReverseName);
+
+/// <summary>
+/// A change of a user type: either name, and the Suno action it stands for, each read as raw JSON. A
+/// missing <c>sunoAction</c> is <see cref="JsonValueKind.Undefined"/> (unchanged); null clears it.
+/// </summary>
+internal sealed record UpdateRelationshipTypeRequest(JsonElement? Name, JsonElement? ReverseName, JsonElement SunoAction);
 
 /// <summary>Relating Songs: the type's ID, the direction read from this Song, and the other Song's ID or shortcode, each read as raw JSON.</summary>
 internal sealed record RelateSongsRequest(JsonElement? TypeId, JsonElement? Direction, JsonElement? OtherSong);
 
 /// <summary>
 /// A relationship type as the API shows it: both names (equal for a symmetric type), whether it is
-/// a system type, the Suno action a system type stands for, how many relationships use it, and its revision.
+/// a system type, the Suno action it stands for (fixed for a system type, set by the user for their own;
+/// null for none), how many relationships use it, and its revision.
 /// </summary>
 internal sealed record RelationshipTypeResponse(
     Guid Id,

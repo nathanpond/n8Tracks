@@ -30,7 +30,9 @@ jobs:
   dotnet:
     name: dotnet
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Raised from 20: the API suite (~2,140 tests) passed the 20-minute mark on
+    # the runner during M4 (#315). #316 tracks splitting it and lowering this again.
+    timeout-minutes: 40
     env:
       DOTNET_NOLOGO: 'true'
       DOTNET_CLI_TELEMETRY_OPTOUT: 'true'

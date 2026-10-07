@@ -117,7 +117,8 @@ public static class VersionRules
     /// the new Version. The source is not changed. The number must already have been checked against
     /// <see cref="VersionNumbering.Options"/>, the name against <see cref="NameErrors"/>, and any
     /// lyrics or styles against <see cref="LyricsErrors"/> and <see cref="StylesErrors"/>. Every Suno
-    /// option (<see cref="SongVersion.Inputs"/>, applicable or not) is copied as it is.
+    /// option (<see cref="SongVersion.Inputs"/>, applicable or not) is copied as it is, and so is its
+    /// lineage (<see cref="SongVersion.Lineage"/>): the same sources, pointing at the same targets.
     /// </summary>
     public static SongVersion CreateFrom(
         SongVersion source,
@@ -157,7 +158,8 @@ public static class VersionRules
             source.Inputs,
             now,
             now,
-            Revision: 1);
+            Revision: 1,
+            source.Lineage);
     }
 
     /// <summary>

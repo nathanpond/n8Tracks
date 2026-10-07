@@ -1,4 +1,5 @@
 import {
+  Anchor,
   Button,
   Group,
   Menu,
@@ -11,14 +12,17 @@ import {
   VisuallyHidden,
 } from '@mantine/core';
 import { useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { Link } from 'react-router';
 import type { FieldValue } from '../api/saves';
 import { kindLabel } from '../api/versions';
 import { CONCEPT_MAXIMUM_LENGTH, type Song, type WorkflowState } from '../api/songs';
 import { ArtworkImage } from '../common/ArtworkImage';
 import { ShortcodeBadge } from '../common/ShortcodeBadge';
+import { SelectedGenerationBadges } from '../generations/GenerationParts';
 import { focusOnMount, saveError, useInPlaceEdit } from '../common/useInPlaceEdit';
 import type { SaveOutcome } from '../common/useRevisionedSave';
 import { DuplicateTitleIndicator } from './DuplicateTitleIndicator';
+import { UnavailableWorkspaceBadge } from './details/WorkspaceSection';
 import { StateBadge, TagLabels } from './SongParts';
 import { conceptError, singleLine, titleError } from './songRules';
 
@@ -268,10 +272,43 @@ function StateField({
 }
 
 /**
+ * The Song's Selected Generation (#120): its shortcode, linking to its panel, with badges when it is
+ * Archived, in Suno's Trash, or missing from Suno; or that the Song has none.
+ */
+function SelectedGenerationField({ song }: { song: Song }) {
+  const selected = song.selectedGeneration;
+  return (
+    <Group gap={6} wrap="wrap" data-testid="song-selected-generation">
+      <Text size="sm">Selected Generation:</Text>
+      {selected === null ? (
+        <Text size="sm" c="var(--n8-color-secondary-text)">
+          None
+        </Text>
+      ) : (
+        <>
+          <Anchor
+            component={Link}
+            to={`/songs/${song.shortcode}/generations/${selected.shortcode}`}
+            size="sm"
+            ff="monospace"
+            underline="always"
+            aria-label={`Selected Generation ${selected.shortcode}`}
+          >
+            {selected.shortcode}
+          </Anchor>
+          <SelectedGenerationBadges selected={selected} />
+        </>
+      )}
+    </Group>
+  );
+}
+
+/**
  * The Song page's header: its artwork (chosen in the Details panel; a placeholder when it has
  * none), shortcode, title, workflow state, and concept, each edited where it is
  * shown, the Song's Tags as coloured labels (chosen in the Details panel), and `actions` (the
- * Details control) beside the shortcode. Every save goes through the
+ * Details control) beside the shortcode, its Selected Generation with a link to it, and a badge when
+ * its Suno workspace is unavailable (#129). Every save goes through the
  * page's one `useRevisionedSave` (`save`), so a save based on an old revision is refused and offered
  * for comparison and reapplying instead of overwriting.
  */
@@ -299,6 +336,10 @@ export function SongHeader({
             <Text size="sm" data-testid="song-kind">
               Kind: {kindLabel(song.currentVersion.kind)}
             </Text>
+            <SelectedGenerationField song={song} />
+            {song.sunoWorkspace?.state === 'unavailable' && (
+              <UnavailableWorkspaceBadge workspace={song.sunoWorkspace} />
+            )}
             {actions !== undefined && <div style={{ marginInlineStart: 'auto' }}>{actions}</div>}
           </Group>
           <Group gap="md" align="flex-start" wrap="wrap">

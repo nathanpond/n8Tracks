@@ -8,6 +8,7 @@ using n8Tracks.Application.References;
 using n8Tracks.Application.Songs;
 using n8Tracks.Application.Suno;
 using n8Tracks.Domain.Songs;
+using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Api.Endpoints;
 
@@ -681,7 +682,7 @@ internal static class VersionsEndpoints
                 return Revisions.Conflict(context, VersionDetailResponse.From(conflict.Current));
 
             case VersionUpdateOutcome.Invalid invalid:
-                return ApiProblem.ValidationFailed(context, invalid.Errors);
+                return ApiProblem.ValidationFailed(context, invalid.Errors, invalid.Rules);
 
             case VersionUpdateOutcome.NotFound:
                 return await MissingVersionAsync(context, reference, deletions, cancellationToken);
@@ -708,7 +709,7 @@ internal static class VersionsEndpoints
     /// number, and when, when it names a Version deleted on its own within its retention period;
     /// otherwise <c>not_found</c>.
     /// </summary>
-    private static async Task<ProblemHttpResult> MissingVersionAsync(
+    internal static async Task<ProblemHttpResult> MissingVersionAsync(
         HttpContext context,
         CatalogReference reference,
         VersionDeletionService deletions,
@@ -926,9 +927,13 @@ internal sealed record VersionResponse(
 /// <summary>
 /// One Version with its creation inputs: everything <see cref="VersionResponse"/> has, plus its
 /// lyrics and styles exactly as stored (empty strings when there are none), <c>inputs</c> (its kind,
-/// modes, and every Suno option, applicable or not), and the read-only <c>effectiveInputs</c> (the
-/// ones that apply to its kind and mode, lyrics and styles included when they do: what is sent to
-/// Suno). Times are UTC.
+/// modes, every Suno option, applicable or not, and its lineage: <c>sources</c>, <c>inspiration</c>,
+/// <c>voice</c>, and <c>fileInputs</c>, #122), and the read-only <c>effectiveInputs</c> (the ones that
+/// apply to its kind and mode, lyrics and styles included when they do: what is sent to Suno). Times are UTC.
+/// <c>imported</c> is null for a Version made in n8Tracks; for one created from a Suno clip (#135) it
+/// says which options Suno does not return (<c>notReturned</c>: they hold the default), which returned
+/// values are outside n8Tracks' limits (<c>outOfRange</c>: kept as Suno returned them), and each unknown
+/// choice as Suno returned it (<c>rawValues</c>, JSON text). Options are named as the API spells them.
 /// </summary>
 internal sealed record VersionDetailResponse(
     Guid Id,
@@ -947,7 +952,8 @@ internal sealed record VersionDetailResponse(
     string Lyrics,
     string Styles,
     JsonObject Inputs,
-    JsonObject EffectiveInputs)
+    JsonObject EffectiveInputs,
+    ImportedInputsResponse? Imported)
 {
     public static VersionDetailResponse From(VersionDetail version)
     {
@@ -970,8 +976,24 @@ internal sealed record VersionDetailResponse(
             summary.Kind,
             version.Lyrics,
             version.Styles,
-            VersionInputRules.ToJson(version.Inputs),
-            VersionInputRules.Effective(CreateFieldInventory.Embedded, version.Inputs, version.Lyrics, version.Styles));
+            With(VersionInputRules.ToJson(version.Inputs), VersionLineageInputs.ToJson(version.Lineage)),
+            VersionEffectiveInputs.Of(version),
+            ImportedInputsResponse.From(version.Imported));
+    }
+
+    /// <summary>The key of <c>effectiveInputs</c> that reports the Song's Suno workspace (the inventory's <c>workspace</c>, #129).</summary>
+    public const string WorkspaceKey = VersionEffectiveInputs.WorkspaceKey;
+
+    /// <summary><paramref name="options"/> followed by the lineage keys in <paramref name="lineage"/>.</summary>
+    private static JsonObject With(JsonObject options, JsonObject lineage)
+    {
+        foreach (var (key, value) in lineage.ToList())
+        {
+            lineage.Remove(key);
+            options[key] = value;
+        }
+
+        return options;
     }
 }
 
@@ -1014,3 +1036,10 @@ internal sealed record SnapshotDetailResponse(Guid Id, Guid VersionId, DateTime 
 
 /// <summary>A Version's snapshots, newest first.</summary>
 internal sealed record SnapshotListResponse(SnapshotResponse[] Items);
+
+/// <summary>What import recorded about a Version's inputs (#135), as <see cref="VersionDetailResponse"/> shows it.</summary>
+internal sealed record ImportedInputsResponse(IReadOnlyList<string> NotReturned, IReadOnlyList<string> OutOfRange, IReadOnlyDictionary<string, string> RawValues)
+{
+    public static ImportedInputsResponse? From(ImportedInputMarks? marks) =>
+        marks is null ? null : new(marks.NotReturned, marks.OutOfRange, marks.RawValues);
+}

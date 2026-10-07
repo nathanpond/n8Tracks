@@ -41,6 +41,8 @@ public sealed class LogRedactionGuardTests
     private const string PasswordSentinel = "sentinel-password-3e55";
     private const string LyricsSentinel = "sentinel-lyrics-88f1";
     private const string RawPayloadSentinel = "sentinel-raw-payload-d2c7";
+    private const string RawClipSentinel = "sentinel-raw-clip-7b19";
+    private const string StyleTagsSentinel = "sentinel-style-tags-c3d0";
     private const string NestedSentinel = "sentinel-nested-api-key-64ab";
     private const string ScopeSentinel = "sentinel-scope-style-1f90";
     private const string TitleSentinel = "sentinel-title-visible-e3b4";
@@ -59,6 +61,8 @@ public sealed class LogRedactionGuardTests
         PasswordSentinel,
         LyricsSentinel,
         RawPayloadSentinel,
+        RawClipSentinel,
+        StyleTagsSentinel,
         NestedSentinel,
         ScopeSentinel,
         SetupPasswordSentinel,
@@ -252,6 +256,44 @@ public sealed class LogRedactionGuardTests
         Assert.DoesNotContain(token[4..], captured, StringComparison.Ordinal);
         Assert.DoesNotContain(n8Tracks.Application.Credentials.CredentialToken.Hash(token), captured, StringComparison.Ordinal);
         Assert.DoesNotContain(unknown[4..], captured, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The extension's handshake carries its token and two version headers. At Debug, through a
+    /// handshake that is answered and one with a revoked token, neither the token nor its hash
+    /// reaches the log, while the request itself is logged.
+    /// </summary>
+    [Fact]
+    public async Task TheExtensionHandshakeNeverLogsItsToken()
+    {
+        using var factory = new LoggingApiFactory("Debug");
+        using var client = factory.CreateClient();
+        await SetupApi.CompleteAsync(client);
+        var created = Assert.IsType<n8Tracks.Application.Credentials.CredentialOutcome.Created>(await CredentialApi.CreateAsync(
+            factory,
+            new n8Tracks.Application.Credentials.CredentialRequest("sentinel extension", "extension", ["suno.sync"])));
+
+        foreach (var status in new[] { HttpStatusCode.OK, HttpStatusCode.Unauthorized })
+        {
+            if (status == HttpStatusCode.Unauthorized)
+            {
+                await using var scope = factory.Services.CreateAsyncScope();
+                await scope.ServiceProvider.GetRequiredService<n8Tracks.Application.Credentials.CredentialService>().RevokeAsync(created.Id, CancellationToken.None);
+            }
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, new Uri("/api/v1/extension/handshake", UriKind.Relative));
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", created.Token);
+            Assert.True(request.Headers.TryAddWithoutValidation("X-N8Tracks-Extension-Version", "0.1.0"));
+            Assert.True(request.Headers.TryAddWithoutValidation("X-N8Tracks-Adapter-Version", "1"));
+            using var response = await client.SendAsync(request);
+            Assert.Equal(status, response.StatusCode);
+            await factory.CompletionLine(LoggingApiFactory.RequestId(response));
+        }
+
+        var captured = factory.CapturedText;
+        Assert.Contains("/api/v1/extension/handshake", captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(created.Token[4..], captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(n8Tracks.Application.Credentials.CredentialToken.Hash(created.Token), captured, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -464,6 +506,141 @@ public sealed class LogRedactionGuardTests
         Assert.DoesNotContain(ToolLyricsSentinel, captured, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A Generation's raw clip at Debug (#117): attached from a clip whose prompt and style text hold
+    /// sentinels, attached again (refused), refused as invalid with the sentinel in it, and read back
+    /// through every Generation endpoint, the provider record included. The requests reach the log;
+    /// no clip content does.
+    /// </summary>
+    [Fact]
+    public async Task ARawClipNeverReachesTheLog()
+    {
+        const string PromptSentinel = "sentinel-clip-prompt-0f6e";
+        const string InvalidSentinel = "sentinel-invalid-clip-a5b2";
+
+        using var factory = new LoggingApiFactory("Debug");
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        await Songs.SongApi.CreateAsync(client, "Clipped");
+        var raw = Generations.Clips.Handwritten("logged-clip", PromptSentinel);
+        await Songs.SongApi.AttachGenerationAsync(factory, "n8-1-v1", raw);
+        Assert.IsType<n8Tracks.Application.Generations.GenerationAttachOutcome.SunoIdExists>(await Songs.SongApi.AttachAsync(factory, "n8-1-v1", raw));
+        Assert.IsType<n8Tracks.Application.Generations.GenerationAttachOutcome.InvalidClip>(
+            await Songs.SongApi.AttachAsync(factory, "n8-1-v1", "{\"title\":\"" + InvalidSentinel + "\",\"id\":"));
+
+        foreach (var path in new[] { "generations/n8-1-v1-g1/provider-record", "generations/n8-1-v1-g1", "versions/n8-1-v1/generations", "songs/n8-1/generations" })
+        {
+            using var response = await client.GetAsync(new Uri("/api/v1/" + path, UriKind.Relative));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+
+        // The provider-record answer itself held the prompt: the request was logged, its body was not.
+        var captured = factory.CapturedText;
+        Assert.Contains("/api/v1/generations/n8-1-v1-g1/provider-record", captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(PromptSentinel, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(InvalidSentinel, captured, StringComparison.Ordinal);
+        Assert.All(
+            ["rawClip", "raw_clip", "clipJson", "rawClipJson", "providerRecord", "styleTags", "style_tags", "payload"],
+            name => Assert.True(n8Tracks.Infrastructure.Logging.RedactionPolicy.IsSensitive(name), name));
+    }
+
+    /// <summary>
+    /// A Suno export at Debug (#131): a header whose raw workspace and playlist hold sentinels, a part whose
+    /// clip holds one in its prompt, a refused part with one in a clip that cannot be kept, the completion,
+    /// and the reads. The export's ID and counts reach the log; no raw payload does.
+    /// </summary>
+    [Fact]
+    public async Task ARawSunoExportNeverReachesTheLog()
+    {
+        const string PromptSentinel = "sentinel-export-prompt-5e21";
+        const string WorkspaceSentinel = "sentinel-export-workspace-b08c";
+        const string RefusedSentinel = "sentinel-export-refused-71fa";
+
+        using var factory = new LoggingApiFactory("Debug");
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var token = await Suno.SunoWorkspaceApi.ExtensionTokenAsync(factory);
+        var header = Suno.SunoExportApi.Header(
+            workspaces: [Suno.SunoWorkspaceApi.Project("ws", "Studio", description: WorkspaceSentinel)],
+            workspacesComplete: true,
+            playlists: [Suno.SunoExportApi.Playlist("pl", WorkspaceSentinel, "logged-clip")]);
+        var id = await Suno.SunoExportApi.CreateAsync(client, token, header);
+        await Suno.SunoExportApi.PartAsync(client, token, id, Suno.SunoExportApi.Part(1, [System.Text.Json.Nodes.JsonNode.Parse(Generations.Clips.Handwritten("logged-clip", PromptSentinel))!]));
+        using (var refused = await Suno.SunoExportApi.SendAsync(
+            client,
+            HttpMethod.Post,
+            Suno.SunoExportApi.Export(id, "/parts"),
+            token,
+            "{\"partNumber\":2,\"clips\":[{\"id\":5,\"prompt\":\"" + RefusedSentinel + "\"}]}"))
+        {
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, refused.StatusCode);
+        }
+
+        await Suno.SunoExportApi.CompleteAsync(client, token, id);
+        await Suno.SunoExportApi.GetAsync(client, token, id);
+        await Suno.SunoExportApi.RecordsAsync(client, id);
+
+        var captured = factory.CapturedText;
+        Assert.Contains("Suno export completed", captured, StringComparison.Ordinal);
+        Assert.Contains(id.ToString(), captured, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(PromptSentinel, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(WorkspaceSentinel, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(RefusedSentinel, captured, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A Generation comment at Debug (#119): added, edited, refused as too long, read back with its
+    /// Generation, and deleted, each with sentinel text. The requests and the comment IDs reach the
+    /// log; no comment text does.
+    /// </summary>
+    [Fact]
+    public async Task CommentTextNeverReachesTheLog()
+    {
+        const string CommentSentinel = "sentinel-comment-text-41c8";
+        const string EditedSentinel = "sentinel-comment-edited-9a27";
+
+        using var factory = new LoggingApiFactory("Debug");
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        await Songs.SongApi.CreateAsync(client, "Commented");
+        await Songs.SongApi.AttachGenerationAsync(factory, "n8-1-v1", null);
+        var comments = new Uri("/api/v1/generations/n8-1-v1-g1/comments", UriKind.Relative);
+
+        using var created = await Songs.SongApi.SendJsonAsync(client, HttpMethod.Post, comments, JsonSerializer.Serialize(new { text = CommentSentinel }));
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var id = (await SetupApi.JsonAsync(created)).GetProperty("id").GetString();
+        var comment = new Uri($"/api/v1/generations/n8-1-v1-g1/comments/{id}", UriKind.Relative);
+
+        using (var edit = Antiforgery(new HttpRequestMessage(HttpMethod.Patch, comment) { Content = new StringContent(JsonSerializer.Serialize(new { text = EditedSentinel }), Encoding.UTF8, "application/json") }))
+        {
+            Assert.True(edit.Headers.TryAddWithoutValidation("If-Match", "\"1\""));
+            using var edited = await client.SendAsync(edit);
+            Assert.Equal(HttpStatusCode.OK, edited.StatusCode);
+        }
+
+        using (var refused = await Songs.SongApi.SendJsonAsync(client, HttpMethod.Post, comments, JsonSerializer.Serialize(new { text = CommentSentinel + new string('x', 2000) })))
+        {
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, refused.StatusCode);
+        }
+
+        using (var read = await client.GetAsync(new Uri("/api/v1/generations/n8-1-v1-g1", UriKind.Relative)))
+        {
+            Assert.Equal(HttpStatusCode.OK, read.StatusCode);
+        }
+
+        using (var delete = Antiforgery(new HttpRequestMessage(HttpMethod.Delete, comment)))
+        {
+            Assert.True(delete.Headers.TryAddWithoutValidation("If-Match", "\"2\""));
+            using var deleted = await client.SendAsync(delete);
+            Assert.Equal(HttpStatusCode.NoContent, deleted.StatusCode);
+        }
+
+        var captured = factory.CapturedText;
+        Assert.Contains(id!, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(CommentSentinel, captured, StringComparison.Ordinal);
+        Assert.DoesNotContain(EditedSentinel, captured, StringComparison.Ordinal);
+        Assert.All(
+            ["comment", "Comments", "commentText", "comment_text", "GenerationComment"],
+            name => Assert.True(n8Tracks.Infrastructure.Logging.RedactionPolicy.IsSensitive(name), name));
+    }
+
     private static HttpRequestMessage Antiforgery(HttpRequestMessage request)
     {
         request.Headers.Add(SessionApi.AntiforgeryHeader, "1");
@@ -530,8 +707,10 @@ public sealed class LogRedactionGuardTests
         var logger = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("n8Tracks.Tests.Probe");
 
         var body = await JsonSerializer.DeserializeAsync<JsonElement>(context.Request.Body, cancellationToken: context.RequestAborted);
-        var headers = context.Request.Headers.ToDictionary(header => header.Key, header => header.Value.ToString(), StringComparer.Ordinal);
-        var query = context.Request.Query.ToDictionary(pair => pair.Key, pair => pair.Value.ToString(), StringComparer.Ordinal);
+        // Line breaks are taken out of what the request sent, so the probe cannot forge a log line of
+        // its own; the sentinels have none, and what redaction must hide is left as it came.
+        var headers = context.Request.Headers.ToDictionary(header => OneLine(header.Key), header => OneLine(header.Value.ToString()), StringComparer.Ordinal);
+        var query = context.Request.Query.ToDictionary(pair => OneLine(pair.Key), pair => OneLine(pair.Value.ToString()), StringComparer.Ordinal);
 
         using (logger.BeginScope(new Dictionary<string, object> { ["Style"] = ScopeSentinel }))
         {
@@ -540,6 +719,12 @@ public sealed class LogRedactionGuardTests
                 new ProbeSong(TitleSentinel, PasswordSentinel, LyricsSentinel, RawPayloadSentinel));
 
             logger.LogInformation("Probe logged the body {@Body}, headers {@Headers}, and query {@Query}", body, headers, query);
+
+            // A Generation's raw clip and Suno's style text, under the names they travel by (#117).
+            logger.LogInformation(
+                "Probe logged a Generation {@Generation} and its {ProviderRecord}",
+                new { SunoTitle = "a clip", RawClip = RawClipSentinel, StyleTags = StyleTagsSentinel },
+                RawClipSentinel);
 
             logger.LogInformation(
                 "Probe logged nested {@Outer} and a named value {AccessToken}",
@@ -550,6 +735,9 @@ public sealed class LogRedactionGuardTests
         context.Response.Headers.Append("Set-Cookie", $"session={SetCookieSentinel}; HttpOnly");
         await context.Response.WriteAsync("ok", context.RequestAborted);
     }
+
+    /// <summary>The text with each carriage return and line feed made a space.</summary>
+    private static string OneLine(string text) => text.Replace('\r', ' ').Replace('\n', ' ');
 
     private sealed record ProbeSong(string Title, string Password, string Lyrics, string RawPayload);
 }

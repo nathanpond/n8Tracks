@@ -24,7 +24,7 @@ function sidebar(): HTMLElement {
 }
 
 describe('the signed-in shell', () => {
-  it('has a sidebar listing Songs, Artists, Albums, Playlists, and Settings with Account, Credentials, Workflow, Catalog, Genres, Tags, Relationships, Suno, Backups, and System', async () => {
+  it('has a sidebar listing Songs, Artists, Albums, Playlists, Suno import, Ignored Suno items, and Settings with Account, Credentials, Workflow, Catalog, Genres, Tags, Relationships, Suno, Suno workspaces, Backups, and System', async () => {
     stubFetch().mockImplementation(() => Promise.resolve(jsonResponse(200, healthyReport)));
 
     renderAt('/songs');
@@ -36,6 +36,8 @@ describe('the signed-in shell', () => {
       'Artists',
       'Albums',
       'Playlists',
+      'Suno import',
+      'Ignored Suno items',
       'Account',
       'Credentials',
       'Workflow',
@@ -44,6 +46,7 @@ describe('the signed-in shell', () => {
       'Tags',
       'Relationships',
       'Suno',
+      'Suno workspaces',
       'Backups',
       'System',
     ]);

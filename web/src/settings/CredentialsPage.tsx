@@ -43,6 +43,8 @@ const SCOPE_DESCRIPTIONS: Record<(typeof CREDENTIAL_SCOPES)[number], string> = {
   'generations.evaluate': 'Rate and annotate Generations',
   'artwork.write': 'Add and change artwork',
   'catalog.bulk-write': 'Change many records in one request',
+  'suno.sync': 'Browser extension: send your Suno library to n8Tracks for review',
+  'suno.generate': 'Browser extension: fill Suno’s Create form and report what it made',
 };
 
 export const TOKEN_SHOWN_ONCE_MESSAGE =
@@ -56,6 +58,16 @@ function kindLabel(kind: string): string {
 }
 
 type KindFilter = 'all' | CredentialKind;
+
+/** What the extension last reported with this credential: its version, its adapter version, and when. */
+function extensionSeen(credential: Credential, timeZone: string): string {
+  if (!credential.lastSeenAt) {
+    return 'Extension not connected yet';
+  }
+  const extension = credential.lastExtensionVersion ?? 'unknown';
+  const adapter = credential.lastAdapterVersion ?? 'unknown';
+  return `Extension ${extension}, adapter ${adapter}, seen ${formatDateTime(credential.lastSeenAt, timeZone)}`;
+}
 
 /** The create dialog's form, then the shown-once token. Closing it forgets the token. */
 function CreateCredentialDialog({
@@ -437,6 +449,11 @@ function CredentialRow({
       <Table.Td>{formatDateTime(credential.createdUtc, timeZone)}</Table.Td>
       <Table.Td>
         {credential.lastUsedUtc ? formatDateTime(credential.lastUsedUtc, timeZone) : 'Never'}
+        {credential.kind === 'extension' && (
+          <Text size="sm" c="var(--n8-color-secondary-text)" data-testid="extension-seen">
+            {extensionSeen(credential, timeZone)}
+          </Text>
+        )}
       </Table.Td>
       <Table.Td>
         {credential.revokedUtc ? (

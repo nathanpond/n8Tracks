@@ -1,7 +1,7 @@
 import { Loader, TextInput } from '@mantine/core';
 import { useState, type KeyboardEvent } from 'react';
 import { useNavigate } from 'react-router';
-import { goToTarget, pageFor, resolveGoTo } from '../api/references';
+import { goToTarget, pageFor, resolveGoTo, stateFor } from '../api/references';
 
 export const GO_TO_NOT_FOUND = 'Nothing has that shortcode or ID.';
 export const GO_TO_FAILED =
@@ -10,7 +10,8 @@ export const GO_TO_FAILED =
 /**
  * The header's Go to box: a shortcode (`n8-12`, `n8-12-v1.1`, any letter case), a stable ID, or a
  * pasted n8Tracks link, opened on Enter (not on paste). Surrounding whitespace is ignored. A
- * successful jump opens the Song or Version and clears the box; a reference that names nothing
+ * successful jump opens the Song, Version, or Generation (a moved Generation's old shortcode opens
+ * it where it is now, saying so) and clears the box; a reference that names nothing
  * keeps the typed text, with a not-found message beside the box until the text changes.
  */
 export function GoToBox() {
@@ -30,7 +31,9 @@ export function GoToBox() {
     setBusy(false);
     if (result.kind === 'found') {
       setText('');
-      void navigate(pageFor(result.resolved));
+      // A moved Generation's old shortcode opens it where it is now, saying it moved.
+      const typed = target.kind === 'reference' ? target.reference : text;
+      void navigate(pageFor(result.resolved), { state: stateFor(result.resolved, typed) });
       return;
     }
     setMessage(result.kind === 'not-found' ? GO_TO_NOT_FOUND : GO_TO_FAILED);

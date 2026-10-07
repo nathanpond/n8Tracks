@@ -14,6 +14,7 @@ import { CatalogPage } from './settings/CatalogPage';
 import { CredentialsPage } from './settings/CredentialsPage';
 import { GenresPage } from './settings/GenresPage';
 import { SunoPage } from './settings/SunoPage';
+import { SunoWorkspacePage, SunoWorkspacesPage } from './settings/SunoWorkspacesPage';
 import { RelationshipsPage } from './settings/RelationshipsPage';
 import { TagsPage } from './settings/TagsPage';
 import { SystemPage } from './settings/SystemPage';
@@ -24,6 +25,9 @@ import { GoPage } from './shell/GoPage';
 import { NotFoundPage } from './shell/NotFoundPage';
 import { SongPage } from './songs/SongPage';
 import { SongsPage } from './songs/SongsPage';
+import { ImportReviewPage } from './suno/ImportReviewPage';
+import { IgnoredItemsPage } from './suno/IgnoredItemsPage';
+import { SunoImportsPage } from './suno/SunoImportsPage';
 import { colorSchemeManager, cssVariablesResolver, theme } from './theme/theme';
 
 /**
@@ -47,12 +51,16 @@ export function App() {
                 <Route path="songs" element={<SongsPage />} />
                 <Route path="songs/:reference" element={<SongPage />} />
                 <Route path="songs/:reference/v/:number" element={<SongPage />} />
+                <Route path="songs/:reference/generations/:generation" element={<SongPage />} />
                 <Route path="artists" element={<ArtistsPage />} />
                 <Route path="artists/:id" element={<ArtistPage />} />
                 <Route path="albums" element={<AlbumsPage />} />
                 <Route path="albums/:id" element={<AlbumPage />} />
                 <Route path="playlists" element={<PlaylistsPage />} />
                 <Route path="playlists/:id" element={<PlaylistPage />} />
+                <Route path="suno/imports" element={<SunoImportsPage />} />
+                <Route path="suno/ignored" element={<IgnoredItemsPage />} />
+                <Route path="suno/imports/:id" element={<ImportReviewPage />} />
                 <Route path="go/:reference" element={<GoPage />} />
                 <Route path="settings" element={<Navigate to="/settings/account" replace />} />
                 <Route path="settings/account" element={<AccountPage />} />
@@ -63,6 +71,8 @@ export function App() {
                 <Route path="settings/tags" element={<TagsPage />} />
                 <Route path="settings/relationships" element={<RelationshipsPage />} />
                 <Route path="settings/suno" element={<SunoPage />} />
+                <Route path="settings/suno-workspaces" element={<SunoWorkspacesPage />} />
+                <Route path="settings/suno-workspaces/:id" element={<SunoWorkspacePage />} />
                 <Route path="settings/backups" element={<BackupsPage />} />
                 <Route path="settings/system" element={<SystemPage />} />
                 <Route path="*" element={<NotFoundPage />} />

@@ -27,8 +27,28 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
     /// <summary>The trigger that refuses changing a frozen Version's lyrics, styles, kind, model, or options, or unfreezing it.</summary>
     public const string VersionFrozenTrigger = "tr_versions_frozen_inputs_never_change";
 
-    /// <summary>The trigger that refuses any change to a Generation's Version, Song, or ordinal.</summary>
-    public const string GenerationFixedTrigger = "tr_generations_identity_never_changes";
+    /// <summary>
+    /// The trigger that refuses any change to a Generation's Version, Song, or ordinal but a move
+    /// (#123): to the newest ordinal of another, frozen Version of the Song it names, once its old
+    /// shortcode is recorded as its alias, and never to a shortcode that is another's alias.
+    /// </summary>
+    public const string GenerationMoveTrigger = "tr_generations_move_only_leaving_an_alias";
+
+    /// <summary>The trigger that refuses a new Generation (or a restored one) at a shortcode that is another Generation's alias.</summary>
+    public const string GenerationAliasReservedTrigger = "tr_generations_aliases_stay_reserved";
+
+    /// <summary>The trigger that refuses changing an external reference's Suno ID or kind, which frozen sources are compared by.</summary>
+    public const string ExternalReferenceFixedTrigger = "tr_external_suno_references_identity_never_changes";
+
+    /// <summary>
+    /// The tables holding a Version's lineage (#122), each with insert, update, and delete triggers
+    /// that refuse any change while the Version is frozen (<see cref="LineageFrozenTriggers"/>).
+    /// </summary>
+    public static IReadOnlyList<string> LineageTables { get; } = ["version_sources", "version_inspiration_playlists", "version_voices", "version_file_inputs"];
+
+    /// <summary>The names of the three freeze triggers of a lineage table: insert, update, delete.</summary>
+    public static IReadOnlyList<string> LineageFrozenTriggers(string table) =>
+        [$"tr_{table}_frozen_insert", $"tr_{table}_frozen_update", $"tr_{table}_frozen_delete"];
 
     public DbSet<AppMetadataEntry> AppMetadata => Set<AppMetadataEntry>();
 
@@ -59,6 +79,46 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
     public DbSet<EditorRevisionRecord> EditorRevisions => Set<EditorRevisionRecord>();
 
     public DbSet<GenerationRecord> Generations => Set<GenerationRecord>();
+
+    public DbSet<ProviderRecordRecord> ProviderRecords => Set<ProviderRecordRecord>();
+
+    public DbSet<GenerationEventRecord> GenerationEvents => Set<GenerationEventRecord>();
+
+    public DbSet<GenerationCommentRecord> GenerationComments => Set<GenerationCommentRecord>();
+
+    public DbSet<GenerationEventLinkRecord> GenerationEventLinks => Set<GenerationEventLinkRecord>();
+
+    public DbSet<ExternalSunoReferenceRecord> ExternalSunoReferences => Set<ExternalSunoReferenceRecord>();
+
+    public DbSet<ShortcodeAliasRecord> ShortcodeAliases => Set<ShortcodeAliasRecord>();
+
+    public DbSet<SunoPlaylistRecord> SunoPlaylists => Set<SunoPlaylistRecord>();
+
+    public DbSet<SunoPersonaRecord> SunoPersonas => Set<SunoPersonaRecord>();
+
+    public DbSet<SunoWorkspaceRecord> SunoWorkspaces => Set<SunoWorkspaceRecord>();
+
+    public DbSet<ProviderTombstoneRecord> ProviderTombstones => Set<ProviderTombstoneRecord>();
+
+    public DbSet<SunoGenerationRequestRecord> SunoGenerationRequests => Set<SunoGenerationRequestRecord>();
+
+    public DbSet<SunoExportRecord> SunoExports => Set<SunoExportRecord>();
+
+    public DbSet<SunoExportPartRecord> SunoExportParts => Set<SunoExportPartRecord>();
+
+    public DbSet<StagedClipRecord> StagedClips => Set<StagedClipRecord>();
+
+    public DbSet<StagedClipPlaylistRecord> StagedClipPlaylists => Set<StagedClipPlaylistRecord>();
+
+    public DbSet<SunoIgnoredItemRecord> SunoIgnoredItems => Set<SunoIgnoredItemRecord>();
+
+    public DbSet<VersionSourceRecord> VersionSources => Set<VersionSourceRecord>();
+
+    public DbSet<VersionInspirationPlaylistRecord> VersionInspirationPlaylists => Set<VersionInspirationPlaylistRecord>();
+
+    public DbSet<VersionVoiceRecord> VersionVoices => Set<VersionVoiceRecord>();
+
+    public DbSet<VersionFileInputRecord> VersionFileInputs => Set<VersionFileInputRecord>();
 
     public DbSet<GenreRecord> Genres => Set<GenreRecord>();
 
@@ -294,6 +354,7 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                 Position = seeded.Order,
                 Retired = seeded.Retired,
                 Discovered = seeded.Discovered,
+                ReportedAs = seeded.ReportedAs,
             }));
         });
 
@@ -337,6 +398,21 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
             song.HasOne<VersionRecord>()
                 .WithMany()
                 .HasForeignKey(record => record.CurrentVersionId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            // The Selected Generation (#120): a Generation names its Song and the Song may name one of
+            // its Generations back, so the reference is nullable and never cascades; deleting or moving
+            // a Generation clears it first (retention clears it within a group and puts it back on restore).
+            song.HasOne<GenerationRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.SelectedGenerationId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            // The Suno workspace the Song lives in (#129), by Suno ID. Workspace records are never
+            // deleted, so the key only guards against a dangling name.
+            song.HasOne<SunoWorkspaceRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.SunoWorkspaceId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
@@ -406,11 +482,29 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
             generation.ToTable("generations", static table =>
             {
                 table.HasCheckConstraint("ck_generations_ordinal", "ordinal >= 1");
-                table.HasTrigger(GenerationFixedTrigger);
+                table.HasCheckConstraint("ck_generations_state", $"state IN ('{GenerationRecord.Active}', '{GenerationRecord.Archived}')");
+                table.HasCheckConstraint(
+                    "ck_generations_remote_state",
+                    $"remote_state IN ('{GenerationRecord.Present}', '{GenerationRecord.Trashed}', '{GenerationRecord.Missing}')");
+                table.HasCheckConstraint("ck_generations_revision", "revision >= 1");
+                table.HasCheckConstraint("ck_generations_suno_id", "suno_id IS NULL OR length(suno_id) > 0");
+                table.HasCheckConstraint("ck_generations_rating", "rating IS NULL OR rating BETWEEN 1 AND 5");
+                table.HasCheckConstraint(
+                    "ck_generations_archived_by",
+                    $"archived_by IS NULL OR archived_by IN ('{GenerationRecord.ArchivedByUser}', '{GenerationRecord.ArchivedBySync}')");
+                table.HasTrigger(GenerationMoveTrigger);
+                table.HasTrigger(GenerationAliasReservedTrigger);
             });
             generation.HasKey(record => record.Id);
             generation.HasIndex(record => new { record.VersionId, record.Ordinal }).IsUnique();
             generation.HasIndex(record => record.SongId);
+            generation.Property(record => record.State).HasDefaultValue(GenerationRecord.Active);
+            generation.Property(record => record.RemoteState).HasDefaultValue(GenerationRecord.Present);
+            generation.Property(record => record.Revision).HasDefaultValue(1);
+
+            // A Suno clip appears in the catalog at most once: unique among the live Generations that
+            // have a Suno ID (deleted ones are in retention, not in this table).
+            generation.HasIndex(record => record.SunoId).IsUnique().HasFilter("suno_id IS NOT NULL");
 
             // Nothing removes a Version or a Song with Generations by accident: deleting them is M3's.
             generation.HasOne<VersionRecord>()
@@ -420,6 +514,335 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
             generation.HasOne<SongRecord>()
                 .WithMany()
                 .HasForeignKey(record => record.SongId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            // Its cover image (#121): the asset is kept while the Generation names it, and the artwork
+            // sweep cannot remove a named asset.
+            generation.HasIndex(record => record.ArtworkAssetId);
+            generation.HasOne<AssetRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.ArtworkAssetId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // A moved Generation's old shortcodes (#123): kept for good, in lower case. No foreign key to
+        // the Generation, so an alias outlives its deletion and stays reserved after its purge.
+        modelBuilder.Entity<ShortcodeAliasRecord>(alias =>
+        {
+            alias.ToTable("shortcode_aliases", static table =>
+            {
+                table.HasCheckConstraint("ck_shortcode_aliases_alias", "length(alias) > 0 AND alias = lower(alias)");
+            });
+            alias.HasKey(record => record.Alias);
+            alias.HasIndex(record => record.GenerationId);
+        });
+
+        modelBuilder.Entity<SunoPlaylistRecord>(playlist =>
+        {
+            playlist.ToTable("suno_playlists", static table =>
+            {
+                table.HasCheckConstraint("ck_suno_playlists_suno_id", "length(suno_id) BETWEEN 1 AND 100");
+            });
+            playlist.HasKey(record => record.SunoId);
+        });
+
+        modelBuilder.Entity<SunoWorkspaceRecord>(workspace =>
+        {
+            workspace.ToTable("suno_workspaces", static table =>
+            {
+                table.HasCheckConstraint("ck_suno_workspaces_suno_id", "length(suno_id) BETWEEN 1 AND 100");
+                table.HasCheckConstraint("ck_suno_workspaces_state", "state IN ('available', 'unavailable')");
+            });
+            workspace.HasKey(record => record.SunoId);
+        });
+
+        // Provider tombstones (#130): keyed by Suno ID alone, with no foreign key, so they outlive the
+        // retention prune of the Generations they stand for.
+        modelBuilder.Entity<ProviderTombstoneRecord>(tombstone =>
+        {
+            tombstone.ToTable("provider_tombstones", static table =>
+            {
+                table.HasCheckConstraint("ck_provider_tombstones_suno_id", "length(suno_id) > 0");
+                table.HasCheckConstraint("ck_provider_tombstones_kind", $"kind IN ('{ProviderTombstoneRecord.ClipKind}')");
+            });
+            tombstone.HasKey(record => record.SunoId);
+        });
+
+        // Generate on Suno requests (#144): not catalog tables. The Version and the claiming credential
+        // are named without foreign keys; the newest request of a Version is found by the index.
+        modelBuilder.Entity<SunoGenerationRequestRecord>(request =>
+        {
+            request.ToTable("suno_generation_requests", static table =>
+            {
+                table.HasCheckConstraint(
+                    "ck_suno_generation_requests_state",
+                    $"state IN ({string.Join(", ", GenerationRequestRules.StateNames.Select(static name => $"'{name}'"))})");
+                table.HasCheckConstraint("ck_suno_generation_requests_step", $"step IS NULL OR length(step) BETWEEN 1 AND {GenerationRequestRules.MaximumStepLength}");
+                table.HasCheckConstraint("ck_suno_generation_requests_message", $"message IS NULL OR length(message) BETWEEN 1 AND {GenerationRequestRules.MaximumMessageLength}");
+            });
+            request.HasKey(record => record.Id);
+            request.HasIndex(record => new { record.VersionId, record.CreatedUtc });
+        });
+
+        // Suno export staging (#131): staging tables, not catalog tables. The rows of an export go with it
+        // (cascade); a staged record names a Generation without a foreign key, and its staged image keeps
+        // its asset live (RESTRICT, and the store reports it as attached to the artwork sweep).
+        modelBuilder.Entity<SunoExportRecord>(export =>
+        {
+            export.ToTable("suno_exports", static table =>
+            {
+                table.HasCheckConstraint(
+                    "ck_suno_exports_state",
+                    "state IN ('receiving', 'classifying', 'ready', 'committing', 'committed', 'discarded', 'failed', 'expired')");
+                table.HasCheckConstraint("ck_suno_exports_scope", "scope IN ('library', 'workspaces', 'playlists', 'clips')");
+            });
+            export.HasKey(record => record.Id);
+            export.HasIndex(record => record.State);
+            export.Property(record => record.Revision).HasDefaultValue(1);
+        });
+
+        modelBuilder.Entity<SunoExportPartRecord>(part =>
+        {
+            part.ToTable("suno_export_parts", static table =>
+            {
+                table.HasCheckConstraint("ck_suno_export_parts_part_number", "part_number >= 1");
+            });
+            part.HasKey(record => new { record.ExportId, record.PartNumber });
+            part.HasOne<SunoExportRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.ExportId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<StagedClipRecord>(clip =>
+        {
+            clip.ToTable("suno_export_records", static table =>
+            {
+                table.HasCheckConstraint("ck_suno_export_records_suno_id", "length(suno_id) > 0");
+                table.HasCheckConstraint(
+                    "ck_suno_export_records_class",
+                    "class IS NULL OR class IN ('new', 'linked', 'changed', 'conflict', 'ignored', 'deleted')");
+            });
+            clip.HasKey(record => new { record.ExportId, record.SunoId });
+            clip.HasIndex(record => new { record.ExportId, record.Class });
+            clip.HasIndex(record => new { record.ExportId, record.SunoCreatedUtc });
+            clip.HasIndex(record => record.ArtworkAssetId);
+            clip.Property(record => record.Flags).HasDefaultValue("[]");
+            clip.Property(record => record.ChangedFields).HasDefaultValue("[]");
+            clip.HasOne<SunoExportRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.ExportId)
+                .OnDelete(DeleteBehavior.Cascade);
+            clip.HasOne<AssetRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.ArtworkAssetId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<StagedClipPlaylistRecord>(membership =>
+        {
+            membership.ToTable("suno_export_record_playlists");
+            membership.HasKey(record => new { record.ExportId, record.SunoId, record.PlaylistId });
+            membership.HasIndex(record => new { record.ExportId, record.PlaylistId });
+            membership.HasOne<StagedClipRecord>()
+                .WithMany()
+                .HasForeignKey(record => new { record.ExportId, record.SunoId })
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // The ignore list (#143 fills it): keyed by Suno ID, with no foreign key.
+        modelBuilder.Entity<SunoIgnoredItemRecord>(item =>
+        {
+            item.ToTable("suno_ignored_items", static table =>
+            {
+                table.HasCheckConstraint("ck_suno_ignored_items_suno_id", "length(suno_id) > 0");
+            });
+            item.HasKey(record => record.SunoId);
+        });
+
+        modelBuilder.Entity<SunoPersonaRecord>(persona =>
+        {
+            persona.ToTable("suno_personas", static table =>
+            {
+                table.HasCheckConstraint("ck_suno_personas_suno_id", "length(suno_id) BETWEEN 1 AND 100");
+            });
+            persona.HasKey(record => record.SunoId);
+        });
+
+        modelBuilder.Entity<ExternalSunoReferenceRecord>(reference =>
+        {
+            reference.ToTable("external_suno_references", static table =>
+            {
+                table.HasCheckConstraint(
+                    "ck_external_suno_references_kind",
+                    $"kind IN ('{ExternalSunoReferenceRecord.ClipKind}', '{ExternalSunoReferenceRecord.PlaylistKind}', '{ExternalSunoReferenceRecord.PersonaKind}')");
+                table.HasCheckConstraint("ck_external_suno_references_suno_id", "length(suno_id) BETWEEN 1 AND 100");
+                table.HasTrigger(ExternalReferenceFixedTrigger);
+            });
+            reference.HasKey(record => record.Id);
+            reference.HasIndex(record => new { record.SunoId, record.Kind }).IsUnique();
+        });
+
+        // A Version's lineage (#122): each table cascades from the Version, so the Version's deletion
+        // retains it with the Version, and each has freeze triggers (see LineageTables).
+        modelBuilder.Entity<VersionSourceRecord>(source =>
+        {
+            source.ToTable("version_sources", static table =>
+            {
+                table.HasCheckConstraint(
+                    "ck_version_sources_group",
+                    $"source_group IN ('{VersionSourceRecord.AudioGroup}', '{VersionSourceRecord.InspirationGroup}')");
+                table.HasCheckConstraint("ck_version_sources_position", "position >= 0");
+                table.HasCheckConstraint(
+                    "ck_version_sources_one_target",
+                    "(generation_id IS NOT NULL) + (song_id IS NOT NULL) + (external_reference_id IS NOT NULL) = 1");
+                table.HasCheckConstraint("ck_version_sources_continue_at", "continue_at_hundredths IS NULL OR continue_at_hundredths >= 0");
+                table.HasCheckConstraint("ck_version_sources_secondary_ids", "secondary_ids IS NULL OR (json_valid(secondary_ids) AND json_type(secondary_ids) = 'object')");
+                foreach (var trigger in LineageFrozenTriggers("version_sources"))
+                {
+                    table.HasTrigger(trigger);
+                }
+            });
+            source.HasKey(record => record.Id);
+            source.HasIndex(record => new { record.VersionId, record.SourceGroup, record.Position }).IsUnique();
+            source.HasIndex(record => record.GenerationId);
+            source.HasIndex(record => record.SongId);
+            source.HasIndex(record => record.ExternalReferenceId);
+            source.HasIndex(record => record.TypeId);
+            source.HasOne<VersionRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.VersionId)
+                .OnDelete(DeleteBehavior.Cascade);
+            source.HasOne<RelationshipTypeRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.TypeId)
+                .OnDelete(DeleteBehavior.Restrict);
+            source.HasOne<ExternalSunoReferenceRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.ExternalReferenceId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<VersionInspirationPlaylistRecord>(playlist =>
+        {
+            playlist.ToTable("version_inspiration_playlists", static table =>
+            {
+                table.HasCheckConstraint("ck_version_inspiration_playlists_id", "length(suno_playlist_id) BETWEEN 1 AND 100");
+                table.HasCheckConstraint("ck_version_inspiration_playlists_name", "length(name) <= 200");
+                table.HasCheckConstraint(
+                    "ck_version_inspiration_playlists_clip_ids",
+                    "json_valid(clip_ids) AND json_type(clip_ids) = 'array' AND json_array_length(clip_ids) <= 500");
+                foreach (var trigger in LineageFrozenTriggers("version_inspiration_playlists"))
+                {
+                    table.HasTrigger(trigger);
+                }
+            });
+            playlist.HasKey(record => record.VersionId);
+            playlist.HasOne<VersionRecord>()
+                .WithOne()
+                .HasForeignKey<VersionInspirationPlaylistRecord>(record => record.VersionId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<VersionVoiceRecord>(voice =>
+        {
+            voice.ToTable("version_voices", static table =>
+            {
+                table.HasCheckConstraint("ck_version_voices_persona_id", "length(persona_id) BETWEEN 1 AND 100");
+                table.HasCheckConstraint("ck_version_voices_name", "length(name) <= 200");
+                foreach (var trigger in LineageFrozenTriggers("version_voices"))
+                {
+                    table.HasTrigger(trigger);
+                }
+            });
+            voice.HasKey(record => record.VersionId);
+            voice.HasOne<VersionRecord>()
+                .WithOne()
+                .HasForeignKey<VersionVoiceRecord>(record => record.VersionId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<VersionFileInputRecord>(file =>
+        {
+            file.ToTable("version_file_inputs", static table =>
+            {
+                table.HasCheckConstraint(
+                    "ck_version_file_inputs_kind",
+                    $"kind IN ('{VersionFileInputRecord.AudioKind}', '{VersionFileInputRecord.ImageKind}', '{VersionFileInputRecord.VideoKind}')");
+                table.HasCheckConstraint("ck_version_file_inputs_description", "length(description) BETWEEN 1 AND 500");
+                foreach (var trigger in LineageFrozenTriggers("version_file_inputs"))
+                {
+                    table.HasTrigger(trigger);
+                }
+            });
+            file.HasKey(record => new { record.VersionId, record.Kind });
+            file.HasOne<VersionRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.VersionId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ProviderRecordRecord>(record =>
+        {
+            record.ToTable("provider_records", static table =>
+            {
+                table.HasCheckConstraint("ck_provider_records_kind", $"kind IN ('{ProviderRecordRecord.ClipKind}')");
+                table.HasCheckConstraint("ck_provider_records_payload_json", "json_valid(payload) AND json_type(payload) = 'object'");
+            });
+            record.HasKey(provider => provider.GenerationId);
+
+            // The raw clip goes with its Generation (into retention with it, as a registered type).
+            record.HasOne<GenerationRecord>()
+                .WithOne()
+                .HasForeignKey<ProviderRecordRecord>(provider => provider.GenerationId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<GenerationCommentRecord>(comment =>
+        {
+            comment.ToTable("generation_comments", static table =>
+            {
+                table.HasCheckConstraint("ck_generation_comments_text", "length(text) BETWEEN 1 AND 2000");
+                table.HasCheckConstraint("ck_generation_comments_revision", "revision >= 1");
+            });
+            comment.HasKey(record => record.Id);
+
+            // A Generation's comments, oldest first.
+            comment.HasIndex(record => new { record.GenerationId, record.CreatedUtc, record.Id });
+            comment.Property(record => record.Revision).HasDefaultValue(1);
+
+            // The comments go with their Generation (into retention with it, as a registered type).
+            comment.HasOne<GenerationRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.GenerationId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<GenerationEventRecord>(generationEvent =>
+        {
+            generationEvent.ToTable("generation_events", static table =>
+            {
+                table.HasCheckConstraint("ck_generation_events_source", "source IN ('observed', 'inferred', 'user')");
+                table.HasCheckConstraint("ck_generation_events_confidence", "confidence IN ('high', 'medium')");
+                table.HasCheckConstraint("ck_generation_events_batch_size", "batch_size >= 1");
+            });
+            generationEvent.HasKey(record => record.Id);
+        });
+
+        modelBuilder.Entity<GenerationEventLinkRecord>(link =>
+        {
+            link.ToTable("generation_event_links");
+
+            // A Generation has at most one event; an event has any number of Generations.
+            link.HasKey(record => record.GenerationId);
+            link.HasIndex(record => record.EventId);
+            link.HasOne<GenerationRecord>()
+                .WithOne()
+                .HasForeignKey<GenerationEventLinkRecord>(record => record.GenerationId)
+                .OnDelete(DeleteBehavior.Cascade);
+            link.HasOne<GenerationEventRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.EventId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
@@ -647,7 +1070,8 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
             type.ToTable("song_relationship_types", static table =>
             {
                 table.HasCheckConstraint("ck_song_relationship_types_names", "length(name) > 0 AND length(reverse_name) > 0");
-                table.HasCheckConstraint("ck_song_relationship_types_suno_action", "suno_action IS NULL OR is_system = 1");
+                // A system type's action is fixed by its seed; a user's own may stand for an audio action (#126).
+                table.HasCheckConstraint("ck_song_relationship_types_suno_action", "suno_action IS NULL OR is_system = 1 OR suno_action IN ('cover', 'extend', 'mashup', 'sample', 'reuse_prompt')");
             });
             type.HasKey(record => record.Id);
 

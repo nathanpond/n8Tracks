@@ -1,10 +1,11 @@
 using Microsoft.EntityFrameworkCore;
 using n8Tracks.Application.Songs;
 using n8Tracks.Domain.Songs;
+using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Infrastructure.Persistence;
 
-internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
+internal sealed class VersionStore(N8TracksDbContext context, TimeProvider time) : IVersionStore
 {
     public async Task<VersionNumberingFacts?> FindNumberingAsync(Guid id, CancellationToken cancellationToken)
     {
@@ -49,8 +50,10 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
                 UtcText.Parse(record.CreatedUtc),
                 UtcText.Parse(record.UpdatedUtc),
                 record.Revision,
+                await VersionLineageRows.ReadAsync(context, id, cancellationToken).ConfigureAwait(false),
                 record.IsFrozen,
-                record.LastGenerationOrdinal);
+                record.LastGenerationOrdinal,
+                VersionInputsColumns.ReadImported(record.ImportedInputs));
     }
 
     public async Task<Guid?> FindIdByShortcodeAsync(long songShortcodeNumber, string number, CancellationToken cancellationToken) =>
@@ -83,13 +86,34 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
 
         var inputs = await context.Versions.AsNoTracking()
             .Where(version => version.Id == id)
-            .Select(static version => new { version.Lyrics, version.Styles, version.Kind, version.Model, version.Inputs })
+            .Select(static version => new { version.Lyrics, version.Styles, version.Kind, version.Model, version.Inputs, version.ImportedInputs })
             .SingleOrDefaultAsync(cancellationToken)
             .ConfigureAwait(false);
 
-        return inputs is null
+        if (inputs is null)
+        {
+            return null;
+        }
+
+        var lineage = await VersionLineageRows.ReadAsync(context, id, cancellationToken).ConfigureAwait(false);
+
+        // The Song's workspace (#129) is not the Version's, but where Generate on Suno saves its result.
+        var workspaceId = await context.Songs.AsNoTracking()
+            .Where(song => song.Id == summary.SongId)
+            .Select(static song => song.SunoWorkspaceId)
+            .SingleOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var workspace = workspaceId is null
             ? null
-            : new VersionDetail(summary, inputs.Lyrics, inputs.Styles, VersionInputsColumns.Read(inputs.Kind, inputs.Model, inputs.Inputs));
+            : (await SunoWorkspaceStore.ForIdsAsync(context, [workspaceId], cancellationToken).ConfigureAwait(false)).GetValueOrDefault(workspaceId);
+        return new VersionDetail(
+            summary,
+            inputs.Lyrics,
+            inputs.Styles,
+            VersionInputsColumns.Read(inputs.Kind, inputs.Model, inputs.Inputs),
+            await VersionLineageRows.ViewAsync(context, lineage, cancellationToken).ConfigureAwait(false),
+            workspace,
+            VersionInputsColumns.ReadImported(inputs.ImportedInputs));
     }
 
     public async Task<IReadOnlyList<VersionSummary>> ListAsync(Guid songId, CancellationToken cancellationToken)
@@ -149,6 +173,9 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
         context.Versions.Add(record);
         await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         context.Entry(record).State = EntityState.Detached;
+
+        // A Version created from another holds a copy of its lineage, naming the same targets.
+        await VersionLineageRows.WriteAsync(context, version.Id, VersionLineage.None, version.Lineage, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>The row a new Version is stored as.</summary>
@@ -174,6 +201,7 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
             Revision = version.Revision,
             IsFrozen = version.IsFrozen,
             LastGenerationOrdinal = version.LastGenerationOrdinal,
+            ImportedInputs = VersionInputsColumns.ImportedJson(version.Imported),
         };
     }
 
@@ -264,6 +292,51 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
         return count == 1;
     }
 
+    public async Task ReplaceLineageAsync(Guid id, VersionLineage lineage, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(lineage);
+
+        var held = await VersionLineageRows.ReadAsync(context, id, cancellationToken).ConfigureAwait(false);
+        await VersionLineageRows.WriteAsync(context, id, held, lineage, cancellationToken).ConfigureAwait(false);
+    }
+
+    public Task EnsureExternalReferencesAsync(IReadOnlyCollection<ExternalSunoReference> references, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(references);
+        return VersionLineageRows.EnsureReferencesAsync(context, references, time.GetUtcNow(), cancellationToken);
+    }
+
+    public async Task<SourceGenerationFacts?> FindSourceGenerationAsync(Guid id, CancellationToken cancellationToken) =>
+        await context.Generations.AsNoTracking()
+            .Where(generation => generation.Id == id)
+            .Select(static generation => new SourceGenerationFacts(generation.Id, generation.VersionId, generation.SongId, generation.SunoId, generation.DurationSeconds))
+            .SingleOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+    public async Task<SourceGenerationFacts?> FindSourceGenerationBySunoIdAsync(string sunoId, CancellationToken cancellationToken) =>
+        await context.Generations.AsNoTracking()
+            .Where(generation => generation.SunoId == sunoId)
+            .Select(static generation => new SourceGenerationFacts(generation.Id, generation.VersionId, generation.SongId, generation.SunoId, generation.DurationSeconds))
+            .SingleOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+    public Task RewriteSourcesOfDeletedGenerationsAsync(
+        IReadOnlyCollection<Guid> generationIds,
+        IReadOnlyCollection<Guid> versionsGoing,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(generationIds);
+        ArgumentNullException.ThrowIfNull(versionsGoing);
+        return VersionLineageRows.RewriteDeletedGenerationsAsync(context, generationIds, versionsGoing, now, cancellationToken);
+    }
+
+    public Task<IReadOnlyList<LinkedSource>> LinkExternalSourcesAsync(string sunoId, Guid generationId, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(sunoId);
+        return VersionLineageRows.LinkExternalSourcesAsync(context, sunoId, generationId, cancellationToken);
+    }
+
     public async Task<bool> TryAttachGenerationAsync(SongVersion version, Generation generation, int revision, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(version);
@@ -290,41 +363,85 @@ internal sealed class VersionStore(N8TracksDbContext context) : IVersionStore
             return false;
         }
 
-        var record = new GenerationRecord
-        {
-            Id = generation.Id,
-            VersionId = generation.VersionId,
-            SongId = generation.SongId,
-            Ordinal = generation.Ordinal,
-            CreatedUtc = UtcText.From(generation.CreatedUtc),
-        };
+        // Every column the entity holds: its ordinal, states, and what Suno reported about its clip.
+        var record = GenerationRows.ToRecord(generation);
         context.Generations.Add(record);
         await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         context.Entry(record).State = EntityState.Detached;
         return true;
     }
 
-    public async Task<GenerationSummary?> FindGenerationAsync(Guid id, CancellationToken cancellationToken)
+    public async Task<bool> TryMoveGenerationAsync(
+        SongVersion target,
+        Generation moved,
+        int targetRevision,
+        int generationRevision,
+        ShortcodeAlias alias,
+        CancellationToken cancellationToken)
     {
-        var found = await context.Generations.AsNoTracking()
-            .Where(generation => generation.Id == id)
-            .Join(context.Versions, generation => generation.VersionId, version => version.Id, (generation, version) => new { generation, version.Number })
-            .Join(context.Songs, row => row.generation.SongId, song => song.Id, (row, song) => new { row.generation, row.Number, song.ShortcodeNumber })
-            .SingleOrDefaultAsync(cancellationToken)
-            .ConfigureAwait(false);
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentNullException.ThrowIfNull(moved);
+        ArgumentNullException.ThrowIfNull(alias);
 
-        return found is null
-            ? null
-            : new GenerationSummary(
-                new Generation(
-                    found.generation.Id,
-                    found.generation.VersionId,
-                    found.generation.SongId,
-                    found.generation.Ordinal,
-                    UtcText.Parse(found.generation.CreatedUtc)),
-                found.ShortcodeNumber,
-                found.Number);
+        // The old shortcode first: the database moves a Generation only once its alias is recorded.
+        var row = new ShortcodeAliasRecord { Alias = alias.Alias, GenerationId = alias.GenerationId, CreatedUtc = UtcText.From(alias.CreatedUtc) };
+        context.ShortcodeAliases.Add(row);
+        await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        context.Entry(row).State = EntityState.Detached;
+
+        // The target's freeze and nothing else, as attaching writes it: its inputs are not written.
+        var id = target.Id;
+        var ordinal = target.LastGenerationOrdinal;
+        var updated = UtcText.From(target.UpdatedUtc);
+        var newRevision = target.Revision;
+        var frozen = await context.Versions
+            .Where(record => record.Id == id && record.Revision == targetRevision)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(record => record.IsFrozen, true)
+                    .SetProperty(record => record.LastGenerationOrdinal, ordinal)
+                    .SetProperty(record => record.UpdatedUtc, updated)
+                    .SetProperty(record => record.Revision, newRevision),
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (frozen != 1)
+        {
+            return false;
+        }
+
+        // Where the Generation is, and its revision: its rating, state, comments, image, Suno data,
+        // provider record, and event link are its own and go with it untouched.
+        var generationId = moved.Id;
+        var versionId = moved.VersionId;
+        var songId = moved.SongId;
+        var newOrdinal = moved.Ordinal;
+        var generationRevisionAfter = moved.Revision;
+        return await context.Generations
+            .Where(record => record.Id == generationId && record.Revision == generationRevision)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(record => record.VersionId, versionId)
+                    .SetProperty(record => record.SongId, songId)
+                    .SetProperty(record => record.Ordinal, newOrdinal)
+                    .SetProperty(record => record.Revision, generationRevisionAfter),
+                cancellationToken)
+            .ConfigureAwait(false) == 1;
     }
+
+    public async Task<ShortcodeAlias?> FindAliasAsync(string alias, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(alias);
+
+        var key = ShortcodeAlias.Normalise(alias);
+        var row = await context.ShortcodeAliases.AsNoTracking()
+            .SingleOrDefaultAsync(record => record.Alias == key, cancellationToken)
+            .ConfigureAwait(false);
+        return row is null ? null : new ShortcodeAlias(row.Alias, row.GenerationId, UtcText.Parse(row.CreatedUtc));
+    }
+
+    public async Task<GenerationSummary?> FindGenerationAsync(Guid id, CancellationToken cancellationToken) =>
+        (await GenerationRows.SummariesAsync(context, context.Generations.Where(generation => generation.Id == id), cancellationToken).ConfigureAwait(false))
+            .SingleOrDefault();
 
     public async Task<IReadOnlyList<Guid>> GenerationIdsAsync(Guid versionId, CancellationToken cancellationToken) =>
         await context.Generations.AsNoTracking()

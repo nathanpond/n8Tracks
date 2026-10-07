@@ -10,7 +10,7 @@ namespace n8Tracks.Application.Catalog;
 /// <param name="PrimaryArtist">Its primary Artist, or null.</param>
 /// <param name="State">Its workflow state.</param>
 /// <param name="HasSelectedGeneration">
-/// Whether it has a Selected Generation. Always false until Generations can be selected (M4); a
+/// Whether its Song has a Selected Generation (#120); a
 /// Song without one stays on the Playlist and is marked.
 /// </param>
 public sealed record PlaylistSong(Guid Id, string Shortcode, string Title, PlaylistSongArtist? PrimaryArtist, PlaylistSongState State, bool HasSelectedGeneration);

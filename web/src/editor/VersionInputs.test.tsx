@@ -1,8 +1,9 @@
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { EditorView } from '@codemirror/view';
-import { describe, expect, it, vi } from 'vitest';
-import { advanceTimers, fakeTimeouts, jsonResponse, renderApp } from '../test/helpers';
+import { describe, expect, it } from 'vitest';
+import { fakeTimeouts } from '../test/fakeClock';
+import { jsonResponse, renderApp } from '../test/helpers';
 import { testVersion, versionServer } from '../test/versionServer';
 
 const ONE = testVersion('1', { current: true, lyrics: '[Verse]\nRun (ooh)\n', styles: 'punk' });
@@ -45,13 +46,6 @@ function pasteLyrics(text: string) {
       changes: { from: 0, to: view.state.doc.length, insert: text },
       userEvent: 'input.paste',
     });
-  });
-}
-
-/** Moves the fake clock on by `milliseconds`, letting the saves its timers start answer. */
-async function advance(milliseconds: number) {
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(milliseconds);
   });
 }
 
@@ -164,8 +158,8 @@ describe('the lyrics editor', () => {
   });
 
   it('saves automatically once the user pauses: Saving…, then Saved, in one PATCH', async () => {
-    fakeTimeouts();
-    const user = userEvent.setup({ advanceTimers });
+    const clock = fakeTimeouts();
+    const user = userEvent.setup({ advanceTimers: clock.advanceTimers });
     const { server } = versionServer([ONE]);
     await openVersion();
 
@@ -186,8 +180,8 @@ describe('the lyrics editor', () => {
   });
 
   it('saves at once on Ctrl+S, without waiting for the pause', async () => {
-    fakeTimeouts();
-    const user = userEvent.setup({ advanceTimers });
+    const clock = fakeTimeouts();
+    const user = userEvent.setup({ advanceTimers: clock.advanceTimers });
     const { server } = versionServer([ONE]);
     await openVersion();
 
@@ -199,8 +193,8 @@ describe('the lyrics editor', () => {
   });
 
   it('counts over the limit, says so, and does not save until it is back under', async () => {
-    fakeTimeouts();
-    const user = userEvent.setup({ advanceTimers });
+    const clock = fakeTimeouts();
+    const user = userEvent.setup({ advanceTimers: clock.advanceTimers });
     const { server } = versionServer([ONE]);
     await openVersion();
 
@@ -212,24 +206,28 @@ describe('the lyrics editor', () => {
       'Not saved: The lyrics are over their limit. Shorten the text to save.',
     );
 
-    await user.type(screen.getByRole('textbox', { name: 'Styles' }), 'y'.repeat(997));
+    // The styles go in by one paste up to two short of their limit, then two typed keys cross it:
+    // typing all 997 keys, each drawing the page again, took long enough to time out on a loaded CI.
+    const styles = screen.getByRole('textbox', { name: 'Styles' });
+    await user.click(styles);
+    await user.paste('y'.repeat(995));
+    expect(styles).toHaveValue(`punk${'y'.repeat(995)}`);
+    await user.type(styles, 'yy');
     expect(screen.getAllByText(/Over the limit by 1 character\./)).toHaveLength(2);
     expect(indicator()).toHaveTextContent(
       'Not saved: The lyrics are over their limit. The styles are over their limit. Shorten the text to save.',
     );
-    await advance(2_000);
+    await clock.advanceTimersAsync(2_000);
     expect(server.writes).toEqual([]);
 
     pasteLyrics('x'.repeat(5_000));
-    await user.type(screen.getByRole('textbox', { name: 'Styles' }), '{Backspace}');
+    await user.type(styles, '{Backspace}');
     expect(await screen.findByText('5,000 / 5,000 characters')).toBeVisible();
     await writesReach(server.writes, 1);
     expect(server.writes.map((write) => write.body)).toEqual([
       { lyrics: 'x'.repeat(5_000), styles: `punk${'y'.repeat(996)}` },
     ]);
-    // Typing 997 keys, each drawing the page again, takes real time the fake clock cannot save:
-    // about 5 s on a loaded machine.
-  }, 20_000);
+  });
 
   it('keeps the text when a save fails, says so, and retries until it is stored', async () => {
     fakeTimeouts();
@@ -258,8 +256,8 @@ describe('the lyrics editor', () => {
   }, 10_000);
 
   it('stops on a refusal retrying cannot fix, says what to do, and tries again when asked', async () => {
-    fakeTimeouts();
-    const user = userEvent.setup({ advanceTimers });
+    const clock = fakeTimeouts();
+    const user = userEvent.setup({ advanceTimers: clock.advanceTimers });
     const { server } = versionServer([ONE]);
     await openVersion();
     // A refusal that is not a freeze (a freeze shows the frozen notice instead: FrozenVersion.test).
@@ -272,7 +270,7 @@ describe('the lyrics editor', () => {
       },
       { timeout: 4_000 },
     );
-    await advance(2_500);
+    await clock.advanceTimersAsync(2_500);
     expect(server.writes).toHaveLength(1);
 
     await user.click(screen.getByRole('button', { name: 'Try again' }));
@@ -283,7 +281,7 @@ describe('the lyrics editor', () => {
   }, 10_000);
 
   it('sends what was typed during a save after it returns, even typing back to the old text', async () => {
-    fakeTimeouts();
+    const clock = fakeTimeouts();
     const { server } = versionServer([ONE]);
     await openVersion();
     let release: () => void = () => undefined;
@@ -305,7 +303,7 @@ describe('the lyrics editor', () => {
         userEvent: 'delete.backward',
       });
     });
-    await advance(2_000);
+    await clock.advanceTimersAsync(2_000);
     expect(server.writes).toHaveLength(1);
 
     release();
@@ -321,8 +319,8 @@ describe('the lyrics editor', () => {
   }, 10_000);
 
   it('opens the shared conflict dialog when the lyrics changed elsewhere; Reload takes theirs', async () => {
-    fakeTimeouts();
-    const user = userEvent.setup({ advanceTimers });
+    const clock = fakeTimeouts();
+    const user = userEvent.setup({ advanceTimers: clock.advanceTimers });
     const { server } = versionServer([ONE]);
     await openVersion();
     server.changeElsewhere('1', { lyrics: 'Theirs' });
@@ -347,8 +345,8 @@ describe('the lyrics editor', () => {
   });
 
   it('pauses autosave on a conflict left undecided, until the user reapplies', async () => {
-    fakeTimeouts();
-    const user = userEvent.setup({ advanceTimers });
+    const clock = fakeTimeouts();
+    const user = userEvent.setup({ advanceTimers: clock.advanceTimers });
     const { server } = versionServer([ONE]);
     await openVersion();
     server.changeElsewhere('1', { lyrics: 'Theirs' });
@@ -365,7 +363,7 @@ describe('the lyrics editor', () => {
       expect(indicator()).toHaveTextContent(/^Not saved: this Version was changed elsewhere/);
     });
     typeLyrics(' more');
-    await advance(2_000);
+    await clock.advanceTimersAsync(2_000);
     expect(server.writes).toHaveLength(1);
 
     await user.click(screen.getByRole('button', { name: 'Reapply my change' }));

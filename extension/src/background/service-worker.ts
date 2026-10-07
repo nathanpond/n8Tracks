@@ -1,3 +1,98 @@
-chrome.runtime.onInstalled.addListener(() => {
-  // Nothing to set up yet. Pairing with n8Tracks arrives in a later milestone.
+import { ADAPTER_VERSION } from '../adapter/version.ts';
+import { ADAPTER_WORKFLOWS } from '../adapter/workflows/index.ts';
+import { browserVersion, Diagnostics, type UserAgentData } from '../diagnostics/report.ts';
+import { displayVersion } from '../version-label.ts';
+import { CompletionWatch } from './completion.ts';
+import { Connection } from './connection.ts';
+import { GenerateCoordinator } from './generate.ts';
+import { route } from './router.ts';
+import { SyncCoordinator } from './sync.ts';
+
+/**
+ * The service worker holds the pairing and is the only part of the extension that calls n8Tracks
+ * (through `apiClient.ts`). It answers the popup, the options page, and the content scripts.
+ */
+const connection = new Connection({
+  browser: {
+    storage: chrome.storage.local,
+    permissions: chrome.permissions,
+    scripting: chrome.scripting,
+  },
+  versions: {
+    extension: displayVersion(chrome.runtime.getManifest()),
+    adapter: String(ADAPTER_VERSION),
+  },
 });
+
+const sync = new SyncCoordinator({
+  connection,
+  browser: {
+    session: chrome.storage.session,
+    local: chrome.storage.local,
+    tabs: chrome.tabs,
+  },
+});
+
+// The completion watch (#154): a recorded Create's Generations, filled in when Suno finishes them;
+// in session storage, with an alarm for the end of their ten minutes.
+const completion = new CompletionWatch({
+  connection,
+  browser: { session: chrome.storage.session, alarms: chrome.alarms },
+});
+
+// Generate on Suno (#144, #145): the request this extension claimed and its Suno tab, in session
+// storage.
+const generate = new GenerateCoordinator({
+  connection,
+  browser: {
+    session: chrome.storage.session,
+    openOptions: () => chrome.runtime.openOptionsPage(),
+    tabs: chrome.tabs,
+  },
+  completion,
+});
+
+// The diagnostic report's step log: in session storage only, cleared on Disconnect, never sent.
+const diagnostics = new Diagnostics({
+  storage: chrome.storage.session,
+  workflows: ADAPTER_WORKFLOWS,
+  versions: {
+    extension: displayVersion(chrome.runtime.getManifest()),
+    adapter: String(ADAPTER_VERSION),
+  },
+  connectionState: () => connection.state(),
+  browser: () =>
+    browserVersion((navigator as Navigator & { userAgentData?: UserAgentData }).userAgentData),
+});
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  void route(connection, message, sender, chrome.runtime.id, diagnostics, sync, generate).then(
+    sendResponse,
+  );
+  return true;
+});
+
+// A sync's Suno tab that is closed, or taken off suno.com, ends the sync and discards its export.
+chrome.tabs.onRemoved.addListener((tabId) => {
+  void sync.tabRemoved(tabId).catch(() => undefined);
+  // A generation's Suno tab that is closed stops its request, saying so, and ends its watch.
+  void generate.tabRemoved(tabId).catch(() => undefined);
+  void completion.tabRemoved(tabId).catch(() => undefined);
+});
+chrome.alarms.onAlarm.addListener((alarm) => {
+  void completion.alarm(alarm.name).catch(() => undefined);
+});
+chrome.tabs.onUpdated.addListener((tabId, change) => {
+  void sync.tabUpdated(tabId, change.url).catch(() => undefined);
+});
+
+// A permission removed in the browser's settings shows at the next state check, not a minute later.
+chrome.permissions.onRemoved.addListener(() => {
+  connection.forgetHandshake();
+});
+
+// Re-run the handshake whenever the service worker starts.
+void connection.start().catch(() => undefined);
+
+// Cover images a stopped service worker left unsent are sent now (#152).
+void sync.images.resume().catch(() => undefined);

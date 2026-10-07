@@ -9,6 +9,7 @@ using n8Tracks.Api.Cli;
 using n8Tracks.Api.Configuration;
 using n8Tracks.Api.DependencyInjection;
 using n8Tracks.Api.Endpoints;
+using n8Tracks.Api.Extension;
 using n8Tracks.Api.Frontend;
 using n8Tracks.Api.Logging;
 using n8Tracks.Api.Maintenance;
@@ -300,6 +301,7 @@ public sealed class Program
             app.MapSessions();
             app.MapAccount();
             app.MapCredentials();
+            app.MapExtensionHandshake();
             app.MapJobs();
             app.MapSongs();
             app.MapSongDeletion();
@@ -314,6 +316,11 @@ public sealed class Program
             app.MapArtwork();
             app.MapWorkflowStates();
             app.MapVersions();
+            app.MapGenerations();
+            app.MapSongSelection();
+            app.MapGenerationArtwork();
+            app.MapGenerationMoves();
+            app.MapGenerationDeletion();
             app.MapResolve();
             app.MapSuno();
             app.MapBackups();

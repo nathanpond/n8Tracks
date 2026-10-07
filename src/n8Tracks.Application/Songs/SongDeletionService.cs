@@ -1,8 +1,10 @@
 using System.Globalization;
+using n8Tracks.Application.Artwork;
 using n8Tracks.Application.Assets;
 using n8Tracks.Application.Auth;
 using n8Tracks.Application.References;
 using n8Tracks.Application.Retention;
+using n8Tracks.Application.Suno;
 using n8Tracks.Domain.Assets;
 using n8Tracks.Domain.Songs;
 
@@ -73,12 +75,15 @@ public abstract record SongDeleteOutcome
 /// (<see cref="RetentionService.RestoreAsync"/>): memberships and relationships come back where the
 /// other side still exists, memberships at the end of each Album and Playlist. Items of the Song
 /// deleted separately before (a Version, a history entry, replaced artwork) keep their own groups.
+/// Each of its Generations with a Suno ID gets a provider tombstone (#130), which a restore removes.
 /// </summary>
 public sealed class SongDeletionService(
     ISongStore songs,
     IVersionStore versions,
     ISongDeletionStore store,
     ArtworkAttachmentService artwork,
+    GenerationArtworkService generationArtwork,
+    TombstoneService tombstones,
     RetentionService retention,
     IExclusiveTransaction transaction,
     TimeProvider time)
@@ -119,7 +124,11 @@ public sealed class SongDeletionService(
 
                 var all = await versions.ListAsync(id, ct).ConfigureAwait(false);
                 var generations = await store.GenerationIdsAsync(id, ct).ConfigureAwait(false);
-                var (artworkRoot, files) = await artwork.RetentionOfAsync(ArtworkOwnerTypes.Song, id, ct).ConfigureAwait(false);
+                var (artworkRoot, ownFiles) = await artwork.RetentionOfAsync(ArtworkOwnerTypes.Song, id, ct).ConfigureAwait(false);
+
+                // The Generations' images (#121) are kept with the group too; the Song's own artwork
+                // may be a copy of one of them, so each file is listed once.
+                string[] files = [.. ownFiles.Concat(await generationArtwork.RetainedFilesAsync(generations, ct).ConfigureAwait(false)).Distinct(StringComparer.Ordinal)];
                 // Parents first: the Song, its Versions, their Generations (both refer to the Song and
                 // their Versions without cascading), then the artwork, which no key ties to the Song.
                 List<RetainedRoot> roots =
@@ -133,6 +142,11 @@ public sealed class SongDeletionService(
                     roots.Add(artworkRoot);
                 }
 
+                // Sources of other Songs' Versions that point at these Generations keep their Suno IDs
+                // (#122), and each Generation with a Suno ID gets a provider tombstone (#130).
+                var now = time.GetUtcNow();
+                await versions.RewriteSourcesOfDeletedGenerationsAsync(generations, [.. all.Select(static version => version.Id)], now, ct).ConfigureAwait(false);
+                await tombstones.RecordForAsync(generations, now, ct).ConfigureAwait(false);
                 var group = await retention.RetainWithinAsync(
                     new RetentionRequest(RetainedRecordTypes.Song, Label(song.Shortcode, song.Title), song.Shortcode, roots, files),
                     ct).ConfigureAwait(false);

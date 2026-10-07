@@ -7,6 +7,8 @@
   <!-- Suno's Create-screen field inventory: the one source of option limits, ranges, lists, and defaults. -->
   <ItemGroup>
     <EmbeddedResource Include="..\..\docs\suno-create-field-inventory.json" Link="Suno\suno-create-field-inventory.json" LogicalName="n8Tracks.Application.Suno.suno-create-field-inventory.json" />
+    <!-- Where each option is in a clip Suno returns (TS-003): what import reads. -->
+    <EmbeddedResource Include="..\..\docs\suno-import-field-map.json" Link="Suno\Import\suno-import-field-map.json" LogicalName="n8Tracks.Application.Suno.Import.suno-import-field-map.json" />
   </ItemGroup>
 
   <ItemGroup>

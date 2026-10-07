@@ -3,8 +3,11 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'vite';
 import {
+  observerOutput,
   referencedFiles,
+  relayOutput,
   serviceWorkerOutput,
+  sunoOutput,
   transformManifest,
   validateManifest,
   type Manifest,
@@ -70,6 +73,7 @@ export async function buildExtension(): Promise<ProductVersion> {
       rolldownOptions: {
         input: {
           popup: join(extensionRoot, 'src/popup/popup.html'),
+          options: join(extensionRoot, 'src/options/options.html'),
           'service-worker': join(extensionRoot, 'src/background/service-worker.ts'),
         },
         output: {
@@ -80,6 +84,34 @@ export async function buildExtension(): Promise<ProductVersion> {
       },
     },
   });
+
+  // Content scripts run as classic scripts: one file each, no imports, so each is built on its
+  // own. The service worker registers the relay for the paired origin, and the Suno script and
+  // the page observer for suno.com, by these names.
+  const contentScripts: Record<string, string> = {
+    [relayOutput]: 'src/content/relay-main.ts',
+    [sunoOutput]: 'src/content/suno-main.ts',
+    [observerOutput]: 'src/page/observe-main.ts',
+  };
+  for (const [output, entry] of Object.entries(contentScripts)) {
+    await build({
+      configFile: false,
+      root: join(extensionRoot, 'src'),
+      publicDir: false,
+      logLevel: 'warn',
+      build: {
+        outDir: distDirectory,
+        emptyOutDir: false,
+        rolldownOptions: {
+          input: { [output.replace(/\.js$/, '')]: join(extensionRoot, entry) },
+          output: { format: 'iife', entryFileNames: output },
+        },
+      },
+    });
+    if (!existsSync(join(distDirectory, output))) {
+      throw new Error(`The build did not make ${output}.`);
+    }
+  }
 
   const source = readJson(join(extensionRoot, 'manifest.json')) as Manifest;
   const manifest = transformManifest(source, version);

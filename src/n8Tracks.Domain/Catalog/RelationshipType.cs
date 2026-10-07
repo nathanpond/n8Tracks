@@ -13,7 +13,8 @@ namespace n8Tracks.Domain.Catalog;
 /// <param name="IsSystem">Whether it ships with n8Tracks, and so cannot be renamed or deleted.</param>
 /// <param name="SunoAction">
 /// The Suno lineage action it stands for (<see cref="SunoActions"/>), which M4's import and
-/// automation map to; null for the general types and for every user-defined type.
+/// automation map to: fixed for a system type (null for the general ones); for a user-defined type,
+/// one of the audio actions the user chose (#126), or null when unmapped.
 /// </param>
 public sealed record RelationshipType(Guid Id, string Name, string ReverseName, bool IsSystem, string? SunoAction)
 {

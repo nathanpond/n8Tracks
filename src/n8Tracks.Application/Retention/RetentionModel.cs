@@ -19,6 +19,27 @@ public static class RetainedRecordTypes
     /// <summary>A Generation (<c>generations</c>), deleted with its Version.</summary>
     public const string Generation = "generation";
 
+    /// <summary>A Generation's raw clip (<c>provider_records</c>), deleted with its Generation.</summary>
+    public const string ProviderRecord = "provider-record";
+
+    /// <summary>A comment on a Generation (<c>generation_comments</c>), deleted with its Generation (one deleted alone is not retained).</summary>
+    public const string GenerationComment = "generation-comment";
+
+    /// <summary>A Generation's link to its Generation Event (<c>generation_event_links</c>), deleted with its Generation; the event stays.</summary>
+    public const string GenerationEventLink = "generation-event-link";
+
+    /// <summary>A source of a Version (<c>version_sources</c>), deleted with its Version (#122).</summary>
+    public const string VersionSource = "version-source";
+
+    /// <summary>A Version's Inspiration playlist (<c>version_inspiration_playlists</c>), deleted with its Version.</summary>
+    public const string VersionInspirationPlaylist = "version-inspiration-playlist";
+
+    /// <summary>A Version's Voice (<c>version_voices</c>), deleted with its Version.</summary>
+    public const string VersionVoice = "version-voice";
+
+    /// <summary>A Version's file input (<c>version_file_inputs</c>), deleted with its Version.</summary>
+    public const string VersionFileInput = "version-file-input";
+
     /// <summary>A Song (<c>songs</c>), deleted with everything that is its own.</summary>
     public const string Song = "song";
 
@@ -69,6 +90,12 @@ public static class RetainedRecordTypes
     /// with its credits removed: a reference, not a row; the Album itself stays.
     /// </summary>
     public const string AlbumArtist = "album-artist";
+
+    /// <summary>
+    /// A Song's Selected Generation (<c>songs.selected_generation_id</c>, #120), cleared when that
+    /// Generation is deleted without its Song (with its Version): a reference, not a row; the Song stays.
+    /// </summary>
+    public const string SelectedGeneration = "selected-generation";
 }
 
 /// <summary>A record a deletion names: the root of what goes into retention with it.</summary>

@@ -17,12 +17,15 @@ interface Write {
  * A fake n8Tracks holding relationship types, answering as the API does: system types refuse
  * changes (409 `system_type`), a write is checked against the type's revision, a new type's name is
  * refused when another type has it in either direction, and a type in use is deleted only with
- * `removeRelationships=true`.
+ * `removeRelationships=true`. `sourceVersions` holds, by type ID, how many Versions have a source of
+ * the type: its Suno action then cannot change (409 `mapping_in_use`), nor can it be deleted (409
+ * `type_in_use`).
  */
 function typeServer(types: RelationshipType[] = [...SYSTEM_TYPES, SEQUEL, SIBLING]) {
   const server = {
     types: types.map((type) => ({ ...type })),
     writes: [] as Write[],
+    sourceVersions: {} as Record<string, number>,
   };
   const key = (name: string) => name.trim().replace(/\s+/g, ' ').toUpperCase();
   const problem = (status: number, code: string, extra: Record<string, unknown> = {}) =>
@@ -63,7 +66,11 @@ function typeServer(types: RelationshipType[] = [...SYSTEM_TYPES, SEQUEL, SIBLIN
     if (ifMatch !== `"${String(type.revision)}"`) {
       return Promise.resolve(problem(409, 'revision_conflict', { current: type }));
     }
+    const versionCount = server.sourceVersions[id] ?? 0;
     if (method === 'DELETE') {
+      if (versionCount > 0) {
+        return Promise.resolve(problem(409, 'type_in_use', { versionCount }));
+      }
       if (type.relationshipCount > 0 && url.searchParams.get('removeRelationships') !== 'true') {
         return Promise.resolve(
           problem(409, 'relationship_type_in_use', { relationshipCount: type.relationshipCount }),
@@ -71,6 +78,17 @@ function typeServer(types: RelationshipType[] = [...SYSTEM_TYPES, SEQUEL, SIBLIN
       }
       server.types = server.types.filter((candidate) => candidate.id !== id);
       return Promise.resolve(new Response(null, { status: 204 }));
+    }
+    const mapping = body as { sunoAction?: string | null } | undefined;
+    if (mapping?.sunoAction !== undefined) {
+      if (mapping.sunoAction === type.sunoAction) {
+        return Promise.resolve(jsonResponse(200, type));
+      }
+      if (versionCount > 0) {
+        return Promise.resolve(problem(409, 'mapping_in_use', { versionCount }));
+      }
+      Object.assign(type, { sunoAction: mapping.sunoAction, revision: type.revision + 1 });
+      return Promise.resolve(jsonResponse(200, type));
     }
     if (sent !== undefined) {
       Object.assign(type, {
@@ -114,7 +132,19 @@ describe('Settings → Relationships', () => {
       expect(within(systemRow).getByText('System type')).toBeVisible();
       expect(within(systemRow).getByText(system.reverseName)).toBeVisible();
       expect(within(systemRow).queryByRole('button')).toBeNull();
+      expect(within(systemRow).queryByRole('combobox')).toBeNull();
     }
+    expect(within(row('Cover')).getByTestId('suno-action')).toHaveTextContent('Cover');
+    expect(within(row('Sample This Song')).getByTestId('suno-action')).toHaveTextContent(
+      'Sample This Song',
+    );
+    expect(within(row('Use as Inspiration')).getByTestId('suno-action')).toHaveTextContent(
+      'Inspiration',
+    );
+    expect(within(row('Remix')).getByTestId('suno-action')).toHaveTextContent('None');
+    expect(
+      within(row('Sequel to')).getByRole('combobox', { name: 'Suno action for Sequel to' }),
+    ).toHaveValue('');
     expect(within(row('Sequel to')).getByText('Has sequel')).toBeVisible();
     expect(within(row('Sibling of')).getByText('Same both ways')).toBeVisible();
     expect(
@@ -214,5 +244,97 @@ describe('Settings → Relationships', () => {
     await waitFor(() => {
       expect(document.querySelector('tr[data-type-name="Sequel to"]')).toBeNull();
     });
+  });
+
+  it('maps one of the user’s types to a Suno action, changes it, and clears it, each on its revision (#126)', async () => {
+    const user = userEvent.setup();
+    const server = typeServer();
+    await openPage();
+    const select = within(row('Sequel to')).getByRole('combobox', {
+      name: 'Suno action for Sequel to',
+    });
+    expect([...select.querySelectorAll('option')].map((option) => option.textContent)).toEqual([
+      'Not mapped',
+      'Cover',
+      'Extend',
+      'Mashup',
+      'Sample This Song',
+      'Reuse Prompt',
+    ]);
+
+    await user.selectOptions(select, 'Cover');
+    expect(await screen.findByText('Sequel to now stands for Cover.')).toBeVisible();
+    await waitFor(() => {
+      expect(
+        within(row('Sequel to')).getByRole('combobox', { name: 'Suno action for Sequel to' }),
+      ).toHaveValue('cover');
+    });
+
+    await user.selectOptions(
+      within(row('Sequel to')).getByRole('combobox', { name: 'Suno action for Sequel to' }),
+      'Mashup',
+    );
+    expect(await screen.findByText('Sequel to now stands for Mashup.')).toBeVisible();
+
+    await user.selectOptions(
+      within(row('Sequel to')).getByRole('combobox', { name: 'Suno action for Sequel to' }),
+      'Not mapped',
+    );
+    expect(
+      await screen.findByText('Sequel to is no longer mapped to a Suno action.'),
+    ).toBeVisible();
+    expect(server.writes).toEqual(
+      [
+        ['"1"', 'cover'],
+        ['"2"', 'mashup'],
+        ['"3"', null],
+      ].map(([ifMatch, sunoAction]) => ({
+        method: 'PATCH',
+        path: `/api/v1/relationship-types/${SEQUEL.id}`,
+        ifMatch,
+        body: { sunoAction },
+      })),
+    );
+  });
+
+  it('complement: a mapping in use is neither changed nor cleared, and the type is not deleted, naming the Versions', async () => {
+    const user = userEvent.setup();
+    const server = typeServer([
+      ...SYSTEM_TYPES,
+      relationshipType(102, 'Reimagining of', 'Reimagined as', { sunoAction: 'cover' }),
+      SEQUEL,
+    ]);
+    const reimagining = server.types.find((type) => type.name === 'Reimagining of');
+    server.sourceVersions[reimagining?.id ?? ''] = 1;
+    await openPage();
+    const select = () =>
+      within(row('Reimagining of')).getByRole('combobox', {
+        name: 'Suno action for Reimagining of',
+      });
+    expect(select()).toHaveValue('cover');
+
+    await user.selectOptions(select(), 'Not mapped');
+    expect(
+      await screen.findByText(
+        '1 Version has a source of the type Reimagining of, so the Suno action it stands for cannot change. Change those sources first.',
+      ),
+    ).toBeVisible();
+    expect(select()).toHaveValue('cover');
+    expect(reimagining?.sunoAction).toBe('cover');
+
+    server.sourceVersions[reimagining?.id ?? ''] = 2;
+    await user.selectOptions(select(), 'Extend');
+    expect(
+      await screen.findByText(/^2 Versions have a source of the type Reimagining of/),
+    ).toBeVisible();
+    expect(select()).toHaveValue('cover');
+
+    await user.click(screen.getByRole('button', { name: 'Delete Reimagining of' }));
+    expect(
+      await screen.findByText(
+        'Reimagining of / Reimagined as is not deleted: 2 Versions have a source of this type, counting deleted Versions that can still be restored.',
+      ),
+    ).toBeVisible();
+    expect(row('Reimagining of')).toBeInTheDocument();
   });
 });

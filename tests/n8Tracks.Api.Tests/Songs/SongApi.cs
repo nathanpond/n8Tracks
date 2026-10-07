@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using n8Tracks.Api.Tests.Auth;
 using n8Tracks.Api.Tests.Persistence;
 using n8Tracks.Api.Tests.Setup;
+using n8Tracks.Application.Generations;
 using n8Tracks.Application.Songs;
 using n8Tracks.Domain.Songs;
 using n8Tracks.Infrastructure.Persistence;
@@ -37,17 +38,24 @@ internal static class SongApi
 
     /// <summary>
     /// Attaches a new Generation to the Version a reference names, through the application service
-    /// (there is no endpoint for it yet), which freezes its inputs; returns the Generation.
+    /// (there is no endpoint for it), which freezes its inputs; returns the Generation. With
+    /// <paramref name="rawClip"/>, the Generation keeps that clip; without, it has no Suno data.
     /// </summary>
-    public static async Task<GenerationSummary> AttachGenerationAsync(N8TracksApiFactory factory, string versionReference)
+    public static async Task<GenerationSummary> AttachGenerationAsync(N8TracksApiFactory factory, string versionReference, string? rawClip = null)
+    {
+        var outcome = await AttachAsync(factory, versionReference, rawClip);
+        return Assert.IsType<GenerationAttachOutcome.Attached>(outcome).Generation;
+    }
+
+    /// <summary>Attaches as <see cref="AttachGenerationAsync"/> does, and returns the outcome, whatever it is.</summary>
+    public static async Task<GenerationAttachOutcome> AttachAsync(N8TracksApiFactory factory, string? versionReference, string? rawClip, GenerationAttachOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(factory);
 
         var scope = factory.Services.CreateAsyncScope();
         await using (scope.ConfigureAwait(false))
         {
-            var outcome = await scope.ServiceProvider.GetRequiredService<GenerationService>().AttachAsync(versionReference, CancellationToken.None);
-            return Assert.IsType<GenerationAttachOutcome.Attached>(outcome).Generation;
+            return await scope.ServiceProvider.GetRequiredService<GenerationService>().AttachAsync(versionReference, rawClip, options, CancellationToken.None);
         }
     }
 

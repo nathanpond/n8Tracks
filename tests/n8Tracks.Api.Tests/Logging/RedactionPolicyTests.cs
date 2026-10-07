@@ -8,7 +8,7 @@ public sealed class RedactionPolicyTests
     public void TheSensitiveNameListIsTheAgreedOne()
     {
         Assert.Equal(
-            ["password", "passwordconfirmation", "passwordhash", "token", "secret", "cookie", "session", "sessionid", "idhash", "tokenhash", "authorization", "apikey", "lyrics", "prompt", "style", "styles", "simpleprompt", "excludestyles", "speechprompt", "speechscript", "speechtone", "sounddescription", "rawpayload", "providerpayload", "payload", "document"],
+            ["password", "passwordconfirmation", "passwordhash", "token", "secret", "cookie", "session", "sessionid", "idhash", "tokenhash", "authorization", "apikey", "lyrics", "prompt", "style", "styles", "simpleprompt", "excludestyles", "speechprompt", "speechscript", "speechtone", "sounddescription", "rawpayload", "providerpayload", "providerrecord", "rawclip", "clipjson", "styletags", "comment", "comments", "commenttext", "snapshot", "snapshotjson", "verification", "verificationjson", "payload", "document"],
             RedactionPolicy.SensitiveNames);
     }
 
@@ -30,6 +30,13 @@ public sealed class RedactionPolicyTests
     [InlineData("VersionStyles")]
     [InlineData("rawpayload")]
     [InlineData("providerpayload")]
+    [InlineData("ProviderRecord")]
+    [InlineData("rawClipJson")]
+    [InlineData("raw_clip")]
+    [InlineData("StyleTags")]
+    [InlineData("Comment")]
+    [InlineData("generation_comments")]
+    [InlineData("commentText")]
     [InlineData("AccessToken")]
     [InlineData("refresh_token")]
     [InlineData("Set-Cookie")]

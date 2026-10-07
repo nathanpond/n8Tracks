@@ -191,6 +191,38 @@ internal static class ArtworkEndpoints
     {
         SessionEndpoints.NoStore(context);
 
+        var (content, problem) = await ReadUploadAsync(context, cancellationToken);
+        if (problem is not null)
+        {
+            return problem;
+        }
+
+        var outcome = await artwork.UploadAsync(content, cancellationToken);
+        if (outcome is not ArtworkUploadOutcome.Stored stored)
+        {
+            return UploadRefusal(context, outcome);
+        }
+
+        var response = ArtworkResponse.From(stored.Asset, context.Request.PathBase);
+        if (!stored.Created)
+        {
+            return TypedResults.Ok(response);
+        }
+
+        loggers.CreateLogger(typeof(ArtworkEndpoints)).LogInformation("Artwork stored: {AssetId}", stored.Asset.Id);
+        return TypedResults.Created(response.Urls[ArtworkResponse.OriginalKey], response);
+    }
+
+    /// <summary>
+    /// The image an upload sends, as every artwork upload takes it (the store's own, and a Generation's,
+    /// #121): the first file part of a <c>multipart/form-data</c> body, read into memory and counted
+    /// against the 25 MB limit as it arrives (a body over it is never read to the end). Otherwise the
+    /// problem: 413 <c>artwork_too_large</c>, or 400 when there is no file part.
+    /// </summary>
+    internal static async Task<(ReadOnlyMemory<byte> Content, ProblemHttpResult? Problem)> ReadUploadAsync(HttpContext context, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
         if (context.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit)
         {
             limit.MaxRequestBodySize = ArtworkRules.MaximumBytes + MultipartAllowance;
@@ -198,53 +230,44 @@ internal static class ArtworkEndpoints
 
         if (context.Request.ContentLength > ArtworkRules.MaximumBytes + MultipartAllowance)
         {
-            return TooLarge(context);
+            return (default, TooLarge(context));
         }
 
         if (!MediaTypeHeaderValue.TryParse(context.Request.ContentType, out var contentType)
             || !contentType.MediaType.Equals("multipart/form-data", StringComparison.OrdinalIgnoreCase)
             || HeaderUtilities.RemoveQuotes(contentType.Boundary).Value is not { Length: > 0 and <= 200 } boundary)
         {
-            return NoFile(context);
+            return (default, NoFile(context));
         }
 
-        ReadOnlyMemory<byte> content;
         try
         {
-            switch (await ReadFirstFileAsync(new MultipartReader(boundary, context.Request.Body), cancellationToken))
-            {
-                case { } read:
-                    content = read;
-                    break;
-                default:
-                    return NoFile(context);
-            }
+            return await ReadFirstFileAsync(new MultipartReader(boundary, context.Request.Body), cancellationToken) is { } read
+                ? (read, null)
+                : (default, NoFile(context));
         }
         catch (FileTooLargeException)
         {
-            return TooLarge(context);
+            return (default, TooLarge(context));
         }
         catch (BadHttpRequestException exception) when (exception.StatusCode == StatusCodes.Status413PayloadTooLarge)
         {
-            return TooLarge(context);
+            return (default, TooLarge(context));
         }
         catch (InvalidDataException)
         {
-            return NoFile(context);
+            return (default, NoFile(context));
         }
+    }
 
-        switch (await artwork.UploadAsync(content, cancellationToken))
+    /// <summary>
+    /// The problem for an upload the store refused (#97): 413 <c>artwork_too_large</c>, 415
+    /// <c>artwork_type_not_supported</c>, or 422 <c>artwork_undecodable</c> or <c>artwork_dimensions_exceeded</c>.
+    /// </summary>
+    internal static ProblemHttpResult UploadRefusal(HttpContext context, ArtworkUploadOutcome outcome)
+    {
+        switch (outcome)
         {
-            case ArtworkUploadOutcome.Stored stored:
-                var response = ArtworkResponse.From(stored.Asset, context.Request.PathBase);
-                if (!stored.Created)
-                {
-                    return TypedResults.Ok(response);
-                }
-
-                loggers.CreateLogger(typeof(ArtworkEndpoints)).LogInformation("Artwork stored: {AssetId}", stored.Asset.Id);
-                return TypedResults.Created(response.Urls[ArtworkResponse.OriginalKey], response);
-
             case ArtworkUploadOutcome.TooLarge:
                 return TooLarge(context);
 
@@ -273,7 +296,7 @@ internal static class ArtworkEndpoints
                     [new("width", exceeded.Width), new("height", exceeded.Height), new("maximumSide", ArtworkRules.MaximumSide)]);
 
             default:
-                throw new InvalidOperationException("Unknown artwork upload outcome.");
+                throw new ArgumentException("Not a refusal: the image was stored.", nameof(outcome));
         }
     }
 

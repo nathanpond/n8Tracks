@@ -2,9 +2,16 @@
   "$comment": "The shape of each retained type's table, as RetainedShapeGuardTests hashes it. Change an entry only together with the type's ShapeVersion and an upgrader from the shape before (see that test).",
   "editor-snapshot": { "shapeVersion": 1, "hash": "1478e55e8e635532af8498033927cc6e8a11be32068dfd197a2a4a6fd7b9787f" },
   "artwork-attachment": { "shapeVersion": 1, "hash": "b8ca786d5139b838675f0487b1e9d7c6e808b1f4b435cdab0add51aed8ee254f" },
-  "version": { "shapeVersion": 1, "hash": "1661a485fb008102fed2d4d03567b6a46301e95b0c73fa44c29a478600b1e37c" },
-  "generation": { "shapeVersion": 1, "hash": "e73f3e53b090ef37cbfa8128431f558abe6a193a8fb2c68021042d19d81d795c" },
-  "song": { "shapeVersion": 1, "hash": "8ca296b846fc4e3f7d2adcc0a46d98e78ebf9ba3aa5b20d8e0725bff68b9de13" },
+  "version": { "shapeVersion": 2, "hash": "47b74ef6c4c67f1b6f7ecb33e81251032e48abb05fb5d9d1973cf17e089943d3" },
+  "version-source": { "shapeVersion": 1, "hash": "8a2e44524055cbe01192160fdf54ac9b2cb926988a272d17d2d40709ef526ffb" },
+  "version-inspiration-playlist": { "shapeVersion": 1, "hash": "7b7d7acd34726e011393492c7c920afb2d94840475b85cafe75152f9c5faf0db" },
+  "version-voice": { "shapeVersion": 1, "hash": "f7bcdc20051a7d8f31e7a14017d11d30cd9e398965558e3d582350d5ef976a21" },
+  "version-file-input": { "shapeVersion": 1, "hash": "574f8ab31384fdcbd990821f0436aa1aba76652b03733b60fbc96330096c7cd7" },
+  "generation": { "shapeVersion": 6, "hash": "460c5bf3a8209403e94f6a3ddde75be05b37b6a3efd6e46ae8b045a80ab1e581" },
+  "provider-record": { "shapeVersion": 1, "hash": "eb8ed31721034d29d3bdcda218bc2395af5825556aa129530c30d0fdd2901d91" },
+  "generation-comment": { "shapeVersion": 1, "hash": "88be575d82f0cfddf3fb9ff7e2e34a481e04a34203342f3745803383a772d24c" },
+  "generation-event-link": { "shapeVersion": 1, "hash": "64d4bf93360f169329b62b8f8fccb65d3674b578309bcc40bf90c4f5e8d87500" },
+  "song": { "shapeVersion": 3, "hash": "8975628d26d38e11b48e0284532beca1adc47306258782926951a39bdaea03cd" },
   "used-version-number": { "shapeVersion": 1, "hash": "f30feb019fece4c1d32bb19851fa7dd8e80e3f9a3b6563943adbd4435adf0b67" },
   "song-link": { "shapeVersion": 1, "hash": "ea8d78cbd0c8c1fdd57de98a7b5ad84952a92a2229056ccc1ecfa9d621b8dbb9" },
   "song-genre": { "shapeVersion": 1, "hash": "5415900a0bbcfa00613202e752c340d95a790dc6aaf4ce4d0325b732e8c53cbb" },
@@ -19,5 +26,6 @@
   "artist": { "shapeVersion": 1, "hash": "3d72e88264816470a7d4c39825533744ded483d7135ee116f29b507d5fa62ee8" },
   "artist-alias": { "shapeVersion": 1, "hash": "366dc9805a8a34dd7fdd0e198f8809f34e806c0b6d71d54ba989e246958944d9" },
   "artist-link": { "shapeVersion": 1, "hash": "91f74a0f12c8c81742b64a319594ce9f99c4c3b6cfd63d2fac605973cc3f981b" },
-  "album-artist": { "shapeVersion": 1, "hash": "454e9b58847f63b41d6d2789e92c8564233583e1ce1e98ad5c30b559195af719" }
+  "album-artist": { "shapeVersion": 1, "hash": "454e9b58847f63b41d6d2789e92c8564233583e1ce1e98ad5c30b559195af719" },
+  "selected-generation": { "shapeVersion": 1, "hash": "cda5495c84568a7dd0093d02950a65977eb180df4f23e3ac91beb220cf535b5b" }
 }

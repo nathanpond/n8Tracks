@@ -13,12 +13,23 @@ import {
 } from '@mantine/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useCreateFields, type CreateFields, type OptionValue } from '../api/createFields';
+import {
+  inputText,
+  lineageOf,
+  lineageSummary,
+  lineageText,
+  lineageValue,
+  type Lineage,
+} from '../api/lineage';
 import type { FailureReason, FieldValue } from '../api/saves';
 import { restoreSnapshot, type Snapshot } from '../api/snapshots';
 import { useConfiguredTimeZone } from '../api/timeZone';
 import {
+  isLineageKey,
   isVersionDetail,
   KIND_OPTION,
+  LINEAGE_KEYS,
+  SONG_MODE_OPTION,
   OPTION_EDIT_PREFIX,
   optionFromText,
   optionText,
@@ -40,10 +51,14 @@ import { useRevisionedSave, type SavedField } from '../common/useRevisionedSave'
 import { AutosaveIndicator } from '../editor/AutosaveIndicator';
 import { FrozenNotice } from '../editor/FrozenNotice';
 import { HistoryPanel, type RestoreResult } from '../editor/HistoryPanel';
+import { ImportedNotice } from '../editor/ImportedNotice';
 import { LeaveGuard } from '../editor/LeaveGuard';
 import { useAutosave, type AutosaveStatus, type Edit } from '../editor/useAutosave';
 import { useSnapshots, type EditorText } from '../editor/useSnapshots';
 import { VersionInputs } from '../editor/VersionInputs';
+import { GenerateOnSunoButton, GenerateOnSunoStatus } from '../versions/GenerateOnSuno';
+import { useGenerateOnSuno, type GenerateOnSunoController } from '../versions/useGenerateOnSuno';
+import { SourcesSection } from '../versions/SourcesSection';
 import { OptionsPanel } from './inputs/OptionsPanel';
 import { choiceLabel } from './inputs/optionFormat';
 import { RelativeTime } from './SongParts';
@@ -84,10 +99,28 @@ function draftsOf(version: VersionDetail): Drafts {
   };
 }
 
-/** Every option key either side holds. */
+/** Every option key either side holds: the lineage keys (#122) are not options. */
 function optionKeys(...sides: VersionOptions[]): string[] {
-  return [...new Set(sides.flatMap((side) => Object.keys(side)))];
+  return [...new Set(sides.flatMap((side) => Object.keys(side)))].filter(
+    (key) => !isLineageKey(key),
+  );
 }
+
+/**
+ * Every key of `inputs` either side holds, the lineage keys always among them: a lineage key left
+ * out is an empty one, the same as one held empty.
+ */
+function inputKeys(...sides: VersionOptions[]): string[] {
+  return [...new Set([...sides.flatMap((side) => Object.keys(side)), ...LINEAGE_KEYS])];
+}
+
+/** How the conflict view names each lineage key. */
+const LINEAGE_LABELS: Readonly<Record<string, string>> = {
+  sources: 'Sources',
+  inspiration: 'Inspiration',
+  voice: 'Voice',
+  fileInputs: 'Files to attach in Suno',
+};
 
 /** Each editable field: how its stored value is read, and how a draft of it is saved. */
 const DRAFTED: readonly {
@@ -122,9 +155,9 @@ function editOf(drafts: Drafts, stored: VersionDetail): Edit {
     }
   }
   if (!stored.isFrozen) {
-    for (const key of optionKeys(drafts.inputs)) {
-      const value = optionText(drafts.inputs[key]);
-      if (value !== optionText(stored.inputs[key])) {
+    for (const key of inputKeys(drafts.inputs)) {
+      const value = inputText(key, drafts.inputs[key]);
+      if (value !== inputText(key, stored.inputs[key])) {
         edit[OPTION_EDIT_PREFIX + key] = value;
       }
     }
@@ -155,12 +188,12 @@ function follow(
       next = { ...next, [field.key]: draftsOf(after)[field.key] };
     }
   }
-  for (const key of optionKeys(before.inputs, after.inputs)) {
-    const was = optionText(before.inputs[key]);
+  for (const key of inputKeys(before.inputs, after.inputs)) {
+    const was = inputText(key, before.inputs[key]);
     if (
       !Object.hasOwn(sending, OPTION_EDIT_PREFIX + key) &&
-      optionText(after.inputs[key]) !== was &&
-      optionText(next.inputs[key]) === was
+      inputText(key, after.inputs[key]) !== was &&
+      inputText(key, next.inputs[key]) === was
     ) {
       next = { ...next, inputs: { ...next.inputs, [key]: after.inputs[key] ?? null } };
     }
@@ -175,8 +208,8 @@ function textDiffers(drafts: Drafts, stored: VersionDetail): boolean {
 
 /** Whether `drafts` hold an option `stored` does not. */
 function optionsDiffer(drafts: Drafts, stored: VersionDetail): boolean {
-  return optionKeys(drafts.inputs, stored.inputs).some(
-    (key) => optionText(drafts.inputs[key]) !== optionText(stored.inputs[key]),
+  return inputKeys(drafts.inputs, stored.inputs).some(
+    (key) => inputText(key, drafts.inputs[key]) !== inputText(key, stored.inputs[key]),
   );
 }
 
@@ -199,7 +232,11 @@ function refusesInputs(
   const changesOption = Object.entries(edit).some(
     ([key, value]) =>
       key.startsWith(OPTION_EDIT_PREFIX) &&
-      value !== optionText(current.inputs[key.slice(OPTION_EDIT_PREFIX.length)]),
+      value !==
+        inputText(
+          key.slice(OPTION_EDIT_PREFIX.length),
+          current.inputs[key.slice(OPTION_EDIT_PREFIX.length)],
+        ),
   );
   return current.isFrozen && (changes('lyrics') || changes('styles') || changesOption)
     ? 'frozen'
@@ -295,6 +332,11 @@ interface DetailsProps {
    * lyrics and styles, if any, to offer as a new Version's content.
    */
   onDeletedElsewhere: (version: Version, text: EditorText | undefined) => void;
+  /**
+   * The user's Create in Suno was recorded (#149): Generations were attached, and maybe a new Version
+   * made, so the page reads its Versions and Generations again.
+   */
+  onRecorded?: () => void;
 }
 
 /** The heading, marks, and action buttons of the selected Version. */
@@ -302,7 +344,11 @@ function VersionHeader({
   version,
   actions,
   busy,
-}: Omit<DetailsProps, 'onVersion' | 'onDeletedElsewhere'>) {
+  generate,
+}: Omit<DetailsProps, 'onVersion' | 'onDeletedElsewhere'> & {
+  /** Generate on Suno for this Version: held by the panel, so it outlives the switch from loading to loaded. */
+  generate: GenerateOnSunoController;
+}) {
   return (
     <>
       <Group gap="sm" align="center" wrap="wrap">
@@ -328,6 +374,7 @@ function VersionHeader({
         >
           Create New Version From {version.number}
         </Button>
+        <GenerateOnSunoButton controller={generate} />
         {!version.current && (
           <Button
             variant="default"
@@ -360,6 +407,7 @@ function VersionHeader({
         </Button>
       </Group>
       <ShortcodeBadge shortcode={version.shortcode} testId="version-shortcode" />
+      <GenerateOnSunoStatus controller={generate} />
     </>
   );
 }
@@ -387,14 +435,44 @@ export function VersionDetails(props: DetailsProps) {
     }
   }, [missing, onDeletedElsewhere, version]);
 
+  const generate = useGenerateOnSuno(props.version.id);
+
+  // Each Create recorded since the page opened changes the catalog: the Version froze, Generations
+  // came, or a new Version was made. The first answer read is only what was recorded before.
+  const { onRecorded } = props;
+  const recorded = generate.request?.observed?.length;
+  const seen = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (recorded === undefined) {
+      return;
+    }
+    if (seen.current !== undefined && recorded > seen.current) {
+      reload();
+      onRecorded?.();
+    }
+    seen.current = recorded;
+  }, [recorded, reload, onRecorded]);
+
   if (state.phase === 'ready' && fieldsState.phase === 'ready') {
-    return <LoadedVersionDetails {...props} loaded={state.data} createFields={fieldsState.data} />;
+    return (
+      <LoadedVersionDetails
+        {...props}
+        loaded={state.data}
+        createFields={fieldsState.data}
+        generate={generate}
+      />
+    );
   }
 
   return (
     <Paper p="md" withBorder component="section" aria-labelledby="version-heading">
       <Stack gap="sm">
-        <VersionHeader version={props.version} actions={props.actions} busy={props.busy} />
+        <VersionHeader
+          version={props.version}
+          actions={props.actions}
+          busy={props.busy}
+          generate={generate}
+        />
         {state.phase === 'loading' ||
         (state.phase === 'ready' && fieldsState.phase === 'loading') ? (
           <Group gap="sm">
@@ -437,7 +515,12 @@ function LoadedVersionDetails({
   busy,
   loaded,
   createFields,
-}: DetailsProps & { loaded: VersionDetail; createFields: CreateFields }) {
+  generate,
+}: DetailsProps & {
+  loaded: VersionDetail;
+  createFields: CreateFields;
+  generate: GenerateOnSunoController;
+}) {
   const timeZone = useConfiguredTimeZone();
   const [record, setRecord] = useState(loaded);
   const latest = useRef(loaded);
@@ -477,7 +560,7 @@ function LoadedVersionDetails({
     setDraftsState(next);
   }, []);
 
-  const optionNames = Object.keys(loaded.inputs).join(',');
+  const optionNames = optionKeys(loaded.inputs).join(',');
   const fields = useMemo((): SavedField<VersionDetail>[] => {
     const show = (value: FieldValue) => <ConflictValue value={value} />;
     // An option is compared by its JSON and shown as the page writes its value.
@@ -525,6 +608,12 @@ function LoadedVersionDetails({
           read: (current) => optionText(current.inputs[key]),
           show: showOption,
         })),
+      ...LINEAGE_KEYS.map((key): SavedField<VersionDetail> => ({
+        key: OPTION_EDIT_PREFIX + key,
+        label: LINEAGE_LABELS[key] ?? key,
+        read: (current) => lineageText(key, current.inputs[key]),
+        show: (value) => <ConflictValue value={lineageSummary(key, value)} />,
+      })),
     ];
   }, [createFields, optionNames]);
 
@@ -589,6 +678,27 @@ function LoadedVersionDetails({
     [capture, rebase, setDrafts],
   );
 
+  /**
+   * After a save, each lineage part it sent is taken as the API stored it (with what it looked up: a
+   * pasted Suno ID it has as a Generation, titles, availability), unless it was changed again since.
+   */
+  const adoptSaved = useCallback(
+    (edit: Edit) => {
+      const now = latestDrafts.current;
+      let inputs = now.inputs;
+      for (const key of LINEAGE_KEYS) {
+        const sent = edit[OPTION_EDIT_PREFIX + key];
+        if (sent !== undefined && inputText(key, now.inputs[key]) === sent) {
+          inputs = { ...inputs, [key]: latest.current.inputs[key] ?? null };
+        }
+      }
+      if (inputs !== now.inputs) {
+        setDrafts({ ...now, inputs });
+      }
+    },
+    [setDrafts],
+  );
+
   /** A 409 `version_frozen` on a Version the page did not know was frozen: it is now. */
   const markFrozen = useCallback(() => {
     if (!latest.current.isFrozen) {
@@ -607,6 +717,9 @@ function LoadedVersionDetails({
         sending.current = edit;
         try {
           const outcome = await saveFields(edit);
+          if (outcome.kind === 'saved') {
+            adoptSaved(edit);
+          }
           if (outcome.kind === 'failed' && outcome.reason === 'deleted') {
             // Deleted elsewhere: the unsaved lyrics and styles go to the page, to start a new Version.
             const now = latestDrafts.current;
@@ -630,12 +743,16 @@ function LoadedVersionDetails({
             return { kind: 'saved' } as const;
           }
           sending.current = rest;
-          return await saveFields(rest);
+          const saved = await saveFields(rest);
+          if (saved.kind === 'saved') {
+            adoptSaved(rest);
+          }
+          return saved;
         } finally {
           sending.current = null;
         }
       },
-      [markFrozen, onDeletedElsewhere, saveFields, takeFrozen],
+      [adoptSaved, markFrozen, onDeletedElsewhere, saveFields, takeFrozen],
     ),
     onReloaded: useCallback(() => {
       // The text being discarded goes into history first; the text taken in may be new to it.
@@ -670,6 +787,19 @@ function LoadedVersionDetails({
     (key: string, value: OptionValue) => {
       const now = latestDrafts.current;
       setDrafts({ ...now, inputs: { ...now.inputs, [key]: value } });
+      changed();
+    },
+    [changed, setDrafts],
+  );
+
+  const changeLineage = useCallback(
+    (lineage: Lineage) => {
+      const now = latestDrafts.current;
+      const inputs: Record<string, OptionValue> = { ...now.inputs };
+      for (const key of ['sources', 'inspiration', 'voice', 'fileInputs'] as const) {
+        inputs[key] = lineageValue(lineage, key);
+      }
+      setDrafts({ ...now, inputs });
       changed();
     },
     [changed, setDrafts],
@@ -746,7 +876,7 @@ function LoadedVersionDetails({
   return (
     <Paper p="md" withBorder component="section" aria-labelledby="version-heading" ref={panel}>
       <Stack gap="sm">
-        <VersionHeader version={shown} actions={paneActions} busy={busy} />
+        <VersionHeader version={shown} actions={paneActions} busy={busy} generate={generate} />
         <AutosaveIndicator
           status={autosave.status}
           onRetry={autosave.retry}
@@ -780,6 +910,7 @@ function LoadedVersionDetails({
             />
           )}
         </div>
+        <ImportedNotice imported={record.imported} fields={createFields.fields} />
         <OptionsPanel
           fields={createFields}
           options={drafts.inputs}
@@ -801,6 +932,16 @@ function LoadedVersionDetails({
             />
           )}
         />
+        {isSong && <Divider />}
+        {isSong && (
+          <SourcesSection
+            lineage={lineageOf(drafts.inputs)}
+            songMode={drafts.inputs[SONG_MODE_OPTION] === 'simple' ? 'simple' : 'advanced'}
+            versionId={record.id}
+            readOnly={frozen}
+            onChange={changeLineage}
+          />
+        )}
         {isSong && <Divider />}
         {isSong && (
           <HistoryPanel

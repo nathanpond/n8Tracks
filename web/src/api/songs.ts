@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from './client';
-import { isArtwork, type Artwork, type ArtworkCrop } from './artwork';
+import { isSongArtwork, type ArtworkCrop, type SongArtwork } from './artwork';
 import { patchWithRevision, writeWithRevision, type SaveResult } from './saves';
+import { isSongWorkspace, type SongWorkspace } from './sunoWorkspaces';
 
 const SONGS_PATH = 'api/v1/songs';
 export const WORKFLOW_STATES_PATH = 'api/v1/workflow-states';
@@ -178,8 +179,40 @@ export interface Song {
   release: SongRelease;
   /** What is allowed but worth telling the user, such as an ISRC another Song has. */
   warnings: SongWarning[];
-  /** Its own artwork, or null when it has none. */
-  artwork: Artwork | null;
+  /**
+   * What it shows as artwork: its own (`source` `own`), or else its Selected Generation's image
+   * (`selectedGeneration`, uncropped), or null when it has neither.
+   */
+  artwork: SongArtwork | null;
+  /** Whether it has a Selected Generation. */
+  hasSelectedGeneration: boolean;
+  /** Its Selected Generation, the Song's chosen output, with that Generation's states; null when it has none. */
+  selectedGeneration: SelectedGeneration | null;
+  /** The Suno workspace it lives in (#129), by Suno's ID, with its name and state; null when it is in none. */
+  sunoWorkspace: SongWorkspace | null;
+}
+
+/**
+ * A Song's Selected Generation as the Song shows it: the Generation, its shortcode, its own state
+ * (`active` or `archived`), and whether Suno still lists the clip (`present`, `trashed`, `missing`).
+ */
+export interface SelectedGeneration {
+  id: string;
+  shortcode: string;
+  state: 'active' | 'archived';
+  remoteState: 'present' | 'trashed' | 'missing';
+}
+
+function isSelectedGeneration(value: unknown): value is SelectedGeneration {
+  return (
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    typeof value.shortcode === 'string' &&
+    (value.state === 'active' || value.state === 'archived') &&
+    (value.remoteState === 'present' ||
+      value.remoteState === 'trashed' ||
+      value.remoteState === 'missing')
+  );
 }
 
 export interface SongPage {
@@ -327,7 +360,10 @@ export function isSong(value: unknown): value is Song {
     isSongRelease(value.release) &&
     Array.isArray(value.warnings) &&
     value.warnings.every(isSongWarning) &&
-    (value.artwork === null || isArtwork(value.artwork))
+    (value.artwork === null || isSongArtwork(value.artwork)) &&
+    typeof value.hasSelectedGeneration === 'boolean' &&
+    (value.selectedGeneration === null || isSelectedGeneration(value.selectedGeneration)) &&
+    (value.sunoWorkspace === null || isSongWorkspace(value.sunoWorkspace))
   );
 }
 
@@ -345,7 +381,7 @@ export function isSongRelationship(value: unknown): value is SongRelationship {
   );
 }
 
-function isSongPage(value: unknown): value is SongPage {
+export function isSongPage(value: unknown): value is SongPage {
   return (
     isRecord(value) &&
     Array.isArray(value.items) &&
@@ -637,6 +673,8 @@ export interface SongEdit {
   artworkAssetId?: string | null;
   /** The artwork's square crop, in pixels of the original, or null for the centred square. */
   artworkCrop?: ArtworkCrop | null;
+  /** The Suno ID of the workspace the Song lives in (an Available one), or null for none. */
+  sunoWorkspaceId?: string | null;
 }
 
 /** Edits a Song, based on `song`'s revision; a stale revision comes back as a conflict. */

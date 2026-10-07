@@ -100,12 +100,20 @@ public readonly record struct CatalogReference
 /// <param name="Id">Its stable ID.</param>
 /// <param name="Shortcode">Its canonical (lower-case) shortcode.</param>
 /// <param name="Status">
-/// <see cref="ReferenceResolver.ActiveStatus"/> or, for a Version, <see cref="ReferenceResolver.ArchivedStatus"/>
-/// or <see cref="ReferenceResolver.DeletedStatus"/>.
+/// <see cref="ReferenceResolver.ActiveStatus"/> or, for a Version or a Generation, <see cref="ReferenceResolver.ArchivedStatus"/>
+/// or <see cref="ReferenceResolver.DeletedStatus"/>; for a Generation's old shortcode, <see cref="ReferenceResolver.MovedStatus"/>.
 /// </param>
 /// <param name="Song">For a Version or a Generation, its Song; null for a Song.</param>
 /// <param name="Version">For a Generation, its Version; null otherwise.</param>
-public sealed record ResolvedReference(string EntityType, Guid Id, string Shortcode, string Status, ResolvedSong? Song, ResolvedVersion? Version = null);
+/// <param name="CanonicalShortcode">For a moved Generation's old shortcode, the shortcode it has now (the same as <paramref name="Shortcode"/>); null otherwise.</param>
+public sealed record ResolvedReference(
+    string EntityType,
+    Guid Id,
+    string Shortcode,
+    string Status,
+    ResolvedSong? Song,
+    ResolvedVersion? Version = null,
+    string? CanonicalShortcode = null);
 
 /// <summary>The Song a resolved Version or Generation belongs to.</summary>
 public sealed record ResolvedSong(Guid Id, string Shortcode);
@@ -135,14 +143,39 @@ public sealed class ReferenceResolver(ISongStore songs, IVersionStore versions, 
     public const string DeletedStatus = "deleted";
 
     /// <summary>
+    /// A Generation's old shortcode, from before it moved to another Song or Version (#123, #141): it
+    /// resolves for good to the Generation where it is now, with that place's shortcode as canonical.
+    /// </summary>
+    public const string MovedStatus = "moved";
+
+    /// <summary>
     /// The Song, Version, or Generation a reference names, whichever it is; null when it names none.
     /// A Version deleted on its own resolves as <see cref="DeletedStatus"/> for its retention period,
-    /// by its ID or its shortcode, while its Song is live. A moved status comes with a later
-    /// milestone. A Generation is always active for now.
+    /// by its ID or its shortcode, while its Song is live. A Generation is active or archived (its
+    /// user-facing state); its old shortcode, from before a move, is <see cref="MovedStatus"/> while
+    /// it is live, resolves as it does by its ID once deleted, and names nothing once it is purged.
     /// </summary>
     public async Task<ResolvedReference?> ResolveAsync(CatalogReference reference, CancellationToken cancellationToken) =>
         await ResolveLiveAsync(reference, cancellationToken).ConfigureAwait(false)
+            ?? await ResolveAliasAsync(reference, cancellationToken).ConfigureAwait(false)
             ?? await ResolveDeletedAsync(reference, cancellationToken).ConfigureAwait(false);
+
+    /// <summary>A moved Generation's old shortcode (#123): where the Generation is now, or what its ID resolves to once it is deleted.</summary>
+    private async Task<ResolvedReference?> ResolveAliasAsync(CatalogReference reference, CancellationToken cancellationToken)
+    {
+        if (reference.Kind != ReferenceKind.Generation
+            || await versions.FindAliasAsync(reference.Text, cancellationToken).ConfigureAwait(false) is not { GenerationId: { } id })
+        {
+            return null;
+        }
+
+        if (await versions.FindGenerationAsync(id, cancellationToken).ConfigureAwait(false) is { } moved)
+        {
+            return Of(moved) with { Status = MovedStatus, CanonicalShortcode = moved.Shortcode };
+        }
+
+        return await ResolveDeletedAsync(CatalogReference.Parse(id.ToString()), cancellationToken).ConfigureAwait(false);
+    }
 
     private async Task<ResolvedReference?> ResolveDeletedAsync(CatalogReference reference, CancellationToken cancellationToken)
     {
@@ -397,7 +430,7 @@ public sealed class ReferenceResolver(ISongStore songs, IVersionStore versions, 
             GenerationType,
             generation.Generation.Id,
             generation.Shortcode,
-            ActiveStatus,
+            generation.Generation.State == GenerationState.Archived ? ArchivedStatus : ActiveStatus,
             new ResolvedSong(generation.Generation.SongId, Shortcodes.ForSong(generation.SongShortcodeNumber)),
             new ResolvedVersion(generation.Generation.VersionId, generation.VersionShortcode));
 }

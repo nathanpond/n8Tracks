@@ -114,6 +114,58 @@ describe('Settings → Credentials', () => {
     expect(document.body).not.toHaveTextContent('n8t_');
   });
 
+  it('shows the versions an extension credential last reported, and that one has not connected yet', async () => {
+    const seen: Credential = {
+      ...active,
+      id: '0199b1a0-0000-7000-8000-000000000009',
+      name: 'Chrome at home',
+      kind: 'extension',
+      scopes: ['suno.sync', 'suno.generate'],
+      lastExtensionVersion: '0.1.0',
+      lastAdapterVersion: '3',
+      lastSeenAt: '2026-10-02T07:45:00Z',
+    };
+    const fresh: Credential = {
+      ...seen,
+      id: '0199b1a0-0000-7000-8000-00000000000a',
+      name: 'Laptop',
+      lastExtensionVersion: null,
+      lastAdapterVersion: null,
+      lastSeenAt: null,
+    };
+    backend([seen, fresh, active]);
+
+    renderApp('/settings/credentials');
+    await table();
+
+    expect(within(row('Chrome at home')).getByTestId('extension-seen')).toHaveTextContent(
+      `Extension 0.1.0, adapter 3, seen ${formatDateTime('2026-10-02T07:45:00Z', 'UTC')}`,
+    );
+    expect(within(row('Chrome at home')).getByText('suno.generate')).toBeVisible();
+    expect(within(row('Laptop')).getByTestId('extension-seen')).toHaveTextContent(
+      'Extension not connected yet',
+    );
+    // Complement: an API credential has no extension line.
+    expect(within(row('test script')).queryByTestId('extension-seen')).not.toBeInTheDocument();
+  });
+
+  it('offers the two Suno scopes when creating a credential', async () => {
+    backend([]);
+    const user = userEvent.setup();
+
+    renderApp('/settings/credentials');
+    await screen.findByText('There are no credentials yet.');
+    await user.click(screen.getByRole('button', { name: 'Create credential' }));
+    const form = await screen.findByRole('form', { name: 'Create credential' });
+
+    // The modal's opening transition: wait until it is shown.
+    await waitFor(() => {
+      expect(within(form).getByRole('checkbox', { name: /^suno\.sync/ })).toBeVisible();
+    });
+    expect(within(form).getByRole('checkbox', { name: /^suno\.generate/ })).toBeVisible();
+    expect(within(form).getAllByRole('checkbox')).toHaveLength(9);
+  });
+
   it('filters the list by kind', async () => {
     backend([active, revoked]);
     const user = userEvent.setup();

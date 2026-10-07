@@ -1,0 +1,10 @@
+// A fixture for the invariant 4 guard's static scan: an observer that only wraps the page's fetch
+// and forwards a copy of what it sees. Scanned as if it were src/page/observe.ts; never built or
+// shipped.
+const original = window.fetch;
+
+window.fetch = async (...args: Parameters<typeof fetch>) => {
+  const response = await original(...args);
+  window.postMessage({ type: 'n8tracks-observed', status: response.status }, window.origin);
+  return response;
+};

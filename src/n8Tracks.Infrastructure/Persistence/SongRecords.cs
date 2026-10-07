@@ -69,6 +69,19 @@ public sealed class SongRecord
 
     /// <summary>A language code from the bundled list, or null.</summary>
     public string? Language { get; set; }
+
+    /// <summary>
+    /// The Song's Selected Generation (#120): one of its own Generations, from any Version, or null
+    /// when it has none. A foreign key with restrict on delete; that it is the Song's own is the
+    /// service's check. Whatever deletes or moves a Generation resolves the selection first.
+    /// </summary>
+    public Guid? SelectedGenerationId { get; set; }
+
+    /// <summary>
+    /// The Suno ID of the workspace the Song lives in (#129), or null for none: a foreign key to
+    /// <c>suno_workspaces</c> with restrict on delete (workspace records are never deleted).
+    /// </summary>
+    public string? SunoWorkspaceId { get; set; }
 }
 
 /// <summary>One row of <c>song_links</c>: an external link of a Song, at its place in the Song's list.</summary>
@@ -144,14 +157,31 @@ public sealed class VersionRecord
 
     /// <summary>The ordinal of the last Generation attached; 0 when none has been. Never goes down.</summary>
     public int LastGenerationOrdinal { get; set; }
+
+    /// <summary>
+    /// What import recorded about the inputs of a Version created from a Suno clip (#135), as JSON
+    /// (<see cref="VersionInputsColumns.ImportedJson"/>); null for a Version made in n8Tracks. System
+    /// metadata: written when the Version is created and never changed.
+    /// </summary>
+    public string? ImportedInputs { get; set; }
 }
 
 /// <summary>
-/// One row of <c>generations</c>: a Generation attached to a Version. Only its identity, owner, and
-/// ordinal for now; the rest arrives with Generations in M4. Unique on the Version and the ordinal.
+/// One row of <c>generations</c>: a Generation attached to a Version, with its states and what Suno
+/// reported about its clip, normalized (the raw clip is its <see cref="ProviderRecordRecord"/>). Unique
+/// on the Version and the ordinal, and on the Suno ID among the rows that have one: this table holds
+/// only live Generations (deleted ones are moved into retention), so that is "among live Generations".
 /// </summary>
 public sealed class GenerationRecord
 {
+    public const string Active = "active";
+    public const string Archived = "archived";
+    public const string Present = "present";
+    public const string Trashed = "trashed";
+    public const string Missing = "missing";
+    public const string ArchivedByUser = "user";
+    public const string ArchivedBySync = "sync";
+
     public required Guid Id { get; set; }
 
     public required Guid VersionId { get; set; }
@@ -163,6 +193,171 @@ public sealed class GenerationRecord
 
     /// <summary>UTC, ISO 8601, millisecond precision: when it was attached.</summary>
     public required string CreatedUtc { get; set; }
+
+    /// <summary><see cref="Active"/> or <see cref="Archived"/>: the user-facing state.</summary>
+    public string State { get; set; } = Active;
+
+    /// <summary><see cref="Present"/>, <see cref="Trashed"/>, or <see cref="Missing"/>: whether Suno still lists the clip.</summary>
+    public string RemoteState { get; set; } = Present;
+
+    /// <summary>
+    /// <see cref="ArchivedByUser"/> or <see cref="ArchivedBySync"/> while <see cref="State"/> is archived
+    /// (#142); null while active, and for a Generation archived before #142 (read as the user's archive).
+    /// </summary>
+    public string? ArchivedBy { get; set; }
+
+    /// <summary>Starts at 1; raised by rating and state changes (comments have their own).</summary>
+    public int Revision { get; set; } = 1;
+
+    /// <summary>The user's rating, 1 to 5; null when not rated. Written only by a rating change, never by import.</summary>
+    public int? Rating { get; set; }
+
+    /// <summary>The clip's Suno ID; null for a Generation with no Suno data. Unique where set.</summary>
+    public string? SunoId { get; set; }
+
+    /// <summary>Suno's status for the clip, stored as reported.</summary>
+    public string? ProviderStatus { get; set; }
+
+    public string? SunoTitle { get; set; }
+
+    public double? DurationSeconds { get; set; }
+
+    /// <summary>Suno's <c>major_model_version</c>.</summary>
+    public string? ModelVersion { get; set; }
+
+    /// <summary>Suno's <c>model_name</c>.</summary>
+    public string? ModelName { get; set; }
+
+    /// <summary>The model label Suno shows (<c>metadata.model_badges.songrow.display_name</c>).</summary>
+    public string? ModelLabel { get; set; }
+
+    /// <summary>Suno's style description of the clip (<c>metadata.tags</c>): style text, never logged.</summary>
+    public string? StyleTags { get; set; }
+
+    public double? MinimumBpm { get; set; }
+
+    public double? MaximumBpm { get; set; }
+
+    public double? AverageBpm { get; set; }
+
+    /// <summary>Suno's <c>metadata.key</c>, as returned.</summary>
+    public string? MusicalKey { get; set; }
+
+    /// <summary>UTC, ISO 8601, millisecond precision: Suno's <c>created_at</c>.</summary>
+    public string? SunoCreatedUtc { get; set; }
+
+    public string? AudioUrl { get; set; }
+
+    public string? ImageUrl { get; set; }
+
+    /// <summary>Suno's workspace ID (<c>project.id</c>).</summary>
+    public string? WorkspaceId { get; set; }
+
+    public int? BatchIndex { get; set; }
+
+    /// <summary>
+    /// The Generation's cover image in the managed artwork store (#121), or null when it has none. It
+    /// is the Generation's own: written only by the Generation artwork upload, never by an import's
+    /// refresh of the clip columns, and replacing it removes the old asset unless something else uses it.
+    /// </summary>
+    public Guid? ArtworkAssetId { get; set; }
+
+    /// <summary>
+    /// A diff the user declined (#141): the SHA-256 of Suno's incoming values of the compared fields when
+    /// the user left at least one of them declined; while a later sync brings the same values, the clip is
+    /// Already linked. Null when nothing is declined. Never shown, never logged.
+    /// </summary>
+    public string? DeclinedHash { get; set; }
+
+    /// <summary>
+    /// A Conflict the user chose to keep (#141): the SHA-256 of the clip's mapped creation inputs; while a
+    /// later sync brings the same inputs, the clip is not a Conflict. Null when none was kept.
+    /// </summary>
+    public string? KeptInputsHash { get; set; }
+}
+
+/// <summary>
+/// One row of <c>provider_records</c>: the latest raw clip Suno reported for a Generation, kept whole
+/// as the text received (never re-serialised; earlier payloads are replaced, not kept). Goes with its
+/// Generation, into retention too. Never logged, and answered only by the session-only provider-record
+/// endpoint.
+/// </summary>
+public sealed class ProviderRecordRecord
+{
+    public const string ClipKind = "clip";
+
+    public required Guid GenerationId { get; set; }
+
+    public required string SunoId { get; set; }
+
+    /// <summary>What the payload is: <see cref="ClipKind"/>.</summary>
+    public required string Kind { get; set; }
+
+    /// <summary>The raw JSON object as received, UTF-8, whitespace and all.</summary>
+    public required string Payload { get; set; }
+
+    /// <summary>UTC, ISO 8601, millisecond precision: when n8Tracks received it.</summary>
+    public required string CapturedUtc { get; set; }
+
+    /// <summary>The Suno export it arrived in, when it came through one (exports arrive with a later story).</summary>
+    public Guid? ExportId { get; set; }
+}
+
+/// <summary>
+/// One row of <c>generation_comments</c>: a comment the user keeps on a Generation, plain text of 1 to
+/// 2,000 characters. Goes with its Generation, into retention too; deleting one alone is final. Its
+/// text is the user's own words and is never logged.
+/// </summary>
+public sealed class GenerationCommentRecord
+{
+    public required Guid Id { get; set; }
+
+    public required Guid GenerationId { get; set; }
+
+    /// <summary>Trimmed; newlines kept.</summary>
+    public required string Text { get; set; }
+
+    /// <summary>UTC, ISO 8601, millisecond precision: when it was written.</summary>
+    public required string CreatedUtc { get; set; }
+
+    /// <summary>UTC, ISO 8601, millisecond precision: when its text last changed; null when it never has.</summary>
+    public string? EditedUtc { get; set; }
+
+    /// <summary>Starts at 1; raised by each edit that changes the text.</summary>
+    public int Revision { get; set; } = 1;
+}
+
+/// <summary>
+/// One row of <c>generation_events</c>: one Create on Suno, which the Generations linked to it came
+/// from. Internal: never answered or shown.
+/// </summary>
+public sealed class GenerationEventRecord
+{
+    public required Guid Id { get; set; }
+
+    public string? ProviderRequestId { get; set; }
+
+    /// <summary><c>observed</c>, <c>inferred</c>, or <c>user</c>.</summary>
+    public required string Source { get; set; }
+
+    /// <summary><c>high</c> or <c>medium</c>.</summary>
+    public required string Confidence { get; set; }
+
+    public required int BatchSize { get; set; }
+
+    /// <summary>UTC, ISO 8601, millisecond precision.</summary>
+    public required string OccurredUtc { get; set; }
+}
+
+/// <summary>
+/// One row of <c>generation_event_links</c>: a Generation's Generation Event (a Generation has at most
+/// one). Goes with its Generation; the event stays.
+/// </summary>
+public sealed class GenerationEventLinkRecord
+{
+    public required Guid GenerationId { get; set; }
+
+    public required Guid EventId { get; set; }
 }
 
 /// <summary>

@@ -13,11 +13,15 @@ namespace n8Tracks.Api.Tests.Auth;
 /// <summary>
 /// Every <c>/api/v1</c> endpoint declares what a token needs to call it: exactly one of
 /// <c>RequireScope(...)</c>, <c>SessionOnly()</c>, or <c>AllowAnonymous()</c>. The one exception is
-/// the API's own 404 fallback, marked <c>AnyCaller()</c>, and no other endpoint may carry that.
+/// the API's own 404 fallback and the extension handshake, marked <c>AnyCaller()</c>, and no other
+/// endpoint may carry that.
 /// </summary>
 public sealed class EndpointScopeGuardTests
 {
     private const string ApiNotFoundPattern = "/api/v1/{**path}";
+
+    /// <summary>Every route that may be <c>AnyCaller()</c>, by name: a new one is a deliberate change here.</summary>
+    private static readonly string[] AnyCallerPatterns = [ApiNotFoundPattern, "/api/v1/extension/handshake"];
 
     [Fact]
     public void EveryApiEndpointDeclaresExactlyOneScopeMarker()
@@ -95,6 +99,14 @@ public sealed class EndpointScopeGuardTests
         Assert.Equal("session-only", markers["DELETE /api/v1/versions/{reference}/snapshots/{snapshotId:guid}"]);
         Assert.Equal("session-only", markers["GET /api/v1/versions/{reference}/deletion-impact"]);
         Assert.Equal("session-only", markers["DELETE /api/v1/versions/{reference}"]);
+        Assert.Equal("scope", markers["GET /api/v1/versions/{reference}/generations"]);
+        Assert.Equal("scope", markers["GET /api/v1/songs/{reference}/generations"]);
+        Assert.Equal("scope", markers["GET /api/v1/generations/{reference}"]);
+        Assert.Equal("session-only", markers["GET /api/v1/generations/{reference}/provider-record"]);
+        Assert.Equal("scope", markers["PATCH /api/v1/generations/{reference}"]);
+        Assert.Equal("scope", markers["POST /api/v1/generations/{reference}/comments"]);
+        Assert.Equal("scope", markers["PATCH /api/v1/generations/{reference}/comments/{commentId:guid}"]);
+        Assert.Equal("scope", markers["DELETE /api/v1/generations/{reference}/comments/{commentId:guid}"]);
         Assert.Equal("session-only", markers["GET /api/v1/songs/{reference}/deletion-impact"]);
         Assert.Equal("session-only", markers["DELETE /api/v1/songs/{reference}"]);
         Assert.Equal("session-only", markers["DELETE /api/v1/albums/{id:guid}"]);
@@ -102,6 +114,27 @@ public sealed class EndpointScopeGuardTests
         Assert.Equal("scope", markers["GET /api/v1/resolve/{reference}"]);
         Assert.Equal("scope", markers["GET /api/v1/suno/create-fields"]);
         Assert.Equal("scope", markers["GET /api/v1/suno/models"]);
+        Assert.Equal("scope", markers["GET /api/v1/suno/playlists"]);
+        Assert.Equal("scope", markers["GET /api/v1/suno/personas"]);
+        Assert.Equal("scope", markers["GET /api/v1/suno/workspaces"]);
+        Assert.Equal("scope", markers["PUT /api/v1/suno/workspaces/discovered"]);
+        Assert.Equal("scope", markers["POST /api/v1/suno/generation-requests/{id:guid}/observed-create"]);
+        Assert.Equal("scope", markers["POST /api/v1/suno/generation-requests/{id:guid}/clips"]);
+        Assert.Equal("session-only", markers["POST /api/v1/suno/workspaces/{id}/move-songs"]);
+        Assert.Equal("scope", markers["POST /api/v1/suno/exports"]);
+        Assert.Equal("scope", markers["POST /api/v1/suno/exports/{id:guid}/parts"]);
+        Assert.Equal("scope", markers["POST /api/v1/suno/exports/{id:guid}/complete"]);
+        Assert.Equal("scope", markers["POST /api/v1/suno/exports/{id:guid}/discard"]);
+        Assert.Equal("scope", markers["GET /api/v1/suno/exports/{id:guid}"]);
+        Assert.Equal("scope", markers["PUT /api/v1/suno/exports/{id:guid}/artwork/{sunoId}"]);
+        Assert.Equal("session-only", markers["GET /api/v1/suno/exports/{id:guid}/records"]);
+        Assert.Equal("session-only", markers["PATCH /api/v1/suno/exports/{id:guid}/records"]);
+        Assert.Equal("session-only", markers["GET /api/v1/suno/exports/current"]);
+        Assert.Equal("session-only", markers["GET /api/v1/suno/exports/{id:guid}/summary"]);
+        Assert.Equal("session-only", markers["GET /api/v1/suno/exports/{id:guid}/records/{sunoId}/targets"]);
+        Assert.Equal("session-only", markers["POST /api/v1/suno/exports/{id:guid}/commit"]);
+        Assert.Equal("session-only", markers["GET /api/v1/suno/exports/{id:guid}/remote-states"]);
+        Assert.Equal("session-only", markers["PATCH /api/v1/suno/exports/{id:guid}/remote-states"]);
         Assert.Equal("session-only", markers["POST /api/v1/suno/models"]);
         Assert.Equal("session-only", markers["PATCH /api/v1/suno/models/{id:guid}"]);
         Assert.Equal("session-only", markers["PUT /api/v1/suno/models/order"]);
@@ -111,6 +144,13 @@ public sealed class EndpointScopeGuardTests
         Assert.Equal("session-only", markers["GET /api/v1/settings/catalog"]);
         Assert.Equal("session-only", markers["PUT /api/v1/settings/catalog"]);
         Assert.Equal("scope", markers["PUT /api/v1/songs/{reference}/credits"]);
+        Assert.Equal("scope", markers["PUT /api/v1/songs/{reference}/selected-generation"]);
+        Assert.Equal("scope", markers["DELETE /api/v1/songs/{reference}/selected-generation"]);
+        Assert.Equal("scope", markers["PUT /api/v1/generations/{reference}/artwork"]);
+        Assert.Equal("session-only", markers["POST /api/v1/generations/{reference}/move-to-new-song"]);
+        Assert.Equal("session-only", markers["GET /api/v1/generations/{reference}/deletion-impact"]);
+        Assert.Equal("session-only", markers["DELETE /api/v1/generations/{reference}"]);
+        Assert.Equal("scope", markers["POST /api/v1/songs/{reference}/artwork/from-generation"]);
         Assert.Equal("scope", markers["GET /api/v1/workflow-states"]);
         Assert.Equal("session-only", markers["POST /api/v1/workflow-states"]);
         Assert.Equal("session-only", markers["PATCH /api/v1/workflow-states/{id:guid}"]);
@@ -121,6 +161,8 @@ public sealed class EndpointScopeGuardTests
         Assert.Equal("session-only", markers["POST /api/v1/restores/uploads"]);
         Assert.Equal("session-only", markers["POST /api/v1/restores"]);
         Assert.Equal("any-caller", markers["* " + ApiNotFoundPattern]);
+        Assert.Equal("any-caller", markers["GET /api/v1/extension/handshake"]);
+        Assert.Equal(2, markers.Values.Count(static marker => marker == "any-caller"));
     }
 
     /// <summary>Proves the check bites: an endpoint added to the test host without a marker fails it.</summary>
@@ -149,7 +191,7 @@ public sealed class EndpointScopeGuardTests
         });
 
         Assert.Equal(
-            ["GET /api/v1/test/both: 2 scope markers", "GET /api/v1/test/open: AnyCaller() is for the API's 404 only"],
+            ["GET /api/v1/test/both: 2 scope markers", "GET /api/v1/test/open: AnyCaller() is for the API's 404 and the extension handshake only"],
             Violations(ApiEndpoints(factory)));
     }
 
@@ -164,6 +206,11 @@ public sealed class EndpointScopeGuardTests
         Assert.Equal(
             [CredentialScopes.SongsWrite, CredentialScopes.CatalogBulkWrite],
             new RequiredScopes([CredentialScopes.SongsWrite, CredentialScopes.CatalogBulkWrite, CredentialScopes.SongsWrite]).Scopes);
+
+        // Every one is needed unless the marker says one of them is enough (#121's Generation image).
+        Assert.False(new RequiredScopes([CredentialScopes.SongsWrite]).AnyOf);
+        Assert.True(new RequiredScopes([CredentialScopes.SunoSync, CredentialScopes.ArtworkWrite], anyOf: true).AnyOf);
+        Assert.Throws<ArgumentException>(static () => new RequiredScopes([], anyOf: true));
     }
 
     /// <summary>
@@ -190,7 +237,7 @@ public sealed class EndpointScopeGuardTests
             }
         }
 
-        Assert.Equal(45, sessionOnly);
+        Assert.Equal(62, sessionOnly);
 
         // An anonymous endpoint answers as it would without the header, even to a token that is not one.
         using var status = await CredentialApi.SendRawAsync(client, HttpMethod.Get, SetupApi.Status, "Bearer not-a-token");
@@ -231,9 +278,9 @@ public sealed class EndpointScopeGuardTests
             {
                 violations.Add($"{Describe(endpoint)}: {count} scope markers");
             }
-            else if (Marker(endpoint) == "any-caller" && endpoint.RoutePattern.RawText != ApiNotFoundPattern)
+            else if (Marker(endpoint) == "any-caller" && !AnyCallerPatterns.Contains(endpoint.RoutePattern.RawText, StringComparer.Ordinal))
             {
-                violations.Add($"{Describe(endpoint)}: AnyCaller() is for the API's 404 only");
+                violations.Add($"{Describe(endpoint)}: AnyCaller() is for the API's 404 and the extension handshake only");
             }
         }
 

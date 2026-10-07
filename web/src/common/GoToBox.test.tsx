@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { jsonResponse, renderApp, requestPath } from '../test/helpers';
 import { baseSong } from '../test/songServer';
-import { testVersion, versionServer } from '../test/versionServer';
+import { testGeneration, testVersion, versionServer } from '../test/versionServer';
 import { GO_TO_FAILED, GO_TO_NOT_FOUND } from './GoToBox';
 
 const VERSIONS = [testVersion('1', { current: true }), testVersion('1.1', { archived: true })];
@@ -59,15 +59,17 @@ describe('the Go to box', () => {
     expect(router.state.location.pathname).toBe('/songs/n8-7/v/1');
   });
 
-  it("opens a Generation's Version from the Generation's shortcode", async () => {
-    versionServer([testVersion('1'), testVersion('1.1', { current: true })]);
+  it("opens a Generation's panel, with its Version in the editor, from the Generation's shortcode", async () => {
+    const { server } = versionServer([testVersion('1'), testVersion('1.1', { current: true })]);
+    server.generations = [testGeneration('1', 1), testGeneration('1', 2)];
     const user = userEvent.setup();
     const router = await openElsewhere();
 
     await user.type(box(), 'N8-7-V1-G2{Enter}');
 
+    expect(await screen.findByRole('dialog', { name: 'Generation n8-7-v1-g2' })).toBeVisible();
     await versionHeading('1');
-    expect(router.state.location.pathname).toBe('/songs/n8-7/v/1');
+    expect(router.state.location.pathname).toBe('/songs/n8-7/generations/n8-7-v1-g2');
   });
 
   it('acts on Enter, not on paste', async () => {

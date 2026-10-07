@@ -361,7 +361,9 @@ describe('archiving Versions', () => {
     expect(node('1')).toHaveAttribute('data-archived', 'true');
     expect(node('1')).toHaveAttribute('aria-current', 'true');
     expect(screen.getByRole('heading', { level: 3, name: 'Version 1' })).toBeVisible();
-    expect(screen.getByText('Archived')).toBeVisible();
+    expect(
+      within(screen.getByRole('region', { name: 'Version 1' })).getByText('Archived'),
+    ).toBeVisible();
     expect(screen.getByRole('button', { name: 'Unarchive' })).toBeEnabled();
   });
 

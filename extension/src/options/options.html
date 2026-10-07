@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="color-scheme" content="light dark" />
+    <title>n8Tracks extension settings</title>
+    <link rel="stylesheet" href="../popup/popup.css" />
+    <link rel="stylesheet" href="./options.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>n8Tracks extension</h1>
+        <p id="version"></p>
+      </header>
+
+      <section aria-labelledby="connection-heading">
+        <h2 id="connection-heading">Connection</h2>
+        <p id="connection" role="status"></p>
+        <p id="detail"></p>
+        <p id="warning" class="warning" hidden></p>
+        <div class="actions">
+          <button id="disconnect" type="button" hidden>Disconnect</button>
+        </div>
+      </section>
+
+      <form id="pair" aria-labelledby="pair-heading" novalidate>
+        <h2 id="pair-heading">Connect to n8Tracks</h2>
+        <div class="field">
+          <label for="address">n8Tracks address</label>
+          <input
+            id="address"
+            name="address"
+            type="url"
+            autocomplete="url"
+            spellcheck="false"
+            required
+            aria-describedby="address-help address-error"
+          />
+          <p id="address-help" class="help">
+            The address you open n8Tracks at, such as https://n8tracks.example.com.
+          </p>
+          <p id="address-error" class="error"></p>
+          <p id="insecure" class="help" hidden>
+            This address starts with http://, so the token is sent unencrypted. Use it only on a
+            network you trust.
+          </p>
+        </div>
+        <div class="field">
+          <label for="token">Token</label>
+          <input
+            id="token"
+            name="token"
+            type="password"
+            autocomplete="off"
+            spellcheck="false"
+            required
+            aria-describedby="token-help token-error"
+          />
+          <p id="token-help" class="help">
+            Create a credential of kind Extension in n8Tracks under Settings → Credentials, with
+            suno.sync, suno.generate, or both, and paste its token here.
+          </p>
+          <p id="token-error" class="error"></p>
+        </div>
+        <div id="confirm" class="confirm" hidden>
+          <p id="confirm-text"></p>
+          <div class="actions">
+            <button id="replace" type="button">Replace connection</button>
+            <button id="keep" type="button">Keep the current one</button>
+          </div>
+        </div>
+        <p id="result" role="status"></p>
+        <div class="actions">
+          <button id="connect" type="submit">Connect</button>
+        </div>
+      </form>
+
+      <section aria-labelledby="diagnostics-heading">
+        <h2 id="diagnostics-heading">Diagnostics</h2>
+        <p id="diagnostics-statement" class="help"></p>
+        <div class="actions">
+          <button id="download-report" type="button" aria-describedby="diagnostics-statement">
+            Download diagnostic report
+          </button>
+        </div>
+        <p id="diagnostics-result" role="status"></p>
+      </section>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

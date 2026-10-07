@@ -2433,3 +2433,1333 @@ Changes made outside the n8SDLC commands that deviate from planned issues get an
 - **Decision:** For each bug I ran the touched suites and a bite or regression proof before committing. I ran the full gate (dotnet build/format/test, web, extension, e2e, check-suppressions, check-canaries) once over the whole branch before the single push.
   **Why:** The brief says not to push until every bug is done, so nothing is checked by CI in between. One full gate over the final tree covers every commit's combined effect.
   **Issue:** #301, #311, #302, #303, #304, #306, #307, #308, #309, #310
+
+## /n8-exec M4 — 2026-10-06
+
+- **Decision:** D1 applied. `GenerationService` moved from `Application.Songs` to the new namespace `Application.Generations`, as #117 planned (with `IGenerationStore`, `GenerationAttachOptions`, and the event types). The invariant 1 guard (`VersionImmutabilityGuardTests`) now has one explicit list, `CatalogServiceNamespaces`. It names `Application.Songs`, `Application.References`, `Application.Retention`, and `Application.Generations`, each by type, with no prefix or wildcard. Both the "every public method is exercised or excused" check and the "services elsewhere may not take a catalog type" complement read this list. Every `GenerationService` method has an exerciser on a frozen Version. A later story that adds a catalog namespace (`Application.Suno.Import`, `Application.Suno.Generate`, `Application.Artwork`) must add it to the list.
+  **Why:** This is orchestrator decision D1. An enumerated list means a new write path cannot slip out of the guard because it sits in another namespace. The complement test still catches a catalog type taken anywhere else.
+  **Issue:** #117
+- **Decision:** `ClipFields` (the normalized clip) is in `Domain.Suno`, not `Domain.Songs`. `ClipReader` is a static class in `Application.Suno`.
+  **Why:** If they were in a catalog namespace, a future Suno import service in `Application.Suno.*` could not take a `ClipFields` without tripping the guard's complement. They hold Suno's data, not catalog state. A static reader is not a service, so the guard does not enumerate it.
+  **Issue:** #117
+- **Decision:** One migration, `AddGenerationProviderData`. It adds the `generations` columns, creates `provider_records` (keyed by `generation_id`, cascading from the Generation, with a JSON-object CHECK on `payload`), creates `generation_events`, and creates `generation_event_links` (keyed by `generation_id`, which cascades; the event FK is RESTRICT; indexed on `event_id`). The partial unique index `ix_generations_suno_id` covers `WHERE suno_id IS NOT NULL`. Four columns that carry CHECKs (`state`, `remote_state`, `revision`, `suno_id`) are added with hand-written `ALTER TABLE ... ADD COLUMN ... CHECK` statements. Down drops every column in place.
+  **Why:** EF Core's `AddCheckConstraint` rebuilds `generations` at the end of the migration. That drops `tr_generations_identity_never_changes` after any SQL that tries to re-create it, and it splits the migration across three transactions. Adding the columns in place keeps the trigger and keeps the migration in one transaction. The model snapshot still declares the named checks, so a later EF rebuild produces the same constraints. `has-pending-model-changes` reports none.
+  **Issue:** #117
+- **Decision:** The event link is a separate table, `generation_event_links`, not a nullable `event_id` column on `generations`.
+  **Why:** A column FK would also have forced a table rebuild. As its own retained type (`generation-event-link`, Optional), the link goes into retention with its Generation. If the event is gone at restore, the Generation comes back without the link, which is what #124 asks for ("its event link is restored if the event still exists"). A Generation still has at most one event, because the link's key is the Generation.
+  **Issue:** #117
+- **Decision:** Retention, done now for #124: the `provider-record` and `generation-event-link` types are registered. Each cascades from `generations`, so any group that retains a Generation also retains them. `generation` moved to shape 2, with the upgrader `GenerationShape1To2` (a shape-1 record restores as active, present, revision 1, no Suno data). `retained-shapes.json` is updated. A test deletes a Version, then restores it: the provider record comes back byte for byte and the event link comes back. A second test restores a shape-1 record through the upgrader. Backup and restore need no change, because both copy the whole SQLite database.
+  **Why:** This follows the m4-plan risk note for #117. Without the registered types, deleting a Version or a Song that has a provider record would be refused.
+  **Issue:** #117
+- **Decision:** Suno ID uniqueness is checked inside the attach's `IExclusiveTransaction` (BEGIN IMMEDIATE), before the insert. The partial unique index is the backstop, and a test shows it refusing a raw SQL duplicate. A restore that would bring back a Suno ID that is now live gets `Clash`, and a test covers it.
+  **Why:** IMMEDIATE serialises every writer, including the separate `seed-generation` process, so a race between the check and the insert cannot happen. The index still refuses any other writer.
+  **Issue:** #117
+- **Decision:** No HTTP endpoint attaches Generations in this story. The attach outcome `SunoIdExists` carries the existing Generation. `GenerationsEndpoints.AttachRefusal` maps the refusals to problems (409 `suno_id_exists` with `shortcode` and `generationId`, 422 `invalid_clip`, 404) for the import and observed-Create endpoints to reuse, and a test covers the mapping.
+  **Why:** AC 6 makes the application-service method the only way to create a Generation, and the story names no attach endpoint. Fixing the 409 shape now keeps AC 2's wording true for whichever endpoint exposes the attach.
+  **Issue:** #117
+- **Decision:** Attach options are `GenerationAttachOptions(EventId?, ExportId?)`. The discretion line's `reimport` flag is left to #124.
+  **Why:** In this story, reimport has no behaviour to give it. Live uniqueness already allows a deleted Generation's Suno ID to be attached again, and restoring the original is #124's work. An option that changes nothing would be dead API.
+  **Issue:** #117
+- **Decision:** Field names. The response has `title`, `durationSeconds`, `modelVersion` (`major_model_version`), `modelName`, `modelLabel` (`metadata.model_badges.songrow.display_name`), `styleTags` (`metadata.tags`), `minimumBpm`, `maximumBpm`, `averageBpm`, `key`, `sunoCreatedAt`, `audioUrl`, `imageUrl`, `workspaceId`, `batchIndex`, and `sunoUrl` (derived, null without a Suno ID). It also has `sunoId`, `providerStatus`, `state`, `remoteState`, `revision`, and `isSelected` (always false). The column for the key is `musical_key`. Blank strings in a clip are read as none.
+  **Why:** The design calls `metadata.tags` "tags as returned", but TS-003 shows the field is Suno's rewritten style text. Naming it `styleTags` keeps it from being confused with catalog Tags and puts it under the redaction policy: `styletags` was added to the policy, together with `providerrecord`, `rawclip`, and `clipjson`. The fixtures send `""` for a Sound's `major_model_version` and for a submitted clip's `audio_url`; neither is a value.
+  **Issue:** #117
+- **Decision:** In the fixtures, every `media_urls` entry is `m4a-opus`, so the audio address falls back to `audio_url` (`…/api/forbidden` on a finished clip, `""` on a submitted one). An entry counts as MP3 if its `content_type` contains "mp3" or its address ends in `.mp3`.
+  **Why:** The discretion line says "where a fixture disagrees, the fixture wins". The rule is implemented as written, and the fixtures decide what it reads.
+  **Issue:** #117
+- **Decision:** The resolver now answers `archived` for a Generation whose state is archived (it was always `active`), and `GET /generations/{reference}` returns a deleted Generation as a plain 404 `not_found`. The provider-record endpoint answers 404 `no_provider_record` for a Generation that has no Suno data.
+  **Why:** The state now exists, so the resolver can read it at no cost. A specific code for a deleted Generation is #124's (Generation deletion). The no-record code tells a client apart from a missing Generation.
+  **Issue:** #117
+- **Decision:** `seed-generation` takes an optional second argument, the path to a clip JSON file. The command reads the file as text and passes it to `GenerationService.AttachAsync`. It exits 1 for an unreadable file, an invalid clip, or a duplicate Suno ID. The e2e helper `seedGeneration(testInfo, shortcode, clip?)` writes the clip into the container's `/tmp` before calling the command. The README documents the argument.
+  **Why:** This is the story's key link ("the command accepts an optional path to a clip JSON file"). The command is test-only (it refuses unless test seeding is on), only reads the file, and never touches `/media`, so invariant 2 is unaffected.
+  **Issue:** #117
+- **Decision:** I added an API-level e2e spec, `generations-api.spec.ts`: it seeds Generations with and without a clip, lists and reads them, and reads the provider record back byte for byte from the built image. There is no UI walk and no axe scan.
+  **Why:** The Demo is "none — agent-verifiable" and the story adds no screen, so there is no visited state to scan. The spec still exercises the seed command's clip path and the endpoints on the real image.
+  **Issue:** #117
+- **Decision:** D4 applied: the manifest validator (`extension/scripts/lib/manifest.ts`) and `test/dist.test.ts` now hold an explicit new allow-list. `permissions` must be exactly `storage`, `scripting`, `tabs`. `optional_host_permissions` must be exactly `https://suno.com/*`, `https://*/*`, `http://*/*`. `options_ui` must be exactly the options page with `open_in_tab`. `host_permissions`, `optional_permissions`, `content_scripts`, and `externally_connectable` must still be absent. The complement tests still fail on any extra permission (`downloads`, `cookies`, `webRequest`, `activeTab`), on `host_permissions`, on a missing permission, and on the M1 lists. The relay is registered with `chrome.scripting.registerContentScripts` for the paired origin and never declared in the manifest. `downloads` stays out until #150.
+  **Why:** Orchestrator decision D4 and the manifest in `docs/suno-integration.md`. An exact list keeps "anything wider fails" true.
+  **Issue:** #128
+- **Decision:** The handshake is marked with the existing `AnyCaller()` marker. The scope guard now allows that marker only on an explicit list of two routes, the API's 404 fallback and `GET /api/v1/extension/handshake`, and asserts that exactly two endpoints carry it. A browser session calling the handshake gets 403 `credential_required`, because there is no credential to report or record.
+  **Why:** The story says the handshake "needs any valid token; it is the one endpoint that needs no particular scope". `AnyCaller()` already means "any authenticated caller, whatever its scopes". A new marker type would duplicate it, and naming the routes keeps the guard explicit.
+  **Issue:** #128
+- **Decision:** The handshake records the sighting on `credentials.last_extension_version`, `last_adapter_version`, and `last_seen_at` (migration `AddCredentialExtensionSightings`) and does not raise the credential's revision. A header value is kept trimmed only when it is 1–64 visible ASCII characters; otherwise, or when it is missing or repeated, it is stored as null and the handshake answers `compatible: false`. Compatibility is major.minor equality of `major.minor[.patch][-suffix]`, and anything else counts as unreadable.
+  **Why:** The story names the columns and says "missing headers store null" and "give compatible: false". Bounding the stored text keeps a client from writing arbitrary strings into Settings. A sighting is an observation, not an edit, so it must not cause rename conflicts.
+  **Issue:** #128
+- **Decision:** The credential API answer gains `lastExtensionVersion`, `lastAdapterVersion`, and `lastSeenAt` (null until a handshake). On the Credentials screen, these show as a line under "Last used" for extension credentials ("Extension 0.1.0, adapter 1, seen …" or "Extension not connected yet"). This is not a new column. The scope list now has nine scopes, `suno.sync` and `suno.generate` last, and the dialog describes each.
+  **Why:** AC 7. Keeping the table's columns unchanged leaves the existing tests and the layout as they are. The two scopes go after the PRD's seven because the PRD lists those as the MCP scopes.
+  **Issue:** #128
+- **Decision:** The extension stores only `pairing: {address, token}` in `chrome.storage.local`, plus `notice: "revoked"` after n8Tracks refuses the token. In that case the token is removed and the address is kept, so the user sees why and can reconnect. The handshake result is cached in the service worker's memory for 60 s and is never stored. The relay and the panel get a state that never carries the token, and the relay passes on only a summary.
+  **Why:** AC 8 ("only the address, the token, and its own settings"), and the discretion line that a 401 removes the token. The notice is the extension's own state.
+  **Issue:** #128
+- **Decision:** The options page calls `chrome.permissions.request` for exactly `https://suno.com/*` and the entered origin's pattern, synchronously inside the Connect click (or the Replace click). Only after the permissions are granted does it send `connect` to the service worker, which checks the permissions, runs the handshake, and only then saves. A failed connect to a new origin gives back that origin's permission and keeps suno.com. The pattern includes the port when there is one (`http://host:8080/*`); the docs say a port in a pattern restricts it to that port. Only extension pages may send `connect` and `disconnect`; content scripts may send only `state` and `relay`.
+  **Why:** The browser shows a permission prompt only for a user gesture. The extension can call n8Tracks across origins only with host permission. The sender check stops a page script from ending the pairing through the relay.
+  **Issue:** #128
+- **Decision:** A confirmation is asked before replacing a pairing that still holds a token (connected, unreachable, or permission removed). A revoked pairing is replaced without one. The relay answers `ping` within 300 ms: if the service worker has not answered by then, it reports `connection.status: "checking"`, so the web app's 500 ms ping still gets an answer while a handshake runs.
+  **Why:** A revoked pairing has nothing left to lose. The ping timeout comes from the design (500 ms).
+  **Issue:** #128
+- **Decision:** The two features show in the popup as list items: "Library sync: Ready" or "…: This credential lacks suno.sync", with the missing one `aria-disabled`. `FeatureState` (`available`, `reason`) is part of the connected state, so the sync and generate stories can disable their own buttons with that reason. The version warning for the Suno panel is `warningFor(state)` in `extension/src/ui/connectionView.ts`. The panel itself is #132's, so this story's AC 5 is left unticked for the panel: the popup and options page show the warning.
+  **Why:** There are no sync or generate buttons yet, and no panel (#132 builds it). Inventing either would be scope creep.
+  **Issue:** #128
+- **Decision:** Added `axe-core` ^4.14.0 (from `npm view`) as an extension dev dependency. The popup and options pages are checked with axe in jsdom, with color-contrast off because jsdom computes no styles. `ADAPTER_VERSION = 1` is placed in `extension/src/adapter/version.ts` for #132 to own.
+  **Why:** The discretion line says "checked with the extension's unit-level accessibility checks". The extension had none. The handshake sends the adapter version now.
+  **Issue:** #128
+- **Decision:** The Versions table reads `rating` and the comment count from the Generation list answer when they are there. Until #119 adds them, they read as null and 0: "Not rated" and 0 comments. `generationOf` in `web/src/api/generations.ts` accepts either a `commentCount` number or an embedded `comments` array. No API field was added in this story.
+  **Why:** #119 owns ratings and comments, and its plan embeds the comments in the Generation answer. Adding placeholder fields to the API now would fix a contract #119 is meant to design. The column, the highest-rating rule ("Not rated" when nothing is rated), and the count are built and tested on fixtures.
+  **Issue:** #118
+- **Decision:** The Generation panel's address is `/songs/<song>/generations/<shortcode>`. That route also selects the Generation's Version in the tree and the editor, and closing the panel goes to `/songs/<song>/v/<number>`. The resolver's `pageFor` and the Go to box now send a Generation shortcode there. A pasted Generation page URL is read as its shortcode. `FrontendHosting.IsShellRequest` serves that path when its last segment parses as a Generation shortcode, because the dots in the shortcode would otherwise read as a file extension and give a 404 on reload.
+  **Why:** This is the discretion line: "has its own address … where the resolver sends a Generation shortcode". Showing the Generation's own Version keeps the tree, the table, and the editor in step.
+  **Issue:** #118
+- **Decision:** The table hides an archived Version while Show archived Versions is off, even when that Version is current. The tree still always draws the current Version. The table's two toggles are kept in the URL (`archived=1`, `archivedGenerations=1`) and stay there as the user moves between Versions and Generations. The tree's own "Show archived" stays a per-browser choice. The table's switches are labelled "Show archived Versions" and "Show archived Generations". `e2e/tests/versions.spec.ts` now matches the tree's switch with `exact: true`.
+  **Why:** AC 1 and 2 say the table lists Active Versions and that the toggle adds Archived ones, and Demo step 4 has an archived Version leave the table. The tree's behaviour (#62/#63) is unchanged. The labels avoid three switches all named "Show archived".
+  **Issue:** #118
+- **Decision:** The section's heading is "Versions and Generations", and it sits below the tree and the editor, collapsible with a Hide/Show button (not remembered). Each Version row has a chevron button (`aria-expanded`, named "Generations of Version N"), and its Version number is a link that selects the Version. The Generation rows are a nested `<table>` in a full-width cell. Each row has the `ShortcodeBadge` copy control, and its Suno title (or "Untitled") is a link that opens the panel. "Open in Suno" goes to `https://suno.com/song/<Suno ID>` in a new tab. State shows as badges: Active or Archived, "Remote Missing" with a focusable tooltip, and "Selected". When a Version's only Generations are hidden archived ones, the table says how many are hidden instead of "No Generations yet".
+  **Why:** This follows the discretion lines: a real table with nested Generation rows; choosing a row does not expand it; the chevron with `aria-expanded`; Remote Missing as a badge with a tooltip. The copy control reuses #68's component. A link per row keeps the rows keyboard-operable without click handlers on `<tr>`.
+  **Issue:** #118
+- **Decision:** `useSongGenerations` reads the Song's Generations again 10 s after each answer while any Generation is `submitted` or `streaming`. It uses `setTimeout`, not `setInterval`, so the test's fake timeouts can drive it. A read again that fails keeps the list already shown. A refresh after a Version deletion reads the Generations again too.
+  **Why:** This follows the discretion line on Generating and the 10-second refresh. Keeping the old list avoids flashing an error while polling.
+  **Issue:** #118
+- **Decision:** Rule 3: `HandshakeEndpoint` reads its claims with `FindFirst(type)!.Value` instead of `ClaimsPrincipal.FindFirstValue`.
+  **Why:** An `AssemblyLoad` probe over a full Api run showed what loaded `Microsoft.Extensions.Identity.Core`: the server's own handshake handler (#117), not a test. `FindFirstValue` is defined in that Identity assembly, so the server depended on ASP.NET Core Identity, which the setup guard forbids. The flake was a real breach. It surfaced only when a handshake test ran before the guard. `SessionAuthenticationHandler` already uses `FindFirst`.
+  **Issue:** #313
+- **Decision:** Rule 3: `SetupEndpointTests.ThereIsNoRegistrationPasswordResetOrOAuth` checks the server's transitive referenced-assembly closure from `typeof(Program).Assembly`, the same walk as `GatewayIsolationGuardTests`, instead of `AppDomain.GetAssemblies()`. The route check and the forbidden-name filter are unchanged, and complement asserts show that the walk reached the server projects and the framework.
+  **Why:** The loaded-assemblies check depended on which tests had already run in the process, and it passed when run alone even with the breach present. The reference walk fails deterministically on the old handshake code, which was verified when the test ran alone, and other tests cannot affect it.
+  **Issue:** #313
+- **Decision:** The rating is a nullable `generations.rating` column (CHECK 1–5). It is added in place by hand-written `ALTER TABLE` in migration `AddGenerationEvaluations`, as #117 did for its checked columns, so the identity trigger survives. Comments are the new table `generation_comments`, as the discretion line names. The story implies both schema changes, so neither is treated as Rule 4. The retained `generation` type moves to shape 3, with the upgrader `GenerationShape2To3` (unrated). The new retained type `generation-comment` (cascade from its Generation) means a Version or Song deletion keeps comments and restores them. Deleting one comment alone is final.
+  **Why:** The discretion lines fix the table and say a comment deleted alone is not retained. The retention store refuses to cascade into a table that is not registered, so registering the type is required, and it also keeps comments with their Generation.
+  **Issue:** #119
+- **Decision:** `GenerationEvaluationService` lives in `Application.Generations`, a namespace already in the invariant-1 guard's list. It is the only writer of the rating and the comments. Each of its four public methods, and each of the four new unsafe endpoints, has an exerciser in `VersionImmutabilityGuardTests`, which sends the Version's inputs alongside, unread. It looks Generations up through `GenerationService.FindAsync`. `IGenerationStore.TryRateAsync` writes only `rating` and `revision`.
+  **Why:** D1: new write paths are enumerated by the guard, not left to escape it. Keeping one store method that writes the rating means no clip-update path can touch it.
+  **Issue:** #119
+- **Decision:** Every Generation answer (list, read, and the 409 `current`) carries `rating` and `comments`, oldest first, each `{id, text, createdAt, editedAt, revision}`. There is no `commentCount`; the web counts the array. `GenerationSummary.Comments` is filled by `GenerationRows.SummariesAsync` in one extra query per read.
+  **Why:** The discretion line embeds comments in the Generation response, and the stale-rating `current` must include them. One shape for the list and the read keeps the row and the panel on one cached value.
+  **Issue:** #119
+- **Decision:** Comment writes (add, edit, delete) also set the Song's updated time, as a rating change does. None of them raises the Song's revision or the Generation's revision. A missing `rating`, or the value it already has, stores nothing, but a stale revision is still a 409. A comment edit whose trimmed text is unchanged stores nothing and is not marked edited. A comment's length is counted in UTF-16 units, the same as the web counter, and the database CHECK (`length(text) BETWEEN 1 AND 2000`) counts characters, which is never more.
+  **Why:** The discretion lines name only the rating for the updated time. A comment is the user's own edit to the Song's data, so its last-updated time should move too. The no-op rules follow the Tag edit pattern and "Edited shows only when the text actually changed".
+  **Issue:** #119
+- **Decision:** Comment text is added to the redaction names as `comment`, `comments`, and `commenttext`. The bare word `text` is not added, because it is too common to mask everywhere. The endpoints log only comment and Generation IDs. A new `LogRedactionGuardTests` case checks that sentinel comment text never reaches a Debug log.
+  **Why:** This follows the discretion line ("added to the log redaction name list") and the conventions.
+  **Issue:** #119
+- **Decision:** Web rating control:
+  - `generations/StarRating.tsx` is a custom radio group named "Rating of <shortcode>". Each star is a `role="radio"` button ("4 stars"), with one tab stop.
+  - The arrow keys change the rating at once, and focus follows. Down from one star clears it, Home and End go to 1 and 5, and Delete clears it.
+  - Clicking the checked star, or pressing Space or Enter on it, clears the rating.
+  - The control is used in the table row and in the panel. Both read the Song's one Generation list (`useSongGenerations().update`), so the highest rating is recomputed from that list.
+  - `useRateGeneration` sends one write at a time per Generation, and the latest value wins. A 409 is retried once with the current revision. A second 409 shows n8Tracks's value with a message, and a failure reloads the list.
+
+  **Why:** These follow the discretion lines. Mantine's `Rating` cannot clear by clicking the current star. Custom buttons make the keyboard behaviour exact and testable in jsdom.
+  **Issue:** #119
+- **Decision:** Web comments:
+  - `generations/GenerationComments.tsx` is in the panel. It has an ordered list, and each comment shows "Written <time>" and an "Edited <time>" badge when edited.
+  - Editing happens in place, and the edit box takes focus.
+  - Deleting needs an inline confirmation: "Delete comment N" or "Keep it", and "Keep it" takes focus.
+  - The text box has a counter of trimmed characters. Text that is too long gets an error message and a disabled button, and is never truncated.
+  - A 404 on a comment write removes the comment silently. A 409 shows the current comment and a message.
+  - The textarea uses fixed rows instead of `autosize`, because Mantine's autosize needs `document.fonts`, which jsdom lacks.
+  - The table's Comments column now counts `comments.length` (testid `generation-comment-count`).
+
+  **Why:** These follow the discretion lines on the counter and on comments deleted elsewhere, and AC 2's confirmation. An inline confirmation avoids stacking a modal on the drawer.
+  **Issue:** #119
+- **Decision:** In the web tests, `VersionsTable.test.tsx` waits for the Generation panel's opening transition, with `openedPanel()`, before it checks visibility.
+  **Why:** With more content in the panel, `findByRole('dialog')` could return while the drawer was still at opacity 0. The test was timing-dependent, and no behaviour changed.
+  **Issue:** #119
+- **Decision:** The Selected Generation is a nullable `songs.selected_generation_id` with a foreign key to `generations` (ON DELETE RESTRICT) and an index. Migration `AddSelectedGeneration` adds the column by a hand-written `ALTER TABLE songs ADD COLUMN ... CONSTRAINT fk_songs_generations_selected_generation_id REFERENCES generations (id) ON DELETE RESTRICT`; the generated `AddForeignKey` was replaced.
+  **Why:** The discretion lines call for a nullable column with restrict on delete and a service-level same-Song check. EF Core's SQLite `AddForeignKey` rebuilds `songs`, a table many others refer to, and splits the migration across transactions. SQLite accepts a REFERENCES column in `ADD COLUMN` when its default is NULL. `DatabaseStartupTests` now asserts the FK, the column, and the index.
+  **Issue:** #120
+- **Decision:** Retention of the circular reference (m4-plan risk note):
+  - **Song deletion:** no code change. The selected Generation is in the Song's own group, so the generic retain clears the in-group reference before removing the rows. Restore defers foreign keys and puts the selection back.
+  - **Version deletion:** passes `Referring: [selected-generation]`. This is a new reference type over `songs.selected_generation_id`, like #104's `album-artist`. When the deleted Version holds the selected Generation, the selection is cleared and remembered with the group. A restore sets it again when the Song has chosen none meanwhile, raising the Song's revision; otherwise it is left out with a note.
+  - **Shape:** `song` retention moves to shape 2 (upgrader `SongShape1To2`: no selection).
+  - **Tests:** round-trip tests for both paths and for "chosen another meanwhile"; the M3 deletion and restore suites re-run green.
+
+  **Why:** The plan's risk note says deletion clears the selection first and asks for a restore round-trip. The `Referring` mechanism does the clearing and remembers the value, so a restore brings the selection back rather than losing it. #123 (move) and #124 (delete a Generation) must resolve the selection themselves.
+  **Issue:** #120
+- **Decision:** Archive and activate go through `GenerationEvaluationService`, not `GenerationSelectionService`. `RateAsync` became `UpdateAsync(reference, GenerationEdit(Rating, State), revision)`, which returns `GenerationUpdateOutcome`, and the store's `TryRateAsync` became `TryUpdateAsync(id, rating, state, revision)`. `GenerationSelectionService` (`Application.Generations`) holds `SelectAsync` and `ClearAsync`.
+  **Why:** The issue's artifact lists archive and activate under the selection service. But the discretion line has the PATCH accept `state` and `rating` together, under one Generation revision. Doing both in one check-and-write means one service method. Both services are in the invariant-1 guard's exercisers.
+  **Issue:** #120
+- **Decision:** Song answers, list rows included, carry `hasSelectedGeneration` and `selectedGeneration {id, shortcode, state, remoteState}`. The discretion line names `{id, shortcode}`; the two states are added. The header uses them for the Archived, In Suno Trash, and Remote Missing badges without a second request.
+  **Why:** The header must show those badges, and the Song read is what it has. The extra fields only add to the contract.
+  **Issue:** #120
+- **Decision:** API details:
+  - **Order of checks in `PUT .../selected-generation`:** Song found (404, or `song_deleted`); `generation` named as text (422 `validation_failed` on `generation`); Generation found (404 `not_found`); Generation belongs to the Song (422 `generation_not_in_song`, with `generationId` and `shortcode`); then the Song's revision (409 with the Song as `current`).
+  - **Invalid state:** 422 on `state`, case-sensitive: only `active` or `archived`.
+  - **No-ops:** clearing when nothing is selected stores nothing, and so does setting a state the Generation already has. A stale revision is still a 409 in both cases.
+  - **Logging:** selection changes log only IDs.
+
+  **Why:** These follow the discretion lines. Other refusals come before the revision check, as in the other Song sub-resources.
+  **Issue:** #120
+- **Decision:** Web:
+  - A `useGenerationChoices` hook backs the Select/Clear and Archive/Reactivate controls in the Generation panel and in a new per-row actions menu ("Actions for <shortcode>").
+  - On a 409, a choice is sent again once with the current revision. The user's explicit choice does not depend on, for example, a title autosave in between.
+  - `useSongGenerations` gained `markSelected`.
+  - The header shows "Selected Generation: <shortcode link to its panel>" with badges, or "None".
+  - The Songs table gets a last column, "Selected", with a check mark ("Yes" or "No" for screen readers). It is last so existing cell indexes stay as they are.
+  - `writeWithRevision` accepts `DELETE` without a body.
+
+  **Why:** The AC asks for the panel or row, and for the header and Songs table indicators. The discretion line says a check mark. A menu keeps the row narrow.
+  **Issue:** #120
+- **Decision:** Carry 1 is done. `hasSelectedGeneration` is computed from `songs.selected_generation_id` in `AlbumTrackStore.ForAlbumsAsync` and `PlaylistStore.FindAsync`. `GenerationResponse.isSelected` comes from `GenerationRows`, which joins the Song's selection. Tests cover Albums (detail and list) and Playlists.
+  **Why:** This is the orchestrator's Carry 1 (m4-plan drift row).
+  **Issue:** #120
+- **Decision:** A Generation's cover image is a nullable `generations.artwork_asset_id`, a foreign key to `assets` (RESTRICT) with an index. Migration `AddGenerationArtwork` adds it in place with a hand-written `ALTER TABLE ... REFERENCES`. It is not an `artwork_attachments` row with a new owner type. `GenerationStore` is registered as a second `IArtworkAttachments`, so an image a Generation names stays live and the sweep keeps it.
+  **Why:**
+  - `artwork_attachments` has no foreign key to its owner, so deleting a Version or Song would leave the row behind.
+  - Its owner-type CHECK could only change by rebuilding the table.
+  - A column goes into retention with the Generation's own row.
+  - EF's `AddForeignKey` would rebuild `generations` and drop its identity trigger.
+  **Issue:** #121
+- **Decision:** Retention changes:
+  - Generation retention is now **shape 4**, with the upgrader `GenerationShape3To4`, which gives an earlier record no image.
+  - A `PrepareRestoreAsync` hook restores a Generation without its image, with a note, when the asset has gone all the same.
+  - Rule 2: Version deletion and Song deletion now list the files of their Generations' images in the group (`GenerationArtworkService.RetainedFilesAsync`, internal). Without this, the sweep could remove an image 24 hours after its Generation was deleted, and the restore would then fail on the foreign key. Regression tests cover a round trip and the vanished-asset note.
+  **Why:** Otherwise a deleted Generation's image would be lost before the 30-day retention ends.
+  **Issue:** #121
+- **Decision:** "Copies it into a managed asset owned by the Song" is done as a new Song attachment of the same asset. The store is content-addressed (#97/#98: identical bytes are one asset), so a byte copy would be the same asset anyway.
+  - The copy is independent of the Generation: the asset stays while the Song's attachment names it.
+  - Tested: replacing the Generation's image leaves the Song's artwork byte-identical, and deleting the Generation's Version leaves the Song's cover served.
+  - Picking goes through `ArtworkAttachmentService.ReplaceAsync`, so the Song's earlier artwork is retained and the crop is reset.
+  - Picking the image the Song already owns uncropped stores nothing. Owned with a crop, the crop is reset and the revision is raised.
+  **Why:** This follows the discretion line and #98's replacement rule without duplicating bytes the store would merge anyway.
+  **Issue:** #121
+- **Decision:** API shapes:
+  - The Song's `artwork` keeps #98/#99's shape `{assetId, width, height, urls, crop, squareUrls}` and adds `source: own | selectedGeneration` (`SongArtworkResponse`).
+  - The default comes from a new trailing `SongSummary.SelectedGenerationArtwork`, joined in the same query as the Selected Generation (left join on `assets`). It is computed at read time and never stored.
+  - A Generation's `artwork` has the same shape (`AttachedArtworkResponse`), with `crop` always null. `GenerationResponse.From` / `GenerationListResponse.From` now take the `PathString`.
+  - The planner's `{assetId, url, thumbnails}` is `urls.original` plus the size keys of `urls` and `squareUrls`.
+  **Why:** Renaming fields would break the contract that #98's web client and the e2e tests read. The new field only adds to it.
+  **Issue:** #121
+- **Decision:** `PUT /api/v1/generations/{reference}/artwork` uses a new any-of scope marker, `RequireAnyScope(suno.sync, suno.generate, artwork.write)`.
+  - `RequiredScopes.AnyOf`: when the token holds none of them, the answer is 403 `insufficient_scope` with `requiredScope` as the list of all three.
+  - A session or an `artwork.write` token may replace an image (`ScopeMiddleware.Holds`). A `suno.*` token gets 409 `artwork_exists` (with `generationId` and `shortcode`) when the Generation already has a different image.
+  - Identical bytes are a 200 no-op for anyone.
+  - Both refusals and the no-op are decided from the content hash before anything is stored.
+  - The session-only count stays 46.
+  **Why:** The AC says one of three scopes. The existing marker requires every scope it lists.
+  **Issue:** #121
+- **Decision:** Generations have no last-updated column. An image upload moves the Song's updated time and raises no revision, as comments and archiving do.
+  **Why:** The discretion line says "moves the Generation's last-updated time" and "bumps no revision". Adding a column only for this was not worth a schema change.
+  **Issue:** #121
+- **Decision:** A replaced Generation image leaves the store in the same transaction (`ArtworkService.RemoveNowIfUnusedAsync`, internal), whatever its upload time. It stays only if a live record attaches it or an unpruned retention group lists its files.
+  **Why:** The discretion line says the image is removed at once and not retained. Accepted race: identical bytes uploaded moments earlier for another owner, but not yet attached, would be removed. That upload's PATCH then gets #98's 422 "upload the image again".
+  **Issue:** #121
+- **Decision:** `POST /api/v1/songs/{reference}/artwork/from-generation` (`artwork.write` only, per the AC) checks in this order:
+  1. 404 for the Song (or `song_deleted`).
+  2. 422 `validation_failed` on `generation`.
+  3. 404 for the Generation.
+  4. 422 `generation_not_in_song`.
+  5. 422 `generation_has_no_artwork`.
+  6. 409 `revision_conflict`.
+  7. 409 `artwork_unavailable` when the original is missing from the store.
+  **Why:** This matches #120's selection order: refusals before the revision check.
+  **Issue:** #121
+- **Decision:** Where the default shows: the Song header, the Details panel, and the Songs table (96-pixel thumbnail) all read the Song's computed `artwork`. Album and Playlist track lists show no Song artwork today, so nothing changes there.
+  **Why:** The discretion line covers every place Song artwork is shown, and the track lists are not among them yet. A later story that adds artwork to the track lists should reuse `SongSummary.SelectedGenerationArtwork` / `SongArtworkResponse`.
+  **Issue:** #121
+- **Decision:** Web:
+  - `ArtworkPicker` gains `inherited` (the note shown when the artwork is not the owner's own; Crop, Remove, and Keep crop are hidden then), `afterRemoval` (text for the confirmation), and `choose`, a render prop for a further control.
+  - `songs/GenerationArtworkChooser.tsx` opens "Choose a Generation's image". It loads the Song's Generations when it opens, lists those with images ("Use the image of <sc>"), and retries a 409 once with the current revision.
+  - `SongPage`'s artwork save fields read only `ownArtwork(song.artwork)`.
+  - A Generation's image sits in its row's title cell (32 px), so cell indexes do not change. The panel shows it at 160 px, or "No image from Suno yet."
+  - `testArtwork` now returns a `SongArtwork` (`source: 'own'` by default). `testGeneration` gives `artwork: null`.
+  **Why:** A defaulted image is not the Song's own, so it cannot be cropped or removed. Treating it as the Song's own field would make the conflict check see changes nobody made.
+  **Issue:** #121
+- **Decision:** D8, as applied in #122. Each lineage table (`version_sources`, `version_inspiration_playlists`, `version_voices`, `version_file_inputs`) has its own `BEFORE INSERT`, `BEFORE UPDATE` and `BEFORE DELETE` freeze trigger. Each one refuses a change while its Version row exists with `is_frozen = 1`. On `version_sources`, the update trigger lets exactly one change through: the system rewrite of a deleted Generation's pointer into the external reference with the same Suno ID, with every other column unchanged. `external_suno_references` gets a trigger that refuses changing a Suno ID or kind.
+  **Why:** This keeps #69's three layers (entity `WithLineage` → `EnsureMutable`, the store writing only after the guarded `versions` update, and the database) for the new tables. The rewrite is the discretion's "system rewrite of the pointer, not of the input": the source's identity is its Suno ID either way.
+  **Issue:** #122
+- **Decision:** Retention gains `RetainedType.FrozenWithParent`, set on the four lineage types. When their Version is deleted, these rows are removed after the Version, by its cascade, instead of before it. On restore they are inserted before the Version, while the restore's foreign keys are deferred.
+  **Why:** A frozen Version's lineage triggers refuse any insert or delete while the Version row is present. Ordering around the parent lets Version and Song deletion and restore keep the lineage without any bypass in the triggers. The guard's retention exerciser compares the restored lineage byte for byte.
+  **Issue:** #122
+- **Decision:** A source names its target Generation or Song by ID with no foreign key. When Generations are deleted (Version or Song deletion now; #124 later), `IVersionStore.RewriteSourcesOfDeletedGenerationsAsync` runs first. It repoints each source in another Version whose Generation has a Suno ID to the shared external reference for that ID, labelled "Deleted" and carrying the Suno title. A source whose Generation has no Suno ID keeps the Generation's ID and reads as `missing: true`, and so does a Song target that was deleted.
+  **Why:** The discretion makes a source outlive its target: a moved Generation is followed, and a deleted one becomes an external reference. A Generation without a Suno ID has nothing to rewrite to, so its ID stays as the frozen identity. That is the identity rule the discretion gives the guard: the Suno ID when there is one, otherwise the Generation ID.
+  **Issue:** #122
+- **Decision:** API shape:
+  - `inputs` gains `sources`, `inspiration` (`{sources:[…]}` or `{playlist:{sunoPlaylistId,name,clipIds}}` or null), `voice` (`{personaId,name}` or null) and `fileInputs` (`[{kind,description}]`).
+  - A source has `typeId`, exactly one of `generation`, `song` or `external`, `continueAtSeconds` and `secondaryIds`.
+  - On write, `generation` and `song` take an ID or shortcode, as text or as an object with `id`. On read they are objects with `shortcode`, `title` and `missing`, and the read also gives `sunoAction`. Read-only fields are ignored when sent back, so a read can be sent back as it is (no change, no revision).
+  - Inspiration sources take no type: it is always Use as Inspiration. File inputs are sorted by kind.
+  - A rule violation is a 422 `validation_failed` with a new `rules` member (`field → [rule code]`) beside `errors`.
+  **Why:** The AC says sources round-trip in `inputs` and a rule violation is "a field error naming the rule". A separate `rules` member keeps `errors` messages-only, as every other 422 has it.
+  **Issue:** #122
+- **Decision:** Write-time rule checks report only the rules that read a part the edit sent. The cross-part rules (Inspiration with Cover, audio file with an audio action) are also reported when `sources` is sent. An image or video on a Song that is not in Simple mode is refused on write. Individual Inspiration sources are not refused in Simple mode; they are only left out of `effectiveInputs`.
+  **Why:** "Changing kind or mode never refuses." So a part kept as it is (say, an image left over after switching to Advanced) must not block an edit of another part. The test plan names only image or video on an Advanced-mode Song as a refusal; individual Inspiration in Simple mode is named only as omitted from `effectiveInputs`.
+  **Issue:** #122
+- **Decision:** `GenerationService.AttachAsync` refuses an incomplete lineage with the new outcome `GenerationAttachOutcome.IncompleteSources`: a Mashup without two sources, an Extend without its position, or a position past the source's known length. Only the rules a complete check adds are applied, not the write-time ones. `GenerationsEndpoints.AttachRefusal` maps it to 422 with `rules`; `seed-generation` prints the rule codes.
+  **Why:** The discretion puts the complete-set rules at attach and at Generate on Suno. Applying the write rules again would let a later change of mode block an attach, against "changing kind or mode never refuses".
+  **Issue:** #122
+- **Decision:** The general Remix type is allowed only through `LineageOrigin.Import`: any number of Remix sources, never together with an audio action. The PATCH is `LineageOrigin.Edit` and refuses Remix with `source_type_import_only`. No public import method was added. #140 calls the domain rules with `Import` when it writes imported lineage.
+  **Why:** "They cannot be chosen in the editor and are never automated", and there is no import path yet. A public service method now would widen the guard with no caller.
+  **Issue:** #122
+- **Decision:** A user relationship type is refused as a source type with `source_type_not_mapped` when its `SunoAction` is null, which is true of every user type until #126 adds the mapping. `version_sources.type_id` references `song_relationship_types` with RESTRICT. Automatic Song relationships are created only for the parts an edit sent (`sources` and/or `inspiration`), under the source's type (Inspiration uses Use as Inspiration), with the Version's Song as "from", and only when the two Songs are not already related under that type either way round. Create New Version From copies the lineage but makes no relationships.
+  **Why:** These follow the discretion lines. Relating only on a sent part means editing the Voice cannot bring back a relationship the user removed. Copies stay in the same Song, so a relationship would point at itself.
+  **Issue:** #122
+- **Decision:** Inventory coverage: the exclusion list is now `["workspace"]`, owned by #129. The six reference and file fields map to lineage keys through `VersionLineageInputs.InventoryFields` (`audio`→`sources`, `inspiration` and `simple_add_playlist`→`inspiration`, `voice`→`voice`, `simple_add_image` and `simple_add_video`→`fileInputs`). The coverage test round-trips a value of each field and refuses a wrong one with a named rule. Deleting any mapping fails the test, which a six-case theory proves.
+  **Why:** The AC requires a declared mapping that the coverage test reads, and requires the test to fail when one mapping is deleted.
+  **Issue:** #122
+- **Decision:** Web: `api/versions.ts` gains `LINEAGE_KEYS` and `isLineageKey`. `isVersionDetail` accepts lineage keys holding objects, arrays or null, and `VersionDetails` leaves them out of option keys and the conflict list. No editor UI was added; that is #125.
+  **Why:** Without this the web reader would reject every Version answer, since `isOptions` required scalar values. #125 owns the sources editor.
+  **Issue:** #122
+- **Decision:** No e2e spec was added (Demo: none, agent-verifiable). The existing e2e suite was rerun against an image built from this change.
+  **Why:** The story has no UI and no Demo walk. API integration tests cover the behaviour.
+  **Issue:** #122
+- **Decision:** #122 lands as one commit, not four (model, triggers, guard, API) as the M4 plan's risk note suggested.
+  **Why:** None of the four compiles or passes on its own. The entity's new `Lineage` parameter changes every construction site and the store. The guard's `inputs` key check fails until the API returns the lineage keys. The retained-shape and startup tests fail until the migration exists. Splitting would leave intermediate commits with a red gate on a shared milestone branch.
+  **Issue:** #122
+- **Decision:** D2, applied. A new migration, `AddShortcodeAliases` (`20261006220000`), adds `shortcode_aliases` (alias PK, lower case by CHECK; `generation_id` with no FK, so an alias outlives deletion and purge; `created_utc`). It drops `tr_generations_identity_never_changes` and adds two triggers:
+  - `tr_generations_move_only_leaving_an_alias`: a change of a Generation's Version, Song or ordinal is refused unless all of these hold. It goes to another Version. That Version is frozen and belongs to the Song named. The new ordinal equals that Version's `last_generation_ordinal`, so it was just given and an ordinal is never reused. The old shortcode is recorded as this Generation's alias. The new place is not another Generation's alias.
+  - `tr_generations_aliases_stay_reserved`, on insert: no Generation, a restored one included, may take a shortcode that is another Generation's alias.
+
+  `DatabaseStartupTests`, the `Generation.cs` doc and the `GenerationStore` doc are updated.
+  **Why:** This is the orchestrator's D2: forbid unsafe identity changes and allow only the move path. Checking the alias inside the trigger makes "a move leaves an alias" a database rule, not just a service rule. Comparing against the newest ordinal enforces "never reused" without a separate table.
+  **Issue:** #123
+- **Decision:** One shared move path. `SongVersion.ReceiveGeneration` (domain) gives the next ordinal, freezes the Version and raises both revisions. `IVersionStore.TryMoveGenerationAsync` writes the alias, the target's freeze and the Generation's place in one call. `GenerationMoveService.MoveWithinAsync` is internal and #141 reuses it. Its only public method is `MoveToNewSongAsync`. It refuses to move a Generation that is still selected out of its Song.
+  **Why:** This follows the M4 plan's risk note for #123/#141: one move service. Internal keeps the guard's public surface to the one user path. #141 calls it inside its commit transaction with a child Version it creates.
+  **Issue:** #123
+- **Decision:** The selection choice is shared with #124 and lives in `GenerationSelectionService`:
+  - Public record `SelectionChoice(ReplacementGeneration, WorkflowState)`.
+  - Internal `CheckChoiceAsync` and `ApplyChoiceAsync`.
+  - Constants `selection_choice_required`, `replacementGeneration` and `workflowState`.
+
+  The rules:
+  - The replacement may be any other Generation of the Song, whatever its state.
+  - Sending both choices is a 422 under `replacementGeneration`.
+  - A choice sent for a Generation that is not selected is a 422 under the field sent.
+  - A workflow state clears the selection, then sets the state. Each write raises the Song's revision.
+
+  `GenerationSelectionService` now also takes `IWorkflowStateStore`.
+  **Why:** The story says the choice is made "exactly as when deleting it" and the refusal code is "shared with the deletion story". #124 can call the same two internal methods.
+  **Issue:** #123
+- **Decision:** The moved Generation always becomes the new Song's Selected Generation, not only when it was the old Song's.
+  **Why:** AC 6 requires this when it was selected. The discretion says "the new Song … shows the moved Generation's" artwork, and a Song shows a Generation's image only through its Selected Generation. It is also the Song's only Generation.
+  **Issue:** #123
+- **Decision:** A move raises the Generation's revision by one. Rating, state, comments, image, Suno data, provider record and event link do not change. If-Match carries the Generation's revision, and the 201 sets the ETag to the new revision.
+  **Why:** Another client holding the old revision should get a conflict and not act on the old place. The AC lists what must stay unchanged, and the revision is not on that list.
+  **Issue:** #123
+- **Decision:** The new Version 1 is written through `Song.Create`, then a direct `SongVersion` copy. The copy takes the source's name, lyrics, styles, inputs (kind and modes included) and lineage. Its notes are "Created from Version <source shortcode> when Generation <old shortcode> moved to this Song." This text is how "the new Version records the source Version it came from"; no new column was added. The lineage is written with `ReplaceLineageAsync` before the move freezes the Version. The source Version's lineage stays as it is, and the lineage tables' freeze triggers allow inserts only while the parent is unfrozen. No automatic Song relationships are made from the copied lineage. The only one recorded is Derived From, new Song to old.
+  **Why:** The discretion says "its notes say which Version it came from". A column would be a schema change the story does not name. Relationships from a copied lineage would duplicate the original Song's own.
+  **Issue:** #123
+- **Decision:** "The original Song's Suno workspace" is not copied: Songs have no workspace field yet (#129 adds workspaces). The new Song starts in the first visible workflow state, with no primary Artist, Genres, Tags, memberships or artwork.
+  **Why:** There is nothing to copy today. #129 should copy `workspace` in `GenerationMoveService.MoveToNewSongAsync` when it adds the field.
+  **Issue:** #123
+- **Decision:** Resolution:
+  - An alias resolves with `status: "moved"`, `shortcode` and `canonicalShortcode` set to where the Generation is now, and the Song and Version where it is now.
+  - Every Generation lookup by shortcode (`GenerationService.FindAsync`, used by every `/generations/{reference}` endpoint) falls back to the alias. An alias of a deleted Generation resolves as its ID would (deleted).
+  - A purged alias (`generation_id` null) names nothing, so it is a 404.
+
+  Web: the Go to box, `/go/` and an old Generation URL (`/songs/<old>/generations/<old shortcode>`, which resolves and redirects) open the Generation where it is now. The panel then says "<old> moved: this Generation is now <new>." The router state is `{movedFrom}`.
+  **Why:** The key link and the must-have say "an old shortcode pasted anywhere still finds the Generation".
+  **Issue:** #123
+- **Decision:** The endpoint is `POST /api/v1/generations/{reference}/move-to-new-song`, `SessionOnly()`. The session-only count is now 47. Answers:
+  - 201 with `{song, version, generation, alias}`, with `Location` set to the new Song.
+  - 404 when the Generation is not found.
+  - 409 `revision_conflict`, with `current` set to the Generation.
+  - 428 or 400 when the revision is missing or invalid.
+  - 422 `validation_failed` for the title or the choice.
+  - 422 `selection_choice_required`, with `generationId` and `shortcode`.
+
+  Guards: the invariant 1 guard has an API exerciser and a service exerciser. Each moves a fresh Generation off the frozen target, then asserts that the target's stored inputs are byte-identical and that the new Version's stored inputs equal them. `ReceiveGeneration` is classified as "copies the inputs as they are, and freezes". The scope guard and `ReferenceParameterGuardTests.Calls` are extended.
+  **Why:** The route and the session-only requirement are in the story and its AC. Invariant 1 requires every new write path to be listed in the guard.
+  **Issue:** #123
+- **Decision:** The atomicity test swaps `IVersionStore` for a `DispatchProxy` that throws at `TryMoveGenerationAsync`, after the new Song, Version 1, lineage, relationship and selection choice have been written. It asserts that the whole-database fingerprint (`RestoreApi.Fingerprint`) is unchanged, and that the next Song still takes the next shortcode number.
+  **Why:** The story's test plan says to force a failure after the Song is created and assert that nothing changed. A proxy needs no production test hook.
+  **Issue:** #123
+- **Decision:** Rule 3: `e2e/tests/generation-artwork.spec.ts` (#121) had a `playwright/no-conditional-in-test` warning, so `npm run lint` failed in `e2e/` on the branch. The conditional chevron click now sits in a helper, `openVersionOne`, which is the same pattern as its `openDetails`.
+  **Why:** The gate must pass. This is a one-line move with no change in behaviour.
+  **Issue:** #123
+- **Decision:** #124 covers only deleting, retaining, and restoring a Generation, with the Song's selection resolved first. Its tombstone criteria (the attach refusal `suno_id_tombstoned`, tombstones that outlive the prune, one tombstone per Generation from Version and Song deletion) are left to #130, and Reimport to #140, as the story's own discretion lines say.
+  **Why:** The planner moved those criteria to the sibling stories. #130 depends on #124.
+  **Issue:** #124
+- **Decision:** `GenerationDeletionService` (`Application.Generations`) puts the Generation into one retention group:
+  - Kind `generation`, label `Generation <shortcode>`, and the group shortcode is the Generation's own shortcode, so `restore-deleted <shortcode>` finds it.
+  - The only root is the Generation. Its comments, provider record and event link follow by cascade, through the types #117 and #119 registered.
+  - The group's files are those of its own image, from `GenerationArtworkService.RetainedFilesAsync`.
+  - The selection is resolved first, with #123's `CheckChoiceAsync` and `ApplyChoiceAsync`, so the group carries no `selected-generation` reference. A restore therefore never brings back the selection or the Song's state.
+  - When the Generation is not selected, only the Song's updated time moves (`TouchSongAsync`) and its revision stays. With a choice, the Song's revision goes up, as #123's does.
+  **Why:** The discretion lines say "restoring never restores the selection or changes the workflow state", that the retention group includes the provider record, and that the event link comes back if the event still exists (`generation-event-link` is Optional).
+  **Issue:** #124
+- **Decision:** Before retaining, the service calls `IVersionStore.RewriteSourcesOfDeletedGenerationsAsync([id], [], now)` (#122). Another Version's source that pointed at the Generation then points at the external reference for its Suno ID, labelled "Deleted". A Generation without a Suno ID stays pointed at by ID and reads as missing.
+  **Why:** This is the orchestrator note for #124. It also matches the discretion line "keeps pointing at its Suno ID as an external reference labelled Deleted". #122 built this rewrite to keep the source's identity (its Suno ID), so the frozen Version's stored lineage is byte-identical. The test asserts this with the guard's `Stored()`.
+  **Issue:** #124
+- **Decision:** The API has two endpoints, both `SessionOnly()`, which brings the session-only count to **49**:
+  - `GET /api/v1/generations/{reference}/deletion-impact` answers `{id, shortcode, isSelected, replacements[], commentCount, artworkCount, sourceVersionCount, revision}`:
+    - `replacements` are full Generation answers: the Song's other live Generations in any state, and only when this one is selected.
+    - `artworkCount` is 0 or 1.
+    - `sourceVersionCount` counts distinct Versions, from the new `IGenerationStore.SourceVersionCountAsync`.
+  - `DELETE /api/v1/generations/{reference}` takes If-Match and an optional body `{replacementGeneration | workflowState}`, and answers 200 `{song}`. Its errors are:
+    - 422 `selection_choice_required`, with `generationId` and `shortcode`.
+    - 422 `invalid_replacement`, with `errors`, for every choice #123's check refuses: both choices sent, a Generation that is not another of this Song's, an unknown state, or a choice sent for an unselected Generation.
+    - 422 `validation_failed` for a field of the wrong type.
+    - 400 `invalid_request` for a body that is not a JSON object.
+    - 409, 428, and 404.
+
+  The body is read by hand, as the Song DELETE reads its body.
+  **Why:** The route and error codes come from the story. A bound body parameter on a DELETE makes a request without a body miss the endpoint and fall through to the 404 fallback, which was seen in the first test run. #123's check already validates the replacement and the state, so this story reuses it and maps its refusals to the story's one code.
+  **Issue:** #124
+- **Decision:** Restore uses #105's `DeletedItemsService`, unchanged except in two places:
+  - `HolderHintAsync` has a Generation case: when the Generation's Version or Song is in a retention group, the refusal names that group and how to restore it first.
+  - The "not a shortcode" message gives a Generation example.
+
+  A restore puts back the rating, comments, image and provider record. Like every restored record (#95), it raises the comments' revisions. A Generation deleted on its own does not resolve as `deleted` through `/resolve`; a GET of it is 404 `not_found`.
+  **Why:** `FindByShortcodeAsync` already looked up Generation shortcodes, and the generic parent check already refuses with `MissingParent`, which is the story's `parent_missing` rule. No AC asks for a resolver status. It can be added with #130 or later if the import review needs it.
+  **Issue:** #124
+- **Decision:** Guards:
+  - The invariant 1 guard has an API exerciser (`DELETE /generations/{reference}`) and service exercisers (`GenerationDeletionService.DeleteAsync` and `ImpactAsync`). Each deletes a fresh Generation off the frozen target and restores it.
+  - The scope guard and `ReferenceParameterGuardTests.Calls` cover both new routes.
+  - The new architecture test `DeletingAGenerationReachesNeitherTheNetworkNorTheExtension` walks the constructor-dependency closure of `GenerationDeletionService`, following ports into their Application and Infrastructure implementations. It asserts that nothing in the closure depends on `System.Net.Http`, `System.Net.Sockets`, `System.Net.WebSockets` or `n8Tracks.Application.Credentials`, where the extension handshake lives. Its complements: the closure reaches `GenerationStore` and `RetentionStore`, and the rule flags `ExtensionHandshakeService`.
+  **Why:** The test plan asks for "no dependency that can reach the extension or the network (asserted by the layering guard)". A check of direct dependencies only would miss the stores behind the ports.
+  **Issue:** #124
+- **Decision:** Web:
+  - The Generation panel has a "Delete Generation" button, beside "Create new Song from Generation". The row actions menu does not get one.
+  - `generations/DeleteGenerationDialog.tsx` reads the impact when it opens. Its summary (`deletionRules.ts`, testid `delete-generation-summary`) names the shortcode, the rating, the comment count, the Suno artwork, and the Versions that use it as a source, and says that nothing in Suno changes and that it can be restored for 30 days.
+  - For a selected Generation, the dialog shows radio groups ("Instead"; "Generation to select instead"; "Workflow state once the selection is cleared"). Nothing is pre-selected and nothing needs typing. When the Song has no other Generation, only the state group is shown. Only visible states are listed. Delete stays disabled until a choice is complete.
+  - A conflict, a `choice-required` answer or a refused choice reads the impact again.
+  - After a delete, the panel closes onto the Version and the notice `generation-deleted` is shown.
+  **Why:** The AC puts the control in the Generation panel. The discretion lines ask for every visible state with none pre-selected and no typing. Radio groups make "none chosen" explicit, where a select would show its first option.
+  **Issue:** #124
+- **Decision:** The Suno playlist and persona read models are new tables made by this story: `suno_playlists` (`suno_id` PK, `name`, `clip_ids` JSON, `last_seen_utc`) and `suno_personas` (`suno_id` PK, `name`, `last_seen_utc`), in migration `AddSunoPlaylistsAndPersonas` (`20261006230000`, renamed from EF's generated timestamp so it sorts after #123's). They are empty until #137/#153 fill them. `Application/Suno/SunoLibraryService` lists them over `ISunoLibraryStore`.
+  **Why:** The story's discretion says it defines the two read endpoints "against empty tables", and no earlier story made them. #137 records their shape ("ID, name, member clip IDs as last seen" and "ID, name"); `last_seen_utc` is added for the playlist answer's `lastSeen`. Keyed by the Suno ID, because a playlist or persona is identified by it everywhere else (`InspirationPlaylist.SunoPlaylistId`, `VersionVoice.PersonaId`).
+  **Issue:** #125
+- **Decision:** `GET /api/v1/suno/playlists` and `GET /api/v1/suno/personas` (`catalog.read`) answer `{items:[…]}`, not a bare array. Each playlist item is `{id, name, memberCount, clipIds, lastSeen}` and each persona item is `{id, name}`, sorted by name (ignoring case, then by ID) and unpaged.
+  **Why:** Every other list endpoint answers `{items}` (`relationship-types`, `workflow-states`, `songs/{ref}/generations`), so the discretion's `[{…}]` is read as the item shape. `clipIds` is added because a Version keeps the playlist's clip snapshot (`inspiration.playlist.clipIds`, #122), and the picker has nowhere else to take it from.
+  **Issue:** #125
+- **Decision:** Each source in a Version answer has `availability`: `ok`, `not_imported`, `deleted`, `trashed` or `missing`. It is computed by `SourceTargetView.Availability` from the target as read:
+  - A Generation or Song no longer in the catalog, or an external reference labelled "Deleted" (#122's rewrite), is `deleted`.
+  - Any other external reference is `not_imported`.
+  - A Generation's `remote_state` gives `trashed` or `missing`.
+  - Everything else is `ok`.
+  A Generation target also gains `title` (its Suno title) and `durationSeconds`.
+  **Why:** The discretion asks for the server-computed value. The duration lets the editor bound Extend's position as the server's `continue_at_beyond_source` rule does. What a read adds is ignored when it is sent back, so a read sent back is still no change.
+  **Issue:** #125
+- **Decision:** A source sent as `external` whose Suno ID a live Generation has is resolved to that Generation (`IVersionStore.FindSourceGenerationBySunoIdAsync`). This happens only when the group does not already name that Suno ID as an external reference, and never to the Version's own Generation.
+  **Why:** The discretion line reads: "an ID n8Tracks already has resolves to that Generation". The exception keeps the invariant 1 property "a read sent back is no change": a frozen Version's external source stays external, even after an import brings in a Generation with that ID.
+  **Issue:** #125
+- **Decision:** Web structure:
+  - The section is `web/src/versions/SourcesSection.tsx`, at the must-have path. Beside it are `SourcePicker.tsx` and the pure rules in `sourcesRules.ts`. The API side is in `api/lineage.ts`.
+  - The editor keeps each lineage key in `drafts.inputs`, as the API reads it. Edits and conflicts compare them by `lineageText`, the write form with what a read adds left out and empty forms unified, through `inputText(key, value)`.
+  - `inputKeys` always includes the four lineage keys.
+  - After a successful save, each lineage part that was sent is replaced by the API's stored value, unless the user changed it again (`adoptSaved`). This brings in the shortcodes and titles, and a pasted ID resolved to a Generation, without sending it again.
+  - The conflict dialog lists the four parts as "Sources", "Inspiration", "Voice" and "Files to attach in Suno".
+  **Why:** One autosave queue and one revisioned save for the whole Version, as #65 requires. Adopting the answer only after a save, not in `follow`, keeps a conflict's other-client value from silently replacing the user's unsaved change.
+  **Issue:** #125
+- **Decision:** Interaction choices where the discretion leaves room:
+  - The audio action is a native select, "Action", listing the relationship types whose `sunoAction` is an audio action, so a #126-mapped user type appears without change. Before a source exists, the chosen action is local state.
+  - The Inspiration form and the Voice also use native selects. The picker uses the shared `SongSearch`, a table of the Song's Generations (the Version's own left out; those already in the group shown as "Already a source") and a field for a pasted address or ID.
+  - A confirmation is asked whenever a change would also remove something: the second Mashup source, Inspiration on Cover, the audio file note when an action is chosen, or every source when the action is set to None.
+  - The audio-file-note dialog says what it replaces; saving the note is the confirmation.
+  - Individual Inspiration songs stay visible in Simple mode, with a note that Suno takes them only in Advanced.
+  - The playlist chooser is offered only while no song is chosen, and the reverse.
+  **Why:** Native selects are keyboard-operable as they are ("every picker is operable by keyboard"). Showing the record of the other form, rather than switching between two forms, makes the exclusivity visible. The discretion asks for a confirmation for each case it names; the None case removes sources in the same way.
+  **Issue:** #125
+- **Decision:** In component tests, dialogs are found by role and name and are not waited on to become visible.
+  **Why:** Mantine's opening transition advances on animation frames, which the fake clock (`fakeTimeouts`) does not move, so a `toBeVisible` wait timed out at random. user-event acts on the dialog either way.
+  **Issue:** #125
+- **Decision:** Rule 3: #92 left the CHECK `ck_song_relationship_types_suno_action` as `suno_action IS NULL OR is_system = 1`, which forbids the user mapping this story stores in that column (a 500 before this fix). Migration `AllowUserTypeSunoAction` (`20261006233000`) widens it to also allow a user type with one of the five audio actions. The migration edits the stored table definition in place inside the migration transaction (`PRAGMA writable_schema`, then `RESET`). This is the procedure SQLite documents for a change that every row already satisfies. Down clears user mappings first, then narrows the CHECK again.
+  **Why:** The story names this column as the storage, so no table or key changes. EF Core's rebuild switches foreign keys off outside the transaction. It then logs a startup warning, which made the no-warning startup and logging tests fail. Renaming the table away with foreign keys on would repoint the FKs of `song_relationships` and `version_sources` at the old table, which was checked in sqlite3.
+  **Issue:** #126
+- **Decision:** The mapping is set on the type's PATCH as `sunoAction`, read as raw JSON: omitted means unchanged, null clears, and text must be one of `cover`, `extend`, `mashup`, `sample`, `reuse_prompt`; anything else is 422 on `sunoAction`. The service checks in this order:
+  1. 404 or 409 `system_type`.
+  2. 409 `revision_conflict`.
+  3. A no-op when nothing differs.
+  4. 409 `mapping_in_use` with `versionCount` (distinct live Versions with a source of the type, frozen or not).
+  5. Taken names.
+  These checks and the write share one transaction. POST does not take `sunoAction`: a type is mapped after it is added. A rename is allowed while the type is in use.
+  **Why:** This follows the story's discretion. A rename changes no source, because sources name their type by ID and keep their own `suno_action`.
+  **Issue:** #126
+- **Decision:** Deleting a type is refused with 409 `type_in_use` and `versionCount` when any Version source is of it, even with `removeRelationships=true`. The count also includes deleted Versions that can still be restored: the store reads `type_id` and `version_id` out of the retained `version-source` documents. `mapping_in_use` counts only live Versions.
+  **Why:** A retained source names its type by FK RESTRICT. If the type were deleted, restoring that Version would be refused. A mapping change is harmless for a retained source, which keeps the action it was written with.
+  **Issue:** #126
+- **Decision:** Web: Settings → Relationships has a "Suno action" column. A system type shows its fixed action as text (Cover, …, Inspiration, Voice, None). A user type has a native select, "Suno action for <name>" (Not mapped plus the five actions), which saves when it changes. The in-use refusals appear in the page's status area as a "Not changed" notice that gives the Version count. In the Sources "Action" picker, a user type is labelled with its action, for example "Reimagining of (Cover)". System types keep their bare names.
+  **Why:** One control per row matches the page's existing row actions. Labelling the action tells apart several types that map to the same action.
+  **Issue:** #126
+- **Decision:** Invariant 1: the guard's exemption reasons for PATCH and DELETE `relationship-types` now name #126. A dedicated API test freezes a Version that has a source of a mapped type, tries to change and clear the mapping and to delete the type, and compares `VersionImmutabilityGuardTests.Stored` and the `version_sources` rows. No new Application namespace was added. `Application.Catalog` and `Application.Suno` are not in `CatalogServiceNamespaces`, and the complement test confirms that neither takes a catalog type.
+  **Why:** The orchestrator asked for confirmation. `RelationshipService` takes only IDs and text.
+  **Issue:** #126
+- **Decision:** A workspace is identified by its Suno ID everywhere: it is the `suno_workspaces` primary key, as for `suno_playlists` (#125); the value of `songs.suno_workspace_id`, a FK with RESTRICT; the API's `id`; the Song PATCH's `sunoWorkspaceId`; and the bulk-move route's `{id}`, a plain string because Suno's default workspace has the ID `default`. There is no separate n8Tracks UUID.
+  **Why:** The AC says association is always by workspace ID, and the discretion line asks for the Suno ID to be unique. A surrogate key would add a second identity that every client would have to map back to Suno's. The default workspace's ID is not a UUID, so the route could not use `{id:guid}`.
+  **Issue:** #129
+- **Decision:** Schema: migration `AddSunoWorkspaces` (`20261006234000`; EF's generated timestamp was renamed so it sorts after `AllowUserTypeSunoAction`) creates `suno_workspaces`, with suno_id, name, description, state, first/last seen, and raw_json, and CHECKs on state and on the ID's length. It adds `songs.suno_workspace_id` with a hand-written `ALTER TABLE … ADD COLUMN … REFERENCES`, as #120 did. Song retention moves to shape 3, with upgrader `SongShape2To3`, which gives a Song "no workspace".
+  **Why:** EF Core would have added the FK by rebuilding `songs`, and the M4 notes forbid rebuilding a table on SQLite. The CHECKs are in `CreateTable`, so no table is rebuilt for them. Workspace records are never deleted, so a restored Song's FK always holds.
+  **Issue:** #129
+- **Decision:** The discovery rules, beyond the discretion lines:
+  - The extension's PUT returns every workspace plus the Suno IDs that were added, renamed, became unavailable, or became available.
+  - In an incomplete list, a known workspace keeps its state even when reported as trashed. A workspace seen for the first time takes its state from `is_trashed` either way.
+  - Limits: at most 1,000 workspaces per report, a name of at most 500 characters, a description of at most 5,000, and a raw project of at most 64 KB. Exceeding any of them is a 422 for the whole body.
+  - The description is overwritten only when one is sent.
+  **Why:** The key link says availability changes only when `complete` is true, so an incomplete report never moves a known workspace's state; the first-seen rule comes from the discretion. The limits stop a token from growing the database without bound. They are well beyond Suno's 20-per-page list.
+  **Issue:** #129
+- **Decision:** In the Song PATCH, an Unavailable workspace other than the Song's own is refused with 422 on `sunoWorkspaceId`. That check runs after the revision check, because it needs the Song's current workspace. The workspace is part of `SongDetails` (now a required sixth member) and of `SongStore.TryUpdateAsync`. `GenerationSelectionService` passes the Song's current workspace through.
+  **Why:** The association is part of the Song's revision, per the discretion, so it travels with the Song's other details in one conditional write.
+  **Issue:** #129
+- **Decision:** `effectiveInputs.workspace` (`{id, name, state}`) is reported for every kind and mode whenever the Song has a workspace. It is never added to `inputs`. `VersionDetail` gains a trailing `Workspace`, which `VersionStore.FindDetailAsync` fills.
+  **Why:** The discretion says `effectiveInputs` reports it for Generate on Suno. A result is saved to a workspace whatever the form, even though Suno shows the "Save to…" control only in Advanced mode.
+  **Issue:** #129
+- **Decision:** The bulk move is implemented here, as the API only, even though its page is #151's. `POST /api/v1/suno/workspaces/{id}/move-songs` is session-only, so the session-only count goes from 49 to 50. It is served by `Application.Songs.SongWorkspaceService.MoveSongsAsync`, which accepts each Song by ID or shortcode. Exactly one of `songIds` (not empty) and `all: true` must be sent. Error codes are 422 `too_many_songs` (with `limit` and `count`), 422 `song_not_in_workspace` (with `songs`, as sent), 422 `validation_failed` on `targetWorkspaceId` (unknown, the same workspace, or unavailable), and 404 for an unknown source workspace. Discovery and the list are `Application.Suno.SunoWorkspaceService`.
+  **Why:** AC 6 makes the bulk move session-only and the Test plan tests it here, and #151 links to "the command described in #129's discretion". The move changes Songs, so it belongs in a catalog namespace that the invariant-1 guard enumerates (API and service exercisers added). Discovery touches no catalog type, so it is in the guard's exempt table.
+  **Issue:** #129
+- **Decision:** Web: the Details panel has a "Suno workspace" section after Tags, with a native "Workspace" select: None, then every Available workspace, plus the Song's own even when it is unavailable, labelled "(unavailable)". The select saves as soon as a choice is made, through the page's one `useRevisionedSave` under the key `sunoWorkspaceId`. While the Song's workspace is unavailable, a "Workspace unavailable" badge shows in both the header and the Details, with a notice in the Details. When a choice is refused, the workspace list is read again. There is no Settings page; that is #151.
+  **Why:** This matches the Language field's choose-to-save pattern. The discretion puts the badge in the Song header and Details only.
+  **Issue:** #129
+- **Decision:** The inventory coverage test no longer has an exclusion list. It maps `workspace` to the Song association `sunoWorkspaceId` and checks it end to end:
+  - a workspace reported with a `suno.sync` token can be set and is read back on the Song and in `effectiveInputs.workspace`;
+  - an unknown ID is refused with a field error and changes nothing;
+  - null clears it.
+  The bite tests are "mapping removed" and "mapped to a field that does not store it".
+  **Why:** This is AC 7. The checker still knows nothing of how n8Tracks stores the association.
+  **Issue:** #129
+- **Decision:** Provider tombstones are stored in a new table, `provider_tombstones`, created by migration `AddProviderTombstones` (`20261006235000`).
+  - Columns: `suno_id` (the PK, `length > 0` as on `generations.suno_id`), `kind` (`clip` only), `deleted_utc`, and `title` (nullable).
+  - The table has no foreign key, so the retention prune never reaches it.
+  - The domain record is `Domain/Suno/ProviderTombstone.cs` (`ProviderTombstoneKind.Clip`). The service is `Application/Suno/TombstoneService.cs`, with `IProviderTombstoneStore`.
+  - The service's public method is the check, `FindAsync(sunoId)`. `RecordForAsync(generationIds, deletedUtc)` and `RemoveAsync(sunoId)` are internal and run inside the caller's transaction.
+  - The service takes no catalog type, so it stays outside the invariant-1 guard's catalog namespaces.
+  **Why:** The new table is the one #124's and #130's discretion name. Keying by Suno ID alone makes a tombstone independent of the retention group, so it outlives the prune.
+  **Issue:** #130
+- **Decision:** A tombstone is recorded inside each deletion's transaction, after the sources are rewritten and just before `RetainWithinAsync`, using the deletion's own time. This happens in `GenerationDeletionService.DeleteAsync`, in `VersionDeletionService.RetainAsync` (both the plain path and the path that creates a blank Version), and in `SongDeletionService.DeleteAsync`. The Suno IDs and titles are read from the live `generations` rows of the IDs being retained, so a Generation without a Suno ID writes nothing. Recording an existing Suno ID again replaces that tombstone.
+  **Why:** This is where #124 left the hook. The deletion is then atomic: either the group and the tombstone both exist, or neither does.
+  **Issue:** #130
+- **Decision:** Removal on restore is an `AfterRestoreAsync` on `RetainedTypes.Generation`. It deletes the tombstone for each restored row's `suno_id`, through `ProviderTombstoneStore.RemoveAsync(context, …)`. I did not put it in `DeletedItemsService.RestoreWithinAsync`.
+  **Why:** Every restore path removes the tombstones of exactly the Generations that came back, and nothing else. That includes the container command and `RetentionService.RestoreAsync`, which #140's Reimport-through-retention uses. A refused restore rolls the removal back with everything else. Generations deleted earlier in groups of their own are not in the group, so their tombstones stay. This follows the existing restore-rule pattern (`EditorSnapshot` prunes through `EditorRevisionStore(row.Context)`).
+  **Issue:** #130
+- **Decision:** `GenerationAttachOptions` gains a trailing `bool Reimport = false`.
+  - Without it, `GenerationService.AttachAsync` returns `GenerationAttachOutcome.SunoIdTombstoned(ProviderTombstone)` for a tombstoned Suno ID. The code is `GenerationService.SunoIdTombstonedCode = "suno_id_tombstoned"`, and `GenerationsEndpoints.AttachRefusal` answers it as 409 with `sunoId` and `deletedAt`.
+  - With it, the clip attaches and its tombstone is removed in the same transaction.
+  - The check runs after the `suno_id_exists` check, so a live Generation wins.
+  - The `seed-generation` command reports the refusal and never reimports.
+  **Why:** This is the key link in #130 ("refuses a tombstoned Suno ID with `suno_id_tombstoned` unless the reimport option is set"), and invariant 3 needs it. The precedence (live first) matches #131's classifier rule. No attach endpoint exists yet, so the 409 is unit-tested through `AttachRefusal`.
+  **Issue:** #130
+- **Decision:** `GenerationServiceTests.TheSunoIdIsUniqueAmongLiveGenerationsOnly` (#117) now attaches the deleted Version's Suno ID again only with `Reimport: true`. First it asserts that the plain attach is refused with `SunoIdTombstoned`.
+  **Why:** The test assumed a retained Generation's Suno ID could simply be attached again. #130 deliberately changes that (invariant 3). The test's own comment had deferred reimport to "the deletion story", which is this one.
+  **Issue:** #130
+- **Decision:** The branch head 03bc122 was checked before any change by a full `dotnet test` (Release). Results: Architecture 138, Gateway 215, AppHost 23, and Api 1,898 passed, with none failing. No Rule 3 fix was needed.
+  **Why:** The task asked for the baseline to be confirmed green first.
+  **Issue:** #131
+- **Decision:** Export staging uses five new tables, all from one migration, `AddSunoExportStaging` (`20261006235500`). EF's generated timestamp was renamed so that it sorts after `AddProviderTombstones`.
+  - `suno_exports`: the export's state, its creator credential (null for a session), the header fields, the raw workspaces and playlists, the times, the job, and the `revision`.
+  - `suno_export_parts`: each part's body as received, keyed `(export_id, part_number)`.
+  - `suno_export_records`: one row per Suno ID, keyed `(export_id, suno_id)`. It holds the raw JSON, the trashed flag, the list fields, the class, the `flags` and `changed_fields` JSON, the `generation_id` (no FK), the `artwork_asset_id` (FK to `assets`, RESTRICT), and the empty `proposal_json` and `choice_json`.
+  - `suno_export_record_playlists`: the playlist join table.
+  - `suno_ignored_items`: created empty, in the shape #143 gives (`suno_id` PK, `title`, `workspace_id`, `ignored_utc`, `last_status`, `last_seen_utc`, no FK).
+  Rows cascade from the export.
+  **Why:** The story names `suno_exports`, `suno_export_records`, the playlist join table, and the empty ignore table. `suno_export_parts` is my addition inside the staging subsystem the story creates. It holds no catalog data. Keeping each part whole makes "a repeated partNumber replaces" a delete-and-insert, and keeps the trashed-wins and last-wins collapse deterministic whatever order the parts arrive in. Collapsing at completion, one part at a time, keeps memory to one part (at most 20 MB) for an export of 50,000 clips.
+  **Issue:** #131
+- **Decision:** An export has a state the design doc did not list, `classifying`, between `receiving` and `ready`. Completion moves the export there. An export of at most 2,000 clips (counted as received) is classified inline and answers `ready`. A larger one answers `classifying` with `jobId` (job type `suno-export-classify`), and becomes `ready` when the job ends. Each step of classification runs in its own transaction, which first checks that the export is still classifying, so discarding it midway stops the job. A failure marks the export `failed` and removes its staged rows. `docs/suno-integration.md` now describes the states and endpoints.
+  **Why:** "Completing twice is 409 `export_not_receiving`" needs a state that is no longer receiving while a large export is classified in the background, and `ready` would be untrue until classification finishes.
+  **Issue:** #131
+- **Decision:** These choices fill in what the story left open about errors and the API shape:
+  - The `formatVersion` refusal is 422 `unsupported_format`, carrying `formatVersion` and `supported`.
+  - The header must have `format`, `formatVersion`, `capturedAt`, `scope.kind`, `libraryComplete`, and `trashedComplete`. `workspaces`, `workspacesComplete`, and `playlists` are optional. Clips in the header are refused.
+  - A body that is not UTF-8 JSON is 400 `invalid_request`.
+  - Both size limits are 413 `export_too_large`, carrying `limit` and `count`.
+  - Discarding an export that is being committed, or has been committed, is 409 `export_not_discardable`. Discarding one that has already ended answers 200 with the export as it is.
+  - Staging artwork on an export that is not ready is 409 `export_not_ready`, because #134/#152 send images after the export is ready.
+  - The records list returns 400 `invalid_request` for an unknown, repeated, or out-of-range parameter.
+  **Why:** These are low-cost choices. They match the existing problem codes and the order the extension uses.
+  **Issue:** #131
+- **Decision:** Exports are visible according to who asks. A credential's calls reach only the exports it created. For another credential's export, every route answers 404, so the export's existence is not revealed. A signed-in session reaches every export. Workspaces from a complete list (`workspacesComplete: true`) are applied through `SunoWorkspaceService.RecordAsync(..., complete: true)` when the export becomes ready, not when it is created. An incomplete list waits for the commit (#140).
+  **Why:** The AC says "a credential can read only the exports it created" and "a signed-in session can read every export". Applying the workspaces at completion means a sync cancelled midway (which the extension discards, #134) changes nothing.
+  **Issue:** #131
+- **Decision:** The classifier compares title, tags, duration, `major_model_version`, `model_name`, the three BPM values, key, and the image address without its query or fragment. It does not compare the model label, the status, the audio address, the workspace, or the batch index. A changed record carries the fields that differ in `changedFields`. The record `flags` are `repeated` (the ID appeared more than once) and `alsoInLibrary` (the ID was in both lists). `conflict` is never produced yet: `Classify` takes an `inputsDiffer` flag, which the classifier passes as false until the mapping stories (#135–#137) can compute it, and a unit test covers the rule. The tombstone lookup is batched through a new `TombstoneService.TombstonedAsync` and `IProviderTombstoneStore.TombstonedAsync`. Live Generations and the ignore list are batched through `ISunoClipLookup` (`SunoExportStore`). Batches hold 500 records.
+  **Why:** The story's discretion lines name these fields and the order of precedence. #130's note asked for a batch lookup for large exports. "Reported model" is defined in the design doc as `major_model_version` and `model_name`.
+  **Issue:** #131
+- **Decision:** Every table is classified as catalog or not. The invariant 3 guard (`SunoExportStagingGuardTests`) puts each one in exactly one of two lists, and a table in neither list fails the guard.
+  - **Catalog:** every M2–M4 catalog table, plus `provider_tombstones`, `suno_ignored_items`, `suno_playlists`, `suno_personas`, `suno_models`, the retention tables, and `settings`.
+  - **Not catalog:** the four staging tables, `suno_workspaces`, `assets`, `credentials`, `sessions`, `jobs`, `administrators`, `app_metadata`, and the EF history and lock.
+  `suno_workspaces` is not catalog data, because its names and availability are provider state that a complete list applies at once. The Song association it supports is catalog data, and lives in `songs.suno_workspace_id`. The guard's bite test makes the clip lookup write `provider_records` during classification, and asserts that the guard reports that table.
+  **Why:** The discretion line says the guard names the catalog tables explicitly and fails on a new table in neither list. A staged image is an asset row, stored content that nothing in the catalog references until the commit.
+  **Issue:** #131
+- **Decision:** Expiry is a second step of `RetentionPruneJobHandler`, the daily job from #95, through `ExportStagingService.ExpireAsync`. It runs even if the prune step fails. Its counts go into the job result (`exportsExpired`, `exportsDiscarded`, `exportsFailed`, `committedExportsCleared`). Each export it ends keeps its row, so its final state can still be read.
+  - A ready export is expired 7 days after it became ready.
+  - An export still receiving is discarded 24 hours after it was created.
+  - An export still classifying is failed 24 hours after it was completed.
+  - A committed export has its staged rows removed 24 hours after the commit.
+  **Why:** The key link names "a second step in the same scheduled job". A job interrupted by a restart would otherwise leave an export stuck in `classifying`.
+  **Issue:** #131
+- **Decision:** A staged cover image is uploaded through `ArtworkService.UploadAsync`, which validates it like any artwork, and is held on the record as `artwork_asset_id`. `SunoExportStore` is registered as an `IArtworkAttachments`, so the sweep keeps the asset while a staged record holds it. Once the export's rows are gone, the sweep removes the image. A second image replaces the first. The answer is `{sunoId, artwork}`.
+  **Why:** This is AC 9: "held with the export, and changes nothing in the catalog". Using the attachment port that already exists means no new sweep rule is needed.
+  **Issue:** #131
+- **Decision:** The panel opens from the toolbar popup. On a suno.com tab, while the extension is connected, the popup shows "Show the panel on Suno". The button sends `{type:'toggle-panel'}` to the tab with `chrome.tabs.sendMessage` and then closes the popup. If the tab has no content script yet, because it was opened before pairing, the popup first injects `suno.js` with `chrome.scripting.executeScript`.
+  **Why:** The discretion says "opened from the extension's toolbar button". The manifest has `default_popup`, so `action.onClicked` never fires. Removing the popup would lose the connection view that #128 built. `tabs` and `scripting` are already allowed (D4), so no permission is added.
+  **Issue:** #132
+- **Decision:** The Suno content script `suno.js` is registered for `https://suno.com/*` at `document_idle`. It is registered beside the relay, under the ID `n8tracks-suno`, when the extension connects. It is checked again on every handshake, which re-registers a missing script, and unregistered on disconnect. Like the relay, it is a separate classic IIFE build in `scripts/lib/build.ts`.
+  **Why:** D4 allows registered content scripts, and the manifest still declares none. Registering at pairing matches how the relay works. The script only reads the page until a workflow runs.
+  **Issue:** #132
+- **Decision:** The panel is an open shadow root on its own `<n8tracks-panel>` host, which carries `data-n8tracks-panel`. `find` never looks inside a host with that attribute.
+  **Why:** An open root lets the unit-level axe checks reach the panel. A closed root would hide it from them. The host attribute keeps the panel's own controls, such as its "Close" button, out of the adapter's searches, so they can never make a Suno control ambiguous or be clicked by a workflow. A test proves this against the Download dialog snapshot.
+  **Issue:** #132
+- **Decision:** The DOM-access ban is ESLint's built-in `no-restricted-syntax`. It is set to error for `src/adapter/**`, `src/content/suno*.ts`, and `src/panel/**`. It forbids calling query methods (`querySelector`, `getElementById`, `getElementsBy*`, `closest`, and others), `.click()`, and `dispatchEvent`, in both dotted and bracket form. A second block turns the rule off for `src/adapter/primitives.ts` and `src/**/*.test.ts`, with a rationale comment.
+  **Why:** The suppression guard allows `ignores:` only for build output, so the exemption has to be a rule set to `off`, which needs a rationale. The panel stays inside the ban: it keeps references to the elements it created and needs none of these calls. `test/dom-access-lint.test.ts` lints sample code as five in-scope files, expecting every finding, and as three exempt files, expecting none. `scripts/check-canaries.sh` passed after the change (19 passed).
+  **Issue:** #132
+- **Decision:** The panel lists the registered workflows in three groups: "Suno page", "Library sync", and "Generate on Suno". A group with no registered workflow is left out, so this version shows only "Suno page › Recognise the Suno page". Fill and sync workflows are test-only stand-ins until their stories register real ones.
+  **Why:** The discretion says the list is whatever is registered and that this story registers only the recognition check. AC 6 is proven by a component test that renders sync and generate parts in every state. The Demo step 2 test uses stand-ins on the Advanced snapshot.
+  **Issue:** #132
+- **Decision:** The recognition workflow needs Suno's navigation Library link (`role=link`, `data-testid="navbar-library-tab"`). Its fixtures are `library-list`, `library-trash`, and `workspace-selector`.
+  **Why:** The Suno logo appears twice on every page, so `find` would rightly call it ambiguous. The Library link appears once, in the three snapshots that are whole pages. The other snapshots are regions without navigation, and there the check correctly reports "not working".
+  **Issue:** #132
+- **Decision:** `Target` is `{role, name?, testId?, within?, description}`. `within` may be another Target or a bare `{testId, description}` region. `description` is the plain-words "expected …" text. For example, Suno's Styles box has no accessible name (placeholder only), so it is `{role:'textbox', within:{testId:'create-form-styles-wrapper'}}`, described as "a text box labelled Styles".
+  **Why:** The discretion prefers role and label, then a stable test attribute, and never a class name. The TS-003 Styles box can be reached only through its wrapper's test attribute. Keeping the report text on the target makes every stop name what was expected in the same words as the Demo.
+  **Issue:** #132
+- **Decision:** These runner details were not specified, so I chose them:
+  - `verify` is polled like `expect`, every 100 ms up to the step timeout. React updates after an event, so a single read-back would fail spuriously.
+  - A failure of a check after polling has kind `check`, and a hung `act` has kind `timeout`. Both name the step.
+  - `pageMayBeChanged` is true once any `act` has run.
+  - The run's `Page` is bound to an `AbortSignal` that is aborted at the first failure and at the end. After that, set, choose, and click throw `StoppedError`, so an `act` still running after a timeout cannot change the page.
+  - An exception's message is never copied into the report (invariant 6). A `PrimitiveError` reports its own plain words.
+  **Why:** AC 3 says the run stops and changes nothing further on the page. The abort makes that structural, and a test proves it: a late click is refused and records no mutations.
+  **Issue:** #132
+- **Decision:** `set` handles text boxes and textareas with the prototype's native setter (`Reflect.set` with the element as receiver), followed by `input` and `change` events. It handles a slider through its range input if it has one. Otherwise it presses ArrowRight or ArrowLeft and stops when a key changes nothing or would pass the value. It never sends Enter. A contenteditable region, such as Suno's Lexical lyrics editor, is refused as "to take a typed value". #146 must add a primitive for it.
+  **Why:** This follows the discretion on React inputs and sliders. Suno's sliders in TS-003 are `role=slider` divs with no input. Lexical needs `beforeinput` handling, and no story before #146 fills lyrics.
+  **Issue:** #132
+- **Decision:** `ADAPTER_VERSION` stays 1.
+  **Why:** No adapter shipped before this story. Version 1 is the first one that has selectors, and nothing has reported another number. Later stories raise it whenever they change a selector or step.
+  **Issue:** #132
+- **Decision:** The field-map parity test lives in `extension/test/field-map.test.ts`. It reads `docs/suno-adapter-field-map.md` with node `fs`. It compares entry, field, and `how`, and fails on a missing, extra, or repeated entry and on a wrong `N entries.` line.
+  **Why:** The `src/` tests are typed without node, and the document is outside the vite root. A change to one `how` in a copy of the document makes the test fail, as the plan requires.
+  **Issue:** #132
+- **Decision:** `SUNO_ORIGIN_PATTERN` moved to `src/adapter/addresses.ts`. `src/address.ts` re-exports it, so existing imports still work.
+  **Why:** AC 1 says every Suno address pattern is inside the adapter.
+  **Issue:** #132
+- **Decision:** The guard lives in `extension/test/invariants/` (D7), not the `extension/tests/invariants/` path the story names: `sunoNeverMutated.guard.test.ts` (runtime and static), with the harness `workflowGuard.ts` and the TypeScript-compiler-API scan `sourceScan.ts` (tested in `sourceScan.test.ts` against fixture files in `test/invariants/fixtures/*.ts.txt`, which no build, lint, or format step reads).
+  **Why:** Vitest only includes `src/**`, `scripts/**`, and `test/**`. Keeping the scan and the harness as separate tested modules follows the plan's risk note.
+  **Issue:** #133
+- **Decision:** `tsconfig.node.json` gains the `DOM` and `DOM.Iterable` libs and the `chrome` and `vite/client` types, rather than a separate tsconfig for `test/invariants`.
+  **Why:** The runtime guard imports the adapter and the snapshot loader, which need DOM and `import.meta.glob` types. A separate project would need `test/invariants` excluded from the node project, and `scripts/check-suppressions.sh` rightly refuses any `exclude` except build output. Adding libs strengthens nothing and weakens nothing; strict settings are unchanged.
+  **Issue:** #133
+- **Decision:** The matcher (`src/adapter/forbidden.ts`) is pure: it classifies `ControlFacts` that `primitives.ts` gathers (role, accessible name plus `aria-label`, text, and `title`, a CSS-selector test, the nearest dialog's title, the inline field label, form submission). Names are read lazily, because reading one walks the subtree. The press check covers the element and every element it sits in, since the click reaches them too.
+  **Why:** Only `primitives.ts` touches the page (the ESLint rule from #132). Classifying every element of a 160 KB snapshot was about 50 s with eager names and about 1 s with lazy ones.
+  **Issue:** #133
+- **Decision:** The create-workspace exception covers two controls: the inline row's Confirm (recognised by the row's "New workspace name" field, the inline "dialog's" title, not by its own text), and the list's "Create new workspace" entry that opens the row. Only `Page.createWorkspaceClick` presses them. The static scan allows that primitive only in `src/adapter/workflows/workspace.ts`, the file #145 plans. The runtime guard allows an exception's activation only for a workflow whose recipe names it.
+  **Why:** TS-003 shows the create-workspace "dialog" is an inline row with no `role=dialog`, and `POST /api/project` came "from the inline row". The opener is part of the same permitted change, and #145 cannot reach Confirm without it. Its name starts with "Create", so without the exception the matcher would refuse it.
+  **Issue:** #133
+- **Decision:** Every dialog except "Overwrite Lyrics & Styles?" fails closed. In that dialog only Overwrite and Keep Current may be pressed; its Close is refused. So the Voice and Inspo pickers and the Download dialog are refused for now: #146 must add the pickers to `RECOGNISED_DIALOGS` with their allowed controls, and #216 adds the Download dialog through its own primitive.
+  **Why:** The discretion says an unrecognised dialog title fails closed, and the TS-003 replan recognises only the create-workspace row and the Overwrite dialog. The AC names Overwrite and Keep Current only.
+  **Issue:** #133
+- **Decision:** A refusal is a new `StepFailure.kind`, `refused`. `failureText` reads "<title>: step '<name>' refused: forbidden control (<target description>: <reason>)". The refusal poisons the run's page handle, and the runner checks it after `act` and on timeout, so a step that catches the refusal itself is still stopped. Report words are the adapter's own, never the page's: control names can hold a song title.
+  **Why:** The discretion says "refused: forbidden control" and "there is no override". Invariant 6 forbids page values in reports.
+  **Issue:** #133
+- **Decision:** "Try again" in the panel appears on a stopped workflow. It calls `AdapterSession.forget(id)` and re-runs the self-check. It does not re-run the workflow.
+  **Why:** Workflows run with values that come from n8Tracks (#134, #145+), and the panel has none to give. Forgetting the stop returns the workflow to its self-check state, and the user starts it again from where it was started. Re-running from the panel can come with the stories that start runs.
+  **Issue:** #133
+- **Decision:** The static scan resolves symbols with the type checker. It flags a reference only when it is declared by the browser's or a package's types, so the `fetch` option of `Connection` is not flagged. Page context is the `adapter/`, `page/`, and `panel/` folders, `content/suno*`, and everything they import. The scan names `apiClient.ts` (paired origin), `adapter/imageReader.ts` (#152's credential-less read, the one Suno exemption), and `page/observe.ts` (#134; wraps only: no address literal, `Request`, or `URL` of its own). It also flags any use of `chrome.downloads`, which #216 adds.
+  **Why:** These are the file names #152 and #134 plan. Resolving symbols catches aliases (`globalThis.fetch`, `window['fetch']`, destructuring) that a text search misses. The string `'submit'` is left to the reference check, because it is also an input type and an event name.
+  **Issue:** #133
+- **Decision:** Rule 1: `labelsOf` in `primitives.ts` failed with "labels is not iterable" on a hidden input, whose `labels` is null rather than undefined. It now treats null as no labels. Regression test: "names a hidden input without failing".
+  **Why:** The matcher names every element of every snapshot, and the playlist and library snapshots have hidden inputs.
+  **Issue:** #133
+- **Decision:** Rule 3: `element(page, id)` moved from `ui/connectionView.ts` to a new `ui/element.ts`. Only the popup and the options page import it.
+  **Why:** `connectionView.ts` is built into the Suno content script, through the panel. Its `getElementById` was a way to query Suno's page from page-context code, and the static scan rightly found it.
+  **Issue:** #133
+- **Decision:** CLAUDE.md is unchanged. Invariant 4's line keeps "guard: #133 (planned)".
+  **Why:** In CLAUDE.md, a guard reads "(merged)" only once it is on main, and #122's guard, done on this branch, still reads "(planned)". The milestone merge updates it.
+  **Issue:** #133
+- **Decision:** A sync is read in legs, one list per Suno page. The legs are the workspace list (`/me/workspaces`), then the library (`/me`) or each chosen playlist (`/playlist/<id>`), then the Trash (`/me/trash`). Each page is reached by address (`Page.go`, suno.com only), never by pressing a link. Between page loads the service worker holds the sync in `chrome.storage.session` (`SyncSession`). Each new content script asks `sync-resume` and reads its leg. This deviates from the discretion line "read progress is held in the content script ... if the content script is lost the read fails".
+  **Why:** The Trash is reachable only by its address: #133's matcher refuses the library's "Trash" button, and changing that would weaken invariant 4's guard. Suno is a Next.js app, and a foreign history entry makes it reload. So at least one full page load per sync is unavoidable, and the read must survive it. One mechanism for every list is simpler than mixing in-app clicks with a reload. It also needs no page structure that TS-003 did not capture: there is no snapshot of the workspace list or playlist list pages. The forbidden-control matcher already says "the adapter reaches pages by address". A tab that is closed, leaves suno.com, or is on the wrong page when its leg loads still fails as "Suno tab lost" and discards the export.
+  **Issue:** #134
+- **Decision:** A workspace-scoped read scrolls the whole Library › Songs feed and keeps the clips whose `project.id` is a chosen workspace. It does not drive the workspace selector on /create.
+  **Why:** The TS-003 replan says the library feed covers every workspace and gives each clip's `project`. Paging a workspace feed beyond page 1 is unverified (D11), and the snapshot shows no pager. The library feed's paging is verified. The cost is reading the whole library. The library feed's default filters also leave out disliked clips, which the workspace feed's filters do not, and the export records those filters. This needs the owner's live check.
+  **Issue:** #134
+- **Decision:** The export header's `libraryComplete`, `trashedComplete`, and `workspacesComplete` are what the read sets out to read: true, true, and true for a whole-library read, and `libraryComplete` false for scoped reads. An export is completed only if every list it read was seen to its end. Any other end (a malformed, repeated, or missing page, cancel, or a lost tab) discards it.
+  **Why:** #131's API takes these flags in the header at creation, and `complete` takes no body. Changing that contract would be Rule 4. Since nothing partial is ever completed (AC 6), a completed export's flags are true statements, and "a half-read library is never mistaken for a full one" holds without an API change.
+  **Issue:** #134
+- **Decision:** The export is created when its first part is ready. The workspace list read in leg 1 travels in the session until then. The library filters Suno sent with the first library page go in the header as `libraryFilters`.
+  **Why:** The header carries `workspaces`, and parts cannot. The filters are known only once the library's first request is seen. #131's `ReadHeader` ignores unknown fields, so `libraryFilters` is accepted but not stored yet. #139 (the review says which kinds were excluded) must persist it, which is noted for #139.
+  **Issue:** #134
+- **Decision:** The page observer (`src/page/observe.ts`) is a third registered script: `n8tracks-observer`, in the MAIN world at `document_start`, built as `dist/observe.js`. It wraps only `fetch`, which matches TS-001; XHR is not wrapped. It forwards only the five TS-003 list responses, on suno.com hosts over HTTPS, matched by exact path and method. Request bodies are reduced to `cursor`, `limit`, `filters`, `feed_id`, and `page_size`, plus the query's `page` and `cursor`. `token`, `create_session_token`, and `user_tier` are stripped at any depth. It keeps the last 20 responses and replays them when the content script, which starts at `document_idle`, posts `observer-ready`. Both sides check `event.source` and `event.origin`.
+  **Why:** The plan's risk note for #134 asks for fixture-replay tests that prove the token never leaves (invariant 6). The replay closes the race between the page's first request and the content script starting. The path patterns live in `adapter/observed.ts`, because #133's static scan forbids any address literal in `observe.ts`.
+  **Issue:** #134
+- **Decision:** A new `load-more` workflow (feature `sync`) scrolls the list on screen, using the new primitive `Page.scrollToEnd()`. That primitive sets `scrollTop` on the page and on every region that scrolls its own content; it presses nothing and dispatches no event. The workflow expects the song `rowgroup` on the Library and Trash pages, the "N songs" list on a playlist page, and Suno's navigation on the workspace list page, which has no snapshot. It is registered with an entry in `RUN_RECIPES`, and its fixtures are library-list, library-trash, and playlist. `Role` gains `rowgroup` and `list`, and `ul`/`ol` map to `list`.
+  **Why:** TS-003 says every list the reader reads loads more on scroll. The reader's own check of each response is what detects a page that does not look as expected, so the page checks stay minimal and invent no structure.
+  **Issue:** #134
+- **Decision:** `ADAPTER_VERSION` is raised from 1 to 2.
+  **Why:** Its contract is "raised whenever a selector, address pattern, or workflow step for Suno changes". This story adds address patterns, a page kind, and a workflow.
+  **Issue:** #134
+- **Decision:** The content script now asks the service worker one question on every Suno page load (`sync-resume`) before the panel is opened. #132's test "asks nothing until it is opened" now expects only that question.
+  **Why:** A sync must continue after its own navigation without the user re-opening anything. The question starts nothing. If the answer is "no sync", the panel stays closed and nothing is read. AC 7 is proven by "never syncs by itself".
+  **Issue:** #134
+- **Decision:** In the panel, the workspace and playlist choices list what Suno has already shown on this page. The observer passively sees `project/me` and `playlist/me` as the user browses. If nothing has been seen, the panel says where to open the list. Choosing does not read anything new.
+  **Why:** The AC requires confirmation before anything starts, so the extension may not operate the page to fetch the lists before the user confirms. The extension token has no `catalog.read` for n8Tracks' copy.
+  **Issue:** #134
+- **Decision:** In the service worker, a part is sent again up to 3 times on a network error or a 5xx. Any 4xx stops the read at once, and a 401 `invalid_token` also forgets the token (`Connection.call`). A failed `complete`, such as 409 `import_in_progress`, discards the export. The review opens at `<address>/suno/imports/<id>` (#139's planned route), in an n8Tracks tab of the Suno tab's window if there is one, otherwise in a new tab there. The "replaces an export waiting for review" warning checks only the last export this extension created (`lastSunoExport` in local storage).
+  **Why:** Sending a refused part again would not change the answer. An export that cannot complete must not be left half-offered. An extension token can read only its own exports.
+  **Issue:** #134
+- **Decision:** Not built here: the notice on n8Tracks' Suno page for a discarded export. That notice and the review page itself belong to #139. Images belong to #152.
+  **Why:** The review page and the Suno entry point are #139's. The story moved its image criteria to #152.
+  **Issue:** #134
+
+Story #151 (built in parallel; merged into the milestone branch):
+
+- **Decision:** Added an optional `workspace` parameter (a Suno workspace ID) to `GET /api/v1/songs` so a workspace's page can list its Songs. A blank, unknown, or repeated value is 400 `invalid_request`, like the other filters. It is additive: no schema change, no migration, and no existing parameter changes.
+  **Why:** #151 AC 1 needs a workspace's Songs to be listed, and no endpoint could do that. Fetching every Song and filtering in the browser would not scale. `SongService` already takes `ISunoWorkspaceStore`.
+  **Issue:** #151
+- **Decision:** Two routes: `/settings/suno-workspaces` (the list) and `/settings/suno-workspaces/:id` (one workspace, by Suno ID, URL-encoded). There is one sidebar link, "Suno workspaces", placed after "Suno". `SUNO_WORKSPACES_PATH` and `workspacePath` are in `api/sunoWorkspaces.ts` because the react-refresh lint rule keeps component files to components only.
+  **Why:** the must-have names `settings/SunoWorkspacesPage.tsx`. The conventions require new screens in the sidebar. The discretion links the page from Settings and from the badge.
+  **Issue:** #151
+- **Decision:** The Song's "Workspace unavailable" badge, in the header and in Details, is now a link to the workspace's page. Its accessible name starts with its visible text: "Workspace unavailable: <name>. Open it in Settings".
+  **Why:** the discretion says "The page is linked from Settings and from a Song's workspace badge". The badge only shows for an Unavailable workspace, which is exactly when a move is needed.
+  **Issue:** #151
+- **Decision:** There are two ways to select. The header checkbox "Select all N Songs in this workspace" sends `{all: true}`, so it covers every page. Row checkboxes send `songIds`. The confirmation states the count frozen when it opened: the total for all, or the number ticked. The workspace's page shows 100 Songs at a time, which is the list's largest page.
+  **Why:** AC 2 asks for "some or all … in one action". With `all`, a workspace of up to 5,000 Songs moves in one command, without paging through it.
+  **Issue:** #151
+- **Decision:** A refused move (`song_not_in_workspace`, or `validation_failed` on the target) keeps the dialog open with "Nothing moved: …", clears the selection, and reads the Songs and workspaces again. While a move reads the list again, the page keeps showing the last list it read.
+  **Why:** the move is all or nothing, so the user must see that nothing changed. Reading the list again avoids stale state.
+  **Issue:** #151
+- **Decision:** The API test-plan items (all-or-nothing, an Unavailable or identical target, a Song not in the workspace, and 403 `session_required` for a bearer token) are covered by #129's existing `SunoWorkspaceEndpointTests`, which are reused unchanged. Only tests for the new list filter were added.
+  **Why:** the orchestrator note for #129 says the bulk-move API and its tests already exist.
+  **Issue:** #151
+
+Story #135 (built in parallel; merged into the milestone branch):
+
+- **Decision:** D5 applied. In `docs/suno-import-field-map.json` (and its `.md`), `simple_add_lyrics` and `simple_add_styles` get `notReturned` with the reason "Unverified in TS-003". An imported Version therefore lists `simpleLyricsAdded` and `simpleStylesAdded` as not returned and holds `false` for both.
+  **Why:** Without this the coverage test fails as written: both entries had `feed: null` and only an `unverified` note. AC 2 allows "not returned when the map says so".
+  **Issue:** #135
+- **Decision:** The map is made machine-readable where the mapper needs it, as data rather than code:
+  - Variety's value table is now numbers 0–4. `unverifiedValues` lists Off, Normal and Extra.
+  - The model entry gains `feedFallbacks: [major_model_version, model_name]`.
+  - Any other value an enumeration returns is kept raw and marked out of range.
+  **Why:** The table's strings ("0 (unverified)") could not be decoded. TS-003 saw only 2 (High) and 4 (Max); 0, 1 and 3 follow the form's order. Without them a default Advanced clip (Normal = 1) would always be marked out of range.
+  **Issue:** #135
+- **Decision:** D6 is one migration, `20261007000000_AddImportedInputsAndModelReportedAs`. It adds two nullable columns in place (no table rebuild, no CHECK):
+  - `suno_models.reported_as`. HasData seeds it on v6-mini only (`V6-MINI`, the one label TS-003 saw).
+  - `versions.imported_inputs`, a JSON column for the import marks.
+  Version retention is now **shape 2** (`VersionShape1To2`), and the `retained-shapes.json` baseline is updated.
+  **Why:** The story's discretion says to add the column if #114 lacks it. The out-of-range mark is "a flag on the Version" (system metadata). The reported-as names of v6 and v6-wild were not verified, so they are left null; matching falls back to the model's name, ignoring case, which covers them.
+  **Issue:** #135
+- **Decision:** Model matching is `SunoModelRules.Match`. It compares exactly, ignoring case (NameKey), first against each model's reported-as name and then against its name. Retired models match. The reported name is the songrow badge when the clip has one, else `major_model_version`, else `model_name`. A clip with no model at all lists `model` as not returned.
+  An unknown model is only proposed: `ClipModel(Reported, Matched: null)`, with the reported name in `inputs.model`. `ModelCatalogService.EnsureReportedAsync(reported)` (public, runs inside the caller's transaction) adds it once per commit for #140. The entry is Discovered, named and reported as Suno reported it, and raises the list revision.
+  **Why:** This follows the discretion and the TS-003 replan line. The name fallback stops a commit from adding a duplicate of a model the user typed in by hand.
+  **Issue:** #135
+- **Decision:** Suno's title is read and stored on the Version, but takes no part in input comparisons (`ClipInputMapper.NotCompared`).
+  **Why:** A user can rename a clip in Suno after creating it, which is a `changed` record (ChangedFields already reports `title`), not a `conflict`. Suno also writes a title of its own for a blank one (the TS-003 map note), so two clips of one Create request can differ there. Deviation from the literal AC 5 wording ("every returned option").
+  **Issue:** #135
+- **Decision:** `RecordClassifier` now computes `inputsDiffer` (#131's note). `ISunoClipLookup.LiveGenerationsAsync` returns each linked Generation's Version inputs (`LinkedClip.Version`, a `LinkedVersionInputs`). The clip is mapped against the model list (read only) and compared with `ClipInputMapper.Differs`. Options the clip does not return, and those the Version's own marks list as not returned, take no part.
+  The existing #131 tests that expected `linked` for a library clip on a blank Version 1 now use an imported Version: test helper `ImportedVersions.AttachAsync`. Such a clip on a blank Version is now, correctly, `conflict`.
+  **Why:** This is AC 5's key link ("conflict is decided by comparing mapped inputs with the linked Version's").
+  **Issue:** #135
+- **Decision:** Every clip maps as a Song until #136. A clip is Simple when `metadata.gpt_description_prompt` is present and `metadata.task` is `agentic_thinking`; otherwise it is Advanced. Lineage tasks are left to #137. Reference and file fields go to #137, and the workspace to #140; they are listed in `ClipInputMapper.ReadElsewhere`, and the coverage test asserts each one is a reference or file field.
+  **Why:** This follows the story's discretion lines.
+  **Issue:** #135
+- **Decision:** The import marks are API-spelled keys: `lyrics`, `styles`, and the keys of `inputs`.
+  - They live on `SongVersion.Imported` (`ImportedInputMarks`), which is classified as a SystemField in the invariant 1 guard, with `imported_inputs` as a SystemColumn.
+  - `GenerationMoveService` carries them to the copied Version.
+  - The Version answer has `imported: {notReturned, outOfRange, rawValues} | null`.
+  - The web shows `ImportedNotice` ("Imported from Suno") above the options.
+  - The model list API does not expose `reportedAs`.
+  **Why:** The out-of-range mark is a flag on the Version, shown in the read-only editor (discretion). The not-returned list shares the same notice, so the defaults are not read as what produced the Generation. Keeping `reportedAs` out of the model list API avoids changing an API contract that no AC asks for.
+  **Issue:** #135
+- **Decision:** `docs/suno-import-field-map.json` is embedded in the Application assembly as `n8Tracks.Application.Suno.Import.suno-import-field-map.json`. Its line comes out of `.dockerignore`, and the Dockerfile copies it next to the inventory.
+  **Why:** This follows the discretion ("linked into the Application project as an embedded resource like the inventory"). The image build would fail without the file in the build context.
+  **Issue:** #135
+
+Story #150 (built in parallel; merged into the milestone branch):
+
+- **Decision:** The diagnostic report is saved through a Blob link, and the manifest is unchanged: no `downloads` permission. The panel offers an `<a download>` with a Blob address that the user's own click saves. The options page clicks a Blob link inside the user's click.
+  **Why:** The story's key link says "a Blob link the page itself saves; no `downloads` permission is added in this milestone". The #128 note ("#150 adds `downloads` to `allowedPermissions`") contradicts it, and the story's text wins. `downloads` stays for #216, which the #133 scan already anticipates, so D4's allow-list and its "fails on any extra" complement are untouched.
+  **Issue:** #150
+- **Decision:** The panel's link is never clicked by code. The content script prepares the report on every panel refresh and hands the panel a fresh Blob address, revoking the old one.
+  **Why:** The page-context lint rule and the invariant 4 static scan forbid `.click()` and `dispatchEvent` outside `primitives.ts`. A link the user clicks needs neither, and adds no exemption to either guard.
+  **Issue:** #150
+- **Decision:** The log lives in the service worker, as a `Diagnostics` class in `extension/src/diagnostics/report.ts`, over `chrome.storage.session`. The Suno content script reports to it with two additive messages: `diagnostics-record` (a run that ended, and the self-check states) and `diagnostic-report`. Both are allowed from content scripts. `route` takes an optional fifth argument, `diagnostics`, and `disconnect` clears the log after unpairing.
+  **Why:** Content scripts cannot reach `chrome.storage.session` at its default access level, and the report needs the connection's versions, which only the service worker holds. An optional argument keeps the existing router callers and tests unchanged.
+  **Issue:** #150
+- **Decision:** Redaction is by construction, in three layers.
+  1. The service worker accepts only workflow IDs in the registry and step names those workflows declare. Phases and outcomes come from fixed lists.
+  2. `expected` is redacted. A double-quoted value becomes `"…"`, and addresses, `@` handles, UUIDs, hex and digit runs, and secret-shaped words (an underscore, more than 24 characters, or letters mixed with digits) are removed.
+  3. A source test (`extension/test/diagnostics-source.test.ts`) fails any workflow module whose `id`, `title`, `name`, `step`, `description`, `expected(...)` or `new PrimitiveError(...)` text is not written in the source. A template may hold only another `.description` or a quoted value.
+  **Why:** The planner wanted `expected` to be "a string-literal union type". That would retype `Check`, `Target.description` and every workflow while #134 is changing the same code in parallel. The source test enforces the same rule ("compile-time constants in the adapter") without changing any type. A careless quoted value and every primitive's own interpolation (`to offer "<option>"`) are then caught by the quote rule.
+  **Issue:** #150
+- **Decision:** The page-structure capture is `Page.structureAround()` in `primitives.ts`, the only DOM-reading file. The page remembers the last target a run looked for, in a trail shared with its `withSignal` handles. The capture is anchored on that element if it is present once, else on its `within` container, else on `main`/`role=main`, else on `body`. The capture holds:
+  - the anchor's subtree, breadth-first to depth 6 below the anchor and at most 300 nodes, with a `truncated` flag;
+  - ancestors (up to 6) and siblings (up to 50), by tag only.
+  `AdapterSession` captures when a run stops, and reports every run to an optional `onRun` listener.
+  **Why:** The story says "depth of six around the failing element" and "siblings by tag name only". This is the simplest reading that stays within the 300-node cap.
+  **Issue:** #150
+- **Decision:** A capture keeps:
+  - `role` only from the ARIA role list;
+  - `type` only from the input/button types;
+  - `data-testid` only if it matches `^[a-z0-9_-]{1,40}$` and is not ID-shaped;
+  - `aria-*` attribute names only, sorted.
+  The service worker rebuilds every node through the same rules before storing it.
+  **Why:** Allow-lists rather than patterns keep a free-text `role` or `type` (for example, a user handle) out. The rebuild means a forged capture from page context cannot add text.
+  **Issue:** #150
+- **Decision:** The report's fields:
+  - `browser` is "<brand> <major>" from `navigator.userAgentData`, skipping "Not A Brand" entries and preferring a named brand over Chromium. Otherwise it is `unknown`.
+  - `versions.application` is kept only if it parses as a version, so it can be null even when connected.
+  - `connection` holds only `status` and the address's `scheme`. There is no credential name and no scopes.
+  - Step entries add `phase` to the planned `{workflow, step, outcome, ms, expected?}`. Outcomes are `ok`, `failed`, `timed_out`, `error` and `refused`. `ms` is the time since the previous entry of the same run.
+  **Why:** These are low-cost choices the story leaves open. `phase` is an enumerated value and tells a maintainer whether the check before or after the action failed.
+  **Issue:** #150
+- **Decision:** A failed self-check, as opposed to a stopped run, records its state but not a page-structure capture.
+  **Why:** The story's capture is "around the most recent failure" of a run's step. The self-check reads every workflow in turn, so its last target is ambiguous. Runs already capture.
+  **Issue:** #150
+
+Merge of #134 and #150:
+
+- **Decision:** `route` keeps `diagnostics` as its optional fifth argument and takes #134's `sync` as a sixth (`route(connection, message, sender, id, diagnostics?, sync?)`). `CONTENT_SCRIPT_TYPES` is `state`, `relay`, the two diagnostics types, and `SYNC_TYPES`. The sync's runs go through `session.run`, so they reach the step log, and the load-more workflow is in the report like every other workflow.
+  **Why:** Both stories added a fifth argument in parallel. #150's notes asked later stories to keep the fifth for `diagnostics`; only #134's three router-test calls and the service worker needed the change.
+  **Issue:** #134, #150
+
+#152 (cover images with a sync):
+
+- **Decision:** The service worker reads and sends the images, not the Suno tab. The read (`adapter/imageReader.ts`) is a CORS GET with `credentials: 'omit'`, no headers, `referrerPolicy: 'no-referrer'` and `redirect: 'error'`, made to `https://cdn2.suno.ai` only. The host list (`SUNO_IMAGE_HOSTS`, `isSunoImageAddress`) is in `adapter/addresses.ts`, because the scan forbids a Suno address in a file that sends requests. Neither the manifest nor a permission changes.
+  **Why:** The key link sends images "through the service worker's apiClient", and bytes cannot cross runtime messaging as a Blob. TS-003 found `Access-Control-Allow-Origin: *`, so the extension origin can read the image without a host permission. A redirect could leave the listed hosts, so redirects are refused.
+  **Issue:** #152
+- **Decision:** A clip's cover is `image_large_url` when it is on a listed host, otherwise `image_url`. Covers are collected from every part the sync uploads, library and Trash alike, de-duplicated by Suno ID, and kept in `chrome.storage.local` (`sunoImages`) with the counts. The sender resumes when the service worker starts.
+  **Why:** The large image suits artwork, and the small one is the fallback. Local storage outlives a stopped service worker, so a long send carries on.
+  **Issue:** #152
+- **Decision:** Images wait until the export is `ready`: `GET` every 2 s, for at most 15 min. They are then sent four at a time. Each outcome is counted as `sent`, `failed` (could not be read, or refused with a 4xx/5xx; never retried, per #134), or `ignored` (no such record, a record that became no Generation, or a Generation that already has an image). A discarded, expired or failed export, or a 401, stops the send, and the images not yet sent count as failed.
+  **Why:** The story leaves the wait and the counting open. #134 decided that failures are not retried. A Generation that already has an image is "refused (and ignored)" in the story, so it is not shown as a failure.
+  **Issue:** #152
+- **Decision:** Rule 2: the late-image path needs the record's Generation, and a `suno.sync` credential had no way to find it: `GET .../records` is session-only, and Generation references take no Suno ID. For a **committed** export, `PUT /api/v1/suno/exports/{id}/artwork/{sunoId}` now answers its 409 `export_not_ready` with `generationId`, the live Generation that has the record's Suno ID, when there is one. `ExportStagingService` takes `ISunoClipLookup`, and `NotReady` has an optional `GenerationId`. The extension then calls `PUT /api/v1/generations/{generationId}/artwork`, whose `artwork_exists` refusal for `suno.*` tokens (#121) keeps an existing image. During `committing` the image waits and is sent again.
+  **Why:** This is the smallest additive change that lets the key link (late images go to the Generations endpoint) work. It adds a member to an existing problem and changes no status, route or schema, and it needs no migration. The import still never writes `artwork_asset_id` itself.
+  **Issue:** #152
+- **Decision:** AC 5 is a constant, `IMAGES_READABLE = true` (TS-003), and the sender takes a `readable` option. When it is false, nothing is read or sent and the panel says that images are not brought along.
+  **Why:** TS-003 found that images can be read this way, so the skip path exists only for a future spike result. It is tested through the option.
+  **Issue:** #152
+- **Decision:** The panel follows the images with a new tab-bound message, `sync-images` (in `SYNC_TYPES`, answered only to the sync's own tab), polled every second after a finished sync, for at most 30 min. Only the finished state's `.sync-images` status line is rewritten, so focus stays put. `ADAPTER_VERSION` goes from 2 to 3 because an address pattern was added.
+  **Why:** The router signature stays the same, with no seventh argument. `addresses.ts` says that a new pattern raises the adapter version.
+  **Issue:** #152
+
+Story #136 (built in parallel; merged into the milestone branch):
+
+- **Decision:** The kind markers are data. `kindMarkers` in `docs/suno-import-field-map.json` now holds `{path, equals}` for Speech (`metadata.is_speech` = true) and Sound (`metadata.task` = "sound"). `ImportFieldMap.KindMarkers` reads them, and `ClipInputMapper.KindOf` applies them.
+  **Why:** AC 1 says "by the marker the import field map names". Keeping the map as data, with no field code in the mapper, follows #135's approach.
+  **Issue:** #136
+- **Decision:** A clip's kind is undetermined in two cases:
+  - Both markers match.
+  - A marker holds a value of another JSON type than the map's, for example `is_speech: "yes"` or a numeric `task`.
+
+  The clip then maps as a Song with `KindUnknown`, and its staged record gets `flags: ["unknown_kind"]` (`SunoExportRules.UnknownKindFlag`) at staging time. When a repeated record keeps a later copy, the flag follows that copy. A clip with no `metadata`, or with `is_speech: false`, is a determined Song.
+  **Why:** The discretion fixes the flag name and the fallback. "Unrecognised marker" has to be decidable without listing every lineage task. Treating a missing marker as unknown would flag every minimal or older clip (and break #131's flag assertions). The flag name `unknown_kind` follows the discretion literally, though the other flags are camelCase.
+  **Issue:** #136
+- **Decision:** Map data, as #135 did for Variety:
+  - `speech_variety` gets the numeric 0–4 table; only High (2) is verified.
+  - `sound_type` becomes `enum` over the bool (`one_shot`: false, `loop`: true). Absent is the default, One-shot.
+  - `sound_key` and `sound_scale` get a `pattern`, a regex with one capturing group, over the shared `user_key`. Key `^([A-G]#?)m?$` gives the note. Scale `^[A-G]#?(m?)$` gives `m` for minor or nothing for major.
+  - A flat or other unmatched key is kept raw and marked out of range for both. An absent key is Any, with the scale unset (null).
+  **Why:** The inventory holds `sound_type` as a choice, and key and scale as two choices, while Suno returns a bool and one combined string. A generic `pattern` keeps the mapper free of per-field code. Only `Am` and Loop were verified in TS-003.
+  **Issue:** #136
+- **Decision:** Only the fields of the clip's own tab are read. The Songs `title` and `model` are therefore not read for a Speech or a Sound: they keep their defaults, and `MappedClipInputs.Model` is null, so a commit adds no model. Compared keys are `kind`, the kind's mode (`songMode` or `speechMode`; none for a Sound), and the tab's options.
+  **Why:** This follows the discretion: "Options belonging to another tab are ignored (they remain in the raw JSON)". In the inventory, `title` is a Songs-tab field. A kind mismatch with the linked Version makes the record a `conflict`.
+  **Issue:** #136
+- **Decision:** Speech mode:
+  - Simple by #135's marker.
+  - Advanced when `gpt_description_prompt` is absent.
+  - With the prompt but another task (no mode marker), Advanced when the script (`speech_script`'s feed path) is not blank after trimming, else Simple.
+
+  Speech Simple's Variety, which Suno does not send and which is not on the Simple form, stays at the default and is not marked not returned. Songs Simple treats absent sliders the same way.
+  **Why:** This follows the discretion ("Advanced when it has a script", "a whitespace-only script counts as absent") and keeps parity with #135.
+  **Issue:** #136
+- **Decision:** The coverage test now walks every tab. It asserts all 35 inventory keys: 28 in `ReadKeys`, plus the 7 in `ReadElsewhere`, checked against an explicit owner list in the test (6 for #137, 1 for #140). The new bite test adds a made-up `sound_swing` field to a copy of the inventory. Redaction needed no change: #113 already lists `speechprompt`, `speechscript`, `speechtone`, and `sounddescription`. There is no migration and no web change, because the review page belongs to #139.
+  **Why:** This follows AC 5 and the discretion's owner-list line. The attention mark is a staged-record flag, not a Version field.
+  **Issue:** #136
+
+Story #137 (built in parallel; merged into the milestone branch):
+
+- **Decision:** Rule 3: migration `20261007030000_AllowResolvedExternalSources` replaces `tr_version_sources_frozen_update`. On a frozen Version it now allows two pointer rewrites: the existing Generation → external reference (#122), and the reverse, external reference → Generation. Each is allowed only when the Suno ID on both sides is the same and every other column is unchanged. No table is rebuilt.
+  **Why:** Imported Versions are frozen as soon as their Generation is attached, so without this the resolver could not point a "Not imported" source at its parent's Generation. The source's identity (its Suno ID) is unchanged, which keeps invariant 1. The guard asserts the new clause, refuses the rewrite to a Generation with another Suno ID, and checks that `Stored()` is byte-identical before and after resolution.
+  **Issue:** #137
+- **Decision:** Lineage takes part in the same-inputs comparison through a new trailing `MappedClipInputs.Lineage` (`ImportedLineage`) that `SameInputs` compares by `LineageReader.ComparisonKeyOf`. It is not a key of `Compared`, and `Differs` (clip vs Version, the classifier's conflict) ignores lineage.
+  **Why:** Tests assert the exact `Compared` key set, and a lineage key there would make `Differs` read it from `VersionInputs` and call every linked clip with lineage a conflict. The issue's discretion gives "lineage differs from its Version's" to the diff story.
+  **Issue:** #137
+- **Decision:** `metadata.task` decides only the audio action. Inspiration (`playlist_id`/`playlist_clip_ids`) and the Voice (`persona_id` + `persona.name`) are read from their own fields whatever the task. `playlist_condition`, `vox_playlist_condition` and `agentic_thinking` are recognised tasks that have no audio action. An unknown task gets Remix sources from `clip_roots`, and a missing task (Reuse Prompt) gets none.
+  **Why:** TS-002 saw Voice combined with Inspiration under one task. Reading the fields directly keeps any combination Suno reports.
+  **Issue:** #137
+- **Decision:** Secondary IDs are keyed by Suno's field name with its index (`edited_clip_id`, `history[i]`, `clip_roots[i]`, `mashup_clip_ids[i]`). Each ID appears once, up to the 10 the rules allow. A `clip_roots` ID that is already a direct source in the group is not repeated. Extend's direct source is `edited_clip_id`, else the last `history` entry, else the first `clip_roots` entry. Its position comes from the matching `history` entry, else `metadata.continue_at`, rounded to hundredths. A Cover or Mashup clip with no source ID falls back to Remix sources from `clip_roots`.
+  **Why:** The issue gives the fields but not the encoding. These choices keep every identifier, in order, and the result passes `VersionLineageRules` (Complete, Import) for every TS-002 example.
+  **Issue:** #137
+- **Decision:** An uploaded or recorded audio file is marked by a new `fileInput` sub-entry on the `audio` entry of `docs/suno-import-field-map.json` (`notReturned`; parsed as `ImportFieldEntry.FileInput`). Image and video keep their existing `notReturned` entries. The reader turns any file input the map does locate into a note saying "Imported from Suno". With the shipped map, no file note is ever produced.
+  **Why:** AC 7 asks for "not returned" in the map where Suno does not report the file. The `audio` key's own feed path is the lineage task, so it needed a separate marker.
+  **Issue:** #137
+- **Decision:** `ExternalReferenceResolver` (`Application.Suno`) has three methods: `LinkAsync(ImportedLineage)` at import, public `ResolveAsync(sunoId)` in its own transaction, and internal `ResolveWithinAsync(sunoId)` for #140's commit transaction. Resolving relates child Song → parent Song under the source's type (the sources-story rule). `LinkAsync` does not relate: #140's import write should relate linked sources as `VersionService.RelateSourcesAsync` does. The resolver takes no catalog type, so it is not in the guard's namespace list; a dedicated guard fact covers it. Filling `suno_playlists`/`suno_personas` and the review text are left to #153, as the issue's moved-criteria line says. The inspiration playlist's name is blank at read, because the clip carries none.
+  **Why:** This keeps the reader pure and the resolver callable inside or outside a transaction.
+  **Issue:** #137
+- **Decision:** Rule 1: the replaced trigger wraps its "allowed rewrite" test in `COALESCE(..., 0)`, so a comparison SQLite cannot decide counts as a change and is refused. Example: a source pointed at a Generation ID that no longer exists, whose Suno ID subquery gives NULL. The guard has a regression case.
+  **Why:** Without it, `NOT (… = NULL)` is NULL, the trigger's WHEN does not fire, and pointing a frozen source at a deleted Generation got through. This was caught by `VersionSourcesEndpointTests.ASourceWhoseGenerationIsDeletedKeepsItsSunoIdAndAFrozenVersionIsUnchanged`.
+  **Issue:** #137
+
+Story #138:
+
+- **Decision:** Proposals are computed by `ProposalService.ProposeWithinAsync` (`Application.Suno.Import`) as the last step of `ExportStagingService.ClassifyAsync`, in its own still-classifying transaction before the move to `ready`. Every record gets `proposal_json` (`{choice, basis, group, freezesVersion}`), and `choice_json` starts as the proposed choice. Linked, changed and conflict records are proposed `skip` with basis `linked`; ignored and deleted records are proposed `skip` with basis `ignored` or `deleted`.
+  **Why:** The discretion says "same job as classification". Writing the starting choice means #139 and #140 read one field, the choice, while the proposal stays as it was for display. Giving every record a proposal leaves no nulls for the review to special-case. #141 and #142 refine the linked, changed and conflict defaults.
+  **Issue:** #138
+- **Decision:** Grouping (`Domain/Suno/ClipGrouping`) puts every new, linked, changed and conflict record into groups, so a new clip can follow a group-mate that is already a Generation. The anchor is the earliest clip (by time, then `batch_index`, then Suno ID). Members are taken in time order while within 1 s of the anchor, skipping any repeated `batch_index`. A set that has no index 0, or has a single clip, leaves the anchor alone, and the remaining clips are grouped again. `group` is numbered only for groups of two or more.
+  **Why:** This follows the TS-001 rule and the anchoring discretion. The complement cases (proximity without `batch_index`, or without index 0) never group.
+  **Issue:** #138
+- **Decision:** The clip-vs-Version comparison is `!ClipInputMapper.Differs(...)` plus an equal lineage comparison key. In the Version's key, each source Generation is counted by its Suno ID (`IVersionStore.FindSourceGenerationAsync`). A Song-target source never matches a clip. A source typed with a user relationship type mapped to the same action also does not match, because the key uses the type ID.
+  **Why:** The discretion says sources are part of the inputs. `Differs` deliberately ignores lineage (#137), and the clip's key names Suno IDs.
+  **Issue:** #138
+- **Decision:** A new Version on an existing Song reuses the earlier proposal's temporary key when an earlier group of the same export has the same inputs. A new Song is still one per Create request (the user's rule). Proposed numbers are `NextTopLevel` over the Song's used numbers plus the numbers already proposed for it in this export.
+  **Why:** Two Create requests with the same settings belong in one Version. The discretion allows several groups to target one new Version, and merging new Songs is left to the user.
+  **Issue:** #138
+- **Decision:** `PATCH /api/v1/suno/exports/{id}/records` takes `{sunoIds (1–1,000, de-duplicated), choice}`, which is the shape #139's discretion uses. It is SessionOnly and needs If-Match on the export revision. It works only on a ready export; otherwise it answers 409 `export_not_ready`. It answers 200 with the export at its new revision plus an ETag, and the GET of the export now sends an ETag too. Malformed bodies get 422 `validation_failed` with errors by field; refusals get 422 `invalid_choices` with `records: {sunoId: [reasons]}`. The `filter`+exclusions form ("select all that match") is left to #139.
+  **Why:** One choice per request matches the review's bulk-apply interaction. The filter form needs #139's `q` search, which does not exist yet.
+  **Issue:** #138
+- **Decision:** These are the validation rules.
+  - Import and ignore are allowed only for new, ignored and deleted records; other records answer `already_linked`. Skip is allowed for any record.
+  - `version`: the clip's inputs must be that Version's, frozen or mutable.
+  - New targets: every record naming a key must describe the same target (`target_conflict`) and hold clips with the same inputs (`inputs_differ`).
+  - `newVersion` of a new Song: the Song is named by its key, must be top-level, and must exist in the resulting choices (`target_missing`). This is checked across the whole export, so a change that removes a new Song still named by another record's new Version is refused.
+  - Numbers: with a parent, the number must be one of `VersionNumbering.Options(parent, used ∪ other keys' numbers)`. Top-level, it must be one part, at least `NextTopLevel(used)` (a new Song has used `1`), and not claimed by another key on that Song.
+  - Catalog-dependent checks run only for the changed records.
+  **Why:** The top-level rule is symmetric, so a skip elsewhere never invalidates another key's number. Revalidating unrelated records against a catalog that moved would block harmless changes. The commit (#140) revalidates everything.
+  **Issue:** #138
+- **Decision:** No migration: `proposal_json`, `choice_json` and `revision` exist since #131. The invariant 3 staging guard (`SunoExportStagingGuardTests`) now also changes choices, including to a catalog target, before the after-snapshot. The invariant 1 guard lists the PATCH as touching no Version. The session-only count is 52.
+  **Why:** The test plan requires the invariant 3 guard to run over proposing and changing choices.
+  **Issue:** #138
+- **Decision:** The review's reads are new session-only endpoints in `SunoExportsEndpoints`: `GET /suno/exports/current` (`{waiting, last}`), `GET /suno/exports/{id}/summary`, and `GET /suno/exports/{id}/records/{sunoId}/targets?song=&parent=`. The records list gains `q` and, per record, `target` (the choice's Song and Version named) and `generation` (shortcode and Song shortcode, for the link). Reads live in a new `ImportReviewService` (`Application.Suno.Import`); `ProposalService` gains `ValidateAsync` and `TargetsAsync`. The session-only count is 55.
+  **Why:** The planned `/summary` and `/targets` endpoints, plus a "current" read so the sidebar entry, the empty state, the discarded notice, and Settings can find the waiting export without a credential. Names in the records answer let the page group rows under a heading for each target without one request per row.
+  **Issue:** #139
+- **Decision:** The bulk PATCH's filter form is `{ filter: {class, workspace, playlist, q}, except: [≤1,000], choice }`. The server resolves it inside the change's transaction to the matching records whose class the review can change (new, ignored, deleted), never linked/changed/conflict ones, and refuses a filter matching none with 422 `validation_failed` on `filter`. A body cannot mix `sunoIds` and `filter`.
+  **Why:** "Select all that match" must work across pages without IDs. A record a Generation holds has no import control, so a selection never includes it; otherwise one linked record in the filter would refuse the whole change with `already_linked`.
+  **Issue:** #139
+- **Decision:** The summary checks every stored choice again (target still exists, numbers still free, a new Song's key still created, keys agreeing, and a clip's inputs against an existing Version that may have been edited) and lists the reasons by Suno ID (at most 1,000, with the full count). It does not re-compare inputs among the clips of one new target, which were checked at the change and cannot change in staging. Counts: Songs = new-Song keys; Versions = new-Song keys + new-Version keys; Generations = imported records; `ignored` = Don't copy plus records already on the ignore list that are not imported; `skipped` = the rest; `nothingToDo` when nothing is imported or newly ignored.
+  **Why:** The AC asks the page to report whether every choice is valid, and the catalog moves while an export waits up to seven days. #138 proposes Skip for an ignored record, and its ignore entry is kept, so it is shown and counted as Don't copy (the AC's "Ignored records default to Don't copy"). Mapping every new-target clip again on each summary would cost seconds for large exports.
+  **Issue:** #139
+- **Decision:** One migration (`AddExportLibraryFilters`, `20261007040000`) adds nullable `suno_exports.library_filters_json`. `ExportReader.ReadHeader` keeps the header's `libraryFilters` without its `user`, `workspace`, and `trashed` members (anything but an object or null is 422 `invalid_export`; a kept object over 4,000 characters is dropped). The export answer has `libraryExcluded` (filter members that are `"False"` or `{presence: "False"}`), which the page words as disliked songs, stems, and clips made in Studio projects.
+  **Why:** #134's binding note: #139 persists the filters and shows which kinds were excluded. `user` and `workspace` are identifiers, not kinds of clip, and the owner's Suno user ID must not be stored where it is not needed; Trash is read as its own list. A column is the smallest change, and the note names it.
+  **Issue:** #139
+- **Decision:** Web: the main sidebar gains "Suno import" (after Playlists) at `/suno/imports`, which redirects to `/suno/imports/<id>` when an export is waiting and otherwise explains how to start a sync and what became of the last one (discarded, failed, expired, or confirmed). The page is `web/src/suno/ImportReviewPage.tsx` with `ChoiceEditor.tsx`, `SunoImportsPage.tsx`, and `importReviewRules.ts`. Settings → Suno shows an "Import" section with a link. The Confirm button is shown disabled, its description saying why (nothing to do, invalid choices, or the commit arriving later). Selection is IDs (ticks) or a filter (all that match, a workspace, a playlist) with unticked exceptions. The choice editor asks the server's `/targets` for the first selected record on the page.
+  **Why:** "Suno" alone is taken by Settings → Suno, and exact link names in existing tests rely on it. The AC moves Confirm itself to #140, while the test plan asks for a disabled Confirm that says when there is nothing to do.
+  **Issue:** #139
+- **Decision:** Rule 1: `e2e/tests/account.spec.ts` lists the sidebar with "Suno workspaces" (missing since #151) and the new "Suno import"; `e2e/tests/suno-models.spec.ts` opens Settings → Suno with an exact link name, as "Suno workspaces" and now "Suno import" also contain "Suno".
+  **Why:** Both specs would fail in the milestone's full e2e run. Playwright matches link names by substring unless `exact` is set.
+  **Issue:** #139
+- **Decision:** The e2e Demo uses a record deleted in n8Tracks in place of the ignored one.
+  **Why:** Nothing writes the ignore list before #143, and the e2e containers have no SQL access. Ignored rows are covered by component tests and the API tests (`SunoExportApi.Ignore`).
+  **Issue:** #139
+- **Decision:** Rule 1: the sidebar (`AppShell.Navbar`) scrolls on its own (`overflowY: auto`).
+  **Why:** With "Suno import" added, the list is taller than a 720-pixel window and "System" could not be reached (e2e `account.spec.ts` could not click it: "element is outside of the viewport"). Regression test: that spec.
+  **Issue:** #139
+- **Decision:** The invariant 3 guard for the commit (`tests/n8Tracks.Api.Tests/Invariants/ImportNeverOverwritesGuardTests.cs`) reads every row of every table in #131's `SunoExportStagingGuardTests.CatalogTables`, keyed by primary key, before and after a commit. Each added, changed, or removed row must be one the confirmed choices name, checked against the job's result: new Songs, Versions, and Generations; their provider records, events, and used numbers; the Versions attached to; a reported model and the model list's revision (`settings` `suno.models`); the shortcode counter; and for a Reimport the restored Generation, its retention group, and its tombstone. Complements: an all-Skip commit and an uploaded-then-discarded export change nothing. A bite test makes the tombstone store retitle an existing Generation inside the commit. The guard was landed and run first; a temporary change making the commit raise every Song's revision failed it ("songs: changed …"), and it passed again once reverted.
+  **Why:** The story's test plan and the m4-plan risk note ask for the guard first, whole rows of every catalog table, expectations computed from the choices, and proof that it bites. `provider_tombstones` was already in the catalog list (#130's note).
+  **Issue:** #140
+- **Decision:** The commit attaches through `GenerationService.AttachWithinAsync` (internal; `AttachAsync` now calls it inside its own transaction). Each target runs in a service scope of its own (`ImportTargetWriter`), so a rolled-back target leaves nothing tracked in the next one's `DbContext`. An unexpected database failure inside a target fails that target with `invalid_clip`; it does not fail the job.
+  **Why:** `IExclusiveTransaction` does not nest, the story requires one transaction per target, and "one failing target does not undo the others". The reason list is fixed by the story, and Application has no logger to name anything else.
+  **Issue:** #140
+- **Decision:** The commit request (`POST /api/v1/suno/exports/{id}/commit`, session-only) takes If-Match on the export's revision (428 without; 409 `revision_conflict` when stale) and answers 202 with the export, now `committing` and naming the job in `jobId` (`Location` is the job). Invalid choices do not refuse the request: the job checks every choice again and fails those targets with their reason. The web keeps Confirm disabled while any choice is invalid.
+  **Why:** Convention: every write sends the revision it read, so Confirm commits exactly the choices whose numbers the user was shown. The catalog can change between the request and the job, so the job's check is the one that counts; the story makes the UI the place that blocks invalid choices.
+  **Issue:** #140
+- **Decision:** A Reimport (a `deleted` record chosen Import) is first tried as a restore: the newest retention group holding a retained Generation whose stored `suno_id` is the clip's (new `IRetentionStore.FindByStoredValueAsync`, which uses `json_extract` in SQL so the document never leaves the database) is restored, in its own transaction, when its kind is `generation` (deleted alone) and its prune time has not passed. The Generation then goes back where it was, whatever target the choice named; the restore removes the tombstone, and references to the clip resolve to it again. A Generation deleted with its Version or Song, or past its 30 days, or whose restore is refused, is attached afresh to the chosen target with `Reimport: true`.
+  **Why:** The user's decision is to restore while it is still retained and otherwise import fresh. Restoring a whole Version or Song group to bring back one clip would change rows no choice names (invariant 3).
+  **Issue:** #140
+- **Decision:** Order inside the job: Reimport restores, then new Songs (by key), new Versions of existing Songs, new Versions of new Songs, and existing Versions. Each target's clips are taken in `batch_index` order, then Suno creation time. Records a Generation now holds are reported `linked` with `already_linked`. A non-Reimport record whose Suno ID was tombstoned since is reported `skipped` with `tombstoned`. Neither fails its target. The new Version is built from the first clip's mapped inputs, and every other clip of a new target must have the same inputs (`inputs_differ` otherwise). An unknown model is added through `ModelCatalogService.EnsureReportedAsync` before the Version names it. The Mashup and Extend `IncompleteSources` attach refusal is reported as `invalid_clip`.
+  **Why:** A new Version of a new Song needs its Song made first. The reason list is fixed by the story; `invalid_clip` is the closest code for a clip that cannot be kept as a Generation.
+  **Issue:** #140
+- **Decision:** Carry 2: a new Song from the commit is built with `Song.Create` and stored through `ISongStore.AddAsync` without `SongCreditService`. So it has no primary Artist, never the default one, and no personal defaults. Version 1 holds exactly the clip's mapped inputs, lineage, and import marks. The workspace goes on through `ISongWorkspaceStore.MoveAsync`, after the clips' unknown workspaces are recorded as an incomplete report (from the export's workspace list when it names them). Test: `ANewSongIsCreditedToNoArtistEvenWithADefaultArtist`.
+  **Why:** m4-notes Carry 2 says import sends an explicit null primary Artist, and the story says personal defaults are not applied to imported Versions. `SongService.CreateAsync` would apply the defaults and validate inputs that imports keep out of range on purpose (#135).
+  **Issue:** #140
+- **Decision:** Group events: after all targets, one `GenerationEvent` per proposal group with two or more clips attached (across targets), `source` Inferred, `confidence` Medium, `batchSize` = the number attached, `occurredUtc` = the earliest Suno creation time among them. Staged artwork goes through a new internal `GenerationArtworkService.AttachStagedAsync` after the target commits, in its own transaction. It links the staged asset (already in the managed store) only when the Generation has no image, and reports `artwork_missing` as a note when the asset or its original is gone.
+  **Why:** TS-001's grouping is an inference, not an observation. #121/#152 require artwork only through `GenerationArtworkService` and never replacing an image (invariant 3). The image was checked when it was staged, so nothing is re-uploaded.
+  **Issue:** #140
+- **Decision:** Interruption: the job puts the export back to `ready` and reclassifies it (`ExportStagingService.ReclassifyAsync`) when it throws or is cancelled. A new hosted service `ImportCommitRecovery`, registered before `JobWorker`, does the same at startup for an export left `committing` whose job is not queued. Reclassifying sets the proposal and choice of a record a Generation now holds to Skip (linked); every other choice stays as the user left it. Returning to `ready` restamps `ready_utc`, so the seven days start again.
+  **Why:** Discretion: the job is not resumable, and committed records come back classified `linked` for the user to confirm again. Registering before the worker means a running job is seen as interrupted before the worker marks it failed or claims a queued one.
+  **Issue:** #140
+- **Decision:** The invariant 1 guard's `CatalogServiceNamespaces` gains `Application.Suno.Import` and `Application.Suno`. `ExternalReferenceResolver.LinkAsync` takes `ImportedLineage`, so adding Import alone made the "services elsewhere take no catalog type" complement fail. New exercisers: the commit endpoint and `ImportCommitService.CommitAsync` (a choice attaching a clip whose inputs are not the Version's, written on the staged record as if the Version changed after the choice: the target fails `inputs_differ` and the Version is byte-identical), `RecoverInterruptedAsync`, `ExternalReferenceResolver.ResolveAsync`, and `ModelCatalogService.UpdateAsync`/`DeleteAsync` on the target's model (refused `InUse`). Every other public method of the two namespaces is listed with why it takes no Version (staging, reads, pure).
+  **Why:** The story's key link adds the import path to the guard's write-path list. Each namespace is enumerated by name (D1).
+  **Issue:** #140
+- **Decision:** Web: Confirm is enabled when every choice is valid and there is something to do. It opens "Confirm this import?", which shows the same three summary lines (`SummaryNumbers`), then posts the commit with the summary's revision. The page then shows `ImportCommitView`: progress follows the job through `useCommitJob` (the `useBackupJob` pattern, every 1 s, `COMMIT_POLL_MS`). The result shows created counts, outcome counts, links to the Songs, and a "Not imported as chosen" table. A confirmed export opened later reads the job's result again (finished jobs are kept 30 days, then only the state is shown). A job that fails sends the page back to the review. `e2e/tests/import-review.spec.ts` now expects Confirm enabled.
+  **Why:** AC 13. The job's result is kept with the job (discretion). #57's hook is the backup page's, so the pattern was copied for the commit job's own result shape rather than coupled to backups.
+  **Issue:** #140
+- **Decision:** Rule 3: `ImportCommitApi.CommitAsync`, the test helper, accepted only `committing` in the 202 answer. A commit whose records are all Skip can finish before the export is read back, so the full Api run on 693598f failed `ACommitWithEveryRecordSetToSkipChangesNothing` once ("committed"). The helper now accepts `committing` or `committed`. The product behaviour is unchanged, and the job result and the final `committed` state are still asserted.
+  **Why:** The answer is read after the job is queued, so either state is correct. The test raced the worker.
+  **Issue:** #141
+- **Decision:** The story's PATCH shape `{ choice: "apply", acceptFields }` is sent as #138's `choice.action`: `{ action: "apply", acceptFields: [...] }`, `{ action: "moveToNewVersion" }`, and `{ action: "keep" }`. `moveToNewVersion` and `keep` also take an optional `acceptFields`, the metadata diff shown beneath a conflict. `ImportAction` gains `Apply`, `MoveToNewVersion`, and `Keep`. `ImportChoice` gains a trailing `AcceptFields`. Refusals: `not_changed` (apply on a record that is not Changed), `not_conflict`, and `field_not_changed` (a field the record does not differ in). An unknown field name, or `acceptFields` on another action, is 422 `validation_failed`.
+  **Why:** The records PATCH already nests the choice under `choice`. The discretion says a record can be both changed and in conflict, so a conflict's choice has to carry fields too.
+  **Issue:** #141
+- **Decision:** The diffed fields are #131's `SunoExportRules.ComparedFields`: title, tags, duration, model version and name, the three BPMs, key, and the image address without its query string. `providerStatus`, the remote state, and audio addresses are left out. The classifier now keeps a Conflict's changed fields as well (it used to keep a Changed record's only). `GET /api/v1/suno/exports/{id}/records/{sunoId}/diff` is SessionOnly (count now 57) and answers `{sunoId, class, generationId, fields:[{field,current,incoming}], inputs:[{field,current,incoming}]}`. The inputs come from the new `ClipInputMapper.DifferingInputs`; `Differs` now calls it. Any other class gets 422 `record_not_changed`.
+  **Why:** These are the planner's fields, and the classifier already compares exactly these. Lyrics and styles in a conflict's diff are the user's own text, answered only on the session-only route and never logged (invariant 6).
+  **Issue:** #141
+- **Decision:** At commit, Changed and Conflict choices go to `CommitPlan.Resolutions`. They are applied after the targets, each in its own scope and transaction, by the internal `ChangeResolutionWriter` (in `ChangeResolutionService.cs`; the public `ChangeResolutionService` only reads diffs). It writes only accepted fields that still differ, through the new `IGenerationStore.RefreshClipFieldsAsync`, which touches no rating, state, revision, or artwork, and then touches the Song. It replaces `provider_records` only when a field was accepted or a move was made. A move creates the child Version through `ImportTargetWriter.CreateAsync` (now internal) with the first `Child` option of `VersionNumbering.Options`, then calls `GenerationMoveService.MoveWithinAsync`. The Generation keeps its Suno ID, rating, comments, artwork, event link, and selection. An accepted image address replaces the artwork with the staged image through the new internal `GenerationArtworkService.ReplaceWithStagedAsync`. New outcomes: `updated`, `declined`, `kept`, `moved`. A moved Version counts in `created.versions`. The summary gains `resolved`; a decided diff counts as something to do and is no longer counted as skipped.
+  **Why:** m4-notes #123/#140 say to reuse the move service and the commit's handling. An accepted image is an explicit choice, so it may replace (invariant 3). Without the summary change, an import whose only choices were diffs could not be confirmed.
+  **Issue:** #141
+- **Decision:** Guards. Invariant 3: the scenario gains a Changed record (title accepted, tags declined, rated and commented) and a Conflict record (moved), both on the bystander Song. The column-precise rules allow `suno_title` only on the first, and `version_id`/`ordinal`/`revision` only on the second. They also allow that Generation's `provider_records` change, its `shortcode_aliases` row, and the child Version. The Version it left is not named, so any change to it is unexplained. The all-Skip complement now includes both classes. Invariant 1: the commit exercisers (API and service) also move a conflict off the frozen target Version, and the guard compares that Version afterwards. `ChangeResolutionService.DiffAsync` is listed as reads only.
+  **Why:** The story's test plan says to extend both guards with this path. Keeping the changes inside the existing scenario keeps #142/#143's edits to `Unexplained` mergeable.
+  **Issue:** #141
+- **Decision:** Web: `web/src/suno/RecordDiff.tsx` is a dialog opened from "Review differences" on a Changed or Conflict row. It has a side-by-side table (Field, In n8Tracks, On Suno, Take Suno's), and each checkbox is labelled Take or Keep, so the diff reads without colour. It has "Take all from Suno" and "Keep all as they are", plus a summary line. A Conflict also gets an inputs table and a radio group (move, keep, decide later); Decide later is the default and saves Skip. A Changed record has a "Decide later" button. Saving PATCHes that one record by ID.
+  **Why:** The AC and discretion: per-field or all at once, the conflict's two choices, Skip by default.
+  **Issue:** #141
+- **Decision:** BLOCKER, partial: AC 3 (a declined change is remembered) and AC 6 (a keep is remembered the same way) are not built. The planner's design (discretion) stores two SHA-256 hashes as columns on `generations`. That needs a migration and Generation retention shape 5. The orchestrator gave M4's migration slot to #142, which runs in parallel. Everything else is built: the diff, partial acceptance, the move, Skip by default, and the raw-JSON rule. A declined or kept record shows as Changed or Conflict again at the next sync until the follow-up lands.
+  **Why:** No existing table fits without bending the design. `settings` is shared and not retained with the Generation, and `provider_records.payload` must stay Suno's raw clip byte for byte. A schema change is Rule 4.
+  **Issue:** #141
+
+Story #143 (built in parallel; merged into the milestone branch):
+
+- **Decision:** No migration: #131's `suno_ignored_items` (`suno_id`, `title`, `workspace_id`, `ignored_utc`, `last_status`, `last_seen_utc`) is used as created. `last_status` holds `present | trashed | missing | not_seen` (null until a sync saw the clip); `last_seen_utc` is the export's capture time of the last confirmed sync that included it.
+  **Why:** The shape planned for #143 was already in place; the parallel addendum forbids migrations.
+  **Issue:** #143
+- **Decision:** Status rules (`SunoIgnoreListRules.StatusAfter`): a confirmed sync including the clip sets `trashed` or `present`; a whole-library sync (scope `library` and `libraryComplete`) without it sets `missing` when `trashedComplete`, else `not_seen`; any other sync leaves it. "Missing" therefore matches #142's Remote Missing rule, and "not seen since" is the weaker whole-library case.
+  **Why:** The story names four statuses with precedence "in Trash, present, missing, not seen" but defines only "not seen"; #142 defines missing as library and Trash both read to the end.
+  **Issue:** #143
+- **Decision:** Commit hooks: `CommitPlan.Of` collects the Don't copy records (`plan.Ignores`); after the targets the job adds each in its own transaction (`IgnoreListService.IgnoreAsync`, idempotent, reports `linked` / `skipped: tombstoned` when that changed since the review), then refreshes the list in one transaction. `ImportTargetWriter` calls `ForgetWithinAsync` after each attach, in the target's transaction (new last constructor parameter).
+  **Why:** "Adding happens in the record's transaction"; removal belongs with the import. Kept additive for the parallel #141/#142 edits of the same code.
+  **Issue:** #143
+- **Decision:** Don't copy on a `deleted` record is refused with the new reason `tombstoned` (`ImportChoiceRules.Tombstoned`), at PATCH and in `ProposalService.ValidateAsync`; a change by filter to Don't copy passes over deleted records instead of refusing the whole change. The list also never shows a Suno ID with a tombstone.
+  **Why:** Discretion "an ignore choice for a tombstoned ID is refused in validation"; refusing a whole "select all" for one deleted record would make the filter form unusable (the #131 staging guard does exactly that).
+  **Issue:** #143
+- **Decision:** Removal reclassifies every `ready` export with `ExportStagingService.ReclassifyAsync` (class becomes `new`, the stored choice — Skip — kept, revision unchanged).
+  **Why:** Discretion "removing an entry while an export is ready reclassifies that export's record as New"; reusing #140's reclassify keeps choices intact.
+  **Issue:** #143
+- **Decision:** Deferred to #142: "importing an ignored clip that is in Suno's Trash imports it Archived". Today a trashed clip imports Active, as every trashed new clip does after #140.
+  **Why:** Archiving by sync needs #142's `archivedBy: sync` (and its migration); archiving here through the user's path would mark it user-archived and break #142's restore rule. Flagged for the orchestrator to apply after #142 merges.
+  **Issue:** #143
+- **Decision:** API: `GET /api/v1/suno/ignored` (`q`, `workspace`, `status`, `page`; answer `{items, page, pageSize: 50, total, workspaces:[{id,name,count}]}`) and `POST /api/v1/suno/ignored/remove` (`{sunoIds}` 1–1,000 → `{removed, unknown}`; 422 `validation_failed` / `too_many_items`), both SessionOnly (session-only count 56 → 58). The workspace facet covers the whole list so the filter offers every workspace.
+  **Why:** Story discretion (paged at 50, search title substring or Suno ID prefix, bulk removal up to 1,000, skipping unknown with counts, 403 `session_required` for a bearer).
+  **Issue:** #143
+- **Decision:** Web: `IgnoredItemsPage` at `/suno/ignored` with its own sidebar entry "Ignored Suno items" after "Suno import"; search applies on submit (Search button), filters at once, all in the URL; selection is per checked item across pages; removal confirmed in a modal.
+  **Why:** "Linked from the Suno sidebar entry": `/suno/imports` redirects to a waiting review, so a link only on that page would often be unreachable.
+  **Issue:** #143
+
+Story #142 (built in parallel; merged into the milestone branch):
+
+- **Decision:** #142 does not store Suno state changes ("remote-state rows"). `RemoteStateService` works them out from the export (records classed linked, changed, or conflict, plus the header's scope and completeness flags) and from the catalog every time they are listed, counted, or applied. Only the rows set to Skip are stored, as a JSON array in a new nullable `suno_exports.remote_skips_json`.
+  **Why:** The story's discretion says rows are re-evaluated at Confirm and applied to each Generation as it then is. A Remote Missing row has no staged record to hang a choice on. A new staging table would be a Rule 4 schema addition the story does not name; one column on a staging table is enough.
+  **Issue:** #142
+- **Decision:** Migration `20261007050000_FollowSunoRemoteState` (the parallel migration slot) adds `generations.archived_by` (`user` | `sync`, null while active) and `suno_exports.remote_skips_json`. `archived_by` is added by a hand-written `ALTER ... CHECK`, because EF's `AddCheckConstraint` would rebuild `generations` and drop #123's triggers. Generation retention moves to **shape 5** (`GenerationShape4To5`: no archiver).
+  **Why:** The story's discretion requires `archivedBy: user | sync`. An archived Generation with no archiver reads as the user's, so existing archives are never undone by a restore.
+  **Issue:** #142
+- **Decision:** The user's archive is set by the existing `PATCH /generations/{ref}` and only when `state` is sent. `archived` makes `archivedBy: user`, even on a Generation that sync archived. `active` clears it. An edit of the rating alone keeps the archiver. `IGenerationStore.TryUpdateAsync` takes the archiver, and Generation answers carry `archivedBy`.
+  **Why:** This is the discretion line "A user archiving a Generation that sync archived makes it archivedBy: user" without breaking sync's archive on a rating change.
+  **Issue:** #142
+- **Decision:** Remote Missing leaves out Generations attached after the export's `capturedAt`, and Suno IDs on the ignore list (`suno_ignored_items`).
+  **Why:** A library read taken before a clip was attached cannot say that clip is missing. This errs toward never marking a clip missing wrongly. Ignored clips get no rows (discretion). It also keeps the existing tests and the shared e2e containers safe, since their headers carry a fixed or earlier `capturedAt`.
+  **Issue:** #142
+- **Decision:** New session-only endpoints `GET` and `PATCH /api/v1/suno/exports/{id}/remote-states` live in their own file, `Api/Endpoints/SunoRemoteStateEndpoints.cs`. The PATCH takes `{sunoIds: 1–1000, apply}` with If-Match on the export revision and raises the revision. Its refusals are 422 `unknown_rows`, 422 `validation_failed`, 409 `export_not_ready`, 409 `revision_conflict`, and 428. The export summary gains `remoteChanges` and `remoteChangesTotal`, and `nothingToDo` is false while any change is applied. The commit result gains `remoteStates: [{sunoId, change, outcome: applied|skipped, generation}]`. **The session-only count is now 58.**
+  **Why:** This keeps the shared `SunoExportsEndpoints` and `PATCH .../records` (which #141 and #143 also touch) to small, additive edits. Apply/Skip is independent of any diff choice (discretion).
+  **Issue:** #142
+- **Decision:** The commit job applies the remote-state rows after the targets and artwork, in one transaction (`RemoteStateService.ApplyAsync`). Each applied row raises the Generation's revision and touches neither its Song nor the selection nor retention. `CommitPlan.Of` and `ImportTargetWriter` are unchanged.
+  **Why:** Rows are independent of record choices, and the brief asked for small edits there.
+  **Issue:** #142
+- **Decision:** In the invariant 3 guard, the scenario becomes a whole-library sync (`capturedAt` 2099) with the frozen Version's clip in the Trash (applied) and the bystander missing (set to Skip). An existing Generation may now change only for a row left to apply, and only in `remote_state`, `state`, `archived_by`, and `revision`. The everything-skipped complement also skips every row. A new bite test makes the store forget the skips and expects the bystander reported.
+  **Why:** This is the test plan's "remote-state changes happen only for rows left selected at Confirm".
+  **Issue:** #142
+- **Decision:** The e2e `import-commit.spec.ts` export header now says `libraryComplete: false`. The new `suno-remote-state.spec.ts` sets to Skip, through the API, every Suno state change but its own two before walking the Demo.
+  **Why:** On the shared containers, a complete whole-library sync marks every other test's clip Remote Missing. That would break import-commit's step 3 ("nothing to do") and touch other specs' data.
+  **Issue:** #142
+- **Decision:** On the web, the Class filter gains "Suno state changes (N)" (`?class=remote-state`), which lists the rows in `suno/RemoteStateChanges.tsx` with an "Apply: <title>" checkbox each. Generation rows and the panel gain an "In Suno Trash" badge (`in-suno-trash`).
+  **Why:** The story's key_link names the class filter. The badge covers the truth "User sees in n8Tracks which outputs they have trashed in Suno"; Remote Missing already had one.
+  **Issue:** #142
+- **Decision:** The Generate on Suno routes:
+  - `POST /api/v1/versions/{reference}/generation-requests` (`versions.write`) makes a request.
+  - `GET /api/v1/versions/{reference}/generation-request` (`catalog.read`, no snapshot) is what the page polls.
+  - `GET`, `POST .../claim`, and `PATCH /api/v1/suno/generation-requests/{id}` need `suno.generate`; the snapshot is answered only here.
+  - `POST .../cancel` needs `versions.write`.
+
+  A session that claims gets 403 `credential_required`.
+  **Why:** The story fixes the PATCH path and the scopes, but not the create or read paths. Hanging creation off the Version reuses reference binding, the 404/deleted answers, and the reference guard. A session claim would bind no credential, so it is refused.
+  **Issue:** #144
+- **Decision:** `suno_generation_requests` (migration `20261007060000_AddSunoGenerationRequests`) names the Version and the claiming credential without foreign keys. It is listed as not catalog in the invariant 3 guard's `OtherTables`.
+  **Why:** A cascade from `versions` would interfere with retention and restore. A request only needs to read as cancelled once its Version is gone, and the settle-on-read does that. The story's Discretion allows the table.
+  **Issue:** #144
+- **Decision:** Requests are settled lazily on every read (page poll, extension read, claim, report, cancel, create). Unclaimed after 15 s it becomes stopped. With no report for 1 h it becomes expired. When the Version's content key differs it becomes cancelled as stale; a Version that is gone also makes it cancelled. There is no background sweep.
+  **Why:** State is only ever observed through reads, so a sweep adds nothing. The content key is a hash of kind, mode, entries, unsupported values, file inputs, and source targets. It leaves out the name, notes, workspace, and availability, so freezing at an observed Create (#149) and a rename do not cancel a request (Discretion: workspace and availability changes do not cancel). Comparing the revision instead would have cancelled on every freeze.
+  **Issue:** #144
+- **Decision:** `effectiveInputs` is now built in one place, `Application.Songs.VersionEffectiveInputs.Of`. The Version answer and the snapshot both use it.
+  **Why:** The test plan says the snapshot equals `effectiveInputs`. One builder makes that true by construction rather than by two copies kept in step.
+  **Issue:** #144
+- **Decision:** The snapshot shape is the Discretion's, with these details:
+  - The entries are keyed `<tab>.<mode>.<inventory field>`. `AdapterFieldMap.Entries` in code is checked against `docs/suno-adapter-field-map.md` by `AdapterFieldMapTests`, so the Docker image needs no Markdown.
+  - In Simple mode, the added lyrics or styles are the value of `simple_add_lyrics`/`simple_add_styles` (null when not added).
+  - The workspace is only the top-level `workspace`.
+  - Each source has `{key, group, position, typeId, sunoAction, target{kind,id,sunoId}, title, shortcode, availability, continueAtSeconds, secondaryIds}`. The Suno ID comes from the Generation.
+  - `unsupported` holds `{key, value}`.
+  **Why:** The field map gives Simple mode no lyrics entry ("fills it from the Version's lyrics"). The extension (#146, #148) needs the clip's Suno ID to open a source.
+  **Issue:** #144
+- **Decision:** Every effective source with availability deleted, trashed, or missing blocks the request with 422 `sources_unavailable` (`sources[{group, position, title, shortcode, availability}]`, `lastSyncAt`). This covers Song targets too, and Generation sources deleted into an external "Deleted" reference. `lastSyncAt` is the newest committed export's `captured_utc`. Remix sources that are never sent do not block.
+  **Why:** The Discretion says every source that points at a Generation is required. "Deleted" covers a missing Song target just as well, and the page needs a time for "as of the last confirmed sync".
+  **Issue:** #144
+- **Decision:** The web flow:
+  - `web/src/extension/bridge.ts` pings with a 500 ms timeout and gives absent, disconnected (with status), incompatible, no-scope, or ready.
+  - Nothing is made unless the answer is ready.
+  - When the relay answered, a button "Open the extension's options" sends a new page message, `open-options`. The service worker opens the options page.
+  - If the extension does not answer `generate-accepted`, the page cancels the request it just made and shows the extension's words.
+  - The Generate button is disabled while a request is active; Cancel is beside the progress line.
+  **Why:** A web page cannot link to a `chrome-extension://` options page, so Demo step 2's "links to its options" goes through the relay. When the relay is absent (the extension is not installed, or the page was loaded before Disconnect, which unregisters the relay), the page can only say so and explain. Cancelling a refused hand-off avoids a 15 s pending request that nobody will claim.
+  **Issue:** #144
+- **Decision:** On the extension side:
+  - `messages.ts` gains `PageRequest` (`generate`, `open-options`), `GenerateFailure`, the widened `RelayReply`, and `GenerationHandOff`.
+  - `background/generate.ts` (`GenerateCoordinator`) handles them. It takes a fresh handshake, checks that the sender's origin is the paired address, then compatibility, then `suno.generate`. It then claims through `Connection.call` and keeps only `{requestId, claimedAt}` in `chrome.storage.session` under `generation`.
+  - `route(...)` gains a seventh, optional `generate` argument. Relay page messages reach it only from a tab that is not on suno.com.
+  **Why:** This follows the one typed message union and the tab-bound pattern from the M4 notes. The snapshot holds lyrics and prompts, so it is never stored; the Suno steps (#145+) read the request again before each step, as the Discretion requires.
+  **Issue:** #144
+
+Story #141 follow-up, with #143's deferred Trash line (built in parallel; merged into the milestone branch):
+
+- **Decision:** Migration `20261007070000_RememberDeclinedSunoChanges` adds the nullable TEXT columns `generations.declined_hash` and `generations.kept_inputs_hash` with EF `AddColumn`. That is a plain `ALTER TABLE ADD COLUMN` with no CHECK, so `generations` is not rebuilt and #123's triggers stay. Generation retention is now **shape 6**, and `GenerationShape5To6` restores an older record with neither hash.
+  **Why:** #141's discretion places both hashes on the Generation. The orchestrator gave this follow-up the 070000 migration slot.
+  **Issue:** #141
+- **Decision:** The declined hash is SHA-256 (lower-case hex) over a canonical JSON object of Suno's incoming value of **every** compared field (`SunoExportRules.ComparedFields`, in order; the image address without its query; numbers as round-trip text). It does not cover only the fields that differed. The kept hash is SHA-256 over the clip's `MappedClipInputs.Compared`, keys in ordinal order, without lineage, as `ClipInputMapper.Differs` compares. Both are in `Domain/Suno/RememberedChoiceRules.cs`.
+  **Why:** With every field covered, any later change in Suno, to a declined field or to another one, gives a new hash, which is what "until Suno's data changes again" asks. With a subset, a partly accepted change would also be remembered. An image signature (query string) alone never counts as a change, matching the comparison.
+  **Issue:** #141
+- **Decision:** The writer (`ChangeResolutionWriter`) sets `declined_hash` after every `apply`, `keep`, or `moveToNewVersion`: to the incoming hash when any shown field is left unaccepted, and to null when nothing is left. It sets `kept_inputs_hash` on `keep` while the inputs still differ, clears it on a move (or when they no longer differ), and leaves it alone on `apply`. Neither write raises the revision or touches a clip column, the raw clip, the rating, or comments. A hash is cleared only at a commit that writes the Generation. A linked record never writes anything at commit, so a stale hash stays until the next decision.
+  **Why:** This follows the discretion's "cleared when the incoming data equals what is stored", limited to the confirmed-choice path, because invariant 3 forbids writes for records the user made no choice on. The only cost is in an edge case: Suno reverts to the stored values and later returns to exactly the declined values. That stays Already linked, which matches the user's decision.
+  **Issue:** #141
+- **Decision:** `RecordClassifier.ChangedFieldsOf(linked, incoming)` (internal) is the one rule for "changed fields shown": none while the incoming values hash to the remembered decline. Both the classifier and `ChangeResolutionService.DiffAsync` use it. So a Conflict brought back only by its inputs does not re-offer metadata the user already declined. The PATCH's `field_not_changed` check (stored changed fields) agrees with the diff.
+  **Why:** Without a shared rule, the diff would list a field that the records PATCH then refuses to accept.
+  **Issue:** #141
+- **Decision:** #143's deferred line: an `ignored` record that came from Suno's Trash and is chosen Import is archived by sync right after its attach, in the target's transaction. It is written through #142's own `RemoteStateRules.Transition(..., RemoteSighting.Trashed)` and `IRemoteStateStore.TryApplyAsync` (`ImportTargetWriter.ArchiveAsTrashedAsync`; `ImportTargetWriter` gets a new last constructor parameter, `IRemoteStateStore`). The result is `state` archived, `archived_by` sync, `remote_state` trashed, revision 2. `CommitRecord` has a trailing `Trashed`. A trashed clip that was not ignored still imports Active, as after #140.
+  **Why:** Reusing #142's transition keeps one archiving rule: a later restore in Suno reactivates the clip, because only what sync archived is undone. The attach path (`GenerationService.AttachWithinAsync`) stays unchanged. The discretion names only ignored clips.
+  **Issue:** #143
+- **Decision:** Invariant 3 guard: the scenario gains `declined-1` (Changed, every field declined), `kept-1` (Conflict kept, its retitle declined), and `ignored-trashed` (on the ignore list, in Suno's Trash, imported to `n8-1-v3`). Under the column-precise rules, a declined record may change only `declined_hash`, a kept one only `declined_hash` and `kept_inputs_hash`, and `changed-1` only `suno_title` and `declined_hash`. `provider_records` may change only for the accepted record and the moved one (the rule was "any resolved record" before). `suno_ignored_items` may also lose `ignored-trashed`. The created counts are now `(1, 3, 7)`. A new bite test installs a trigger that writes Suno's title when the declined hash is set, and expects that Generation to be unexplained.
+  **Why:** This is the orchestrator's ask: a declined change must leave the clip columns untouched, and only the remembered hash may change. Both new behaviours are covered.
+  **Issue:** #141, #143
+
+Story #153 (built in parallel; merged into the milestone branch):
+
+- **Decision:** A commit records into `suno_playlists`/`suno_personas` only what the clips it imports (created or restored) touch: each playlist the export lists (header and parts) that holds an imported clip, each imported clip's Inspiration playlist, and each imported clip's Voice. Skip, Don't copy, linked, and resolved records add nothing, so an all-Skip commit changes neither table.
+  **Why:** AC 3 says "imported playlists and personas". Invariant 3's guard allows a row change only where a confirmed choice names it, so recording the export's whole playlist list would break "a commit with every record set to Skip changes nothing".
+  **Issue:** #153
+- **Decision:** Upsert rules, by Suno ID (`ISunoLibraryStore.RecordAsync`, internal `SunoLibraryService.RecordAsync` in its own transaction, called by `ImportCommitJob` after the events): a new row is added. A stored row takes a non-blank name, and for a listed playlist its clip IDs, with `last_seen_utc` set to the commit time. A blank name never replaces a known one. A playlist known only as a clip's Inspiration (not in the export's list) is added with a blank name and the clip's snapshot, and never overwrites a stored row.
+  **Why:** A clip's playlist snapshot is the playlist as it was when the clip was made, and a clip without a `persona` object names no Voice. Neither should overwrite what a later or fuller sighting recorded.
+  **Issue:** #153
+- **Decision:** Ignoring a Not imported source is a new session-only `POST /api/v1/suno/ignored` `{sunoId}` → public `IgnoreListService.IgnoreReferenceAsync`. The #143 note suggested an internal method. It answers 200 `{sunoId, added}`, 404 when no external clip reference has that ID, 409 `already_imported` (a live Generation holds the ID), 409 `tombstoned`, and 422 `validation_failed`. The entry has the reference's title, no workspace, and status null. The reference and the sources are untouched. The invariant 1 guard lists the endpoint and the method as touching no Version. The session-only count is now 60 on this branch.
+  **Why:** The Api assembly cannot call an internal Application method (there is no InternalsVisibleTo). Requiring an existing reference keeps the endpoint to its purpose, and refusing linked or deleted clips matches #143's commit-path rules.
+  **Issue:** #153
+- **Decision:** The review computes lineage on read. `ImportReviewService.RecordsAsync` runs `LineageReader` over each page record's raw clip and gives each source a place: `generation` (a live Generation, with shortcode and Suno title), `export` (a record of this export, with its class, choice, and proposal, read through the new `ISunoExportStore.RecordsNamedAsync`), or `not_imported`. An Inspiration playlist is named from the export's list, which is read only when a clip names one. The record answer has a trailing `lineage`, and `ImportGenerationView` has a trailing `title`.
+  **Why:** There is no migration and no stored lineage per staged record. Reading on demand stays correct as choices change.
+  **Issue:** #153
+- **Decision:** The "Include" control in the Lineage column changes only the parent record's choice (PATCH `{sunoIds:[parent]}`). It sets the parent's proposal when the proposal is an import; otherwise it sets a new Song with the parent's title, in its workspace, under the summary's `nextKey`. The control appears only for a source that is a record of this export and is not chosen for import.
+  **Why:** The proposal is n8Tracks' best target (for example, beside a group mate). A record proposed Don't copy (ignored) still needs a sensible import target.
+  **Issue:** #153
+- **Decision:** The wording of the Lineage column: "Cover of / Extension of (at m:ss) / Mashup of A + B / Sample of / Prompt reused from / <Type> of" for audio sources, "Inspired by …" for Inspiration songs, "Inspired by playlist <name> (n clips)", and "Voice: <name>". When all sources are in one place, the place is said once (": not in this sync", ": in this sync", ": in this sync, not chosen for import"). Otherwise it follows each title in parentheses. A Generation source gets a link instead.
+  **Why:** This follows #137's Discretion ("Mashup of A + B", "Voice: X") and the Demo's "Cover of <title>: not in this sync".
+  **Issue:** #153
+- **Decision:** An imported Version's Inspiration playlist name is not filled from the export's list at commit, so the stored lineage keeps the reader's blank name. Only the review and the `suno_playlists` read model carry the name.
+  **Why:** Filling it would change `ImportTargetWriter.CreateAsync` (also used by #141's move, and being edited in parallel by #142) for no AC. The Sources section shows the playlist ID when the name is blank.
+  **Issue:** #153
+- **Decision:** The invariant 3 extension is a separate guard test, `ThePlaylistsAndPersonasChangeOnlyWithTheClipsImported`. It covers an all-Skip/Don't-copy commit (no change) and a one-import commit (exactly its Voice and the listed playlist holding it are added, and pre-existing rows are untouched). The shared scenario and `Unexplained` rules are not edited.
+  **Why:** The shared scenario has no lineage, so its rules need no new table, and #142 edits that scenario in parallel. A separate test avoids a merge conflict.
+  **Issue:** #153
+
+Story #145 (built in parallel; merged into the milestone branch):
+
+- **Decision:** `PUT /api/v1/suno/workspaces/discovered` now takes `suno.sync` or `suno.generate` (`RequireAnyScope`).
+  **Why:** The story's key link has Generate on Suno report Suno's complete workspace list, and that report is what makes n8Tracks mark a missing workspace Unavailable. A generate-only credential could not send it. The change only widens the endpoint: suno.sync callers are unaffected. The scope test now names both scopes.
+  **Issue:** #145
+- **Decision:** `resolvedWorkspace` on the progress PATCH sets the Song's workspace in the same transaction as the report, through `ISongWorkspaceStore.MoveAsync`, and only when the Song has none or an Unavailable one. Otherwise it answers 409 `workspace_already_set` with `workspaceId`. Resending the Song's own workspace is accepted and changes nothing (no revision bump). An unknown workspace is recorded as Available from a minimal raw project; an Unavailable one is refused with 422 `validation_failed` on `resolvedWorkspace`.
+  **Why:** The story says the report is retried after a failure, never the creation, so a retry after a lost answer must not be refused. The workspace record needs a row before the Song's FK can point at it. A choice of an Unavailable workspace matches the Song PATCH rule. No migration.
+  **Issue:** #145
+- **Decision:** The snapshot's `workspace` carries `state` (`available` or `unavailable`). The content key is unchanged.
+  **Why:** The story requires the request snapshot to carry the Song's workspace state. The workspace never made a request stale (#144), and it still does not.
+  **Issue:** #145
+- **Decision:** Not signed in is detected without a sign-in snapshot. The `open-workspaces` workflow's first step requires Suno's profile menu button (`data-testid="profile-menu-button"`, present on every signed-in TS-003 page snapshot). The tab also stops when it is not on /create after two loads (a sign-in redirect). The test stands in for the signed-out page by taking the button out of the selector snapshot.
+  **Why:** The m4-plan risk for #145 says the not-signed-in page has no snapshot, so the story relies on fallback detection. Absence-based detection invents no page structure.
+  **Issue:** #145
+- **Decision:** The "Workspaces" breadcrumb that opens the list is found as `role=button` named exactly "Workspaces". When the list is already open (the "Search workspaces" box is there), nothing is pressed.
+  **Why:** No TS-003 snapshot shows the closed state, only the open list. The role is unverified, so the owner's live Demo checks it. Matching the exact name never presses the workspace-name (rename) breadcrumb.
+  **Issue:** #145
+- **Decision:** Suno's rows carry no ID, so a workspace's row is found by `^<name>( |$)` on the row's accessible name. The name is the one Suno's complete list (`/api/project/me`) gives for the ID. If that list holds another workspace of the same name, the tab stops (`SAME_NAME`) without pressing. A prefix overlap makes `find` ambiguous, which also stops. Selection is verified by Suno's library pane requesting `/api/feed/v3` with `filters.workspace.workspaceId` equal to the ID; a workspace the pane already shows is not pressed.
+  **Why:** This follows the Discretion note "the ID is matched against the IDs in Suno's workspace list response". A workspace with the same name and another ID is never selected automatically (test plan complement). The feed filter is the TS-003-documented signal of the selected workspace.
+  **Issue:** #145
+- **Decision:** A created workspace's name is the Song's title with whitespace collapsed and no cut ("Untitled" for a blank title). The new ID is read from the observed `POST /api/project` answer (a new observer kind, `workspace-created`). If Suno does not select the new workspace within 5 s, its row is pressed.
+  **Why:** The create-row snapshot shows no `maxlength`, so there is no limit to cut to (Discretion: "cut … if the dialog shows one"). TS-003 does not say whether Suno selects a new workspace by itself.
+  **Issue:** #145
+- **Decision:** In the extension ESLint config, the click restriction now matches only a zero-argument `click()` (the DOM's) in the page-context folders, so a workflow can call the primitive `page.click(found)`. `test/dom-access-lint.test.ts` keeps the native-click samples failing and adds one that the primitive passes.
+  **Why:** The old selector refused every `.click(...)` call, the click primitive included, so no workflow could press anything (#145 is the first that needs to). Type-aware enforcement stays in the invariant 4 source scan, which refuses DOM clicks by symbol. This is not a suppression; `check-suppressions.sh` and `check-canaries.sh` pass.
+  **Issue:** #145
+- **Decision:** This story ends the request in state `workspace` with step `workspace selected`; #146 continues from there. A closed generation tab reports `stopped` ("The Suno tab was closed."). The web shows `workspace` with step `choose workspace` as "Waiting for you in Suno: choose the Song's workspace in the extension's panel".
+  **Why:** The filling steps are #146's. The Discretion note requires the Version page to show "Waiting for you in Suno" during the choice.
+  **Issue:** #145
+- **Decision:** `ADAPTER_VERSION` is 4. Four workflows are registered in `adapter/workflows/workspace.ts` (`open-workspaces`, `more-workspaces`, `select-workspace`, `create-workspace`), each with a guard recipe; `create-workspace` has `exceptions: ['create-workspace']`. The runtime guard test's timeout is raised to 60 s.
+  **Why:** Selectors and an observed request changed (#133/#134 rule). The guard runs every workflow on every snapshot; with six workflows it takes about 8 s, past vitest's 5 s default. No check was weakened.
+  **Issue:** #145
+
+Story #146 (PARTIAL: D9):
+
+- **Decision:** Simple mode's Add Lyrics and Add Styles sections, and Duration's Auto or Custom mode, are not set by the adapter. They are listed in `BLOCKED_ON_CAPTURE` in `extension/src/adapter/fill.ts`. The summary reports a Version value for them as `manual` ("add it from the + menu…" / "set Duration … by hand") and a section the Version does not add as `not_applicable`, with a note that the extension cannot see Simple's added sections. AC 1 and AC 8 stay unticked. #146 is labelled `blocked` + `needs-owner-action`, with a capture-session request.
+  **Why:** This is binding decision D9: no TS-003 snapshot shows those page states, so no page structure is invented. Duration's mode is the same kind of gap, found while building: the More Options snapshot shows the slider and "0:30", but no control or reading that tells Auto from Custom. The coverage test names the three entries explicitly, and fails if one of them gains a filler without leaving the list.
+  **Issue:** #146
+- **Decision:** Two primitive additions in `adapter/primitives.ts`.
+  - A `Region` scope (`{ around, levels, description }`): the nearest container, outwards from an anchor, that holds the target, never more than `levels` elements out.
+  - A `TextAnchor` (`{ text, within? }`): the innermost visible element whose whole text is the label.
+  - `Target.popup` (`aria-haspopup`) and `Reading.expanded` (`aria-expanded`).
+  **Why:** More Options' Off/On and Male/Female buttons have no name or test attribute of their own, and the snapshots also keep the Speech form's Male/Female/Variety controls. A plain `find` is ambiguous, and an unbounded region found the Speech controls once a Songs control was removed (caught by the "unavailable" tests). Every level count was measured on the snapshots and is the smallest that finds the control.
+  **Issue:** #146
+- **Decision:** The lyrics editor is filled by a new `Page.typeText`: focus, select all, then `execCommand('insertText')` per line and `insertParagraph` between lines (`delete` for empty). `execCommand` is read with `Reflect.get`, and a browser without it (jsdom) gets a `PrimitiveError`. An editable region reads as lines (one per `<p>`, `<br>` a break). Tests stand in for Lexical (`src/testing/sunoForm.ts`).
+  **Why:** #132's note: `set` refuses contenteditable. Lexical takes text only from the browser's own trusted input. A synthetic `beforeinput` is not inserted for a collapsed selection, and `execCommand` is the one way to make trusted input. It is deprecated in lib.dom, so it is read by name rather than with a lint suppression. The live Demo confirms it.
+  **Issue:** #146
+- **Decision:** The model is read from the menu button beside the mode tabs (its name is the label). Another model is chosen from the `role=menu` that the button's `aria-haspopup="menu"` declares. A menu that does not open, or does not offer the label, gives `unavailable`. No snapshot shows the menu open, so its read-back failure test uses a stand-in menu.
+  **Why:** The Discretion line says "a model absent from Suno's dropdown is unavailable". The role comes from the page's own ARIA, not from invented structure. The menu's item names are unverified, and the owner's Demo checks them; the capture request lists the open menu.
+  **Issue:** #146
+- **Decision:** Both Song Title boxes are set, each found by its own place: around "Add audio" (4 levels) and around "Save to..." (2 levels).
+  **Why:** TS-003 says the title is shared, and the snapshot shows both boxes visible. `find` never chooses between two matches. Setting each one shown means neither is chosen over the other.
+  **Issue:** #146
+- **Decision:** The workflows are `switch-form`, `fill-songs-simple`, `fill-songs-advanced`, and `check-songs-form` (`adapter/workflows/fillSongs.ts`), each with a `RUN_RECIPES` entry. The fill is one step, `fill`, with a 2-minute timeout, and it records each entry's outcome. The precondition steps are the Songs form, the Song description box, and the Lyrics, Styles, and More Options sections opened. `ADAPTER_VERSION` is 5.
+  **Why:** A failed entry must not stop the run (Discretion), but the runner stops at a failed step. Only "the form as a whole" preconditions are steps. Selectors and workflows changed (#133/#134 rule).
+  **Issue:** #146
+- **Decision:** The read-back polls every 100 ms for up to 900 ms (`READ_BACK_MS × READ_BACK_TRIES`) through `Page.wait`, rather than three fixed 300 ms sleeps.
+  **Why:** It is the same deadline as the Discretion's "300 ms, up to three times", and a value that shows sooner is taken sooner.
+  **Issue:** #146
+- **Decision:** A control is pressed or set only when it differs from the Version's value. Vocal Gender None presses the selected one (deselect), and is `failed` if it stays selected.
+  **Why:** AC 3 requires every entry to be set, defaults included, and that is checked by reading every entry back. Pressing an already-selected toggle would deselect it.
+  **Issue:** #146
+- **Decision:** Source entries (audio, voice, inspiration, Simple playlist) are reported as `manual`, naming what to load by hand, until #148 loads sources. Without a source they are `not_applicable`. When the Version has a source, the Songs tab and mode are not switched.
+  **Why:** The source story (#148) is not built. The Discretion says the summary lists the outcomes the source story reports. Until then, "to do by hand" is the honest outcome.
+  **Issue:** #146
+- **Decision:** The Suno tab now receives the snapshot's values (`GenerateJob.form`: kind, mode, entries, sources, file inputs, unsupported keys). #145's test "the job carries no values of the snapshot" was changed to assert the form instead.
+  **Why:** The tab fills the form, so it needs the lyrics and settings. Nothing is logged or put in the diagnostic report, whose workflow text rule still holds.
+  **Issue:** #146
+- **Decision:** The PATCH takes an optional `verification` (adapterVersion ≥ 1, mode, checkedAt, at most 100 entries of `{ key, outcome, expected?, found?, note? }`). Each value is null, a number, a boolean, a string of at most 100 characters, or `{ length, sha256 }`. Any other member is refused (422 `validation_failed` on `verification`). It is validated in `Application.Suno.Generate.GenerationVerification`, stored normalised in the new nullable `suno_generation_requests.verification_json`, replaced by each later summary, kept by a report without one, and answered on both GETs. `verification` and `verificationjson` were added to the redaction names.
+  **Why:** AC 7, with the key link "lyrics and prompts sent as lengths and hashes". Refusing unknown members keeps raw text out. The migration is `20261007080000_AddGenerationRequestVerification`: an in-place `ADD COLUMN`, with the Designer from the current snapshot (the diff is the one property).
+  **Issue:** #146
+- **Decision:** A Speech or Sound request stops at `open Songs form`, saying that filling those forms is not built yet. A request whose snapshot has no kind or mode ends the tab's part at "workspace selected", as before.
+  **Why:** #147 owns Speech and Sounds. The second case keeps #145's behaviour for a malformed snapshot.
+  **Issue:** #146
+- **Decision:** The Voice picker is a recognised dialog (title "Voice"; Close, My Voices, and Favorites may be pressed). The Inspo picker is not added.
+  **Why:** This follows #133's note. The Inspo dialog has an empty title, and recognising an untitled dialog would recognise every untitled one. #148, which presses in both pickers, decides how to recognise Inspo and adds what it presses.
+  **Issue:** #146
+- **Decision:** The Sounds Key and Key scale are not set by the adapter. They are in `BLOCKED_ON_CAPTURE` (D9) and reported `manual` with the Version's value as `expected`. Key scale is `not_applicable` when the Key is Any (or absent). AC 2, AC 3 and AC 4 are left unticked, and the issue is labelled `blocked` + `needs-owner-action` with a capture request.
+  **Why:** TS-003's replan says the key is set through a popover of note buttons, Any, Major/Minor and Apply. No snapshot shows that popover: in `page.create-sounds-advanced-options.html` the Key button is `aria-expanded="true"`, but its `aria-controls` target is absent, and its label is redacted. Under D9, no page structure is invented.
+  **Issue:** #147
+- **Decision:** Type One-Shot, BPM empty (Auto) and Key Any are treated as captured page states. They appear in the hidden Sounds form inside the Speech snapshots, at its defaults. The Type and BPM fillers are built and tested on them.
+  **Why:** TS-003 lists "Sound One-Shot, Auto BPM, Any key" as not exercised in a Create, but the page states themselves are in committed snapshots. D9 forbids only states that no snapshot shows. "major" appears in none, so it stays with the Key.
+  **Issue:** #147
+- **Decision:** Each kind gets its own workflows:
+  - `switch-speech-form`, `fill-speech-simple`, `fill-speech-advanced` and `check-speech-form` in `workflows/fillSpeech.ts`.
+  - `switch-sounds-form`, `fill-sounds` and `check-sounds-form` in `workflows/fillSounds.ts`.
+  - All seven have `RUN_RECIPES`.
+  - `FORM_WORKFLOWS` in `workflows/index.ts` is the registry keyed `<kind>.<mode>`: `song.simple`, `song.advanced`, `speech.simple`, `speech.advanced` and `sound.single`.
+  - A Speech or Sound opens its tab at the reported step `choose form` (Songs keep `open Songs form`). An unknown key stops there with `NO_FORM`, which replaces `NOT_A_SONG`.
+  **Why:** The Discretion says the registry key is `<kind>.<mode>` and that an unknown key and the wait for the form report "choose form". With the tab switch in its own workflow, a missing tab stops before any fill, naming its step (AC 5). The invariant-4 guard needs one recipe per workflow, so a generic switch over kinds could not be finished on each fixture.
+  **Issue:** #147
+- **Decision:** A Speech or Sound summary lists only its own tab's entries. The workspace entry `songs.simple.workspace` is listed for Songs only: `summaryEntries(mode, kind)`, `verifyForm` passing `job.kind`.
+  **Why:** The Discretion says "A Simple Speech Version lists only its one entry", and Demo step 1 expects six Sounds entries. The workspace entry is a Songs key, and the workspace step still runs for every kind.
+  **Issue:** #147
+- **Decision:** The Sounds model is the menu button within 3 levels around the "Credits remaining" button: Sounds has no mode tabs to anchor on. It is chosen through the menu exactly as for Songs (`model(entry, button)`). The menu is still unverified (#146's capture item 5).
+  **Why:** In the Sounds snapshot the model button ("v6-mini") sits beside the credits, and the inventory says "Same dropdown as Songs". Speech has no model button (inventory: "no model dropdown").
+  **Issue:** #147
+- **Decision:** These fillers follow the Songs story:
+  - Speech Vocal Gender (male, female, or None) and Sounds Type (one_shot or loop) share a new `choice` builder. None presses the selected button to deselect it, as Songs' Vocal Gender does. A Type the form does not offer is `failed` with a note.
+  - BPM types any whole number, so an out-of-range value is attempted and the read-back reports what Suno kept. Empty means Auto, which empties the box.
+  - Speech Variety reuses the Songs step table (`wantedVariety`).
+  **Why:** The Discretion says out-of-range imported values are attempted and reported `failed`, and that an empty BPM re-selects Auto. Speech's None-deselect behaviour is not captured. It is attempted and verified by read-back, so a page that will not deselect gives `failed`, not a false `set`.
+  **Issue:** #147
+- **Decision:** These changes go with the new kinds:
+  - `ADAPTER_VERSION` is 6.
+  - `FORM_GONE` now says "The form …".
+  - `fillSongs.ts` exports `selected`, `expandedSection`, `pressUnless` and `fillStep` for reuse.
+  - The panel's heading reads `formName(kind, mode)`, with an optional `form` on the `verification` view state.
+  - The panel and the Version page name the Speech and Sounds fields. On the web, `modeLabel('single')` is "Sounds".
+  - The stand-in `standInForSuno` handles `aria-pressed` groups.
+  **Why:** Selectors and workflows changed (the #133/#134 rule). The rest are additive edits that keep #148's parallel changes to `fill.ts` and the guard mergeable.
+  **Issue:** #147
+- **Decision:** #149 goes ahead although its blocker #146 is PARTIAL. This is the orchestrator's decision.
+  **Why:** #146 left three fill steps unfinished: Simple Add Lyrics and Add Styles, and the Duration mode. Recording the submitted request does not depend on them. A field the user sets by hand is observed like any other.
+  **Issue:** #149
+- **Decision:** The Create observation is a kind in `adapter/observed.ts`: `create`, for `POST /api/generate/v2-web`. There is no `adapter/workflows/observeCreate.ts`, although the story's artifacts list names one.
+  - The observer forwards the response, and `submitted`: the values at `CREATE_REQUEST_PATHS`. Those are the import field map's `createRequest` paths plus `metadata.create_mode`, minus `user_uploaded_images_b64`. A parity test, `extension/test/observed-create-paths.test.ts`, keeps the list in step with the map.
+  - The watch for further Creates lives in `content/sunoGenerate.ts`.
+  **Why:** The binding #134 note puts the Create observation in `observed.ts` with a field allow-list. A Workflow has steps that act on the page, and observing presses nothing, so a workflow that clicks nothing would only weaken the registry and guard checks. An uploaded image's bytes are large, and n8Tracks keeps only a file-input note, so they are never sent.
+  **Issue:** #149
+- **Decision:** The observed Create is mapped by `ClipInputMapper.MapCreate`, and the field map gains two additive members.
+  - **Where each option comes from:** the response (`paths.create`), else the request (`paths.createRequest`), else the requested Version, listed as assumed.
+  - **New members:** `absentInCreateRequest: "default"` on vocal_gender, speech_vocal_gender and duration_mode, and `presentInCreateRequest: "custom"` on duration_mode.
+  - **Absent keys:** without the new member, a key absent from the request says nothing.
+  - **Never decoded from a Create:** the model, and any undecodable value, which is assumed and kept raw. For example, Male's `m` is not verified in the map.
+  **Why:** The map's `values` for request-only options are descriptive text ("duration key present"), so they cannot be decoded as data. TS-003 shows that `mv` is the engine (chirp-goose), not the label. Never guessing means assuming from the Version rather than branching on a value n8Tracks cannot read. The members are additive, so import's feed reading is unchanged (`MapWith` takes a reader).
+  **Issue:** #149
+- **Decision:** These parts of the observed Create are decided here:
+  - **Endpoint:** `POST /api/v1/suno/generation-requests/{id}/observed-create` (`suno.generate`, the claimer only) answers the request with a new `observed` list. Suno's request ID is stored in `generation_events` and `observed_json`, and never answered.
+  - **The `/clips` completion route** from the planner's Discretion is not built. #154 owns completion.
+  - **Migration `20261007100000_AddObservedCreates`** adds `suno_generation_requests.observed_json` (nullable). Its Designer was built from the current snapshot.
+  - **Where the clips go:** to the requested Version when nothing differs, else to an earlier branch of the same request that holds the same inputs, else to a new child Version. The new Version takes the first free child number (`VersionNumberKind.Child`) and the note "Created from what was submitted to Suno". It becomes the Song's current Version.
+  - **Sources:** the new Version's lineage is the requested Version's when the lineage key matches, else the clip's, resolved through `ExternalReferenceResolver.LinkAsync`.
+  **Why:** The AC and the planner's Discretion ask for these. A column on a non-catalog table, like #146's `verification_json`, is the smallest store for "what happened" on the Version page. Reusing an earlier branch avoids one new Version per Create when the form stayed changed.
+  **Issue:** #149
+- **Decision:** These parts of how the request ends and how Creates are watched are decided here:
+  - **The request** stays `waiting` (step `Create recorded`) between Creates. It becomes `done` when the tab leaves the Create page (the extension reports it), or 30 minutes after the last Create. The 30-minute rule is a settle rule in `GenerationRequestService.SettleAsync`, not a service-worker alarm.
+  - **The tab's watch** polls the address every second and ends after 30 minutes (60 before the first Create).
+  - **A failed send** is retried 3 times inside the service worker, and the panel then says the clips were not recorded. Failed reports are not kept in `chrome.storage.session`.
+  - **After a recorded Create,** a load of the tab never fills the form again (`GenerateJob.created`).
+  **Why:** The #144 note says to report `waiting` between Creates and `done` at the end. The server already settles on every read, so a server-side settle is simpler and survives a closed tab. AC 5's "marked done" is met when observation ends. n8Tracks answers a repeated Create once (by Suno's request ID), so the simpler retry is safe. A sync brings in anything still missing.
+  **Issue:** #149
+- **Decision:** `ADAPTER_VERSION` is 7 (the observer gained a pattern). The popup test now reads the constant.
+  **Why:** By the #133/#134 rule, a change to an observed pattern raises the version. #148 also bumps it in parallel, so whichever story merges second takes 8.
+  **Issue:** #149
+- **Decision:** On the web, `VersionDetails` takes an optional `onRecorded`. When the request's `observed` count grows, it reloads the Version and calls `onRecorded`, and `SongVersions` then re-reads the Versions, the Song and the Generations. A branch makes the new Version current, so the e2e opens the requested Version by its number (`/v/1`), whose page lists what each Create came to.
+  **Why:** Without this, the Generations would not appear "at once" until another read. A Version page opened at `/songs/<sc>` follows the Song's current Version, so it switches to the new branch. That Version carries the note.
+  **Issue:** #149
+
+Story #148 (built in parallel; merged into the milestone branch):
+
+- **Decision:** Applied D10 to #148. Cover and Reuse Prompt are loaded from the clip's Remix menu and verified; the TS-003 snapshots back them (the menus, a loaded Cover in Advanced and Simple, and the Overwrite dialog). Extend, Mashup, Sample this song, a single Inspiration song, the Inspo playlist pick, and Voice selection are listed in the summary as to do by hand, with the source, playlist, or voice named. AC 1, 2, 4, 5 and 9 are left unticked, and the story is labelled `blocked` + `needs-owner-action` with the capture list.
+  **Why:** No snapshot shows the form after those actions, a chosen voice or playlist, or an unopenable or trashed clip page. Inventing that structure would risk a false "verified".
+  **Issue:** #148
+- **Decision:** The source clip is opened by address at `/song/<clip id>`, the address shape of the Library's song links. Its menu button is found by the name "More options", and only when the page has exactly one; anything else stops at step 'clip menu' as "could not open source".
+  **Why:** The clip page itself was not captured. Every captured Suno list names a clip's menu button "More options". Requiring exactly one, with verification of the thumbnail's clip ID afterwards, means a wrong guess can only stop the run; it never loads the wrong source. The owner's capture list includes the clip page.
+  **Issue:** #148
+- **Decision:** Added the outcome `verified` to the verification summary in four places: `GenerationVerification.Outcomes`, the web `VerificationOutcome` and labels, the extension's `EntryOutcome`, and its panel labels. No migration.
+  **Why:** The story's source outcomes are verified / set / manual / unavailable / failed, and the summary must say a source was seen on the form. The change is additive, because the stored JSON is validated by a list.
+  **Issue:** #148
+- **Decision:** `switch-form` now always runs, before any source is loaded. This reverses #146's skip when the Version has sources.
+  **Why:** TS-002 found that a source applies only in the mode active when its action was chosen, and the Discretion says to switch to the Version's mode first.
+  **Issue:** #148
+- **Decision:** The source phase is kept across page loads by the service worker, through a new tab-bound message `generate-source {source: {phase: opening|chosen, sunoId} | null}`. It resets the tab's load count. `GenerateJob.source` carries the phase to the next load.
+  **Why:** Opening the clip's page is a page load, and choosing the action may load Create anew. The content script cannot survive either.
+  **Issue:** #148
+- **Decision:** A verification mismatch does not end the request. It stays `filling` at step `load source by hand`, with a message, and the panel shows a new `source` state with a Continue button. Continue verifies the source again, as often as needed.
+  **Why:** AC 3 and the Discretion: the user may load the source by hand and continue, and a mismatch blocks again.
+  **Issue:** #148
+- **Decision:** In Simple mode the source is verified only by the chip thumbnail's clip ID, because Suno's chip does not name the action (`page.create-source-simple.html`).
+  **Why:** The snapshot shows no action label on the chip. The action was the one the extension itself pressed.
+  **Issue:** #148
+- **Decision:** The Inspo dialog stays unrecognised and refused by the forbidden-control matcher.
+  **Why:** Its snapshot shows no title. The orchestrator's rule is to recognise it only if a snapshot shows a title.
+  **Issue:** #148
+- **Decision:** The extension also checks n8Tracks' availability of every source (`trashed`, `missing`, `deleted`) before it changes the form, and stops naming each one, even though `POST .../generation-requests` already answers 422 `sources_unavailable`. It also refuses more than four Inspiration songs.
+  **Why:** The Discretion says availability known to n8Tracks is checked for every source before starting. A snapshot read later could change, and five Inspiration songs are impossible by construction, which is asserted on the request.
+  **Issue:** #148
+- **Decision:** `ADAPTER_VERSION` is now 6. The five new workflows are appended at the end of `ADAPTER_WORKFLOWS`, and the source targets are in `adapter/sources.ts`.
+  **Why:** New addresses (`/song/<id>`) and workflow steps mean a new adapter version. Appending keeps the merge with parallel #147 additive.
+  **Issue:** #148
+- **Decision (blocker):** #148 is PARTIAL and waits on an owner capture session. The page states needed are listed on the issue.
+  **Why:** D10.
+  **Issue:** #148
+- **Decision:** On the merge of #148 with #147 and #149, the source skip is reconciled: the kind's `open` workflow (switch-form, switch-speech-form, or switch-sounds-form) always runs first, for every kind and whether or not the Version has sources. A source is loaded after it only when the kind loads sources. `FormWorkflows.sourcesDecideForm` is renamed `loadsSources` (Songs true; Speech and Sounds false), and `sunoGenerate.fill()` reads `workflows.loadsSources && plan.load !== null`. `fillRest` fills with the kind's `fill` workflow, with the loaded source's result. A new test in `sunoGenerate.test.ts` pins both halves: a Song with a Cover runs `switch-form` and then goes to the clip's page without filling, and a Speech Version with a source runs `switch-speech-form` and `fill-speech-advanced` in place. `ADAPTER_VERSION` is now **8**: #147 set 6, #149 set 7, and #148 set 6. Every test reads the constant.
+  **Why:** TS-002 says a source applies only in the mode active when its action was chosen, so #148 needs the switch before the source. That reverses #146's skip, which #147 had narrowed to Songs. Speech and Sounds have no source step, so for them the switch always ran under #147 and still does. The rename says what the flag now decides. Each of the three stories changed the adapter, so the version takes the next number after the highest.
+  **Issue:** #148, #147
+
+Story #154:
+
+- **Decision:** "Never been complete" is decided without a migration. A Generation is completed only when all of these hold:
+  - it is listed among the Generations of this request's `observed_json`;
+  - its stored status is not `complete` or `error`;
+  - `declined_hash` and `kept_inputs_hash` are null;
+  - its provider record has no `export_id`.
+  `IGenerationStore.TryCompleteClipAsync` writes every clip column but the Suno ID in one conditional `UPDATE`. The service then replaces the provider record with the finished clip (`export_id` null). It refuses with 409 `already_complete` when the stored status is final, and with 409 `not_provisional` for a Generation that is not this request's (one made by import) or that an import review decided about.
+  **Why:** n8Tracks writes a Generation's status only at attach and by this completion (`RefreshClipFieldsAsync` never writes it), so a non-final status means never complete in n8Tracks. A review that declined, kept, or applied Suno's data has decided about it, so completion must not override that (invariant 3, AC 1). A column such as `completed_utc` would need shape 7 and an upgrader for no extra guarantee.
+  **Issue:** #154
+- **Decision:** The route is `POST /api/v1/suno/generation-requests/{id}/clips` with one clip per call, `{ clip }`. It answers 200 `{ outcome: completed | failed, generation: { id, shortcode, sunoId, providerStatus } }` and is accepted after the request has ended (done or expired), from the claiming credential only. 404 means no request, or no live Generation holds the clip; 422 means the clip is not finished.
+  **Why:** Clips finish independently (TS-001), and the test plan wants a second report refused with 409, which a batch answer could not say per clip. The user leaving the Create page ends the request (#149) while its clips are still generating.
+  **Issue:** #154
+- **Decision:** The cover goes through the existing `PUT /api/v1/generations/{id}/artwork` (#121), with the extension's `suno.generate` token. The service worker sends it after a completed report and reads the image with `adapter/imageReader.ts`, the only image request site. `artwork_exists` is left as it is.
+  **Why:** This is the story's key link, and it is the only path that writes `artwork_asset_id` (the #121 note). Completion itself never writes artwork.
+  **Issue:** #154
+- **Decision:** The timers are split.
+  - **The ten-minute end** is a service-worker `chrome.alarms` alarm (`n8tracks-completion`) over the watched clips in session storage. A clip whose ten minutes are up is dropped on every read as well. This adds `alarms` to the manifest allow-list (validator, `dist.test.ts`, `manifest.test.ts`, `docs/suno-integration.md`).
+  - **The 15-second refresh prompts** are paced by the Suno tab's own clock. The tab also stops by itself after 11 minutes.
+
+  **Why:** The Discretion says the timers are service-worker alarms, but Chrome's alarms fire at most every 30 seconds, so a 15-second prompt cannot be one. The prompt is a page action anyway, so it lives with the page. The alarm still bounds the watch when the service worker stops.
+  **Issue:** #154
+- **Decision:** The refresh prompt is a new read-only workflow, `refresh-library`, in `adapter/workflows/watchCompletion.ts`. It opens the workspace list by its breadcrumb if closed and presses the Song's workspace row, which makes the library pane ask for the workspace's songs. No library filter is toggled, so the TS-003 rule about restoring a toggled filter has nothing to restore. It runs only on the Create page and only when the workspace name is known; elsewhere the watch only listens. It is in `RUN_RECIPES`, and `ADAPTER_VERSION` is now 9.
+  **Why:** No TS-003 snapshot shows the /create library pane's filters or page buttons, and inventing that structure is ruled out (D9/D10). The workspace row is in `page.workspace-selector.html`, and #145 relies on its press making the pane request the feed. Whether pressing the already-selected row requests the feed again is for the owner's Demo. If it does not, the clips arrive through the next sync, as the AC allows.
+  **Issue:** #154
+- **Decision:** The watch outlives the request and is bound to the tab. `generate-resume` answers `watching` (Suno IDs) even when the tab has no job. `generate-completion` is answered before the generation-tab check. Closing the tab ends that tab's watch.
+  **Why:** After a recorded Create, leaving the Create page marks the request done (#149), but the clips are still generating. The completion watch reads the feed of whatever Suno page the tab shows.
+  **Issue:** #154
+- **Decision:** On the web, a Generation with status `error` shows a `Failed` badge (testid `generation-failed`), and deletion is the existing #124 path. A Generation still generating 10 minutes after `createdAt` shows "Still generating in Suno: sync to update" in its duration cell (`COMPLETION_WATCH_MS`, `isStillGenerating`, `isFailed` in `api/generations.ts`). The request's result on the Version page is unchanged.
+  **Why:** AC 3 and AC 4 name the row. The time is the Generation's own, so no extension report is needed.
+  **Issue:** #154
+- **Decision:** `ProvisionalCompletionService.CompleteAsync` is in the invariant 1 guard with an API exerciser and a service exerciser. The invariant 3 guard (`ImportNeverOverwritesGuardTests`) gains `CompletionChangesOnlyAnObservedGenerationThatWasNeverComplete` and the bite test `TheGuardFailsWhenCompletionTouchesAGenerationThatWasEverComplete`. Completion does not touch the Song's updated time.
+  **Why:** These are the test plan's guard and bite. A Song timestamp or revision change while the user edits the Song would surprise them, and the Generations list re-reads by itself.
+  **Issue:** #154
+- **Decision:** Filed #314, out of scope: a sync never updates a linked Generation's Suno status, so a clip still `submitted` after the watch stays Generating after its diff is applied.
+  **Why:** #141's diff excludes `status` by design. Changing that is a reviewed-change rule for invariant 3, not this story's path.
+  **Issue:** #154
+- **Decision:** #314, Rule 1: a Generation's Suno status follows Suno automatically at the commit of a confirmed sync, whatever the record's choice (Skip included), and is not a reviewed diff field. It moves only from a status that is not final (`submitted`, `streaming`, or none) to Suno's final one (`complete` or `error`), by the same rule as #154's completion (`ProvisionalCompletionRules.MayComplete`). It writes that one column and nothing else: not the other clip columns (they still follow the Changed choice), the rating, state, archiver, comments, remembered hashes, raw clip, or revision. A final status never changes, and Suno's unfinished status is never written. The new step is `Application.Suno.Import.SunoStatusService` (`CountAsync`, `ApplyAsync`, both internal), run by the commit job after #141's resolutions and before #142's remote states, through `IGenerationStore.TryFinishStatusAsync` (a conditional UPDATE).
+  **Why:** The status is Suno's own state of the clip, not catalog content the user chose, like #142's remote state. #154 AC 1 already makes completing a Generation that has never been complete a change no review confirms. Under the alternative (a `status` diff field following the Changed choice), a declined diff, or a clip whose only difference is its status (classed Already linked), would leave the Generation reading "Generating" for ever, so #154 AC 3 would still fail. Adding `status` to the compared fields would also change every remembered declined hash. One way only keeps "a stored status that is not final means never complete" true, so `TryCompleteClipAsync`'s conditions stay in step: once a sync gives the Generation its final status, the completion refuses it (409 `already_complete`).
+  **Issue:** #314, #154
+- **Decision:** #314: the status write is never silent. The review summary has a trailing `statusChanges` (`ImportReviewSummary.StatusChanges`), counted as the catalog is now. `nothingToDo` also needs `statusChanges == 0`, so an export whose only news is a finished clip can still be confirmed. The commit result has a trailing `statuses: [{sunoId, status, generation{id, shortcode}}]`. On the web, the summary shows `summary-statuses` and the result shows `commit-statuses` (`statusResultText` in `importReviewRules.ts`).
+  **Why:** Invariant 3 forbids silent overwrites. Before Confirm, the user sees how many Generations will take Suno's status, and afterwards which ones did. Without the `nothingToDo` change, the Confirm button would stay disabled for a status-only sync, and the status could never arrive.
+  **Issue:** #314
+- **Decision:** #314: the invariant 3 guard's scenario adds three bystander Generations whose clips differ only in status, all left to Skip: `status-1` (submitted to complete; rated, commented, with a declined hash), `status-final` (complete to error), and `status-going` (submitted to streaming). The `generations` C rule gains `TakesSunosFinalStatus`, which allows only `status-1`'s `provider_status`, only from a status that is not final to `complete`, and every other column must be equal. The result must list exactly that one. The every-Skip complement now expects exactly that one change. The new bite `TheGuardFailsWhenSunosStatusChangesAFinalStatusOrAnotherColumn` uses a trigger to make the status write also fail `status-final` and retitle `status-1`, and the guard reports both. The regression tests are in `Suno/SyncStatusTests.cs`. Before the fix, the first one failed with `Expected ("complete", 143.52), Actual ("submitted", 143.52)`: the bug, an applied diff brings the duration but not the status.
+  **Why:** The new write is allowed only as the rule says, and the complement and bite prove that the guard still sees everything else.
+  **Issue:** #314
+- **Decision:** CLAUDE.md's invariant 3 guard summary ("only rows a confirmed choice names may change") was left as it is, because the brief allows only the guard-status words. It now has two documented exceptions, both Suno's own state of a Generation that was never complete: #154's completion and #314's status. The guard's own doc comment names both.
+  **Why:** The scope of the CLAUDE.md edit is fixed by the brief. The owner may want to reword the line, and whether this reading of "explicit user choice" holds is the owner's call.
+  **Issue:** #314

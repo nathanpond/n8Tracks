@@ -32,6 +32,25 @@ public sealed class ReferenceParameterGuardTests
         "DELETE /api/v1/workflow-states/{id:guid}: id",
         "PATCH /api/v1/suno/models/{id:guid}: id",
         "DELETE /api/v1/suno/models/{id:guid}: id",
+        "POST /api/v1/suno/exports/{id:guid}/parts: id",
+        "POST /api/v1/suno/exports/{id:guid}/complete: id",
+        "POST /api/v1/suno/exports/{id:guid}/discard: id",
+        "GET /api/v1/suno/exports/{id:guid}: id",
+        "GET /api/v1/suno/exports/{id:guid}/records: id",
+        "PATCH /api/v1/suno/exports/{id:guid}/records: id",
+        "GET /api/v1/suno/exports/{id:guid}/summary: id",
+        "GET /api/v1/suno/exports/{id:guid}/records/{sunoId}/targets: id",
+        "GET /api/v1/suno/exports/{id:guid}/records/{sunoId}/diff: id",
+        "GET /api/v1/suno/exports/{id:guid}/remote-states: id",
+        "PATCH /api/v1/suno/exports/{id:guid}/remote-states: id",
+        "PUT /api/v1/suno/exports/{id:guid}/artwork/{sunoId}: id",
+        "POST /api/v1/suno/exports/{id:guid}/commit: id",
+        "GET /api/v1/suno/generation-requests/{id:guid}: id",
+        "POST /api/v1/suno/generation-requests/{id:guid}/claim: id",
+        "PATCH /api/v1/suno/generation-requests/{id:guid}: id",
+        "POST /api/v1/suno/generation-requests/{id:guid}/cancel: id",
+        "POST /api/v1/suno/generation-requests/{id:guid}/observed-create: id",
+        "POST /api/v1/suno/generation-requests/{id:guid}/clips: id",
         "PATCH /api/v1/genres/{id:guid}: id",
         "POST /api/v1/genres/{id:guid}/merge: id",
         "DELETE /api/v1/genres/{id:guid}: id",
@@ -62,6 +81,8 @@ public sealed class ReferenceParameterGuardTests
         "GET /api/v1/artwork/{assetId:guid}: assetId",
         "GET /api/v1/artwork/{assetId:guid}/{size}: assetId",
         "GET /api/v1/artwork/{assetId:guid}/crops/{cropKey}/{size}: assetId",
+        "PATCH /api/v1/generations/{reference}/comments/{commentId:guid}: commentId",
+        "DELETE /api/v1/generations/{reference}/comments/{commentId:guid}: commentId",
     };
 
     /// <summary>
@@ -78,6 +99,11 @@ public sealed class ReferenceParameterGuardTests
 
         // 409 revision_conflict: the Song was found, and a revision it is not at deletes nothing.
         ["DELETE /api/v1/songs/{reference}"] = static (c, song, _) => c.SendAsync(HttpMethod.Delete, $"songs/{song}", revision: 999),
+
+        // 409 revision_conflict: the Song and its Generation were found, and a revision it is not at selects nothing.
+        ["PUT /api/v1/songs/{reference}/selected-generation"] = static (c, song, _) =>
+            c.SendAsync(HttpMethod.Put, $"songs/{song}/selected-generation", $$"""{"generation":"{{c.GenerationId}}"}""", revision: 999),
+        ["DELETE /api/v1/songs/{reference}/selected-generation"] = static (c, song, _) => c.SendAsync(HttpMethod.Delete, $"songs/{song}/selected-generation", revision: 999),
 
         // 200: the Song is credited to no one already, so nothing changes.
         ["PUT /api/v1/songs/{reference}/credits"] = static async (c, song, _) =>
@@ -101,6 +127,10 @@ public sealed class ReferenceParameterGuardTests
             await c.SendAsync(HttpMethod.Patch, $"versions/{version}", "{}", await c.VersionRevisionAsync()),
         ["GET /api/v1/versions/{reference}/next-numbers"] = static (c, _, version) => c.SendAsync(HttpMethod.Get, $"versions/{version}/next-numbers"),
 
+        // 201: a Generate on Suno request is made (#144), replacing the one before; nothing in the catalog changes.
+        ["POST /api/v1/versions/{reference}/generation-requests"] = static (c, _, version) => c.SendAsync(HttpMethod.Post, $"versions/{version}/generation-requests", "{}"),
+        ["GET /api/v1/versions/{reference}/generation-request"] = static (c, _, version) => c.SendAsync(HttpMethod.Get, $"versions/{version}/generation-request"),
+
         // 200: the text is the newest snapshot's already, so nothing new is kept.
         ["POST /api/v1/versions/{reference}/snapshots"] = static (c, _, version) =>
             c.SendAsync(HttpMethod.Post, $"versions/{version}/snapshots", """{"lyrics":"","styles":""}"""),
@@ -118,6 +148,33 @@ public sealed class ReferenceParameterGuardTests
         // 409 revision_conflict: the Version was found, and a revision it is not at deletes nothing.
         ["DELETE /api/v1/versions/{reference}"] = static (c, _, version) => c.SendAsync(HttpMethod.Delete, $"versions/{version}", revision: 999),
         ["GET /api/v1/resolve/{reference}"] = static (c, _, version) => c.SendAsync(HttpMethod.Get, $"resolve/{version}"),
+        ["GET /api/v1/versions/{reference}/generations"] = static (c, _, version) => c.SendAsync(HttpMethod.Get, $"versions/{version}/generations"),
+        ["GET /api/v1/songs/{reference}/generations"] = static (c, song, _) => c.SendAsync(HttpMethod.Get, $"songs/{song}/generations"),
+
+        // A Generation by its ID, or by its shortcode (the Version shortcode's Generation 1).
+        ["GET /api/v1/generations/{reference}"] = static (c, _, version) => c.SendAsync(HttpMethod.Get, $"generations/{c.GenerationOf(version)}"),
+        ["GET /api/v1/generations/{reference}/provider-record"] = static (c, _, version) => c.SendAsync(HttpMethod.Get, $"generations/{c.GenerationOf(version)}/provider-record"),
+
+        // 409 revision_conflict: the Generation (or its comment) was found, and a revision it is not at changes nothing.
+        ["PATCH /api/v1/generations/{reference}"] = static (c, _, version) => c.SendAsync(HttpMethod.Patch, $"generations/{c.GenerationOf(version)}", """{"rating":4}""", revision: 999),
+        ["POST /api/v1/generations/{reference}/move-to-new-song"] = static (c, _, version) =>
+            c.SendAsync(HttpMethod.Post, $"generations/{c.GenerationOf(version)}/move-to-new-song", """{"title":"Moved"}""", revision: 999),
+        ["DELETE /api/v1/generations/{reference}"] = static (c, _, version) => c.SendAsync(HttpMethod.Delete, $"generations/{c.GenerationOf(version)}", revision: 999),
+        ["GET /api/v1/generations/{reference}/deletion-impact"] = static (c, _, version) => c.SendAsync(HttpMethod.Get, $"generations/{c.GenerationOf(version)}/deletion-impact"),
+        ["PATCH /api/v1/generations/{reference}/comments/{commentId:guid}"] = static (c, _, version) =>
+            c.SendAsync(HttpMethod.Patch, $"generations/{c.GenerationOf(version)}/comments/{c.CommentId}", """{"text":"Changed"}""", revision: 999),
+        ["DELETE /api/v1/generations/{reference}/comments/{commentId:guid}"] = static (c, _, version) =>
+            c.SendAsync(HttpMethod.Delete, $"generations/{c.GenerationOf(version)}/comments/{c.CommentId}", revision: 999),
+
+        // 201: each call adds a comment.
+        ["POST /api/v1/generations/{reference}/comments"] = static (c, _, version) => c.SendAsync(HttpMethod.Post, $"generations/{c.GenerationOf(version)}/comments", """{"text":"Referenced"}"""),
+
+        // A Generation's image (#121): stored by ID, then the same bytes again by shortcode (no change).
+        ["PUT /api/v1/generations/{reference}/artwork"] = static (c, _, version) => c.UploadAsync($"generations/{c.GenerationOf(version)}/artwork"),
+
+        // 409 revision_conflict, or 422 while the Generation has no image: the Song and its Generation were found.
+        ["POST /api/v1/songs/{reference}/artwork/from-generation"] = static (c, song, _) =>
+            c.SendAsync(HttpMethod.Post, $"songs/{song}/artwork/from-generation", $$"""{"generation":"{{c.GenerationId}}"}""", revision: 999),
 
         // 200: the Song is not on the Playlist, so nothing changes.
         ["DELETE /api/v1/playlists/{id:guid}/songs/{reference}"] = static async (c, song, _) =>
@@ -183,6 +240,14 @@ public sealed class ReferenceParameterGuardTests
         {
             Assert.Equal(HttpStatusCode.Created, album.StatusCode);
             context.AlbumId = (await SetupApi.JsonAsync(album)).GetProperty("id").GetString()!;
+        }
+
+        // Version 1's Generation 1, with a clip: the Generation endpoints read it (its Version is frozen).
+        context.GenerationId = (await SongApi.AttachGenerationAsync(factory, versionId, Generations.Clips.Minimal("referenced-clip"))).Generation.Id.ToString();
+        using (var comment = await context.SendAsync(HttpMethod.Post, $"generations/{context.GenerationId}/comments", """{"text":"Kept"}"""))
+        {
+            Assert.Equal(HttpStatusCode.Created, comment.StatusCode);
+            context.CommentId = (await SetupApi.JsonAsync(comment)).GetProperty("id").GetString()!;
         }
 
         // Every endpoint that binds a reference has a call here, and every call is to such an endpoint.
@@ -301,6 +366,13 @@ public sealed class ReferenceParameterGuardTests
 
         public string AlbumId { get; set; } = string.Empty;
 
+        public string GenerationId { get; set; } = string.Empty;
+
+        public string CommentId { get; set; } = string.Empty;
+
+        /// <summary>The Generation a call names: by ID when given the Version's ID, else Generation 1 of the Version shortcode given.</summary>
+        public string GenerationOf(string version) => version == versionId ? GenerationId : version + "-G1";
+
         public async Task<HttpResponseMessage> SendAsync(HttpMethod method, string path, string? json = null, int? revision = null)
         {
             using var request = new HttpRequestMessage(method, new Uri("/api/v1/" + path, UriKind.Relative));
@@ -315,6 +387,16 @@ public sealed class ReferenceParameterGuardTests
                 Assert.True(request.Headers.TryAddWithoutValidation("If-Match", SongApi.Quoted(value)));
             }
 
+            return await client.SendAsync(request);
+        }
+
+        /// <summary>A <c>PUT</c> of a small PNG as a multipart upload, as the browser sends one.</summary>
+        public async Task<HttpResponseMessage> UploadAsync(string path)
+        {
+            using var form = new MultipartFormDataContent();
+            form.Add(new ByteArrayContent(Assets.ArtworkImages.Solid(SkiaSharp.SKEncodedImageFormat.Png, 64, 64, Assets.ArtworkImages.Red)), "file", "cover.png");
+            using var request = new HttpRequestMessage(HttpMethod.Put, new Uri("/api/v1/" + path, UriKind.Relative)) { Content = form };
+            request.Headers.Add(SessionApi.AntiforgeryHeader, "1");
             return await client.SendAsync(request);
         }
 

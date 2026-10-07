@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
+using Microsoft.EntityFrameworkCore;
 using n8Tracks.Application.Retention;
 using n8Tracks.Application.Songs;
 using n8Tracks.Infrastructure.Persistence;
@@ -71,6 +72,14 @@ internal sealed record RetainedType(string RecordType, string Table, string Noun
     /// reference document holds only the key columns and these.
     /// </summary>
     public IReadOnlyList<string>? ReferenceColumns { get; init; }
+
+    /// <summary>
+    /// Set for a table frozen with its parent row (a Version's lineage, #122), whose freeze triggers
+    /// refuse any insert or delete while the parent is frozen and present: its rows are removed by the
+    /// parent's cascade, after the parent, and inserted again before the parent, while the restore's
+    /// foreign keys are deferred. Its documents are retained like any other.
+    /// </summary>
+    public bool FrozenWithParent { get; init; }
 }
 
 /// <summary>
@@ -137,25 +146,83 @@ internal static class RetainedTypes
     /// <c>used_version_numbers</c> while it is deleted, so it is never offered again; restoring it lets
     /// that row go just before the insert, whose trigger records the number again (a new Version
     /// still cannot take a used number). Once it is back, a blank Version created because it was the
-    /// last one is removed if it was never edited (<see cref="VersionRestore"/>).
+    /// last one is removed if it was never edited (<see cref="VersionRestore"/>). Shape 2 (#135) added
+    /// what import recorded about its inputs; an earlier record restores as a Version made in n8Tracks.
     /// </summary>
-    public static readonly RetainedType Version = new(RetainedRecordTypes.Version, "versions", "Version", ShapeVersion: 1)
+    public static readonly RetainedType Version = new(RetainedRecordTypes.Version, "versions", "Version", ShapeVersion: 2)
     {
+        Upgraders = new Dictionary<int, Func<JsonObject, JsonObject>> { [1] = VersionShape1To2 }.ToFrozenDictionary(),
         BeforeRestoreAsync = static (row, cancellationToken) => VersionRestore.FreeNumberAsync(row, cancellationToken),
         AfterRestoreAsync = static (row, cancellationToken) => VersionRestore.RemoveAutoCreatedBlankAsync(row, cancellationToken),
     };
 
-    /// <summary>A Generation, deleted with its Version. In V1 it is the minimal record (#69); its own deletion rules are M4's.</summary>
-    public static readonly RetainedType Generation = new(RetainedRecordTypes.Generation, "generations", "Generation", ShapeVersion: 1);
+    /// <summary>
+    /// A Generation, deleted with its Version or Song (its own deletion is a later story's). Shape 2
+    /// (#117) added its states, revision, Suno ID, and the clip's normalized fields; a shape-1 record
+    /// (the minimal record of #69, which had no Suno data) restores as an active, present Generation
+    /// with none. Shape 3 (#119) added its rating; an earlier record restores unrated. Shape 4 (#121)
+    /// added its image, whose files the deleting group lists; an earlier record restores with none,
+    /// and one whose asset is gone all the same restores without it, with a note. Shape 5 (#142) added
+    /// who archived it; an earlier record restores with none (an archived one reads as the user's). Shape 6
+    /// (#141) added the remembered declined-change and kept-conflict hashes; an earlier record restores
+    /// with neither, so its clip's differences are shown again at the next sync. Its provider
+    /// record, event link, and comments go with it, as their own types. Once it is back, the provider
+    /// tombstone its deletion recorded (#130) is removed, whatever ran the restore (the container
+    /// command, or a Reimport), so a sync sees its clip as linked again; nothing else's tombstone is touched.
+    /// </summary>
+    public static readonly RetainedType Generation = new(RetainedRecordTypes.Generation, "generations", "Generation", ShapeVersion: 6)
+    {
+        Upgraders = new Dictionary<int, Func<JsonObject, JsonObject>> { [1] = GenerationShape1To2, [2] = GenerationShape2To3, [3] = GenerationShape3To4, [4] = GenerationShape4To5, [5] = GenerationShape5To6 }.ToFrozenDictionary(),
+        PrepareRestoreAsync = static (row, cancellationToken) => KeepArtworkIfStoredAsync(row, cancellationToken),
+        AfterRestoreAsync = static (row, cancellationToken) => row.Values.GetValueOrDefault("suno_id") is string sunoId
+            ? ProviderTombstoneStore.RemoveAsync(row.Context, sunoId, cancellationToken)
+            : Task.CompletedTask,
+    };
+
+    /// <summary>
+    /// A source of a Version (#122), deleted and restored with its Version, which it cascades from. It
+    /// names its relationship type and any external reference by foreign key (neither is ever deleted
+    /// while used), and its Generation or Song by ID only, so it comes back however they have changed.
+    /// </summary>
+    public static readonly RetainedType VersionSource = new(RetainedRecordTypes.VersionSource, "version_sources", "Version source", ShapeVersion: 1) { FrozenWithParent = true };
+
+    /// <summary>A Version's Inspiration playlist (#122), deleted and restored with its Version.</summary>
+    public static readonly RetainedType VersionInspirationPlaylist =
+        new(RetainedRecordTypes.VersionInspirationPlaylist, "version_inspiration_playlists", "Inspiration playlist", ShapeVersion: 1) { FrozenWithParent = true };
+
+    /// <summary>A Version's Voice (#122), deleted and restored with its Version.</summary>
+    public static readonly RetainedType VersionVoice = new(RetainedRecordTypes.VersionVoice, "version_voices", "Voice", ShapeVersion: 1) { FrozenWithParent = true };
+
+    /// <summary>A Version's file input (#122), deleted and restored with its Version.</summary>
+    public static readonly RetainedType VersionFileInput = new(RetainedRecordTypes.VersionFileInput, "version_file_inputs", "file input", ShapeVersion: 1) { FrozenWithParent = true };
+
+    /// <summary>A comment on a Generation, deleted (and restored) with its Generation, which it cascades from.</summary>
+    public static readonly RetainedType GenerationComment = new(RetainedRecordTypes.GenerationComment, "generation_comments", "Generation comment", ShapeVersion: 1);
+
+    /// <summary>A Generation's raw clip, deleted (and restored) with its Generation, which it cascades from.</summary>
+    public static readonly RetainedType ProviderRecord = new(RetainedRecordTypes.ProviderRecord, "provider_records", "provider record", ShapeVersion: 1);
+
+    /// <summary>
+    /// A Generation's link to its Generation Event, deleted with its Generation. Events are never
+    /// deleted today; should one be gone at restore, the Generation comes back without its link.
+    /// </summary>
+    public static readonly RetainedType GenerationEventLink = new(RetainedRecordTypes.GenerationEventLink, "generation_event_links", "Generation Event link", ShapeVersion: 1)
+    {
+        Optional = true,
+    };
 
     /// <summary>
     /// A Song, deleted with its Versions, Generations, and everything of its own (#102). Its shortcode
     /// number is never given out again (the sequence only goes up). Restored into the workflow state
-    /// it was in, or into the first visible one when that state was deleted meanwhile.
+    /// it was in, or into the first visible one when that state was deleted meanwhile. Shape 2 (#120)
+    /// added its Selected Generation, which is one of its own Generations, so it goes and comes back
+    /// with the group; an earlier record restores with none. Shape 3 (#129) added its Suno workspace,
+    /// a record that is never deleted, so it comes back as it was; an earlier record restores with none.
     /// </summary>
-    public static readonly RetainedType Song = new(RetainedRecordTypes.Song, "songs", "Song", ShapeVersion: 1)
+    public static readonly RetainedType Song = new(RetainedRecordTypes.Song, "songs", "Song", ShapeVersion: 3)
     {
         PrepareRestoreAsync = static (row, cancellationToken) => SongRestore.KeepStateAsync(row, cancellationToken),
+        Upgraders = new Dictionary<int, Func<JsonObject, JsonObject>> { [1] = SongShape1To2, [2] = SongShape2To3 }.ToFrozenDictionary(),
     };
 
     /// <summary>
@@ -291,14 +358,134 @@ internal static class RetainedTypes
         AfterRestoreAsync = static (row, cancellationToken) => SongRestore.TouchAsync(row, "albums", "id", cancellationToken),
     };
 
+    /// <summary>
+    /// The Selected Generation of a Song whose selected Generation was deleted with its Version (#120):
+    /// a reference, so the Song stays and only its <c>selected_generation_id</c> is cleared and
+    /// remembered. Restored with the Generation where the Song still exists and has chosen none
+    /// meanwhile, raising its revision.
+    /// </summary>
+    public static readonly RetainedType SelectedGeneration = new(RetainedRecordTypes.SelectedGeneration, "songs", "Selected Generation", ShapeVersion: 1)
+    {
+        ReferenceColumns = ["selected_generation_id"],
+        AfterRestoreAsync = static (row, cancellationToken) => SongRestore.TouchAsync(row, "songs", "id", cancellationToken),
+    };
+
     /// <summary>Every built-in type.</summary>
     public static IReadOnlyList<RetainedType> BuiltIn { get; } =
     [
-        EditorSnapshot, ArtworkAttachment, Version, Generation,
+        EditorSnapshot, ArtworkAttachment, Version, VersionSource, VersionInspirationPlaylist, VersionVoice, VersionFileInput,
+        Generation, ProviderRecord, GenerationEventLink, GenerationComment,
         Song, UsedVersionNumber, SongLink, SongGenre, SongTag, SongCredit, AlbumTrack, PlaylistEntry, SongRelationship,
         Album, AlbumLink, Playlist,
-        Artist, ArtistAlias, ArtistLink, AlbumArtist,
+        Artist, ArtistAlias, ArtistLink, AlbumArtist, SelectedGeneration,
     ];
+
+    /// <summary>
+    /// A Generation retained before #117 (shape 1: id, version_id, song_id, ordinal, created_utc) as
+    /// shape 2: active, present, at revision 1, with no Suno data.
+    /// </summary>
+    internal static JsonObject GenerationShape1To2(JsonObject document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+
+        document["state"] = "active";
+        document["remote_state"] = "present";
+        document["revision"] = JsonNode.Parse("1");
+        foreach (var column in (string[])
+            ["suno_id", "provider_status", "suno_title", "duration_seconds", "model_version", "model_name", "model_label", "style_tags",
+             "minimum_bpm", "maximum_bpm", "average_bpm", "musical_key", "suno_created_utc", "audio_url", "image_url", "workspace_id", "batch_index"])
+        {
+            document[column] = null;
+        }
+
+        return document;
+    }
+
+    /// <summary>A Version retained before #135 (shape 1) as shape 2: not made by import.</summary>
+    internal static JsonObject VersionShape1To2(JsonObject document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+
+        document["imported_inputs"] = null;
+        return document;
+    }
+
+    /// <summary>A Song retained before #120 (shape 1) as shape 2: with no Selected Generation.</summary>
+    internal static JsonObject SongShape1To2(JsonObject document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+
+        document["selected_generation_id"] = null;
+        return document;
+    }
+
+    /// <summary>A Song retained before #129 (shape 2) as shape 3: in no Suno workspace.</summary>
+    internal static JsonObject SongShape2To3(JsonObject document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+
+        document["suno_workspace_id"] = null;
+        return document;
+    }
+
+    /// <summary>A Generation retained before #119 (shape 2) as shape 3: unrated.</summary>
+    internal static JsonObject GenerationShape2To3(JsonObject document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+
+        document["rating"] = null;
+        return document;
+    }
+
+    /// <summary>A Generation retained before #121 (shape 3) as shape 4: with no image.</summary>
+    internal static JsonObject GenerationShape3To4(JsonObject document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+
+        document["artwork_asset_id"] = null;
+        return document;
+    }
+
+    /// <summary>A Generation retained before #142 (shape 4) as shape 5: with no archiver recorded.</summary>
+    internal static JsonObject GenerationShape4To5(JsonObject document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+
+        document["archived_by"] = null;
+        return document;
+    }
+
+    /// <summary>A Generation retained before #141's remembered decisions (shape 5) as shape 6: nothing declined or kept.</summary>
+    internal static JsonObject GenerationShape5To6(JsonObject document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+
+        document["declined_hash"] = null;
+        document["kept_inputs_hash"] = null;
+        return document;
+    }
+
+    /// <summary>
+    /// A Generation comes back with its image while the asset is still stored (its group lists the
+    /// files, so the sweep keeps it); should it be gone all the same, the Generation comes back without one.
+    /// </summary>
+    private static async Task<RestorePreparation> KeepArtworkIfStoredAsync(RestoredRow row, CancellationToken cancellationToken)
+    {
+        if (row.Values.GetValueOrDefault("artwork_asset_id") is null)
+        {
+            return RestorePreparation.With(row.Values);
+        }
+
+        var assetId = row.TextOf("artwork_asset_id");
+        var stored = await row.Context.Database.SqlQuery<int>($"SELECT count(*) AS \"Value\" FROM assets WHERE id = {assetId}")
+            .SingleAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return stored > 0
+            ? RestorePreparation.With(row.Values)
+            : RestorePreparation.With(
+                new Dictionary<string, object?>(row.Values, StringComparer.Ordinal) { ["artwork_asset_id"] = null },
+                "The Generation's image was no longer stored, so it was restored without one.");
+    }
 }
 
 /// <summary>The registered retained types, checked once when the first is needed.</summary>

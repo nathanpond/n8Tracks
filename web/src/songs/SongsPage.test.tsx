@@ -56,6 +56,9 @@ function song(number: number, overrides: Partial<Song> = {}): Song {
     release: NO_RELEASE,
     warnings: [],
     artwork: null,
+    hasSelectedGeneration: false,
+    selectedGeneration: null,
+    sunoWorkspace: null,
     ...overrides,
   };
 }
@@ -213,14 +216,24 @@ describe('Songs', () => {
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
   });
 
-  it('lists each Song with its shortcode, title, concept, state, kind, Versions, and updated time', async () => {
+  it('lists each Song with its shortcode, title, concept, state, kind, Versions, updated time, and whether it has a Selected Generation', async () => {
     const updated = new Date(Date.now() - 5 * 60 * 1000).toISOString();
     backend({
       list: () =>
         jsonResponse(
           200,
           page([
-            song(3, { concept: LONG_CONCEPT, updatedAt: updated }),
+            song(3, {
+              concept: LONG_CONCEPT,
+              updatedAt: updated,
+              hasSelectedGeneration: true,
+              selectedGeneration: {
+                id: '0199b1a0-0000-7000-c000-000000000001',
+                shortcode: 'n8-3-v1-g1',
+                state: 'active',
+                remoteState: 'present',
+              },
+            }),
             song(2, {
               state: ARCHIVED,
               versionCount: 4,
@@ -253,8 +266,12 @@ describe('Songs', () => {
       'Versions',
       'Tags',
       'Updated ▼',
+      'Selected',
     ]);
     const first = row('n8-3');
+    // A check mark where the Song has a Selected Generation (said in words to a screen reader).
+    expect(within(first).getByTestId('song-selected')).toHaveTextContent('✓Yes');
+    expect(within(row('n8-2')).getByTestId('song-selected')).toHaveTextContent(/^No$/);
     expect(within(first).getByRole('link', { name: 'Running in a Pack' })).toHaveAttribute(
       'href',
       '/songs/n8-3',

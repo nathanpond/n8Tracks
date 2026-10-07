@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using n8Tracks.Application.Generations;
 using n8Tracks.Application.Assets;
 using n8Tracks.Application.Auth;
 using n8Tracks.Application.Backups;
@@ -15,6 +16,8 @@ using n8Tracks.Application.Retention;
 using n8Tracks.Application.Setup;
 using n8Tracks.Application.Songs;
 using n8Tracks.Application.Suno;
+using n8Tracks.Application.Suno.Generate;
+using n8Tracks.Application.Suno.Import;
 using n8Tracks.Infrastructure.Assets;
 using n8Tracks.Infrastructure.Backups;
 using n8Tracks.Infrastructure.Health;
@@ -70,10 +73,22 @@ public static class DependencyInjection
         services.AddScoped<ISongCreditStore, SongCreditStore>();
         services.AddScoped<ICatalogSettingsStore, CatalogSettingsStore>();
         services.AddScoped<IVersionStore, VersionStore>();
+        services.AddScoped<GenerationStore>();
+        services.AddScoped<IGenerationStore>(static provider => provider.GetRequiredService<GenerationStore>());
         services.AddScoped<ISongDeletionStore, SongDeletionStore>();
         services.AddScoped<IEditorRevisionStore, EditorRevisionStore>();
         services.AddScoped<IWorkflowStateStore, WorkflowStateStore>();
         services.AddScoped<ISunoModelStore, SunoModelStore>();
+        services.AddScoped<ISunoLibraryStore, SunoLibraryStore>();
+        services.AddScoped<IProviderTombstoneStore, ProviderTombstoneStore>();
+        services.AddScoped<ISunoWorkspaceStore, SunoWorkspaceStore>();
+        services.AddScoped<SunoExportStore>();
+        services.AddScoped<ISunoExportStore>(static provider => provider.GetRequiredService<SunoExportStore>());
+        services.AddScoped<ISunoClipLookup>(static provider => provider.GetRequiredService<SunoExportStore>());
+        services.AddScoped<ISunoIgnoreListStore, SunoIgnoreListStore>();
+        services.AddScoped<ISongWorkspaceStore, SunoWorkspaceStore>();
+        services.AddScoped<IRemoteStateStore, RemoteStateStore>();
+        services.AddScoped<IGenerationRequestStore, SunoGenerationRequestStore>();
         services.AddScoped<IVersionDefaultsStore, VersionDefaultsStore>();
         services.AddSingleton<IBackupStorage, BackupFolders>();
         services.AddSingleton<IBackupWriter, BackupWriter>();
@@ -106,6 +121,8 @@ public static class DependencyInjection
         services.AddScoped<ArtworkAttachmentStore>();
         services.AddScoped<IArtworkAttachmentStore>(static provider => provider.GetRequiredService<ArtworkAttachmentStore>());
         services.AddScoped<IArtworkAttachments>(static provider => provider.GetRequiredService<ArtworkAttachmentStore>());
+        services.AddScoped<IArtworkAttachments>(static provider => provider.GetRequiredService<GenerationStore>());
+        services.AddScoped<IArtworkAttachments>(static provider => provider.GetRequiredService<SunoExportStore>());
         services.AddSingleton<IManagedAssetStore, ManagedAssetStore>();
         services.AddSingleton<IArtworkImaging, SkiaArtworkImaging>();
         services.AddJobHandler<RetentionPruneJobHandler>(RetentionPruneTask.JobType);
@@ -125,6 +142,9 @@ public static class DependencyInjection
         services.TryAddSingleton(new DailyTaskSchedulerOptions());
         services.AddHostedService<BackupStartupCleanup>();
         services.AddHostedService<RestoreHousekeeping>();
+
+        // Before the worker: a commit it was running when the process stopped is still marked running.
+        services.AddHostedService<ImportCommitRecovery>();
         services.AddHostedService<JobWorker>();
         services.AddHostedService<DailyTaskScheduler>();
 

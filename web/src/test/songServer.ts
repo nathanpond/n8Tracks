@@ -1,6 +1,7 @@
 import type { Artwork } from '../api/artwork';
 import type { Artist } from '../api/artists';
 import type { CatalogSettings } from '../api/catalogSettings';
+import type { Generation } from '../api/generations';
 import type { Genre } from '../api/genres';
 import type { RelationshipType } from '../api/relationships';
 import type {
@@ -13,6 +14,7 @@ import type {
 } from '../api/songs';
 import type { Language } from '../api/languages';
 import { NO_RELEASE, type SongRelease, type SongWarning } from '../api/songs';
+import type { SunoWorkspace } from '../api/sunoWorkspaces';
 import type { Tag } from '../api/tags';
 import { isrcError, normaliseIsrc } from '../songs/details/releaseField';
 import { testArtist } from './artistServer';
@@ -76,6 +78,9 @@ export const baseSong: Song = {
   release: NO_RELEASE,
   warnings: [],
   artwork: null,
+  hasSelectedGeneration: false,
+  selectedGeneration: null,
+  sunoWorkspace: null,
 };
 
 export const FOLK: Genre = {
@@ -205,6 +210,32 @@ export const SONG_C: Song = {
   shortcode: 'n8-9',
   title: 'Song C',
 };
+
+/** A Suno workspace as the list answers it (#129): Available, with no Songs, unless `change` says otherwise. */
+export function testWorkspace(
+  id: string,
+  name: string,
+  change: Partial<SunoWorkspace> = {},
+): SunoWorkspace {
+  return {
+    id,
+    name,
+    description: '',
+    state: 'available',
+    firstSeen: '2026-10-01T09:00:00Z',
+    lastSeen: '2026-10-01T09:00:00Z',
+    songCount: 0,
+    ...change,
+  };
+}
+
+/** The workspaces the fake lists by default: two Available ones and one that has gone from Suno. */
+export const STUDIO = testWorkspace('00000000-0000-4000-8000-000000000105', 'Studio');
+export const DEMOS = testWorkspace('default', 'Demos');
+export const ARCHIVE = testWorkspace('00000000-0000-4000-8000-000000000125', 'Archive', {
+  state: 'unavailable',
+});
+export const WORKSPACES = [ARCHIVE, DEMOS, STUDIO];
 
 /** The languages the fake lists: a few, by name, as the API answers them. */
 export const LANGUAGES: Language[] = [
@@ -347,6 +378,8 @@ export function songServer(
     languages: LANGUAGES as Language[] | undefined,
     /** Every name POSTed to the Tag list, in order. */
     createdTags: [] as string[],
+    /** The Suno workspaces it lists (#129); set it to undefined to answer the list with a 500. */
+    workspaces: WORKSPACES.map((workspace) => ({ ...workspace })) as SunoWorkspace[] | undefined,
     /** Every name POSTed to the Genre list, in order. */
     created: [] as string[],
     edits: [] as ReceivedEdit[],
@@ -358,6 +391,13 @@ export function songServer(
     uploadSizes: [] as { width: number; height: number }[],
     /** When set, answers the next PATCH (once) instead of the fake API. */
     next: undefined as (() => Response | Promise<Response>) | undefined,
+    /**
+     * The Song's Generations (#121), served at `GET …/generations` when set; a pick of one's image
+     * (`POST …/artwork/from-generation`) makes it the Song's own artwork, uncropped.
+     */
+    generations: undefined as Generation[] | undefined,
+    /** Every pick of a Generation's image, in order: the revision it named and the Generation. */
+    picks: [] as { ifMatch: string | null; generation: unknown }[],
     /** Plays another tab: changes the Song and raises its revision. */
     changeElsewhere(change: Partial<Song>) {
       server.song = { ...server.song, ...change, revision: server.song.revision + 1 };
@@ -425,6 +465,42 @@ export function songServer(
       server.artists.push(artist);
       return jsonResponse(201, artist);
     }
+    if (
+      server.generations !== undefined &&
+      path.endsWith(`/api/v1/songs/${server.song.id}/generations`)
+    ) {
+      return jsonResponse(200, { items: server.generations });
+    }
+    if (path.endsWith(`/api/v1/songs/${server.song.id}/artwork/from-generation`)) {
+      const ifMatch = new Headers(init?.headers).get('If-Match');
+      const sent = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as Record<
+        string,
+        unknown
+      >;
+      server.picks.push({ ifMatch, generation: sent.generation });
+      if (ifMatch !== `"${String(server.song.revision)}"`) {
+        return jsonResponse(409, { code: 'revision_conflict', current: server.song });
+      }
+      const chosen = server.generations?.find(
+        (generation) =>
+          generation.id === sent.generation || generation.shortcode === sent.generation,
+      );
+      if (chosen === undefined) {
+        return jsonResponse(404, { code: 'not_found', title: 'There is no such Generation.' });
+      }
+      if (chosen.artwork === null) {
+        return jsonResponse(422, {
+          code: 'generation_has_no_artwork',
+          title: `Generation ${chosen.shortcode} has no image.`,
+        });
+      }
+      server.song = {
+        ...server.song,
+        artwork: { ...chosen.artwork, crop: null, source: 'own' },
+        revision: server.song.revision + 1,
+      };
+      return jsonResponse(200, server.song);
+    }
     if (path.endsWith('/api/v1/artwork')) {
       const file = init?.body instanceof FormData ? init.body.get('file') : null;
       if (file instanceof File) {
@@ -438,6 +514,11 @@ export function songServer(
       const id = testAssetId(server.uploads.length);
       const { width, height, urls } = testArtwork(id, sizeOfUpload(server.uploads.length));
       return jsonResponse(201, { id, width, height, urls });
+    }
+    if (path.endsWith('/api/v1/suno/workspaces')) {
+      return server.workspaces === undefined
+        ? jsonResponse(500, { code: 'unexpected' })
+        : jsonResponse(200, { items: server.workspaces });
     }
     if (path.endsWith('/api/v1/languages')) {
       return server.languages === undefined
@@ -774,6 +855,30 @@ export function songServer(
         updated.artwork = testArtwork(artwork.assetId, { ...artwork, crop });
       }
     }
+    if ('sunoWorkspaceId' in body) {
+      // As the API: a known workspace's ID or null; only an Available one, unless the Song has it.
+      const id = body.sunoWorkspaceId;
+      const workspace = server.workspaces?.find((candidate) => candidate.id === id);
+      if (id === null) {
+        updated.sunoWorkspace = null;
+      } else if (
+        workspace === undefined ||
+        (workspace.state !== 'available' && workspace.id !== server.song.sunoWorkspace?.id)
+      ) {
+        return jsonResponse(422, {
+          code: 'validation_failed',
+          errors: {
+            sunoWorkspaceId: [
+              workspace === undefined
+                ? 'There is no Suno workspace with this ID.'
+                : 'This Suno workspace is unavailable: choose an available one.',
+            ],
+          },
+        });
+      } else {
+        updated.sunoWorkspace = { id: workspace.id, name: workspace.name, state: workspace.state };
+      }
+    }
     updated.warnings = warningsOf(updated, server.others);
     const changed =
       JSON.stringify(updated.release) !== JSON.stringify(server.song.release) ||
@@ -784,7 +889,8 @@ export function songServer(
       JSON.stringify(updated.genres) !== JSON.stringify(server.song.genres) ||
       JSON.stringify(updated.tags) !== JSON.stringify(server.song.tags) ||
       updated.artwork?.assetId !== server.song.artwork?.assetId ||
-      JSON.stringify(updated.artwork?.crop) !== JSON.stringify(server.song.artwork?.crop);
+      JSON.stringify(updated.artwork?.crop) !== JSON.stringify(server.song.artwork?.crop) ||
+      updated.sunoWorkspace?.id !== server.song.sunoWorkspace?.id;
     server.song = changed ? { ...updated, revision: server.song.revision + 1 } : server.song;
     return jsonResponse(200, server.song);
   });

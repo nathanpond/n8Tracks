@@ -1,0 +1,27 @@
+// A fixture for the invariant 4 guard's static scan: a workflow declared outside the workflows
+// folder, registered at run time, and the create-workspace primitive used outside the workspace
+// workflow. Scanned as if it were the file the test names; never built or shipped.
+import { ANY_SUNO_PAGE } from '../adapter/addresses.ts';
+import type { Page, Target } from '../adapter/primitives.ts';
+import { WorkflowRegistry } from '../adapter/registry.ts';
+import { OK, type Workflow } from '../adapter/workflow.ts';
+
+const CONFIRM: Target = { role: 'button', name: 'Confirm', description: 'Confirm' };
+
+export const hidden: Workflow = {
+  id: 'hidden',
+  title: 'Hidden',
+  feature: 'page',
+  startsOn: ANY_SUNO_PAGE,
+  needs: [{ step: 'one', check: () => OK }],
+  steps: [{ name: 'one', expect: () => OK, act: () => undefined, verify: () => OK }],
+  fixtures: ['library-list'],
+};
+
+export function addLater(registry: WorkflowRegistry, page: Page): void {
+  registry.register(hidden);
+  const found = page.find(CONFIRM);
+  if (found.kind === 'found') {
+    page.createWorkspaceClick(found.found);
+  }
+}

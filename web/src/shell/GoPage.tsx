@@ -1,7 +1,7 @@
 import { Anchor, Button, Loader, Stack, Text, Title } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
-import { pageFor, resolveReference } from '../api/references';
+import { pageFor, resolveReference, stateFor } from '../api/references';
 import { Notice } from '../components/Notice';
 
 type GoState = { phase: 'resolving' } | { phase: 'not-found' } | { phase: 'failed' };
@@ -27,7 +27,10 @@ export function GoPage() {
         return;
       }
       if (result.kind === 'found') {
-        void navigate(pageFor(result.resolved), { replace: true });
+        void navigate(pageFor(result.resolved), {
+          replace: true,
+          state: stateFor(result.resolved, reference),
+        });
         return;
       }
       setState({

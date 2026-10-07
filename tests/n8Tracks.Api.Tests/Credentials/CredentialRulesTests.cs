@@ -44,10 +44,10 @@ public sealed class CredentialRulesTests
     }
 
     [Fact]
-    public void ThereAreSevenScopesAndThreeKinds()
+    public void ThereAreNineScopesAndThreeKinds()
     {
         Assert.Equal(
-            ["catalog.read", "songs.write", "versions.write", "collections.write", "generations.evaluate", "artwork.write", "catalog.bulk-write"],
+            ["catalog.read", "songs.write", "versions.write", "collections.write", "generations.evaluate", "artwork.write", "catalog.bulk-write", "suno.sync", "suno.generate"],
             CredentialScopes.All);
         Assert.Equal(["api", "extension", "mcp-gateway"], CredentialKinds.All);
     }
@@ -240,6 +240,8 @@ public sealed class CredentialRulesTests
         }
 
         public Task TouchAsync(Guid id, DateTimeOffset lastUsedUtc, CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task RecordSightingAsync(Guid id, ExtensionSighting sighting, CancellationToken cancellationToken) => Task.CompletedTask;
 
         private bool Taken(string nameKey, Guid? except) =>
             rows.Any(pair => pair.Key != except && pair.Value.Summary.RevokedUtc is null && pair.Value.NameKey == nameKey);

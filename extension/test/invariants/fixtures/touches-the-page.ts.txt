@@ -1,0 +1,13 @@
+// A fixture for the invariant 4 guard's static scan: page-context code that reaches Suno's page
+// without the primitives. Scanned as if it were the file the test names; never built or shipped.
+export function pressCreate(page: Document): void {
+  const button = page.querySelector<HTMLButtonElement>('[aria-label="Create song"]');
+  button?.click();
+  const row = button?.closest('div');
+  const first = row?.children[0];
+  first?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  const walker = page.createTreeWalker(page.body);
+  void walker;
+  void page.body.firstElementChild?.shadowRoot;
+  page.getElementById('lyrics')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+}

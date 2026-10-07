@@ -1,4 +1,4 @@
-import type { Artwork } from '../api/artwork';
+import type { Artwork, SongArtwork } from '../api/artwork';
 import { jsonResponse } from './helpers';
 
 /** The ID the fake artwork store gives its `n`th upload, from 1. */
@@ -15,8 +15,8 @@ export const TEST_ARTWORK_SIZE = { width: 1200, height: 600 };
  */
 export function testArtwork(
   assetId: string,
-  change: Partial<Pick<Artwork, 'width' | 'height' | 'crop'>> = {},
-): Artwork {
+  change: Partial<Pick<SongArtwork, 'width' | 'height' | 'crop' | 'source'>> = {},
+): SongArtwork {
   const original = `/api/v1/artwork/${assetId}`;
   const crop = change.crop ?? null;
   const square =
@@ -35,6 +35,8 @@ export function testArtwork(
     },
     crop,
     squareUrls: { '96': `${square}/96`, '320': `${square}/320`, '1024': `${square}/1024` },
+    // A Song's own unless the test says it shows its Selected Generation's (#121); other owners ignore it.
+    source: change.source ?? 'own',
   };
 }
 

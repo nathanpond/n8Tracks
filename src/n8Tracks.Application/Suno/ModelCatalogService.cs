@@ -112,6 +112,43 @@ public sealed class ModelCatalogService(ISunoModelStore models, IExclusiveTransa
     }
 
     /// <summary>
+    /// The name of the model a clip reporting <paramref name="reported"/> was made with
+    /// (<see cref="SunoModelRules.Match"/>), adding it first when no model matches (#135): at the end
+    /// of the order, not retired, marked discovered, named and reported as Suno reported it, with the
+    /// list revision raised. Runs inside the caller's transaction (an import commit, #140), so the entry
+    /// is added only when that commit is, and once however many of its clips report it; classifying an
+    /// export never calls it. <paramref name="reported"/> must be a valid model name.
+    /// </summary>
+    public async Task<string> EnsureReportedAsync(string reported, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(reported);
+        if (SunoModelRules.NameErrors(reported) is { Length: > 0 } errors)
+        {
+            throw new ArgumentException(errors[0], nameof(reported));
+        }
+
+        var all = await models.ListAsync(cancellationToken).ConfigureAwait(false);
+        if (SunoModelRules.Match(all, reported) is { } matched)
+        {
+            return matched.Name;
+        }
+
+        var name = SunoModelRules.NormaliseName(reported);
+        await models.AddAsync(
+            new SunoModel(
+                Guid.CreateVersion7(time.GetUtcNow()),
+                name,
+                Note: null,
+                all.Count == 0 ? 1 : all.Max(static existing => existing.Order) + 1,
+                Retired: false,
+                Discovered: true,
+                ReportedAs: name),
+            cancellationToken).ConfigureAwait(false);
+        await models.BumpRevisionAsync(cancellationToken).ConfigureAwait(false);
+        return name;
+    }
+
+    /// <summary>
     /// Renames, annotates, retires, or restores a model; only the fields given change. A model a
     /// Version names cannot be renamed, and the last model not retired cannot be retired. A change
     /// that changes nothing is not written.

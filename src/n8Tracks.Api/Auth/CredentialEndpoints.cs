@@ -196,7 +196,11 @@ internal sealed record CreateCredentialRequest(string? Name, string? Kind, IRead
 /// <summary>The rename form.</summary>
 internal sealed record RenameCredentialRequest(string? Name);
 
-/// <summary>A credential as the API shows it: never its token. Times are UTC.</summary>
+/// <summary>
+/// A credential as the API shows it: never its token. Times are UTC. The last three fields are what
+/// the last extension handshake with its token reported; each is null until one is made, and a
+/// version is null when the handshake did not send it.
+/// </summary>
 internal sealed record CredentialResponse(
     Guid Id,
     string Name,
@@ -205,7 +209,10 @@ internal sealed record CredentialResponse(
     DateTime CreatedUtc,
     DateTime? LastUsedUtc,
     DateTime? RevokedUtc,
-    int Revision)
+    int Revision,
+    string? LastExtensionVersion,
+    string? LastAdapterVersion,
+    DateTime? LastSeenAt)
 {
     public static CredentialResponse From(CredentialSummary credential)
     {
@@ -219,7 +226,10 @@ internal sealed record CredentialResponse(
             credential.CreatedUtc.UtcDateTime,
             credential.LastUsedUtc?.UtcDateTime,
             credential.RevokedUtc?.UtcDateTime,
-            credential.Revision);
+            credential.Revision,
+            credential.LastSeen?.ExtensionVersion,
+            credential.LastSeen?.AdapterVersion,
+            credential.LastSeen?.SeenUtc.UtcDateTime);
     }
 }
 
@@ -233,11 +243,26 @@ internal sealed record CreatedCredentialResponse(
     DateTime? LastUsedUtc,
     DateTime? RevokedUtc,
     int Revision,
+    string? LastExtensionVersion,
+    string? LastAdapterVersion,
+    DateTime? LastSeenAt,
     string Token)
 {
     public static CreatedCredentialResponse From(CredentialSummary credential, string token)
     {
         var shown = CredentialResponse.From(credential);
-        return new(shown.Id, shown.Name, shown.Kind, shown.Scopes, shown.CreatedUtc, shown.LastUsedUtc, shown.RevokedUtc, shown.Revision, token);
+        return new(
+            shown.Id,
+            shown.Name,
+            shown.Kind,
+            shown.Scopes,
+            shown.CreatedUtc,
+            shown.LastUsedUtc,
+            shown.RevokedUtc,
+            shown.Revision,
+            shown.LastExtensionVersion,
+            shown.LastAdapterVersion,
+            shown.LastSeenAt,
+            token);
     }
 }

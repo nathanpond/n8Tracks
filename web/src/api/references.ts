@@ -14,6 +14,11 @@ export interface ResolvedReference {
   song?: { id: string; shortcode: string };
   /** The Version a Generation belongs to; absent otherwise. */
   version?: { id: string; shortcode: string };
+  /**
+   * For a moved Generation's old shortcode (`status: 'moved'`, #123), the shortcode it has now (the
+   * same as `shortcode`); absent otherwise.
+   */
+  canonicalShortcode?: string;
 }
 
 function isNamed(value: unknown): boolean {
@@ -33,7 +38,8 @@ function isResolvedReference(value: unknown): value is ResolvedReference {
     typeof value.shortcode === 'string' &&
     typeof value.status === 'string' &&
     isNamed(value.song) &&
-    isNamed(value.version)
+    isNamed(value.version) &&
+    (value.canonicalShortcode === undefined || typeof value.canonicalShortcode === 'string')
   );
 }
 
@@ -63,20 +69,40 @@ export async function resolveReference(
   }
 }
 
+/** Router state a page opened from a moved Generation's old shortcode carries (#123). */
+export interface MovedFromState {
+  movedFrom: string;
+}
+
+/** Whether `state` (a location's) says the page was opened from a moved Generation's old shortcode. */
+export function movedFromOf(state: unknown): string | undefined {
+  return isRecord(state) && typeof state.movedFrom === 'string' ? state.movedFrom : undefined;
+}
+
 /**
- * The app page that shows what a reference resolved to: the Song's page, or its Song's page with
- * the Version selected (a Generation's Version, until Generations have a page of their own). A
- * path inside the app, for the router.
+ * Router state for opening what `reference` resolved to: for a moved Generation's old shortcode,
+ * that shortcode, so the page can say it moved; otherwise none.
+ */
+export function stateFor(
+  resolved: ResolvedReference,
+  reference: string,
+): MovedFromState | undefined {
+  return resolved.status === 'moved' ? { movedFrom: reference.trim().toLowerCase() } : undefined;
+}
+
+/**
+ * The app page that shows what a reference resolved to: the Song's page, its Song's page with the
+ * Version selected, or a Generation's panel on its Song's page
+ * (`/songs/<song>/generations/<shortcode>`). A path inside the app, for the router.
  */
 export function pageFor(resolved: ResolvedReference): string {
   if (resolved.entityType === 'song' || resolved.song === undefined) {
     return `/songs/${resolved.shortcode}`;
   }
-  const version = resolved.entityType === 'generation' ? resolved.version : resolved;
-  if (version === undefined) {
-    return `/songs/${resolved.song.shortcode}`;
+  if (resolved.entityType === 'generation') {
+    return `/songs/${resolved.song.shortcode}/generations/${resolved.shortcode}`;
   }
-  const number = version.shortcode.slice(`${resolved.song.shortcode}-v`.length);
+  const number = resolved.shortcode.slice(`${resolved.song.shortcode}-v`.length);
   return `/songs/${resolved.song.shortcode}/v/${number}`;
 }
 
@@ -99,8 +125,9 @@ function decoded(segment: string): string | undefined {
 
 /**
  * Reads what was typed or pasted into the Go to box, ignoring surrounding whitespace: a stable ID
- * or shortcode as it is, or a URL of this instance (`/go/<reference>`, `/songs/<reference>`, or
- * `/songs/<reference>/v/<number>`, absolute or from the root). A URL of another host, or of another
+ * or shortcode as it is, or a URL of this instance (`/go/<reference>`, `/songs/<reference>`,
+ * `/songs/<reference>/v/<number>`, or `/songs/<reference>/generations/<generation>`, absolute or
+ * from the root). A URL of another host, or of another
  * kind of page, names nothing.
  */
 export function goToTarget(text: string): GoToTarget {
@@ -135,6 +162,14 @@ export function goToTarget(text: string): GoToTarget {
   const [first, second, third, fourth] = segments;
   if (segments.length === 2 && (first === 'go' || first === 'songs') && second !== undefined) {
     return { kind: 'reference', reference: second };
+  }
+  if (
+    segments.length === 4 &&
+    first === 'songs' &&
+    third === 'generations' &&
+    fourth !== undefined
+  ) {
+    return { kind: 'reference', reference: fourth };
   }
   if (
     segments.length === 4 &&

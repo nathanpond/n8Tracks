@@ -9,7 +9,7 @@ import {
   Text,
   UnstyledButton,
 } from '@mantine/core';
-import { useId, useRef, useState } from 'react';
+import { useId, useRef, useState, type ReactNode } from 'react';
 import {
   ARTWORK_ACCEPT,
   artworkAlt,
@@ -29,6 +29,17 @@ import type { SaveOutcome } from './useRevisionedSave';
 const SHOWN_PIXELS = 200;
 
 /**
+ * What a further way of choosing the artwork (a Song's "Choose from Generations", #121) gets from
+ * the picker: whether the picker is busy, and how to say it has started and how it ended (a status
+ * to announce, or an error to show; null when the user gave up).
+ */
+export interface ArtworkChooseControls {
+  disabled: boolean;
+  begin: () => void;
+  end: (result: { status: string } | { error: string } | null) => void;
+}
+
+/**
  * An owner's artwork, chosen by uploading an image: upload one, replace it, crop it, or remove it
  * (after a confirmation). The image is uploaded first (n8Tracks judges it by its content, so a file
  * that is not really an image is refused with the reason, and nothing changes); then `save` attaches
@@ -37,22 +48,36 @@ const SHOWN_PIXELS = 200;
  * the image itself is never changed. Replacing resets the crop, unless "Keep crop" is ticked and the
  * crop fits the new image. The artwork shows at 320 pixels as its square; activating it opens the
  * whole 1,024-pixel image with a "View original" link. Replaced or removed artwork is kept for 30
- * days in deleted items.
+ * days in deleted items. An owner may show artwork that is not its own (a Song its Selected
+ * Generation's image, #121): `inherited` says where it comes from, and the picker then offers only
+ * to upload (or `choose`) artwork of the owner's own, never to crop or remove what it shows.
  */
 export function ArtworkPicker({
   title,
   noun,
   artwork,
   save,
+  inherited,
+  afterRemoval = 'a placeholder',
+  choose,
 }: {
   /** The owner's title or name, for the text alternative. */
   title: string;
   /** What the owner is, for the messages ("Song"). */
   noun: string;
+  /** What the owner shows: its own artwork, or (with `inherited`) artwork it borrows; null for none. */
   artwork: Artwork | null;
   /** Saves the owner's artwork: its `artworkAssetId` (null to remove it) and its `artworkCrop`, each when given. */
   save: (edit: ArtworkEdit) => Promise<SaveOutcome>;
+  /** Where the artwork shown comes from when it is not the owner's own; undefined when it is. */
+  inherited?: string | undefined;
+  /** What the owner shows once its own artwork is removed, for the confirmation. */
+  afterRemoval?: string;
+  /** A further way of choosing the owner's artwork, drawn beside the upload control. */
+  choose?: (controls: ArtworkChooseControls) => ReactNode;
 }) {
+  // The owner's own artwork: what can be replaced, cropped, or removed.
+  const own = inherited === undefined ? artwork : null;
   const headingId = useId();
   const reset = useRef<() => void>(null);
   const [busy, setBusy] = useState<'uploading' | 'saving' | undefined>();
@@ -116,8 +141,8 @@ export function ArtworkPicker({
       return;
     }
     setBusy('saving');
-    const replacing = artwork !== null;
-    const wanted = keepCrop ? (artwork?.crop ?? null) : null;
+    const replacing = own !== null;
+    const wanted = keepCrop ? (own?.crop ?? null) : null;
     const kept = keptCrop(wanted, uploaded.artwork.width, uploaded.artwork.height);
     const outcome = await save(
       kept === null
@@ -179,11 +204,27 @@ export function ArtworkPicker({
               disabled={busy !== undefined}
               {...props}
             >
-              {artwork === null ? 'Upload artwork' : 'Replace artwork'}
+              {own === null ? 'Upload artwork' : 'Replace artwork'}
             </Button>
           )}
         </FileButton>
-        {artwork !== null && (
+        {choose?.({
+          disabled: busy !== undefined,
+          begin: () => {
+            setError(undefined);
+            setStatus('');
+            setBusy('saving');
+          },
+          end: (result) => {
+            setBusy(undefined);
+            if (result !== null && 'status' in result) {
+              setStatus(result.status);
+            } else if (result !== null) {
+              setError(result.error);
+            }
+          },
+        })}
+        {own !== null && (
           <Button
             variant="default"
             size="compact-sm"
@@ -196,7 +237,7 @@ export function ArtworkPicker({
             Crop artwork
           </Button>
         )}
-        {artwork?.crop != null && (
+        {own?.crop != null && (
           <Button
             variant="default"
             size="compact-sm"
@@ -208,7 +249,7 @@ export function ArtworkPicker({
             Reset crop
           </Button>
         )}
-        {artwork !== null && (
+        {own !== null && (
           <Button
             variant="default"
             size="compact-sm"
@@ -221,7 +262,12 @@ export function ArtworkPicker({
           </Button>
         )}
       </Group>
-      {artwork?.crop != null && (
+      {inherited !== undefined && (
+        <Text size="xs" c="var(--n8-color-secondary-text)" data-testid="artwork-inherited">
+          {inherited}
+        </Text>
+      )}
+      {own?.crop != null && (
         <Checkbox
           size="xs"
           label="Keep crop"
@@ -245,10 +291,10 @@ export function ArtworkPicker({
         {status}
       </Text>
 
-      {artwork !== null && (
+      {own !== null && (
         <CropDialog
           opened={cropping}
-          artwork={artwork}
+          artwork={own}
           title={title}
           busy={busy === 'saving'}
           error={cropError}
@@ -294,7 +340,7 @@ export function ArtworkPicker({
       >
         <Stack gap="md">
           <Text size="sm" data-testid="remove-artwork-summary">
-            The {noun} will show a placeholder instead. The image is kept in deleted items for 30
+            The {noun} will show {afterRemoval} instead. The image is kept in deleted items for 30
             days.
           </Text>
           <Group justify="flex-end" gap="sm">

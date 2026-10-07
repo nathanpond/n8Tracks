@@ -56,7 +56,7 @@ internal sealed class AlbumTrackStore(N8TracksDbContext context) : IAlbumTrackSt
                 join song in context.Songs.AsNoTracking() on track.SongId equals song.Id
                 join state in context.WorkflowStates.AsNoTracking() on song.WorkflowStateId equals state.Id
                 orderby track.Disc, track.Track
-                select new { track.AlbumId, track.Disc, track.Track, song.Id, song.ShortcodeNumber, song.Title, StateId = state.Id, StateName = state.Name, state.Colour })
+                select new { track.AlbumId, track.Disc, track.Track, song.Id, song.ShortcodeNumber, song.Title, StateId = state.Id, StateName = state.Name, state.Colour, song.SelectedGenerationId })
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
 
@@ -73,9 +73,7 @@ internal sealed class AlbumTrackStore(N8TracksDbContext context) : IAlbumTrackSt
                     new AlbumTrackState(row.StateId, row.StateName, row.Colour),
                     row.Disc,
                     row.Track,
-
-                    // Selected Generations arrive in M4; until then no Song has one, and every track is incomplete.
-                    HasSelectedGeneration: false))]);
+                    HasSelectedGeneration: row.SelectedGenerationId != null))]);
     }
 
     /// <summary>The Albums each of <paramref name="songIds"/> is on, with its disc and track, by Album title (ignoring case), the earlier created first on a tie.</summary>
