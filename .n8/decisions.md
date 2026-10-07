@@ -3404,3 +3404,33 @@ Story #143 (built in parallel; merged into the milestone branch):
 - **Decision:** Web: `IgnoredItemsPage` at `/suno/ignored` with its own sidebar entry "Ignored Suno items" after "Suno import"; search applies on submit (Search button), filters at once, all in the URL; selection is per checked item across pages; removal confirmed in a modal.
   **Why:** "Linked from the Suno sidebar entry": `/suno/imports` redirects to a waiting review, so a link only on that page would often be unreachable.
   **Issue:** #143
+
+Story #142 (built in parallel; merged into the milestone branch):
+
+- **Decision:** #142 does not store Suno state changes ("remote-state rows"). `RemoteStateService` works them out from the export (records classed linked, changed, or conflict, plus the header's scope and completeness flags) and from the catalog every time they are listed, counted, or applied. Only the rows set to Skip are stored, as a JSON array in a new nullable `suno_exports.remote_skips_json`.
+  **Why:** The story's discretion says rows are re-evaluated at Confirm and applied to each Generation as it then is. A Remote Missing row has no staged record to hang a choice on. A new staging table would be a Rule 4 schema addition the story does not name; one column on a staging table is enough.
+  **Issue:** #142
+- **Decision:** Migration `20261007050000_FollowSunoRemoteState` (the parallel migration slot) adds `generations.archived_by` (`user` | `sync`, null while active) and `suno_exports.remote_skips_json`. `archived_by` is added by a hand-written `ALTER ... CHECK`, because EF's `AddCheckConstraint` would rebuild `generations` and drop #123's triggers. Generation retention moves to **shape 5** (`GenerationShape4To5`: no archiver).
+  **Why:** The story's discretion requires `archivedBy: user | sync`. An archived Generation with no archiver reads as the user's, so existing archives are never undone by a restore.
+  **Issue:** #142
+- **Decision:** The user's archive is set by the existing `PATCH /generations/{ref}` and only when `state` is sent. `archived` makes `archivedBy: user`, even on a Generation that sync archived. `active` clears it. An edit of the rating alone keeps the archiver. `IGenerationStore.TryUpdateAsync` takes the archiver, and Generation answers carry `archivedBy`.
+  **Why:** This is the discretion line "A user archiving a Generation that sync archived makes it archivedBy: user" without breaking sync's archive on a rating change.
+  **Issue:** #142
+- **Decision:** Remote Missing leaves out Generations attached after the export's `capturedAt`, and Suno IDs on the ignore list (`suno_ignored_items`).
+  **Why:** A library read taken before a clip was attached cannot say that clip is missing. This errs toward never marking a clip missing wrongly. Ignored clips get no rows (discretion). It also keeps the existing tests and the shared e2e containers safe, since their headers carry a fixed or earlier `capturedAt`.
+  **Issue:** #142
+- **Decision:** New session-only endpoints `GET` and `PATCH /api/v1/suno/exports/{id}/remote-states` live in their own file, `Api/Endpoints/SunoRemoteStateEndpoints.cs`. The PATCH takes `{sunoIds: 1–1000, apply}` with If-Match on the export revision and raises the revision. Its refusals are 422 `unknown_rows`, 422 `validation_failed`, 409 `export_not_ready`, 409 `revision_conflict`, and 428. The export summary gains `remoteChanges` and `remoteChangesTotal`, and `nothingToDo` is false while any change is applied. The commit result gains `remoteStates: [{sunoId, change, outcome: applied|skipped, generation}]`. **The session-only count is now 58.**
+  **Why:** This keeps the shared `SunoExportsEndpoints` and `PATCH .../records` (which #141 and #143 also touch) to small, additive edits. Apply/Skip is independent of any diff choice (discretion).
+  **Issue:** #142
+- **Decision:** The commit job applies the remote-state rows after the targets and artwork, in one transaction (`RemoteStateService.ApplyAsync`). Each applied row raises the Generation's revision and touches neither its Song nor the selection nor retention. `CommitPlan.Of` and `ImportTargetWriter` are unchanged.
+  **Why:** Rows are independent of record choices, and the brief asked for small edits there.
+  **Issue:** #142
+- **Decision:** In the invariant 3 guard, the scenario becomes a whole-library sync (`capturedAt` 2099) with the frozen Version's clip in the Trash (applied) and the bystander missing (set to Skip). An existing Generation may now change only for a row left to apply, and only in `remote_state`, `state`, `archived_by`, and `revision`. The everything-skipped complement also skips every row. A new bite test makes the store forget the skips and expects the bystander reported.
+  **Why:** This is the test plan's "remote-state changes happen only for rows left selected at Confirm".
+  **Issue:** #142
+- **Decision:** The e2e `import-commit.spec.ts` export header now says `libraryComplete: false`. The new `suno-remote-state.spec.ts` sets to Skip, through the API, every Suno state change but its own two before walking the Demo.
+  **Why:** On the shared containers, a complete whole-library sync marks every other test's clip Remote Missing. That would break import-commit's step 3 ("nothing to do") and touch other specs' data.
+  **Issue:** #142
+- **Decision:** On the web, the Class filter gains "Suno state changes (N)" (`?class=remote-state`), which lists the rows in `suno/RemoteStateChanges.tsx` with an "Apply: <title>" checkbox each. Generation rows and the panel gain an "In Suno Trash" badge (`in-suno-trash`).
+  **Why:** The story's key_link names the class filter. The badge covers the truth "User sees in n8Tracks which outputs they have trashed in Suno"; Remote Missing already had one.
+  **Issue:** #142
