@@ -1,0 +1,15 @@
+// A fixture for the invariant 4 guard's static scan: an observer that sends requests of its own to
+// addresses built at run time, which no literal check sees (#330). Scanned as if it were
+// src/page/observe.ts; never built or shipped.
+const original = window.fetch.bind(window);
+const page = window;
+
+window.fetch = async (...args: Parameters<typeof fetch>) => {
+  const response = await original(...args);
+  void original(page.location.href + 'api/clips/trashed_v2');
+  void original.call(page, `${page.location.origin}/api/feed/v3`);
+  const [input] = args;
+  void original(input);
+  void page.fetch(page.location.href);
+  return response;
+};

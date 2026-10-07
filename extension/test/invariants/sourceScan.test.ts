@@ -115,12 +115,64 @@ describe('the static scan of the invariant 4 guard (TypeScript compiler API)', (
     expect(wraps.pageContext).toContain('src/page/observe.ts');
 
     const requests = scanWith({ 'src/page/observe.ts': fixture('observer-requests.ts.txt') });
-    expect(findingsIn(requests, 'src/page/observe.ts').map((line) => line.split(':')[0])).toEqual([
-      'request 7',
-      'request 8',
-      'request 8',
-      'request 8',
+    expect(findingsIn(requests, 'src/page/observe.ts')).toEqual([
+      "request 7: original('/api/feed/v3', { method: 'POST' })",
+      'request 7: original',
+      'request 8: original',
+      "request 8: new Request('https://studio-api-prod.suno.com/api/clip')",
+      "request 8: new Request('https://studio-api-prod.suno.com/api/clip')",
+      "request 8: 'https://studio-api-prod.suno.com/api/clip'",
     ]);
+  });
+
+  // #330: an address built at run time is not a literal, so the literal checks alone miss it.
+  it("finds the observer calling the saved fetch with anything but the page's own arguments", () => {
+    const report = scanWith({ 'src/page/observe.ts': fixture('observer-computed-address.ts.txt') });
+
+    expect(findingsIn(report, 'src/page/observe.ts')).toEqual([
+      'request 9: original',
+      'request 10: original',
+      'request 12: original',
+      'request 13: fetch',
+    ]);
+  });
+
+  it("passes the real observer, which calls the saved fetch with the page's arguments only", () => {
+    const observer = readFileSync(join(EXTENSION_ROOT, 'src/page/observe.ts'), 'utf8');
+    expect(
+      findingsIn(scanWith({ 'src/page/observe.ts': observer }), 'src/page/observe.ts'),
+    ).toEqual([]);
+  });
+
+  // #331: script injection and the debugger reach the page from background code, past the primitives.
+  it('finds script injection and the debugger in any file, by name', () => {
+    const report = scanWith({ 'src/background/probe.ts': fixture('injects-scripts.ts.txt') });
+
+    expect(findingsIn(report, 'src/background/probe.ts')).toEqual([
+      'injection 5: executeScript',
+      'injection 9: insertCSS',
+      'injection 10: debugger',
+      "injection 12: 'executeScript'",
+    ]);
+  });
+
+  it("lets the popup add the extension's own Suno content script, and nothing else", () => {
+    const popup = readFileSync(join(EXTENSION_ROOT, 'src/popup/main.ts'), 'utf8');
+    expect(findingsIn(scanWith({ 'src/popup/main.ts': popup }), 'src/popup/main.ts')).toEqual([]);
+
+    const withCode = popup.replace('files: [SUNO_FILE]', 'files: [SUNO_FILE], func: () => 1');
+    expect(findingsIn(scanWith({ 'src/popup/main.ts': withCode }), 'src/popup/main.ts')).toEqual([
+      'injection 22: executeScript',
+    ]);
+    const otherFile = popup.replace('files: [SUNO_FILE]', "files: ['page.js']");
+    expect(findingsIn(scanWith({ 'src/popup/main.ts': otherFile }), 'src/popup/main.ts')).toEqual([
+      'injection 22: executeScript',
+    ]);
+    // The same call anywhere else is found.
+    const moved = popup.replace("'../background/connection.ts'", "'./connection.ts'");
+    expect(
+      findingsIn(scanWith({ 'src/background/popupCopy.ts': moved }), 'src/background/popupCopy.ts'),
+    ).toEqual(['injection 22: executeScript']);
   });
 
   it('allows the credential-less image read in the file the exemption names, and nowhere else', () => {
