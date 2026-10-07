@@ -5,7 +5,8 @@ import type { Generation } from '../api/generations';
 import type { LineageSource } from '../api/lineage';
 import type { VersionDetail } from '../api/versions';
 import { DEFAULT_INPUTS } from '../test/createFieldsFixture';
-import { advanceTimers, fakeTimeouts, renderApp } from '../test/helpers';
+import { fakeTimeouts } from '../test/fakeClock';
+import { renderApp } from '../test/helpers';
 import { relationshipType, SONG_B, SONG_C, SYSTEM_TYPES } from '../test/songServer';
 import { testGeneration, testVersion, versionServer } from '../test/versionServer';
 
@@ -72,19 +73,24 @@ function serve(inputs: Record<string, unknown> = {}, change: Partial<VersionDeta
 }
 
 async function openVersion() {
-  fakeTimeouts();
-  const user = userEvent.setup({ advanceTimers });
+  return (await openVersionOnClock()).user;
+}
+
+/** As {@link openVersion}, with the fake clock it put on. */
+async function openVersionOnClock() {
+  const clock = fakeTimeouts();
+  const user = userEvent.setup({ advanceTimers: clock.advanceTimers });
   renderApp('/songs/n8-7');
   await screen.findByRole('heading', { name: 'Sources' });
   await waitFor(() => {
     expect(screen.getByRole('combobox', { name: 'Action' })).toBeEnabled();
   });
-  return user;
+  return { user, clock };
 }
 
 /** Opens the Song's current Version when it is frozen (its Action is text, not a control). */
 async function openFrozen() {
-  fakeTimeouts();
+  const { advanceTimers } = fakeTimeouts();
   const user = userEvent.setup({ advanceTimers });
   renderApp('/songs/n8-7');
   await screen.findByTestId('sources-frozen');
@@ -572,7 +578,7 @@ describe('the Sources section of a Version (#125)', () => {
 
   it('a pasted ID n8Tracks already has becomes that Generation once saved', async () => {
     const { server } = serve();
-    const user = await openVersion();
+    const { user, clock } = await openVersionOnClock();
     await user.selectOptions(screen.getByRole('combobox', { name: 'Action' }), 'Cover');
     await user.click(screen.getByRole('button', { name: 'Choose the Cover source' }));
     const dialog = await openedDialog('Choose the Cover source');
@@ -588,7 +594,7 @@ describe('the Sources section of a Version (#125)', () => {
     expect(within(section()).queryByTestId('source-availability')).not.toBeInTheDocument();
     // Taken as the API stored it, it is not sent again.
     await act(async () => {
-      advanceTimers(3_000);
+      clock.advanceTimers(3_000);
       await Promise.resolve();
     });
     expect(server.writes).toHaveLength(1);

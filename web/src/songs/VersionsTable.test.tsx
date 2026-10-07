@@ -2,7 +2,8 @@ import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { COMPLETION_WATCH_MS, GENERATING_REFRESH_MS, STILL_GENERATING } from '../api/generations';
-import { advanceTimers, fakeTimeouts, jsonResponse, renderApp } from '../test/helpers';
+import { fakeTimeouts } from '../test/fakeClock';
+import { jsonResponse, renderApp } from '../test/helpers';
 import { testComment, testGeneration, testVersion, versionServer } from '../test/versionServer';
 
 const ONE = testVersion('1', { current: true, isFrozen: true });
@@ -395,7 +396,7 @@ describe('the Versions table', () => {
   });
 
   it('shows "Generating" for a clip still being made, and reads the list again every 10 seconds until it is done', async () => {
-    fakeTimeouts();
+    const { advanceTimers } = fakeTimeouts();
     const user = userEvent.setup({ advanceTimers });
     const { server } = versionServer([ONE]);
     server.generations = [

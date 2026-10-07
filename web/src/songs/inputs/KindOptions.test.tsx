@@ -2,7 +2,8 @@ import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_INPUTS } from '../../test/createFieldsFixture';
-import { advanceTimers, fakeTimeouts, renderApp } from '../../test/helpers';
+import { fakeTimeouts } from '../../test/fakeClock';
+import { renderApp } from '../../test/helpers';
 import { testVersion, versionServer } from '../../test/versionServer';
 
 const TEXT = { lyrics: '[Verse]\nRun with me\n', styles: 'punk, fast' };
@@ -12,7 +13,7 @@ const TEXT = { lyrics: '[Verse]\nRun with me\n', styles: 'punk, fast' };
  * loaded machine spends no real time waiting for it and cannot run the test's timeout out.
  */
 async function openVersion() {
-  fakeTimeouts();
+  const { advanceTimers } = fakeTimeouts();
   const user = userEvent.setup({ advanceTimers });
   renderApp('/songs/n8-7');
   await screen.findByRole('radiogroup', { name: 'Kind' });

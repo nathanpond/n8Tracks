@@ -8,14 +8,8 @@ import { REQUEST_POLL_MS } from '../api/generationRequests';
 import type { Bridge, BridgeMessage, BridgeReply, ExtensionState } from '../extension/bridge';
 import { stateOfPong } from '../extension/bridge';
 import { BridgeContext } from '../extension/bridgeContext';
-import {
-  advanceTimers,
-  fakeTimeouts,
-  healthyReport,
-  jsonResponse,
-  requestPath,
-  stubFetch,
-} from '../test/helpers';
+import { fakeTimeouts } from '../test/fakeClock';
+import { healthyReport, jsonResponse, requestPath, stubFetch } from '../test/helpers';
 import { GenerateOnSunoButton, GenerateOnSunoStatus } from './GenerateOnSuno';
 import { useGenerateOnSuno } from './useGenerateOnSuno';
 
@@ -247,7 +241,7 @@ describe('Generate on Suno', () => {
   });
 
   it('follows the request as the extension reports it, every two seconds while it is active', async () => {
-    fakeTimeouts();
+    const { advanceTimers } = fakeTimeouts();
     const server = serve({ current: testRequest({ state: 'claimed', claimed: true }) });
     const { bridge } = fakeBridge({ kind: 'ready', extensionVersion: '0.1.0' });
     renderAction(bridge);
