@@ -33,7 +33,7 @@ function SidebarLink({
 
 /**
  * The signed-in shell: the header (sidebar toggle, product name, colour control, Go to box, user menu), the
- * sidebar, and the current page. The sidebar lists Songs, Artists, Albums, Playlists, Suno import, Ignored Suno items, and Settings, and Settings has Account,
+ * sidebar, and the current page. The sidebar lists Songs, Artists, Albums, Playlists, Suno import, Ignored Suno items, Library (Media), and Settings, and Settings has Account,
  * Credentials, Workflow, Catalog, Genres, Tags, Relationships, Suno, Suno workspaces, Backups, and System; later stories add pages. On a narrow screen the sidebar is hidden until the toggle opens
  * it, and choosing a page closes it again.
  */
@@ -65,6 +65,20 @@ export function SignedInShell() {
           <SidebarLink to="/playlists" label="Playlists" onNavigate={close} />
           <SidebarLink to="/suno/imports" label="Suno import" onNavigate={close} />
           <SidebarLink to="/suno/ignored" label="Ignored Suno items" onNavigate={close} />
+          <Text
+            id="navigation-library"
+            size="xs"
+            fw={700}
+            tt="uppercase"
+            c="var(--n8-color-secondary-text)"
+            px="sm"
+            pt="sm"
+          >
+            Library
+          </Text>
+          <div role="group" aria-labelledby="navigation-library">
+            <SidebarLink to="/library/media" label="Media" onNavigate={close} />
+          </div>
           <Text
             id="navigation-settings"
             size="xs"

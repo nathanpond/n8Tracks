@@ -2,6 +2,7 @@ using System.Globalization;
 using Microsoft.AspNetCore.Http.HttpResults;
 using n8Tracks.Api.Auth;
 using n8Tracks.Api.Problems;
+using n8Tracks.Application.Configuration;
 using n8Tracks.Application.Credentials;
 using n8Tracks.Application.Media;
 using n8Tracks.Domain.Media;
@@ -12,8 +13,11 @@ namespace n8Tracks.Api.Endpoints;
 /// The local media library (#203): starting a scan of the media folder, and reading the audio files
 /// it cataloged. Starting a scan is session-only (invariant 7 keeps file-system actions away from
 /// tokens and MCP); reading needs <c>catalog.read</c>. Every input names an audio file by ID, never
-/// by a path, and no answer carries an absolute path. Every answer is <c>no-store</c>. The media
-/// status (#207) says whether the media folder can be read, and since when; #208 adds the rest.
+/// by a path, and no answer carries an absolute path but the media folder's own, as configured (the
+/// path inside the container, never the host's). Every answer is <c>no-store</c>. The media status
+/// says whether the media folder can be read, and since when (#207), and what the Media page shows
+/// (#208): the files by status and association, the last scan and the last successful one, the scan in
+/// progress, the schedule, and the majority-missing warning.
 /// </summary>
 internal static class MediaEndpoints
 {
@@ -37,7 +41,7 @@ internal static class MediaEndpoints
 
         endpoints.MapGet(StatusPath, StatusAsync)
             .WithName("GetMediaStatus")
-            .WithSummary("Whether the media folder can be read (available or unavailable), and since when.")
+            .WithSummary("The media library's state: whether the media folder can be read and since when, the audio files by status and association, the last scan and the last successful one, the scan queued or running, the schedule and its next scan, and whether the last successful scan marked most files Missing.")
             .RequireScope(CredentialScopes.CatalogRead)
             .Produces<MediaStatusResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
@@ -79,16 +83,17 @@ internal static class MediaEndpoints
             : TypedResults.Accepted($"{context.Request.PathBase}{JobsEndpoints.JobsPath}/{start.JobId}", response);
     }
 
-    /// <summary>200 with the mount state; <c>since</c> is null before anything was ever recorded.</summary>
+    /// <summary>200 with the media status; <c>mount.since</c> is null before anything was ever recorded, and <c>lastScan</c> before any scan ended.</summary>
     private static async Task<Ok<MediaStatusResponse>> StatusAsync(
-        MediaAvailability availability,
+        MediaStatusService statuses,
+        N8TracksOptions options,
         HttpContext context,
         CancellationToken cancellationToken)
     {
         SessionEndpoints.NoStore(context);
 
-        var mount = await availability.CurrentAsync(cancellationToken);
-        return TypedResults.Ok(new MediaStatusResponse(new MediaMountResponse(MediaAvailabilityTexts.Text(mount.State), mount.SinceUtc?.UtcDateTime)));
+        var status = await statuses.GetAsync(cancellationToken);
+        return TypedResults.Ok(MediaStatusResponse.From(status, options.MediaPath));
     }
 
     /// <summary>200 with a page; 422 <c>validation_failed</c> for a malformed or unknown query value, or a limit over 200.</summary>
@@ -208,11 +213,125 @@ internal static class MediaEndpoints
     }
 }
 
-/// <summary>The media status (#207): the mount state. #208 adds the counts and the scans.</summary>
-internal sealed record MediaStatusResponse(MediaMountResponse Mount);
+/// <summary>
+/// The media status (#207, #208). <c>nextScheduledScan</c> is null while scheduled scans are off, and
+/// may be in the past when one is due; <c>activeScanJobId</c> is the <c>media-scan</c> job queued or
+/// running, or null.
+/// </summary>
+internal sealed record MediaStatusResponse(
+    MediaMountResponse Mount,
+    MediaFileCountsResponse Counts,
+    MediaScanReportResponse? LastScan,
+    MediaScanReportResponse? LastSuccessfulScan,
+    Guid? ActiveScanJobId,
+    MediaScheduleResponse Schedule,
+    DateTime? NextScheduledScan,
+    bool MajorityMissingWarning)
+{
+    public static MediaStatusResponse From(MediaStatus status, string folderPath)
+    {
+        ArgumentNullException.ThrowIfNull(status);
 
-/// <summary>Whether the media folder can be read (<c>available</c> or <c>unavailable</c>), and since when (null before anything was recorded).</summary>
-internal sealed record MediaMountResponse(string State, DateTime? Since);
+        var counts = status.Counts;
+        return new(
+            new MediaMountResponse(MediaAvailabilityTexts.Text(status.Mount.State), status.Mount.SinceUtc?.UtcDateTime, folderPath),
+            new MediaFileCountsResponse(counts.Total, counts.Available, counts.Missing, counts.Associated, counts.Unmatched),
+            MediaScanReportResponse.From(status.LastScan),
+            MediaScanReportResponse.From(status.LastSuccessfulScan),
+            status.ActiveScanJobId,
+            new MediaScheduleResponse(status.Schedule.Enabled, status.Schedule.IntervalMinutes),
+            status.NextScheduledScan?.UtcDateTime,
+            status.MajorityMissingWarning);
+    }
+}
+
+/// <summary>
+/// Whether the media folder can be read (<c>available</c> or <c>unavailable</c>), since when (null
+/// before anything was recorded), and the folder's path as configured: inside the container.
+/// </summary>
+internal sealed record MediaMountResponse(string State, DateTime? Since, string Path);
+
+/// <summary>The cataloged audio files by stored status and by association; Unmatched is every file with no association, Missing ones included.</summary>
+internal sealed record MediaFileCountsResponse(int Total, int Available, int Missing, int Associated, int Unmatched);
+
+/// <summary>The scan schedule (#204): on or off, and the minutes from the end of one scan to the next.</summary>
+internal sealed record MediaScheduleResponse(bool Enabled, int IntervalMinutes);
+
+/// <summary>
+/// One finished scan. <c>trigger</c> (<c>manual</c>, <c>startup</c>, <c>scheduled</c>, <c>recovery</c>)
+/// and <c>counts</c> are null when the scan ended without a summary (cut off by a restart).
+/// <c>failure</c> is null when it succeeded, otherwise <c>media_folder_unavailable</c>,
+/// <c>interrupted</c>, or <c>failed</c>.
+/// </summary>
+internal sealed record MediaScanReportResponse(
+    Guid JobId,
+    string? Trigger,
+    string Outcome,
+    DateTime StartedAt,
+    DateTime FinishedAt,
+    decimal DurationSeconds,
+    MediaScanCountsResponse? Counts,
+    string? Failure)
+{
+    public static MediaScanReportResponse? From(MediaScanReport? report)
+    {
+        if (report is null)
+        {
+            return null;
+        }
+
+        return new(
+            report.JobId,
+            report.Trigger is { } trigger ? MediaScanTriggers.Text(trigger) : null,
+            report.Outcome == MediaScanOutcome.Succeeded ? "succeeded" : "failed",
+            report.StartedUtc.UtcDateTime,
+            report.FinishedUtc.UtcDateTime,
+            Math.Max(0m, Math.Round((decimal)report.Duration.TotalSeconds, 3)),
+            report.Counts is { } counts ? MediaScanCountsResponse.From(counts) : null,
+            report.Failure switch
+            {
+                null => null,
+                MediaScanFailure.FolderUnavailable => "media_folder_unavailable",
+                MediaScanFailure.Interrupted => "interrupted",
+                _ => "failed",
+            });
+    }
+}
+
+/// <summary>What a scan counted, as its job result reports it.</summary>
+internal sealed record MediaScanCountsResponse(
+    int Seen,
+    int New,
+    int Changed,
+    int Unchanged,
+    int Missing,
+    int Restored,
+    int Associated,
+    int Unmatched,
+    int Skipped,
+    int Unreadable,
+    int UnreadableDirectories,
+    int AvailableBefore)
+{
+    public static MediaScanCountsResponse From(MediaScanCounts counts)
+    {
+        ArgumentNullException.ThrowIfNull(counts);
+
+        return new(
+            counts.Seen,
+            counts.New,
+            counts.Changed,
+            counts.Unchanged,
+            counts.Missing,
+            counts.Restored,
+            counts.Associated,
+            counts.Unmatched,
+            counts.Skipped,
+            counts.Unreadable,
+            counts.UnreadableDirectories,
+            counts.AvailableBefore);
+    }
+}
 
 /// <summary>The scan's job, and whether it was already queued or running.</summary>
 internal sealed record MediaScanStartResponse(Guid JobId, bool AlreadyInProgress);

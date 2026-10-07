@@ -7,23 +7,40 @@ namespace n8Tracks.Infrastructure.Persistence;
 
 /// <summary>
 /// The last scan's summary (#203) in the <c>settings</c> row <see cref="Key"/>, as
-/// <c>{"jobId", "trigger", "outcome", "startedUtc", "finishedUtc", "counts": {...}, "error"}</c>, the counts including <c>associated</c> and <c>unmatched</c> since #206, and <c>missing</c> and <c>restored</c> since #207.
-/// Kept outside the jobs table, which is pruned after 30 days. A summary written before #205 has no
-/// <c>counts.skippedLinks</c>, and reads as none skipped.
+/// <c>{"jobId", "trigger", "outcome", "startedUtc", "finishedUtc", "counts": {...}, "error"}</c>, the counts including <c>associated</c> and <c>unmatched</c> since #206, <c>missing</c> and <c>restored</c> since #207, and <c>availableBefore</c> since #208.
+/// The last scan that succeeded is kept as well (#208), in the same shape in the row
+/// <see cref="SuccessfulKey"/>, so a failed scan never hides the counts before it. Both are kept
+/// outside the jobs table, which is pruned after 30 days. A summary written before #205 has no
+/// <c>counts.skippedLinks</c>, and reads as none skipped; before #208 there is no
+/// <see cref="SuccessfulKey"/> row, and the last scan stands for it when it succeeded.
 /// </summary>
 internal sealed class MediaScanSummaryStore(N8TracksDbContext context) : IMediaScanSummaryStore
 {
     public const string Key = "media.lastScan";
+
+    public const string SuccessfulKey = "media.lastSuccessfulScan";
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 
-    public async Task<MediaScanSummary?> FindAsync(CancellationToken cancellationToken)
+    public Task<MediaScanSummary?> FindAsync(CancellationToken cancellationToken) => FindAsync(Key, cancellationToken);
+
+    public async Task<MediaScanSummary?> FindLastSuccessfulAsync(CancellationToken cancellationToken)
+    {
+        if (await FindAsync(SuccessfulKey, cancellationToken).ConfigureAwait(false) is { } successful)
+        {
+            return successful;
+        }
+
+        return await FindAsync(Key, cancellationToken).ConfigureAwait(false) is { Outcome: MediaScanOutcome.Succeeded } last ? last : null;
+    }
+
+    private async Task<MediaScanSummary?> FindAsync(string key, CancellationToken cancellationToken)
     {
         var text = await context.Settings.AsNoTracking()
-            .Where(setting => setting.Key == Key)
+            .Where(setting => setting.Key == key)
             .Select(static setting => setting.Value)
             .SingleOrDefaultAsync(cancellationToken)
             .ConfigureAwait(false);
@@ -39,7 +56,7 @@ internal sealed class MediaScanSummaryStore(N8TracksDbContext context) : IMediaS
             || value.StartedUtc is null
             || value.FinishedUtc is null)
         {
-            throw new InvalidOperationException($"The settings row {Key} cannot be read.");
+            throw new InvalidOperationException($"The settings row {key} cannot be read.");
         }
 
         return new MediaScanSummary(
@@ -51,11 +68,13 @@ internal sealed class MediaScanSummaryStore(N8TracksDbContext context) : IMediaS
             new MediaScanCounts(counts.Seen, counts.New, counts.Changed, counts.Unchanged, counts.Skipped, counts.Unreadable, counts.UnreadableDirectories, counts.Associated, counts.Unmatched, counts.Missing, counts.Restored)
             {
                 SkippedLinks = counts.SkippedLinks is { } links ? new MediaSkippedLinks(links.Escaping, links.Cycle, links.Dangling) : MediaSkippedLinks.None,
+                AvailableBefore = counts.AvailableBefore,
             },
             value.Error);
     }
 
-    public Task WriteAsync(MediaScanSummary summary, CancellationToken cancellationToken)
+    /// <summary>Replaces the last scan's summary and, when it succeeded, the last successful scan's too, in one statement each.</summary>
+    public async Task WriteAsync(MediaScanSummary summary, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(summary);
 
@@ -79,21 +98,29 @@ internal sealed class MediaScanSummaryStore(N8TracksDbContext context) : IMediaS
                     counts.Associated,
                     counts.Unmatched,
                     counts.Missing,
-                    counts.Restored),
+                    counts.Restored,
+                    counts.AvailableBefore),
                 summary.Error),
             Json);
 
-        return context.Database.ExecuteSqlInterpolatedAsync(
-            $"INSERT INTO settings (key, value) VALUES ({Key}, {value}) ON CONFLICT (key) DO UPDATE SET value = excluded.value;",
-            cancellationToken);
+        await WriteAsync(Key, value, cancellationToken).ConfigureAwait(false);
+        if (summary.Outcome == MediaScanOutcome.Succeeded)
+        {
+            await WriteAsync(SuccessfulKey, value, cancellationToken).ConfigureAwait(false);
+        }
     }
+
+    private Task WriteAsync(string key, string value, CancellationToken cancellationToken) =>
+        context.Database.ExecuteSqlInterpolatedAsync(
+            $"INSERT INTO settings (key, value) VALUES ({key}, {value}) ON CONFLICT (key) DO UPDATE SET value = excluded.value;",
+            cancellationToken);
 
     private sealed record SummaryValue(Guid JobId, string? Trigger, string? Outcome, string? StartedUtc, string? FinishedUtc, CountsValue? Counts, string? Error);
 
     /// <summary>
     /// The counts; <c>associated</c> and <c>unmatched</c> (#206) and <c>missing</c> and
-    /// <c>restored</c> (#207) read as 0, and <c>skippedLinks</c> (#205) as null, from a summary written
-    /// before them.
+    /// <c>restored</c> (#207), and <c>availableBefore</c> (#208) read as 0, and <c>skippedLinks</c> (#205)
+    /// as null, from a summary written before them.
     /// </summary>
     private sealed record CountsValue(
         int Seen,
@@ -107,7 +134,8 @@ internal sealed class MediaScanSummaryStore(N8TracksDbContext context) : IMediaS
         int Associated = 0,
         int Unmatched = 0,
         int Missing = 0,
-        int Restored = 0);
+        int Restored = 0,
+        int AvailableBefore = 0);
 
     private sealed record SkippedLinksValue(int Escaping, int Cycle, int Dangling);
 }
