@@ -3377,3 +3377,30 @@ Story #138:
 - **Decision:** BLOCKER, partial: AC 3 (a declined change is remembered) and AC 6 (a keep is remembered the same way) are not built. The planner's design (discretion) stores two SHA-256 hashes as columns on `generations`. That needs a migration and Generation retention shape 5. The orchestrator gave M4's migration slot to #142, which runs in parallel. Everything else is built: the diff, partial acceptance, the move, Skip by default, and the raw-JSON rule. A declined or kept record shows as Changed or Conflict again at the next sync until the follow-up lands.
   **Why:** No existing table fits without bending the design. `settings` is shared and not retained with the Generation, and `provider_records.payload` must stay Suno's raw clip byte for byte. A schema change is Rule 4.
   **Issue:** #141
+
+Story #143 (built in parallel; merged into the milestone branch):
+
+- **Decision:** No migration: #131's `suno_ignored_items` (`suno_id`, `title`, `workspace_id`, `ignored_utc`, `last_status`, `last_seen_utc`) is used as created. `last_status` holds `present | trashed | missing | not_seen` (null until a sync saw the clip); `last_seen_utc` is the export's capture time of the last confirmed sync that included it.
+  **Why:** The shape planned for #143 was already in place; the parallel addendum forbids migrations.
+  **Issue:** #143
+- **Decision:** Status rules (`SunoIgnoreListRules.StatusAfter`): a confirmed sync including the clip sets `trashed` or `present`; a whole-library sync (scope `library` and `libraryComplete`) without it sets `missing` when `trashedComplete`, else `not_seen`; any other sync leaves it. "Missing" therefore matches #142's Remote Missing rule, and "not seen since" is the weaker whole-library case.
+  **Why:** The story names four statuses with precedence "in Trash, present, missing, not seen" but defines only "not seen"; #142 defines missing as library and Trash both read to the end.
+  **Issue:** #143
+- **Decision:** Commit hooks: `CommitPlan.Of` collects the Don't copy records (`plan.Ignores`); after the targets the job adds each in its own transaction (`IgnoreListService.IgnoreAsync`, idempotent, reports `linked` / `skipped: tombstoned` when that changed since the review), then refreshes the list in one transaction. `ImportTargetWriter` calls `ForgetWithinAsync` after each attach, in the target's transaction (new last constructor parameter).
+  **Why:** "Adding happens in the record's transaction"; removal belongs with the import. Kept additive for the parallel #141/#142 edits of the same code.
+  **Issue:** #143
+- **Decision:** Don't copy on a `deleted` record is refused with the new reason `tombstoned` (`ImportChoiceRules.Tombstoned`), at PATCH and in `ProposalService.ValidateAsync`; a change by filter to Don't copy passes over deleted records instead of refusing the whole change. The list also never shows a Suno ID with a tombstone.
+  **Why:** Discretion "an ignore choice for a tombstoned ID is refused in validation"; refusing a whole "select all" for one deleted record would make the filter form unusable (the #131 staging guard does exactly that).
+  **Issue:** #143
+- **Decision:** Removal reclassifies every `ready` export with `ExportStagingService.ReclassifyAsync` (class becomes `new`, the stored choice — Skip — kept, revision unchanged).
+  **Why:** Discretion "removing an entry while an export is ready reclassifies that export's record as New"; reusing #140's reclassify keeps choices intact.
+  **Issue:** #143
+- **Decision:** Deferred to #142: "importing an ignored clip that is in Suno's Trash imports it Archived". Today a trashed clip imports Active, as every trashed new clip does after #140.
+  **Why:** Archiving by sync needs #142's `archivedBy: sync` (and its migration); archiving here through the user's path would mark it user-archived and break #142's restore rule. Flagged for the orchestrator to apply after #142 merges.
+  **Issue:** #143
+- **Decision:** API: `GET /api/v1/suno/ignored` (`q`, `workspace`, `status`, `page`; answer `{items, page, pageSize: 50, total, workspaces:[{id,name,count}]}`) and `POST /api/v1/suno/ignored/remove` (`{sunoIds}` 1–1,000 → `{removed, unknown}`; 422 `validation_failed` / `too_many_items`), both SessionOnly (session-only count 56 → 58). The workspace facet covers the whole list so the filter offers every workspace.
+  **Why:** Story discretion (paged at 50, search title substring or Suno ID prefix, bulk removal up to 1,000, skipping unknown with counts, 403 `session_required` for a bearer).
+  **Issue:** #143
+- **Decision:** Web: `IgnoredItemsPage` at `/suno/ignored` with its own sidebar entry "Ignored Suno items" after "Suno import"; search applies on submit (Search button), filters at once, all in the URL; selection is per checked item across pages; removal confirmed in a modal.
+  **Why:** "Linked from the Suno sidebar entry": `/suno/imports` redirects to a waiting review, so a link only on that page would often be unreachable.
+  **Issue:** #143
