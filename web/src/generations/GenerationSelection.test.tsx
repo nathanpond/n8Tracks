@@ -122,6 +122,64 @@ describe('the Song’s Selected Generation', () => {
     expect(server.selectionWrites.map((write) => write.ifMatch)).toEqual(['"1"', '"2"']);
   });
 
+  it('is not cleared over a selection made elsewhere: the conflict dialog shows it, and Reload keeps it', async () => {
+    const user = userEvent.setup();
+    const server = twoVersionSong();
+    const { panel } = await openPanel(V1G1);
+    await user.click(within(panel).getByRole('button', { name: 'Select for the Song' }));
+    await waitFor(() => {
+      expect(header()).toHaveTextContent(V1G1);
+    });
+    server.selectElsewhere(testGeneration('2', 1).id);
+
+    await user.click(within(panel).getByRole('button', { name: 'Clear the selection' }));
+
+    const conflict = await screen.findByRole('dialog', { name: 'Changed since you loaded it' });
+    const row = within(conflict).getByRole('row', { name: /Selected Generation/ });
+    expect(row).toHaveTextContent('Changed elsewhere and by you');
+    expect(row).toHaveTextContent(`None${V2G1}`);
+    // Not sent again: the other client's selection stands, and the page shows it.
+    expect(server.selectionWrites.map((write) => write.method)).toEqual(['PUT', 'DELETE']);
+    expect(header()).toHaveTextContent(`Selected Generation:${V2G1}`);
+
+    await user.click(within(conflict).getByRole('button', { name: 'Reload' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Changed since you loaded it' })).toBeNull();
+    });
+    expect(server.selectionWrites).toHaveLength(2);
+    expect(server.song.selectedGeneration?.shortcode).toBe(V2G1);
+    expect(header()).toHaveTextContent(`Selected Generation:${V2G1}`);
+    expect(within(generationRow(V1G1)).queryByTestId('selected-generation')).toBeNull();
+  });
+
+  it('replaces a selection made elsewhere only when the user reapplies theirs in the conflict dialog', async () => {
+    const user = userEvent.setup();
+    const server = twoVersionSong();
+    const { panel } = await openPanel(V1G1);
+    server.selectElsewhere(testGeneration('2', 1).id);
+
+    await user.click(within(panel).getByRole('button', { name: 'Select for the Song' }));
+
+    const conflict = await screen.findByRole('dialog', { name: 'Changed since you loaded it' });
+    expect(within(conflict).getByRole('row', { name: /Selected Generation/ })).toHaveTextContent(
+      `${V1G1}${V2G1}`,
+    );
+    expect(server.selectionWrites).toHaveLength(1);
+
+    await user.click(
+      within(conflict).getByRole('button', {
+        name: 'Reapply my change, replacing the current selected generation',
+      }),
+    );
+
+    await waitFor(() => {
+      expect(header()).toHaveTextContent(`Selected Generation:${V1G1}`);
+    });
+    expect(server.selectionWrites.map((write) => write.ifMatch)).toEqual(['"1"', '"2"']);
+    expect(server.song.selectedGeneration?.shortcode).toBe(V1G1);
+  });
+
   it('says so when n8Tracks does not take the choice, and keeps the Song as it was', async () => {
     const user = userEvent.setup();
     const server = twoVersionSong();
