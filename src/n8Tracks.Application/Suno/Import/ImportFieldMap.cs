@@ -183,7 +183,39 @@ public sealed class ImportFieldMap
             throw new JsonException($"The import field map's '{key}' has a pattern without exactly one capturing group.");
         }
 
-        return new ImportFieldEntry(key, feed, fallbacks, encoding, scale, values, notReturned, pattern);
+        return new ImportFieldEntry(key, feed, fallbacks, encoding, scale, values, notReturned, pattern, ReadFileInput(key, field));
+    }
+
+    /// <summary>
+    /// An entry's <c>fileInput</c> (#137): where Suno reports that the option took a file rather than a
+    /// clip (an uploaded or recorded audio file), a <c>paths.feed</c> or a <c>notReturned</c> note;
+    /// null when the entry has none.
+    /// </summary>
+    private static ImportFileInput? ReadFileInput(string key, JsonElement field)
+    {
+        if (!field.TryGetProperty("fileInput", out var fileInput))
+        {
+            return null;
+        }
+
+        if (fileInput.ValueKind != JsonValueKind.Object)
+        {
+            throw new JsonException($"The import field map's '{key}' has a fileInput that is not an object.");
+        }
+
+        var feed = fileInput.TryGetProperty("paths", out var paths) && paths.ValueKind == JsonValueKind.Object
+            && paths.TryGetProperty("feed", out var feedValue) && feedValue.ValueKind == JsonValueKind.String
+            ? feedValue.GetString()
+            : null;
+        var notReturned = fileInput.TryGetProperty("notReturned", out var notReturnedValue) && notReturnedValue.ValueKind == JsonValueKind.Object
+            ? notReturnedValue.TryGetProperty("checked", out var why) && why.ValueKind == JsonValueKind.String ? why.GetString() : string.Empty
+            : null;
+        if (feed is null && notReturned is null)
+        {
+            throw new JsonException($"The import field map's '{key}' has a fileInput with neither a feed path nor a notReturned note.");
+        }
+
+        return new ImportFileInput(feed, notReturned);
     }
 
     private static int CaptureGroups(string key, string pattern)
@@ -243,6 +275,7 @@ public sealed class ImportFieldMap
 /// expression whose one group is the part looked up in <paramref name="Values"/>; null when the whole
 /// value is.
 /// </param>
+/// <param name="FileInput">For the audio slot: where Suno reports an uploaded or recorded file (#137); null for none.</param>
 public sealed record ImportFieldEntry(
     string Key,
     string? FeedPath,
@@ -251,9 +284,22 @@ public sealed record ImportFieldEntry(
     double? Scale,
     IReadOnlyDictionary<string, JsonElement>? Values,
     string? NotReturned,
-    string? Pattern = null)
+    string? Pattern = null,
+    ImportFileInput? FileInput = null)
 {
     /// <summary>Whether the map says Suno does not return the value.</summary>
+    public bool IsNotReturned => NotReturned is not null;
+}
+
+/// <summary>
+/// Where Suno reports that an option took a file (#137): the audio slot's uploaded or recorded file,
+/// as distinct from a clip used as a source.
+/// </summary>
+/// <param name="FeedPath">Where the file is named in a feed clip; null when Suno does not report it.</param>
+/// <param name="NotReturned">Why Suno does not report it, when it does not; null when it does.</param>
+public sealed record ImportFileInput(string? FeedPath, string? NotReturned)
+{
+    /// <summary>Whether the map says Suno does not report the file.</summary>
     public bool IsNotReturned => NotReturned is not null;
 }
 

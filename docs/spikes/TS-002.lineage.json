@@ -1,0 +1,70 @@
+{
+  "about": "The lineage list of docs/spikes/TS-002.md ('The lineage list' table), one row per Suno action, transcribed for the coverage test (#137): each row names the metadata.task that marks the action, the source fields it reads, and the example in extension/fixtures/suno/lineage-metadata.examples.json that tests its capture rule. 'captured' is false only for Reuse Prompt, which Suno does not record; its rule is that it yields no source.",
+  "finding": "docs/spikes/TS-002.md",
+  "fixtures": "extension/fixtures/suno/lineage-metadata.examples.json",
+  "rows": [
+    {
+      "action": "Cover",
+      "task": "cover",
+      "sourceFields": ["metadata.cover_clip_id", "metadata.edited_clip_id"],
+      "captured": true,
+      "fixture": "cover",
+      "yields": "audio",
+      "sunoAction": "cover"
+    },
+    {
+      "action": "Mashup",
+      "task": "mashup_condition",
+      "sourceFields": ["metadata.mashup_clip_ids", "clip_roots.clips"],
+      "captured": true,
+      "fixture": "mashup",
+      "yields": "audio",
+      "sunoAction": "mashup"
+    },
+    {
+      "action": "Sample this song",
+      "task": "chop_sample_condition",
+      "sourceFields": ["clip_roots.clips"],
+      "captured": true,
+      "fixture": "sample",
+      "yields": "audio",
+      "sunoAction": "sample"
+    },
+    {
+      "action": "Extend",
+      "task": "extend",
+      "sourceFields": ["metadata.edited_clip_id", "metadata.history", "clip_roots.clips"],
+      "captured": true,
+      "fixture": "extend",
+      "yields": "audio",
+      "sunoAction": "extend"
+    },
+    {
+      "action": "Use as Inspiration",
+      "task": "playlist_condition",
+      "sourceFields": ["metadata.playlist_id", "metadata.playlist_clip_ids"],
+      "captured": true,
+      "fixture": "inspiration",
+      "yields": "inspiration",
+      "sunoAction": "inspiration"
+    },
+    {
+      "action": "Voice",
+      "task": "vox_playlist_condition",
+      "sourceFields": ["metadata.persona_id", "persona"],
+      "captured": true,
+      "fixture": "voice",
+      "yields": "voice",
+      "sunoAction": "voice"
+    },
+    {
+      "action": "Reuse Prompt",
+      "task": null,
+      "sourceFields": [],
+      "captured": false,
+      "fixture": "reuse_prompt",
+      "yields": "none",
+      "sunoAction": "reuse_prompt"
+    }
+  ]
+}

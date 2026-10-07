@@ -361,6 +361,9 @@ public enum SourceAvailability
 /// <param name="DurationSeconds">Its length, when Suno reported one.</param>
 public sealed record SourceGenerationFacts(Guid Id, Guid VersionId, Guid SongId, string? SunoId, double? DurationSeconds);
 
+/// <summary>A source that an external reference resolution pointed at a Generation (#137): its Version, that Version's Song, and its type.</summary>
+public sealed record LinkedSource(Guid VersionId, Guid SongId, Guid TypeId);
+
 /// <summary>
 /// A Version's lyrics and styles, as they are to be stored: valid, line endings as <c>\n</c>,
 /// otherwise as written. The text the editing history snapshots and restores.
@@ -487,6 +490,16 @@ public interface IVersionStore
         IReadOnlyCollection<Guid> versionsGoing,
         DateTimeOffset now,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Inside the caller's transaction, once the Generation <paramref name="generationId"/> with Suno ID
+    /// <paramref name="sunoId"/> is attached: every source that names the external reference for that
+    /// Suno clip is pointed at the Generation instead, except a source of the Generation's own Version.
+    /// The system rewrite of a pointer (#137), the reverse of <see cref="RewriteSourcesOfDeletedGenerationsAsync"/>:
+    /// the source's identity is its Suno ID either way, which the database checks, and the external
+    /// reference itself stays. Returns each source pointed, in Version order.
+    /// </summary>
+    Task<IReadOnlyList<LinkedSource>> LinkExternalSourcesAsync(string sunoId, Guid generationId, CancellationToken cancellationToken);
 
     /// <summary>
     /// Stores <paramref name="generation"/> and <paramref name="version"/>'s freeze (its frozen flag,

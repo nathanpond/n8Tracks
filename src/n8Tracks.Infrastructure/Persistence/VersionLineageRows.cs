@@ -279,6 +279,63 @@ internal static class VersionLineageRows
         }
     }
 
+    /// <summary>
+    /// Points every source naming the external reference for Suno clip <paramref name="sunoId"/> at the
+    /// Generation <paramref name="generationId"/>, which has that Suno ID, except one of the Generation's
+    /// own Version; the reference stays. Each source pointed, with its Version's Song and its type.
+    /// </summary>
+    public static async Task<IReadOnlyList<LinkedSource>> LinkExternalSourcesAsync(
+        N8TracksDbContext context,
+        string sunoId,
+        Guid generationId,
+        CancellationToken cancellationToken)
+    {
+        var generation = await context.Generations.AsNoTracking()
+            .Where(record => record.Id == generationId && record.SunoId == sunoId)
+            .Select(static record => new { record.VersionId })
+            .SingleOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (generation is null)
+        {
+            return [];
+        }
+
+        var pointing = await context.VersionSources.AsNoTracking()
+            .Where(source => source.VersionId != generation.VersionId)
+            .Join(
+                context.ExternalSunoReferences.Where(reference => reference.SunoId == sunoId && reference.Kind == ExternalSunoReferenceRecord.ClipKind),
+                static source => source.ExternalReferenceId,
+                static reference => (Guid?)reference.Id,
+                static (source, _) => source)
+            .Join(context.Versions, static source => source.VersionId, static version => version.Id, static (source, version) => new
+            {
+                source.Id,
+                source.VersionId,
+                version.SongId,
+                source.TypeId,
+            })
+            .OrderBy(static source => source.VersionId)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        // One statement per source, as the deletion rewrite does: the reference goes and the
+        // Generation with the same Suno ID comes, nothing else changes (the trigger checks it).
+        foreach (var source in pointing)
+        {
+            var id = source.Id;
+            await context.VersionSources
+                .Where(record => record.Id == id)
+                .ExecuteUpdateAsync(
+                    setters => setters
+                        .SetProperty(static record => record.ExternalReferenceId, (Guid?)null)
+                        .SetProperty(static record => record.GenerationId, (Guid?)generationId),
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        return [.. pointing.Select(static source => new LinkedSource(source.VersionId, source.SongId, source.TypeId))];
+    }
+
     public static ExternalSunoReference ToReference(ExternalSunoReferenceRecord record) =>
         new(record.Id, record.SunoId, record.Kind switch
         {

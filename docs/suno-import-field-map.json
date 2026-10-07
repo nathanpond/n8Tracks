@@ -64,7 +64,11 @@
       "encoding": "enum",
       "values": { "cover": "metadata.cover_clip_id", "mashup": "metadata.mashup_clip_ids", "sample": "clip_roots.clips", "extend": "metadata.edited_clip_id" },
       "example": "cover",
-      "notes": "Source identifiers per action are listed in docs/spikes/TS-002.md. createRequest carries cover_clip_id, artist_clip_id, continue_clip_id and their start/end seconds, all null for plain generations."
+      "notes": "Source identifiers per action are listed in docs/spikes/TS-002.md. createRequest carries cover_clip_id, artist_clip_id, continue_clip_id and their start/end seconds, all null for plain generations.",
+      "fileInput": {
+        "paths": { "feed": null, "create": null, "createRequest": null },
+        "notReturned": { "checked": "Not exercised in TS-002 or TS-003: no clip made from an uploaded or recorded file was captured, and no feed field says a source was a file rather than a clip (#137)." }
+      }
     },
     "voice": {
       "paths": { "feed": "metadata.persona_id", "create": "metadata.persona_id", "createRequest": "persona_id" },

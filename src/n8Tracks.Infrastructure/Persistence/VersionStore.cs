@@ -331,6 +331,12 @@ internal sealed class VersionStore(N8TracksDbContext context, TimeProvider time)
         return VersionLineageRows.RewriteDeletedGenerationsAsync(context, generationIds, versionsGoing, now, cancellationToken);
     }
 
+    public Task<IReadOnlyList<LinkedSource>> LinkExternalSourcesAsync(string sunoId, Guid generationId, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(sunoId);
+        return VersionLineageRows.LinkExternalSourcesAsync(context, sunoId, generationId, cancellationToken);
+    }
+
     public async Task<bool> TryAttachGenerationAsync(SongVersion version, Generation generation, int revision, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(version);

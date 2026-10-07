@@ -19,6 +19,7 @@ These values are sent at Create time and never come back in the feed. Import mar
 | `speech_background_music` | Only in the request (`metadata.backing_music`). |
 | `sounds_model` | Sound clips carry no model badge, and `model_name` does not follow the selected label. |
 | `simple_add_image`, `simple_add_video` | No input field appears anywhere. |
+| `audio` (an uploaded or recorded file) | No clip made from a file was captured, and no feed field says a source was a file rather than a clip. Marked by the entry's `fileInput` (#137); a clip used as the audio source is read as lineage. |
 | `simple_add_lyrics`, `simple_add_styles` | Unverified in TS-003: no Simple clip with either section added was captured, and the feed has no field saying a section was added. |
 
 ## Songs
@@ -32,7 +33,7 @@ These values are sent at Create time and never come back in the feed. Import mar
 | `simple_add_playlist` | `metadata.playlist_id` | same | — | text | per TS-002 |
 | `simple_add_image` | not returned | — | `user_uploaded_images_b64` | text | |
 | `simple_add_video` | not returned | — | — | text | |
-| `audio` | `metadata.task` plus the TS-002 source fields | same | `cover_clip_id`, `continue_clip_id`, … | enum | `cover` |
+| `audio` | `metadata.task` plus the TS-002 source fields (read by the lineage reader, #137; the seven rows are `docs/spikes/TS-002.lineage.json`); an uploaded file: not returned | same | `cover_clip_id`, `continue_clip_id`, … | enum | `cover` |
 | `voice` | `metadata.persona_id` | same | `persona_id` | text | per TS-002 |
 | `inspiration` | `metadata.playlist_clip_ids` | same | — | text | per TS-002 |
 | `lyrics` | `metadata.prompt` | same | `prompt` | text | returned unchanged |
