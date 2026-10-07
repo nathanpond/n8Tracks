@@ -649,6 +649,7 @@ export function SongVersions({
         problem={ratingProblem}
         movedFrom={movedFromOf(location.state)}
       />
+      {choices.dialog}
       <DeleteGenerationDialog
         generation={deletingGeneration}
         song={song}

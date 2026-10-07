@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   clearSelectedGeneration,
   selectGeneration,
@@ -6,8 +6,10 @@ import {
   type Generation,
   type GenerationState,
 } from '../api/generations';
-import type { SaveResult } from '../api/saves';
+import type { FieldValue, SaveResult } from '../api/saves';
 import type { Song } from '../api/songs';
+import { ConflictValue } from '../common/ConflictDialog';
+import { useRevisionedSave, type SavedField } from '../common/useRevisionedSave';
 
 /** What the page says when a choice did not go through. */
 const FAILED_SUFFIX =
@@ -23,12 +25,27 @@ export interface GenerationChoices {
   clear: () => void;
   /** Whether a choice is on its way to n8Tracks: the controls wait for it. */
   busy: boolean;
+  /** The conflict dialog a Select or Clear refused by a newer selection asks with: render it once. */
+  dialog: ReactNode;
+}
+
+/** The compared field of a Select or Clear: the Selected Generation, by ID. */
+const SELECTION = 'selectedGeneration';
+
+/** Notes the shortcode of a Generation a selection may name, by its ID. */
+function remember(
+  names: Map<string, string>,
+  generation: { id: string; shortcode: string } | null | undefined,
+) {
+  if (generation) {
+    names.set(generation.id, generation.shortcode);
+  }
 }
 
 /**
- * Sends `write` based on `revision`; a write refused because the record changed elsewhere (a
- * rating, or an edit of the Song) is sent once more based on the revision it has now, since the
- * user's choice does not depend on what changed.
+ * Sends `write` based on `revision`; a state change refused because the Generation changed
+ * elsewhere (a rating, a comment) is sent once more based on the revision it has now. Select and
+ * Clear do not come here: they compare what changed first ({@link useRevisionedSave}).
  */
 async function withOneRetry<T extends { revision: number }>(
   revision: number,
@@ -44,6 +61,11 @@ async function withOneRetry<T extends { revision: number }>(
  * Generation, the state the Song's header shows (`onSong`); choosing or clearing gives the page the
  * Song as n8Tracks answers it and marks the chosen Generation in the list (`markSelected`). Nothing
  * else changes. `onProblem` says why a choice was not saved (undefined clears it).
+ *
+ * Select and Clear go through the shared save helper (project conventions, "Concurrency"): when the
+ * Song changed elsewhere, only a change of its Selected Generation stops the choice, and then the
+ * conflict dialog shows the two selections side by side; any other change (a title, a rating) is
+ * retried on the Song as it is now without asking (#317).
  */
 export function useGenerationChoices({
   song,
@@ -94,30 +116,70 @@ export function useGenerationChoices({
     [onProblem, onSong, update],
   );
 
+  // Shortcodes of the Generations a selection may name, so the conflict dialog can show them.
+  const names = useRef(new Map<string, string>());
+  useEffect(() => {
+    remember(names.current, song.selectedGeneration);
+  }, [song.selectedGeneration]);
+
+  const fields = useMemo(
+    (): SavedField<Song>[] => [
+      {
+        key: SELECTION,
+        label: 'Selected Generation',
+        read: (record) => record.selectedGeneration?.id ?? null,
+        show: (value: FieldValue) => (
+          <ConflictValue value={value === null ? 'None' : (names.current.get(value) ?? value)} />
+        ),
+      },
+    ],
+    [],
+  );
+  const send = useCallback((base: Song, edit: Readonly<Record<string, FieldValue>>) => {
+    const chosen = edit[SELECTION] ?? null;
+    return chosen === null
+      ? clearSelectedGeneration(base.id, base.revision)
+      : selectGeneration(base.id, chosen, base.revision);
+  }, []);
+  const onRecord = useCallback(
+    (record: Song) => {
+      remember(names.current, record.selectedGeneration);
+      onSong(record);
+      markSelected(record.selectedGeneration?.id ?? null);
+    },
+    [markSelected, onSong],
+  );
+  const { save, dialog } = useRevisionedSave({
+    record: song,
+    onRecord,
+    fields,
+    send,
+    subject: 'This Song',
+  });
+
   const choose = useCallback(
     (generation: Generation | null) => {
       setBusy(true);
       onProblem(undefined);
-      const songId = latest.current.id;
-      void withOneRetry(latest.current.revision, (revision) =>
-        generation === null
-          ? clearSelectedGeneration(songId, revision)
-          : selectGeneration(songId, generation.id, revision),
-      ).then((result) => {
+      remember(names.current, generation);
+      void save(SELECTION, generation?.id ?? null).then((outcome) => {
         setBusy(false);
-        if (result.kind !== 'saved') {
-          onProblem(
-            generation === null
-              ? `The selection was not cleared: ${FAILED_SUFFIX}`
-              : `${generation.shortcode} was not selected: ${FAILED_SUFFIX}`,
-          );
+        // Reloaded, or back to the page: the Song as it is now is already shown.
+        if (
+          outcome.kind === 'saved' ||
+          outcome.kind === 'reloaded' ||
+          outcome.kind === 'keep-editing'
+        ) {
           return;
         }
-        onSong(result.record);
-        markSelected(result.record.selectedGeneration?.id ?? null);
+        onProblem(
+          generation === null
+            ? `The selection was not cleared: ${FAILED_SUFFIX}`
+            : `${generation.shortcode} was not selected: ${FAILED_SUFFIX}`,
+        );
       });
     },
-    [markSelected, onProblem, onSong],
+    [onProblem, save],
   );
 
   const select = useCallback(
@@ -130,5 +192,5 @@ export function useGenerationChoices({
     choose(null);
   }, [choose]);
 
-  return { setState, select, clear, busy };
+  return { setState, select, clear, busy, dialog };
 }

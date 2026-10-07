@@ -356,6 +356,71 @@ describe('Settings → Suno workspaces', () => {
     });
   });
 
+  it('keeps the count it confirmed after a refusal resets the selection (#345)', async () => {
+    const server = workspaceServer([FIRST, SECOND, THIRD]);
+    const user = await openWorkspace('Demos');
+    await user.click(screen.getByRole('checkbox', { name: 'Select Alpha' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Select Bravo' }));
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Move to' }), 'Studio');
+    server.next = () => jsonResponse(422, { code: 'song_not_in_workspace', songs: [FIRST.id] });
+
+    await user.click(screen.getByRole('button', { name: 'Move 2 Songs' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Move 2 Songs?' });
+    await user.click(within(dialog).getByRole('button', { name: 'Move 2 Songs' }));
+    await within(dialog).findByRole('alert');
+
+    // The selection behind the dialog is reset; the dialog still states what the user confirmed.
+    await waitFor(() => {
+      expect(screen.getByTestId('selected-count')).toHaveTextContent('None selected');
+    });
+    expect(screen.getByRole('dialog', { name: 'Move 2 Songs?' })).toBe(dialog);
+    expect(within(dialog).getByTestId('move-count')).toHaveTextContent(
+      '2 Songs will move from Demos to Studio.',
+    );
+    expect(within(dialog).getByRole('button', { name: 'Move 2 Songs' })).toBeVisible();
+  });
+
+  it('keeps keyboard focus inside the dialog after a refusal, on the reason (#347)', async () => {
+    const server = workspaceServer([FIRST, SECOND]);
+    const user = await openWorkspace('Demos');
+    await user.click(screen.getByRole('checkbox', { name: 'Select Alpha' }));
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Move to' }), 'Studio');
+    server.next = () => jsonResponse(422, { code: 'song_not_in_workspace', songs: [FIRST.id] });
+
+    await user.click(screen.getByRole('button', { name: 'Move 1 Song' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Move 1 Song?' });
+    await user.click(within(dialog).getByRole('button', { name: 'Move 1 Song' }));
+
+    const reason = await within(dialog).findByRole('alert');
+    await waitFor(() => {
+      expect(reason).toHaveFocus();
+    });
+    // Tab moves on within the dialog, never to the page behind it.
+    await user.tab();
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+    await user.tab();
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+  });
+
+  it('puts keyboard focus on what a successful move says once the dialog closes (#347)', async () => {
+    workspaceServer([FIRST, SECOND]);
+    const user = await openWorkspace('Demos');
+    await user.click(screen.getByRole('checkbox', { name: 'Select Alpha' }));
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Move to' }), 'Studio');
+
+    await user.click(screen.getByRole('button', { name: 'Move 1 Song' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Move 1 Song?' });
+    await user.click(within(dialog).getByRole('button', { name: 'Move 1 Song' }));
+
+    const note = await screen.findByTestId('songs-moved');
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+    // Still there after the dialog would have handed focus back to its (now disabled) trigger.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(note).toHaveFocus();
+  });
+
   it('says why a move failed when n8Tracks does not answer as expected', async () => {
     const server = workspaceServer([FIRST]);
     const user = await openWorkspace('Demos');
