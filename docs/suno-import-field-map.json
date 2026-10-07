@@ -8,13 +8,14 @@
     "createRequest": "the JSON body of POST /api/generate/v2-web/; readable only by a page-side wrapper in the tab that clicked Create"
   },
   "kindMarkers": {
-    "song": "neither marker below",
-    "speech": "metadata.is_speech === true",
-    "sound": "metadata.task === \"sound\" (model_name chirp-sfx in the feed, chirp-seeds in the Create response; major_model_version is empty)"
+    "song": { "notes": "Neither marker below. Neither includes a clip without metadata. A clip whose markers conflict (both match) or are unrecognised (a marker holding a value of another JSON type, such as is_speech \"yes\") is imported as a Song with the staged record flagged unknown_kind (#136)." },
+    "speech": { "path": "metadata.is_speech", "equals": true, "notes": "metadata.is_speech === true" },
+    "sound": { "path": "metadata.task", "equals": "sound", "notes": "metadata.task === \"sound\" (model_name chirp-sfx in the feed, chirp-seeds in the Create response; major_model_version is empty)" }
   },
   "modeMarkers": {
     "simple": "metadata.gpt_description_prompt is present and metadata.task === \"agentic_thinking\" (feed and create); createRequest.metadata.create_mode === \"simple\"",
     "advanced": "metadata.gpt_description_prompt is absent; createRequest.metadata.create_mode === \"custom\" (Sounds also sends \"custom\")",
+    "speech": "As for Songs. With a description prompt but another task (neither marker), a Speech clip is Advanced when it has a non-blank script (metadata.prompt), else Simple (#136). A Sound has no mode.",
     "note": "A clip with a TS-002 lineage task (cover, extend, …) is marked by that task instead; create_mode is never returned in feed or create."
   },
   "fields": {
@@ -190,9 +191,10 @@
     "speech_variety": {
       "paths": { "feed": "metadata.control_sliders.aug_creativity", "create": "metadata.control_sliders.aug_creativity", "createRequest": "metadata.control_sliders.aug_creativity" },
       "encoding": "enum",
-      "values": { "high": 2, "others": "as variety (unverified)" },
+      "values": { "off": 0, "normal": 1, "high": 2, "extra": 3, "max": 4 },
+      "unverifiedValues": ["off", "normal", "extra", "max"],
       "example": 2,
-      "notes": "Speech Simple sends no control_sliders."
+      "notes": "High (2) was seen; the others follow Variety's table (unverified). Speech Simple sends no control_sliders, and Variety is not on the Speech Simple form."
     },
     "sounds_model": {
       "paths": { "feed": null, "create": null, "createRequest": "mv" },
@@ -209,9 +211,11 @@
     },
     "sound_type": {
       "paths": { "feed": "metadata.sound_configs.user_loop", "create": "metadata.sound_configs.user_loop", "createRequest": "metadata.sound_configs.user_loop" },
-      "encoding": "bool",
-      "values": { "loop": true, "one_shot": "false or absent (unverified)" },
-      "example": true
+      "encoding": "enum",
+      "values": { "one_shot": false, "loop": true },
+      "unverifiedValues": ["one_shot"],
+      "example": true,
+      "notes": "A bool: true for Loop. One-shot is expected false or absent (unverified); absent is the default, One-shot."
     },
     "sound_bpm": {
       "paths": { "feed": "metadata.sound_configs.user_tempo", "create": "metadata.sound_configs.user_tempo", "createRequest": "metadata.sound_configs.user_tempo" },
@@ -222,15 +226,20 @@
     "sound_key": {
       "paths": { "feed": "metadata.sound_configs.user_key", "create": "metadata.sound_configs.user_key", "createRequest": "metadata.sound_configs.user_key" },
       "encoding": "enum",
-      "values": { "A": "A (followed by m for minor)", "any": "unverified (expected absent)", "others": "unverified" },
+      "pattern": "^([A-G]#?)m?$",
+      "values": { "C": "C", "C#": "C#", "D": "D", "D#": "D#", "E": "E", "F": "F", "F#": "F#", "G": "G", "G#": "G#", "A": "A", "A#": "A#", "B": "B" },
+      "unverifiedValues": ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A#", "B"],
       "example": "Am",
-      "notes": "Key and scale share one string: note name, then m for minor. metadata.key (e.g. Ab_minor) is Suno's measurement."
+      "notes": "Key and scale share one string: note name, then m for minor; pattern's group is the note. Any is expected absent (unverified), and absent is the default, Any. metadata.key (e.g. Ab_minor) is Suno's measurement."
     },
     "sound_scale": {
       "paths": { "feed": "metadata.sound_configs.user_key", "create": "metadata.sound_configs.user_key", "createRequest": "metadata.sound_configs.user_key" },
       "encoding": "enum",
-      "values": { "minor": "trailing m", "major": "no suffix (unverified)" },
-      "example": "Am"
+      "pattern": "^[A-G]#?(m?)$",
+      "values": { "major": "", "minor": "m" },
+      "unverifiedValues": ["major"],
+      "example": "Am",
+      "notes": "The pattern's group is the suffix after the note: m for minor, none for major (unverified). With no key (Any) the scale stays unset."
     }
   }
 }

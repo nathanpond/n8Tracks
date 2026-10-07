@@ -3,8 +3,12 @@ using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Application.Suno.Import;
 
-/// <summary>One copy of a clip in an export, read from a part: its raw text as sent, whether it came from the Trash list, and its normalized fields.</summary>
-public sealed record StagedClip(string SunoId, string RawJson, bool Trashed, ClipFields Fields);
+/// <summary>
+/// One copy of a clip in an export, read from a part: its raw text as sent, whether it came from the
+/// Trash list, its normalized fields, and whether its kind could not be determined (#136, flagged
+/// <see cref="SunoExportRules.UnknownKindFlag"/>).
+/// </summary>
+public sealed record StagedClip(string SunoId, string RawJson, bool Trashed, ClipFields Fields, bool UnknownKind = false);
 
 /// <summary>A staged record as the classifier reads it: its Suno ID and raw clip.</summary>
 public sealed record StagedRecordRaw(string SunoId, string RawJson);
@@ -35,7 +39,7 @@ public sealed record LinkedVersionInputs(string Lyrics, string Styles, VersionIn
 /// <param name="PlaylistIds">The export's playlists it is in.</param>
 /// <param name="ProposalJson">What n8Tracks proposes to do with it (#138), as JSON; null until proposed.</param>
 /// <param name="ChoiceJson">The user's choice (#139), as JSON; null until chosen.</param>
-/// <param name="Flags">Notes on how it was received (<see cref="SunoExportRules.RepeatedFlag"/>, <see cref="SunoExportRules.AlsoInLibraryFlag"/>).</param>
+/// <param name="Flags">Notes on how it was received (<see cref="SunoExportRules.RepeatedFlag"/>, <see cref="SunoExportRules.AlsoInLibraryFlag"/>) and on what it is (<see cref="SunoExportRules.UnknownKindFlag"/>).</param>
 /// <param name="ChangedFields">For a changed record, the compared fields that differ.</param>
 /// <param name="GenerationId">The live Generation holding its Suno ID, when there is one.</param>
 /// <param name="ArtworkAssetId">The cover image staged for it, when there is one.</param>
@@ -97,7 +101,8 @@ public interface ISunoExportStore
     /// <summary>
     /// Stages <paramref name="clips"/>, in order: a clip whose Suno ID is not staged yet is added; a later
     /// copy replaces the staged one when <see cref="SunoExportRules.Replaces"/> says so, and either way the
-    /// record is flagged as repeated (and as also in the library when the two lists met).
+    /// record is flagged as repeated (and as also in the library when the two lists met). A record is
+    /// flagged <see cref="SunoExportRules.UnknownKindFlag"/> while the copy it keeps is.
     /// </summary>
     Task StageAsync(Guid exportId, IReadOnlyList<StagedClip> clips, CancellationToken cancellationToken);
 

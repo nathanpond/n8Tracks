@@ -58,7 +58,7 @@ These values are sent at Create time and never come back in the feed. Import mar
 | `speech_tone` | not returned (rewritten) | `metadata.tags` | `tags` | text | `cheerful and quick` |
 | `speech_vocal_gender` | not returned | — | `metadata.vocal_gender` | enum | `f` |
 | `speech_background_music` | not returned | — | `metadata.backing_music` | bool | `false` |
-| `speech_variety` | `metadata.control_sliders.aug_creativity` | same | same | enum 0–4 | `2`; Speech Simple sends none |
+| `speech_variety` | `metadata.control_sliders.aug_creativity` | same | same | enum 0–4 | `2` High (the rest as `variety`, unverified); Speech Simple sends none |
 
 ## Sounds
 
@@ -66,12 +66,12 @@ These values are sent at Create time and never come back in the feed. Import mar
 |---|---|---|---|---|---|
 | `sounds_model` | not returned | — | `mv` | enum | `chirp-goose` for v6-mini |
 | `sound_description` | `metadata.tags` | same | `tags` | text | kept as submitted |
-| `sound_type` | `metadata.sound_configs.user_loop` | same | same | bool | `true` for Loop |
+| `sound_type` | `metadata.sound_configs.user_loop` | same | same | enum over a bool | `true` Loop, `false` One-shot (unverified; absent is One-shot) |
 | `sound_bpm` | `metadata.sound_configs.user_tempo` | same | same | number | `120` |
-| `sound_key`, `sound_scale` | `metadata.sound_configs.user_key` | same | same | enum | `Am` = A minor |
+| `sound_key`, `sound_scale` | `metadata.sound_configs.user_key` | same | same | enum, read by `pattern` | `Am` = A minor: the key is the note, and the scale is `m` (minor) or nothing (major, unverified). An absent key is Any, with the scale unset. |
 
 ## Telling clips apart
 
-- **Kind:** Speech has `metadata.is_speech: true`. Sound has `metadata.task: "sound"`. A Song has neither.
-- **Mode:** a Simple clip has `metadata.gpt_description_prompt` and `metadata.task: "agentic_thinking"`. An Advanced clip has neither (or a TS-002 lineage task). The request's `metadata.create_mode` (`simple` or `custom`) is never returned.
+- **Kind:** Speech has `metadata.is_speech: true`. Sound has `metadata.task: "sound"`. A Song has neither. The JSON's `kindMarkers` holds both as `{path, equals}`. Import takes a clip as a Song, flagged `unknown_kind` for the review, in two cases: both markers match, or a marker holds a value of another JSON type.
+- **Mode:** a Simple clip has `metadata.gpt_description_prompt` and `metadata.task: "agentic_thinking"`. An Advanced clip has neither (or a TS-002 lineage task). A Speech clip with the prompt but another task is Advanced when its script is not blank. A Sound has no mode. The request's `metadata.create_mode` (`simple` or `custom`) is never returned.
 - **Measured, not submitted:** `metadata.duration`, `avg_bpm`/`min_bpm`/`max_bpm`, and `key` (for example `Ab_minor`) are Suno's analysis of the audio. They must not be imported as the user's settings.

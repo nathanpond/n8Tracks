@@ -17,29 +17,38 @@ public sealed record ClipModel(string Reported, string? Matched)
     public bool IsNew => Matched is null;
 }
 
+/// <summary>What kind of Version a clip is (#136), and whether its kind markers said so.</summary>
+/// <param name="Kind">Song, Speech, or Sound; Song when the markers do not tell.</param>
+/// <param name="Determined">False when the markers conflict or are unrecognised, so the clip is taken as a Song and needs the user's attention.</param>
+public sealed record ClipKind(VersionKind Kind, bool Determined);
+
 /// <summary>
-/// A clip's creation inputs, as an imported Version holds them (#135).
+/// A clip's creation inputs, as an imported Version holds them (#135, #136).
 /// </summary>
-/// <param name="Lyrics">The Version's lyrics, as Suno returned them.</param>
+/// <param name="Lyrics">The Version's lyrics, as Suno returned them; empty for a Speech or a Sound.</param>
 /// <param name="Styles">The Version's styles: empty, since the feed returns Suno's rewrite of them, not what was sent.</param>
 /// <param name="Inputs">Its kind, mode, and every option, the ones Suno does not return at the n8Tracks default.</param>
 /// <param name="Marks">Which options are not returned, out of range, or unknown choices kept raw.</param>
 /// <param name="Model">The model it reports, or null when it reports none.</param>
-/// <param name="Compared">What two clips' inputs are compared by: each option Suno returned, normalised.</param>
+/// <param name="Compared">What two clips' inputs are compared by: the kind, its mode, and each option of its tab Suno returned, normalised.</param>
+/// <param name="KindUnknown">Whether the kind could not be determined, so the clip mapped as a Song (<see cref="ClipKind.Determined"/>).</param>
 public sealed record MappedClipInputs(
     string Lyrics,
     string Styles,
     VersionInputs Inputs,
     ImportedInputMarks Marks,
     ClipModel? Model,
-    IReadOnlyDictionary<string, string> Compared);
+    IReadOnlyDictionary<string, string> Compared,
+    bool KindUnknown = false);
 
 /// <summary>
-/// Turns what Suno says about a clip into the creation inputs of an n8Tracks Version (#135), by the
-/// import field map (<see cref="ImportFieldMap"/>): every field of the inventory's Songs tab is read
-/// from its <c>paths.feed</c> by its encoding, or, when the map says Suno does not return it, left at
-/// the n8Tracks default and listed as not returned (never guessed). The mapper has no code for any one
-/// field beyond the encodings, except the model, which is matched against the model list.
+/// Turns what Suno says about a clip into the creation inputs of an n8Tracks Version (#135, #136), by the
+/// import field map (<see cref="ImportFieldMap"/>): the clip's kind is told by the map's kind markers,
+/// and every field of that kind's tab in the inventory is read from its <c>paths.feed</c> by its
+/// encoding, or, when the map says Suno does not return it, left at the n8Tracks default and listed as
+/// not returned (never guessed). Fields of the other tabs are not read; they stay in the raw clip. The
+/// mapper has no code for any one field beyond the encodings, except the model, which is matched
+/// against the model list.
 /// <para>
 /// A returned value outside n8Tracks' limits (longer text, an out-of-range number, an unknown choice)
 /// is kept as Suno returned it and listed as out of range: nothing is refused or cut. An unknown choice
@@ -47,15 +56,18 @@ public sealed record MappedClipInputs(
 /// editor writes, only without its range checks; it is pure and reads nothing but its arguments.
 /// </para>
 /// <para>
-/// Mode (TS-003): Simple when <c>metadata.gpt_description_prompt</c> is present and
-/// <c>metadata.task</c> is <c>agentic_thinking</c>; otherwise Advanced. Until the Speech and Sounds
-/// story (#136), every clip maps as a Song.
+/// Kind (<see cref="KindOf(JsonElement, ImportFieldMap)"/>): a Speech or a Sound by its marker, a
+/// Song when neither marks it, and a Song needing the user's attention when the markers conflict or
+/// are unrecognised. Mode (TS-003): Simple when <c>metadata.gpt_description_prompt</c> is present and
+/// <c>metadata.task</c> is <c>agentic_thinking</c>; Advanced when the description prompt is absent. A
+/// Song with the prompt but another task is Advanced; a Speech is then Advanced when it has a script
+/// that is not blank, else Simple. A Sound has no mode.
 /// </para>
 /// </summary>
 public static class ClipInputMapper
 {
     /// <summary>
-    /// The Songs fields this mapper leaves to other stories, though the map says where they are: the
+    /// The fields this mapper leaves to other stories, all on the Songs tab, though the map says where they are: the
     /// references and files (sources, Voice, Inspiration, playlist) are read by the lineage story
     /// (#137), and the workspace by the commit (#140).
     /// </summary>
@@ -77,21 +89,74 @@ public static class ClipInputMapper
     /// </summary>
     public static IReadOnlySet<string> NotCompared { get; } = new HashSet<string>(StringComparer.Ordinal) { "title" };
 
-    /// <summary>The inventory tab this mapper reads.</summary>
+    /// <summary>The inventory tab of each kind.</summary>
     public const string SongsTab = "songs";
+    public const string SpeechTab = "speech";
+    public const string SoundsTab = "sounds";
 
-    private const string ModelKey = "model";
     private const string AgenticTask = "agentic_thinking";
+    private const string SpeechScriptKey = "speech_script";
+
+    /// <summary>The fields naming a Suno model (a Song's and a Sound's), matched against the model list.</summary>
+    private static readonly HashSet<string> ModelKeys = new(StringComparer.Ordinal) { "model", "sounds_model" };
 
     /// <summary>The API name of each option, by its inventory key (lyrics and styles are the Version's own).</summary>
     private static readonly Dictionary<string, string> ApiNames = BuildApiNames();
 
-    /// <summary>The inventory keys this mapper reads: every Songs field with a place in a Version.</summary>
+    /// <summary>The inventory keys this mapper reads: every field, on every tab, with a place in a Version.</summary>
     public static IReadOnlySet<string> ReadKeys { get; } = new HashSet<string>(
         CreateFieldInventory.Embedded.Fields
-            .Where(static field => field.Tab == SongsTab && ApiNames.ContainsKey(field.Key))
+            .Where(static field => ApiNames.ContainsKey(field.Key))
             .Select(static field => field.Key),
         StringComparer.Ordinal);
+
+    /// <summary>The inventory tab whose fields a Version of <paramref name="kind"/> holds.</summary>
+    public static string TabOf(VersionKind kind) => kind switch
+    {
+        VersionKind.Speech => SpeechTab,
+        VersionKind.Sound => SoundsTab,
+        _ => SongsTab,
+    };
+
+    /// <summary>What kind <paramref name="clip"/> is, by the embedded map's kind markers.</summary>
+    public static ClipKind KindOf(JsonElement clip) => KindOf(clip, ImportFieldMap.Embedded);
+
+    /// <summary>
+    /// What kind <paramref name="clip"/> is, by <paramref name="map"/>'s kind markers: the one kind whose
+    /// marker it carries, or a Song when it carries none. When more than one marker matches, or a marker
+    /// holds a value of another JSON type than the map's (an <c>is_speech</c> of <c>"yes"</c>), the kind
+    /// is not determined and the clip is taken as a Song.
+    /// </summary>
+    public static ClipKind KindOf(JsonElement clip, ImportFieldMap map)
+    {
+        ArgumentNullException.ThrowIfNull(map);
+
+        var marked = new List<VersionKind>();
+        foreach (var marker in map.KindMarkers)
+        {
+            if (ImportFieldMap.Read(clip, marker.Path) is not { } value)
+            {
+                continue;
+            }
+
+            if (TypeOf(value) != TypeOf(marker.Value))
+            {
+                return new ClipKind(VersionKind.Song, Determined: false);
+            }
+
+            if (JsonElement.DeepEquals(value, marker.Value))
+            {
+                marked.Add(marker.Kind);
+            }
+        }
+
+        return marked.Count switch
+        {
+            0 => new ClipKind(VersionKind.Song, Determined: true),
+            1 => new ClipKind(marked[0], Determined: true),
+            _ => new ClipKind(VersionKind.Song, Determined: false),
+        };
+    }
 
     /// <summary>Maps <paramref name="clip"/>, one clip object, by the embedded map and inventory.</summary>
     public static MappedClipInputs Map(JsonElement clip, IReadOnlyCollection<SunoModel> models) =>
@@ -104,9 +169,22 @@ public static class ClipInputMapper
         ArgumentNullException.ThrowIfNull(map);
         ArgumentNullException.ThrowIfNull(inventory);
 
+        var kind = KindOf(clip, map);
+        var tab = TabOf(kind.Kind);
         var json = VersionInputRules.ToJson(VersionInputRules.Defaults(inventory, string.Empty));
-        json[VersionInputRules.KindKey] = Camel(nameof(VersionKind.Song));
-        json[VersionInputRules.SongModeKey] = Camel(IsSimple(clip) ? nameof(CreationMode.Simple) : nameof(CreationMode.Advanced));
+        json[VersionInputRules.KindKey] = Camel(kind.Kind.ToString());
+        var modeKey = kind.Kind switch
+        {
+            VersionKind.Song => VersionInputRules.SongModeKey,
+            VersionKind.Speech => VersionInputRules.SpeechModeKey,
+            _ => null,
+        };
+        if (modeKey is not null)
+        {
+            var mode = kind.Kind == VersionKind.Speech ? SpeechModeOf(clip, map) : IsSimple(clip) ? CreationMode.Simple : CreationMode.Advanced;
+            json[modeKey] = Camel(mode.ToString());
+        }
+
         var lyrics = string.Empty;
         var styles = string.Empty;
         var notReturned = new List<string>();
@@ -115,11 +193,15 @@ public static class ClipInputMapper
         var compared = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             [VersionInputRules.KindKey] = json[VersionInputRules.KindKey]!.ToJsonString(),
-            [VersionInputRules.SongModeKey] = json[VersionInputRules.SongModeKey]!.ToJsonString(),
         };
+        if (modeKey is not null)
+        {
+            compared[modeKey] = json[modeKey]!.ToJsonString();
+        }
+
         ClipModel? model = null;
 
-        foreach (var field in inventory.Fields.Where(static field => field.Tab == SongsTab && ApiNames.ContainsKey(field.Key)))
+        foreach (var field in inventory.Fields.Where(field => field.Tab == tab && ApiNames.ContainsKey(field.Key)))
         {
             var name = ApiNames[field.Key];
             var entry = map.Find(field.Key) ?? throw new InvalidOperationException($"The import field map has no entry for '{field.Key}'.");
@@ -137,14 +219,14 @@ public static class ClipInputMapper
             var value = ImportFieldMap.Read(clip, entry.FeedPath)
                 ?? entry.FeedFallbacks.Select(path => ImportFieldMap.Read(clip, path)).FirstOrDefault(static found => found is not null);
             Decoded decoded;
-            if (field.Key == ModelKey && value is null)
+            if (ModelKeys.Contains(field.Key) && value is null)
             {
                 // A clip with no model at all (no badge, version, or name) did not return it.
                 notReturned.Add(name);
                 continue;
             }
 
-            if (field.Key == ModelKey)
+            if (ModelKeys.Contains(field.Key))
             {
                 (decoded, model) = DecodeModel(value!.Value, models);
             }
@@ -207,7 +289,8 @@ public static class ClipInputMapper
             VersionInputRules.FromJson(json),
             new ImportedInputMarks(notReturned, outOfRange, raw),
             model,
-            compared);
+            compared,
+            KindUnknown: !kind.Determined);
     }
 
     /// <summary>
@@ -249,7 +332,7 @@ public static class ClipInputMapper
     }
 
     /// <summary>
-    /// What the import field map lacks for the Songs fields of <paramref name="inventory"/>: a field with
+    /// What the import field map lacks for the fields of <paramref name="inventory"/>, on every tab: a field with
     /// no entry, an entry with neither a feed path nor a <c>notReturned</c> note, and a mapped field that
     /// neither <paramref name="readKeys"/> (what the mapper reads) nor <see cref="ReadElsewhere"/> covers.
     /// Empty when the map is complete; the coverage test checks it.
@@ -261,7 +344,7 @@ public static class ClipInputMapper
         ArgumentNullException.ThrowIfNull(readKeys);
 
         var gaps = new List<string>();
-        foreach (var field in inventory.Fields.Where(static field => field.Tab == SongsTab))
+        foreach (var field in inventory.Fields)
         {
             var entry = map.Find(field.Key);
             if (entry is null)
@@ -299,6 +382,34 @@ public static class ClipInputMapper
         && ImportFieldMap.Read(clip, "metadata.task") is { ValueKind: JsonValueKind.String } task
         && task.GetString() == AgenticTask;
 
+    /// <summary>
+    /// A Speech's mode: Simple or Advanced by the Songs markers; with a description prompt but another
+    /// task (neither marker), Advanced when its script is not blank, else Simple.
+    /// </summary>
+    private static CreationMode SpeechModeOf(JsonElement clip, ImportFieldMap map)
+    {
+        if (IsSimple(clip))
+        {
+            return CreationMode.Simple;
+        }
+
+        if (ImportFieldMap.Read(clip, "metadata.gpt_description_prompt") is not { ValueKind: JsonValueKind.String })
+        {
+            return CreationMode.Advanced;
+        }
+
+        var scriptPath = map.Find(SpeechScriptKey)?.FeedPath;
+        return scriptPath is not null
+            && ImportFieldMap.Read(clip, scriptPath) is { ValueKind: JsonValueKind.String } script
+            && !string.IsNullOrWhiteSpace(script.GetString())
+            ? CreationMode.Advanced
+            : CreationMode.Simple;
+    }
+
+    /// <summary>A JSON value's type for marker checks, with <c>true</c> and <c>false</c> one type.</summary>
+    private static JsonValueKind TypeOf(JsonElement value) =>
+        value.ValueKind == JsonValueKind.False ? JsonValueKind.True : value.ValueKind;
+
     private static (Decoded Decoded, ClipModel? Model) DecodeModel(JsonElement value, IReadOnlyCollection<SunoModel> models)
     {
         if (value.ValueKind != JsonValueKind.String || SunoModelRules.NameErrors(value.GetString()).Length > 0)
@@ -329,7 +440,19 @@ public static class ClipInputMapper
                 return Whole(number, field, value);
 
             case ImportFieldMap.EnumEncoding when entry.Values is not null:
-                var choice = entry.Values.FirstOrDefault(pair => JsonElement.DeepEquals(pair.Value, value)).Key;
+                var returned = value;
+                if (entry.Pattern is not null)
+                {
+                    // Part of a text: the pattern's group is what the table is looked up by (a Sound's "Am").
+                    if (value.ValueKind != JsonValueKind.String || ImportFieldMap.Capture(entry.Pattern, value.GetString()!) is not { } part)
+                    {
+                        return Decoded.Unknown(value);
+                    }
+
+                    returned = JsonSerializer.SerializeToElement(part);
+                }
+
+                var choice = entry.Values.FirstOrDefault(pair => JsonElement.DeepEquals(pair.Value, returned)).Key;
                 return choice is not null && (field.Values?.Contains(choice, StringComparer.Ordinal) ?? true)
                     ? Decoded.Of(JsonValue.Create(choice), outOfRange: false)
                     : Decoded.Unknown(value);

@@ -138,6 +138,7 @@ internal sealed class SunoExportStore(N8TracksDbContext context) : ISunoExportSt
             {
                 row = new StagedClipRecord { ExportId = exportId, SunoId = clip.SunoId, RawJson = clip.RawJson };
                 Fill(row, clip);
+                row.Flags = clip.UnknownKind ? JsonSerializer.Serialize(new[] { SunoExportRules.UnknownKindFlag }) : "[]";
                 context.StagedClips.Add(row);
                 staged[clip.SunoId] = row;
                 continue;
@@ -152,6 +153,11 @@ internal sealed class SunoExportStore(N8TracksDbContext context) : ISunoExportSt
             if (SunoExportRules.Replaces(row.Trashed, clip.Trashed))
             {
                 Fill(row, clip);
+                flags.Remove(SunoExportRules.UnknownKindFlag);
+                if (clip.UnknownKind)
+                {
+                    flags.Add(SunoExportRules.UnknownKindFlag);
+                }
             }
 
             row.Flags = JsonSerializer.Serialize(flags);
