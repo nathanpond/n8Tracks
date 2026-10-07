@@ -254,10 +254,10 @@ internal sealed class SunoExportStore(N8TracksDbContext context) : ISunoExportSt
         var read = await context.StagedClips.AsNoTracking()
             .Where(row => row.ExportId == exportId)
             .OrderBy(static row => row.SunoId)
-            .Select(static row => new { row.SunoId, row.RawJson, row.Class, row.ChoiceJson, row.ProposalJson, row.ArtworkAssetId })
+            .Select(static row => new { row.SunoId, row.RawJson, row.Class, row.ChoiceJson, row.ProposalJson, row.ArtworkAssetId, row.Trashed })
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
-        return [.. read.Select(static row => new CommitRecord(row.SunoId, row.RawJson, SunoExportRules.ClassOf(row.Class), row.ChoiceJson, row.ProposalJson, row.ArtworkAssetId))];
+        return [.. read.Select(static row => new CommitRecord(row.SunoId, row.RawJson, SunoExportRules.ClassOf(row.Class), row.ChoiceJson, row.ProposalJson, row.ArtworkAssetId, row.Trashed))];
     }
 
     public async Task ProposeAsync(Guid exportId, IReadOnlyList<RecordProposalRow> proposals, CancellationToken cancellationToken)
@@ -491,7 +491,9 @@ internal sealed class SunoExportStore(N8TracksDbContext context) : ISunoExportSt
                     row.ImageUrl,
                     row.WorkspaceId,
                     row.BatchIndex),
-                versions.GetValueOrDefault(row.VersionId)),
+                versions.GetValueOrDefault(row.VersionId),
+                row.DeclinedHash,
+                row.KeptInputsHash),
             StringComparer.Ordinal);
     }
 

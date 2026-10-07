@@ -197,8 +197,16 @@ public sealed class GenerationServiceTests
         var shape5 = RetainedTypes.GenerationShape4To5(shape4);
         Assert.Null(shape5["archived_by"]);
         Assert.Equal(28, shape5.Count);
-        Assert.Equal(5, RetainedTypes.Generation.ShapeVersion);
         Assert.True(RetainedTypes.Generation.Upgraders.ContainsKey(4));
+
+        // Shape 6 (#141) adds the remembered declined change and kept conflict: an earlier Generation
+        // restores with neither, so its clip's differences show again at the next sync.
+        var shape6 = RetainedTypes.GenerationShape5To6(shape5);
+        Assert.Null(shape6["declined_hash"]);
+        Assert.Null(shape6["kept_inputs_hash"]);
+        Assert.Equal(30, shape6.Count);
+        Assert.Equal(6, RetainedTypes.Generation.ShapeVersion);
+        Assert.True(RetainedTypes.Generation.Upgraders.ContainsKey(5));
     }
 
     [Fact]

@@ -28,12 +28,15 @@ namespace n8Tracks.Api.Tests.Invariants;
 /// a new Song, a model the clips report that no entry matched, the Reimport's restored Generation (its
 /// retention group and tombstone go), the shortcode and number counters, and (#141) the one clip column a
 /// Changed record's accepted field names, the move of a Conflict's Generation to a new child Version with
-/// its alias and raw clip (its old Version and its rating untouched). Every other row is byte for
-/// byte the same. Following Suno (#142): an existing Generation may also change for a Suno state change left
+/// its alias and raw clip (its old Version and its rating untouched), and the remembered hash of a change
+/// declined or a conflict kept, which is all such a record may change: never a clip column or the raw clip.
+/// An ignored clip in Suno's Trash chosen for import (#143) comes in archived by sync. Every other row is
+/// byte for byte the same. Following Suno (#142): an existing Generation may also change for a Suno state change left
 /// selected at Confirm, and then only in its remote state, state, archiver, and revision. Complements: a
 /// commit with every record (Changed and Conflict included) and every Suno state change set to Skip, and an export uploaded, classified,
 /// proposed, and discarded, change nothing at all; and the guard bites when the commit retitles an
-/// existing Generation, and when it applies a Suno state change set to Skip. The guard does not cover
+/// existing Generation, when it applies a Suno state change set to Skip, and when a declined change
+/// writes a clip column. The guard does not cover
 /// portable import (M8, #263).
 /// </summary>
 public sealed class ImportNeverOverwritesGuardTests
@@ -205,6 +208,30 @@ public sealed class ImportNeverOverwritesGuardTests
     }
 
     /// <summary>
+    /// The guard bites on a remembered decline (#141): with the database made to write Suno's title as
+    /// well whenever the declined record's hash is remembered, that Generation is reported as unexplained.
+    /// </summary>
+    [Fact]
+    public async Task TheGuardFailsWhenADeclinedChangeWritesAClipColumn()
+    {
+        using var factory = SongApi.Host();
+        var scenario = await ScenarioAsync(factory);
+        TestDatabase.Execute(
+            factory.DataPath,
+            """
+            CREATE TRIGGER tr_test_declined_overwrites AFTER UPDATE OF declined_hash ON generations
+            WHEN NEW.suno_id = 'declined-1' AND NEW.declined_hash IS NOT NULL
+            BEGIN UPDATE generations SET suno_title = 'Declined after' WHERE id = NEW.id; END;
+            """);
+
+        var result = await ImportCommitApi.CommitAsync(scenario.Client, scenario.ExportId);
+
+        var declined = ImportCommitApi.Records(result)["declined-1"].GetProperty("generation").GetProperty("id").GetGuid();
+        Assert.Contains($"generations: changed {Upper(declined)}", Unexplained(factory, scenario, result, Rows(factory.DataPath)));
+        scenario.Client.Dispose();
+    }
+
+    /// <summary>
     /// The catalog and the export the tests commit: a Song with a frozen Version (one Generation), a
     /// mutable Version holding a clip's inputs, a Generation deleted alone (tombstoned, retained), and a
     /// bystander Song with a Generation no choice names; then an export whose choices make a new Song (two
@@ -247,6 +274,22 @@ public sealed class ImportNeverOverwritesGuardTests
         var conflictNow = conflictClip.DeepClone();
         conflictNow["metadata"]!["prompt"] = "Other conflict words";
 
+        // #141: a Generation whose clip Suno retitled, every field declined (Changed), and one whose clip
+        // has other lyrics and a new title, kept where it is with the title declined (Conflict).
+        var declinedClip = ProposalApi.Clip("declined-1", null, at.AddHours(12), 0, "Declined words", "Declined before");
+        var keptClip = ProposalApi.Clip("kept-1", null, at.AddHours(13), 0, "Kept words", "Kept before");
+        await ImportedVersions.AttachAsync(factory, bystanderSong, "4", declinedClip);
+        await ImportedVersions.AttachAsync(factory, bystanderSong, "5", keptClip);
+        var declinedNow = declinedClip.DeepClone();
+        declinedNow["title"] = "Declined after";
+        var keptNow = keptClip.DeepClone();
+        keptNow["title"] = "Kept after";
+        keptNow["metadata"]!["prompt"] = "Other kept words";
+
+        // #143: a clip on the ignore list (as the sync below will refresh it) that is in Suno's Trash.
+        var ignoredTrashed = ProposalApi.Clip("ignored-trashed", null, at.AddHours(11), 0, "Mutable words", "Trashed and ignored");
+        TestDatabase.Execute(factory.DataPath, $"INSERT INTO suno_ignored_items (suno_id, title, ignored_utc, last_status, last_seen_utc) VALUES ('ignored-trashed', 'Trashed and ignored', '2026-09-01T00:00:00.000Z', 'trashed', '{RemoteStateApi.CapturedLater}');");
+
         JsonNode NewSongClip(string id, int batch)
         {
             var clip = ProposalApi.Clip(id, "studio", at.AddHours(3), batch, "New Song words", "Brand new");
@@ -266,10 +309,13 @@ public sealed class ImportNeverOverwritesGuardTests
             deleted,
             changedNow,
             conflictNow,
+            declinedNow,
+            keptNow,
         };
-        var (exportId, _) = await SunoExportApi.UploadAsync(client, token, RemoteStateApi.Header(), SunoExportApi.Part(1, clips, trashed: [frozen]));
+        var (exportId, _) = await SunoExportApi.UploadAsync(client, token, RemoteStateApi.Header(), SunoExportApi.Part(1, clips, trashed: [frozen, ignoredTrashed]));
         var records = await SunoExportApi.RecordsByIdAsync(client, exportId);
         Assert.Equal("deleted", records["deleted-1"].GetProperty("class").GetString());
+        Assert.Equal(("changed", "conflict", "ignored"), (records["declined-1"].GetProperty("class").GetString(), records["kept-1"].GetProperty("class").GetString(), records["ignored-trashed"].GetProperty("class").GetString()));
         await ImportCommitApi.StageImageAsync(client, token, exportId, "new-a1");
 
         var revision = 1;
@@ -293,6 +339,9 @@ public sealed class ImportNeverOverwritesGuardTests
             await ChooseAsync(ProposalApi.Import(new JsonObject { ["kind"] = "newSong", ["key"] = "new:91", ["title"] = "Reimported" }), "deleted-1");
             await ChooseAsync(new JsonObject { ["action"] = "apply", ["acceptFields"] = new JsonArray("title") }, "changed-1");
             await ChooseAsync(new JsonObject { ["action"] = "moveToNewVersion" }, "conflict-1");
+            await ChooseAsync(new JsonObject { ["action"] = "apply", ["acceptFields"] = new JsonArray() }, "declined-1");
+            await ChooseAsync(new JsonObject { ["action"] = "keep" }, "kept-1");
+            await ChooseAsync(ProposalApi.Import(new JsonObject { ["kind"] = "version", ["version"] = "n8-1-v3" }), "ignored-trashed");
             Assert.Equal("newSong", ProposalApi.Text(ProposalApi.Target(records["new-a1"]), "kind"));
             await RemoteStateApi.SetAsync(client, exportId, false, "bystander-1");
         }
@@ -313,7 +362,7 @@ public sealed class ImportNeverOverwritesGuardTests
     private static List<string> Unexplained(N8TracksApiFactory factory, Scenario scenario, JsonElement result, Dictionary<string, Dictionary<string, Row>> after, bool checkRemoteStates = true)
     {
         var records = ImportCommitApi.Records(result);
-        Assert.Equal(["created", "created", "created", "created", "created", "skipped", "ignored", "created"], new[] { "new-a1", "new-a2", "new-v", "same-mutable", "same-frozen", "skipped-1", "ignored-1", "deleted-1" }.Select(id => ImportCommitApi.Outcome(records[id])));
+        Assert.Equal(["created", "created", "created", "created", "created", "skipped", "ignored", "created", "created"], new[] { "new-a1", "new-a2", "new-v", "same-mutable", "same-frozen", "skipped-1", "ignored-1", "deleted-1", "ignored-trashed" }.Select(id => ImportCommitApi.Outcome(records[id])));
 
         string GenerationOf(string sunoId) => Upper(records[sunoId].GetProperty("generation").GetProperty("id").GetGuid());
         string VersionIdOf(string generationId) => after["generations"][generationId]["version_id"]!;
@@ -334,6 +383,11 @@ public sealed class ImportNeverOverwritesGuardTests
         Assert.Equal((songA, "4"), (after["versions"][newVersion]["song_id"], Number(newVersion)));
         Assert.Equal(versionThree, VersionIdOf(GenerationOf("same-mutable")));
         Assert.Equal(versionTwo, VersionIdOf(GenerationOf("same-frozen")));
+
+        // #143: the ignored clip from Suno's Trash went where its choice named, archived by sync.
+        var trashedImport = GenerationOf("ignored-trashed");
+        Assert.Equal(versionThree, VersionIdOf(trashedImport));
+        Assert.Equal(("archived", "trashed", "sync"), (after["generations"][trashedImport]["state"], after["generations"][trashedImport]["remote_state"], after["generations"][trashedImport]["archived_by"]));
         var restored = GenerationOf("deleted-1");
         Assert.True(records["deleted-1"].GetProperty("restored").GetBoolean());
         Assert.Contains(before["retention_records"].Values, row => row["original_id"] == restored);
@@ -341,30 +395,42 @@ public sealed class ImportNeverOverwritesGuardTests
         Assert.Equal(1, ImportCommitApi.GenerationCount(factory, "deleted-1"));
         Assert.Equal(0, ImportCommitApi.GenerationCount(factory, "skipped-1") + ImportCommitApi.GenerationCount(factory, "ignored-1"));
 
-        // #141: the Changed record took only its accepted title; the Conflict's Generation moved to a new
-        // child Version of its own, leaving its Version (not named below) as it was.
-        Assert.Equal(("updated", "moved"), (ImportCommitApi.Outcome(records["changed-1"]), ImportCommitApi.Outcome(records["conflict-1"])));
+        // #141: the Changed record took only its accepted title, remembering the tags it declined; the
+        // Conflict's Generation moved to a new child Version of its own, leaving its Version (not named
+        // below) as it was. The declined record and the kept conflict changed only what they remember.
+        Assert.Equal(
+            ("updated", "moved", "declined", "kept"),
+            (ImportCommitApi.Outcome(records["changed-1"]), ImportCommitApi.Outcome(records["conflict-1"]), ImportCommitApi.Outcome(records["declined-1"]), ImportCommitApi.Outcome(records["kept-1"])));
         var changedGeneration = GenerationOf("changed-1");
         var movedGeneration = GenerationOf("conflict-1");
+        var declinedGeneration = GenerationOf("declined-1");
+        var keptGeneration = GenerationOf("kept-1");
+        Assert.All(
+            new[] { (changedGeneration, "declined_hash"), (declinedGeneration, "declined_hash"), (keptGeneration, "declined_hash"), (keptGeneration, "kept_inputs_hash") },
+            remembered => Assert.Matches("^[0-9a-f]{64}$", after["generations"][remembered.Item1][remembered.Item2]));
         var childVersion = VersionIdOf(movedGeneration);
         Assert.Equal("3.1", Number(childVersion));
         var songB = after["versions"][childVersion]["song_id"]!;
         var resolvedColumns = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal)
         {
-            [changedGeneration] = ["suno_title"],
+            [changedGeneration] = ["suno_title", "declined_hash"],
             [movedGeneration] = ["version_id", "ordinal", "revision"],
+            [declinedGeneration] = ["declined_hash"],
+            [keptGeneration] = ["declined_hash", "kept_inputs_hash"],
         };
+        var replacedClips = Set(changedGeneration, movedGeneration);
 
         var createdSongs = Set(newSong);
         var createdVersions = Set(newSongVersion, newVersion, childVersion);
-        var createdGenerations = Set([.. new[] { "new-a1", "new-a2", "new-v", "same-mutable", "same-frozen", "deleted-1" }.Select(GenerationOf)]);
+        var createdGenerations = Set([.. new[] { "new-a1", "new-a2", "new-v", "same-mutable", "same-frozen", "deleted-1", "ignored-trashed" }.Select(GenerationOf)]);
         var namedSongs = Set(songA, newSong, songB);
         var namedVersions = Set(versionTwo, versionThree, restoredVersion);
         var restoredGroups = Set([.. before["retention_records"].Values.Where(row => row["original_id"] == restored).Select(static row => row["group_id"]!)]);
 
         bool In(HashSet<string> set, string? value) => value is not null && set.Contains(value.ToUpperInvariant());
 
-        // A resolved Generation (#141) may change only in the columns its choice names: never its rating.
+        // A resolved Generation (#141) may change only in the columns its choice names: never its rating,
+        // and, declined or kept, never a clip column (only what it remembers).
         bool OnlyResolvedColumns(Row row) =>
             resolvedColumns.TryGetValue(row["id"]!, out var allowed)
             && before["generations"][row["id"]!].Columns.Where(column => before["generations"][row["id"]!][column] != row[column]).All(allowed.Contains);
@@ -392,7 +458,7 @@ public sealed class ImportNeverOverwritesGuardTests
             ["songs"] = (kind, row) => kind == 'A' ? In(createdSongs, row["id"]) : kind == 'C' && In(namedSongs, row["id"]),
             ["versions"] = (kind, row) => kind == 'A' ? In(createdVersions, row["id"]) : kind == 'C' && In(namedVersions, row["id"]),
             ["generations"] = (kind, row) => kind == 'A' ? In(createdGenerations, row["id"]) : kind == 'C' && (OnlyResolvedColumns(row) || FollowsSuno(row)),
-            ["provider_records"] = (kind, row) => kind == 'A' ? In(createdGenerations, row["generation_id"]) : kind == 'C' && resolvedColumns.ContainsKey(row["generation_id"]!),
+            ["provider_records"] = (kind, row) => kind == 'A' ? In(createdGenerations, row["generation_id"]) : kind == 'C' && In(replacedClips, row["generation_id"]),
             ["shortcode_aliases"] = (kind, row) => kind == 'A' && row["generation_id"] == movedGeneration,
             ["generation_comments"] = (kind, row) => kind == 'A' && row["generation_id"] == restored,
             ["generation_events"] = static (kind, _) => kind == 'A',
@@ -404,7 +470,7 @@ public sealed class ImportNeverOverwritesGuardTests
             ["provider_tombstones"] = static (kind, row) => kind == 'R' && row["suno_id"] == "deleted-1",
             ["retention_groups"] = (kind, row) => kind == 'R' && In(restoredGroups, row["id"]),
             ["retention_records"] = (kind, row) => kind == 'R' && In(restoredGroups, row["group_id"]),
-            ["suno_ignored_items"] = static (kind, row) => kind == 'A' && row["suno_id"] == "ignored-1",
+            ["suno_ignored_items"] = static (kind, row) => (kind == 'A' && row["suno_id"] == "ignored-1") || (kind == 'R' && row["suno_id"] == "ignored-trashed"),
         };
 
         var unexplained = new List<string>();
@@ -419,7 +485,7 @@ public sealed class ImportNeverOverwritesGuardTests
         // The group's event, and the counted changes the result reports.
         Assert.Equal(1, Differences(before, after).Count(static change => change.Table == "generation_events"));
         var created = result.GetProperty("created");
-        Assert.Equal((1, 3, 6), (created.GetProperty("songs").GetInt32(), created.GetProperty("versions").GetInt32(), created.GetProperty("generations").GetInt32()));
+        Assert.Equal((1, 3, 7), (created.GetProperty("songs").GetInt32(), created.GetProperty("versions").GetInt32(), created.GetProperty("generations").GetInt32()));
         return unexplained;
     }
 

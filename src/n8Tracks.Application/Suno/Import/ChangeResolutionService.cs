@@ -81,8 +81,8 @@ public sealed class ChangeResolutionService(ISunoExportStore exports, ISunoClipL
             return new RecordDiffOutcome.NotDiffed(record.Class);
         }
 
-        var fields = SunoExportRules.ChangedFields(linked.Stored, read.Fields)
-            .Select(field => new FieldDiff(field, ValueOf(linked.Stored, field), ValueOf(read.Fields, field)))
+        var fields = RecordClassifier.ChangedFieldsOf(linked, read.Fields)
+            .Select(field => new FieldDiff(field, RememberedChoiceRules.ComparedValue(linked.Stored, field), RememberedChoiceRules.ComparedValue(read.Fields, field)))
             .ToList();
         var inputs = new List<InputDiff>();
         if (record.Class == SunoRecordClass.Conflict
@@ -95,22 +95,6 @@ public sealed class ChangeResolutionService(ISunoExportStore exports, ISunoClipL
 
         return new RecordDiffOutcome.Found(new RecordDiff(sunoId, record.Class.Value, linked.GenerationId, fields, inputs));
     }
-
-    /// <summary>A compared field's value in <paramref name="fields"/>, as the diff shows it.</summary>
-    private static object? ValueOf(ClipFields fields, string field) => field switch
-    {
-        "title" => fields.Title,
-        "tags" => fields.StyleTags,
-        "duration" => fields.DurationSeconds,
-        "modelVersion" => fields.ModelVersion,
-        "modelName" => fields.ModelName,
-        "minimumBpm" => fields.MinimumBpm,
-        "maximumBpm" => fields.MaximumBpm,
-        "averageBpm" => fields.AverageBpm,
-        "key" => fields.Key,
-        "imageUrl" => SunoExportRules.WithoutQuery(fields.ImageUrl),
-        _ => null,
-    };
 
     /// <summary>A compared input value as text: a JSON string unquoted, a raw value without its marker, anything else as JSON.</summary>
     private static string Display(string compared)
@@ -136,7 +120,9 @@ public sealed class ChangeResolutionService(ISunoExportStore exports, ISunoClipL
 /// leaves is not touched, and its Suno ID never changes), with any accepted fields.</item>
 /// </list>
 /// The provider record is replaced with Suno's latest only when a field was accepted or the conflict
-/// was resolved by a move. The Generation's rating, comments, state, artwork (save an accepted image,
+/// was resolved by a move. What the user declined or kept is remembered on the Generation as a hash
+/// (<see cref="RememberedChoiceRules"/>), so the next sync with the same data shows the clip as Already
+/// linked; the hash is cleared once nothing it covers differs. The Generation's rating, comments, state, artwork (save an accepted image,
 /// given through <see cref="GenerationArtworkService"/>), event link, and selection are never
 /// part of it. Skip, the default of both classes, never reaches here: it changes nothing (invariant 3).
 /// </summary>
@@ -188,18 +174,23 @@ internal sealed class ChangeResolutionWriter(
         var createdVersion = false;
         string outcome;
 
-        if (clip.Choice.Action == ImportAction.MoveToNewVersion
+        // A Conflict's Version and the clip's inputs, while they still differ.
+        (SongVersion Version, MappedClipInputs Inputs)? conflict = clip.Choice.Action != ImportAction.Apply
             && await versions.FindAsync(generation.Generation.VersionId, cancellationToken).ConfigureAwait(false) is { } current
             && ProposalService.Map(clip.Record.RawJson, await models.ListAsync(cancellationToken).ConfigureAwait(false)) is { } mapped
-            && ClipInputMapper.Differs(mapped, current.Lyrics, current.Styles, current.Inputs, current.Imported))
+            && ClipInputMapper.Differs(mapped, current.Lyrics, current.Styles, current.Inputs, current.Imported)
+            ? (current, mapped)
+            : null;
+
+        if (clip.Choice.Action == ImportAction.MoveToNewVersion && conflict is ({ } leaving, { } inputs))
         {
-            var used = (await versions.UsedNumbersAsync(current.SongId, cancellationToken).ConfigureAwait(false)).Select(VersionNumber.Parse);
-            var child = VersionNumbering.Options(VersionNumber.Parse(current.Number), used).FirstOrDefault(static option => option.Kind == VersionNumberKind.Child)
+            var used = (await versions.UsedNumbersAsync(leaving.SongId, cancellationToken).ConfigureAwait(false)).Select(VersionNumber.Parse);
+            var child = VersionNumbering.Options(VersionNumber.Parse(leaving.Number), used).FirstOrDefault(static option => option.Kind == VersionNumberKind.Child)
                 ?? throw new TargetFailedException(ImportCommitReasons.TargetMissing);
             var (target, _, _, _) = await writer.CreateAsync(
-                new ImportTarget.NewVersion(ImportChoiceRules.Key(1), current.SongId, null, current.Id, child.Number.ToString()),
+                new ImportTarget.NewVersion(ImportChoiceRules.Key(1), leaving.SongId, null, leaving.Id, child.Number.ToString()),
                 clip,
-                mapped,
+                inputs,
                 new Dictionary<string, Guid>(StringComparer.Ordinal),
                 cancellationToken).ConfigureAwait(false);
             (generation, _) = await moves.MoveWithinAsync(generation, target, now, cancellationToken).ConfigureAwait(false);
@@ -219,6 +210,21 @@ internal sealed class ChangeResolutionWriter(
         {
             await generations.RefreshClipFieldsAsync(generation.Generation.Id, read.Fields, accepted, cancellationToken).ConfigureAwait(false);
             await generations.TouchSongAsync(generation.Generation.SongId, now, cancellationToken).ConfigureAwait(false);
+        }
+
+        // Remembered (#141): the values left declined, so the next sync bringing them again shows the clip as
+        // Already linked; none once nothing differs. A kept conflict's inputs likewise; a move leaves none to
+        // keep. Only these two columns change for a declined or kept record (invariant 3).
+        await generations.RememberDeclinedAsync(
+            generation.Generation.Id,
+            changed.Count > accepted.Count ? RememberedChoiceRules.DeclinedHash(read.Fields) : null,
+            cancellationToken).ConfigureAwait(false);
+        if (clip.Choice.Action != ImportAction.Apply)
+        {
+            await generations.RememberKeptInputsAsync(
+                generation.Generation.Id,
+                clip.Choice.Action == ImportAction.Keep && conflict is { Inputs: var kept } ? RememberedChoiceRules.KeptInputsHash(kept.Compared) : null,
+                cancellationToken).ConfigureAwait(false);
         }
 
         if (accepted.Count > 0 || createdVersion)

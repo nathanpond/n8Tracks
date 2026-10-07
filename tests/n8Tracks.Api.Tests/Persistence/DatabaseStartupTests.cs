@@ -70,7 +70,8 @@ public sealed class DatabaseStartupTests : IDisposable
             migration => Assert.Matches("^[0-9]{14}_AddImportedInputsAndModelReportedAs\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AllowResolvedExternalSources\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AddExportLibraryFilters\\|10\\.0\\.", migration),
-            migration => Assert.Matches("^[0-9]{14}_FollowSunoRemoteState\\|10\\.0\\.", migration));
+            migration => Assert.Matches("^[0-9]{14}_FollowSunoRemoteState\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_RememberDeclinedSunoChanges\\|10\\.0\\.", migration));
 
         // ISO 8601 UTC with milliseconds and Z, taken when the migration ran.
         var initialized = TestDatabase.SchemaInitializedUtc(directory.Path);
@@ -158,7 +159,7 @@ public sealed class DatabaseStartupTests : IDisposable
                 "maximum_bpm|REAL|0|0", "minimum_bpm|REAL|0|0", "model_label|TEXT|0|0", "model_name|TEXT|0|0", "model_version|TEXT|0|0",
                 "musical_key|TEXT|0|0", "provider_status|TEXT|0|0", "style_tags|TEXT|0|0", "suno_created_utc|TEXT|0|0", "suno_title|TEXT|0|0",
                 "workspace_id|TEXT|0|0", "state|TEXT|1|0", "remote_state|TEXT|1|0", "revision|INTEGER|1|0", "suno_id|TEXT|0|0",
-                "rating|INTEGER|0|0", "artwork_asset_id|TEXT|0|0", "archived_by|TEXT|0|0",
+                "rating|INTEGER|0|0", "artwork_asset_id|TEXT|0|0", "archived_by|TEXT|0|0", "declined_hash|TEXT|0|0", "kept_inputs_hash|TEXT|0|0",
             ],
             TestDatabase.Rows(directory.Path, "SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('generations') ORDER BY cid;"));
         Assert.Equal(
@@ -326,7 +327,7 @@ public sealed class DatabaseStartupTests : IDisposable
 
         Assert.Equal(MigrationStatus.UpToDate, state.Status);
         Assert.Equal(TestDatabase.History(directory.Path)[^1].Split('|')[0], state.LastAppliedMigrationId);
-        Assert.EndsWith("_FollowSunoRemoteState", state.LastAppliedMigrationId, StringComparison.Ordinal);
+        Assert.EndsWith("_RememberDeclinedSunoChanges", state.LastAppliedMigrationId, StringComparison.Ordinal);
     }
 
     [Fact]

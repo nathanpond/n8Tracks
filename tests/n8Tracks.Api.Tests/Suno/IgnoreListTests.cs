@@ -89,6 +89,40 @@ public sealed class IgnoreListTests
         Assert.Equal("0", TestDatabase.Scalar(factory.DataPath, "SELECT count(*) FROM suno_ignored_items;"));
     }
 
+    /// <summary>
+    /// An ignored clip that is in Suno's Trash, chosen for import, comes in Archived by sync and In Suno
+    /// Trash (#143's discretion, with #142's archiver), so a later restore in Suno reactivates it. A clip
+    /// that was not ignored keeps #140's behaviour.
+    /// </summary>
+    [Fact]
+    public async Task AnIgnoredClipInSunosTrashImportsArchivedBySync()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var token = await SunoWorkspaceApi.ExtensionTokenAsync(factory);
+        var ignored = ProposalApi.Clip("trashed-ignored", null, ProposalApi.At, 0, "Trashed words", "Trashed");
+        var listed = ProposalApi.Clip("listed-ignored", null, ProposalApi.At.AddHours(1), 0, "Listed words", "Listed");
+        await IgnoreThroughACommitAsync(client, token, ignored, listed);
+
+        var id = await RemoteStateApi.ExportAsync(client, token, [listed], [ignored], SunoExportApi.Header());
+        var records = await SunoExportApi.RecordsByIdAsync(client, id);
+        Assert.Equal(("ignored", true), (Text(records["trashed-ignored"], "class"), records["trashed-ignored"].GetProperty("trashed").GetBoolean()));
+        await ProposalApi.ChangedAsync(client, id, 1, ProposalApi.Change(ProposalApi.Import(new JsonObject { ["kind"] = "newSong", ["key"] = "new:1", ["title"] = "From the Trash" }), "trashed-ignored"));
+        await ProposalApi.ChangedAsync(client, id, 2, ProposalApi.Change(ProposalApi.Import(new JsonObject { ["kind"] = "newSong", ["key"] = "new:2", ["title"] = "Listed" }), "listed-ignored"));
+        var result = ImportCommitApi.Records(await ImportCommitApi.CommitAsync(client, id));
+
+        var trashed = result["trashed-ignored"].GetProperty("generation").GetProperty("shortcode").GetString()!;
+        Assert.Equal(("archived", "trashed", "sync"), await RemoteStateApi.StatesAsync(client, trashed));
+        Assert.Equal(("active", "present", (string?)null), await RemoteStateApi.StatesAsync(client, result["listed-ignored"].GetProperty("generation").GetProperty("shortcode").GetString()!));
+        Assert.Equal("0", TestDatabase.Scalar(factory.DataPath, "SELECT count(*) FROM suno_ignored_items;"));
+
+        // Restored in Suno: the next sync reactivates it, as it does only what sync archived.
+        var restored = await RemoteStateApi.ExportAsync(client, token, [ignored], [], SunoExportApi.Header());
+        Assert.True((await RemoteStateApi.RowsAsync(client, restored))["trashed-ignored"].GetProperty("apply").GetBoolean());
+        await ImportCommitApi.CommitAsync(client, restored);
+        Assert.Equal(("active", "present", (string?)null), await RemoteStateApi.StatesAsync(client, trashed));
+    }
+
     /// <summary>Skip on an ignored record keeps it on the list, as Don't copy does; adding it again changes nothing (idempotent).</summary>
     [Fact]
     public async Task SkipOrDontCopyAgainKeepsTheEntryAsItWas()

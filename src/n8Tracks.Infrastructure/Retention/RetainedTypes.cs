@@ -163,14 +163,16 @@ internal static class RetainedTypes
     /// with none. Shape 3 (#119) added its rating; an earlier record restores unrated. Shape 4 (#121)
     /// added its image, whose files the deleting group lists; an earlier record restores with none,
     /// and one whose asset is gone all the same restores without it, with a note. Shape 5 (#142) added
-    /// who archived it; an earlier record restores with none (an archived one reads as the user's). Its provider
+    /// who archived it; an earlier record restores with none (an archived one reads as the user's). Shape 6
+    /// (#141) added the remembered declined-change and kept-conflict hashes; an earlier record restores
+    /// with neither, so its clip's differences are shown again at the next sync. Its provider
     /// record, event link, and comments go with it, as their own types. Once it is back, the provider
     /// tombstone its deletion recorded (#130) is removed, whatever ran the restore (the container
     /// command, or a Reimport), so a sync sees its clip as linked again; nothing else's tombstone is touched.
     /// </summary>
-    public static readonly RetainedType Generation = new(RetainedRecordTypes.Generation, "generations", "Generation", ShapeVersion: 5)
+    public static readonly RetainedType Generation = new(RetainedRecordTypes.Generation, "generations", "Generation", ShapeVersion: 6)
     {
-        Upgraders = new Dictionary<int, Func<JsonObject, JsonObject>> { [1] = GenerationShape1To2, [2] = GenerationShape2To3, [3] = GenerationShape3To4, [4] = GenerationShape4To5 }.ToFrozenDictionary(),
+        Upgraders = new Dictionary<int, Func<JsonObject, JsonObject>> { [1] = GenerationShape1To2, [2] = GenerationShape2To3, [3] = GenerationShape3To4, [4] = GenerationShape4To5, [5] = GenerationShape5To6 }.ToFrozenDictionary(),
         PrepareRestoreAsync = static (row, cancellationToken) => KeepArtworkIfStoredAsync(row, cancellationToken),
         AfterRestoreAsync = static (row, cancellationToken) => row.Values.GetValueOrDefault("suno_id") is string sunoId
             ? ProviderTombstoneStore.RemoveAsync(row.Context, sunoId, cancellationToken)
@@ -450,6 +452,16 @@ internal static class RetainedTypes
         ArgumentNullException.ThrowIfNull(document);
 
         document["archived_by"] = null;
+        return document;
+    }
+
+    /// <summary>A Generation retained before #141's remembered decisions (shape 5) as shape 6: nothing declined or kept.</summary>
+    internal static JsonObject GenerationShape5To6(JsonObject document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+
+        document["declined_hash"] = null;
+        document["kept_inputs_hash"] = null;
         return document;
     }
 

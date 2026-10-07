@@ -667,7 +667,8 @@ internal sealed class ImportTargetWriter(
     RetentionService retention,
     IExclusiveTransaction transaction,
     TimeProvider time,
-    IgnoreListService ignoreList)
+    IgnoreListService ignoreList,
+    IRemoteStateStore remoteStates)
 {
     /// <summary>
     /// Restores the Generation a Reimport names from retention, in its own transaction, when it was
@@ -807,12 +808,37 @@ internal sealed class ImportTargetWriter(
 
                     // An ignored clip imported leaves the ignore list with its import (#143).
                     await ignoreList.ForgetWithinAsync(clip.SunoId, ct).ConfigureAwait(false);
+
+                    // One that is in Suno's Trash comes in archived by sync (#143, with #142's archiver), as a
+                    // sync archives a linked clip found there: a restore in Suno reactivates it.
+                    if (clip.Record is { Class: SunoRecordClass.Ignored, Trashed: true })
+                    {
+                        generation = await ArchiveAsTrashedAsync(generation, ct).ConfigureAwait(false);
+                    }
+
                     attached.Add((clip, generation));
                 }
 
                 return new UnitResult(song, newSongKey, unit.Target is not ImportTarget.ExistingVersion, numberTaken, attached);
             },
             cancellationToken);
+    }
+
+    /// <summary>
+    /// <paramref name="generation"/>, just attached, as following Suno's Trash leaves it (#142's rule): in
+    /// Suno's Trash, archived by sync. Inside the target's transaction.
+    /// </summary>
+    private async Task<GenerationSummary> ArchiveAsTrashedAsync(GenerationSummary generation, CancellationToken cancellationToken)
+    {
+        var attached = generation.Generation;
+        if (RemoteStateRules.Transition(attached.State, attached.ArchivedBy, attached.RemoteState, RemoteSighting.Trashed) is { } transition
+            && !await remoteStates.TryApplyAsync(attached.Id, attached.Revision, transition, cancellationToken).ConfigureAwait(false))
+        {
+            throw new InvalidOperationException("The Generation just attached changed inside the transaction.");
+        }
+
+        return await versions.FindGenerationAsync(attached.Id, cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidOperationException("The Generation just archived cannot be read back.");
     }
 
     /// <summary>The existing Version, when it still holds every clip's inputs; a mutable one is frozen by the first attach.</summary>

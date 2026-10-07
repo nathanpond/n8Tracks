@@ -110,11 +110,10 @@ async function confirm(page: Page) {
  * Walks #141's Demo on the shared containers with a Suno ID and titles of its own. 1. A clip is
  * imported from an export. 2. An export where its title and tags differ shows it as Changed; the diff
  * shows both fields side by side; the title is taken and the tags declined; Confirm. 3. The Generation
- * has the new title and its old tags. 4. An export where its lyrics differ shows it as Conflict; moving
- * it to a new Version and confirming puts the Generation on a frozen child Version, and its old
- * shortcode still resolves. Each visited state, the diff dialog included, is scanned with axe.
- * (Demo step 3's "the same export again is Already linked" needs the remembered decline, which waits
- * for its migration: see the story's completion comment.)
+ * has the new title and its old tags, and the same export again shows it as Already linked: the
+ * declined tags are remembered. 4. An export where its lyrics differ shows it as Conflict; moving it to
+ * a new Version and confirming puts the Generation on a frozen child Version, and its old shortcode
+ * still resolves. Each visited state, the diff dialog included, is scanned with axe.
  */
 test.describe('Import diff', () => {
   test('takes only the fields chosen from a Changed record and moves a Conflict to a new Version', async ({
@@ -186,6 +185,20 @@ test.describe('Import diff', () => {
       };
       const updated = await read(shortcode);
       expect([updated.title, updated.styleTags]).toEqual([retitled.title, original.tags]);
+
+      // The same export again: the declined tags are remembered, so the clip is Already linked.
+      const again = await uploadExport(extension, base, token, workspace, [clip(retitled)]);
+      await page.goto(`./suno/imports/${again}`);
+      await expect(row.getByTestId('record-class')).toHaveText('Already linked');
+      await expect(
+        row.getByRole('button', { name: `Review the differences for ${retitled.title}` }),
+      ).toHaveCount(0);
+      await expectAccessibleInLightAndDark(page);
+      const discarded = await extension.post(
+        new URL(`api/v1/suno/exports/${again}/discard`, base).toString(),
+        { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } },
+      );
+      expect(discarded.status()).toBe(200);
 
       // 4. Its lyrics differ: Conflict. Move it to a new Version; its old shortcode still resolves.
       const remade = { ...retitled, tags: original.tags, lyrics: `[Verse]\nOther words ${stamp}` };

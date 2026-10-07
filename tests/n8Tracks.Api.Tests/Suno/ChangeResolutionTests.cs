@@ -89,28 +89,22 @@ public sealed class ChangeResolutionTests
         var id = GenerationRowId(after);
         Assert.Equal("New title", after["generations"][id]["suno_title"]);
         Assert.Equal(before["generations"][id]["style_tags"], after["generations"][id]["style_tags"]);
-        Assert.Equal(["suno_title"], ChangedColumns(before["generations"][id], after["generations"][id]));
+        Assert.Equal(["suno_title", "declined_hash"], ChangedColumns(before["generations"][id], after["generations"][id]));
+        Assert.NotNull(after["generations"][id]["declined_hash"]);
         Assert.Equal(changed.ToJsonString(), after["provider_records"][id]["payload"]);
         Assert.Equal(Comments(before), Comments(after));
         client.Dispose();
     }
 
     [Fact]
-    public async Task DecliningEveryFieldOrLeavingTheRecordAtSkipChangesNoRow()
+    public async Task DecliningEveryFieldChangesOnlyTheRememberedHashAndSkipChangesNoRow()
     {
         using var factory = SongApi.Host();
         var (client, token) = await ImportedAsync(factory);
         await ImportCommitApi.RateAndCommentAsync(client, Shortcode, 3, "A comment");
         var before = ImportNeverOverwritesGuardTests.Rows(factory.DataPath);
 
-        // Declined: apply with nothing accepted.
-        var (declined, _) = await ProposalApi.ExportAsync(client, token, Changed());
-        await ProposalApi.ChangedAsync(client, declined, 1, ProposalApi.Change(Apply(), SunoId));
-        Assert.Equal("declined", ImportCommitApi.Outcome(ImportCommitApi.Records(await ImportCommitApi.CommitAsync(client, declined))[SunoId]));
-        Assert.Equal(before["generations"].Values.Select(static row => row.Text), ImportNeverOverwritesGuardTests.Rows(factory.DataPath)["generations"].Values.Select(static row => row.Text));
-        Assert.Equal(before["provider_records"].Values.Select(static row => row.Text), ImportNeverOverwritesGuardTests.Rows(factory.DataPath)["provider_records"].Values.Select(static row => row.Text));
-
-        // Skip (the proposal) for a Changed and a Conflict record alike.
+        // Skip (the proposal) for a Changed and a Conflict record alike: no row changes.
         foreach (var (clip, recordClass) in new[] { (Changed(), "changed"), (ConflictOf(SunoId), "conflict") })
         {
             var (skipped, records) = await ProposalApi.ExportAsync(client, token, clip);
@@ -118,12 +112,123 @@ public sealed class ChangeResolutionTests
             Assert.Equal("skipped", ImportCommitApi.Outcome(ImportCommitApi.Records(await ImportCommitApi.CommitAsync(client, skipped))[SunoId]));
         }
 
-        var after = ImportNeverOverwritesGuardTests.Rows(factory.DataPath);
+        var skippedRows = ImportNeverOverwritesGuardTests.Rows(factory.DataPath);
         foreach (var table in new[] { "generations", "provider_records", "versions", "generation_comments", "shortcode_aliases" })
+        {
+            Assert.Equal(before[table].Values.Select(static row => row.Text), skippedRows[table].Values.Select(static row => row.Text));
+        }
+
+        // Declined: apply with nothing accepted. Only the remembered hash changes: not a clip column, the
+        // raw clip, the rating, the comments, or the revision.
+        var (declined, _) = await ProposalApi.ExportAsync(client, token, Changed());
+        await ProposalApi.ChangedAsync(client, declined, 1, ProposalApi.Change(Apply(), SunoId));
+        Assert.Equal("declined", ImportCommitApi.Outcome(ImportCommitApi.Records(await ImportCommitApi.CommitAsync(client, declined))[SunoId]));
+        var after = ImportNeverOverwritesGuardTests.Rows(factory.DataPath);
+        var id = GenerationRowId(after);
+        Assert.Equal(["declined_hash"], ChangedColumns(before["generations"][id], after["generations"][id]));
+        foreach (var table in new[] { "provider_records", "versions", "generation_comments", "shortcode_aliases" })
         {
             Assert.Equal(before[table].Values.Select(static row => row.Text), after[table].Values.Select(static row => row.Text));
         }
 
+        client.Dispose();
+    }
+
+    /// <summary>
+    /// AC 3: a declined change is remembered. The same data again is Already linked (no diff, proposed
+    /// as linked); a further change in Suno, to a declined field or another one, is Changed again with
+    /// every field that differs.
+    /// </summary>
+    [Fact]
+    public async Task ADeclinedChangeIsAlreadyLinkedUntilSunosDataChangesAgain()
+    {
+        using var factory = SongApi.Host();
+        var (client, token) = await ImportedAsync(factory);
+        var (declined, _) = await ProposalApi.ExportAsync(client, token, Changed());
+        await ProposalApi.ChangedAsync(client, declined, 1, ProposalApi.Change(Apply(), SunoId));
+        await ImportCommitApi.CommitAsync(client, declined);
+
+        var (same, records) = await ProposalApi.ExportAsync(client, token, Changed());
+        Assert.Equal("linked", records[SunoId].GetProperty("class").GetString());
+        Assert.Empty(records[SunoId].GetProperty("changedFields").EnumerateArray());
+        using (var noDiff = await client.GetAsync(DiffUri(same, SunoId)))
+        {
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, noDiff.StatusCode);
+        }
+
+        // An image address whose signature (query string) changed is still the same data.
+        var signed = Changed();
+        var image = Assert.IsType<string>((string?)Original()["image_url"]);
+        signed["image_url"] = $"{image.Split('?')[0]}?sig=later";
+        Assert.Equal("linked", (await ProposalApi.ExportAsync(client, token, signed)).Records[SunoId].GetProperty("class").GetString());
+
+        // Suno changes a declined field again, or another one: Changed, with every field that differs.
+        var retagged = Changed();
+        retagged["metadata"]!["tags"] = "tags changed once more";
+        var lengthened = Changed();
+        lengthened["metadata"]!["duration"] = 321.5;
+        foreach (var (clip, fields) in new[] { (retagged, new[] { "title", "tags" }), (lengthened, new[] { "title", "tags", "duration" }) })
+        {
+            var (again, changedRecords) = await ProposalApi.ExportAsync(client, token, clip);
+            Assert.Equal("changed", changedRecords[SunoId].GetProperty("class").GetString());
+            Assert.Equal(fields, (await DiffAsync(client, again, SunoId)).GetProperty("fields").EnumerateArray().Select(static field => field.GetProperty("field").GetString()));
+        }
+
+        client.Dispose();
+    }
+
+    /// <summary>
+    /// A partly accepted change remembers the fields left declined; accepting everything Suno has
+    /// clears the remembered hash, so nothing is left to hide.
+    /// </summary>
+    [Fact]
+    public async Task APartlyAcceptedChangeIsRememberedAndAcceptingEverythingForgetsIt()
+    {
+        using var factory = SongApi.Host();
+        var (client, token) = await ImportedAsync(factory);
+        var (partly, _) = await ProposalApi.ExportAsync(client, token, Changed());
+        await ProposalApi.ChangedAsync(client, partly, 1, ProposalApi.Change(Apply("title"), SunoId));
+        await ImportCommitApi.CommitAsync(client, partly);
+        Assert.Equal("linked", (await ProposalApi.ExportAsync(client, token, Changed())).Records[SunoId].GetProperty("class").GetString());
+
+        var retagged = Changed();
+        retagged["metadata"]!["tags"] = "tags changed once more";
+        var (again, records) = await ProposalApi.ExportAsync(client, token, retagged);
+        Assert.Equal("changed", records[SunoId].GetProperty("class").GetString());
+        await ProposalApi.ChangedAsync(client, again, 1, ProposalApi.Change(Apply("tags"), SunoId));
+        Assert.Equal("updated", ImportCommitApi.Outcome(ImportCommitApi.Records(await ImportCommitApi.CommitAsync(client, again))[SunoId]));
+
+        var rows = ImportNeverOverwritesGuardTests.Rows(factory.DataPath);
+        var id = GenerationRowId(rows);
+        Assert.Equal(("tags changed once more", null), (rows["generations"][id]["style_tags"], rows["generations"][id]["declined_hash"]));
+        client.Dispose();
+    }
+
+    /// <summary>
+    /// AC 6: a kept conflict is remembered like a declined change. The same inputs again are not a
+    /// Conflict (Already linked, or Changed when only metadata differs); other inputs are a Conflict again.
+    /// </summary>
+    [Fact]
+    public async Task AKeptConflictIsNotAConflictAgainUntilTheClipsInputsChangeAgain()
+    {
+        using var factory = SongApi.Host();
+        var (client, token) = await ImportedAsync(factory);
+        var before = ImportNeverOverwritesGuardTests.Rows(factory.DataPath);
+        var (kept, _) = await ProposalApi.ExportAsync(client, token, ConflictOf(SunoId));
+        await ProposalApi.ChangedAsync(client, kept, 1, ProposalApi.Change(new JsonObject { ["action"] = "keep" }, SunoId));
+        await ImportCommitApi.CommitAsync(client, kept);
+        var id = GenerationRowId(before);
+        Assert.Equal(["kept_inputs_hash"], ChangedColumns(before["generations"][id], ImportNeverOverwritesGuardTests.Rows(factory.DataPath)["generations"][id]));
+
+        Assert.Equal("linked", (await ProposalApi.ExportAsync(client, token, ConflictOf(SunoId))).Records[SunoId].GetProperty("class").GetString());
+
+        var retitled = ConflictOf(SunoId);
+        retitled["title"] = "Retitled on Suno";
+        Assert.Equal("changed", (await ProposalApi.ExportAsync(client, token, retitled)).Records[SunoId].GetProperty("class").GetString());
+
+        var rewritten = ConflictOf(SunoId);
+        rewritten["metadata"]!["prompt"] = "Third words";
+        Assert.Equal("conflict", (await ProposalApi.ExportAsync(client, token, rewritten)).Records[SunoId].GetProperty("class").GetString());
         client.Dispose();
     }
 
@@ -201,7 +306,7 @@ public sealed class ChangeResolutionTests
     }
 
     [Fact]
-    public async Task KeepingAConflictChangesNothingUnlessAFieldIsAccepted()
+    public async Task KeepingAConflictChangesOnlyWhatIsRememberedUnlessAFieldIsAccepted()
     {
         using var factory = SongApi.Host();
         var (client, token) = await ImportedAsync(factory);
@@ -209,22 +314,29 @@ public sealed class ChangeResolutionTests
         var conflict = ConflictOf(SunoId);
         conflict["title"] = "Retitled on Suno";
 
+        // Kept, the title declined: the Generation changes only in the two remembered hashes.
         var (kept, _) = await ProposalApi.ExportAsync(client, token, conflict);
         await ProposalApi.ChangedAsync(client, kept, 1, ProposalApi.Change(new JsonObject { ["action"] = "keep" }, SunoId));
         Assert.Equal("kept", ImportCommitApi.Outcome(ImportCommitApi.Records(await ImportCommitApi.CommitAsync(client, kept))[SunoId]));
         var after = ImportNeverOverwritesGuardTests.Rows(factory.DataPath);
-        foreach (var table in new[] { "generations", "provider_records", "versions", "shortcode_aliases" })
+        var id = GenerationRowId(after);
+        Assert.Equal(["declined_hash", "kept_inputs_hash"], ChangedColumns(before["generations"][id], after["generations"][id]));
+        foreach (var table in new[] { "provider_records", "versions", "shortcode_aliases" })
         {
             Assert.Equal(before[table].Values.Select(static row => row.Text), after[table].Values.Select(static row => row.Text));
         }
 
-        // Keep with the title accepted from the metadata diff beneath: only the title changes, and the
-        // Generation stays on its Version.
-        var (titled, _) = await ProposalApi.ExportAsync(client, token, conflict);
+        // Suno's inputs and title change again (a Conflict once more, with the title beneath): kept with the
+        // title accepted, only the title changes, and the Generation stays on its Version. Nothing is left
+        // declined, so the declined hash is cleared.
+        var rewritten = conflict.DeepClone();
+        rewritten["metadata"]!["prompt"] = "Third words";
+        rewritten["title"] = "Retitled again";
+        var (titled, records) = await ProposalApi.ExportAsync(client, token, rewritten);
+        Assert.Equal("conflict", records[SunoId].GetProperty("class").GetString());
         await ProposalApi.ChangedAsync(client, titled, 1, ProposalApi.Change(new JsonObject { ["action"] = "keep", ["acceptFields"] = new JsonArray("title") }, SunoId));
         Assert.Equal("updated", ImportCommitApi.Outcome(ImportCommitApi.Records(await ImportCommitApi.CommitAsync(client, titled))[SunoId]));
-        var id = GenerationRowId(after);
-        Assert.Equal(["suno_title"], ChangedColumns(before["generations"][id], ImportNeverOverwritesGuardTests.Rows(factory.DataPath)["generations"][id]));
+        Assert.Equal(["suno_title", "kept_inputs_hash"], ChangedColumns(before["generations"][id], ImportNeverOverwritesGuardTests.Rows(factory.DataPath)["generations"][id]));
         client.Dispose();
     }
 
