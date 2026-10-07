@@ -1,11 +1,13 @@
 import { Badge, Button, Group, NativeSelect, Stack, Text } from '@mantine/core';
 import { useState } from 'react';
+import { Link } from 'react-router';
 import type { Song } from '../../api/songs';
 import {
   SUNO_WORKSPACE_KEY,
   useSunoWorkspaces,
   workspaceChoices,
   workspaceName,
+  workspacePath,
   type SongWorkspace,
 } from '../../api/sunoWorkspaces';
 import type { FieldValue } from '../../api/saves';
@@ -18,16 +20,22 @@ import { Notice } from '../../components/Notice';
 export const UNAVAILABLE_WORKSPACE_DETAIL =
   'Suno no longer lists this workspace, or it is in Suno’s Trash. The Song keeps it; choose another workspace to move it.';
 
-/** The badge for a workspace Suno no longer offers, in the Song header and its Details. */
+/**
+ * The badge for a workspace Suno no longer offers, in the Song header and its Details. It links to
+ * the workspace's page in Settings (#151), where its Songs can be moved to an Available one.
+ */
 export function UnavailableWorkspaceBadge({ workspace }: { workspace: SongWorkspace }) {
   return (
     <Badge
+      component={Link}
+      to={workspacePath(workspace.id)}
       size="sm"
       variant="default"
       radius="sm"
       tt="none"
+      style={{ cursor: 'pointer' }}
       data-testid="workspace-unavailable"
-      aria-label={`Suno workspace ${workspaceName(workspace)} is unavailable`}
+      aria-label={`Workspace unavailable: ${workspaceName(workspace)}. Open it in Settings`}
     >
       Workspace unavailable
     </Badge>

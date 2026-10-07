@@ -1,4 +1,5 @@
-import { isRecord, useResource } from './songs';
+import { apiFetch } from './client';
+import { body, isErrorMap, isRecord, isSongPage, useResource } from './songs';
 
 /** Whether Suno still offers a workspace: `unavailable` when a complete list left it out or it is trashed in Suno. */
 export type SunoWorkspaceState = 'available' | 'unavailable';
@@ -27,6 +28,14 @@ export interface SongWorkspace {
 
 /** The Song field that sets its workspace: a known workspace's Suno ID, or null for none. */
 export const SUNO_WORKSPACE_KEY = 'sunoWorkspaceId';
+
+/** Where Settings lists the workspaces (#151); each workspace's own page is under it, by Suno ID. */
+export const SUNO_WORKSPACES_PATH = '/settings/suno-workspaces';
+
+/** The Settings page of the workspace with Suno ID `id`. */
+export function workspacePath(id: string): string {
+  return `${SUNO_WORKSPACES_PATH}/${encodeURIComponent(id)}`;
+}
 
 /** What a workspace with a blank name is shown as. */
 export const UNNAMED_WORKSPACE = '(unnamed)';
@@ -84,4 +93,81 @@ export function workspaceChoices(
   return current === null || choices.some((choice) => choice.id === current.id)
     ? choices
     : [current, ...choices];
+}
+
+/** How many of a workspace's Songs its page lists at once: the Songs list's largest page. */
+export const WORKSPACE_SONGS_PAGE_SIZE = 100;
+
+const acceptSongPage = (answer: unknown) => (isSongPage(answer) ? answer : undefined);
+
+/** A page of the Songs in the workspace with Suno ID `id` (#151), by title. */
+export function useWorkspaceSongs(id: string, page: number) {
+  const parameters = new URLSearchParams({
+    workspace: id,
+    sort: 'title',
+    pageSize: String(WORKSPACE_SONGS_PAGE_SIZE),
+  });
+  if (page !== 1) {
+    parameters.set('page', String(page));
+  }
+  return useResource(`api/v1/songs?${parameters.toString()}`, acceptSongPage);
+}
+
+/** Which of a workspace's Songs a bulk move takes: these Songs (by ID), or every one. */
+export type WorkspaceSongSelection = { songIds: string[] } | { all: true };
+
+/**
+ * How a bulk move ended: `moved` (how many); `invalid` with the errors by field (the target is no
+ * longer an Available other workspace, say); `not-in-workspace` with the Songs, as sent, that are no
+ * longer in it; `too-many` past the limit; `gone` when the workspace is not known; `failed`
+ * otherwise. Nothing moved unless the kind is `moved`: a move is all or nothing.
+ */
+export type MoveSongsResult =
+  | { kind: 'moved'; moved: number }
+  | { kind: 'invalid'; errors: Record<string, string[]> }
+  | { kind: 'not-in-workspace'; songs: string[] }
+  | { kind: 'too-many'; limit: number }
+  | { kind: 'gone' }
+  | { kind: 'failed' };
+
+/** Moves the selected Songs out of the workspace with Suno ID `from` into `targetWorkspaceId`, in one command. */
+export async function moveWorkspaceSongs(
+  from: string,
+  selection: WorkspaceSongSelection,
+  targetWorkspaceId: string,
+): Promise<MoveSongsResult> {
+  try {
+    const response = await apiFetch(
+      `api/v1/suno/workspaces/${encodeURIComponent(from)}/move-songs`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...selection, targetWorkspaceId }),
+      },
+    );
+    const answer = await body(response);
+    if (response.ok && isRecord(answer) && typeof answer.moved === 'number') {
+      return { kind: 'moved', moved: answer.moved };
+    }
+    if (response.status === 404) {
+      return { kind: 'gone' };
+    }
+    if (response.status === 422 && isRecord(answer)) {
+      if (answer.code === 'song_not_in_workspace' && Array.isArray(answer.songs)) {
+        return {
+          kind: 'not-in-workspace',
+          songs: answer.songs.filter((song): song is string => typeof song === 'string'),
+        };
+      }
+      if (answer.code === 'too_many_songs' && typeof answer.limit === 'number') {
+        return { kind: 'too-many', limit: answer.limit };
+      }
+      if (isErrorMap(answer.errors)) {
+        return { kind: 'invalid', errors: answer.errors };
+      }
+    }
+    return { kind: 'failed' };
+  } catch {
+    return { kind: 'failed' };
+  }
 }

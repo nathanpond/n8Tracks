@@ -91,6 +91,11 @@ describe('the Suno workspace section of the Details panel', () => {
 
     // Two badges: the header's and the Details'.
     expect(screen.getAllByTestId('workspace-unavailable')).toHaveLength(2);
+    // Each links to the workspace's page in Settings, where its Songs can be moved (#151).
+    for (const badge of screen.getAllByTestId('workspace-unavailable')) {
+      expect(badge).toHaveAttribute('href', `/settings/suno-workspaces/${ARCHIVE.id}`);
+      expect(badge).toHaveAccessibleName('Workspace unavailable: Archive. Open it in Settings');
+    }
     expect(screen.getByTestId('workspace-warning')).toHaveTextContent('Archive is unavailable');
     expect(options(select)).toEqual(['None', 'Archive (unavailable)', 'Demos', 'Studio']);
     expect(select).toHaveValue(ARCHIVE.id);

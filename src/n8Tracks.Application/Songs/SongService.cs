@@ -31,7 +31,8 @@ public sealed record SongRequest(
 /// <paramref name="Artists"/> an Artist's ID or <see cref="SongService.NoArtist"/>.
 /// <paramref name="Query"/> is the search text (<see cref="SongService.QueryParameter"/>),
 /// <paramref name="Title"/> a title to match exactly (<see cref="SongService.TitleParameter"/>), and
-/// <paramref name="ExcludeId"/> a Song's ID to leave out (<see cref="SongService.ExcludeIdParameter"/>).
+/// <paramref name="ExcludeId"/> a Song's ID to leave out (<see cref="SongService.ExcludeIdParameter"/>), and
+/// <paramref name="Workspace"/> the Suno ID of a workspace whose Songs alone are listed (<see cref="SongService.WorkspaceParameter"/>).
 /// </summary>
 public sealed record SongListRequest(
     string? Sort,
@@ -44,7 +45,8 @@ public sealed record SongListRequest(
     IReadOnlyList<string?>? Artists = null,
     string? Query = null,
     string? Title = null,
-    string? ExcludeId = null);
+    string? ExcludeId = null,
+    string? Workspace = null);
 
 /// <summary>How creating a Song ended.</summary>
 public abstract record SongOutcome
@@ -229,6 +231,9 @@ public sealed class SongService(
 
     /// <summary>The ID of a Song to leave out of the list (the Song asking who shares its title).</summary>
     public const string ExcludeIdParameter = "excludeId";
+
+    /// <summary>The Suno ID of a known workspace (#151): only the Songs in it. Blank or unknown is refused.</summary>
+    public const string WorkspaceParameter = "workspace";
 
     /// <summary>How many Songs a search answers unless <see cref="PageSizeParameter"/> says otherwise.</summary>
     public const int SearchPageSize = 10;
@@ -532,8 +537,9 @@ public sealed class SongService(
     /// contains it (ignoring case) or whose shortcode starts with it, and a blank <c>q</c> matches
     /// nothing; <c>title</c> keeps the Songs with that title ignoring case and spacing
     /// (<see cref="SongRules.TitleKey"/>) and a blank one is refused; <c>excludeId</c> leaves out the
-    /// Song with that ID (states, Genres, Tags, Artists, <c>q</c>, <c>title</c>, and <c>excludeId</c>
-    /// combine by AND); <c>page</c> counts from
+    /// Song with that ID; <c>workspace</c> keeps the Songs in the Suno workspace with that ID, and a
+    /// blank or unknown one is refused (states, Genres, Tags, Artists, <c>q</c>, <c>title</c>,
+    /// <c>excludeId</c>, and <c>workspace</c> combine by AND); <c>page</c> counts from
     /// 1; <c>pageSize</c> is 1 to <see cref="MaximumPageSize"/>, <see cref="DefaultPageSize"/> by
     /// default and <see cref="SearchPageSize"/> with <c>q</c>.
     /// </summary>
@@ -686,6 +692,12 @@ public sealed class SongService(
             excludeId = excluded;
         }
 
+        if (request.Workspace is not null
+            && (string.IsNullOrWhiteSpace(request.Workspace) || await workspaces.FindAsync(request.Workspace, cancellationToken).ConfigureAwait(false) is null))
+        {
+            return Invalid($"{WorkspaceParameter} must be the Suno ID of a known workspace.");
+        }
+
         string? search = null;
         if (request.Query is not null)
         {
@@ -696,7 +708,7 @@ public sealed class SongService(
             }
         }
 
-        var query = new SongListQuery(sort, descending, stateIds, page, pageSize, genreIds, noGenre, tagIds, noTag, artistIds, noArtist, search, titleKey, excludeId);
+        var query = new SongListQuery(sort, descending, stateIds, page, pageSize, genreIds, noGenre, tagIds, noTag, artistIds, noArtist, search, titleKey, excludeId, request.Workspace);
         return new SongListOutcome.Listed(await songs.ListAsync(query, cancellationToken).ConfigureAwait(false));
     }
 

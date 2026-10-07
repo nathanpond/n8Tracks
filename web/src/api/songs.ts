@@ -381,7 +381,7 @@ export function isSongRelationship(value: unknown): value is SongRelationship {
   );
 }
 
-function isSongPage(value: unknown): value is SongPage {
+export function isSongPage(value: unknown): value is SongPage {
   return (
     isRecord(value) &&
     Array.isArray(value.items) &&

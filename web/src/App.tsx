@@ -14,6 +14,7 @@ import { CatalogPage } from './settings/CatalogPage';
 import { CredentialsPage } from './settings/CredentialsPage';
 import { GenresPage } from './settings/GenresPage';
 import { SunoPage } from './settings/SunoPage';
+import { SunoWorkspacePage, SunoWorkspacesPage } from './settings/SunoWorkspacesPage';
 import { RelationshipsPage } from './settings/RelationshipsPage';
 import { TagsPage } from './settings/TagsPage';
 import { SystemPage } from './settings/SystemPage';
@@ -64,6 +65,8 @@ export function App() {
                 <Route path="settings/tags" element={<TagsPage />} />
                 <Route path="settings/relationships" element={<RelationshipsPage />} />
                 <Route path="settings/suno" element={<SunoPage />} />
+                <Route path="settings/suno-workspaces" element={<SunoWorkspacesPage />} />
+                <Route path="settings/suno-workspaces/:id" element={<SunoWorkspacePage />} />
                 <Route path="settings/backups" element={<BackupsPage />} />
                 <Route path="settings/system" element={<SystemPage />} />
                 <Route path="*" element={<NotFoundPage />} />

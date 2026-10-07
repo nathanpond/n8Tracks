@@ -517,6 +517,51 @@ public sealed class SunoWorkspaceEndpointTests
     }
 
     [Fact]
+    public async Task TheSongListShowsAWorkspacesSongsAndFollowsABulkMove()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        await ThreeSongsInAsync(factory, client);
+
+        // #151: the workspace page lists its Songs through the Songs list's workspace filter.
+        Assert.Equal(["n8-1", "n8-2"], SongApi.Shortcodes(await SongApi.ListAsync(client, "workspace=w-from&sort=title")));
+        Assert.Empty(SongApi.Shortcodes(await SongApi.ListAsync(client, "workspace=w-to")));
+        Assert.Equal(["n8-2"], SongApi.Shortcodes(await SongApi.ListAsync(client, "workspace=w-from&q=Second")));
+        var page = await SongApi.ListAsync(client, "workspace=w-from&pageSize=1");
+        Assert.Equal(2, page.GetProperty("total").GetInt32());
+
+        using (var moved = await SunoWorkspaceApi.MoveAsync(client, "w-from", """{"all":true,"targetWorkspaceId":"w-to"}"""))
+        {
+            Assert.Equal(2, (await SetupApi.JsonAsync(moved)).GetProperty("moved").GetInt32());
+        }
+
+        Assert.Empty(SongApi.Shortcodes(await SongApi.ListAsync(client, "workspace=w-from")));
+        Assert.Equal(["n8-1", "n8-2"], SongApi.Shortcodes(await SongApi.ListAsync(client, "workspace=w-to&sort=title")));
+
+        // An Unavailable workspace's Songs are listed too: that is how they are found to move them off it.
+        await SunoWorkspaceApi.AssociatedAsync(client, "n8-3", "w-to");
+        var token = await SunoWorkspaceApi.ExtensionTokenAsync(factory);
+        await SunoWorkspaceApi.ReportAsync(client, token, complete: true, SunoWorkspaceApi.Project("w-from", "From"));
+        Assert.Equal(["n8-1", "n8-2", "n8-3"], SongApi.Shortcodes(await SongApi.ListAsync(client, "workspace=w-to&sort=title")));
+    }
+
+    [Theory]
+    [InlineData("workspace=w-unknown")]
+    [InlineData("workspace=")]
+    [InlineData("workspace=%20")]
+    [InlineData("workspace=w-from&workspace=w-to")]
+    public async Task AnUnknownBlankOrRepeatedWorkspaceFilterIsRefused(string query)
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        await ThreeSongsInAsync(factory, client);
+
+        using var response = await client.GetAsync(new Uri($"/api/v1/songs?{query}", UriKind.Relative));
+
+        await SetupApi.ProblemAsync(response, HttpStatusCode.BadRequest, ApiProblem.InvalidRequestCode);
+    }
+
+    [Fact]
     public async Task MoreThanFiveThousandSongsAreRefusedWithTooManySongs()
     {
         using var factory = SongApi.Host();

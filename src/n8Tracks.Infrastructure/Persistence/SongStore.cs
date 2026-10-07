@@ -140,6 +140,11 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
             songs = songs.Where(song => song.Id != excludeId);
         }
 
+        if (query.SunoWorkspaceId is { } sunoWorkspaceId)
+        {
+            songs = songs.Where(song => song.SunoWorkspaceId == sunoWorkspaceId);
+        }
+
         var total = await songs.CountAsync(cancellationToken).ConfigureAwait(false);
 
         // Times are fixed-width UTC text, so text order is time order; the shortcode number breaks ties.

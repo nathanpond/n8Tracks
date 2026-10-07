@@ -40,7 +40,7 @@ internal static class SongsEndpoints
 
         endpoints.MapGet(SongsPath, ListAsync)
             .WithName("ListSongs")
-            .WithSummary("A page of Songs, sorted by last update or title, optionally only those in given workflow states (state), with any of given Genres (genre: Genre IDs, or none for Songs with no Genre), with any of given Tags (tag: Tag IDs, or none for Songs with no Tag), crediting any of given Artists as primary or featured (artist: Artist IDs, or none for Songs credited to no one), and matching a search (q: a title substring or shortcode prefix, ignoring case; ten a page by default; nothing for a blank q).")
+            .WithSummary("A page of Songs, sorted by last update or title, optionally only those in given workflow states (state), with any of given Genres (genre: Genre IDs, or none for Songs with no Genre), with any of given Tags (tag: Tag IDs, or none for Songs with no Tag), crediting any of given Artists as primary or featured (artist: Artist IDs, or none for Songs credited to no one), in a Suno workspace (workspace: a known workspace's Suno ID), and matching a search (q: a title substring or shortcode prefix, ignoring case; ten a page by default; nothing for a blank q).")
             .RequireScope(CredentialScopes.CatalogRead)
             .Produces<SongListResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
@@ -155,8 +155,9 @@ internal static class SongsEndpoints
             [.. query[SongService.ArtistParameter]],
             Single(query, SongService.QueryParameter, out var searchRepeated),
             Single(query, SongService.TitleParameter, out var titleRepeated),
-            Single(query, SongService.ExcludeIdParameter, out var excludeRepeated));
-        if (sortRepeated || directionRepeated || pageRepeated || pageSizeRepeated || searchRepeated || titleRepeated || excludeRepeated)
+            Single(query, SongService.ExcludeIdParameter, out var excludeRepeated),
+            Single(query, SongService.WorkspaceParameter, out var workspaceRepeated));
+        if (sortRepeated || directionRepeated || pageRepeated || pageSizeRepeated || searchRepeated || titleRepeated || excludeRepeated || workspaceRepeated)
         {
             return ApiProblem.For(
                 context,
