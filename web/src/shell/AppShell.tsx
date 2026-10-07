@@ -33,7 +33,7 @@ function SidebarLink({
 
 /**
  * The signed-in shell: the header (sidebar toggle, product name, colour control, Go to box, user menu), the
- * sidebar, and the current page. The sidebar lists Songs, Artists, Albums, and Settings, and Settings has Account,
+ * sidebar, and the current page. The sidebar lists Songs, Artists, Albums, Playlists, Suno import, and Settings, and Settings has Account,
  * Credentials, Workflow, Catalog, Genres, Tags, Relationships, Suno, Suno workspaces, Backups, and System; later stories add pages. On a narrow screen the sidebar is hidden until the toggle opens
  * it, and choosing a page closes it again.
  */
@@ -56,12 +56,14 @@ export function SignedInShell() {
         <GoToBox />
         <UserMenu />
       </AppHeader>
-      <AppShell.Navbar p="xs" id="app-navigation" aria-label="Main">
+      {/* The list outgrows a short window: the sidebar scrolls on its own, so every entry stays reachable. */}
+      <AppShell.Navbar p="xs" id="app-navigation" aria-label="Main" style={{ overflowY: 'auto' }}>
         <Stack gap={4}>
           <SidebarLink to="/songs" label="Songs" onNavigate={close} />
           <SidebarLink to="/artists" label="Artists" onNavigate={close} />
           <SidebarLink to="/albums" label="Albums" onNavigate={close} />
           <SidebarLink to="/playlists" label="Playlists" onNavigate={close} />
+          <SidebarLink to="/suno/imports" label="Suno import" onNavigate={close} />
           <Text
             id="navigation-settings"
             size="xs"

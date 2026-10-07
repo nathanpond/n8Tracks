@@ -49,6 +49,7 @@ public static class DependencyInjection
         services.AddScoped<RecordClassifier>();
         services.AddScoped<ProposalService>();
         services.AddScoped<ExportStagingService>();
+        services.AddScoped<ImportReviewService>();
         services.AddJobHandler<ExportClassifyJobHandler>(ExportStagingService.ClassifyJobType);
         services.AddScoped<GenreService>();
         services.AddScoped<TagService>();

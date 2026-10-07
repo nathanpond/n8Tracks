@@ -47,6 +47,11 @@ public sealed record SunoExport(
 /// <param name="WorkspacesComplete">Whether the workspace list was read to its end.</param>
 /// <param name="WorkspacesJson">The raw project objects, as a JSON array.</param>
 /// <param name="PlaylistsJson">The playlists named in the header (<c>[{ id, name, clipIds }]</c>), as a JSON array.</param>
+/// <param name="LibraryFiltersJson">
+/// The library filters Suno applied while the library was read (#134), as a JSON object without the
+/// members that name the user or a workspace; null when the header carried none. The review says which
+/// kinds of clip they left out (#139).
+/// </param>
 public sealed record SunoExportHeader(
     string? ExtensionVersion,
     string? AdapterVersion,
@@ -57,7 +62,8 @@ public sealed record SunoExportHeader(
     bool TrashedComplete,
     bool WorkspacesComplete,
     string WorkspacesJson,
-    string PlaylistsJson);
+    string PlaylistsJson,
+    string? LibraryFiltersJson = null);
 
 /// <summary>Where an export is in its life.</summary>
 public enum SunoExportState

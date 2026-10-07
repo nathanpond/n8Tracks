@@ -34,6 +34,7 @@ internal sealed class SunoExportStore(N8TracksDbContext context) : ISunoExportSt
             WorkspacesComplete = header.WorkspacesComplete,
             WorkspacesJson = header.WorkspacesJson,
             PlaylistsJson = header.PlaylistsJson,
+            LibraryFiltersJson = header.LibraryFiltersJson,
             CreatedUtc = UtcText.From(export.CreatedUtc),
             Revision = export.Revision,
         };
@@ -316,24 +317,7 @@ internal sealed class SunoExportStore(N8TracksDbContext context) : ISunoExportSt
     {
         ArgumentNullException.ThrowIfNull(query);
 
-        var rows = context.StagedClips.AsNoTracking().Where(row => row.ExportId == exportId);
-        if (query.Class is { } recordClass)
-        {
-            var name = SunoExportRules.NameOf(recordClass);
-            rows = rows.Where(row => row.Class == name);
-        }
-
-        if (query.WorkspaceId is { } workspace)
-        {
-            rows = rows.Where(row => row.WorkspaceId == workspace);
-        }
-
-        if (query.PlaylistId is { } playlist)
-        {
-            rows = rows.Where(row => context.StagedClipPlaylists.Any(member =>
-                member.ExportId == exportId && member.SunoId == row.SunoId && member.PlaylistId == playlist));
-        }
-
+        var rows = Filtered(exportId, query);
         var total = await rows.CountAsync(cancellationToken).ConfigureAwait(false);
         var page = await rows
             .OrderByDescending(static row => row.SunoCreatedUtc)
@@ -390,6 +374,49 @@ internal sealed class SunoExportStore(N8TracksDbContext context) : ISunoExportSt
             query.Page,
             query.PageSize,
             total);
+    }
+
+    public async Task<IReadOnlyList<string>> MatchingSunoIdsAsync(Guid exportId, StagedRecordQuery filter, IReadOnlyCollection<SunoRecordClass> classes, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(filter);
+        ArgumentNullException.ThrowIfNull(classes);
+
+        var names = classes.Select(SunoExportRules.NameOf).ToList();
+        return await Filtered(exportId, filter)
+            .Where(row => row.Class != null && names.Contains(row.Class))
+            .OrderBy(static row => row.SunoId)
+            .Select(static row => row.SunoId)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<StagedFacets> FacetsAsync(Guid exportId, CancellationToken cancellationToken)
+    {
+        var workspaces = await context.StagedClips.AsNoTracking()
+            .Where(row => row.ExportId == exportId && row.WorkspaceId != null)
+            .GroupBy(static row => row.WorkspaceId!)
+            .Select(static group => new { Id = group.Key, Count = group.Count() })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var playlists = await context.StagedClipPlaylists.AsNoTracking()
+            .Where(row => row.ExportId == exportId)
+            .GroupBy(static row => row.PlaylistId)
+            .Select(static group => new { Id = group.Key, Count = group.Count() })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return new StagedFacets(
+            [.. workspaces.OrderBy(static facet => facet.Id, StringComparer.Ordinal).Select(static facet => new StagedFacet(facet.Id, facet.Count))],
+            [.. playlists.OrderBy(static facet => facet.Id, StringComparer.Ordinal).Select(static facet => new StagedFacet(facet.Id, facet.Count))]);
+    }
+
+    public async Task<SunoExport?> NewestAsync(CancellationToken cancellationToken)
+    {
+        var record = await context.SunoExports.AsNoTracking()
+            .OrderByDescending(static row => row.CreatedUtc)
+            .ThenByDescending(static row => row.Id)
+            .FirstOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return record is null ? null : ToExport(record);
     }
 
     public Task<bool> RecordExistsAsync(Guid exportId, string sunoId, CancellationToken cancellationToken) =>
@@ -472,6 +499,37 @@ internal sealed class SunoExportStore(N8TracksDbContext context) : ISunoExportSt
     public Task<bool> IsAttachedAsync(Guid assetId, CancellationToken cancellationToken) =>
         context.StagedClips.AsNoTracking().AnyAsync(row => row.ArtworkAssetId == assetId, cancellationToken);
 
+    /// <summary>The export's staged records matching the query's filters; its page is not applied.</summary>
+    private IQueryable<StagedClipRecord> Filtered(Guid exportId, StagedRecordQuery query)
+    {
+        var rows = context.StagedClips.AsNoTracking().Where(row => row.ExportId == exportId);
+        if (query.Class is { } recordClass)
+        {
+            var name = SunoExportRules.NameOf(recordClass);
+            rows = rows.Where(row => row.Class == name);
+        }
+
+        if (query.WorkspaceId is { } workspace)
+        {
+            rows = rows.Where(row => row.WorkspaceId == workspace);
+        }
+
+        if (query.PlaylistId is { } playlist)
+        {
+            rows = rows.Where(row => context.StagedClipPlaylists.Any(member =>
+                member.ExportId == exportId && member.SunoId == row.SunoId && member.PlaylistId == playlist));
+        }
+
+        if (query.Search is { Length: > 0 } search)
+        {
+            // instr over lower(): SQLite's lower() folds ASCII letters only, so other letters match as written.
+            var lowered = search.ToLowerInvariant();
+            rows = rows.Where(row => row.Title != null && row.Title.ToLower().Contains(lowered));
+        }
+
+        return rows;
+    }
+
     private static void Fill(StagedClipRecord row, StagedClip clip)
     {
         row.RawJson = clip.RawJson;
@@ -499,7 +557,8 @@ internal sealed class SunoExportStore(N8TracksDbContext context) : ISunoExportSt
                 record.TrashedComplete,
                 record.WorkspacesComplete,
                 record.WorkspacesJson,
-                record.PlaylistsJson),
+                record.PlaylistsJson,
+                record.LibraryFiltersJson),
             UtcText.Parse(record.CreatedUtc),
             Optional(record.CompletedUtc),
             Optional(record.ReadyUtc),

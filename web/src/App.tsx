@@ -25,6 +25,8 @@ import { GoPage } from './shell/GoPage';
 import { NotFoundPage } from './shell/NotFoundPage';
 import { SongPage } from './songs/SongPage';
 import { SongsPage } from './songs/SongsPage';
+import { ImportReviewPage } from './suno/ImportReviewPage';
+import { SunoImportsPage } from './suno/SunoImportsPage';
 import { colorSchemeManager, cssVariablesResolver, theme } from './theme/theme';
 
 /**
@@ -55,6 +57,8 @@ export function App() {
                 <Route path="albums/:id" element={<AlbumPage />} />
                 <Route path="playlists" element={<PlaylistsPage />} />
                 <Route path="playlists/:id" element={<PlaylistPage />} />
+                <Route path="suno/imports" element={<SunoImportsPage />} />
+                <Route path="suno/imports/:id" element={<ImportReviewPage />} />
                 <Route path="go/:reference" element={<GoPage />} />
                 <Route path="settings" element={<Navigate to="/settings/account" replace />} />
                 <Route path="settings/account" element={<AccountPage />} />

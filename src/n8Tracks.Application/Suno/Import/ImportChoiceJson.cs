@@ -23,6 +23,13 @@ public sealed record ImportTargetRequest(
     string? Number = null,
     string? Version = null);
 
+/// <summary>
+/// A change of choices by filter (#139, "select all that match"): the records matching the filters
+/// (class, workspace, playlist, and text in the Suno title), except those named in <paramref name="Except"/>.
+/// The server resolves it to Suno IDs, so a selection across pages need not send them.
+/// </summary>
+public sealed record ChoiceFilter(SunoRecordClass? Class, string? WorkspaceId, string? PlaylistId, string? Search, IReadOnlyList<string> Except);
+
 /// <summary>What reading a change of choices found: the request, or the errors by field.</summary>
 public abstract record ChoiceChangeReading
 {
@@ -30,8 +37,11 @@ public abstract record ChoiceChangeReading
     {
     }
 
-    /// <summary>The records named (distinct, in order) and the choice for them.</summary>
-    public sealed record Read(IReadOnlyList<string> SunoIds, ImportChoiceRequest Choice) : ChoiceChangeReading;
+    /// <summary>
+    /// The records named (distinct, in order) and the choice for them; or, when <paramref name="Filter"/>
+    /// is set (#139), no IDs and the filter the records are chosen by on the server.
+    /// </summary>
+    public sealed record Read(IReadOnlyList<string> SunoIds, ImportChoiceRequest Choice, ChoiceFilter? Filter = null) : ChoiceChangeReading;
 
     public sealed record Invalid(IReadOnlyDictionary<string, string[]> Errors) : ChoiceChangeReading;
 }
@@ -113,41 +123,31 @@ public static class ImportChoiceJson
     }
 
     /// <summary>
-    /// Reads a change of choices: <c>sunoIds</c>, 1 to <see cref="ImportChoiceRules.MaximumRecordsPerChange"/>
-    /// Suno IDs (repeats are taken once), and <c>choice</c>. Unknown members are refused, so a misspelt one
-    /// is never ignored.
+    /// Reads a change of choices: <c>{ sunoIds, choice }</c>, with 1 to
+    /// <see cref="ImportChoiceRules.MaximumRecordsPerChange"/> Suno IDs (repeats are taken once), or
+    /// <c>{ filter: { class?, workspace?, playlist?, q? }, except?, choice }</c> (#139), with at most as many
+    /// Suno IDs in <c>except</c>. Unknown members are refused, so a misspelt one is never ignored.
     /// </summary>
     public static ChoiceChangeReading ReadChange(JsonElement body)
     {
         var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
         if (body.ValueKind != JsonValueKind.Object)
         {
-            return Invalid("body", "Send an object: { sunoIds, choice }.");
+            return Invalid("body", "Send an object: { sunoIds, choice } or { filter, except, choice }.");
         }
 
-        Unknown(body, "", errors, "sunoIds", "choice");
+        var byFilter = body.TryGetProperty("filter", out var filterElement);
+        Unknown(body, "", errors, byFilter ? ["filter", "except", "choice"] : ["sunoIds", "choice"]);
         var ids = new List<string>();
-        if (!body.TryGetProperty("sunoIds", out var list) || list.ValueKind != JsonValueKind.Array)
+        ChoiceFilter? filter = null;
+        if (byFilter)
         {
-            errors["sunoIds"] = ["Name the records: a list of Suno IDs."];
+            filter = ReadFilter(filterElement, body, errors);
         }
-        else
+        else if (IdList(body, "sunoIds", errors) is { } named)
         {
-            foreach (var item in list.EnumerateArray())
-            {
-                if (item.ValueKind != JsonValueKind.String || string.IsNullOrEmpty(item.GetString()))
-                {
-                    errors["sunoIds"] = ["Each Suno ID is a text that is not empty."];
-                    break;
-                }
-
-                if (!ids.Contains(item.GetString()!, StringComparer.Ordinal))
-                {
-                    ids.Add(item.GetString()!);
-                }
-            }
-
-            if (!errors.ContainsKey("sunoIds") && (ids.Count == 0 || ids.Count > ImportChoiceRules.MaximumRecordsPerChange))
+            ids = named;
+            if (ids.Count == 0 || ids.Count > ImportChoiceRules.MaximumRecordsPerChange)
             {
                 errors["sunoIds"] = [string.Create(CultureInfo.InvariantCulture, $"Name 1 to {ImportChoiceRules.MaximumRecordsPerChange:N0} records.")];
             }
@@ -163,8 +163,74 @@ public static class ImportChoiceJson
             choice = ReadChoice(choiceElement, errors);
         }
 
-        return errors.Count == 0 ? new ChoiceChangeReading.Read(ids, choice!) : new ChoiceChangeReading.Invalid(errors);
+        return errors.Count == 0 ? new ChoiceChangeReading.Read(ids, choice!, filter) : new ChoiceChangeReading.Invalid(errors);
     }
+
+    /// <summary>The <c>filter</c> and <c>except</c> of a change by filter; null with errors when they are not well formed.</summary>
+    private static ChoiceFilter? ReadFilter(JsonElement filter, JsonElement body, Dictionary<string, string[]> errors)
+    {
+        if (filter.ValueKind != JsonValueKind.Object)
+        {
+            errors["filter"] = ["Send the filter as an object: { class, workspace, playlist, q }, each optional."];
+            return null;
+        }
+
+        var before = errors.Count;
+        Unknown(filter, "filter.", errors, "class", "workspace", "playlist", "q");
+        foreach (var member in filter.EnumerateObject().Where(static member => member.Value.ValueKind is not (JsonValueKind.String or JsonValueKind.Null)))
+        {
+            errors["filter." + member.Name] = ["Send text, or null."];
+        }
+
+        SunoRecordClass? recordClass = null;
+        if (Text(filter, "class") is { } className)
+        {
+            recordClass = SunoExportRules.ClassOf(className);
+            if (recordClass is null)
+            {
+                errors["filter.class"] = ["class is one of new, linked, changed, conflict, ignored, deleted."];
+            }
+        }
+
+        var except = body.TryGetProperty("except", out _) ? IdList(body, "except", errors) : [];
+        if (except is { Count: > ImportChoiceRules.MaximumRecordsPerChange })
+        {
+            errors["except"] = [string.Create(CultureInfo.InvariantCulture, $"Leave out at most {ImportChoiceRules.MaximumRecordsPerChange:N0} records.")];
+        }
+
+        return errors.Count == before
+            ? new ChoiceFilter(recordClass, Blank(Text(filter, "workspace")), Blank(Text(filter, "playlist")), Blank(Text(filter, "q")), except!)
+            : null;
+    }
+
+    /// <summary>A list of Suno IDs (distinct, in order); null with an error when it is not one.</summary>
+    private static List<string>? IdList(JsonElement owner, string name, Dictionary<string, string[]> errors)
+    {
+        if (!owner.TryGetProperty(name, out var list) || list.ValueKind != JsonValueKind.Array)
+        {
+            errors[name] = ["Name the records: a list of Suno IDs."];
+            return null;
+        }
+
+        var ids = new List<string>();
+        foreach (var item in list.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.String || string.IsNullOrEmpty(item.GetString()))
+            {
+                errors[name] = ["Each Suno ID is a text that is not empty."];
+                return null;
+            }
+
+            if (!ids.Contains(item.GetString()!, StringComparer.Ordinal))
+            {
+                ids.Add(item.GetString()!);
+            }
+        }
+
+        return ids;
+    }
+
+    private static string? Blank(string? text) => string.IsNullOrEmpty(text) ? null : text;
 
     private static ImportChoiceRequest? ReadChoice(JsonElement choice, Dictionary<string, string[]> errors)
     {

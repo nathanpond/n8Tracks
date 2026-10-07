@@ -28,6 +28,9 @@ internal static class SunoExportsEndpoints
     public const string DiscardPath = ExportPath + "/discard";
     public const string RecordsPath = ExportPath + "/records";
     public const string ArtworkPath = ExportPath + "/artwork/{sunoId}";
+    public const string CurrentPath = ExportsPath + "/current";
+    public const string SummaryPath = ExportPath + "/summary";
+    public const string TargetsPath = RecordsPath + "/{sunoId}/targets";
 
     /// <summary>The records list's query parameters.</summary>
     public const string ClassParameter = "class";
@@ -35,11 +38,18 @@ internal static class SunoExportsEndpoints
     public const string PlaylistParameter = "playlist";
     public const string PageParameter = "page";
     public const string PageSizeParameter = "pageSize";
+    public const string SearchParameter = "q";
+
+    /// <summary>The targets query's parameters: the Song (ID or shortcode) and the parent of a new Version.</summary>
+    public const string SongParameter = "song";
+    public const string ParentParameter = "parent";
 
     public const int DefaultPageSize = 100;
     public const int MaximumPageSize = 200;
 
-    private static readonly string[] RecordParameters = [ClassParameter, WorkspaceParameter, PlaylistParameter, PageParameter, PageSizeParameter];
+    private static readonly string[] RecordParameters = [ClassParameter, WorkspaceParameter, PlaylistParameter, SearchParameter, PageParameter, PageSizeParameter];
+
+    private static readonly string[] TargetParameters = [SongParameter, ParentParameter];
 
     private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
@@ -102,7 +112,7 @@ internal static class SunoExportsEndpoints
 
         endpoints.MapGet(RecordsPath, RecordsAsync)
             .WithName("ListSunoExportRecords")
-            .WithSummary("The export's classified records, newest in Suno first, then by Suno ID: Suno ID, title, workspace, created time, duration, class, trashed, playlist IDs, proposal, choice, and flags; never the raw clip. Filters: class, workspace, playlist (Suno IDs). Paged with page and pageSize (default 100, at most 200).")
+            .WithSummary("The export's classified records, newest in Suno first, then by Suno ID: Suno ID, title, workspace, created time, duration, class, trashed, playlist IDs, proposal, choice, the choice's target named (target: kind, key, song {id, key, shortcode, title}, version, parent, number), the linked Generation (generation: id, shortcode, songShortcode), and flags; never the raw clip. Filters: class, workspace, playlist (Suno IDs), and q (text in the Suno title, ignoring case). Paged with page and pageSize (default 100, at most 200).")
             .SessionOnly()
             .Produces<SunoExportRecordListResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
@@ -112,7 +122,7 @@ internal static class SunoExportsEndpoints
 
         endpoints.MapPatch(RecordsPath, ChangeChoicesAsync)
             .WithName("ChangeSunoExportChoices")
-            .WithSummary("Changes the choice of some records of a ready export (#138): { sunoIds: [up to 1,000], choice }, with If-Match on the export's revision. A choice is { action: skip | ignore } or { action: import, target }, the target { kind: newSong, key: \"new:<n>\", title, workspaceId? }, { kind: newVersion, key, song: <Song ID or shortcode, or a new Song's key>, parentVersion: <Version ID or shortcode> | null, number }, or { kind: version, version: <Version ID or shortcode> }. A clip goes to an existing Version only when its inputs are the Version's; a new Version's number follows the numbering rules. Refused whole with 422 invalid_choices and reasons per Suno ID (record_not_found, already_linked, inputs_differ, target_missing, parent_not_in_song, invalid_number, invalid_title, target_conflict). 200 with the export at its new revision. 409 export_not_ready unless ready; 409 revision_conflict. Changes nothing in the catalog.")
+            .WithSummary("Changes the choice of some records of a ready export (#138): { sunoIds: [up to 1,000], choice }, or (#139) { filter: { class, workspace, playlist, q }, except: [up to 1,000 Suno IDs], choice } for every new, ignored, or deleted record matching the filter (422 validation_failed on filter when none does), with If-Match on the export's revision. A choice is { action: skip | ignore } or { action: import, target }, the target { kind: newSong, key: \"new:<n>\", title, workspaceId? }, { kind: newVersion, key, song: <Song ID or shortcode, or a new Song's key>, parentVersion: <Version ID or shortcode> | null, number }, or { kind: version, version: <Version ID or shortcode> }. A clip goes to an existing Version only when its inputs are the Version's; a new Version's number follows the numbering rules. Refused whole with 422 invalid_choices and reasons per Suno ID (record_not_found, already_linked, inputs_differ, target_missing, parent_not_in_song, invalid_number, invalid_title, target_conflict). 200 with the export at its new revision. 409 export_not_ready unless ready; 409 revision_conflict. Changes nothing in the catalog.")
             .SessionOnly()
             .Produces<SunoExportResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
@@ -122,6 +132,34 @@ internal static class SunoExportsEndpoints
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        endpoints.MapGet(CurrentPath, CurrentAsync)
+            .WithName("GetCurrentSunoExport")
+            .WithSummary("The export waiting for review (classifying or ready), as waiting, and the export created last, as last (the same one while one waits; otherwise one that was committed, discarded, failed, or expired). Either is null when there is none. For the review page's Suno entry and Settings (#139).")
+            .SessionOnly()
+            .Produces<CurrentSunoExportResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
+        endpoints.MapGet(SummaryPath, SummaryAsync)
+            .WithName("GetSunoExportSummary")
+            .WithSummary("What confirming the export would do as its choices stand (#139): songs, versions (a new Song's Version 1 included), and generations to create, reimports among them, ignored (Don't copy, and records on the ignore list already that are not imported), and skipped (Skip this time); valid, and invalid choices by Suno ID with their reasons (at most 1,000 listed, invalidCount all), each checked again against the catalog as it is now; nothingToDo when no record is imported or newly put on the ignore list; nextKey, a temporary key no choice uses; the workspaces and playlists the records are in (id, name, count); and libraryExcluded, the kinds of clip Suno's library filters left out. With the export's revision as ETag.")
+            .SessionOnly()
+            .Produces<SunoExportSummaryResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        endpoints.MapGet(TargetsPath, TargetsAsync)
+            .WithName("GetSunoExportRecordTargets")
+            .WithSummary("Where a record may go in the Song named by song (an ID or shortcode) (#139): the Song, its Versions holding the record's inputs (matching), every Version (versions), and the numbers a new Version may take (numbers: { number, kind: sibling | child | topLevel, proposed }, the proposal first) under parent (a Version of the Song), or top-level without it. Numbers other records' new Versions of the Song chose count as used. 404 for an unknown export, record, or Song; 422 validation_failed when parent is not a Version of the Song.")
+            .SessionOnly()
+            .Produces<SunoExportTargetsResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         endpoints.MapPut(ArtworkPath, StageArtworkAsync)
             .WithName("StageSunoExportArtwork")
@@ -341,7 +379,7 @@ internal static class SunoExportsEndpoints
     /// <summary>200 with a page of records; 400 <c>invalid_request</c> for a parameter the list does not understand; 404.</summary>
     private static async Task<Results<Ok<SunoExportRecordListResponse>, ProblemHttpResult>> RecordsAsync(
         Guid id,
-        ExportStagingService exports,
+        ImportReviewService review,
         HttpContext context,
         CancellationToken cancellationToken)
     {
@@ -374,8 +412,8 @@ internal static class SunoExportsEndpoints
             return BadQuery(context, string.Create(CultureInfo.InvariantCulture, $"page is a whole number from 1; pageSize from 1 to {MaximumPageSize}."));
         }
 
-        var filter = new StagedRecordQuery(recordClass, Text(query, WorkspaceParameter), Text(query, PlaylistParameter), page, pageSize);
-        return await exports.RecordsAsync(id, filter, cancellationToken) is { } records
+        var filter = new StagedRecordQuery(recordClass, Text(query, WorkspaceParameter), Text(query, PlaylistParameter), page, pageSize, Text(query, SearchParameter));
+        return await review.RecordsAsync(id, filter, cancellationToken) is { } records
             ? TypedResults.Ok(SunoExportRecordListResponse.From(records))
             : NoSuchExport(context);
     }
@@ -422,7 +460,10 @@ internal static class SunoExportsEndpoints
             }
         }
 
-        switch (await proposals.ChangeChoicesAsync(id, revision!.Value, change.SunoIds, change.Choice, cancellationToken))
+        var outcome = change.Filter is { } filter
+            ? await proposals.ChangeChoicesAsync(id, revision!.Value, filter, change.Choice, cancellationToken)
+            : await proposals.ChangeChoicesAsync(id, revision!.Value, change.SunoIds, change.Choice, cancellationToken);
+        switch (outcome)
         {
             case ChoiceChangeOutcome.Changed changed:
                 Log(loggers).LogInformation("Suno export choices changed: {ExportId} now at revision {Revision}, {RecordCount} records", id, changed.Revision, changed.Count);
@@ -447,8 +488,85 @@ internal static class SunoExportsEndpoints
                     ProposalService.InvalidChoicesCode,
                     "Some of these choices cannot be made; nothing was changed.",
                     [new("records", refused.Reasons)]);
+            case ChoiceChangeOutcome.NothingSelected:
+                return ApiProblem.ValidationFailed(
+                    context,
+                    new Dictionary<string, string[]>(StringComparer.Ordinal) { ["filter"] = ["No new, ignored, or deleted record matches this filter."] });
             default:
                 throw new InvalidOperationException("Unknown choice outcome.");
+        }
+    }
+
+    /// <summary>200 with the export waiting for review and the export created last, either null.</summary>
+    private static async Task<Ok<CurrentSunoExportResponse>> CurrentAsync(
+        ImportReviewService review,
+        HttpContext context,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        var current = await review.CurrentAsync(cancellationToken);
+        return TypedResults.Ok(new CurrentSunoExportResponse(
+            current.Waiting is { } waiting ? SunoExportResponse.From(waiting) : null,
+            current.Last is { } last ? SunoExportResponse.From(last) : null));
+    }
+
+    /// <summary>200 with what confirming would do (and the revision as ETag); 404.</summary>
+    private static async Task<Results<Ok<SunoExportSummaryResponse>, ProblemHttpResult>> SummaryAsync(
+        Guid id,
+        ImportReviewService review,
+        HttpContext context,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        if (await review.SummaryAsync(id, cancellationToken) is not { } summary)
+        {
+            return NoSuchExport(context);
+        }
+
+        Revisions.SetETag(context, summary.Export.Export.Revision);
+        return TypedResults.Ok(SunoExportSummaryResponse.From(summary));
+    }
+
+    /// <summary>200 with where the record may go in the Song; 400, 404, or 422 otherwise.</summary>
+    private static async Task<Results<Ok<SunoExportTargetsResponse>, ProblemHttpResult>> TargetsAsync(
+        Guid id,
+        string sunoId,
+        ProposalService proposals,
+        HttpContext context,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        var query = context.Request.Query;
+        if (query.Keys.FirstOrDefault(key => !TargetParameters.Contains(key, StringComparer.Ordinal)) is { } unknown)
+        {
+            return BadQuery(context, $"The targets query does not take \"{unknown}\". It takes {string.Join(", ", TargetParameters)}.");
+        }
+
+        if (query.Any(static pair => pair.Value.Count > 1) || Text(query, SongParameter) is not { } song)
+        {
+            return BadQuery(context, "Name the Song once (song: an ID or a shortcode), and the parent at most once.");
+        }
+
+        var parent = Text(query, ParentParameter);
+        switch (await proposals.TargetsAsync(id, sunoId, song, parent, cancellationToken))
+        {
+            case ImportTargetsOutcome.Found found:
+                return TypedResults.Ok(SunoExportTargetsResponse.From(found));
+            case ImportTargetsOutcome.NotFound:
+                return NoSuchExport(context);
+            case ImportTargetsOutcome.RecordNotFound:
+                return ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "The export has no record with this Suno ID.");
+            case ImportTargetsOutcome.SongNotFound:
+                return ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "There is no such Song.");
+            case ImportTargetsOutcome.ParentNotInSong:
+                return ApiProblem.ValidationFailed(
+                    context,
+                    new Dictionary<string, string[]>(StringComparer.Ordinal) { [ParentParameter] = ["Choose a Version of this Song, or none for a top-level Version."] });
+            default:
+                throw new InvalidOperationException("Unknown targets outcome.");
         }
     }
 
@@ -616,6 +734,8 @@ internal static class SunoExportsEndpoints
 /// An export: its state and times (UTC), what the header said, how many parts and clips arrived, and how
 /// many records it has in each class (<c>counts</c>: all six classes and <c>total</c>). <c>jobId</c>
 /// names the background classification of a large export; <c>expiresAt</c> is set while it is ready.
+/// <c>libraryExcluded</c> names the kinds of clip Suno's library filters left out (#139): the filter
+/// members, such as <c>disliked</c>, <c>stem</c>, <c>stemComplement</c>, and <c>fromStudioProject</c>.
 /// </summary>
 internal sealed record SunoExportResponse(
     Guid Id,
@@ -636,7 +756,8 @@ internal sealed record SunoExportResponse(
     int Clips,
     IReadOnlyDictionary<string, int> Counts,
     Guid? JobId,
-    int Revision)
+    int Revision,
+    IReadOnlyList<string> LibraryExcluded)
 {
     public static SunoExportResponse From(ExportView view)
     {
@@ -669,7 +790,8 @@ internal sealed record SunoExportResponse(
             view.ClipCount,
             counts,
             export.JobId,
-            export.Revision);
+            export.Revision,
+            ExportReader.ExcludedKinds(export.Header.LibraryFiltersJson));
     }
 }
 
@@ -679,7 +801,7 @@ internal sealed record SunoExportScopeResponse(string Kind, IReadOnlyList<string
 /// <summary>A page of an export's records.</summary>
 internal sealed record SunoExportRecordListResponse(IReadOnlyList<SunoExportRecordResponse> Items, int Page, int PageSize, int Total)
 {
-    public static SunoExportRecordListResponse From(StagedRecordPage page)
+    public static SunoExportRecordListResponse From(ReviewedRecordPage page)
     {
         ArgumentNullException.ThrowIfNull(page);
 
@@ -692,7 +814,8 @@ internal sealed record SunoExportRecordListResponse(IReadOnlyList<SunoExportReco
 /// duration in seconds, class, whether it came from Suno's Trash, the export's playlists it is in, the
 /// proposal and the user's choice (JSON, null until later stories fill them), flags on how it arrived
 /// (<c>repeated</c>, <c>alsoInLibrary</c>), the compared fields that differ for a changed record, the
-/// Generation holding the Suno ID, and whether an image is staged for it.
+/// Generation holding the Suno ID (and, as <c>generation</c>, its shortcode and Song's shortcode, for a link),
+/// whether an image is staged for it, and (#139) the choice's target named for the review.
 /// </summary>
 internal sealed record SunoExportRecordResponse(
     string SunoId,
@@ -708,12 +831,15 @@ internal sealed record SunoExportRecordResponse(
     IReadOnlyList<string> Flags,
     IReadOnlyList<string> ChangedFields,
     Guid? GenerationId,
-    bool HasArtwork)
+    bool HasArtwork,
+    ImportTargetView? Target,
+    ImportGenerationView? Generation)
 {
-    public static SunoExportRecordResponse From(StagedRecord record)
+    public static SunoExportRecordResponse From(ReviewedRecord reviewed)
     {
-        ArgumentNullException.ThrowIfNull(record);
+        ArgumentNullException.ThrowIfNull(reviewed);
 
+        var record = reviewed.Record;
         return new(
             record.SunoId,
             record.Title,
@@ -728,7 +854,9 @@ internal sealed record SunoExportRecordResponse(
             record.Flags,
             record.ChangedFields,
             record.GenerationId,
-            record.ArtworkAssetId is not null);
+            record.ArtworkAssetId is not null,
+            reviewed.Target,
+            reviewed.Generation);
     }
 
     private static JsonElement? Json(string? text)
@@ -745,3 +873,79 @@ internal sealed record SunoExportRecordResponse(
 
 /// <summary>The record a staged image belongs to, and the image as the artwork store holds it.</summary>
 internal sealed record SunoExportArtworkResponse(string SunoId, ArtworkResponse Artwork);
+
+/// <summary>The export waiting for review, and the export created last; either null.</summary>
+internal sealed record CurrentSunoExportResponse(SunoExportResponse? Waiting, SunoExportResponse? Last);
+
+/// <summary>A workspace or playlist to filter the review by: Suno ID, name (null when unknown), and how many records are in it.</summary>
+internal sealed record SunoExportFacetResponse(string Id, string? Name, int Count);
+
+/// <summary>What confirming an export would do as its choices stand, and whether every choice is valid (#139).</summary>
+internal sealed record SunoExportSummaryResponse(
+    SunoExportResponse Export,
+    int Songs,
+    int Versions,
+    int Generations,
+    int Reimports,
+    int Ignored,
+    int Skipped,
+    bool Valid,
+    int InvalidCount,
+    IReadOnlyDictionary<string, string[]> Invalid,
+    bool NothingToDo,
+    string NextKey,
+    IReadOnlyList<SunoExportFacetResponse> Workspaces,
+    IReadOnlyList<SunoExportFacetResponse> Playlists,
+    IReadOnlyList<string> LibraryExcluded,
+    int Revision)
+{
+    public static SunoExportSummaryResponse From(ImportReviewSummary summary)
+    {
+        ArgumentNullException.ThrowIfNull(summary);
+
+        return new(
+            SunoExportResponse.From(summary.Export),
+            summary.Songs,
+            summary.Versions,
+            summary.Generations,
+            summary.Reimports,
+            summary.Ignored,
+            summary.Skipped,
+            summary.InvalidCount == 0,
+            summary.InvalidCount,
+            summary.Invalid,
+            summary.NothingToDo,
+            summary.NextKey,
+            [.. summary.Workspaces.Select(static facet => new SunoExportFacetResponse(facet.Id, facet.Name, facet.Count))],
+            [.. summary.Playlists.Select(static facet => new SunoExportFacetResponse(facet.Id, facet.Name, facet.Count))],
+            summary.LibraryExcluded,
+            summary.Export.Export.Revision);
+    }
+}
+
+/// <summary>A number a new Version may take: the number, sibling, child, or topLevel, and whether it is the proposal.</summary>
+internal sealed record SunoExportNumberResponse(string Number, string Kind, bool Proposed);
+
+/// <summary>Where a record may go in one Song (#139).</summary>
+internal sealed record SunoExportTargetsResponse(
+    ImportTargetSong Song,
+    IReadOnlyList<ImportTargetVersion> Matching,
+    IReadOnlyList<ImportTargetVersion> Versions,
+    ImportTargetVersion? Parent,
+    IReadOnlyList<SunoExportNumberResponse> Numbers)
+{
+    public static SunoExportTargetsResponse From(ImportTargetsOutcome.Found found)
+    {
+        ArgumentNullException.ThrowIfNull(found);
+
+        return new(
+            found.Song,
+            found.Matching,
+            found.Versions,
+            found.Parent,
+            [.. found.Numbers.Select(option => new SunoExportNumberResponse(
+                option.Number.ToString(),
+                found.Parent is null ? "topLevel" : option.Kind == Domain.Songs.VersionNumberKind.Child ? "child" : "sibling",
+                option.Proposed))]);
+    }
+}

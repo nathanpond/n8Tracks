@@ -98,6 +98,7 @@ test.describe(
         'Artists',
         'Albums',
         'Playlists',
+        'Suno import',
         'Account',
         'Credentials',
         'Workflow',
@@ -106,6 +107,7 @@ test.describe(
         'Tags',
         'Relationships',
         'Suno',
+        'Suno workspaces',
         'Backups',
         'System',
       ]);

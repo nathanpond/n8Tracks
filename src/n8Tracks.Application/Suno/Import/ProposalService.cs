@@ -29,7 +29,58 @@ public abstract record ChoiceChangeOutcome
 
     /// <summary>Refused whole: the reasons (<see cref="ImportChoiceRules"/>' codes) by Suno ID; nothing was stored.</summary>
     public sealed record Refused(IReadOnlyDictionary<string, string[]> Reasons) : ChoiceChangeOutcome;
+
+    /// <summary>A change by filter (#139) that matches no record the review can change; nothing was stored.</summary>
+    public sealed record NothingSelected : ChoiceChangeOutcome;
 }
+
+/// <summary>What asking which targets a record may take found (#139).</summary>
+public abstract record ImportTargetsOutcome
+{
+    private ImportTargetsOutcome()
+    {
+    }
+
+    /// <summary>
+    /// The Song, those of its Versions holding the record's inputs (a clip may join one of them), every
+    /// Version (a new one may branch from any), and the numbers a new Version may take: under the parent
+    /// asked about, #61's options, the proposal first; with no parent, the next top-level number.
+    /// </summary>
+    public sealed record Found(
+        ImportTargetSong Song,
+        IReadOnlyList<ImportTargetVersion> Matching,
+        IReadOnlyList<ImportTargetVersion> Versions,
+        ImportTargetVersion? Parent,
+        IReadOnlyList<VersionNumberOption> Numbers) : ImportTargetsOutcome;
+
+    /// <summary>No such export.</summary>
+    public sealed record NotFound : ImportTargetsOutcome;
+
+    /// <summary>The export has no such record.</summary>
+    public sealed record RecordNotFound : ImportTargetsOutcome;
+
+    /// <summary>The Song named is not a live Song.</summary>
+    public sealed record SongNotFound : ImportTargetsOutcome;
+
+    /// <summary>The parent named is not a Version of that Song.</summary>
+    public sealed record ParentNotInSong : ImportTargetsOutcome;
+}
+
+/// <summary>A Song as the review names it: its ID, shortcode, and title.</summary>
+public sealed record ImportTargetSong(Guid Id, string Shortcode, string Title);
+
+/// <summary>A Version as the review names it: its ID, number, shortcode, and whether it is frozen.</summary>
+public sealed record ImportTargetVersion(Guid Id, string Number, string Shortcode, bool IsFrozen);
+
+/// <summary>
+/// Every stored choice of an export checked again as the commit would (#139): the choices by Suno ID
+/// (null for a record with none), each record's class, and the reasons any is invalid now (the catalog
+/// may have changed since it was made: a Song deleted, a number taken, a Version edited).
+/// </summary>
+public sealed record ChoiceValidation(
+    IReadOnlyDictionary<string, ImportChoice?> Choices,
+    IReadOnlyDictionary<string, SunoRecordClass?> Classes,
+    IReadOnlyDictionary<string, string[]> Invalid);
 
 /// <summary>
 /// Proposes where each new clip of a sync review belongs, and checks the user's changes to those
@@ -72,6 +123,12 @@ public sealed class ProposalService(
     public const string InvalidChoicesCode = "invalid_choices";
 
     /// <summary>
+    /// The classes whose choices the review changes (#139): a record a Generation holds (linked, changed,
+    /// conflict) cannot be imported again, so a change by filter never names one.
+    /// </summary>
+    public static readonly IReadOnlyList<SunoRecordClass> ReviewableClasses = [SunoRecordClass.New, SunoRecordClass.Ignored, SunoRecordClass.Deleted];
+
+    /// <summary>
     /// Changes the choice of each of <paramref name="sunoIds"/> to <paramref name="request"/>, on a ready
     /// export at <paramref name="revision"/>, raising its revision. Refused whole, nothing stored, when any
     /// record's new choice is invalid.
@@ -86,7 +143,213 @@ public sealed class ProposalService(
         ArgumentNullException.ThrowIfNull(sunoIds);
         ArgumentNullException.ThrowIfNull(request);
 
-        return transaction.RunAsync<ChoiceChangeOutcome>(
+        return ChangeAsync(exportId, revision, _ => Task.FromResult(sunoIds), request, cancellationToken);
+    }
+
+    /// <summary>
+    /// Changes the choice of every record matching <paramref name="filter"/> whose class the review
+    /// changes (<see cref="ReviewableClasses"/>), except those it names, to <paramref name="request"/>
+    /// (#139, "select all that match"), as <see cref="ChangeChoicesAsync(Guid, int, IReadOnlyList{string}, ImportChoiceRequest, CancellationToken)"/>
+    /// does for named records. The records are found inside the same transaction.
+    /// </summary>
+    public Task<ChoiceChangeOutcome> ChangeChoicesAsync(
+        Guid exportId,
+        int revision,
+        ChoiceFilter filter,
+        ImportChoiceRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(filter);
+        ArgumentNullException.ThrowIfNull(request);
+
+        return ChangeAsync(
+            exportId,
+            revision,
+            async ct =>
+            {
+                var except = filter.Except.ToHashSet(StringComparer.Ordinal);
+                var query = new StagedRecordQuery(filter.Class, filter.WorkspaceId, filter.PlaylistId, 1, 1, filter.Search);
+                return [.. (await exports.MatchingSunoIdsAsync(exportId, query, ReviewableClasses.ToList(), ct).ConfigureAwait(false)).Where(id => !except.Contains(id))];
+            },
+            request,
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Every stored choice of the export checked again as the commit would: the target still exists, a
+    /// new Version's number is still free (#61), a new Version of a new Song still has its Song, records
+    /// naming one temporary key still agree, and a clip going to an existing Version still has its inputs
+    /// (it may have been edited). Reads only. Null when there is no such export.
+    /// </summary>
+    public async Task<ChoiceValidation?> ValidateAsync(Guid exportId, CancellationToken cancellationToken = default)
+    {
+        if (await exports.FindAsync(exportId, cancellationToken).ConfigureAwait(false) is null)
+        {
+            return null;
+        }
+
+        var states = await exports.ChoicesAsync(exportId, cancellationToken).ConfigureAwait(false);
+        var choices = states.ToDictionary(static state => state.SunoId, static state => ImportChoiceJson.ReadStored(state.ChoiceJson), StringComparer.Ordinal);
+        var classes = states.ToDictionary(static state => state.SunoId, static state => state.Class, StringComparer.Ordinal);
+        var reasons = new Dictionary<string, SortedSet<string>>(StringComparer.Ordinal);
+        void Refuse(string sunoId, string reason)
+        {
+            if (!reasons.TryGetValue(sunoId, out var list))
+            {
+                reasons[sunoId] = list = new SortedSet<string>(StringComparer.Ordinal);
+            }
+
+            list.Add(reason);
+        }
+
+        var imports = choices.Where(static pair => pair.Value?.Target is not null).ToList();
+        foreach (var (sunoId, _) in imports.Where(pair => classes[pair.Key] is not (SunoRecordClass.New or SunoRecordClass.Ignored or SunoRecordClass.Deleted)))
+        {
+            Refuse(sunoId, ImportChoiceRules.AlreadyLinked);
+        }
+
+        var newSongs = imports.Select(static pair => pair.Value!.Target).OfType<ImportTarget.NewSong>().Select(static song => song.Key).ToHashSet(StringComparer.Ordinal);
+        var catalog = new CatalogView(versions, songs, await models.ListAsync(cancellationToken).ConfigureAwait(false));
+        var verdicts = new Dictionary<ImportTarget, string?>();
+        var existing = new Dictionary<Guid, List<string>>();
+        foreach (var (sunoId, choice) in imports)
+        {
+            var target = choice!.Target!;
+            if (target is ImportTarget.ExistingVersion { VersionId: var versionId })
+            {
+                if (!existing.TryGetValue(versionId, out var holders))
+                {
+                    existing[versionId] = holders = [];
+                }
+
+                holders.Add(sunoId);
+                continue;
+            }
+
+            if (!verdicts.TryGetValue(target, out var verdict))
+            {
+                verdicts[target] = verdict = await VerdictAsync(target, newSongs, choices.Values, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (verdict is not null)
+            {
+                Refuse(sunoId, verdict);
+            }
+        }
+
+        // Records naming one temporary key must describe the same target.
+        foreach (var group in imports.Where(static pair => pair.Value!.Target!.KeyOf() is not null).GroupBy(static pair => pair.Value!.Target!.KeyOf()!, StringComparer.Ordinal))
+        {
+            if (group.Select(static pair => pair.Value!.Target).Distinct().Count() > 1)
+            {
+                foreach (var (sunoId, _) in group)
+                {
+                    Refuse(sunoId, ImportChoiceRules.TargetConflict);
+                }
+            }
+        }
+
+        // A Version may have been edited since: its clips must still hold its inputs.
+        foreach (var (versionId, holders) in existing)
+        {
+            if (await versions.FindAsync(versionId, cancellationToken).ConfigureAwait(false) is not { } version)
+            {
+                holders.ForEach(sunoId => Refuse(sunoId, ImportChoiceRules.TargetMissing));
+                continue;
+            }
+
+            var lineageKey = await catalog.LineageKeyAsync(version, cancellationToken).ConfigureAwait(false);
+            foreach (var record in await exports.ClassifiedRecordsAsync(exportId, holders, cancellationToken).ConfigureAwait(false))
+            {
+                if (!catalog.Matches(catalog.Read(record).Mapped, version, lineageKey))
+                {
+                    Refuse(record.SunoId, ImportChoiceRules.InputsDiffer);
+                }
+            }
+        }
+
+        return new ChoiceValidation(
+            choices,
+            classes,
+            reasons.ToDictionary(static pair => pair.Key, static pair => pair.Value.ToArray(), StringComparer.Ordinal));
+    }
+
+    /// <summary>
+    /// Which targets the record <paramref name="sunoId"/> may take in the Song <paramref name="songText"/>
+    /// (an ID or shortcode): the Versions holding its inputs, and the numbers a new Version may take under
+    /// <paramref name="parentText"/> (a Version of the Song), or top-level when it is null. A number another
+    /// record's new Version of the Song has chosen counts as used, unless only this record chose it.
+    /// </summary>
+    public async Task<ImportTargetsOutcome> TargetsAsync(Guid exportId, string sunoId, string songText, string? parentText, CancellationToken cancellationToken = default)
+    {
+        if (await exports.FindAsync(exportId, cancellationToken).ConfigureAwait(false) is null)
+        {
+            return new ImportTargetsOutcome.NotFound();
+        }
+
+        if ((await exports.ClassifiedRecordsAsync(exportId, [sunoId], cancellationToken).ConfigureAwait(false)) is not [var record])
+        {
+            return new ImportTargetsOutcome.RecordNotFound();
+        }
+
+        if (!CatalogReference.TryParse(songText, out var songReference)
+            || await ReferenceResolver.SongIdAsync(songs, songReference, cancellationToken).ConfigureAwait(false) is not { } songId
+            || await songs.FindAsync(songId, cancellationToken).ConfigureAwait(false) is not { } song)
+        {
+            return new ImportTargetsOutcome.SongNotFound();
+        }
+
+        var catalog = new CatalogView(versions, songs, await models.ListAsync(cancellationToken).ConfigureAwait(false));
+        var clip = catalog.Read(record).Mapped;
+        var summaries = await versions.ListAsync(songId, cancellationToken).ConfigureAwait(false);
+        var all = summaries.Select(static summary => new ImportTargetVersion(summary.Id, summary.Number, summary.Shortcode, summary.IsFrozen)).ToList();
+        var matching = new List<ImportTargetVersion>();
+        foreach (var summary in summaries)
+        {
+            if (await versions.FindAsync(summary.Id, cancellationToken).ConfigureAwait(false) is { } version
+                && catalog.Matches(clip, version, await catalog.LineageKeyAsync(version, cancellationToken).ConfigureAwait(false)))
+            {
+                matching.Add(all.Single(item => item.Id == summary.Id));
+            }
+        }
+
+        ImportTargetVersion? parent = null;
+        if (parentText is not null)
+        {
+            parent = CatalogReference.TryParse(parentText, out var parentReference)
+                && await ReferenceResolver.VersionIdAsync(versions, parentReference, cancellationToken).ConfigureAwait(false) is { } parentId
+                    ? all.SingleOrDefault(item => item.Id == parentId)
+                    : null;
+            if (parent is null)
+            {
+                return new ImportTargetsOutcome.ParentNotInSong();
+            }
+        }
+
+        // The numbers other records' new Versions of this Song hold, as the check counts them.
+        var states = await exports.ChoicesAsync(exportId, cancellationToken).ConfigureAwait(false);
+        var claimed = states
+            .Select(state => (state.SunoId, Target: ImportChoiceJson.ReadStored(state.ChoiceJson)?.Target as ImportTarget.NewVersion))
+            .Where(pair => pair.Target is { } target && target.SongId == songId)
+            .GroupBy(static pair => pair.Target!.Key, StringComparer.Ordinal)
+            .Where(group => group.Any(pair => !string.Equals(pair.SunoId, sunoId, StringComparison.Ordinal)))
+            .Select(static group => VersionNumber.Parse(group.First().Target!.Number));
+        var used = (await versions.UsedNumbersAsync(songId, cancellationToken).ConfigureAwait(false)).Select(VersionNumber.Parse).Concat(claimed).ToList();
+        IReadOnlyList<VersionNumberOption> numbers = parent is null
+            ? VersionNumbering.NextTopLevel(used) is { } next ? [new VersionNumberOption(next, VersionNumberKind.Sibling, Proposed: true)] : []
+            : VersionNumbering.Options(VersionNumber.Parse(parent.Number), used);
+
+        return new ImportTargetsOutcome.Found(new ImportTargetSong(song.Id, Shortcodes.ForSong(song.ShortcodeNumber), song.Title), matching, all, parent, numbers);
+    }
+
+    /// <summary>The change itself: the records chosen inside the transaction by <paramref name="select"/>, checked, then stored.</summary>
+    private Task<ChoiceChangeOutcome> ChangeAsync(
+        Guid exportId,
+        int revision,
+        Func<CancellationToken, Task<IReadOnlyList<string>>> select,
+        ImportChoiceRequest request,
+        CancellationToken cancellationToken) =>
+        transaction.RunAsync<ChoiceChangeOutcome>(
             async ct =>
             {
                 var export = await exports.FindAsync(exportId, ct).ConfigureAwait(false);
@@ -105,6 +368,12 @@ public sealed class ProposalService(
                     return new ChoiceChangeOutcome.Stale(export);
                 }
 
+                var sunoIds = await select(ct).ConfigureAwait(false);
+                if (sunoIds.Count == 0)
+                {
+                    return new ChoiceChangeOutcome.NothingSelected();
+                }
+
                 var (choice, reasons) = await CheckAsync(exportId, sunoIds, request, ct).ConfigureAwait(false);
                 if (reasons.Count > 0)
                 {
@@ -116,6 +385,39 @@ public sealed class ProposalService(
                     : new ChoiceChangeOutcome.Stale(export);
             },
             cancellationToken);
+
+    /// <summary>Why a new target can no longer be made (the same for every record naming it), or null when it can.</summary>
+    private async Task<string?> VerdictAsync(ImportTarget target, IReadOnlySet<string> newSongs, IEnumerable<ImportChoice?> choices, CancellationToken cancellationToken)
+    {
+        switch (target)
+        {
+            case ImportTarget.NewSong song:
+                return SongRules.TitleErrors(song.Title).Length > 0 ? ImportChoiceRules.InvalidTitle : null;
+
+            case ImportTarget.NewVersion version:
+                if (version.NewSongKey is { } songKey)
+                {
+                    if (!newSongs.Contains(songKey))
+                    {
+                        return ImportChoiceRules.TargetMissing;
+                    }
+                }
+                else if (await songs.FindAsync(version.SongId!.Value, cancellationToken).ConfigureAwait(false) is null)
+                {
+                    return ImportChoiceRules.TargetMissing;
+                }
+
+                if (version.ParentVersionId is { } parentId
+                    && (await versions.FindSummaryAsync(parentId, cancellationToken).ConfigureAwait(false))?.SongId != version.SongId)
+                {
+                    return ImportChoiceRules.ParentNotInSong;
+                }
+
+                return await NumberValidAsync(version, choices, cancellationToken).ConfigureAwait(false) ? null : ImportChoiceRules.InvalidNumber;
+
+            default:
+                return null;
+        }
     }
 
     /// <summary>Proposes for every classified record of the export and stores each proposal and starting choice, inside the caller's transaction.</summary>

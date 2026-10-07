@@ -57,7 +57,7 @@ public class FrontendHostingTests
         using var client = Client(factory);
         var shell = await client.GetStringAsync(Relative(pathBase + "/"));
 
-        foreach (var deepLink in new[] { "/songs", "/songs/0198c0de/versions", "/apiary", "/healthy/x", "/index.html", "/songs?tab=lyrics", "/songs/n8-1/v/1.1", "/songs/n8-1/v/1.10.2", "/go/n8-1", "/go/N8-1-V1.1", "/go/n8-1-v1.10.2", "/songs/n8-1/generations/n8-1-v1.1-g2", "/songs/n8-1/generations/N8-1-V1.10.2-G12" })
+        foreach (var deepLink in new[] { "/songs", "/songs/0198c0de/versions", "/apiary", "/healthy/x", "/index.html", "/songs?tab=lyrics", "/songs/n8-1/v/1.1", "/songs/n8-1/v/1.10.2", "/go/n8-1", "/go/N8-1-V1.1", "/go/n8-1-v1.10.2", "/songs/n8-1/generations/n8-1-v1.1-g2", "/songs/n8-1/generations/N8-1-V1.10.2-G12", "/suno/imports", "/suno/imports/0198c0de-0000-7000-8000-000000000001" })
         {
             using var response = await client.GetAsync(Relative(pathBase + deepLink));
 

@@ -68,8 +68,17 @@ public sealed record RecordChoiceState(string SunoId, SunoRecordClass? Class, st
 /// <summary>A record's proposal and the choice it starts with, both as JSON (<see cref="ImportChoiceJson"/>).</summary>
 public sealed record RecordProposalRow(string SunoId, string ProposalJson, string ChoiceJson);
 
-/// <summary>Which staged records to list: optional filters, and a page.</summary>
-public sealed record StagedRecordQuery(SunoRecordClass? Class, string? WorkspaceId, string? PlaylistId, int Page, int PageSize);
+/// <summary>
+/// Which staged records to list: optional filters (class, workspace, playlist, and <paramref name="Search"/>,
+/// text the Suno title contains, ignoring case), and a page.
+/// </summary>
+public sealed record StagedRecordQuery(SunoRecordClass? Class, string? WorkspaceId, string? PlaylistId, int Page, int PageSize, string? Search = null);
+
+/// <summary>How many of an export's records are in one workspace or playlist (by Suno ID), for the review's filters.</summary>
+public sealed record StagedFacet(string Id, int Count);
+
+/// <summary>The workspaces and playlists an export's records are in, each with how many records (#139).</summary>
+public sealed record StagedFacets(IReadOnlyList<StagedFacet> Workspaces, IReadOnlyList<StagedFacet> Playlists);
 
 /// <summary>A page of staged records and how many match in all.</summary>
 public sealed record StagedRecordPage(IReadOnlyList<StagedRecord> Items, int Page, int PageSize, int Total);
@@ -145,6 +154,18 @@ public interface ISunoExportStore
 
     /// <summary>A page of the export's staged records, newest in Suno first, then by Suno ID.</summary>
     Task<StagedRecordPage> ListAsync(Guid exportId, StagedRecordQuery query, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The Suno IDs of the records matching <paramref name="filter"/>'s filters (its page is ignored) whose
+    /// class is one of <paramref name="classes"/>, by Suno ID (#139: a change of choices by filter).
+    /// </summary>
+    Task<IReadOnlyList<string>> MatchingSunoIdsAsync(Guid exportId, StagedRecordQuery filter, IReadOnlyCollection<SunoRecordClass> classes, CancellationToken cancellationToken);
+
+    /// <summary>The workspaces and playlists the export's records are in, with counts, by ID.</summary>
+    Task<StagedFacets> FacetsAsync(Guid exportId, CancellationToken cancellationToken);
+
+    /// <summary>The export created last, whatever its state; null when there is none.</summary>
+    Task<SunoExport?> NewestAsync(CancellationToken cancellationToken);
 
     /// <summary>Whether the export has a staged record with this Suno ID.</summary>
     Task<bool> RecordExistsAsync(Guid exportId, string sunoId, CancellationToken cancellationToken);

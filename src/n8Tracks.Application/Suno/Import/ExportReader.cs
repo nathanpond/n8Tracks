@@ -62,6 +62,16 @@ public static class ExportReader
     public const string ClipsField = "clips";
     public const string TrashedClipsField = "trashedClips";
     public const string PartNumberField = "partNumber";
+    public const string LibraryFiltersField = "libraryFilters";
+
+    /// <summary>The largest library filter object kept, in characters once its identifying members are left out.</summary>
+    public const int LibraryFiltersMaximumLength = 4_000;
+
+    /// <summary>
+    /// The members of Suno's library filters that are not kept: they name the user or a workspace (an
+    /// identifier, not a kind of clip), or Trash (which the export reads as a list of its own).
+    /// </summary>
+    private static readonly string[] UnkeptFilterMembers = ["user", "workspace", "trashed"];
 
     /// <summary>The longest version text kept.</summary>
     public const int VersionMaximumLength = 100;
@@ -135,6 +145,7 @@ public static class ExportReader
         }
 
         var playlists = ReadPlaylists(root, string.Empty, errors);
+        var libraryFilters = ReadLibraryFilters(root, errors);
         foreach (var list in new[] { ClipsField, TrashedClipsField })
         {
             if (root.TryGetProperty(list, out var clips) && !(clips.ValueKind is JsonValueKind.Null || (clips.ValueKind == JsonValueKind.Array && clips.GetArrayLength() == 0)))
@@ -159,8 +170,72 @@ public static class ExportReader
                 trashedComplete,
                 workspacesComplete,
                 workspacesJson,
-                PlaylistsJson(playlists)),
+                PlaylistsJson(playlists),
+                libraryFilters),
             sightings);
+    }
+
+    /// <summary>
+    /// The kinds of clip Suno's library filters left out of the library list (#134, #139), by the filter's
+    /// member name, in the order stored: each member whose value is the text <c>"False"</c> or an object
+    /// whose <c>presence</c> is <c>"False"</c> (TS-003: by default <c>disliked</c>, <c>fromStudioProject</c>,
+    /// <c>stem</c>, and <c>stemComplement</c>). Empty when no filters were recorded.
+    /// </summary>
+    public static IReadOnlyList<string> ExcludedKinds(string? libraryFiltersJson)
+    {
+        if (libraryFiltersJson is null)
+        {
+            return [];
+        }
+
+        using var document = JsonDocument.Parse(libraryFiltersJson);
+        var excluded = new List<string>();
+        foreach (var member in document.RootElement.EnumerateObject())
+        {
+            var value = member.Value;
+            if (value.ValueKind == JsonValueKind.Object && value.TryGetProperty("presence", out var presence))
+            {
+                value = presence;
+            }
+
+            if (value.ValueKind == JsonValueKind.String && string.Equals(value.GetString(), "False", StringComparison.OrdinalIgnoreCase))
+            {
+                excluded.Add(member.Name);
+            }
+        }
+
+        return excluded;
+    }
+
+    /// <summary>
+    /// The header's <c>libraryFilters</c> as kept: an object without its identifying members
+    /// (<see cref="UnkeptFilterMembers"/>), as JSON; null when absent, null, or too long to keep. Any other
+    /// type is an error.
+    /// </summary>
+    private static string? ReadLibraryFilters(JsonElement root, Dictionary<string, string[]> errors)
+    {
+        if (!root.TryGetProperty(LibraryFiltersField, out var filters) || filters.ValueKind == JsonValueKind.Null)
+        {
+            return null;
+        }
+
+        if (filters.ValueKind != JsonValueKind.Object)
+        {
+            errors[LibraryFiltersField] = ["Send Suno's library filters as an object, or null."];
+            return null;
+        }
+
+        var kept = new System.Text.Json.Nodes.JsonObject();
+        foreach (var member in filters.EnumerateObject())
+        {
+            if (!UnkeptFilterMembers.Contains(member.Name, StringComparer.Ordinal) && !kept.ContainsKey(member.Name))
+            {
+                kept[member.Name] = System.Text.Json.Nodes.JsonNode.Parse(member.Value.GetRawText());
+            }
+        }
+
+        var text = kept.ToJsonString();
+        return text.Length <= LibraryFiltersMaximumLength ? text : null;
     }
 
     /// <summary>
@@ -213,6 +288,40 @@ public static class ExportReader
         using var document = JsonDocument.Parse(playlistsJson);
         var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
         return ReadPlaylistList(document.RootElement, PlaylistsField, errors);
+    }
+
+    /// <summary>
+    /// The playlists of a stored part's body, read without parsing its clips (a part may hold 20 MB of
+    /// them): only its top-level <c>playlists</c> member is read. Empty when it has none or cannot be read.
+    /// </summary>
+    public static IReadOnlyList<ExportPlaylist> PlaylistsOfPart(string body)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+
+        var reader = new Utf8JsonReader(System.Text.Encoding.UTF8.GetBytes(body));
+        if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject)
+        {
+            return [];
+        }
+
+        while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+        {
+            var isPlaylists = reader.ValueTextEquals(PlaylistsField);
+            if (!reader.Read())
+            {
+                break;
+            }
+
+            if (isPlaylists)
+            {
+                using var playlists = JsonDocument.ParseValue(ref reader);
+                return ReadPlaylistList(playlists.RootElement, PlaylistsField, new Dictionary<string, string[]>(StringComparer.Ordinal));
+            }
+
+            reader.Skip();
+        }
+
+        return [];
     }
 
     /// <summary>The playlists as stored: <c>[{ id, name, clipIds }]</c>.</summary>

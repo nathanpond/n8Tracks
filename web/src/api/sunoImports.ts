@@ -1,0 +1,479 @@
+import { apiFetch } from './client';
+import { ifMatch } from './saves';
+import { body, isErrorMap, isRecord, useResource } from './songs';
+
+/** Where the review page of the export with ID `id` is (#139); the extension opens it after a sync. */
+export function importPath(id: string): string {
+  return `/suno/imports/${encodeURIComponent(id)}`;
+}
+
+/** The Suno entry of the sidebar: it opens the export waiting for review, or says how to start one. */
+export const IMPORTS_PATH = '/suno/imports';
+
+/** How many records the review lists on one page. */
+export const IMPORT_PAGE_SIZE = 100;
+
+/** How many records a change of choices may name by ID; more are chosen by filter. */
+export const MAXIMUM_NAMED_RECORDS = 1000;
+
+/** Where an export is in its life (#131). */
+export type ImportState =
+  | 'receiving'
+  | 'classifying'
+  | 'ready'
+  | 'committing'
+  | 'committed'
+  | 'discarded'
+  | 'failed'
+  | 'expired';
+
+/** What a record is to n8Tracks, by its Suno ID. */
+export type RecordClass = 'new' | 'linked' | 'changed' | 'conflict' | 'ignored' | 'deleted';
+
+export const RECORD_CLASSES: readonly RecordClass[] = [
+  'new',
+  'linked',
+  'changed',
+  'conflict',
+  'ignored',
+  'deleted',
+];
+
+/** A staged Suno export, as `GET /api/v1/suno/exports/{id}` answers it (the fields the review reads). */
+export interface SunoImport {
+  id: string;
+  state: ImportState;
+  createdAt: string;
+  readyAt: string | null;
+  endedAt: string | null;
+  expiresAt: string | null;
+  capturedAt: string;
+  libraryComplete: boolean;
+  /** How many records it has in each class, and `total`. */
+  counts: Record<string, number>;
+  revision: number;
+  /** The kinds of clip Suno's library filters left out, by filter name (`disliked`, `stem`…). */
+  libraryExcluded: string[];
+}
+
+/** A new Song, a new Version of a Song, or an existing Version, as stored in a choice. */
+export type ImportTargetChoice =
+  | { kind: 'newSong'; key: string; title: string; workspaceId: string | null }
+  | {
+      kind: 'newVersion';
+      key: string;
+      /** A Song's ID or shortcode, or a new Song's key. */
+      song: string;
+      parentVersion: string | null;
+      number: string;
+    }
+  | { kind: 'version'; version: string };
+
+/** What the user wants done with a record: import it to a target, Skip this time, or Don't copy (`ignore`). */
+export type ImportChoice =
+  { action: 'import'; target: ImportTargetChoice } | { action: 'skip' } | { action: 'ignore' };
+
+/** A Song a choice names: an existing one (ID, shortcode, title; the title null once gone) or a new one (its key and title). */
+export interface TargetSong {
+  id: string | null;
+  key: string | null;
+  shortcode: string | null;
+  title: string | null;
+}
+
+/** A Version a review names. */
+export interface TargetVersion {
+  id: string;
+  number: string;
+  shortcode: string;
+  isFrozen: boolean;
+}
+
+/** A record's import target as the server names it for the review. */
+export interface NamedTarget {
+  kind: 'newSong' | 'newVersion' | 'version';
+  key: string | null;
+  song: TargetSong;
+  version: TargetVersion | null;
+  parent: TargetVersion | null;
+  number: string | null;
+}
+
+/** One staged record of the review: never its raw clip. */
+export interface ImportRecord {
+  sunoId: string;
+  title: string | null;
+  workspaceId: string | null;
+  createdAt: string | null;
+  durationSeconds: number | null;
+  class: RecordClass | null;
+  trashed: boolean;
+  playlistIds: string[];
+  proposal: { choice: ImportChoice; basis: string; group: number | null } | null;
+  choice: ImportChoice | null;
+  flags: string[];
+  generationId: string | null;
+  target: NamedTarget | null;
+  generation: { id: string; shortcode: string; songShortcode: string } | null;
+}
+
+export interface ImportRecordPage {
+  items: ImportRecord[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
+/** A workspace or playlist to filter by, with how many records are in it. */
+export interface ImportFacet {
+  id: string;
+  name: string | null;
+  count: number;
+}
+
+/** What confirming the export would do as its choices stand, and whether every choice is valid. */
+export interface ImportSummary {
+  export: SunoImport;
+  songs: number;
+  versions: number;
+  generations: number;
+  reimports: number;
+  ignored: number;
+  skipped: number;
+  valid: boolean;
+  invalidCount: number;
+  /** The reasons each invalid choice cannot be made now, by Suno ID (codes such as `inputs_differ`). */
+  invalid: Record<string, string[]>;
+  nothingToDo: boolean;
+  /** A temporary key (`new:<n>`) no choice uses, for a new Song or Version. */
+  nextKey: string;
+  workspaces: ImportFacet[];
+  playlists: ImportFacet[];
+  libraryExcluded: string[];
+  revision: number;
+}
+
+/** The filters of the review: class, workspace, playlist (Suno IDs), and text in the title. */
+export interface ImportFilter {
+  class?: RecordClass;
+  workspace?: string;
+  playlist?: string;
+  q?: string;
+}
+
+/** Where a record may go in one Song: the Versions holding its inputs, every Version, and the numbers a new one may take. */
+export interface ImportTargets {
+  song: { id: string; shortcode: string; title: string };
+  matching: TargetVersion[];
+  versions: TargetVersion[];
+  parent: TargetVersion | null;
+  numbers: { number: string; kind: 'sibling' | 'child' | 'topLevel'; proposed: boolean }[];
+}
+
+const STATES: readonly string[] = [
+  'receiving',
+  'classifying',
+  'ready',
+  'committing',
+  'committed',
+  'discarded',
+  'failed',
+  'expired',
+];
+
+function isNullableString(value: unknown): value is string | null {
+  return value === null || typeof value === 'string';
+}
+
+function isStringList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string');
+}
+
+export function isSunoImport(value: unknown): value is SunoImport {
+  return (
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    typeof value.state === 'string' &&
+    STATES.includes(value.state) &&
+    typeof value.createdAt === 'string' &&
+    isNullableString(value.readyAt) &&
+    isNullableString(value.endedAt) &&
+    isNullableString(value.expiresAt) &&
+    typeof value.capturedAt === 'string' &&
+    typeof value.libraryComplete === 'boolean' &&
+    isRecord(value.counts) &&
+    typeof value.revision === 'number' &&
+    isStringList(value.libraryExcluded)
+  );
+}
+
+function isTargetVersion(value: unknown): value is TargetVersion {
+  return (
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    typeof value.number === 'string' &&
+    typeof value.shortcode === 'string' &&
+    typeof value.isFrozen === 'boolean'
+  );
+}
+
+function isNamedTarget(value: unknown): value is NamedTarget {
+  return (
+    isRecord(value) &&
+    (value.kind === 'newSong' || value.kind === 'newVersion' || value.kind === 'version') &&
+    isNullableString(value.key) &&
+    isRecord(value.song) &&
+    isNullableString(value.song.title) &&
+    (value.version === null || isTargetVersion(value.version)) &&
+    (value.parent === null || isTargetVersion(value.parent)) &&
+    isNullableString(value.number)
+  );
+}
+
+function isChoice(value: unknown): value is ImportChoice {
+  return (
+    isRecord(value) &&
+    (value.action === 'skip' ||
+      value.action === 'ignore' ||
+      (value.action === 'import' && isRecord(value.target)))
+  );
+}
+
+export function isImportRecord(value: unknown): value is ImportRecord {
+  return (
+    isRecord(value) &&
+    typeof value.sunoId === 'string' &&
+    isNullableString(value.title) &&
+    isNullableString(value.workspaceId) &&
+    isNullableString(value.createdAt) &&
+    (value.durationSeconds === null || typeof value.durationSeconds === 'number') &&
+    (value.class === null ||
+      (typeof value.class === 'string' && RECORD_CLASSES.includes(value.class as RecordClass))) &&
+    isStringList(value.playlistIds) &&
+    (value.choice === null || isChoice(value.choice)) &&
+    isStringList(value.flags) &&
+    (value.target === null || isNamedTarget(value.target)) &&
+    (value.generation === null ||
+      (isRecord(value.generation) &&
+        typeof value.generation.shortcode === 'string' &&
+        typeof value.generation.songShortcode === 'string'))
+  );
+}
+
+function isFacet(value: unknown): value is ImportFacet {
+  return (
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    isNullableString(value.name) &&
+    typeof value.count === 'number'
+  );
+}
+
+export function isImportSummary(value: unknown): value is ImportSummary {
+  return (
+    isRecord(value) &&
+    isSunoImport(value.export) &&
+    ['songs', 'versions', 'generations', 'reimports', 'ignored', 'skipped', 'invalidCount'].every(
+      (name) => typeof value[name] === 'number',
+    ) &&
+    typeof value.valid === 'boolean' &&
+    isErrorMap(value.invalid) &&
+    typeof value.nothingToDo === 'boolean' &&
+    typeof value.nextKey === 'string' &&
+    Array.isArray(value.workspaces) &&
+    value.workspaces.every(isFacet) &&
+    Array.isArray(value.playlists) &&
+    value.playlists.every(isFacet) &&
+    isStringList(value.libraryExcluded) &&
+    typeof value.revision === 'number'
+  );
+}
+
+function isTargets(value: unknown): value is ImportTargets {
+  return (
+    isRecord(value) &&
+    isRecord(value.song) &&
+    typeof value.song.shortcode === 'string' &&
+    Array.isArray(value.matching) &&
+    value.matching.every(isTargetVersion) &&
+    Array.isArray(value.versions) &&
+    value.versions.every(isTargetVersion) &&
+    (value.parent === null || isTargetVersion(value.parent)) &&
+    Array.isArray(value.numbers) &&
+    value.numbers.every((number) => isRecord(number) && typeof number.number === 'string')
+  );
+}
+
+const exportsPath = 'api/v1/suno/exports';
+
+function exportPath(id: string, suffix = ''): string {
+  return `${exportsPath}/${encodeURIComponent(id)}${suffix}`;
+}
+
+/** The query of the records list for `filter` and `page`. */
+export function filterParameters(filter: ImportFilter): URLSearchParams {
+  const parameters = new URLSearchParams();
+  if (filter.class !== undefined) {
+    parameters.set('class', filter.class);
+  }
+  if (filter.workspace !== undefined) {
+    parameters.set('workspace', filter.workspace);
+  }
+  if (filter.playlist !== undefined) {
+    parameters.set('playlist', filter.playlist);
+  }
+  if (filter.q !== undefined && filter.q !== '') {
+    parameters.set('q', filter.q);
+  }
+  return parameters;
+}
+
+const acceptCurrent = (answer: unknown) =>
+  isRecord(answer) &&
+  (answer.waiting === null || isSunoImport(answer.waiting)) &&
+  (answer.last === null || isSunoImport(answer.last))
+    ? { waiting: answer.waiting, last: answer.last }
+    : undefined;
+
+/** The export waiting for review, and the export created last (for the Suno entry and Settings). */
+export function useCurrentImport() {
+  return useResource(`${exportsPath}/current`, acceptCurrent);
+}
+
+const acceptImport = (answer: unknown) => (isSunoImport(answer) ? answer : undefined);
+
+/** One export, by ID. */
+export function useSunoImport(id: string) {
+  return useResource(exportPath(id), acceptImport);
+}
+
+const acceptSummary = (answer: unknown) => (isImportSummary(answer) ? answer : undefined);
+
+/** What confirming the export would do, and whether every choice is valid. */
+export function useImportSummary(id: string) {
+  return useResource(exportPath(id, '/summary'), acceptSummary);
+}
+
+const acceptRecords = (answer: unknown) =>
+  isRecord(answer) &&
+  Array.isArray(answer.items) &&
+  answer.items.every(isImportRecord) &&
+  typeof answer.total === 'number' &&
+  typeof answer.page === 'number' &&
+  typeof answer.pageSize === 'number'
+    ? (answer as unknown as ImportRecordPage)
+    : undefined;
+
+/** A page of the export's records matching `filter`. */
+export function useImportRecords(id: string, filter: ImportFilter, page: number) {
+  const parameters = filterParameters(filter);
+  parameters.set('pageSize', String(IMPORT_PAGE_SIZE));
+  if (page !== 1) {
+    parameters.set('page', String(page));
+  }
+  return useResource(`${exportPath(id, '/records')}?${parameters.toString()}`, acceptRecords);
+}
+
+/** Where the record `sunoId` may go in the Song `song` (an ID or shortcode), a new Version under `parent` (none: top-level). */
+export async function readImportTargets(
+  id: string,
+  sunoId: string,
+  song: string,
+  parent: string | null,
+  signal?: AbortSignal,
+): Promise<ImportTargets | undefined> {
+  const parameters = new URLSearchParams({ song });
+  if (parent !== null) {
+    parameters.set('parent', parent);
+  }
+  try {
+    const response = await apiFetch(
+      `${exportPath(id, `/records/${encodeURIComponent(sunoId)}/targets`)}?${parameters.toString()}`,
+      { signal },
+    );
+    const answer = await body(response);
+    return response.ok && isTargets(answer) ? answer : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Which records a change of choices names: these Suno IDs, or every record the review can change matching a filter but those left out. */
+export type RecordSelection =
+  { kind: 'ids'; sunoIds: string[] } | { kind: 'filter'; filter: ImportFilter; except: string[] };
+
+/**
+ * How a change of choices ended: `changed` (the export's new revision); `refused` with the reasons by
+ * Suno ID (nothing was changed); `conflict` when the export changed elsewhere; `not-ready` when it is no
+ * longer open for review; `none` when the filter matched no record the review can change; `failed`.
+ */
+export type ChangeChoicesResult =
+  | { kind: 'changed'; revision: number }
+  | { kind: 'refused'; records: Record<string, string[]> }
+  | { kind: 'conflict' }
+  | { kind: 'not-ready' }
+  | { kind: 'none' }
+  | { kind: 'failed' };
+
+/** Changes the choice of the selected records at `revision`; the server checks every one, and refuses the whole change if any is invalid. */
+export async function changeImportChoices(
+  id: string,
+  revision: number,
+  selection: RecordSelection,
+  choice: ImportChoice,
+): Promise<ChangeChoicesResult> {
+  const request =
+    selection.kind === 'ids'
+      ? { sunoIds: selection.sunoIds, choice }
+      : {
+          filter: {
+            class: selection.filter.class ?? null,
+            workspace: selection.filter.workspace ?? null,
+            playlist: selection.filter.playlist ?? null,
+            q: selection.filter.q === '' ? null : (selection.filter.q ?? null),
+          },
+          except: selection.except,
+          choice,
+        };
+  try {
+    const response = await apiFetch(exportPath(id, '/records'), {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'If-Match': ifMatch(revision),
+      },
+      body: JSON.stringify(request),
+    });
+    const answer = await body(response);
+    if (response.ok && isSunoImport(answer)) {
+      return { kind: 'changed', revision: answer.revision };
+    }
+    const code = isRecord(answer) ? answer.code : undefined;
+    if (response.status === 422 && code === 'invalid_choices' && isRecord(answer)) {
+      return { kind: 'refused', records: isErrorMap(answer.records) ? answer.records : {} };
+    }
+    if (response.status === 422 && code === 'validation_failed' && isRecord(answer)) {
+      const errors = isErrorMap(answer.errors) ? answer.errors : {};
+      return 'filter' in errors ? { kind: 'none' } : { kind: 'failed' };
+    }
+    if (response.status === 409) {
+      return code === 'revision_conflict' ? { kind: 'conflict' } : { kind: 'not-ready' };
+    }
+    return { kind: 'failed' };
+  } catch {
+    return { kind: 'failed' };
+  }
+}
+
+/** Throws the export away: `discarded`, `too-late` once it is being committed, or `failed`. */
+export async function discardImport(id: string): Promise<'discarded' | 'too-late' | 'failed'> {
+  try {
+    const response = await apiFetch(exportPath(id, '/discard'), { method: 'POST' });
+    if (response.ok) {
+      return 'discarded';
+    }
+    return response.status === 409 ? 'too-late' : 'failed';
+  } catch {
+    return 'failed';
+  }
+}

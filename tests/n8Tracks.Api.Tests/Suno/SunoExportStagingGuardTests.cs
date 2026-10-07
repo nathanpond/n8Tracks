@@ -15,7 +15,8 @@ namespace n8Tracks.Api.Tests.Suno;
 /// Guard for invariant 3, first half (#131, #138): receiving, classifying, and proposing a Suno export,
 /// and changing its choices, never change catalog data. Every catalog table is snapshotted, whole rows,
 /// before an export is uploaded and after it is classified and proposed (with every class present, its
-/// records read, an image staged, choices changed, and an earlier export discarded), and the two must be
+/// records read, an image staged, choices changed by ID and by filter, the review's summary, targets, and
+/// current export read (#139), and an earlier export discarded), and the two must be
 /// identical. The catalog tables are named explicitly, and so are the
 /// tables that are not catalog data; a new table in neither list fails the guard until it is placed.
 /// The commit story (#140) extends this to the commit itself.
@@ -192,6 +193,12 @@ public sealed class SunoExportStagingGuardTests
         var newVersion = new JsonObject { ["kind"] = "newVersion", ["key"] = "new:50", ["song"] = "n8-1", ["parentVersion"] = "n8-1-v2", ["number"] = "2.1" };
         await ProposalApi.ChangedAsync(client, id, 1, ProposalApi.Change(ProposalApi.Import(newVersion), "brand-new"));
         await ProposalApi.ChangedAsync(client, id, 2, ProposalApi.Change(new JsonObject { ["action"] = "ignore" }, "brand-new"));
+
+        // The review page's reads and its change by filter (#139) write none of it either.
+        await ProposalApi.ChangedAsync(client, id, 3, ImportReviewApi.ByFilter(new JsonObject(), new JsonObject { ["action"] = "ignore" }));
+        await ImportReviewApi.SummaryAsync(client, id);
+        await ImportReviewApi.TargetsAsync(client, id, "brand-new", "?song=n8-1&parent=n8-1-v2");
+        await ImportReviewApi.CurrentAsync(client);
 
         // Provider state did change (a complete list), so the run reached it; the catalog did not.
         Assert.Equal("Studio, renamed", (await SunoWorkspaceApi.OneAsync(client, "studio")).GetProperty("name").GetString());

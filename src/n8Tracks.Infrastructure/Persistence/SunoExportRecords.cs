@@ -40,6 +40,12 @@ public sealed class SunoExportRecord
     /// <summary>The header's playlists (<c>[{ id, name, clipIds }]</c>), as a JSON array.</summary>
     public required string PlaylistsJson { get; set; }
 
+    /// <summary>
+    /// The library filters Suno applied while the library was read (#134, #139), without the members that
+    /// name the user or a workspace, as a JSON object; null when the header carried none.
+    /// </summary>
+    public string? LibraryFiltersJson { get; set; }
+
     public required string CreatedUtc { get; set; }
 
     public string? CompletedUtc { get; set; }
