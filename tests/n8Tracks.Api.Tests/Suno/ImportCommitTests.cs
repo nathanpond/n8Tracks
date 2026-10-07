@@ -331,6 +331,48 @@ public sealed class ImportCommitTests
         Assert.Equal("1", TestDatabase.Scalar(factory.DataPath, "SELECT count(*) FROM song_relationships;"));
     }
 
+    /// <summary>
+    /// The other order (#137): the cover is older than its parent, so its new Song is created first,
+    /// before the parent's Generation exists. Its source is stored as a "Not imported" reference, and
+    /// the parent's attach in the same commit resolves it to the parent's Generation: one Generation
+    /// for the parent's Suno ID, at most one reference, and the Songs related once.
+    /// </summary>
+    [Fact]
+    public async Task ACoverImportedBeforeItsParentInTheSameCommitStillHoldsTheParentsGeneration()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var token = await SunoWorkspaceApi.ExtensionTokenAsync(factory);
+        const string parentId = "00000000-0000-4000-8000-0000000000e1";
+        const string coverId = "00000000-0000-4000-8000-0000000000e2";
+        var cover = new JsonObject
+        {
+            ["id"] = coverId,
+            ["status"] = "complete",
+            ["title"] = "The early cover",
+            ["created_at"] = "2026-10-01T10:00:00.000Z",
+            ["metadata"] = new JsonObject { ["task"] = "cover", ["cover_clip_id"] = parentId, ["edited_clip_id"] = parentId },
+        };
+        var parent = new JsonObject { ["id"] = parentId, ["status"] = "complete", ["title"] = "The late parent", ["created_at"] = "2026-10-01T11:00:00.000Z" };
+        var (id, records) = await ProposalApi.ExportAsync(client, token, parent, cover);
+
+        // The cover's new Song comes first in the commit.
+        Assert.Equal("new:1", ProposalApi.Target(records[coverId]).GetProperty("key").GetString());
+        Assert.Equal("new:2", ProposalApi.Target(records[parentId]).GetProperty("key").GetString());
+
+        var result = await ImportCommitApi.CommitAsync(client, id);
+
+        var outcomes = ImportCommitApi.Records(result);
+        Assert.All(outcomes.Values, static record => Assert.Equal("created", ImportCommitApi.Outcome(record)));
+        var parentGeneration = outcomes[parentId].GetProperty("generation").GetProperty("id").GetGuid().ToString().ToUpperInvariant();
+        var coverVersion = TestDatabase.Scalar(factory.DataPath, $"SELECT version_id FROM generations WHERE suno_id = '{coverId}';");
+        Assert.Equal(parentGeneration, TestDatabase.Scalar(factory.DataPath, $"SELECT COALESCE(generation_id, 'none') FROM version_sources WHERE version_id = '{coverVersion}';"));
+        Assert.Equal(string.Empty, TestDatabase.Scalar(factory.DataPath, $"SELECT COALESCE(external_reference_id, '') FROM version_sources WHERE version_id = '{coverVersion}';"));
+        Assert.Equal("1", TestDatabase.Scalar(factory.DataPath, $"SELECT count(*) FROM generations WHERE suno_id = '{parentId}';"));
+        Assert.True(int.Parse(TestDatabase.Scalar(factory.DataPath, $"SELECT count(*) FROM external_suno_references WHERE suno_id = '{parentId}';"), System.Globalization.CultureInfo.InvariantCulture) <= 1);
+        Assert.Equal("1", TestDatabase.Scalar(factory.DataPath, "SELECT count(*) FROM song_relationships;"));
+    }
+
     [Fact]
     public async Task TheCommitIsRefusedUnlessTheExportIsReadyAtTheRevisionSentAndIsSessionOnly()
     {
