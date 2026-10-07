@@ -3990,3 +3990,60 @@ Track b (#322 #327 #328 #329 #330 #331 #332 #335 #339 #341 #342 #343 #344):
 - **Decision:** `Application.Media` stays out of `CatalogServiceNamespaces`. `SunoIdMatcher` and `AudioFileLifecycle` take only IDs, strings and `Domain.Media` types; the deletion hook is `internal`. `audio_files` stays classified as catalog in `SunoExportStagingGuardTests`, and no new table was added.
   **Why:** This is the orchestrator rule: a namespace joins the guard only if it takes catalog types.
   **Issue:** #206
+
+Story #204 (built in parallel; merged into the milestone branch):
+
+- **Decision:** The scheduler is its own hosted service, `Infrastructure/Media/MediaScanScheduler`, looking every 30 s. It is not an `IDailyTask` on the once-a-minute daily scheduler. Each look calls `MediaScanScheduleService.TickAsync` (`Application/Media`), which enqueues only through `MediaScanService.StartAsync(Startup|Scheduled)`, the method `POST /media/scans` calls.
+  **Why:** The story fixes a 30-second check. The daily scheduler's whole-minute pacing and "planned local time" rules do not fit an interval counted from the end of the last scan.
+  **Issue:** #204
+- **Decision:** Whether a scan is due is computed as `media.lastScan.finishedUtc + interval <= now`, from the stored summary of any scan, manual and failed ones included. When no scan has ever ended, a scan is due at once.
+  **Why:** The Claude's Discretion line says due "from the stored last-scan summary, not from memory". With no summary yet, the only way to reach a scheduled look is that the startup scan's job vanished, so running one at once is the safe choice.
+  **Issue:** #204
+- **Decision:** The startup scan is queued once per process, at the first look that may queue anything: after setup is complete and outside maintenance, whatever the schedule, even with the folder unavailable. A singleton `MediaScanStartup` flag records it. If a `media-scan` job is already queued or running at that look, it counts as the startup scan.
+  **Why:** This covers the discretion lines on setup, maintenance, an unavailable mount, and a leftover queued job in one place. The startup scan is therefore queued up to 30 s after setup completes, not at the instant it completes.
+  **Issue:** #204
+- **Decision:** The scheduler enqueues nothing while the media folder is unavailable. `MediaScanService.IsFolderAvailableAsync` lists the root within the existing listing timeout, and it is called only when a scan is otherwise due. `IMediaMount` and `MediaMountReader` are not changed, and neither is the legacy `IMediaMountProbe`.
+  **Why:** This avoids a merge conflict with #205, which reworks the mount reader and folds in the probe. The check costs one root listing only when a scan is otherwise due.
+  **Issue:** #204
+- **Decision:** An empty startup or scheduled scan is deleted from the jobs table when the next scan finishes, whether that scan succeeds or fails. "Empty" means it succeeded with `new == 0 && changed == 0` (`MediaScanCounts.FoundNothing`, `MediaScanScheduleRules.IsForgettable`). The deletion uses a new `IJobStore.DeleteFinishedAsync(id)`, which deletes only a succeeded or failed job. Manual and recovery scans, and failed scans, are kept.
+  **Why:** This is the discretion line on keeping the jobs list uncrowded. A failed unattended scan is information, so it is kept. #207 must add its `missing` count to `FoundNothing`.
+  **Issue:** #204
+- **Decision:** The setting has revision 0 until it is first saved. `Revisions.Read(context, allowUnsaved: true)` accepts `If-Match: "0"` on `PUT /settings/media-scan` only; every other route still answers 400 `invalid_revision` to `"0"`.
+  **Why:** The discretion line requires `If-Match: "0"` for the first PUT, but the project convention, and existing tests, refuse `"0"` everywhere else.
+  **Issue:** #204
+- **Decision:** `PUT /settings/media-scan` binds both fields as `JsonElement` and validates them in `MediaScanSchedule.Parse`. So `1.5`, `"15"`, `null`, or a missing interval is a 422 keyed `intervalMinutes`, not a 400 from the binder. The interval is required and range-checked even when the schedule is off.
+  **Why:** The test plan requires a 422 for a non-integer. The discretion line says a PUT must always carry a valid interval.
+  **Issue:** #204
+- **Decision:** Settings → Library is a new sidebar entry after Catalog (`/settings/library`). The page has a switch and a "Minutes between scans" number field, which is disabled while the switch is off but keeps its value. It validates 1 to 1,440 on the page before sending, and shows the API's 422 messages.
+  **Why:** The discretion line puts it under Settings in the sidebar. Placing it after Catalog groups it with the other catalog settings.
+  **Issue:** #204
+- **Decision:** Test hosts switch the media scan scheduler off (`MediaScanSchedulerOptions { Enabled = false }` in `N8TracksApiFactory`), like the daily scheduler. One test runs the real loop at 50 ms on a `TestClock`.
+  **Why:** Without this, every existing test host would get a startup scan job, which would change job counts and restore's "jobs active" check.
+  **Issue:** #204
+- **Decision:** The "no file-change notifications" guard is an architecture test, `NoFileWatchingTests`, with two checks. A NetArchTest check finds no dependency on `System.IO.FileSystemWatcher` in Domain, Application, Infrastructure, or Api; a test-local sample type proves the rule bites. A source scan finds no file under `src/` that names `FileSystemWatcher`. It does not cover `IFileProvider.Watch`, inotify through P/Invoke, or watchers the framework creates for itself.
+  **Why:** This is the test plan's architecture test, with a complement so that an empty answer means something.
+  **Issue:** #204
+- **Decision:** The e2e `library-settings.spec.ts` walks the whole Demo on the fresh container, not only the settings steps. Copied files are fake `.wav` bytes. Step 3's two-minute wait is a 5-second poll that fails at once if the file is listed, not a `waitForTimeout` with a suppression. The spec is tagged `@root-only` and takes about 2.6 min.
+  **Why:** The test plan asks only for the settings steps with accessibility scans. Steps 2 and 3 are this story's "must-have truth" (files show up within the interval without the user doing anything) and can only be shown on a real container.
+  **Issue:** #204
+
+Story #215 (built in parallel; merged into the milestone branch):
+
+- **Decision:** The Download view reads only Library › Songs (`/me`) through a new `readLibrary` export of `libraryReader.ts`, which reuses the sync's private `readList` and `LIBRARY` spec and the `load-more` workflow. It does not read the workspace or Trash lists.
+  **Why:** The key link requires "the same reader and observer; no second way of reading the library". The library feed already holds every workspace's clips, and each clip carries `project.{id,name}`, so the workspace list adds nothing. Suno's feed leaves trashed clips out (`trashed: "False"`), so a trashed clip cannot be selected. A clip that arrives marked `is_trashed` is shown disabled with the reason.
+  **Issue:** #215
+- **Decision:** Load library and Refresh always reopen `/me` and read on the next page load, like a sync leg. The service worker keeps the request and the selected Suno IDs in `chrome.storage.session` (`downloadLoad`, tab-bound, taken once, forgotten after 2 minutes). The library is not read from the observation queue of the page as it already is.
+  **Why:** The observation queue is consumed by reading and limited to 200 messages, so a second read (Refresh) on the same page would see nothing. Reopening the page gives a fresh first page each time, as the sync does. Carrying the selection across the reload keeps the rule that "selections survive Refresh".
+  **Issue:** #215
+- **Decision:** The plan's download allowance comes from observing the page's own `GET /api/billing/info/`. This adds the observed kind `billing`, and the observer forwards only the three `download_usage` counts. The extension does not open the Download dialog itself in #215. While no reading has been seen, the summary says how to make the page read it (open any clip's More options › Download and close it), and Start is refused with that reason. `ADAPTER_VERSION` is 10 → 11.
+  **Why:** TS-004 found that only opening the Download dialog makes the page request billing info. #133 reserves recognising that dialog for #216's own primitive, and the extension may never construct its own Suno request. Refusing Start when the remaining count is unknown is the safe reading of "never needs more unlocks than remain". #216's dialog primitive will produce the reading as a side effect.
+  **Issue:** #215
+- **Decision:** Start is always disabled in #215, and its reason line shows the most relevant refusal. The order is: no clip selected, no format chosen, unlocks unknown, too few unlocks, and then `START_NOT_YET` ("Downloading arrives in a later version …"). #216 replaces the last one.
+  **Why:** The discretion line says "Until #216 lands, Start is shown disabled". Demo step 3 needs the no-selection reason.
+  **Issue:** #215
+- **Decision:** The lookup is the read-only `Application.Suno.SunoClipLookupService` with a new port, `ISunoClipCatalogLookup`, implemented by `Infrastructure/Persistence/SunoClipCatalogLookup.cs`. It is exposed as `POST /api/v1/suno/clips/lookup` (`RequireScope(suno.sync)`; 1 to 500 non-blank IDs, otherwise 422 `validation_failed`; distinct IDs in the order sent). `deleted` is true when the clip has a provider tombstone. An ignored clip gets `generation: null, deleted: false` with no extra read.
+  **Why:** Invariant 5 requires one application-service layer. The ignore list and tombstones never overlap (#143), so reading the ignore list would change no answer. The invariant-1 guard lists the endpoint and the service method as "reads only". The scope guard has the new marker.
+  **Issue:** #215
+- **Decision:** A clip is not selectable while its status is submitted, queued, or streaming ("Still generating in Suno"), when its status is `error`, when it is trashed, or when it has no `media_urls[0]` ("no audio"). A hidden clip can be selected. M4A (streaming quality) is planned only for clips that have `media_urls[0]`. WAV, MP3, and M4A are always offered, and per-file failures are left to #216. The formats chosen are kept in `chrome.storage.local` (`downloadFormats`), and none is ticked the first time.
+  **Why:** These follow the story's discretion lines and TS-004.
+  **Issue:** #215
