@@ -169,6 +169,8 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
 
     public DbSet<AudioFileRecord> AudioFiles => Set<AudioFileRecord>();
 
+    public DbSet<DownloadRecordRecord> DownloadRecords => Set<DownloadRecordRecord>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         ArgumentNullException.ThrowIfNull(configurationBuilder);
@@ -305,6 +307,27 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                 .WithMany()
                 .HasForeignKey(record => record.SongId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // Download records (#222): files the extension fetched to the user's computer, by Suno ID with
+        // no foreign key (a record is kept for a clip that is not, or no longer, a Generation). Only
+        // ever inserted; the times compare as text because both are written by UtcText.
+        modelBuilder.Entity<DownloadRecordRecord>(download =>
+        {
+            download.ToTable("download_records", static table =>
+            {
+                table.HasCheckConstraint(
+                    "ck_download_records_format",
+                    $"format IN ({string.Join(", ", DownloadFormats.All.Select(static format => $"'{format}'"))})");
+                table.HasCheckConstraint("ck_download_records_suno_id", "length(suno_id) = 36 AND suno_id = lower(suno_id)");
+                table.HasCheckConstraint(
+                    "ck_download_records_file_name",
+                    $"length(file_name) BETWEEN 1 AND {DownloadFormats.MaximumFileNameLength} AND instr(file_name, '/') = 0 AND instr(file_name, '\\') = 0");
+                table.HasCheckConstraint("ck_download_records_size_bytes", "size_bytes IS NULL OR size_bytes >= 0");
+                table.HasCheckConstraint("ck_download_records_completed_utc", "completed_utc <= received_utc");
+            });
+            download.HasKey(record => record.Id);
+            download.HasIndex(record => record.SunoId);
         });
     }
 

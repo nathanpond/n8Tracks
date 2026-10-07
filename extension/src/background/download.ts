@@ -9,6 +9,7 @@ import type {
   ResponseFor,
 } from '../messages.ts';
 import { DisconnectedError, type Connection } from './connection.ts';
+import type { DownloadRecorder } from './downloadRecords.ts';
 
 /**
  * The service worker's half of the Download view (#215). It keeps a Load library across the page
@@ -16,7 +17,8 @@ import { DisconnectedError, type Connection } from './connection.ts';
  * remembers the formats last chosen (in local storage), and asks n8Tracks which clips it has as
  * Generations: `POST /api/v1/suno/clips/lookup`, the only call the view makes, with the extension's
  * `suno.sync` token. Nothing here reaches Suno, and nothing is imported. Start, Cancel, Retry, and
- * Resume go to the download queue (#216, `download/downloader.ts`).
+ * Resume go to the download queue (#216, `download/downloader.ts`); the files it saves are reported
+ * as download records (#222, `downloadRecords.ts`).
  */
 
 /** The parts of `chrome.storage` the Download view uses, so tests can stand in for the browser. */
@@ -61,6 +63,8 @@ export interface DownloadCoordinatorOptions {
   busy: () => Promise<string | null>;
   /** The download queue (#216); without it, Start is refused. */
   downloader?: Downloader;
+  /** Download records (#222): how recording stands, and a nudge to send what waits. */
+  recorder?: Pick<DownloadRecorder, 'status' | 'flush'>;
   now?: () => number;
 }
 
@@ -102,6 +106,7 @@ export class DownloadCoordinator {
   private readonly browser: DownloadBrowser;
   private readonly busy: () => Promise<string | null>;
   private readonly downloader: Downloader | null;
+  private readonly recorder: Pick<DownloadRecorder, 'status' | 'flush'> | null;
   private readonly now: () => number;
 
   constructor(options: DownloadCoordinatorOptions) {
@@ -109,6 +114,7 @@ export class DownloadCoordinator {
     this.browser = options.browser;
     this.busy = options.busy;
     this.downloader = options.downloader ?? null;
+    this.recorder = options.recorder ?? null;
     this.now = options.now ?? (() => Date.now());
   }
 
@@ -131,8 +137,18 @@ export class DownloadCoordinator {
       case 'download-control':
         return this.control(request.action, tabId);
       case 'download-run':
-        return { run: this.downloader === null ? null : await this.downloader.current() };
+        return this.runState();
     }
+  }
+
+  /** The queue, and how recording it stands; reports still waiting are sent again meanwhile. */
+  private async runState(): Promise<ResponseFor['download-run']> {
+    const run = this.downloader === null ? null : await this.downloader.current();
+    if (this.recorder === null) {
+      return { run };
+    }
+    void this.recorder.flush().catch(() => undefined);
+    return { run, records: await this.recorder.status() };
   }
 
   /** Start: refused while a sync or Generate on Suno runs, since the page is shared. */

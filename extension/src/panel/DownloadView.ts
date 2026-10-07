@@ -3,11 +3,12 @@ import { createdText, durationText, type DownloadClip } from '../download/clips.
 import {
   DownloadSelection,
   FORMATS,
+  isDownloadFormat,
   type DownloadFormat,
   type ListFilter,
 } from '../download/selection.ts';
 import type { DownloadFile, DownloadRun } from '../download/downloader.ts';
-import type { ClipLookupRow } from '../messages.ts';
+import type { ClipLookupRow, RecordingStatus } from '../messages.ts';
 
 /**
  * Download from Suno, in the panel on Suno (#215): the user loads their Suno library, narrows it by
@@ -19,6 +20,11 @@ import type { ClipLookupRow } from '../messages.ts';
  * Start (#216) hands the plan to the service worker's download queue, once the user has confirmed
  * the Suno unlocks the run uses; the run's files then show here with their progress, and can be
  * cancelled, retried, or resumed.
+ *
+ * Download records (#222): the lookup says which formats of each clip were already downloaded. The
+ * list can show only the clips not yet downloaded, and Skip files already downloaded (on unless
+ * turned off) leaves those files out of the plan, naming them in the summary. The run says how
+ * recording its files in n8Tracks stands.
  */
 
 /** Where reading the library has got to. */
@@ -78,6 +84,9 @@ export const ASK_WHERE_TO_SAVE =
 /** What a run that unlocks clips also says (TS-004): Suno's page saves its own copy too. */
 export const PAGE_COPY =
   "Suno's page may also save its own copy of a WAV, MP3, or M4A, named by its title only: that copy has no Suno ID, so n8Tracks cannot match it.";
+
+/** The most skipped files the summary names one by one. */
+export const SKIPPED_NAMED = 20;
 
 /** What is said about the view's effect, beside Load library. */
 export const NOTHING_CHANGES =
@@ -153,6 +162,18 @@ export function summaryLines(
         : `${uses} ${String(remainingUnlocks(usage))} remain this period.`,
     );
   }
+  const skipped = selection.skipped();
+  if (skipped.length > 0) {
+    const named = skipped
+      .slice(0, SKIPPED_NAMED)
+      .map((file) => `${file.title} (${formatLabel(file.format)})`);
+    const more = skipped.length - named.length;
+    lines.push(
+      `Skipped, already downloaded: ${named.join(', ')}${more > 0 ? `, and ${String(more)} more` : ''}.`,
+    );
+  } else if (selection.skipDownloaded && !selection.downloadsKnown && clips > 0) {
+    lines.push('What was already downloaded is not known, so no file is skipped.');
+  }
   lines.push(DESTINATION, ASK_WHERE_TO_SAVE);
   if (formats.some((format) => format !== 'm4a-stream')) {
     lines.push(PAGE_COPY);
@@ -225,6 +246,38 @@ export function runSummaryText(run: DownloadRun): string {
   return `${parts.join(', ')}.`;
 }
 
+/**
+ * How recording the run's files in n8Tracks stands (#222), in plain words; none when there is
+ * nothing to say.
+ */
+export function recordingLines(status: RecordingStatus | null): string[] {
+  if (status === null) {
+    return [];
+  }
+  const lines: string[] = [];
+  if (!status.connected) {
+    lines.push(
+      'The extension is not connected to n8Tracks: downloads still work, but they are not recorded there.',
+    );
+  }
+  if (status.unrecorded > 0) {
+    lines.push(
+      `${plural(status.unrecorded, 'download was', 'downloads were')} not recorded in n8Tracks: the extension was not connected.`,
+    );
+  }
+  if (status.pending > 0) {
+    lines.push(
+      `${plural(status.pending, 'download is', 'downloads are')} not yet recorded in n8Tracks; they are sent when the connection works.`,
+    );
+  }
+  if (status.refused > 0) {
+    lines.push(
+      `${plural(status.refused, 'download', 'downloads')} could not be recorded: n8Tracks refused ${status.refused === 1 ? 'the report' : 'the reports'}.`,
+    );
+  }
+  return lines;
+}
+
 /** How a row says whether n8Tracks has the clip. */
 export function inN8TracksText(lookup: LookupState, sunoId: string): string {
   switch (lookup.kind) {
@@ -259,7 +312,8 @@ export class DownloadView {
   /** The unlock count the user ticked, or null. */
   private confirmed: number | null = null;
   private run: DownloadRun | null = null;
-  private filter: ListFilter = { workspaceId: null, text: '' };
+  private records: RecordingStatus | null = null;
+  private filter: ListFilter = { workspaceId: null, text: '', notDownloaded: false };
   /** The first row drawn when the list is virtualised. */
   private firstDrawn = 0;
   /** The Suno ID of the row whose checkbox has focus, to keep it when the list is drawn again. */
@@ -273,6 +327,9 @@ export class DownloadView {
   private readonly retryButton: HTMLButtonElement;
   private readonly workspaceSelect: HTMLSelectElement;
   private readonly textInput: HTMLInputElement;
+  private readonly notDownloadedBox: HTMLInputElement;
+  private readonly notDownloadedWhy: HTMLElement;
+  private readonly skipBox: HTMLInputElement;
   private readonly selectAllButton: HTMLButtonElement;
   private readonly clearButton: HTMLButtonElement;
   private readonly selectAllWhy: HTMLElement;
@@ -289,6 +346,7 @@ export class DownloadView {
   private readonly runSection: HTMLElement;
   private readonly runStatus: HTMLElement;
   private readonly runMessage: HTMLElement;
+  private readonly recordsLine: HTMLElement;
   private readonly runList: HTMLElement;
   private readonly cancelRunButton: HTMLButtonElement;
   private readonly retryRunButton: HTMLButtonElement;
@@ -353,7 +411,23 @@ export class DownloadView {
       this.renderSummary();
     });
     textLabel.append(this.textInput);
-    filters.append(workspaceLabel, textLabel);
+    const notDownloadedLabel = this.make('label', { class: 'dl-field' });
+    this.notDownloadedBox = this.make('input', {
+      type: 'checkbox',
+      'aria-describedby': 'n8-dl-not-downloaded',
+    });
+    this.notDownloadedBox.addEventListener('change', () => {
+      this.filter = { ...this.filter, notDownloaded: this.notDownloadedBox.checked };
+      this.firstDrawn = 0;
+      this.renderList();
+      this.renderSummary();
+    });
+    notDownloadedLabel.append(this.notDownloadedBox, ' Not yet downloaded');
+    this.notDownloadedWhy = this.make('span', {
+      class: 'detail dl-not-downloaded-why',
+      id: 'n8-dl-not-downloaded',
+    });
+    filters.append(workspaceLabel, textLabel, notDownloadedLabel, this.notDownloadedWhy);
 
     // Selection controls.
     this.selectAllWhy = this.make('span', { class: 'detail dl-select-all-why', id: 'n8-dl-all' });
@@ -396,6 +470,9 @@ export class DownloadView {
       box.addEventListener('change', () => {
         this.selection.setFormat(choice.format, box.checked);
         this.options.formatsChanged(this.selection.chosenFormats());
+        if (this.filter.notDownloaded === true) {
+          this.renderList();
+        }
         this.renderSummary();
       });
       this.formatBoxes.set(choice.format, box);
@@ -406,6 +483,16 @@ export class DownloadView {
       }
       formats.append(label);
     }
+
+    // Files already downloaded (#222).
+    const skipLabel = this.make('label', { class: 'dl-skip' });
+    this.skipBox = this.make('input', { type: 'checkbox' });
+    this.skipBox.checked = this.selection.skipDownloaded;
+    this.skipBox.addEventListener('change', () => {
+      this.selection.setSkipDownloaded(this.skipBox.checked);
+      this.renderSummary();
+    });
+    skipLabel.append(this.skipBox, ' Skip files already downloaded');
 
     // Summary and Start.
     this.summary = this.make('div', { class: 'dl-summary', 'aria-live': 'polite' });
@@ -437,6 +524,7 @@ export class DownloadView {
     this.runMessage = this.make('p', { class: 'warning dl-run-message', role: 'alert' });
     this.runMessage.hidden = true;
     this.runList = this.make('ul', { 'aria-label': 'Files' });
+    this.recordsLine = this.make('div', { class: 'detail dl-records', role: 'status' });
     this.cancelRunButton = this.button('Cancel downloads', () => {
       this.options.control?.('cancel');
     });
@@ -452,6 +540,7 @@ export class DownloadView {
     this.runSection.append(
       this.make('h4', { id: 'n8-dl-run' }, 'Downloads'),
       this.runStatus,
+      this.recordsLine,
       runActions,
       this.runList,
     );
@@ -470,6 +559,7 @@ export class DownloadView {
       this.empty,
       this.listBox,
       formats,
+      skipLabel,
       this.summary,
       this.confirmLabel,
       this.startButton,
@@ -516,8 +606,16 @@ export class DownloadView {
 
   setLookup(state: LookupState): void {
     this.lookup = state;
+    this.renderDownloaded();
     this.renderLookup();
     this.renderList();
+    this.renderSummary();
+  }
+
+  /** How recording downloads in n8Tracks stands (#222); null when not known. */
+  setRecords(status: RecordingStatus | null): void {
+    this.records = status;
+    this.renderRecords();
   }
 
   /** The plan's download allowance as the page last read it. */
@@ -530,6 +628,14 @@ export class DownloadView {
   setRun(run: DownloadRun | null): void {
     this.run = run;
     this.renderRun();
+    // Files saved in this run count as downloaded too, before n8Tracks is asked again.
+    if (this.lookup.kind === 'found' && run?.files.some((file) => file.state === 'saved')) {
+      this.renderDownloaded();
+      if (this.filter.notDownloaded === true) {
+        this.renderList();
+      }
+      this.renderSummary();
+    }
   }
 
   /** Why Start or a run control did not work, or null to clear it. */
@@ -573,7 +679,41 @@ export class DownloadView {
     return button;
   }
 
+  /**
+   * What was downloaded, from the lookup and this run's saved files; unknown (nothing skipped, the
+   * filter off) unless the lookup answered.
+   */
+  private renderDownloaded(): void {
+    const lookup = this.lookup;
+    if (lookup.kind !== 'found') {
+      this.selection.setDownloaded(null);
+    } else {
+      const downloaded = new Map<string, DownloadFormat[]>();
+      for (const [sunoId, row] of lookup.rows) {
+        downloaded.set(sunoId, row.downloadedFormats.filter(isDownloadFormat));
+      }
+      for (const file of this.run?.files ?? []) {
+        if (file.state === 'saved') {
+          downloaded.set(file.sunoId, [...(downloaded.get(file.sunoId) ?? []), file.format]);
+        }
+      }
+      this.selection.setDownloaded(downloaded);
+    }
+    const known = this.selection.downloadsKnown;
+    this.notDownloadedBox.disabled = !known;
+    this.notDownloadedWhy.textContent = known
+      ? ''
+      : 'Needs n8Tracks to say what was already downloaded.';
+  }
+
+  private renderRecords(): void {
+    const lines = recordingLines(this.records);
+    this.recordsLine.replaceChildren(...lines.map((line) => this.make('p', {}, line)));
+    this.recordsLine.hidden = lines.length === 0;
+  }
+
   private renderAll(): void {
+    this.renderDownloaded();
     this.renderRead();
     this.renderLookup();
     this.renderWorkspaces();
@@ -629,7 +769,7 @@ export class DownloadView {
         text = 'Checking which clips are already in n8Tracks.';
         break;
       case 'unavailable':
-        text = `Already in n8Tracks: unavailable. ${state.message} The clips can still be downloaded.`;
+        text = `Already in n8Tracks: unavailable. ${state.message} The clips can still be downloaded, but they are not recorded in n8Tracks.`;
         break;
       case 'failed':
         text = `Already in n8Tracks: unknown. ${state.message}`;
@@ -785,6 +925,7 @@ export class DownloadView {
   private renderRun(): void {
     const run = this.run;
     this.runSection.hidden = run === null || run.files.length === 0;
+    this.renderRecords();
     if (run === null) {
       this.runList.replaceChildren();
       return;

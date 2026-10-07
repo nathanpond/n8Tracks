@@ -7,6 +7,7 @@ import { displayVersion } from '../version-label.ts';
 import { CompletionWatch } from './completion.ts';
 import { Connection } from './connection.ts';
 import { DownloadCoordinator } from './download.ts';
+import { DownloadRecorder } from './downloadRecords.ts';
 import { GenerateCoordinator } from './generate.ts';
 import { route } from './router.ts';
 import { SyncCoordinator } from './sync.ts';
@@ -58,6 +59,10 @@ const generate = new GenerateCoordinator({
 // The download queue (#216): files prepared in the run's Suno tab (or the stream's address from the
 // clip data), handed to the browser's downloads interface, and kept in local storage.
 const browserDownloadsApi = browserDownloads();
+// Download records (#222): each saved file is reported to n8Tracks once; reports that cannot be sent
+// yet are kept in local storage for the paired n8Tracks.
+const recorder = new DownloadRecorder({ connection, storage: chrome.storage.local });
+let progress: Promise<void> = Promise.resolve();
 const QUEUE_ALIVE_KEY = 'downloadQueueAlive';
 const tell = (tabId: number, message: DownloadTabMessage) =>
   chrome.tabs.sendMessage(tabId, message);
@@ -73,9 +78,19 @@ const downloader = new Downloader({
     return !alive;
   },
   onChange: (run) => {
-    if (run.tabId !== null) {
-      void tell(run.tabId, { type: 'download-progress', run }).catch(() => undefined);
-    }
+    // In order, so the tab never shows an older state last. Reporting never holds up or fails a
+    // download: its errors are dropped here.
+    progress = progress.then(async () => {
+      await recorder.observe(run).catch(() => undefined);
+      if (run.tabId !== null) {
+        const records = await recorder.status().catch(() => undefined);
+        await tell(run.tabId, {
+          type: 'download-progress',
+          run,
+          ...(records === undefined ? {} : { records }),
+        }).catch(() => undefined);
+      }
+    });
   },
 });
 browserDownloadsApi.onChanged((id) => {
@@ -88,6 +103,7 @@ void downloader.restore().catch(() => undefined);
 const download = new DownloadCoordinator({
   connection,
   downloader,
+  recorder,
   browser: { session: chrome.storage.session, local: chrome.storage.local },
   busy: async () => {
     if (await sync.running()) {
@@ -150,6 +166,9 @@ chrome.permissions.onRemoved.addListener(() => {
 
 // Re-run the handshake whenever the service worker starts.
 void connection.start().catch(() => undefined);
+
+// Download reports a stopped service worker left unsent are sent now (#222).
+void recorder.flush().catch(() => undefined);
 
 // Cover images a stopped service worker left unsent are sent now (#152).
 void sync.images.resume().catch(() => undefined);

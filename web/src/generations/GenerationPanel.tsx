@@ -6,6 +6,7 @@ import { formatDateTime, useConfiguredTimeZone } from '../api/timeZone';
 import { ArtworkImage } from '../common/ArtworkImage';
 import { ShortcodeBadge } from '../common/ShortcodeBadge';
 import { GenerationComments, type UpdateGeneration } from './GenerationComments';
+import { GenerationDownloads } from './GenerationDownloads';
 import { selectionActionLabel, stateActionLabel } from './evaluationRules';
 import {
   GenerationStateBadges,
@@ -170,6 +171,8 @@ function Details({
         </Group>
       )}
       <Divider />
+      <GenerationDownloads generation={generation} />
+      <Divider />
       <GenerationComments generation={generation} update={update} />
     </Stack>
   );
@@ -185,8 +188,9 @@ function Details({
  * clears that, and (#121) its cover image, shown whole. `problem` says why a rating or a choice was
  * not saved. "Create new Song from Generation" (#123) opens through `actions`; `movedFrom` (the old
  * shortcode it was opened by) says the Generation moved. "Delete Generation" (#124) opens its
- * confirmation through `actions`. A reference that names no Generation of this Song says so. Closes with Escape or its close
- * control.
+ * confirmation through `actions`. The files the extension downloaded for its clip (#222) are listed
+ * with whether each is in the media folder. A reference that names no Generation of this Song says
+ * so. Closes with Escape or its close control.
  */
 export function GenerationPanel({
   opened,

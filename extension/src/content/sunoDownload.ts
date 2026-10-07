@@ -19,12 +19,14 @@ import { loadMore } from '../adapter/workflows/loadMore.ts';
 import { clipOf, type DownloadClip } from '../download/clips.ts';
 import { isDownloadFormat } from '../download/selection.ts';
 import type { DownloadRun } from '../download/downloader.ts';
-import type {
-  ClipLookupReply,
-  ClipLookupRow,
-  DownloadAction,
-  Request,
-  ResponseFor,
+import {
+  recordingOf,
+  type ClipLookupReply,
+  type ClipLookupRow,
+  type DownloadAction,
+  type RecordingStatus,
+  type Request,
+  type ResponseFor,
 } from '../messages.ts';
 import type { DownloadView } from '../panel/DownloadView.ts';
 
@@ -216,11 +218,15 @@ export class SunoDownload {
       ResponseFor['download-run'] | undefined;
     const run = isRecord(answer) && isRecord(answer.run) ? (answer.run as DownloadRun) : null;
     this.options.view.setRun(run);
+    this.options.view.setRecords(recordingOf(isRecord(answer) ? answer.records : undefined));
   }
 
-  /** The queue's news, pushed by the service worker. */
-  progress(run: DownloadRun): void {
+  /** The queue's news, pushed by the service worker, with how recording it stands (#222). */
+  progress(run: DownloadRun, records?: RecordingStatus): void {
     this.options.view.setRun(run);
+    if (records !== undefined) {
+      this.options.view.setRecords(recordingOf(records));
+    }
   }
 
   /**

@@ -1,4 +1,5 @@
 using System.Globalization;
+using n8Tracks.Application.Media;
 
 namespace n8Tracks.Application.Suno;
 
@@ -8,8 +9,9 @@ public sealed record SunoClipGenerationFacts(string SunoId, Guid GenerationId, s
 /// <summary>
 /// What the extension's Download view needs to know of one Suno clip (#215): the live Generation that
 /// holds it (archived included), its Song's primary Artist's name, whether its Generation was deleted
-/// in n8Tracks (a provider tombstone, #130), and which formats were already downloaded (#222; empty
-/// until then). An ignored clip (#143) has no Generation and is not deleted.
+/// in n8Tracks (a provider tombstone, #130), and which formats were already downloaded (#222: the
+/// formats of its download records, in the order offered). An ignored clip (#143) has no Generation
+/// and is not deleted.
 /// </summary>
 public sealed record SunoClipLookupRow(
     string SunoId,
@@ -33,7 +35,7 @@ public interface ISunoClipCatalogLookup
 /// already has as Generations. It reads the catalog and changes nothing: listing clips for download
 /// imports nothing (invariant 3) and a clip need not be in n8Tracks to be downloaded.
 /// </summary>
-public sealed class SunoClipLookupService(ISunoClipCatalogLookup catalog, TombstoneService tombstones)
+public sealed class SunoClipLookupService(ISunoClipCatalogLookup catalog, TombstoneService tombstones, DownloadRecordService downloads)
 {
     /// <summary>The most Suno IDs one lookup takes.</summary>
     public const int MaximumIds = 500;
@@ -66,9 +68,10 @@ public sealed class SunoClipLookupService(ISunoClipCatalogLookup catalog, Tombst
         var deleted = unheld.Count == 0
             ? new HashSet<string>(StringComparer.Ordinal)
             : await tombstones.TombstonedAsync(unheld, cancellationToken).ConfigureAwait(false);
+        var downloaded = await downloads.DownloadedFormatsAsync(ids, cancellationToken).ConfigureAwait(false);
 
         return [.. ids.Select(id => live.TryGetValue(id, out var facts)
-            ? new SunoClipLookupRow(id, new SunoClipGeneration(facts.GenerationId, facts.Shortcode), facts.ArtistName, Deleted: false, [])
-            : new SunoClipLookupRow(id, null, null, Deleted: deleted.Contains(id), []))];
+            ? new SunoClipLookupRow(id, new SunoClipGeneration(facts.GenerationId, facts.Shortcode), facts.ArtistName, Deleted: false, downloaded.GetValueOrDefault(id) ?? [])
+            : new SunoClipLookupRow(id, null, null, Deleted: deleted.Contains(id), downloaded.GetValueOrDefault(id) ?? []))];
     }
 }

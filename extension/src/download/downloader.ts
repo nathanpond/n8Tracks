@@ -21,7 +21,8 @@ import { FORMATS, isDownloadFormat, type DownloadFormat, type PlanEntry } from '
  *   carries on. After a browser restart it waits for Resume, and files that were in flight start
  *   again from zero.
  *
- * Nothing here calls n8Tracks: downloading imports, syncs, and changes nothing in the catalog.
+ * Nothing here calls n8Tracks: downloading imports, syncs, and changes nothing in the catalog. A
+ * saved file gets a record ID, and the service worker reports it (#222, `records.ts`).
  */
 
 /** The local-storage key the queue is kept under. */
@@ -68,6 +69,13 @@ export interface DownloadFile {
   renameToM4a: boolean;
   /** Its address was fetched afresh once after it expired. */
   fetchedAgain: boolean;
+  /**
+   * Once saved: the ID its download record is reported to n8Tracks under (#222), new for each
+   * save, so a report sent again is recorded once and a file downloaded again is a new record.
+   */
+  recordId: string | null;
+  /** Once saved: when, as ISO 8601 UTC. */
+  savedAt: string | null;
 }
 
 /** The queue, as kept and as the panel shows it. */
@@ -116,6 +124,10 @@ export interface DownloaderOptions {
   browserStarted?: () => Promise<boolean>;
   /** Waits; `setTimeout` unless a test stands in. */
   sleep?: (ms: number) => Promise<void>;
+  /** A new record ID for a saved file (#222); `crypto.randomUUID` unless a test stands in. */
+  newId?: () => string;
+  /** Milliseconds since the epoch; `Date.now` unless a test stands in. */
+  now?: () => number;
 }
 
 const EMPTY_RUN = (): DownloadRun => ({
@@ -229,6 +241,8 @@ function storedFile(value: unknown): DownloadFile | null {
     renamed: value.renamed === true,
     renameToM4a: value.renameToM4a === true,
     fetchedAgain: value.fetchedAgain === true,
+    recordId: text(value.recordId),
+    savedAt: text(value.savedAt),
   };
 }
 
@@ -362,6 +376,8 @@ export class Downloader {
         renamed: false,
         renameToM4a: false,
         fetchedAgain: false,
+        recordId: null,
+        savedAt: null,
       });
     }
     this.run.tabId = tabId;
@@ -685,6 +701,8 @@ export class Downloader {
         !isChosenName(savedName, file.fileName) || folderName(item.filename) !== DOWNLOAD_FOLDER,
       renameToM4a: file.format !== 'wav' && file.format !== 'mp3' && /\.mp4$/i.test(savedName),
       received: item.bytesReceived,
+      recordId: this.options.newId?.() ?? crypto.randomUUID(),
+      savedAt: new Date(this.options.now?.() ?? Date.now()).toISOString(),
     });
   }
 

@@ -362,6 +362,37 @@ export type Request =
   /** The download queue as it stands, for the panel on a page load (#216). */
   | { type: 'download-run' };
 
+/**
+ * How recording downloads in n8Tracks stands (#222): whether the extension holds a token, how many
+ * reports wait to be sent, and how many of the run's files n8Tracks refused or were saved while not
+ * connected.
+ */
+export interface RecordingStatus {
+  connected: boolean;
+  pending: number;
+  refused: number;
+  unrecorded: number;
+}
+
+/** The recording status in `value`, checked member by member, or null when it is not one. */
+export function recordingOf(value: unknown): RecordingStatus | null {
+  if (
+    !isRecord(value) ||
+    typeof value.connected !== 'boolean' ||
+    !isCount(value.pending) ||
+    !isCount(value.refused) ||
+    !isCount(value.unrecorded)
+  ) {
+    return null;
+  }
+  return {
+    connected: value.connected,
+    pending: value.pending,
+    refused: value.refused,
+    unrecorded: value.unrecorded,
+  };
+}
+
 /** What the Download view's run controls ask of the queue (#216). */
 export type DownloadAction = 'cancel' | 'retry' | 'resume';
 
@@ -400,7 +431,7 @@ export interface ResponseFor {
   'download-formats': { formats: string[] };
   'download-start': DownloadReply;
   'download-control': DownloadReply;
-  'download-run': { run: DownloadRun | null };
+  'download-run': { run: DownloadRun | null; records?: RecordingStatus };
 }
 
 export type Response<T extends Request> = ResponseFor[T['type']];
@@ -424,7 +455,8 @@ export function isTabMessage(value: unknown): value is TabMessage {
  * the queue as it now stands, for the panel.
  */
 export type DownloadTabMessage =
-  { type: 'download-prepare'; job: PrepareJob } | { type: 'download-progress'; run: DownloadRun };
+  | { type: 'download-prepare'; job: PrepareJob }
+  | { type: 'download-progress'; run: DownloadRun; records?: RecordingStatus };
 
 /** The answer to `download-prepare`. */
 export type DownloadPrepareReply = PrepareOutcome;

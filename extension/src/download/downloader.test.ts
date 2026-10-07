@@ -252,6 +252,42 @@ describe('the download queue', () => {
     });
   });
 
+  it('gives a saved file a record ID and time of its own, new for each save, and a failed one none (#222)', async () => {
+    const page = fakePage((job) =>
+      job.sunoId === A
+        ? { ok: false, scope: 'file', reason: 'Suno did not prepare the file', pressed: true }
+        : prepared(job),
+    );
+    const { downloader, downloads, run, finish } = setUp({ page });
+
+    await downloader.add(TAB, [entry(A, 'wav'), entry(B, 'wav')], 0);
+    await vi.waitFor(() => {
+      expect(downloads.started).toHaveLength(1);
+    });
+    finish(1);
+    await vi.waitFor(async () => {
+      expect((await run()).files.map((file) => file.state)).toEqual(['failed', 'saved']);
+    });
+    const [failed, first] = (await run()).files;
+    expect(failed?.recordId).toBeNull();
+    expect(failed?.savedAt).toBeNull();
+    expect(first?.recordId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(Number.isNaN(Date.parse(first?.savedAt ?? ''))).toBe(false);
+
+    // The same clip and format downloaded again is a new file with a new record ID.
+    await downloader.add(TAB, [entry(B, 'wav')], 0);
+    await vi.waitFor(() => {
+      expect(downloads.started).toHaveLength(2);
+    });
+    finish(2);
+    await vi.waitFor(async () => {
+      expect((await run()).files.map((file) => file.state)).toEqual(['saved']);
+    });
+    const again = (await run()).files[0];
+    expect(again?.recordId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(again?.recordId).not.toBe(first?.recordId);
+  });
+
   it('stops every queued file of a format whose step no longer matches the page, naming the step; other formats go on', async () => {
     const step =
       "Prepare a file in the Download dialog: step 'format' expected the Download dialog's WAV choice";

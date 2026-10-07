@@ -8,6 +8,7 @@ import {
   DRAWN_ROWS,
   fileStatusText,
   inN8TracksText,
+  recordingLines,
   ROW_HEIGHT,
   startRefusal,
   VIRTUALISE_ABOVE,
@@ -183,6 +184,8 @@ function file(key: string, change: Partial<DownloadFile> = {}): DownloadFile {
     renamed: false,
     renameToM4a: false,
     fetchedAgain: false,
+    recordId: null,
+    savedAt: null,
     ...change,
   };
 }
@@ -299,5 +302,126 @@ describe('Start and the run (#216)', () => {
     expect(
       fileStatusText(file('a:wav', { state: 'saved', savedName: 'Song (suno-a) (1).wav' })),
     ).toBe('Song (suno-a).wav (WAV): Saved, saved as Song (suno-a) (1).wav.');
+  });
+});
+
+describe('files already downloaded and their records (#222)', () => {
+  function lookup(downloaded: Record<string, string[]>) {
+    return {
+      kind: 'found' as const,
+      rows: new Map(
+        Object.entries(downloaded).map(([sunoId, downloadedFormats]) => [
+          sunoId,
+          { sunoId, generation: null, artist: null, deleted: false, downloadedFormats },
+        ]),
+      ),
+    };
+  }
+
+  function loaded() {
+    const rendered = render();
+    rendered.view.addClips([clip(1), clip(2), clip(3)]);
+    rendered.view.setRead({ kind: 'read', count: 3 });
+    return rendered;
+  }
+
+  const box = (view: DownloadView, label: string) =>
+    [...view.element.querySelectorAll('label')]
+      .find((item) => item.textContent.trim().startsWith(label))
+      ?.querySelector('input');
+  const summary = (view: DownloadView) =>
+    [...view.element.querySelectorAll('.dl-summary p')].map((line) => line.textContent);
+
+  it('filters to the clips not yet downloaded once n8Tracks says what was, and is accessible', async () => {
+    const { view, rows } = loaded();
+    const notDownloaded = box(view, 'Not yet downloaded');
+
+    expect(notDownloaded?.disabled).toBe(true);
+    expect(view.element.querySelector('.dl-not-downloaded-why')?.textContent).toBe(
+      'Needs n8Tracks to say what was already downloaded.',
+    );
+
+    view.setLookup(lookup({ 'clip-1': ['wav'], 'clip-2': ['m4a-stream'], 'clip-3': [] }));
+    expect(notDownloaded?.disabled).toBe(false);
+    if (notDownloaded != null) {
+      notDownloaded.checked = true;
+      notDownloaded.dispatchEvent(new Event('change'));
+    }
+    expect(rows().map((row) => row.dataset.sunoId)).toEqual(['clip-3']);
+
+    // A chosen format narrows it to the clips lacking that format.
+    view.setFormats(['wav']);
+    box(view, 'WAV')?.dispatchEvent(new Event('change'));
+    expect(rows().map((row) => row.dataset.sunoId)).toEqual(['clip-2', 'clip-3']);
+    await expectNoAxeViolations(document);
+  });
+
+  it('skips files already downloaded unless told not to, naming them in the summary', () => {
+    const { view } = loaded();
+    view.setLookup(lookup({ 'clip-1': ['wav'], 'clip-2': [], 'clip-3': [] }));
+    view.setFormats(['wav', 'm4a-stream']);
+    view.selection.toggle('clip-1', true);
+    view.selection.toggle('clip-2', true);
+    view.setUsage({ used: 0, limit: 60, additional: 0 });
+    const skip = box(view, 'Skip files already downloaded');
+
+    expect(skip?.checked).toBe(true);
+    expect(summary(view)).toContain('Files: 3.');
+    expect(summary(view)).toContain('Skipped, already downloaded: Song 1 (WAV).');
+
+    if (skip != null) {
+      skip.checked = false;
+      skip.dispatchEvent(new Event('change'));
+    }
+    expect(summary(view)).toContain('Files: 4.');
+    expect(summary(view).some((line) => line.startsWith('Skipped'))).toBe(false);
+  });
+
+  it('counts a file saved in this run as downloaded', () => {
+    const { view } = loaded();
+    view.setLookup(lookup({}));
+    view.setFormats(['wav']);
+    view.selection.toggle('clip-2', true);
+    view.setRun(run([file('clip-2:wav', { state: 'saved', savedName: 'x.wav', recordId: 'r' })]));
+
+    expect(summary(view)).toContain('Skipped, already downloaded: Song 2 (WAV).');
+  });
+
+  it('says nothing is skipped while what was downloaded is not known', () => {
+    const { view } = loaded();
+    view.setFormats(['wav']);
+    view.selection.toggle('clip-1', true);
+    view.setLookup({ kind: 'unavailable', message: 'The extension is not connected to n8Tracks.' });
+    view.setUsage({ used: 0, limit: 60, additional: 0 });
+
+    expect(summary(view)).toContain(
+      'What was already downloaded is not known, so no file is skipped.',
+    );
+    expect(view.element.querySelector('.dl-lookup')?.textContent).toContain(
+      'The clips can still be downloaded, but they are not recorded in n8Tracks.',
+    );
+  });
+
+  it('says how recording the run in n8Tracks stands', () => {
+    const { view } = loaded();
+    view.setRun(run([file('clip-1:wav', { state: 'saved', savedName: 'x.wav', recordId: 'r' })]));
+    const line = () => view.element.querySelector<HTMLElement>('.dl-records');
+
+    view.setRecords({ connected: true, pending: 0, refused: 0, unrecorded: 0 });
+    expect(line()?.hidden).toBe(true);
+
+    view.setRecords({ connected: true, pending: 2, refused: 1, unrecorded: 0 });
+    expect(line()?.hidden).toBe(false);
+    expect(line()?.textContent).toContain(
+      '2 downloads are not yet recorded in n8Tracks; they are sent when the connection works.',
+    );
+    expect(line()?.textContent).toContain(
+      '1 download could not be recorded: n8Tracks refused the report.',
+    );
+    expect(recordingLines({ connected: false, pending: 0, refused: 0, unrecorded: 3 })).toEqual([
+      'The extension is not connected to n8Tracks: downloads still work, but they are not recorded there.',
+      '3 downloads were not recorded in n8Tracks: the extension was not connected.',
+    ]);
+    expect(recordingLines(null)).toEqual([]);
   });
 });

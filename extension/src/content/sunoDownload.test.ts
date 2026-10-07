@@ -587,7 +587,7 @@ describe('the list, its filters, and the selection', () => {
     });
 
     expect(text('.dl-lookup')).toBe(
-      'Already in n8Tracks: unavailable. The extension is not connected to n8Tracks. The clips can still be downloaded.',
+      'Already in n8Tracks: unavailable. The extension is not connected to n8Tracks. The clips can still be downloaded, but they are not recorded in n8Tracks.',
     );
     expect(rows()[0]?.text).toContain('In n8Tracks: unknown');
     expect(button('Retry: check which clips are in n8Tracks')?.hidden).toBe(true);
@@ -722,6 +722,8 @@ describe('Start and the run (#216)', () => {
           renamed: false,
           renameToM4a: false,
           fetchedAgain: false,
+          recordId: 'record-1',
+          savedAt: '2026-10-07T12:00:00.000Z',
         },
       ],
     });

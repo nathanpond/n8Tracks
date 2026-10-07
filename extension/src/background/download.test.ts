@@ -58,6 +58,7 @@ async function setup(
     busy?: string | null;
     answer?: Fetch;
     downloader?: Downloader;
+    recorder?: ConstructorParameters<typeof DownloadCoordinator>[0]['recorder'];
   } = {},
 ) {
   const fake = fakeBrowser(['https://suno.com/*', 'https://n8tracks.example.com/*']);
@@ -102,6 +103,7 @@ async function setup(
     browser: { session, local },
     busy: () => Promise.resolve(options.busy ?? null),
     ...(options.downloader === undefined ? {} : { downloader: options.downloader }),
+    ...(options.recorder === undefined ? {} : { recorder: options.recorder }),
     now: () => now,
   });
   return {
@@ -324,6 +326,28 @@ describe('the download run (#216)', () => {
     expect(done).toEqual([['add', TAB, [file], 0], ['cancel'], ['retry'], ['resume', TAB]]);
     // Downloading calls nothing in n8Tracks: it imports, syncs, and changes nothing there.
     expect(calls).toEqual([]);
+  });
+
+  it('answers the run with how recording it stands, and sends the reports waiting (#222)', async () => {
+    const { downloader } = queue();
+    let flushes = 0;
+    const records = { connected: true, pending: 2, refused: 0, unrecorded: 0 };
+    const { coordinator } = await setup({
+      downloader,
+      recorder: {
+        status: () => Promise.resolve(records),
+        flush: () => {
+          flushes += 1;
+          return Promise.resolve();
+        },
+      },
+    });
+
+    expect(await coordinator.handle({ type: 'download-run' }, TAB)).toEqual({
+      run: { files: [], tabId: TAB, unlocks: { confirmed: [], spent: [] } },
+      records,
+    });
+    expect(flushes).toBe(1);
   });
 
   it('refuses Start while a sync or Generate on Suno runs, and says why the queue refused', async () => {

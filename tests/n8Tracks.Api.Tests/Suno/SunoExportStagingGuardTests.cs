@@ -35,7 +35,7 @@ public sealed class SunoExportStagingGuardTests
     public static readonly IReadOnlyList<string> CatalogTables =
     [
         "album_links", "album_songs", "albums", "artist_aliases", "artist_links", "artists", "artwork_attachments",
-        "audio_files", "editor_revisions", "external_suno_references", "generation_comments", "generation_event_links", "generation_events",
+        "audio_files", "download_records", "editor_revisions", "external_suno_references", "generation_comments", "generation_event_links", "generation_events",
         "generations", "genres", "pending_file_deletions", "playlist_songs", "playlists", "provider_records",
         "provider_tombstones", "retention_groups", "retention_records", "settings", "shortcode_aliases", "shortcode_sequence",
         "song_artist_credits", "song_genres", "song_links", "song_relationship_types", "song_relationships", "song_tags", "songs",

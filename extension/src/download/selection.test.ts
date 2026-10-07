@@ -258,3 +258,85 @@ describe('the download allowance', () => {
     expect(downloadUsageOf(null)).toBeNull();
   });
 });
+
+describe('files already downloaded (#222)', () => {
+  function selection() {
+    const chosen = new DownloadSelection();
+    chosen.add([
+      clip('a'),
+      clip('b', { unlocked: true }),
+      clip('c'),
+      clip('d', { hasStream: false }),
+    ]);
+    chosen.finish(true);
+    chosen.setDownloaded(
+      new Map([
+        ['a', ['wav', 'mp3']],
+        ['b', ['m4a-stream']],
+        ['c', []],
+      ]),
+    );
+    return chosen;
+  }
+
+  it('shows only the clips lacking a record in at least one chosen format, or in any when none is chosen', () => {
+    const chosen = selection();
+    const notDownloaded = { ...NO_FILTER, notDownloaded: true };
+    const ids = () => chosen.shown(notDownloaded).map((item) => item.sunoId);
+
+    expect(ids()).toEqual(['c', 'd']);
+    chosen.setFormats(['wav']);
+    expect(ids()).toEqual(['b', 'c', 'd']);
+    chosen.setFormats(['wav', 'mp3']);
+    expect(ids()).toEqual(['b', 'c', 'd']);
+    chosen.setFormats(['m4a-stream']);
+    expect(ids()).toEqual(['a', 'c', 'd']);
+    chosen.setFormats(['wav', 'm4a-stream']);
+    expect(ids()).toEqual(['a', 'b', 'c', 'd']);
+
+    // Off, and while what was downloaded is not known, the filter hides nothing.
+    expect(chosen.shown(NO_FILTER)).toHaveLength(4);
+    chosen.setDownloaded(null);
+    expect(chosen.shown(notDownloaded)).toHaveLength(4);
+  });
+
+  it('skips files already downloaded by default, names them, and counts unlocks only for what is left', () => {
+    const chosen = selection();
+    chosen.setFormats(['wav', 'mp3', 'm4a-stream']);
+    for (const id of ['a', 'b', 'c']) {
+      chosen.toggle(id, true);
+    }
+
+    expect(chosen.skipDownloaded).toBe(true);
+    expect(chosen.plan().map((entry) => `${entry.sunoId}:${entry.format}`)).toEqual([
+      'a:m4a-stream',
+      'b:wav',
+      'b:mp3',
+      'c:wav',
+      'c:mp3',
+      'c:m4a-stream',
+    ]);
+    expect(chosen.skipped()).toEqual([
+      { sunoId: 'a', title: 'Song a', format: 'wav' },
+      { sunoId: 'a', title: 'Song a', format: 'mp3' },
+      { sunoId: 'b', title: 'Song b', format: 'm4a-stream' },
+    ]);
+    // a's paid formats are all skipped, and b is unlocked already: only c needs an unlock.
+    expect(chosen.unlocksNeeded()).toBe(1);
+
+    chosen.setSkipDownloaded(false);
+    expect(chosen.plan()).toHaveLength(9);
+    expect(chosen.skipped()).toEqual([]);
+    expect(chosen.unlocksNeeded()).toBe(2);
+  });
+
+  it('skips nothing while what was downloaded is not known', () => {
+    const chosen = selection();
+    chosen.setDownloaded(null);
+    chosen.setFormats(['wav']);
+    chosen.toggle('a', true);
+
+    expect(chosen.plan()).toHaveLength(1);
+    expect(chosen.skipped()).toEqual([]);
+  });
+});

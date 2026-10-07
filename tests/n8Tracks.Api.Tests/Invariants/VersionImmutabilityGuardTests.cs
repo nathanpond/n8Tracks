@@ -975,6 +975,7 @@ public sealed class VersionImmutabilityGuardTests
         ["POST /api/v1/artwork"] = "stores an uploaded image as an asset (assets and its files); attaching it is the owner's own edit, and no Version is touched",
         ["POST /api/v1/restores"] = "starts maintenance and a safety backup; it replaces the instance as a whole (#74), never edits a Version",
         ["POST /api/v1/suno/clips/lookup"] = "reads only: which Suno clips are Generations, for the extension's Download view (#215); nothing is written",
+        ["POST /api/v1/suno/downloads"] = "records a file the extension downloaded (download_records, #222), by Suno ID with no link to a Generation; no Song, Version, or Generation is touched",
         ["PUT /api/v1/suno/workspaces/discovered"] = "records Suno workspaces as the extension reports them (suno_workspaces, #129); no Song or Version is touched, even when one becomes unavailable",
         ["POST /api/v1/suno/exports"] = "stages a Suno export's header (suno_exports, #131); the catalog is not touched (invariant 3, SunoExportStagingGuardTests)",
         ["POST /api/v1/suno/exports/{id:guid}/parts"] = "stages a part of a Suno export (suno_export_parts, #131); the catalog is not touched",

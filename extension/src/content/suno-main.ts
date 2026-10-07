@@ -25,7 +25,7 @@ if (scope[started] !== true) {
     // The service worker's download queue (#216): prepare a file here, or show how the run goes.
     if (isDownloadTabMessage(message)) {
       if (message.type === 'download-progress') {
-        content.download.progress(message.run);
+        content.download.progress(message.run, message.records);
         return false;
       }
       void content.download.prepareFile(message.job).then(sendResponse);

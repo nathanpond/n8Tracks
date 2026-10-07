@@ -1,3 +1,4 @@
+import type { GenerationDownload } from '../api/downloadRecords';
 import type { Generation, GenerationComment } from '../api/generations';
 import type { LineageSource, SunoPersona, SunoPlaylist } from '../api/lineage';
 import type { RelationshipType } from '../api/relationships';
@@ -205,6 +206,8 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     generationCount: 0,
     /** The Song's Generations, as its Generation list answers them (Version order, then ordinal). */
     generations: [] as Generation[],
+    /** Each Generation's download records (#222), by its ID; none unless set. */
+    downloads: new Map<string, GenerationDownload[]>(),
     /** How many times the Song's Generation list was read. */
     generationReads: 0,
     /** When set, answers the next read of the Generation list (once) instead of the fake API. */
@@ -1089,6 +1092,12 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
         comments: generation.comments.map((other) => (other === comment ? edited : other)),
       });
       return jsonResponse(200, edited);
+    }
+
+    const generationDownloads = /\/api\/v1\/generations\/([^/]+)\/downloads$/.exec(path);
+    if (generationDownloads && method === 'GET') {
+      const named = decodeURIComponent(generationDownloads[1] ?? '');
+      return jsonResponse(200, { items: server.downloads.get(named) ?? [] });
     }
 
     const songGenerations = /\/api\/v1\/songs\/([^/]+)\/generations$/.exec(path);

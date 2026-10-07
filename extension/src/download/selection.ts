@@ -55,20 +55,27 @@ export interface PlanEntry {
   streamAddress: string | null;
 }
 
-/** What the list is narrowed to: a workspace (null for every one) and text in the title. */
+/**
+ * What the list is narrowed to: a workspace (null for every one), text in the title, and (#222)
+ * only clips not yet downloaded.
+ */
 export interface ListFilter {
   workspaceId: string | null;
   text: string;
+  /**
+   * Only clips lacking a download record in at least one chosen format, or in any format when none
+   * is chosen. Not applied while what was downloaded is not known.
+   */
+  notDownloaded?: boolean;
 }
 
-export const NO_FILTER: ListFilter = { workspaceId: null, text: '' };
+export const NO_FILTER: ListFilter = { workspaceId: null, text: '', notDownloaded: false };
 
-function matches(clip: DownloadClip, filter: ListFilter): boolean {
-  if (filter.workspaceId !== null && clip.workspace?.id !== filter.workspaceId) {
-    return false;
-  }
-  const wanted = filter.text.trim().toLocaleLowerCase();
-  return wanted === '' || clip.title.toLocaleLowerCase().includes(wanted);
+/** A file the plan leaves out because it was already downloaded (#222). */
+export interface SkippedFile {
+  sunoId: string;
+  title: string;
+  format: DownloadFormat;
 }
 
 export class DownloadSelection {
@@ -77,6 +84,63 @@ export class DownloadSelection {
   private readonly chosen = new Set<string>();
   private readonly formats = new Set<DownloadFormat>();
   private readComplete = false;
+  /** The formats each clip was downloaded in (#222), or null while that is not known. */
+  private downloaded: ReadonlyMap<string, ReadonlySet<DownloadFormat>> | null = null;
+  private skip = true;
+
+  /** Whether files already downloaded are left out of the plan (#222); on unless turned off. */
+  get skipDownloaded(): boolean {
+    return this.skip;
+  }
+
+  setSkipDownloaded(skip: boolean): void {
+    this.skip = skip;
+  }
+
+  /** What was downloaded, by Suno ID (#222); null when it is not known (n8Tracks not asked or not reached). */
+  setDownloaded(downloaded: ReadonlyMap<string, readonly DownloadFormat[]> | null): void {
+    this.downloaded =
+      downloaded === null
+        ? null
+        : new Map([...downloaded].map(([sunoId, formats]) => [sunoId, new Set(formats)]));
+  }
+
+  /** Whether what was downloaded is known. */
+  get downloadsKnown(): boolean {
+    return this.downloaded !== null;
+  }
+
+  /** Whether the clip was downloaded in the format, as far as is known. */
+  isDownloaded(sunoId: string, format: DownloadFormat): boolean {
+    return this.downloaded?.get(sunoId)?.has(format) === true;
+  }
+
+  /**
+   * Whether the clip lacks a download record in at least one chosen format, or in any format when
+   * none is chosen; true while that is not known.
+   */
+  notYetDownloaded(clip: DownloadClip): boolean {
+    if (this.downloaded === null) {
+      return true;
+    }
+    const known = this.downloaded.get(clip.sunoId);
+    const chosen = this.chosenFormats();
+    if (chosen.length === 0) {
+      return known === undefined || known.size === 0;
+    }
+    return chosen.some((format) => known?.has(format) !== true);
+  }
+
+  private matches(clip: DownloadClip, filter: ListFilter): boolean {
+    if (filter.workspaceId !== null && clip.workspace?.id !== filter.workspaceId) {
+      return false;
+    }
+    if (filter.notDownloaded === true && !this.notYetDownloaded(clip)) {
+      return false;
+    }
+    const wanted = filter.text.trim().toLocaleLowerCase();
+    return wanted === '' || clip.title.toLocaleLowerCase().includes(wanted);
+  }
 
   /** Whether the list was read to its end, which Select all needs. */
   get complete(): boolean {
@@ -140,7 +204,7 @@ export class DownloadSelection {
 
   /** The clips the filter shows, in list order. */
   shown(filter: ListFilter): DownloadClip[] {
-    return this.clips.filter((clip) => matches(clip, filter));
+    return this.clips.filter((clip) => this.matches(clip, filter));
   }
 
   /** The workspaces the clips are in, by name, then ID. */
@@ -204,7 +268,7 @@ export class DownloadSelection {
 
   /** How many selected clips the filter hides. */
   hiddenByFilter(filter: ListFilter): number {
-    return this.selected().filter((clip) => !matches(clip, filter)).length;
+    return this.selected().filter((clip) => !this.matches(clip, filter)).length;
   }
 
   setFormat(format: DownloadFormat, chosen: boolean): void {
@@ -236,29 +300,54 @@ export class DownloadSelection {
     return this.chosenFormats().filter((format) => format !== 'm4a-stream' || clip.hasStream);
   }
 
-  /** The files: each selected clip in each chosen format it can be had in. */
+  /**
+   * The files: each selected clip in each chosen format it can be had in, but (#222) those already
+   * downloaded while Skip files already downloaded is on.
+   */
   plan(artistOf: (sunoId: string) => string | null = () => null): PlanEntry[] {
     return this.selected().flatMap((clip) =>
-      this.formatsFor(clip).map((format) => ({
-        sunoId: clip.sunoId,
-        title: clip.title,
-        displayName: clip.displayName,
-        artist: artistOf(clip.sunoId),
-        format,
-        unlocked: clip.unlocked,
-        streamAddress: clip.streamAddress ?? null,
-      })),
+      this.formatsFor(clip)
+        .filter((format) => !this.skips(clip.sunoId, format))
+        .map((format) => ({
+          sunoId: clip.sunoId,
+          title: clip.title,
+          displayName: clip.displayName,
+          artist: artistOf(clip.sunoId),
+          format,
+          unlocked: clip.unlocked,
+          streamAddress: clip.streamAddress ?? null,
+        })),
     );
   }
 
+  /** The files left out of the plan because they were already downloaded, in plan order (#222). */
+  skipped(): SkippedFile[] {
+    return this.selected().flatMap((clip) =>
+      this.formatsFor(clip)
+        .filter((format) => this.skips(clip.sunoId, format))
+        .map((format) => ({ sunoId: clip.sunoId, title: clip.title, format })),
+    );
+  }
+
+  private skips(sunoId: string, format: DownloadFormat): boolean {
+    return this.skip && this.isDownloaded(sunoId, format);
+  }
+
   /**
-   * How many Suno download unlocks the run uses: one per selected clip not yet unlocked when WAV,
-   * MP3, or M4A is chosen (one unlock covers all three), none for the stream alone.
+   * How many Suno download unlocks the run uses: one per clip of the plan not yet unlocked that is
+   * downloaded in WAV, MP3, or M4A (one unlock covers all three), none for the stream alone. A clip
+   * whose paid formats are all skipped (#222) uses none.
    */
   unlocksNeeded(): number {
-    const paid = this.chosenFormats().some(
-      (format) => FORMATS.find((choice) => choice.format === format)?.unlock === true,
+    const paid = new Set(
+      this.plan()
+        .filter(
+          (entry) =>
+            !entry.unlocked &&
+            FORMATS.find((choice) => choice.format === entry.format)?.unlock === true,
+        )
+        .map((entry) => entry.sunoId),
     );
-    return paid ? this.selected().filter((clip) => !clip.unlocked).length : 0;
+    return paid.size;
   }
 }
