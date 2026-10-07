@@ -330,61 +330,23 @@ internal sealed class SunoExportStore(N8TracksDbContext context) : ISunoExportSt
 
         var rows = Filtered(exportId, query);
         var total = await rows.CountAsync(cancellationToken).ConfigureAwait(false);
-        var page = await rows
+        var page = rows
             .OrderByDescending(static row => row.SunoCreatedUtc)
             .ThenBy(static row => row.SunoId)
             .Skip((query.Page - 1) * query.PageSize)
-            .Take(query.PageSize)
-            .Select(static row => new
-            {
-                row.SunoId,
-                row.Title,
-                row.WorkspaceId,
-                row.SunoCreatedUtc,
-                row.DurationSeconds,
-                row.Class,
-                row.Trashed,
-                row.ProposalJson,
-                row.ChoiceJson,
-                row.Flags,
-                row.ChangedFields,
-                row.GenerationId,
-                row.ArtworkAssetId,
-            })
-            .ToListAsync(cancellationToken)
-            .ConfigureAwait(false);
+            .Take(query.PageSize);
+        return new StagedRecordPage(await StagedRecordsAsync(exportId, page, cancellationToken).ConfigureAwait(false), query.Page, query.PageSize, total);
+    }
 
-        var ids = page.Select(static row => row.SunoId).ToList();
-        var playlists = (await context.StagedClipPlaylists.AsNoTracking()
-            .Where(member => member.ExportId == exportId && ids.Contains(member.SunoId))
-            .Select(static member => new { member.SunoId, member.PlaylistId })
-            .ToListAsync(cancellationToken)
-            .ConfigureAwait(false))
-            .GroupBy(static member => member.SunoId, StringComparer.Ordinal)
-            .ToDictionary(
-                static group => group.Key,
-                static group => (IReadOnlyList<string>)[.. group.Select(static member => member.PlaylistId).Order(StringComparer.Ordinal)],
-                StringComparer.Ordinal);
+    public async Task<IReadOnlyList<StagedRecord>> RecordsNamedAsync(Guid exportId, IReadOnlyCollection<string> sunoIds, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(sunoIds);
 
-        return new StagedRecordPage(
-            [.. page.Select(row => new StagedRecord(
-                row.SunoId,
-                row.Title,
-                row.WorkspaceId,
-                row.SunoCreatedUtc is null ? null : UtcText.Parse(row.SunoCreatedUtc),
-                row.DurationSeconds,
-                SunoExportRules.ClassOf(row.Class),
-                row.Trashed,
-                playlists.GetValueOrDefault(row.SunoId) ?? [],
-                row.ProposalJson,
-                row.ChoiceJson,
-                FlagsOf(row.Flags),
-                FlagsOf(row.ChangedFields),
-                row.GenerationId,
-                row.ArtworkAssetId))],
-            query.Page,
-            query.PageSize,
-            total);
+        var ids = sunoIds.ToList();
+        return await StagedRecordsAsync(
+            exportId,
+            context.StagedClips.AsNoTracking().Where(row => row.ExportId == exportId && ids.Contains(row.SunoId)).OrderBy(static row => row.SunoId),
+            cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<IReadOnlyList<string>> MatchingSunoIdsAsync(Guid exportId, StagedRecordQuery filter, IReadOnlyCollection<SunoRecordClass> classes, CancellationToken cancellationToken)
@@ -511,6 +473,58 @@ internal sealed class SunoExportStore(N8TracksDbContext context) : ISunoExportSt
         context.StagedClips.AsNoTracking().AnyAsync(row => row.ArtworkAssetId == assetId, cancellationToken);
 
     /// <summary>The export's staged records matching the query's filters; its page is not applied.</summary>
+    /// <summary>The staged records <paramref name="rows"/> selects, in its order, with the export's playlists each is in.</summary>
+    private async Task<IReadOnlyList<StagedRecord>> StagedRecordsAsync(Guid exportId, IQueryable<StagedClipRecord> rows, CancellationToken cancellationToken)
+    {
+        var page = await rows
+            .Select(static row => new
+            {
+                row.SunoId,
+                row.Title,
+                row.WorkspaceId,
+                row.SunoCreatedUtc,
+                row.DurationSeconds,
+                row.Class,
+                row.Trashed,
+                row.ProposalJson,
+                row.ChoiceJson,
+                row.Flags,
+                row.ChangedFields,
+                row.GenerationId,
+                row.ArtworkAssetId,
+            })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        var ids = page.Select(static row => row.SunoId).ToList();
+        var playlists = (await context.StagedClipPlaylists.AsNoTracking()
+            .Where(member => member.ExportId == exportId && ids.Contains(member.SunoId))
+            .Select(static member => new { member.SunoId, member.PlaylistId })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false))
+            .GroupBy(static member => member.SunoId, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => (IReadOnlyList<string>)[.. group.Select(static member => member.PlaylistId).Order(StringComparer.Ordinal)],
+                StringComparer.Ordinal);
+
+        return [.. page.Select(row => new StagedRecord(
+            row.SunoId,
+            row.Title,
+            row.WorkspaceId,
+            row.SunoCreatedUtc is null ? null : UtcText.Parse(row.SunoCreatedUtc),
+            row.DurationSeconds,
+            SunoExportRules.ClassOf(row.Class),
+            row.Trashed,
+            playlists.GetValueOrDefault(row.SunoId) ?? [],
+            row.ProposalJson,
+            row.ChoiceJson,
+            FlagsOf(row.Flags),
+            FlagsOf(row.ChangedFields),
+            row.GenerationId,
+            row.ArtworkAssetId))];
+    }
+
     private IQueryable<StagedClipRecord> Filtered(Guid exportId, StagedRecordQuery query)
     {
         var rows = context.StagedClips.AsNoTracking().Where(row => row.ExportId == exportId);

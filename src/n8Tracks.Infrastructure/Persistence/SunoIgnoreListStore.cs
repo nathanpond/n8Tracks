@@ -7,7 +7,8 @@ namespace n8Tracks.Infrastructure.Persistence;
 /// <summary>
 /// The ignore list (#143) in <c>suno_ignored_items</c>. It reads <c>provider_tombstones</c> (a deleted
 /// clip is never listed), <c>suno_workspaces</c> (the names of the list's workspaces), and an export's
-/// staged records (<c>suno_export_records</c>), and writes only the ignore list.
+/// staged records (<c>suno_export_records</c>) and the external references to clips (#153), and
+/// writes only the ignore list.
 /// </summary>
 internal sealed class SunoIgnoreListStore(N8TracksDbContext context) : ISunoIgnoreListStore
 {
@@ -139,6 +140,14 @@ internal sealed class SunoIgnoreListStore(N8TracksDbContext context) : ISunoIgno
             .Select(static row => new IgnoredRecordFacts(row.SunoId, row.Title, row.WorkspaceId, row.Trashed))
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    public async Task<ExternalSunoReference?> ExternalClipAsync(string sunoId, CancellationToken cancellationToken)
+    {
+        var record = await context.ExternalSunoReferences.AsNoTracking()
+            .SingleOrDefaultAsync(row => row.SunoId == sunoId && row.Kind == ExternalSunoReferenceRecord.ClipKind, cancellationToken)
+            .ConfigureAwait(false);
+        return record is null ? null : new ExternalSunoReference(record.Id, record.SunoId, ExternalSunoKind.Clip, record.Title, record.Address, record.Label);
     }
 
     private static void Fill(SunoIgnoredItemRecord record, SunoIgnoredItem item)

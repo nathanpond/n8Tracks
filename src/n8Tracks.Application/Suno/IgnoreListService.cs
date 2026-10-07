@@ -36,6 +36,25 @@ public enum IgnoreOutcome
     Tombstoned,
 }
 
+/// <summary>What adding a Not imported source to the ignore list did (#153).</summary>
+public enum IgnoreReferenceOutcome
+{
+    /// <summary>It was added, with no status until a sync sees it.</summary>
+    Added,
+
+    /// <summary>It was on the list already: nothing changed.</summary>
+    AlreadyListed,
+
+    /// <summary>No Version source names a Suno clip with this ID (there is no external reference to it).</summary>
+    NotAReference,
+
+    /// <summary>A Generation holds its Suno ID now: it is imported, not Not imported.</summary>
+    Linked,
+
+    /// <summary>Its Generation was deleted in n8Tracks: a deleted clip is never ignored.</summary>
+    Tombstoned,
+}
+
 /// <summary>
 /// Where the ignore list is kept (<c>suno_ignored_items</c>). Writes run inside the caller's transaction.
 /// It reads the staged records of an export (<c>suno_export_records</c>) for what a commit refreshes.
@@ -62,6 +81,9 @@ public interface ISunoIgnoreListStore
 
     /// <summary>The staged records of export <paramref name="exportId"/> among <paramref name="sunoIds"/> (all of them when null).</summary>
     Task<IReadOnlyList<IgnoredRecordFacts>> StagedAsync(Guid exportId, IReadOnlyCollection<string>? sunoIds, CancellationToken cancellationToken);
+
+    /// <summary>The external reference to the Suno clip <paramref name="sunoId"/> (a source n8Tracks has not imported, #137), or null.</summary>
+    Task<ExternalSunoReference?> ExternalClipAsync(string sunoId, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -73,7 +95,9 @@ public interface ISunoIgnoreListStore
 /// refreshes the title, workspace, and status of the entries its export contains, and a whole-library
 /// sync marks the others missing or not seen. Removing an entry imports nothing: it only makes the clip
 /// eligible again, and a ready export's record of it becomes <c>new</c> at once. A deleted clip (a
-/// provider tombstone) is never listed. Managing the list is session-only.
+/// provider tombstone) is never listed. Managing the list is session-only. The user may also add a
+/// Not imported source of a Version (#153, <see cref="IgnoreReferenceAsync"/>): its external reference
+/// stays, and the source keeps pointing at it.
 /// </summary>
 public sealed class IgnoreListService(
     ISunoIgnoreListStore store,
@@ -81,7 +105,8 @@ public sealed class IgnoreListService(
     ISunoClipLookup clips,
     TombstoneService tombstones,
     ExportStagingService staging,
-    IExclusiveTransaction transaction)
+    IExclusiveTransaction transaction,
+    TimeProvider time)
 {
     /// <summary>A page of the list, with its workspaces.</summary>
     public Task<IgnoredItemPage> ListAsync(IgnoredItemQuery query, CancellationToken cancellationToken = default)
@@ -115,6 +140,42 @@ public sealed class IgnoreListService(
         }
 
         return new IgnoreListRemoval(removed.Count, distinct.Count - removed.Count);
+    }
+
+    /// <summary>
+    /// Puts the Suno clip a Version names as a Not imported source (#153) on the list, in a transaction of
+    /// its own, titled as its external reference is, with no workspace and no status until a sync sees it.
+    /// The reference and every source pointing at it stay as they are (the list is not catalog data a
+    /// source reads). Refused when no external reference names the clip, when a Generation holds its Suno
+    /// ID now, or when it was deleted in n8Tracks; idempotent otherwise.
+    /// </summary>
+    public Task<IgnoreReferenceOutcome> IgnoreReferenceAsync(string sunoId, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(sunoId);
+
+        return transaction.RunAsync(
+            async ct =>
+            {
+                if (!ExternalSunoReferenceRules.IsSunoId(sunoId)
+                    || await store.ExternalClipAsync(sunoId, ct).ConfigureAwait(false) is not { } reference)
+                {
+                    return IgnoreReferenceOutcome.NotAReference;
+                }
+
+                if ((await clips.LiveGenerationsAsync([sunoId], ct).ConfigureAwait(false)).Count > 0)
+                {
+                    return IgnoreReferenceOutcome.Linked;
+                }
+
+                if (await tombstones.FindAsync(sunoId, ct).ConfigureAwait(false) is not null)
+                {
+                    return IgnoreReferenceOutcome.Tombstoned;
+                }
+
+                var added = await store.AddAsync(new SunoIgnoredItem(sunoId, reference.Title, null, time.GetUtcNow(), null, null), ct).ConfigureAwait(false);
+                return added ? IgnoreReferenceOutcome.Added : IgnoreReferenceOutcome.AlreadyListed;
+            },
+            cancellationToken);
     }
 
     /// <summary>

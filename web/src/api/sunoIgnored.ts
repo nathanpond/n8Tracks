@@ -152,3 +152,40 @@ export async function removeIgnoredItems(sunoIds: readonly string[]): Promise<Re
     return { kind: 'failed' };
   }
 }
+
+/** What putting a Not imported source on the ignore list did (#153). */
+export type IgnoreSourceResult =
+  | { kind: 'added' }
+  | { kind: 'already-listed' }
+  | { kind: 'imported' }
+  | { kind: 'deleted' }
+  | { kind: 'failed' };
+
+/**
+ * Puts the Suno clip a Version names as a Not imported source on the ignore list (#153). The source
+ * and its reference stay as they are.
+ */
+export async function ignoreSource(sunoId: string): Promise<IgnoreSourceResult> {
+  try {
+    const response = await apiFetch('api/v1/suno/ignored', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sunoId }),
+    });
+    const answer = await body(response);
+    if (response.ok && isRecord(answer) && typeof answer.added === 'boolean') {
+      return { kind: answer.added ? 'added' : 'already-listed' };
+    }
+    if (response.status === 409 && isRecord(answer)) {
+      if (answer.code === 'already_imported') {
+        return { kind: 'imported' };
+      }
+      if (answer.code === 'tombstoned') {
+        return { kind: 'deleted' };
+      }
+    }
+    return { kind: 'failed' };
+  } catch {
+    return { kind: 'failed' };
+  }
+}

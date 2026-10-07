@@ -913,6 +913,7 @@ public sealed class VersionImmutabilityGuardTests
         ["POST /api/v1/suno/exports/{id:guid}/discard"] = "removes a staged export's rows (#131); the catalog is not touched",
         ["PATCH /api/v1/suno/exports/{id:guid}/records"] = "changes the choices of a staged export's records (suno_export_records, #138); a choice only names a Version, and the catalog is not touched until the commit (#140), which the guard extends to",
         ["PUT /api/v1/suno/exports/{id:guid}/artwork/{sunoId}"] = "stores an image as an asset held by a staged record (#131); no Generation or Version is touched until the commit",
+        ["POST /api/v1/suno/ignored"] = "adds a Not imported source's Suno ID to the ignore list (suno_ignored_items, #153); the source and its external reference are left as they are",
         ["POST /api/v1/suno/ignored/remove"] = "removes Suno IDs from the ignore list (suno_ignored_items, #143) and reclassifies a ready export; nothing is imported and no Version is touched",
     };
 
@@ -1199,6 +1200,7 @@ public sealed class VersionImmutabilityGuardTests
         ["SunoWorkspaceService.ReadReport(JsonElement)"] = "pure: reads a workspace report",
         ["SunoWorkspaceService.ReportAsync(IReadOnlyList`1, Boolean, CancellationToken)"] = "writes Suno's own workspace records (provider state); no Song or Version",
         ["TombstoneService.FindAsync(String, CancellationToken)"] = "reads only",
+        ["IgnoreListService.IgnoreReferenceAsync(String, CancellationToken)"] = "adds a Not imported source's Suno ID to the ignore list (#153); it reads the external reference and writes no Version, source, or reference",
         ["IgnoreListService.ListAsync(IgnoredItemQuery, CancellationToken)"] = "reads only: the ignore list (#143)",
         ["IgnoreListService.RemoveAsync(IReadOnlyCollection`1, CancellationToken)"] = "removes Suno IDs from the ignore list (#143) and reclassifies a ready export's records; nothing is imported and no Version is touched",
         ["TombstoneService.TombstonedAsync(IReadOnlyCollection`1, CancellationToken)"] = "reads only",

@@ -661,6 +661,71 @@ describe('the Sources section of a Version (#125)', () => {
     expect(within(section()).queryByRole('combobox')).not.toBeInTheDocument();
   });
 
+  it('links a source to its Generation, and offers a Not imported one’s Suno address and the ignore list, frozen or not', async () => {
+    Object.defineProperty(window.navigator, 'clipboard', {
+      value: { writeText: () => Promise.resolve() },
+      configurable: true,
+    });
+    const generation = otherGeneration(SONG_B, 1);
+    const { server } = serve(
+      {
+        sources: [
+          readSource(generation, { typeId: typeId('Mashup'), sunoAction: 'mashup' }),
+          {
+            typeId: typeId('Mashup'),
+            sunoAction: 'mashup',
+            external: {
+              sunoId: 'source-x',
+              title: 'Never imported',
+              address: 'https://suno.com/song/source-x',
+              label: 'Not imported',
+            },
+            availability: 'not_imported',
+          },
+          {
+            typeId: typeId('Mashup'),
+            sunoAction: 'mashup',
+            external: { sunoId: 'gone-clip', title: 'Old take', address: null, label: 'Deleted' },
+            availability: 'deleted',
+          },
+        ],
+      },
+      { isFrozen: true },
+    );
+    const user = await openFrozen();
+
+    expect(within(section()).getByRole('link', { name: 'Song B take 1' })).toHaveAttribute(
+      'href',
+      `/songs/${SONG_B.shortcode}/generations/${generation.shortcode}`,
+    );
+    expect(within(section()).getByText('Never imported')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Copy Suno address of Never imported' }));
+    expect(await within(section()).findByText('Suno address copied.')).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole('button', { name: 'Add to the ignore list: Never imported' }),
+    );
+    expect(
+      await within(section()).findByText(
+        'Added to the ignore list. It stays a source of this Version.',
+      ),
+    ).toBeInTheDocument();
+    expect(server.ignoredSources).toEqual(['source-x']);
+    // The source stays as it was.
+    expect(
+      within(section())
+        .getAllByTestId('source-availability')
+        .map((label) => label.textContent),
+    ).toEqual(['Not imported', 'Deleted']);
+
+    // Complement: a source that is not Not imported offers neither.
+    expect(
+      screen.queryByRole('button', { name: /Old take|Song B take 1/ }),
+    ).not.toBeInTheDocument();
+    Reflect.deleteProperty(window.navigator, 'clipboard');
+  });
+
   it('Create New Version From carries the sources into the new Version, where an unavailable one is replaced', async () => {
     serve(
       {

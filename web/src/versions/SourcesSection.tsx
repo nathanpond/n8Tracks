@@ -1,4 +1,5 @@
 import {
+  Anchor,
   Badge,
   Button,
   Group,
@@ -13,6 +14,7 @@ import {
   Title,
 } from '@mantine/core';
 import { useState, type ReactNode } from 'react';
+import { Link } from 'react-router';
 import {
   availabilityLabel,
   FILE_DESCRIPTION_MAXIMUM_LENGTH,
@@ -28,6 +30,7 @@ import {
   type LineageSource,
 } from '../api/lineage';
 import { useRelationshipTypes } from '../api/relationships';
+import { ignoreSource } from '../api/sunoIgnored';
 import { SourcePicker } from './SourcePicker';
 import {
   actionName,
@@ -99,26 +102,123 @@ function PartHeading({
   );
 }
 
-/** One source: its title, its shortcode when it is in n8Tracks, and a label when it cannot be used as it is. */
+/** What putting a Not imported source on the ignore list said, by result (#153). */
+const IGNORE_MESSAGES = {
+  added: 'Added to the ignore list. It stays a source of this Version.',
+  'already-listed': 'It is on the ignore list already.',
+  imported: 'It is imported now: reload the page to see it as a Generation.',
+  deleted: 'It was deleted in n8Tracks, so it is not put on the ignore list.',
+  failed: 'It could not be added to the ignore list. Try again.',
+} as const;
+
+/**
+ * One source: its title (a link to its Generation when it is one), its shortcode when it is in
+ * n8Tracks, and a label when it cannot be used as it is. A Not imported source (#153) can have its
+ * Suno address copied or be put on the ignore list, on a frozen Version too: the source stays, as long
+ * as the Version does.
+ */
 function SourceLine({ source }: { source: LineageSource }) {
   const shortcode = sourceShortcode(source);
   const label = availabilityLabel(source);
+  const title = sourceTitle(source);
+  const [message, setMessage] = useState<string>();
+  const [busy, setBusy] = useState(false);
+  const generation = source.generation;
+  const external = source.external;
+  const notImported =
+    external !== undefined && (source.availability ?? 'not_imported') === 'not_imported';
+  const address = external?.address ?? null;
+
+  const copyAddress = async (text: string) => {
+    try {
+      // The Clipboard API is missing outside a secure context; the cast lets the check say so.
+      const clipboard = navigator.clipboard as Clipboard | undefined;
+      if (clipboard === undefined) {
+        throw new Error('No clipboard.');
+      }
+      await clipboard.writeText(text);
+      setMessage('Suno address copied.');
+    } catch {
+      setMessage(`Copying is not available here. The Suno address is ${text}`);
+    }
+  };
+
+  const ignore = async (sunoId: string) => {
+    setBusy(true);
+    const result = await ignoreSource(sunoId);
+    setBusy(false);
+    setMessage(IGNORE_MESSAGES[result.kind]);
+  };
+
   return (
-    <Group gap="xs" wrap="wrap">
-      <Text size="sm" fw={500} data-testid="source-title">
-        {sourceTitle(source)}
-      </Text>
-      {shortcode !== null && (
-        <Text size="sm" ff="monospace" data-testid="source-shortcode">
-          {shortcode}
+    <Stack gap={4}>
+      <Group gap="xs" wrap="wrap">
+        {generation?.shortcode && generation.songShortcode ? (
+          <Anchor
+            component={Link}
+            size="sm"
+            fw={500}
+            underline="always"
+            to={`/songs/${generation.songShortcode}/generations/${generation.shortcode}`}
+            data-testid="source-title"
+          >
+            {title}
+          </Anchor>
+        ) : (
+          <Text size="sm" fw={500} data-testid="source-title">
+            {title}
+          </Text>
+        )}
+        {shortcode !== null && (
+          <Text size="sm" ff="monospace" data-testid="source-shortcode">
+            {shortcode}
+          </Text>
+        )}
+        {label !== null && (
+          <Badge
+            size="sm"
+            variant="default"
+            radius="sm"
+            tt="none"
+            data-testid="source-availability"
+          >
+            {label}
+          </Badge>
+        )}
+      </Group>
+      {notImported && (
+        <Group gap="xs">
+          {address !== null && (
+            <Button
+              variant="default"
+              size="compact-sm"
+              aria-label={`Copy Suno address of ${title}`}
+              onClick={() => {
+                void copyAddress(address);
+              }}
+            >
+              Copy Suno address
+            </Button>
+          )}
+          <Button
+            variant="default"
+            size="compact-sm"
+            disabled={busy}
+            aria-label={`Add to the ignore list: ${title}`}
+            onClick={() => {
+              void ignore(external.sunoId);
+            }}
+          >
+            Add to the ignore list
+          </Button>
+        </Group>
+      )}
+      {notImported && (
+        <Text size="xs" role="status" data-testid="source-message">
+          {message}
         </Text>
       )}
-      {label !== null && (
-        <Badge size="sm" variant="default" radius="sm" tt="none" data-testid="source-availability">
-          {label}
-        </Badge>
-      )}
-    </Group>
+    </Stack>
   );
 }
 

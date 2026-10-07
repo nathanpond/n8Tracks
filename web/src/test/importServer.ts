@@ -425,7 +425,31 @@ export function importServer(records: ImportRecord[], exported: Partial<SunoImpo
     if (rest === '/records' && method === 'GET') {
       server.recordQueries.push(url.search);
       const filter = filterOf(url.searchParams);
-      const items = server.records.filter((record) => matches(record, filter));
+      // A lineage source's record (#153) carries that record's current choice, as the API reads it.
+      const choices = new Map(server.records.map((record) => [record.sunoId, record.choice]));
+      const items = server.records
+        .filter((record) => matches(record, filter))
+        .map((record) =>
+          record.lineage
+            ? {
+                ...record,
+                lineage: {
+                  ...record.lineage,
+                  sources: record.lineage.sources.map((source) =>
+                    source.record === null
+                      ? source
+                      : {
+                          ...source,
+                          record: {
+                            ...source.record,
+                            choice: choices.get(source.record.sunoId) ?? source.record.choice,
+                          },
+                        },
+                  ),
+                },
+              }
+            : record,
+        );
       return Promise.resolve(
         jsonResponse(200, { items, page: 1, pageSize: 100, total: items.length }),
       );

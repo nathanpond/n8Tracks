@@ -36,6 +36,7 @@ import { formatDateTime, useConfiguredTimeZone } from '../api/timeZone';
 import { Notice } from '../components/Notice';
 import { ChoiceEditor } from './ChoiceEditor';
 import { ImportCommitView } from './ImportCommitView';
+import { LineageCell } from './LineageCell';
 import { RecordDiff } from './RecordDiff';
 import {
   CLASS_LABELS,
@@ -603,6 +604,11 @@ function LoadedReview({ id, onEnded }: { id: string; onEnded: () => void }) {
           refusals={refusals}
           workspaceLabel={workspaceLabel}
           timeZone={timeZone}
+          busy={busy}
+          onInclude={(sunoId, choice) => {
+            // Including a source changes that record's choice only (#153).
+            void apply(choice, { kind: 'ids', sunoIds: [sunoId] });
+          }}
           onReviewDiff={setDiffOf}
           onToggle={toggle}
           onTogglePage={(checked) => {
@@ -787,6 +793,8 @@ function RecordTable({
   refusals,
   workspaceLabel,
   timeZone,
+  busy,
+  onInclude,
   onReviewDiff,
   onToggle,
   onTogglePage,
@@ -797,6 +805,8 @@ function RecordTable({
   refusals: Record<string, string[]>;
   workspaceLabel: (id: string | null) => string;
   timeZone: string;
+  busy: boolean;
+  onInclude: (sunoId: string, choice: ImportChoice) => void;
   onReviewDiff: (record: ImportRecord) => void;
   onToggle: (record: ImportRecord, checked: boolean) => void;
   onTogglePage: (checked: boolean) => void;
@@ -805,7 +815,7 @@ function RecordTable({
   const ticked = reviewable.filter((record) => isSelected(selection, record)).length;
   const groups = groupRecords(records);
   return (
-    <Table.ScrollContainer minWidth={760}>
+    <Table.ScrollContainer minWidth={900}>
       <Table withTableBorder aria-label="Records in this import">
         <Table.Thead>
           <Table.Tr>
@@ -821,6 +831,7 @@ function RecordTable({
               />
             </Table.Th>
             <Table.Th scope="col">Title</Table.Th>
+            <Table.Th scope="col">Lineage</Table.Th>
             <Table.Th scope="col">Workspace</Table.Th>
             <Table.Th scope="col">Created in Suno</Table.Th>
             <Table.Th scope="col">Length</Table.Th>
@@ -832,7 +843,7 @@ function RecordTable({
           <Table.Tbody key={group.key} data-group={group.key}>
             {group.heading !== null && (
               <Table.Tr>
-                <Table.Th scope="colgroup" colSpan={7} data-testid="group-heading">
+                <Table.Th scope="colgroup" colSpan={8} data-testid="group-heading">
                   {group.heading} ({recordCountText(group.records.length)})
                 </Table.Th>
               </Table.Tr>
@@ -863,6 +874,14 @@ function RecordTable({
                       </Text>
                     )}
                   </Table.Th>
+                  <Table.Td>
+                    <LineageCell
+                      lineage={record.lineage}
+                      nextKey={summary.nextKey}
+                      busy={busy}
+                      onInclude={onInclude}
+                    />
+                  </Table.Td>
                   <Table.Td>{workspaceLabel(record.workspaceId)}</Table.Td>
                   <Table.Td>
                     {record.createdAt === null ? '' : formatDateTime(record.createdAt, timeZone)}

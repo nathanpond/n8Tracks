@@ -10,8 +10,9 @@ namespace n8Tracks.Api.Endpoints;
 
 /// <summary>
 /// The ignore list (#143): the Suno clips the user chose not to copy, listed and removed by the signed-in
-/// user only (session-only; a bearer token gets 403 <c>session_required</c>). An item is added only by
-/// confirming an import with Don't copy. Removing one imports nothing: the next sync lists it as new.
+/// user only (session-only; a bearer token gets 403 <c>session_required</c>). An item is added by
+/// confirming an import with Don't copy, or (#153) by the user from a Version's Not imported source.
+/// Removing one imports nothing: the next sync lists it as new.
 /// </summary>
 internal static class SunoIgnoredEndpoints
 {
@@ -30,6 +31,15 @@ internal static class SunoIgnoredEndpoints
     /// <summary>422: more Suno IDs than one removal takes.</summary>
     public const string TooManyItemsCode = "too_many_items";
 
+    /// <summary>The addition's field (#153).</summary>
+    public const string SunoIdField = "sunoId";
+
+    /// <summary>409: the source is imported now (a Generation holds its Suno ID).</summary>
+    public const string AlreadyImportedCode = "already_imported";
+
+    /// <summary>409: the clip was deleted in n8Tracks, and a deleted clip is never ignored.</summary>
+    public const string TombstonedCode = "tombstoned";
+
     private static readonly string[] ListParameters = [SearchParameter, WorkspaceParameter, StatusParameter, PageParameter];
 
     public static IEndpointRouteBuilder MapSunoIgnored(this IEndpointRouteBuilder endpoints)
@@ -44,6 +54,18 @@ internal static class SunoIgnoredEndpoints
             .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden);
+
+        endpoints.MapPost(IgnoredPath, AddAsync)
+            .WithName("IgnoreNotImportedSunoSource")
+            .WithSummary("Adds a Version's Not imported source to the ignore list (#153): { sunoId }, the Suno ID of a clip a Version names as a source without its Generation. The source and its reference stay as they are; the item has no status until a sync sees it. 200 with { sunoId, added } (added false when it was on the list already); 404 when no Version source names that clip; 409 already_imported when a Generation holds it now, or tombstoned when it was deleted in n8Tracks; 422 validation_failed.")
+            .SessionOnly()
+            .Produces<IgnoredItemAdditionResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         endpoints.MapPost(RemovePath, RemoveAsync)
             .WithName("RemoveIgnoredSunoItems")
@@ -139,12 +161,49 @@ internal static class SunoIgnoredEndpoints
         return TypedResults.Ok(new IgnoredItemRemovalResponse(removal.Removed, removal.Unknown));
     }
 
+    /// <summary>
+    /// 200 with the Suno ID and whether it was added; 404 when no Version names that clip as a Not
+    /// imported source; 409 <c>already_imported</c> or <c>tombstoned</c>; 422 <c>validation_failed</c>.
+    /// </summary>
+    private static async Task<Results<Ok<IgnoredItemAdditionResponse>, ProblemHttpResult>> AddAsync(
+        IgnoredItemAdditionRequest? request,
+        IgnoreListService ignoreList,
+        HttpContext context,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        if (request?.SunoId is not { ValueKind: JsonValueKind.String } value
+            || value.GetString() is not { } sunoId
+            || !ExternalSunoReferenceRules.IsSunoId(sunoId))
+        {
+            return ApiProblem.ValidationFailed(
+                context,
+                new Dictionary<string, string[]>(StringComparer.Ordinal) { [SunoIdField] = ["Send the Suno ID of the Not imported source to ignore."] });
+        }
+
+        return await ignoreList.IgnoreReferenceAsync(sunoId, cancellationToken) switch
+        {
+            IgnoreReferenceOutcome.Added => TypedResults.Ok(new IgnoredItemAdditionResponse(sunoId, true)),
+            IgnoreReferenceOutcome.AlreadyListed => TypedResults.Ok(new IgnoredItemAdditionResponse(sunoId, false)),
+            IgnoreReferenceOutcome.Linked => ApiProblem.For(context, StatusCodes.Status409Conflict, AlreadyImportedCode, "That clip is imported now: it is a Generation in n8Tracks."),
+            IgnoreReferenceOutcome.Tombstoned => ApiProblem.For(context, StatusCodes.Status409Conflict, TombstonedCode, "That clip was deleted in n8Tracks, so it is not put on the ignore list."),
+            _ => ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "No Version names that Suno clip as a Not imported source."),
+        };
+    }
+
     private static string? Text(IQueryCollection query, string name) =>
         query.TryGetValue(name, out var text) && text.ToString() is { Length: > 0 } value ? value : null;
 
     private static ProblemHttpResult BadQuery(HttpContext context, string title) =>
         ApiProblem.For(context, StatusCodes.Status400BadRequest, ApiProblem.InvalidRequestCode, title);
 }
+
+/// <summary>An addition as sent, read as raw JSON: <c>sunoId</c> (#153).</summary>
+internal sealed record IgnoredItemAdditionRequest(JsonElement SunoId);
+
+/// <summary>The Suno ID added, and whether it was added (false: it was on the list already).</summary>
+internal sealed record IgnoredItemAdditionResponse(string SunoId, bool Added);
 
 /// <summary>A removal as sent, read as raw JSON: <c>sunoIds</c>.</summary>
 internal sealed record IgnoredItemRemovalRequest(JsonElement SunoIds);
