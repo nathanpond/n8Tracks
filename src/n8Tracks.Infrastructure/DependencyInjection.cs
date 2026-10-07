@@ -96,6 +96,7 @@ public static class DependencyInjection
         services.AddSingleton<IAudioMetadataReader, AtlAudioMetadataReader>();
         services.AddScoped<IAudioFileStore, AudioFileStore>();
         services.AddScoped<IMediaScanSummaryStore, MediaScanSummaryStore>();
+        services.AddScoped<IMediaScanScheduleStore, MediaScanScheduleStore>();
         services.AddSingleton<IBackupStorage, BackupFolders>();
         services.AddSingleton<IBackupWriter, BackupWriter>();
         services.AddScoped<IBackupScheduleStore, BackupScheduleStore>();
@@ -137,8 +138,8 @@ public static class DependencyInjection
     }
 
     /// <summary>
-    /// Adds the background worker that runs queued jobs and the daily-task scheduler. Only the server
-    /// adds them: a command run in the container starts nothing on its own.
+    /// Adds the background worker that runs queued jobs, the daily-task scheduler, and the media scan
+    /// scheduler. Only the server adds them: a command run in the container starts nothing on its own.
     /// </summary>
     public static IServiceCollection AddJobWorker(this IServiceCollection services)
     {
@@ -146,6 +147,7 @@ public static class DependencyInjection
 
         services.TryAddSingleton(new JobWorkerOptions());
         services.TryAddSingleton(new DailyTaskSchedulerOptions());
+        services.TryAddSingleton(new MediaScanSchedulerOptions());
         services.AddHostedService<BackupStartupCleanup>();
         services.AddHostedService<RestoreHousekeeping>();
 
@@ -153,6 +155,10 @@ public static class DependencyInjection
         services.AddHostedService<ImportCommitRecovery>();
         services.AddHostedService<JobWorker>();
         services.AddHostedService<DailyTaskScheduler>();
+
+        // After the worker, whose start marks a scan left running by the last process failed: a scan
+        // still queued from before counts as the startup scan, one left running does not.
+        services.AddHostedService<MediaScanScheduler>();
 
         return services;
     }

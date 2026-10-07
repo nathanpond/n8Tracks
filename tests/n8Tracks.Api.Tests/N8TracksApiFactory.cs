@@ -8,6 +8,7 @@ using Microsoft.Extensions.Hosting;
 using n8Tracks.Api.Configuration;
 using n8Tracks.Api.Frontend;
 using n8Tracks.Infrastructure.Backups;
+using n8Tracks.Infrastructure.Media;
 using n8Tracks.Infrastructure.Scheduling;
 using n8Tracks.TestSupport;
 
@@ -113,6 +114,11 @@ public class N8TracksApiFactory : WebApplicationFactory<Program>
             // time is when the suite runs.
             services.RemoveAll<DailyTaskSchedulerOptions>();
             services.AddSingleton(new DailyTaskSchedulerOptions { Enabled = false });
+
+            // Likewise the media scan scheduler (#204): no startup or scheduled scan joins a test's
+            // jobs unless the test switches it on (MediaScheduleApi) or calls its look itself.
+            services.RemoveAll<MediaScanSchedulerOptions>();
+            services.AddSingleton(new MediaScanSchedulerOptions { Enabled = false });
             TestServices?.Invoke(services);
         });
     }

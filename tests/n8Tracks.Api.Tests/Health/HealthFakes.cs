@@ -136,6 +136,8 @@ internal sealed class ClaimCountingJobStore(N8TracksDbContext context, ClaimCoun
 
     public Task<int> PruneAsync(DateTimeOffset finishedBefore, CancellationToken cancellationToken) => inner.PruneAsync(finishedBefore, cancellationToken);
 
+    public Task<bool> DeleteFinishedAsync(Guid id, CancellationToken cancellationToken) => inner.DeleteFinishedAsync(id, cancellationToken);
+
     /// <summary>How many looks for a queued job have finished.</summary>
     internal sealed class Counter
     {

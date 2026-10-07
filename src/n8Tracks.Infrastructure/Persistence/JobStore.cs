@@ -151,6 +151,12 @@ internal sealed class JobStore(N8TracksDbContext context) : IJobStore
             .ExecuteDeleteAsync(cancellationToken);
     }
 
+    public async Task<bool> DeleteFinishedAsync(Guid id, CancellationToken cancellationToken) =>
+        await context.Jobs
+            .Where(job => job.Id == id && (job.Status == JobRecord.Succeeded || job.Status == JobRecord.Failed))
+            .ExecuteDeleteAsync(cancellationToken)
+            .ConfigureAwait(false) == 1;
+
     private static JobSummary Summary(JobRecord record) =>
         new(
             record.Id,

@@ -6,6 +6,7 @@ using System.Text.Json.Nodes;
 using n8Tracks.Application.Backups;
 using n8Tracks.Application.Catalog;
 using n8Tracks.Application.Credentials;
+using n8Tracks.Application.Media;
 using n8Tracks.Application.Songs;
 using n8Tracks.Application.Suno;
 
@@ -22,6 +23,7 @@ internal static class SettingsEndpoints
     public const string BackupSchedulePath = ApiProblem.VersionPrefix + "/settings/backup-schedule";
     public const string VersionDefaultsPath = ApiProblem.VersionPrefix + "/settings/version-defaults";
     public const string CatalogPath = ApiProblem.VersionPrefix + "/settings/catalog";
+    public const string MediaScanPath = ApiProblem.VersionPrefix + "/settings/media-scan";
 
     public static IEndpointRouteBuilder MapSettings(this IEndpointRouteBuilder endpoints)
     {
@@ -87,7 +89,79 @@ internal static class SettingsEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
+        endpoints.MapGet(MediaScanPath, GetMediaScanAsync)
+            .WithName("GetMediaScanSchedule")
+            .WithSummary("The media scan schedule: whether scheduled scans run, and the interval in minutes from the end of one scan to the next. Revision 0 until it is first saved.")
+            .SessionOnly()
+            .Produces<MediaScanScheduleResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
+        endpoints.MapPut(MediaScanPath, PutMediaScanAsync)
+            .WithName("SetMediaScanSchedule")
+            .WithSummary("Replaces the media scan schedule, given its revision in If-Match (\"0\" before the first save). intervalMinutes is a whole number from 1 to 1440, required even when enabled is false.")
+            .SessionOnly()
+            .Produces<MediaScanScheduleResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
         return endpoints;
+    }
+
+    /// <summary>200 with the media scan schedule; its revision is the <c>ETag</c>.</summary>
+    private static async Task<Ok<MediaScanScheduleResponse>> GetMediaScanAsync(
+        MediaScanScheduleService schedules,
+        HttpContext context,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        var stored = await schedules.GetAsync(cancellationToken);
+        Revisions.SetETag(context, stored.Revision);
+        return TypedResults.Ok(MediaScanScheduleResponse.From(stored));
+    }
+
+    /// <summary>200 with the new schedule; 422 on a missing or wrong field; 409 <c>revision_conflict</c> with the current one.</summary>
+    private static async Task<Results<Ok<MediaScanScheduleResponse>, ProblemHttpResult>> PutMediaScanAsync(
+        MediaScanScheduleRequest? request,
+        MediaScanScheduleService schedules,
+        HttpContext context,
+        ILoggerFactory loggers,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        var (revision, problem) = Revisions.Read(context, allowUnsaved: true);
+        if (problem is not null)
+        {
+            return problem;
+        }
+
+        var (schedule, errors) = MediaScanSchedule.Parse(request?.Enabled ?? default, request?.IntervalMinutes ?? default);
+        if (schedule is null)
+        {
+            return ApiProblem.ValidationFailed(context, errors);
+        }
+
+        switch (await schedules.UpdateAsync(schedule, revision!.Value, cancellationToken))
+        {
+            case MediaScanScheduleUpdate.Updated updated:
+                loggers.CreateLogger(typeof(SettingsEndpoints)).LogInformation(
+                    "Media scan schedule changed: {MediaScanEnabled} every {MediaScanIntervalMinutes} minutes, revision {MediaScanScheduleRevision}",
+                    schedule.Enabled,
+                    schedule.IntervalMinutes,
+                    updated.Current.Revision);
+                Revisions.SetETag(context, updated.Current.Revision);
+                return TypedResults.Ok(MediaScanScheduleResponse.From(updated.Current));
+            case MediaScanScheduleUpdate.Stale stale:
+                return Revisions.Conflict(context, MediaScanScheduleResponse.From(stale.Current));
+            default:
+                throw new InvalidOperationException("Unknown media scan schedule update.");
+        }
     }
 
     /// <summary>200 with the catalog settings; their revision is the <c>ETag</c>.</summary>
@@ -253,6 +327,23 @@ internal static class SettingsEndpoints
             default:
                 throw new InvalidOperationException("Unknown backup schedule update.");
         }
+    }
+}
+
+/// <summary>
+/// The media scan schedule as a client sends it: both fields required. Each is read as raw JSON, so a
+/// value of the wrong type (an interval of 1.5 or "15") is a 422 keyed by its field, not a 400.
+/// </summary>
+internal sealed record MediaScanScheduleRequest(JsonElement Enabled, JsonElement IntervalMinutes);
+
+/// <summary>The media scan schedule: on or off, and the minutes from the end of one scan to the next (kept while off).</summary>
+internal sealed record MediaScanScheduleResponse(bool Enabled, int IntervalMinutes, int Revision)
+{
+    public static MediaScanScheduleResponse From(StoredMediaScanSchedule stored)
+    {
+        ArgumentNullException.ThrowIfNull(stored);
+
+        return new(stored.Schedule.Enabled, stored.Schedule.IntervalMinutes, stored.Revision);
     }
 }
 

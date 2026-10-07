@@ -61,6 +61,12 @@ public sealed record MediaScanCounts(
     int Unmatched = 0)
 {
     public static MediaScanCounts None { get; } = new(0, 0, 0, 0, 0, 0, 0);
+
+    /// <summary>
+    /// Whether the scan found nothing new and nothing changed (#204: such a startup or scheduled
+    /// scan is dropped from the jobs list). #207 adds files gone missing to this test.
+    /// </summary>
+    public bool FoundNothing => New == 0 && Changed == 0;
 }
 
 /// <summary>What a scan that succeeded reports.</summary>
