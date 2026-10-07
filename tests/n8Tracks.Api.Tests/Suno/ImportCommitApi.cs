@@ -64,13 +64,16 @@ internal static class ImportCommitApi
         return job.GetProperty("result");
     }
 
-    /// <summary>Stages a small PNG with the export's record <paramref name="sunoId"/>, as the extension does, asserting 200.</summary>
-    public static async Task StageImageAsync(HttpClient client, string token, Guid exportId, string sunoId)
+    /// <summary>
+    /// Stages a small PNG (blue, or <paramref name="colour"/>) with the export's record <paramref name="sunoId"/>,
+    /// as the extension does, asserting 200.
+    /// </summary>
+    public static async Task StageImageAsync(HttpClient client, string token, Guid exportId, string sunoId, SkiaSharp.SKColor? colour = null)
     {
         ArgumentNullException.ThrowIfNull(client);
 
         using var form = new MultipartFormDataContent();
-        form.Add(new ByteArrayContent(Assets.ArtworkImages.Solid(SkiaSharp.SKEncodedImageFormat.Png, 32, 32, Assets.ArtworkImages.Blue)), "file", "cover.png");
+        form.Add(new ByteArrayContent(Assets.ArtworkImages.Solid(SkiaSharp.SKEncodedImageFormat.Png, 32, 32, colour ?? Assets.ArtworkImages.Blue)), "file", "cover.png");
         using var request = new HttpRequestMessage(HttpMethod.Put, SunoExportApi.Export(exportId, "/artwork/" + sunoId)) { Content = form };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         using var staged = await client.SendAsync(request);

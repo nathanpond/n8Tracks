@@ -48,6 +48,30 @@ internal static class ProvisionalCompletionApi
         return clip;
     }
 
+    /// <summary>
+    /// The import review a still-generating Generation can meet (#141): a sync whose clip
+    /// <paramref name="sunoId"/>, still not finished, Suno has retitled, classed Changed, with the title
+    /// accepted at Confirm. Every changed field is accepted, so nothing is remembered as declined: the raw
+    /// clip is now the export's (its provider record names the export).
+    /// </summary>
+    public static async Task ReviewedFromAnExportAsync(N8TracksApiFactory factory, HttpClient client, Guid generationId, string sunoId)
+    {
+        ArgumentNullException.ThrowIfNull(factory);
+
+        var token = await SunoWorkspaceApi.ExtensionTokenAsync(factory);
+        var clip = JsonNode.Parse(Persistence.TestDatabase.Scalar(factory.DataPath, $"SELECT payload FROM provider_records WHERE generation_id = '{generationId.ToString().ToUpperInvariant()}';"))!;
+        clip["title"] = "Retitled in Suno";
+        var (exportId, records) = await ProposalApi.ExportAsync(client, token, clip);
+        Assert.Equal("changed", records[sunoId].GetProperty("class").GetString());
+        await ProposalApi.ChangedAsync(client, exportId, 1, ProposalApi.Change(new JsonObject { ["action"] = "apply", ["acceptFields"] = new JsonArray("title") }, sunoId));
+
+        var result = await ImportCommitApi.CommitAsync(client, exportId);
+
+        Assert.Equal("updated", ImportCommitApi.Outcome(ImportCommitApi.Records(result)[sunoId]));
+        var stored = Persistence.TestDatabase.Rows(factory.DataPath, $"SELECT g.provider_status, coalesce(g.declined_hash, 'none'), coalesce(g.kept_inputs_hash, 'none'), upper(p.export_id) FROM generations g JOIN provider_records p ON p.generation_id = g.id WHERE g.id = '{generationId.ToString().ToUpperInvariant()}';");
+        Assert.Equal([$"{clip["status"]}|none|none|{exportId.ToString().ToUpperInvariant()}"], stored);
+    }
+
     /// <summary>Reports <paramref name="clip"/> as finished on the request <paramref name="id"/>.</summary>
     public static Task<HttpResponseMessage> PostAsync(HttpClient client, string? token, Guid id, JsonNode? clip) =>
         ObservedCreateApi.SendAsync(client, HttpMethod.Post, Path(id), token, new JsonObject { ["clip"] = clip?.DeepClone() }.ToJsonString());

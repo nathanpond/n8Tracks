@@ -31,14 +31,18 @@ namespace n8Tracks.Api.Tests.Invariants;
 /// its alias and raw clip (its old Version and its rating untouched), and the remembered hash of a change
 /// declined or a conflict kept, which is all such a record may change: never a clip column or the raw clip.
 /// An ignored clip in Suno's Trash chosen for import (#143) comes in archived by sync. Every other row is
-/// byte for byte the same. Following Suno (#142): an existing Generation may also change for a Suno state change left
+/// byte for byte the same. An existing Song or Version a choice names changes only in the columns attaching to
+/// it writes (#336: the Song's touch time; the Version's touch time, revision, Generation count, and freeze),
+/// and the model list's revision only by one. Every row is read before the export is first uploaded and again
+/// once the choices are saved (#337), and the two must be the same. Following Suno (#142): an existing Generation may also change for a Suno state change left
 /// selected at Confirm, and then only in its remote state, state, archiver, and revision. Complements: a
 /// commit with every record (Changed and Conflict included) and every Suno state change set to Skip, and an export uploaded, classified,
 /// proposed, and discarded, change nothing at all; and the guard bites when the commit retitles an
-/// existing Generation, when it applies a Suno state change set to Skip, and when a declined change
+/// existing Generation, when it retitles a Song a choice names or renames its Versions, when it applies a Suno state change set to Skip, and when a declined change
 /// writes a clip column. The one change no review confirms (#154): completing a Generation an observed
 /// Create made, which may change only that Generation's clip columns and raw clip, and only while it was
-/// never complete; the guard bites when a completion touches one that was. Suno's own status (#314): at
+/// never complete and no import review decided about it (#348: its raw clip replaced from an export
+/// included); the guard bites when a completion touches one that was. Suno's own status (#314): at
 /// a commit, whatever the record's choice (Skip included), an existing Generation whose stored status is
 /// not final may take Suno's final one, in that column only, and is listed in the result; a final status
 /// never changes and an unfinished one is not written. The guard bites when that write changes a final
@@ -47,6 +51,15 @@ namespace n8Tracks.Api.Tests.Invariants;
 public sealed class ImportNeverOverwritesGuardTests
 {
     private const string NewModel = "V9-GUARD";
+
+    /// <summary>The columns of an existing Song a commit may change: attaching to it touches it.</summary>
+    private static readonly string[] TouchedSongColumns = ["updated_utc"];
+
+    /// <summary>
+    /// The columns of an existing Version a commit may change: attaching a clip touches it, counts the
+    /// Generation, and freezes a mutable one (#140).
+    /// </summary>
+    private static readonly string[] AttachedVersionColumns = ["updated_utc", "revision", "last_generation_ordinal", "is_frozen"];
 
     [Fact]
     public async Task ACommitChangesOnlyTheRowsTheConfirmedChoicesName()
@@ -81,6 +94,10 @@ public sealed class ImportNeverOverwritesGuardTests
         scenario.Client.Dispose();
     }
 
+    /// <summary>
+    /// An export uploaded, classified, proposed, its choices made (resolutions and Suno state changes
+    /// included), and discarded changes nothing at all, against the catalog as it was before the upload (#337).
+    /// </summary>
     [Fact]
     public async Task AnExportUploadedClassifiedProposedAndDiscardedChangesNothing()
     {
@@ -91,7 +108,7 @@ public sealed class ImportNeverOverwritesGuardTests
             Assert.Equal(System.Net.HttpStatusCode.OK, discarded.StatusCode);
         }
 
-        Assert.Empty(Differences(scenario.Before, Rows(factory.DataPath)));
+        Assert.Empty(Differences(scenario.Pristine, Rows(factory.DataPath)));
         scenario.Client.Dispose();
     }
 
@@ -245,6 +262,39 @@ public sealed class ImportNeverOverwritesGuardTests
     }
 
     /// <summary>
+    /// The guard bites on an existing Song or Version a choice names (#336): with the database made to
+    /// retitle the Song when the commit touches it, and to rename each of its Versions when the commit
+    /// attaches a clip to it, the Song and both Versions are reported as unexplained, though the commit
+    /// may change other columns of each.
+    /// </summary>
+    [Fact]
+    public async Task TheGuardFailsWhenTheCommitRetitlesATargetedSongOrRenamesItsVersion()
+    {
+        using var factory = SongApi.Host();
+        var scenario = await ScenarioAsync(factory);
+        var songA = Upper(scenario.SongId);
+        TestDatabase.Execute(
+            factory.DataPath,
+            $"""
+            CREATE TRIGGER tr_test_song_retitled AFTER UPDATE OF updated_utc ON songs
+            WHEN NEW.id = '{songA}' AND NEW.title = 'Already here'
+            BEGIN UPDATE songs SET title = 'Retitled by the import' WHERE id = NEW.id; END;
+            CREATE TRIGGER tr_test_version_renamed AFTER UPDATE OF last_generation_ordinal ON versions
+            WHEN NEW.song_id = '{songA}' AND NEW.name IS NULL
+            BEGIN UPDATE versions SET name = 'Renamed by the import' WHERE id = NEW.id; END;
+            """);
+
+        var result = await ImportCommitApi.CommitAsync(scenario.Client, scenario.ExportId);
+
+        var unexplained = Unexplained(factory, scenario, result, Rows(factory.DataPath));
+        Assert.Contains($"songs: changed {songA}", unexplained);
+        Assert.All(
+            scenario.Before["versions"].Values.Where(row => row["song_id"] == songA && row["number"] is "2" or "3"),
+            version => Assert.Contains($"versions: changed {version["id"]}", unexplained));
+        scenario.Client.Dispose();
+    }
+
+    /// <summary>
     /// The guard bites on following Suno (#142): with the commit made to forget which Suno state changes
     /// were set to Skip, the bystander's Remote Missing, which the user skipped, is reported as unexplained.
     /// </summary>
@@ -330,8 +380,9 @@ public sealed class ImportNeverOverwritesGuardTests
     /// <summary>
     /// The one change to a Generation that no import review confirms (#154): completing a Generation an
     /// observed Create made once Suno finishes its clip. Over a catalog holding such Generations, one made by
-    /// import (complete, and one still streaming), one already completed, and one an import review declined a
-    /// change of, a finished clip is reported for every one of them: only the Generations that were never
+    /// import (complete, and one still streaming), one already completed, one an import review declined a
+    /// change of, and one whose raw clip a review replaced from an export (#348), a finished clip is reported
+    /// for every one of them: only the Generations that were never
     /// complete change, and then only in their clip columns and raw clip. Every other catalog row is byte for
     /// byte the same.
     /// </summary>
@@ -371,16 +422,19 @@ public sealed class ImportNeverOverwritesGuardTests
     }
 
     /// <summary>
-    /// The catalog the completion tests report on: an observed Create's three Generations (one to complete,
-    /// one completed already, one whose change an import review declined), and two Generations made by
-    /// import (one complete, one still streaming). The rows are read once the first completion is done.
+    /// The catalog the completion tests report on: an observed Create's four Generations (one to complete,
+    /// one completed already, one whose change an import review declined, and (#348) one still generating
+    /// at a sync whose Changed diff was applied with every field accepted, so that only its raw clip, now
+    /// the export's, records the review), and two Generations made by import (one complete, one still
+    /// streaming). The rows are read once the first completion and the review's commit are done.
     /// </summary>
     private static async Task<CompletionScenario> CompletionScenarioAsync(N8TracksApiFactory factory)
     {
         var client = await SessionApi.SignedInClientAsync(factory);
-        var observed = await ProvisionalCompletionApi.ObservedAsync(factory, client, "Guard completion", "guard-open", "guard-done", "guard-declined");
+        var observed = await ProvisionalCompletionApi.ObservedAsync(factory, client, "Guard completion", "guard-open", "guard-done", "guard-declined", "guard-reviewed");
         await ProvisionalCompletionApi.CompleteAsync(client, observed.Token, observed.RequestId, ProvisionalCompletionApi.Finished("guard-done"));
         TestDatabase.Execute(factory.DataPath, $"UPDATE generations SET declined_hash = 'declined' WHERE id = '{Upper(observed.Generations["guard-declined"].Id)}';");
+        await ProvisionalCompletionApi.ReviewedFromAnExportAsync(factory, client, observed.Generations["guard-reviewed"].Id, "guard-reviewed");
         var imported = await SongApi.CreateAsync(client, "Guard imported");
         var version = imported.GetProperty("currentVersion").GetProperty("id").GetGuid().ToString();
         var complete = await SongApi.AttachGenerationAsync(factory, version, Clips.Minimal("guard-imported"));
@@ -431,8 +485,9 @@ public sealed class ImportNeverOverwritesGuardTests
     /// to apply) and the bystander's clip in neither list (Remote Missing, set to Skip). Suno's status
     /// (#314): three more bystander Generations, left to Skip, whose clips differ only in status: one still
     /// submitted (rated, commented, a change of it declined) that Suno has finished, one complete that Suno
-    /// now says ended in error, and one submitted that Suno is still streaming. The rows are read once every
-    /// choice is saved.
+    /// now says ended in error, and one submitted that Suno is still streaming. The rows are read before the
+    /// export is first uploaded and again once every choice is saved, and must be the same: nothing before
+    /// Confirm changes the catalog.
     /// </summary>
     private static async Task<Scenario> ScenarioAsync(N8TracksApiFactory factory, bool everythingSkipped = false)
     {
@@ -522,6 +577,9 @@ public sealed class ImportNeverOverwritesGuardTests
             StatusClip("status-final", 1, "error"),
             StatusClip("status-going", 2, "streaming"),
         };
+        // The catalog before the first upload (#337): a write that receiving, classifying, proposing, or a
+        // choice made would be in place by the time the choices are saved, and is caught against this.
+        var pristine = Rows(factory.DataPath);
         var (exportId, _) = await SunoExportApi.UploadAsync(client, token, RemoteStateApi.Header(), SunoExportApi.Part(1, clips, trashed: [frozen, ignoredTrashed]));
         var records = await SunoExportApi.RecordsByIdAsync(client, exportId);
         Assert.Equal("deleted", records["deleted-1"].GetProperty("class").GetString());
@@ -563,8 +621,9 @@ public sealed class ImportNeverOverwritesGuardTests
         var applied = remote.Where(static row => row.Value.GetProperty("apply").GetBoolean()).Select(static row => Upper(row.Value.GetProperty("generation").GetProperty("id").GetGuid())).ToHashSet(StringComparer.Ordinal);
 
         var rows = Rows(factory.DataPath);
+        Assert.Empty(Differences(pristine, rows).Select(static change => $"{change.Table}: {change.Kind} {change.Key}"));
         var finishedInSuno = rows["generations"].Values.Single(static row => row["suno_id"] == "status-1")["id"]!;
-        return new Scenario(client, token, exportId, songId, bystander.Generation.Id, rows, applied, finishedInSuno);
+        return new Scenario(client, token, exportId, songId, bystander.Generation.Id, pristine, rows, applied, finishedInSuno);
     }
 
     /// <summary>
@@ -679,11 +738,23 @@ public sealed class ImportNeverOverwritesGuardTests
             && row["provider_status"] == "complete"
             && before["generations"][row["id"]!].SameExcept(row, "provider_status");
 
+        // An existing Song or Version a choice names (#336) changes only as attaching or adding to it does:
+        // the Song is touched, and the Version gains Generations, its revision, and (a mutable one) its
+        // freeze. Never a title, name, note, input, or any other column.
+        bool OnlyColumns(string table, Row row, string[] allowed) =>
+            before[table][row["id"]!].SameExcept(row, allowed);
+        bool FrozenOnlyOnward(Row row) =>
+            before["versions"][row["id"]!]["is_frozen"] == row["is_frozen"] || row["is_frozen"] == "1";
+
+        // The model list's revision (the settings row suno.models) goes up by one for the one model the
+        // clips report that no entry matched: from 1 (no row yet) to 2, or from what it was.
+        static int ModelListRevision(Row row) => JsonNode.Parse(row["value"]!)!["revision"]!.GetValue<int>();
+
         // What each table may have had added (A), changed (C), or removed (R), and only that.
         var rules = new Dictionary<string, Func<char, Row, bool>>(StringComparer.Ordinal)
         {
-            ["songs"] = (kind, row) => kind == 'A' ? In(createdSongs, row["id"]) : kind == 'C' && In(namedSongs, row["id"]),
-            ["versions"] = (kind, row) => kind == 'A' ? In(createdVersions, row["id"]) : kind == 'C' && In(namedVersions, row["id"]),
+            ["songs"] = (kind, row) => kind == 'A' ? In(createdSongs, row["id"]) : kind == 'C' && In(namedSongs, row["id"]) && OnlyColumns("songs", row, TouchedSongColumns),
+            ["versions"] = (kind, row) => kind == 'A' ? In(createdVersions, row["id"]) : kind == 'C' && In(namedVersions, row["id"]) && OnlyColumns("versions", row, AttachedVersionColumns) && FrozenOnlyOnward(row),
             ["generations"] = (kind, row) => kind == 'A' ? In(createdGenerations, row["id"]) : kind == 'C' && (OnlyResolvedColumns(row) || FollowsSuno(row) || TakesSunosFinalStatus(row)),
             ["provider_records"] = (kind, row) => kind == 'A' ? In(createdGenerations, row["generation_id"]) : kind == 'C' && In(replacedClips, row["generation_id"]),
             ["shortcode_aliases"] = (kind, row) => kind == 'A' && row["generation_id"] == movedGeneration,
@@ -693,7 +764,12 @@ public sealed class ImportNeverOverwritesGuardTests
             ["used_version_numbers"] = (kind, row) => kind == 'A' && In(namedSongs, row["song_id"]),
             ["shortcode_sequence"] = static (kind, _) => kind == 'C',
             ["suno_models"] = static (kind, row) => kind == 'A' && row["name"] == NewModel,
-            ["settings"] = static (kind, row) => kind is 'A' or 'C' && row["key"] == "suno.models",
+            ["settings"] = (kind, row) => row["key"] == "suno.models" && kind switch
+            {
+                'A' => ModelListRevision(row) == 2,
+                'C' => ModelListRevision(row) == ModelListRevision(before["settings"][row["key"]!]) + 1,
+                _ => false,
+            },
             ["provider_tombstones"] = static (kind, row) => kind == 'R' && row["suno_id"] == "deleted-1",
             ["retention_groups"] = (kind, row) => kind == 'R' && In(restoredGroups, row["id"]),
             ["retention_records"] = (kind, row) => kind == 'R' && In(restoredGroups, row["group_id"]),
@@ -815,7 +891,7 @@ public sealed class ImportNeverOverwritesGuardTests
         /// <summary>Reports a finished clip for every Generation of the scenario; only the provisional one is completed.</summary>
         public async Task ReportEveryClipAsync()
         {
-            foreach (var sunoId in new[] { "guard-open", "guard-done", "guard-declined", "guard-imported", "guard-imported-streaming" })
+            foreach (var sunoId in new[] { "guard-open", "guard-done", "guard-declined", "guard-reviewed", "guard-imported", "guard-imported-streaming" })
             {
                 using var _ = await ProvisionalCompletionApi.PostAsync(Client, Observed.Token, Observed.RequestId, ProvisionalCompletionApi.Finished(sunoId));
             }
@@ -838,7 +914,20 @@ public sealed class ImportNeverOverwritesGuardTests
             values.All(pair => columns.Contains(pair.Key, StringComparer.Ordinal) || string.Equals(pair.Value, other[pair.Key], StringComparison.Ordinal));
     }
 
-    private sealed record Scenario(HttpClient Client, string Token, Guid ExportId, Guid SongId, Guid Bystander, Dictionary<string, Dictionary<string, Row>> Before, HashSet<string> RemoteApplied, string FinishedInSuno);
+    /// <summary>
+    /// The commit's catalog and export: <paramref name="Pristine"/> is every catalog row before the export was
+    /// first uploaded, and <paramref name="Before"/> once every choice is saved (the same rows, as the scenario asserts).
+    /// </summary>
+    private sealed record Scenario(
+        HttpClient Client,
+        string Token,
+        Guid ExportId,
+        Guid SongId,
+        Guid Bystander,
+        Dictionary<string, Dictionary<string, Row>> Pristine,
+        Dictionary<string, Dictionary<string, Row>> Before,
+        HashSet<string> RemoteApplied,
+        string FinishedInSuno);
 
     /// <summary>Which existing Generation the overwriting store retitles; none until the scenario is built.</summary>
     private sealed class BiteSwitch
