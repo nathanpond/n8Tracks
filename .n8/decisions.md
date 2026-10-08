@@ -4492,3 +4492,9 @@ Story #219 (on the milestone branch):
 - **Change:** Artwork uploads are capped at 100,000,000 pixels (`ArtworkRules.MaximumPixels`, #305). An image over it is refused from its header, before any pixel buffer is allocated, as 422 `artwork_dimensions_exceeded` with the title "The image is W × H pixels; artwork can be at most 100 megapixels (100,000,000 pixels)." and a new `maximumPixels` extension beside `maximumSide`. The 12,000-pixel side limit is kept: it still bounds strips the pixel cap allows (100,000 × 1,000 is 100 MP) and keeps #97 AC's wording true. The 512 MiB decode memory cap and its eighth-step scaled decode are kept as a second bound, though no accepted image reaches them now (100 MP at 4 bytes is 400,000,000 bytes). This narrows #97's decision that every JPEG and WebP within 12,000 a side is accepted by scaled decoding: those over 100 MP are now refused.
   **Why:** Owner decision ("~100 MP") on #305: a 470 KB PNG could decode to ~484 MB, too much for a home-server memory profile.
   **Affects:** M3 #97 (closed; its refusal now also covers over 100 MP); M7 artwork upload through the API and MCP (`artwork.write`) inherits the same limit — no open plan names a pixel limit.
+
+## /n8-exec M5 fix pass — 2026-10-08
+
+- **Decision:** #385 is a test only: `AudioFileAssociationTests.AChangedFileKeepsItsAssociationItsOriginAndItsPreferenceOnTheNextScan` changes a hand-associated Song-level file and a Suno-ID file twice (bytes and mtime), first with no preferred choice and then with each its owner's preferred file, and asserts song, generation, origin, preference and reason after each rescan.
+  **Why:** With a preferred choice in place the database already refuses an association change (the composite keys of #212), so the bite would only fail the scan; the first round, without a choice, is what proves the scan's Changed path keeps the association.
+  **Issue:** #385
