@@ -32,9 +32,16 @@ public sealed partial class MediaMountGuardTests
 {
     /// <summary>
     /// Inputs named like a path that name nothing under the mount: the <c>/api/v1</c> fallback, which
-    /// answers 404 to any route nothing else matched and never reads the value (<c>ApiProblem.MapApiNotFound</c>).
+    /// answers 404 to any route nothing else matched and never reads the value (<c>ApiProblem.MapApiNotFound</c>);
+    /// and the preferred-file choices' <c>audioFile</c> (#212), an audio file's ID, read only as a UUID
+    /// (anything else is a 422), never as text.
     /// </summary>
-    private static readonly string[] NotAPath = ["* /api/v1/{**path}: path"];
+    private static readonly string[] NotAPath =
+    [
+        "* /api/v1/{**path}: path",
+        "PUT /api/v1/generations/{reference}/preferred-audio-file: body field AudioFile",
+        "PUT /api/v1/songs/{reference}/preferred-audio-file: body field AudioFile",
+    ];
 
     [UnixFact]
     [UnsupportedOSPlatform("windows")]

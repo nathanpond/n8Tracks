@@ -72,7 +72,7 @@ internal static class MediaEndpoints
 
         endpoints.MapGet(SongAudioFilesPath, ListForSongAsync)
             .WithName("ListSongAudioFiles")
-            .WithSummary("Every local audio file associated with a Song (by its ID or shortcode), at Song level or through one of its Generations, whatever its status: Song-level files first, then by Version tree order, Generation ordinal, and format (WAV, M4A, MP3, then the rest by name). Not paged.")
+            .WithSummary("Every local audio file associated with a Song (by its ID or shortcode), at Song level or through one of its Generations, whatever its status: Song-level files first, then by Version tree order, Generation ordinal, and format (WAV, M4A, MP3, FLAC, OGG, Opus, AAC). Not paged. Each says whether it is preferred and whether it plays now for its Generation and for the Song.")
             .RequireScope(CredentialScopes.CatalogRead)
             .Produces<SongAudioFileListResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
@@ -82,12 +82,12 @@ internal static class MediaEndpoints
         return endpoints;
     }
 
-    /// <summary>200 with the Song's files; 404 (<c>song_deleted</c> when it was deleted) when there is no such Song.</summary>
+    /// <summary>200 with the Song's files, each marked with what plays (#212); 404 (<c>song_deleted</c> when it was deleted) when there is no such Song.</summary>
     private static async Task<Results<Ok<SongAudioFileListResponse>, ProblemHttpResult>> ListForSongAsync(
         CatalogReference reference,
         SongService songs,
         SongDeletionService deletions,
-        AudioFileService files,
+        PlaybackService playback,
         HttpContext context,
         CancellationToken cancellationToken)
     {
@@ -98,7 +98,7 @@ internal static class MediaEndpoints
             return await SongDeletionEndpoints.MissingSongAsync(context, reference, deletions, cancellationToken);
         }
 
-        var items = await files.ListForSongAsync(song.Id, cancellationToken);
+        var items = await playback.ListForSongAsync(song.Id, song.SelectedGeneration?.Id, cancellationToken);
         return TypedResults.Ok(new SongAudioFileListResponse([.. items.Select(AudioFileResponse.From)]));
     }
 
@@ -450,7 +450,10 @@ internal sealed record AudioFileListResponse(AudioFileResponse[] Items, int Tota
 /// for it (<c>POST .../rematch</c>). <c>status</c> is the reported status (#207): <c>unavailable</c> while the media
 /// folder cannot be read, otherwise <c>storedStatus</c> (<c>available</c> or <c>missing</c>).
 /// <c>suggestions</c> (#209) is there only when the list was asked to include them: up to three, best
-/// first, and empty for an associated file or when nothing is credible.
+/// first, and empty for an associated file or when nothing is credible. <c>isPreferred</c> (#212) is
+/// true for the preferred file of its Generation or, Song-level, of its Song; on a Song's list only,
+/// <c>playsForGeneration</c> and <c>playsForSong</c> say whether it is the file that plays now for its
+/// Generation and for the Song (<see cref="PlaybackResolver"/>).
 /// </summary>
 internal sealed record AudioFileResponse(
     Guid Id,
@@ -473,7 +476,10 @@ internal sealed record AudioFileResponse(
     string? UnmatchedReason,
     int Revision,
     bool AutoMatchBlocked,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] MatchSuggestionResponse[]? Suggestions = null)
+    bool IsPreferred,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] MatchSuggestionResponse[]? Suggestions = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? PlaysForGeneration = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? PlaysForSong = null)
 {
     public static AudioFileResponse From(ReportedAudioFile reported)
     {
@@ -501,7 +507,10 @@ internal sealed record AudioFileResponse(
             file.UnmatchedReason is { } reason ? AudioFileAssociations.Text(reason) : null,
             file.Revision,
             file.AutoMatchBlocked,
-            reported.Suggestions?.Select(MatchSuggestionResponse.From).ToArray());
+            file.Preferred,
+            reported.Suggestions?.Select(MatchSuggestionResponse.From).ToArray(),
+            reported.Marks?.PlaysForGeneration,
+            reported.Marks?.PlaysForSong);
     }
 }
 

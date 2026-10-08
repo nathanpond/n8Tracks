@@ -65,3 +65,46 @@ export function tallyText(tally: GenerationAudioFiles): string {
   }
   return parts.filter((part) => part !== '').join(' · ');
 }
+
+/**
+ * Whether a file of a Song's list plays now (#212): a Generation's file when it is what plays for its
+ * Generation, a Song-level file when it is what plays for the Song.
+ */
+export function playsNow(file: UnmatchedFile): boolean {
+  return file.generation === null ? file.playsForSong === true : file.playsForGeneration === true;
+}
+
+/** Who a file's choice belongs to, in words: "Generation n8-1-v1-g1" or "the Song". */
+export function preferenceOwnerText(file: Pick<UnmatchedFile, 'generation'>): string {
+  return file.generation === null ? 'the Song' : `Generation ${file.generation.shortcode}`;
+}
+
+/**
+ * Why the preferred file is not the one playing (#212), or undefined when it plays (or is not
+ * preferred): it is Missing or Unavailable, and what plays instead, from the same Song's list. For a
+ * Generation, its best available file; for the Song, its Selected Generation's file.
+ */
+export function preferenceNote(
+  file: UnmatchedFile,
+  files: readonly UnmatchedFile[],
+): string | undefined {
+  if (!file.isPreferred || playsNow(file)) {
+    return undefined;
+  }
+  const away = file.status === 'available' ? 'not playable' : statusText(file.status);
+  if (file.generation === null) {
+    const instead = files.find((other) => other.playsForSong === true);
+    return instead === undefined
+      ? `Preferred for the Song, but ${away}: no local file plays for the Song.`
+      : `Preferred for the Song, but ${away}: ${instead.fileName}${
+          instead.generation === null ? '' : ` (${instead.generation.shortcode})`
+        } plays instead, from the Selected Generation.`;
+  }
+  const generationId = file.generation.id;
+  const instead = files.find(
+    (other) => other.generation?.id === generationId && other.playsForGeneration === true,
+  );
+  return instead === undefined
+    ? `Preferred, but ${away}: no other file of this Generation is available, so none plays.`
+    : `Preferred, but ${away}: ${instead.fileName} plays instead.`;
+}

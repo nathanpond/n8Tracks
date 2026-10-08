@@ -96,6 +96,7 @@ public static class DependencyInjection
         services.AddSingleton<IMediaScanLog, MediaScanLog>();
         services.AddSingleton<IAudioMetadataReader, AtlAudioMetadataReader>();
         services.AddScoped<IAudioFileStore, AudioFileStore>();
+        services.AddScoped<IPreferredAudioFileStore, PreferredAudioFileStore>();
         services.AddScoped<IMatchCandidateStore, MatchCandidateStore>();
         services.AddScoped<IDownloadRecordStore, DownloadRecordStore>();
         services.AddScoped<IMediaScanSummaryStore, MediaScanSummaryStore>();

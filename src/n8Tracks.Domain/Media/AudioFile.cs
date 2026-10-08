@@ -26,6 +26,10 @@ namespace n8Tracks.Domain.Media;
 /// Set when the user removed or replaced the association of a file whose name holds a UUID (#210): the
 /// scan never associates it by Suno ID again until the user asks for a match.
 /// </param>
+/// <param name="Preferred">
+/// Whether it is the preferred file of what it is associated with (#212): of its Generation, or, for a
+/// Song-level file, of its Song.
+/// </param>
 public sealed record AudioFile(
     Guid Id,
     string Path,
@@ -43,7 +47,8 @@ public sealed record AudioFile(
     AudioFileLink? Link = null,
     UnmatchedReason? UnmatchedReason = null,
     int Revision = 1,
-    bool AutoMatchBlocked = false);
+    bool AutoMatchBlocked = false,
+    bool Preferred = false);
 
 /// <summary>
 /// An audio file's association (#206): exactly one Song, and at most one Generation, which belongs to
@@ -211,8 +216,9 @@ public static class AudioFormats
     };
 
     /// <summary>
-    /// The order formats are listed in (#211): WAV, M4A, MP3, then every other format by name. Compares
-    /// two format texts (lower case); an unknown text sorts with the rest, by name.
+    /// The order formats are listed and chosen for playback in (#211, #212): WAV, M4A, MP3, FLAC, OGG,
+    /// Opus, AAC, the order of <see cref="All"/> (the user put the four non-Suno formats after Suno's
+    /// three). Compares two format texts (lower case); an unknown text sorts last, by name.
     /// </summary>
     public static int CompareByRank(string? left, string? right)
     {
@@ -230,13 +236,18 @@ public static class AudioFormats
         return distinct;
     }
 
-    private static int RankOf(string? format) => format switch
+    private static int RankOf(string? format)
     {
-        "wav" => 0,
-        "m4a" => 1,
-        "mp3" => 2,
-        _ => 3,
-    };
+        for (var rank = 0; rank < All.Count; rank++)
+        {
+            if (string.Equals(All[rank], format, StringComparison.Ordinal))
+            {
+                return rank;
+            }
+        }
+
+        return All.Count;
+    }
 
     /// <summary>A last-modified time as scans compare it: truncated to the whole second, in UTC.</summary>
     public static DateTimeOffset ToWholeSecond(DateTimeOffset time)

@@ -30,6 +30,7 @@ function file(change: Partial<UnmatchedFile> = {}): UnmatchedFile {
     unmatchedReason: null,
     revision: 1,
     autoMatchBlocked: false,
+    isPreferred: false,
     suggestions: [suggestion()],
     ...change,
   };

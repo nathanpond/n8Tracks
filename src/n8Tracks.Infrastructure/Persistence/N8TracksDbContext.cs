@@ -171,6 +171,10 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
 
     public DbSet<DownloadRecordRecord> DownloadRecords => Set<DownloadRecordRecord>();
 
+    public DbSet<GenerationPreferredAudioFileRecord> GenerationPreferredAudioFiles => Set<GenerationPreferredAudioFileRecord>();
+
+    public DbSet<SongPreferredAudioFileRecord> SongPreferredAudioFiles => Set<SongPreferredAudioFileRecord>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         ArgumentNullException.ThrowIfNull(configurationBuilder);
@@ -303,7 +307,40 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
             // cascades on delete: a deletion releases the files first (AudioFileLifecycle).
             file.HasIndex(record => record.SongId);
             file.HasIndex(record => new { record.GenerationId, record.SongId });
+
+            // The parent keys of the preferred-file tables' composite foreign keys (#212). The ID alone
+            // is already unique; SQLite wants a unique index over exactly the columns referred to.
+            file.HasIndex(record => new { record.Id, record.GenerationId }).IsUnique();
+            file.HasIndex(record => new { record.Id, record.SongId }).IsUnique();
             file.HasOne<SongRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.SongId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // Preferred audio files (#212): at most one per Generation and one per Song, each naming a file
+        // that is that owner's. Each owner by a plain RESTRICT key (a deletion clears the choice first,
+        // AudioFileLifecycle); the file by a composite key to audio_files (id, generation_id) or
+        // (id, song_id), written by hand in the migration and not modelled here, as audio_files' own
+        // composite key is not: it refuses a choice of another owner's file, and refuses changing a
+        // chosen file's association before the choice is cleared. A file is chosen by one owner at most.
+        modelBuilder.Entity<GenerationPreferredAudioFileRecord>(preferred =>
+        {
+            preferred.ToTable("generation_preferred_audio_files");
+            preferred.HasKey(record => record.GenerationId);
+            preferred.HasIndex(record => record.AudioFileId).IsUnique();
+            preferred.HasOne<GenerationRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.GenerationId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<SongPreferredAudioFileRecord>(preferred =>
+        {
+            preferred.ToTable("song_preferred_audio_files");
+            preferred.HasKey(record => record.SongId);
+            preferred.HasIndex(record => record.AudioFileId).IsUnique();
+            preferred.HasOne<SongRecord>()
                 .WithMany()
                 .HasForeignKey(record => record.SongId)
                 .OnDelete(DeleteBehavior.Restrict);

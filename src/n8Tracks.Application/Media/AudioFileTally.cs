@@ -6,7 +6,7 @@ namespace n8Tracks.Application.Media;
 /// How many local audio files are associated with one Generation (#211), as they report now: in all
 /// (<see cref="Count"/>, Missing and Unavailable ones included), how many report Missing, how many
 /// report Unavailable (every one while the media folder cannot be read), and their formats once each,
-/// WAV, M4A, MP3, then the rest by name.
+/// WAV, M4A, MP3, FLAC, OGG, Opus, AAC.
 /// </summary>
 public sealed record AudioFileTally(int Count, int Missing, int Unavailable, IReadOnlyList<string> Formats)
 {

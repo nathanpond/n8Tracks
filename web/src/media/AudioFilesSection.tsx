@@ -21,17 +21,86 @@ import {
   fileDurationText,
   formatLabel,
   originLabel,
+  playsNow,
+  preferenceNote,
+  preferenceOwnerText,
   sizeMbText,
   songFolderText,
   statusText,
 } from './songAudioFilesRules';
 
-/** What a listed file offers (#210's association, opened from the Song page). */
+/**
+ * What a listed file offers: #210's association, opened from the Song page, and #212's choice of the
+ * file that plays for its Generation or, Song-level, for the Song.
+ */
 export interface AudioFileActions {
   busy: boolean;
   /** Opens the association dialog with the file's current association. */
   onChange: (file: UnmatchedFile) => void;
   onRemove: (file: UnmatchedFile) => void;
+  /** Makes the file its Generation's (or, Song-level, its Song's) preferred file. */
+  onPrefer: (file: UnmatchedFile) => void;
+  /** Clears the choice the file holds, so the automatic choice plays. */
+  onClearPreferred: (file: UnmatchedFile) => void;
+}
+
+/**
+ * What a file is for playback (#212): "Preferred" when it is its owner's choice, "Plays now" when it is
+ * what plays for its Generation (or, Song-level, for the Song), "Plays for the Song" when a Generation's
+ * file is also what the Song plays, and, when the preferred file is not the one playing, why and what
+ * plays instead. Nothing for a file that is none of these.
+ */
+export function AudioFilePlayback({
+  file,
+  files,
+}: {
+  file: UnmatchedFile;
+  files: readonly UnmatchedFile[];
+}) {
+  const now = playsNow(file);
+  const forSong = file.generation !== null && file.playsForSong === true;
+  const note = preferenceNote(file, files);
+  if (!file.isPreferred && !now && !forSong) {
+    return null;
+  }
+  return (
+    <Stack gap={4}>
+      <Group gap={6} wrap="wrap">
+        {file.isPreferred && (
+          <Badge size="sm" variant="light" radius="sm" tt="none" data-testid="audio-file-preferred">
+            Preferred
+          </Badge>
+        )}
+        {now && (
+          <Badge
+            size="sm"
+            variant="outline"
+            radius="sm"
+            tt="none"
+            data-testid="audio-file-plays-now"
+          >
+            Plays now
+          </Badge>
+        )}
+        {forSong && (
+          <Badge
+            size="sm"
+            variant="outline"
+            radius="sm"
+            tt="none"
+            data-testid="audio-file-plays-for-song"
+          >
+            Plays for the Song
+          </Badge>
+        )}
+      </Group>
+      {note !== undefined && (
+        <Text size="xs" data-testid="audio-file-preference-note">
+          {note}
+        </Text>
+      )}
+    </Stack>
+  );
 }
 
 /**
@@ -66,6 +135,31 @@ export function AudioFileActionButtons({
 }) {
   return (
     <Group gap="xs" wrap="wrap">
+      {file.isPreferred ? (
+        <Button
+          size="compact-xs"
+          variant="default"
+          disabled={actions.busy}
+          aria-label={`Clear preferred file of ${preferenceOwnerText(file)}: ${file.fileName}`}
+          onClick={() => {
+            actions.onClearPreferred(file);
+          }}
+        >
+          Clear preferred
+        </Button>
+      ) : (
+        <Button
+          size="compact-xs"
+          variant="default"
+          disabled={actions.busy}
+          aria-label={`Make preferred for ${preferenceOwnerText(file)}: ${file.fileName}`}
+          onClick={() => {
+            actions.onPrefer(file);
+          }}
+        >
+          Make preferred
+        </Button>
+      )}
       <Button
         size="compact-xs"
         variant="default"
@@ -153,9 +247,10 @@ function Owner({
  * and format, as the API orders them. Each row has its file name, folder (relative to the media
  * folder, `/` for its root), format, duration, size, status (a Missing or Unavailable file is listed
  * and marked, never hidden), the Generation it belongs to (its shortcode opens the Generation panel;
- * one archived, or of an archived Version, is marked) or "Song-level", how it was associated, and its
- * Change association and Remove association actions. A Song with none says so and links to Unmatched
- * Files. `announcement` and `problem` say what the last action did.
+ * one archived, or of an archived Version, is marked) or "Song-level", how it was associated, what
+ * it is for playback (#212: preferred, plays now, and why the two differ), and its Make preferred (or
+ * Clear preferred), Change association, and Remove association actions. A Song with none says so and
+ * links to Unmatched Files. `announcement` and `problem` say what the last action did.
  */
 export function AudioFilesSection({
   files,
@@ -219,7 +314,7 @@ export function AudioFilesSection({
           </Text>
         )}
         {files.phase === 'ready' && files.data.length > 0 && (
-          <Table.ScrollContainer minWidth={960}>
+          <Table.ScrollContainer minWidth={1120}>
             <Table withTableBorder verticalSpacing="xs" aria-labelledby="audio-files-heading">
               <Table.Thead>
                 <Table.Tr>
@@ -229,6 +324,7 @@ export function AudioFilesSection({
                   <Table.Th scope="col">Duration</Table.Th>
                   <Table.Th scope="col">Size</Table.Th>
                   <Table.Th scope="col">Status</Table.Th>
+                  <Table.Th scope="col">Playback</Table.Th>
                   <Table.Th scope="col">Generation</Table.Th>
                   <Table.Th scope="col">Associated</Table.Th>
                   <Table.Th scope="col">
@@ -243,6 +339,8 @@ export function AudioFilesSection({
                     data-testid="song-audio-file"
                     data-file={file.path}
                     data-status={file.status}
+                    data-preferred={String(file.isPreferred)}
+                    data-plays-now={String(playsNow(file))}
                   >
                     <Table.Th scope="row" fw="normal" style={{ wordBreak: 'break-word' }}>
                       <Text size="sm" fw={600} span>
@@ -259,6 +357,9 @@ export function AudioFilesSection({
                     </Table.Td>
                     <Table.Td>
                       <AudioFileStatusMark file={file} />
+                    </Table.Td>
+                    <Table.Td style={{ minWidth: 160 }}>
+                      <AudioFilePlayback file={file} files={files.data} />
                     </Table.Td>
                     <Table.Td style={{ whiteSpace: 'nowrap' }}>
                       <Owner

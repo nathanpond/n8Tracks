@@ -107,6 +107,7 @@ export function testSongAudioFile(
     unmatchedReason: null,
     revision: 2,
     autoMatchBlocked: false,
+    isPreferred: false,
     suggestions: [],
     ...change,
   };
@@ -255,6 +256,15 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     }[],
     /** When set, answers the next association write (once) instead of the fake API. */
     nextAssociationWrite: undefined as (() => Response | Promise<Response>) | undefined,
+    /** Every preferred-file write received (#212): the owner's path, method, If-Match, and body. */
+    preferenceWrites: [] as {
+      path: string;
+      method: string;
+      ifMatch: string | null;
+      body: Record<string, unknown> | null;
+    }[],
+    /** When set, answers the next preferred-file write (once) instead of the fake API. */
+    nextPreferenceWrite: undefined as (() => Response | Promise<Response>) | undefined,
     /** Each Generation's download records (#222), by its ID; none unless set. */
     downloads: new Map<string, GenerationDownload[]>(),
     /** How many times the Song's Generation list was read. */
@@ -1188,6 +1198,59 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
         sent?.song === server.song.id
           ? server.audioFiles.map((candidate) => (candidate === file ? changed : candidate))
           : server.audioFiles.filter((candidate) => candidate !== file);
+      return jsonResponse(200, changed);
+    }
+
+    // Preferred files (#212): the owner's revision is checked and raised; the files' marks follow a
+    // simple form of the rule (the preferred file while available, else the first available one).
+    const preference = /\/api\/v1\/(generations|songs)\/([^/]+)\/preferred-audio-file$/.exec(path);
+    if (preference && (method === 'PUT' || method === 'DELETE')) {
+      const ifMatch = new Headers(init?.headers).get('If-Match');
+      const sent =
+        typeof init?.body === 'string' ? (JSON.parse(init.body) as Record<string, unknown>) : null;
+      server.preferenceWrites.push({ path, method, ifMatch, body: sent });
+      const nextPreferenceWrite = server.nextPreferenceWrite;
+      if (nextPreferenceWrite) {
+        server.nextPreferenceWrite = undefined;
+        return nextPreferenceWrite();
+      }
+      const named = decodeURIComponent(preference[2] ?? '');
+      const chosen = method === 'PUT' ? sent?.audioFile : null;
+      const remark = (
+        ownerOf: (file: UnmatchedFile) => boolean,
+        mark: 'playsForGeneration' | 'playsForSong',
+      ) => {
+        const own = server.audioFiles.filter(ownerOf);
+        const preferred = own.find((file) => file.id === chosen && file.status === 'available');
+        const plays = preferred ?? own.find((file) => file.status === 'available');
+        server.audioFiles = server.audioFiles.map((file) =>
+          ownerOf(file)
+            ? { ...file, isPreferred: file.id === chosen, [mark]: file === plays }
+            : file,
+        );
+      };
+      if (preference[1] === 'songs') {
+        if (ifMatch !== `"${String(server.song.revision)}"`) {
+          return jsonResponse(409, { code: 'revision_conflict', current: server.song });
+        }
+        remark((file) => file.generation === null, 'playsForSong');
+        server.song = { ...server.song, revision: server.song.revision + 1 };
+        return jsonResponse(200, server.song);
+      }
+      const generation = server.generations.find(
+        (candidate) => candidate.id === named || candidate.shortcode === named,
+      );
+      if (generation === undefined) {
+        return jsonResponse(404, { code: 'not_found' });
+      }
+      if (ifMatch !== `"${String(generation.revision)}"`) {
+        return jsonResponse(409, { code: 'revision_conflict', current: generation });
+      }
+      remark((file) => file.generation?.id === generation.id, 'playsForGeneration');
+      const changed = { ...generation, revision: generation.revision + 1 };
+      server.generations = server.generations.map((candidate) =>
+        candidate === generation ? changed : candidate,
+      );
       return jsonResponse(200, changed);
     }
 

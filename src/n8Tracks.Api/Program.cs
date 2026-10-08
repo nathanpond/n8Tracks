@@ -325,6 +325,7 @@ public sealed class Program
             app.MapSuno();
             app.MapMedia();
             app.MapAudioFileAssociations();
+            app.MapPlayback();
             app.MapDownloadRecords();
             app.MapAudioContent();
             app.MapBackups();

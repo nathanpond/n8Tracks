@@ -100,6 +100,8 @@ public static class DependencyInjection
         services.AddScoped<MediaScanService>();
         services.AddScoped<AudioFileService>();
         services.AddScoped<AudioFileAssociationService>();
+        services.AddScoped<PreferredAudioFileService>();
+        services.AddScoped<PlaybackService>();
         services.AddScoped<DownloadRecordService>();
         services.AddScoped<MediaStatusService>();
         services.AddScoped<AudioContentService>();

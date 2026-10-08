@@ -48,7 +48,9 @@ public abstract record AudioFileAssociationOutcome
 /// from Suno, are allowed. A user's association is never altered by a scan (the matcher only looks at
 /// files with no Song); removing one leaves the reason "unassociated by you", which scans keep, and
 /// removing or replacing the association of a file whose name holds a UUID also blocks the matcher
-/// for it until <see cref="RematchAsync"/>.
+/// for it until <see cref="RematchAsync"/>. Changing or removing the association of a file that is a
+/// Generation's or a Song's preferred file (#212) clears that choice first, raising its owner's
+/// revision (the caller does not send it): the choice named the file where it was.
 /// </summary>
 public sealed class AudioFileAssociationService(
     IAudioFileStore files,
@@ -56,7 +58,9 @@ public sealed class AudioFileAssociationService(
     GenerationService generations,
     SunoIdMatcher matcher,
     MediaAvailability availability,
-    IExclusiveTransaction transaction)
+    IPreferredAudioFileStore preferences,
+    IExclusiveTransaction transaction,
+    TimeProvider time)
 {
     /// <summary>The field the Song is sent in, and its errors are reported under.</summary>
     public const string SongField = "song";
@@ -128,6 +132,7 @@ public sealed class AudioFileAssociationService(
                 // Replacing an association is a decision against whatever made it: a scan must not
                 // bring back a Suno ID match the user moved the file away from.
                 var block = file.Link is not null && HoldsUuid(file);
+                await ClearPreferenceAsync(file, ct).ConfigureAwait(false);
                 return await files.TryAssociateByUserAsync(file.Id, revision, target.Id, generationId, block, ct).ConfigureAwait(false)
                     ? new AudioFileAssociationOutcome.Done(await ReadBackAsync(file.Id, ct).ConfigureAwait(false))
                     : throw new InvalidOperationException("The audio file just read changed inside the transaction.");
@@ -159,6 +164,7 @@ public sealed class AudioFileAssociationService(
                     return new AudioFileAssociationOutcome.Done(await ReportAsync(file, ct).ConfigureAwait(false));
                 }
 
+                await ClearPreferenceAsync(file, ct).ConfigureAwait(false);
                 return await files.TryUnassociateByUserAsync(file.Id, revision, HoldsUuid(file), ct).ConfigureAwait(false)
                     ? new AudioFileAssociationOutcome.Done(await ReadBackAsync(file.Id, ct).ConfigureAwait(false))
                     : throw new InvalidOperationException("The audio file just read changed inside the transaction.");
@@ -210,6 +216,15 @@ public sealed class AudioFileAssociationService(
                 return new AudioFileAssociationOutcome.Done(await ReadBackAsync(file.Id, ct).ConfigureAwait(false));
             },
             cancellationToken);
+
+    /// <summary>Before the file's association changes: clears the choice of it, if any (#212); the database refuses the change otherwise.</summary>
+    private async Task ClearPreferenceAsync(AudioFile file, CancellationToken cancellationToken)
+    {
+        if (file.Preferred)
+        {
+            await preferences.ClearForFileAsync(file.Id, time.GetUtcNow(), cancellationToken).ConfigureAwait(false);
+        }
+    }
 
     /// <summary>Whether the file's name holds a UUID, the form a Suno ID takes (whether or not it names a Generation).</summary>
     private static bool HoldsUuid(AudioFile file) => SunoIdMatcher.FindIds(file.FileName).Count > 0;

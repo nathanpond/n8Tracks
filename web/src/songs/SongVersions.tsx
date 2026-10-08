@@ -1,7 +1,15 @@
 import { Anchor, Button, Grid, Group, Paper, Stack, Text, Title } from '@mantine/core';
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router';
-import { removeAssociation, useSongAudioFiles, type UnmatchedFile } from '../api/audioFiles';
+import {
+  clearGenerationPreference,
+  clearSongPreference,
+  preferForGeneration,
+  preferForSong,
+  removeAssociation,
+  useSongAudioFiles,
+  type UnmatchedFile,
+} from '../api/audioFiles';
 import { isNamedBy, useSongGenerations, type Generation } from '../api/generations';
 import { movedFromOf, pageFor, resolveReference, stateFor } from '../api/references';
 import { readSong, type Song } from '../api/songs';
@@ -22,6 +30,7 @@ import { useGenerationChoices } from '../generations/useGenerationChoices';
 import { useRateGeneration, type RatingProblem } from '../generations/useRateGeneration';
 import { AssociateFileDialog } from '../media/AssociateFileDialog';
 import { AudioFilesSection, type AudioFileActions } from '../media/AudioFilesSection';
+import { preferenceOwnerText } from '../media/songAudioFilesRules';
 import { CreateVersionDialog } from './CreateVersionDialog';
 import { DeleteVersionDialog } from './DeleteVersionDialog';
 import { VersionDetails } from './VersionDetails';
@@ -81,6 +90,20 @@ function removalProblemText(
     return `${file.fileName} is no longer cataloged. The list has been read again.`;
   }
   return `The association of ${file.fileName} was not removed: n8Tracks did not answer as expected. Check that it is running and try again.`;
+}
+
+/** What the Audio Files section says when choosing or clearing a preferred file did not go through (#212). */
+type PreferenceProblem =
+  { kind: 'conflict' } | { kind: 'invalid' } | { kind: 'failed'; reason?: string };
+
+function preferenceProblemText(file: UnmatchedFile, result: PreferenceProblem): string {
+  if (result.kind === 'conflict') {
+    return `${preferenceOwnerText(file)} changed since the page was loaded, so its preferred file was not changed. The lists now show it as it is: check it and try again.`;
+  }
+  if (result.kind === 'failed' && result.reason === 'gone') {
+    return `${file.fileName} or ${preferenceOwnerText(file)} is no longer there. The lists have been read again.`;
+  }
+  return `The preferred file of ${preferenceOwnerText(file)} was not changed: n8Tracks did not answer as expected. Check that it is running and try again.`;
 }
 
 /** What the page tells the user after an action: an archive that can be undone, a deletion, or a failure. */
@@ -215,6 +238,59 @@ export function SongVersions({
       window.removeEventListener('focus', onFocus);
     };
   }, [reloadAudioFiles, reloadGenerations]);
+  /** Chooses (`prefer`) or clears the preferred file of `file`'s Generation, or of the Song for a Song-level file (#212). */
+  const writePreference = (file: UnmatchedFile, prefer: boolean) => {
+    setFileProblem(undefined);
+    setFileAnnouncement(undefined);
+    const owner = preferenceOwnerText(file);
+    const saved = () => {
+      filesChanged(
+        prefer
+          ? `${file.fileName} is now the preferred file of ${owner}.`
+          : `Cleared the preferred file of ${owner}: the automatic choice plays.`,
+      );
+    };
+    const refused = (problem: PreferenceProblem) => {
+      setFileProblem(preferenceProblemText(file, problem));
+      filesChanged();
+    };
+    if (file.generation === null) {
+      setRemovingFile(true);
+      void (prefer ? preferForSong(song, file) : clearSongPreference(song)).then((result) => {
+        setRemovingFile(false);
+        if (result.kind === 'saved') {
+          onSong(result.record);
+          saved();
+          return;
+        }
+        if (result.kind === 'conflict') {
+          onSong(result.current);
+        }
+        refused(result);
+      });
+      return;
+    }
+    const generationId = file.generation.id;
+    const generation =
+      generations.state.phase === 'ready'
+        ? generations.state.data.find((candidate) => candidate.id === generationId)
+        : undefined;
+    if (generation === undefined) {
+      refused({ kind: 'failed', reason: 'gone' });
+      return;
+    }
+    setRemovingFile(true);
+    void (
+      prefer ? preferForGeneration(generation, file) : clearGenerationPreference(generation)
+    ).then((result) => {
+      setRemovingFile(false);
+      if (result.kind === 'saved') {
+        saved();
+        return;
+      }
+      refused(result);
+    });
+  };
   const audioFileActions: AudioFileActions = {
     busy: removingFile,
     onChange: (file) => {
@@ -223,6 +299,13 @@ export function SongVersions({
       setAssociating(file);
     },
     onRemove: (file) => {
+      // A preferred file's removal clears its choice (#212): the association dialog says so first.
+      if (file.isPreferred) {
+        setFileProblem(undefined);
+        setFileAnnouncement(undefined);
+        setAssociating(file);
+        return;
+      }
       setRemovingFile(true);
       setFileProblem(undefined);
       setFileAnnouncement(undefined);
@@ -237,6 +320,12 @@ export function SongVersions({
         setFileProblem(removalProblemText(file, result));
         filesChanged();
       });
+    },
+    onPrefer: (file) => {
+      writePreference(file, true);
+    },
+    onClearPreferred: (file) => {
+      writePreference(file, false);
     },
   };
   const panelAudioFiles = {

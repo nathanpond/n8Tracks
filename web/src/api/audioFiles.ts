@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from './client';
+import { generationOf, type Generation } from './generations';
 import { writeWithRevision, type SaveResult } from './saves';
-import { body, isRecord, useResource, type LoadState } from './songs';
+import { body, isRecord, isSong, useResource, type LoadState, type Song } from './songs';
 
 /** Where Library → Unmatched Files is (#209). */
 export const UNMATCHED_PATH = '/library/unmatched';
@@ -49,7 +50,9 @@ export type AssociationOrigin = 'suno-id' | 'user';
  * An audio file as the list answers it, with its suggestions (best first, up to three; none once it
  * is associated). `song` and `generation` are its association (#210), or null; `autoMatchBlocked` is
  * true once the user removed or replaced the association of a file whose name holds a UUID, so scans
- * no longer match it by Suno ID.
+ * no longer match it by Suno ID. `isPreferred` (#212) is true for the preferred file of its Generation
+ * or, Song-level, of its Song; on a Song's list, `playsForGeneration` and `playsForSong` say whether
+ * it is the file that plays now for its Generation and for the Song.
  */
 export interface UnmatchedFile {
   id: string;
@@ -66,6 +69,9 @@ export interface UnmatchedFile {
   unmatchedReason: UnmatchedReason | null;
   revision: number;
   autoMatchBlocked: boolean;
+  isPreferred: boolean;
+  playsForGeneration?: boolean;
+  playsForSong?: boolean;
   suggestions: MatchSuggestion[];
 }
 
@@ -152,8 +158,16 @@ const isLink = (value: unknown) =>
   value === null ||
   (isRecord(value) && typeof value.id === 'string' && typeof value.shortcode === 'string');
 
-/** A file as answered: with suggestions only when the list was asked for them. */
-type AnsweredFile = Omit<UnmatchedFile, 'suggestions'> & { suggestions?: MatchSuggestion[] };
+/**
+ * A file as answered: with suggestions only when the list was asked for them, and (from an older
+ * server or a test fixture) possibly without `isPreferred`, read as not preferred.
+ */
+type AnsweredFile = Omit<UnmatchedFile, 'suggestions' | 'isPreferred'> & {
+  suggestions?: MatchSuggestion[];
+  isPreferred?: boolean;
+};
+
+const booleanOrAbsent = (value: unknown) => value === undefined || typeof value === 'boolean';
 
 function isFile(value: unknown): value is AnsweredFile {
   return (
@@ -177,6 +191,9 @@ function isFile(value: unknown): value is AnsweredFile {
     textOrNull(value.unmatchedReason) &&
     typeof value.revision === 'number' &&
     typeof value.autoMatchBlocked === 'boolean' &&
+    booleanOrAbsent(value.isPreferred) &&
+    booleanOrAbsent(value.playsForGeneration) &&
+    booleanOrAbsent(value.playsForSong) &&
     (value.suggestions === undefined ||
       (Array.isArray(value.suggestions) && value.suggestions.every(isSuggestion)))
   );
@@ -184,7 +201,9 @@ function isFile(value: unknown): value is AnsweredFile {
 
 /** One file as the API answers it; a file answered without suggestions gets none. */
 function acceptFile(answer: unknown): UnmatchedFile | undefined {
-  return isFile(answer) ? { ...answer, suggestions: answer.suggestions ?? [] } : undefined;
+  return isFile(answer)
+    ? { ...answer, isPreferred: answer.isPreferred ?? false, suggestions: answer.suggestions ?? [] }
+    : undefined;
 }
 
 function acceptPage(answer: unknown): UnmatchedPage | undefined {
@@ -393,5 +412,71 @@ export function rematchFile(
     file.revision,
     undefined,
     acceptFile,
+  );
+}
+
+const generationPreferredPath = (generation: string) =>
+  `api/v1/generations/${encodeURIComponent(generation)}/preferred-audio-file`;
+
+const songPreferredPath = (song: string) =>
+  `api/v1/songs/${encodeURIComponent(song)}/preferred-audio-file`;
+
+/**
+ * Makes `file` (one of the Generation's own files, whatever its status) the Generation's preferred file
+ * (#212), based on the Generation's revision: the Generation as it is now, or a conflict with it.
+ */
+export function preferForGeneration(
+  generation: Pick<Generation, 'id' | 'revision'>,
+  file: Pick<UnmatchedFile, 'id'>,
+): Promise<SaveResult<Generation>> {
+  return writeWithRevision(
+    'PUT',
+    generationPreferredPath(generation.id),
+    generation.revision,
+    { audioFile: file.id },
+    generationOf,
+  );
+}
+
+/** Leaves the Generation with no preferred file (the automatic choice plays), based on its revision. */
+export function clearGenerationPreference(
+  generation: Pick<Generation, 'id' | 'revision'>,
+): Promise<SaveResult<Generation>> {
+  return writeWithRevision(
+    'DELETE',
+    generationPreferredPath(generation.id),
+    generation.revision,
+    undefined,
+    generationOf,
+  );
+}
+
+/**
+ * Makes `file` (one of the Song's Song-level files, whatever its status) the Song's preferred file
+ * (#212), based on the Song's revision: the Song as it is now, or a conflict with it.
+ */
+export function preferForSong(
+  song: Pick<Song, 'id' | 'revision'>,
+  file: Pick<UnmatchedFile, 'id'>,
+): Promise<SaveResult<Song>> {
+  return writeWithRevision(
+    'PUT',
+    songPreferredPath(song.id),
+    song.revision,
+    { audioFile: file.id },
+    (answer) => (isSong(answer) ? answer : undefined),
+  );
+}
+
+/** Leaves the Song with no preferred Song-level file (its Selected Generation's file plays), based on its revision. */
+export function clearSongPreference(
+  song: Pick<Song, 'id' | 'revision'>,
+): Promise<SaveResult<Song>> {
+  return writeWithRevision(
+    'DELETE',
+    songPreferredPath(song.id),
+    song.revision,
+    undefined,
+    (answer) => (isSong(answer) ? answer : undefined),
   );
 }

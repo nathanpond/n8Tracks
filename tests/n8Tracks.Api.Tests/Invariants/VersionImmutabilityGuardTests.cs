@@ -957,7 +957,62 @@ public sealed class VersionImmutabilityGuardTests
             using var response = await SendAsync(target.Client, HttpMethod.Post, new Uri($"/api/v1/audio-files/{file}/rematch", UriKind.Relative), SongApi.Quoted(1), json: null);
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         }),
+
+        // Preferred audio files (#212): a file associated with the frozen Version's Generation, or with
+        // its Song alone, chosen and cleared by shortcode, with the Version's inputs alongside: only the
+        // choice and its owner's revision change.
+        ["PUT /api/v1/generations/{reference}/preferred-audio-file"] = new(async target =>
+        {
+            var file = await AssociatedFileAsync(target, "generation-preferred", $"{target.VersionShortcode}-g1");
+            var revision = await GenerationRevisionAsync(target, $"{target.VersionShortcode}-g1");
+            using var response = await SendAsync(
+                target.Client,
+                HttpMethod.Put,
+                new Uri($"/api/v1/generations/{target.VersionShortcode}-g1/preferred-audio-file", UriKind.Relative),
+                SongApi.Quoted(revision),
+                await target.InputsJsonAsync($$"""{"audioFile":"{{file}}",""", "}"));
+            Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        }),
+        ["DELETE /api/v1/generations/{reference}/preferred-audio-file"] = new(async target =>
+        {
+            var revision = await GenerationRevisionAsync(target, $"{target.VersionShortcode}-g1");
+            using var response = await SendAsync(target.Client, HttpMethod.Delete, new Uri($"/api/v1/generations/{target.VersionShortcode}-g1/preferred-audio-file", UriKind.Relative), SongApi.Quoted(revision), json: null);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }),
+        ["PUT /api/v1/songs/{reference}/preferred-audio-file"] = new(async target =>
+        {
+            var file = await AssociatedFileAsync(target, "song-preferred", generation: null);
+            var (_, revision) = await target.SongAsync();
+            using var response = await SendAsync(
+                target.Client,
+                HttpMethod.Put,
+                new Uri($"/api/v1/songs/{target.SongShortcode}/preferred-audio-file", UriKind.Relative),
+                SongApi.Quoted(revision),
+                await target.InputsJsonAsync($$"""{"audioFile":"{{file}}",""", "}"));
+            Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        }),
+        ["DELETE /api/v1/songs/{reference}/preferred-audio-file"] = new(async target =>
+        {
+            var (_, revision) = await target.SongAsync();
+            using var response = await SendAsync(target.Client, HttpMethod.Delete, new Uri($"/api/v1/songs/{target.SongShortcode}/preferred-audio-file", UriKind.Relative), SongApi.Quoted(revision), json: null);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }),
     };
+
+    /// <summary>A cataloged file associated by the API with the target's Song and, when given, its Generation <paramref name="generation"/>.</summary>
+    private static async Task<Guid> AssociatedFileAsync(Target target, string name, string? generation)
+    {
+        var file = CatalogedFile(target, name);
+        var body = generation is null
+            ? $$"""{"song":"{{target.SongShortcode}}"}"""
+            : $$"""{"song":"{{target.SongShortcode}}","generation":"{{generation}}"}""";
+        using var response = await SendAsync(target.Client, HttpMethod.Put, new Uri($"/api/v1/audio-files/{file}/association", UriKind.Relative), SongApi.Quoted(1), body);
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        return file;
+    }
+
+    private static async Task<int> GenerationRevisionAsync(Target target, string generation) =>
+        (await SetupApi.JsonAsync(await target.Client.GetAsync(new Uri($"/api/v1/generations/{generation}", UriKind.Relative)))).GetProperty("revision").GetInt32();
 
     /// <summary>A cataloged, unassociated audio file at revision 1, written straight to the table (no scan is needed to associate one).</summary>
     private static Guid CatalogedFile(Target target, string name)

@@ -254,9 +254,14 @@ public sealed record AudioFileListRequest(
 
 /// <summary>
 /// An audio file and the status it reports now (#207); <see cref="Suggestions"/> is null unless they
-/// were asked for (#209), and then empty when nothing is credible.
+/// were asked for (#209), and then empty when nothing is credible; <see cref="Marks"/> is null except
+/// on a Song's list (#212), where it says whether the file plays now for its Generation and the Song.
 /// </summary>
-public sealed record ReportedAudioFile(AudioFile File, AudioFileReportedStatus Status, IReadOnlyList<MatchSuggestion>? Suggestions = null);
+public sealed record ReportedAudioFile(
+    AudioFile File,
+    AudioFileReportedStatus Status,
+    IReadOnlyList<MatchSuggestion>? Suggestions = null,
+    PlaybackMarks? Marks = null);
 
 /// <summary>One page of the audio file list, as reported.</summary>
 public sealed record ReportedAudioFilePage(IReadOnlyList<ReportedAudioFile> Items, int Total);
@@ -286,7 +291,8 @@ public interface IAudioFileStore
     /// Every file associated with the Song <paramref name="songId"/> (#211), whatever its status: the
     /// Song-level ones first, then by its Generation's Version in tree order, that Generation's
     /// ordinal, and format (<see cref="AudioFormats.CompareByRank"/>); ties by folder, then file name
-    /// (ordinal). Empty for a Song with none, or no such Song.
+    /// (ordinal). Each carries whether it is its owner's preferred file (#212). Empty for a Song with
+    /// none, or no such Song.
     /// </summary>
     Task<IReadOnlyList<AudioFile>> ListForSongAsync(Guid songId, CancellationToken cancellationToken);
 

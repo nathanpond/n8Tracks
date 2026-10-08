@@ -82,7 +82,7 @@ export interface Generation {
 /**
  * How many local audio files are associated with a Generation (#211): in all (Missing and Unavailable
  * ones included), how many are Missing, how many are Unavailable (every one while the media folder
- * cannot be read), and their formats once each, WAV, M4A, MP3, then the rest by name.
+ * cannot be read), and their formats once each, WAV, M4A, MP3, FLAC, OGG, Opus, AAC.
  */
 export interface GenerationAudioFiles {
   count: number;

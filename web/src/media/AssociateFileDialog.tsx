@@ -7,6 +7,7 @@ import type { Song } from '../api/songs';
 import { ARCHIVED_STATE_ID } from '../api/workflow';
 import { SongSearch } from '../common/SongSearch';
 import { Notice } from '../components/Notice';
+import { preferenceOwnerText } from './songAudioFilesRules';
 import { associationText, folderText, originText } from './unmatchedRules';
 
 /** How many Songs the dialog's search offers at once (#210). */
@@ -42,8 +43,9 @@ type Loaded =
  * be found by title or shortcode (twenty at a time, Archived ones included and marked), then its
  * Generations are offered, every state included, beside "the Song only". A Generation is preferred
  * when the file came from one. For a file that is associated, the dialog names the current
- * association, says choosing another replaces it, and offers to remove it. Nothing in the media folder
- * changes. Open while `file` is set; `onChanged` is told what changed (an announcement), or nothing
+ * association, says choosing another replaces it, and offers to remove it; when the file is a
+ * preferred file (#212), it says first that changing or removing the association clears that choice.
+ * Nothing in the media folder changes. Open while `file` is set; `onChanged` is told what changed (an announcement), or nothing
  * when the file was found changed, so the list can be read again.
  */
 export function AssociateFileDialog({
@@ -162,6 +164,12 @@ function AssociateForm({
             {originText(current.associationOrigin)}. Choosing another Song or Generation replaces
             that association.
           </Text>
+          {current.isPreferred && (
+            <Text fw={600} data-testid="preference-warning">
+              It is the preferred file of {preferenceOwnerText(current)}. Changing or removing its
+              association clears that choice, and the automatic choice plays instead.
+            </Text>
+          )}
           <div>
             <Button
               variant="default"

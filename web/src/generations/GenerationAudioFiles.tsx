@@ -4,6 +4,7 @@ import type { Generation } from '../api/generations';
 import type { LoadState } from '../api/songs';
 import {
   AudioFileActionButtons,
+  AudioFilePlayback,
   AudioFileStatusMark,
   type AudioFileActions,
 } from '../media/AudioFilesSection';
@@ -11,6 +12,7 @@ import {
   fileDurationText,
   formatLabel,
   originLabel,
+  playsNow,
   sizeMbText,
   songFolderText,
 } from '../media/songAudioFilesRules';
@@ -18,8 +20,9 @@ import {
 /**
  * The Generation panel's local audio files (#211): the Song's list filtered here to this Generation,
  * in the Song list's order (by format), each with its file name, folder, format, duration, size,
- * status (Missing and Unavailable ones listed and marked), how it was associated, and its Change
- * association and Remove association actions. A Generation with none says so.
+ * status (Missing and Unavailable ones listed and marked), how it was associated, what it is for
+ * playback (#212: preferred, plays now, and why the two differ), and its Make preferred (or Clear
+ * preferred), Change association, and Remove association actions. A Generation with none says so.
  */
 export function GenerationAudioFiles({
   generation,
@@ -71,6 +74,8 @@ export function GenerationAudioFiles({
               data-testid="generation-audio-file"
               data-file={file.path}
               data-status={file.status}
+              data-preferred={String(file.isPreferred)}
+              data-plays-now={String(playsNow(file))}
             >
               <Stack gap={4}>
                 <Text size="sm" fw={600} style={{ overflowWrap: 'anywhere' }}>
@@ -88,6 +93,7 @@ export function GenerationAudioFiles({
                 <div>
                   <AudioFileStatusMark file={file} />
                 </div>
+                <AudioFilePlayback file={file} files={files.phase === 'ready' ? files.data : []} />
                 <AudioFileActionButtons file={file} actions={actions} />
               </Stack>
             </li>

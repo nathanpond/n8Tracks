@@ -566,7 +566,7 @@ internal sealed record GenerationResponse(
 /// <summary>
 /// The local audio files associated with a Generation (#211), as they report now: <c>count</c> (all of
 /// them, Missing and Unavailable ones included), <c>missing</c>, <c>unavailable</c> (every one while
-/// the media folder cannot be read), and <c>formats</c> once each, WAV, M4A, MP3, then the rest by name.
+/// the media folder cannot be read), and <c>formats</c> once each, WAV, M4A, MP3, FLAC, OGG, Opus, AAC.
 /// </summary>
 internal sealed record GenerationAudioFilesResponse(int Count, int Missing, int Unavailable, string[] Formats)
 {

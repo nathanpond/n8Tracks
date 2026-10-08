@@ -143,14 +143,16 @@ public sealed class AudioFormatsTests
     }
 
     [Fact]
-    public void FormatsAreRankedWavM4aMp3ThenTheRestByNameOnceEach()
+    public void FormatsAreRankedWavM4aMp3FlacOggOpusAacOnceEach()
     {
         Assert.Equal(
-            ["wav", "m4a", "mp3", "aac", "flac", "ogg", "opus"],
+            ["wav", "m4a", "mp3", "flac", "ogg", "opus", "aac"],
             AudioFormats.InRankOrder(["opus", "mp3", "flac", "wav", "mp3", "aac", "ogg", "m4a", "wav"]));
         Assert.Empty(AudioFormats.InRankOrder([]));
         Assert.True(AudioFormats.CompareByRank("mp3", "aac") < 0);
         Assert.True(AudioFormats.CompareByRank("flac", "wav") > 0);
+        Assert.True(AudioFormats.CompareByRank("opus", "aac") < 0);
+        Assert.True(AudioFormats.CompareByRank("aac", "unknown") < 0);
         Assert.Equal(0, AudioFormats.CompareByRank("ogg", "ogg"));
     }
 

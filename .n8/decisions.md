@@ -4309,3 +4309,40 @@ Story #210:
 - **Decision:** Rule 1: the empty state's "Open Unmatched Files" link sits inside a sentence, so it is underlined always. Axe `link-in-text-block` failed on every Song page with no files, in the existing versions-table, songs, generation-downloads and generation-evaluation e2e specs. The e2e rerun of those specs is the regression check.
   **Why:** WCAG 1.4.1: a link in a text block must not be told apart by colour alone.
   **Issue:** #211
+- **Decision:** Preferences live in two new tables, `generation_preferred_audio_files (generation_id PK, audio_file_id)` and `song_preferred_audio_files (song_id PK, audio_file_id)`, not in nullable foreign-key columns on `generations` and `songs` as the planner's discretion line says. Migration `20261008050000_AddPreferredAudioFiles` writes the tables by hand. Each table has:
+  - a RESTRICT key to its owner;
+  - a composite key `(audio_file_id, generation_id|song_id)` to `audio_files (id, generation_id|song_id)`, RESTRICT on delete and update;
+  - a unique `audio_file_id`.
+
+  `audio_files` only gains the two unique parent-key indexes, by plain `CREATE INDEX`, so it is not rebuilt and its composite foreign key survives. The composite keys are not in the EF model, as with #206's key; `DatabaseStartupTests` asserts them.
+  **Why:** This follows the orchestrator's binding #212 decision and m5-plan's drift row. Columns would bump the retained shapes (`generation` 6→7, `song` 3→4) and need upgraders. EF would also rebuild both trigger-carrying tables to add a foreign key. With the composite keys, the database itself refuses two things: a choice of a file that is not the owner's, and an association change that leaves a choice behind.
+  **Issue:** #212
+- **Decision:** Rule 1: `AudioFormats.CompareByRank` now ranks every format in the order of `AudioFormats.All`: WAV, M4A, MP3, FLAC, OGG, Opus, AAC. #211 ranked "WAV, M4A, MP3, then the rest by name", which put AAC before FLAC. The Song's list order, the Generation tally's formats, and the playback fallback all use this one rank. #211's unit test and its API summaries were updated.
+  **Why:** #212's AC fixes the order (the user's file-type answer), and the plan says one rank serves the lists and the resolver.
+  **Issue:** #212
+- **Decision:** `Application/Media/PlaybackResolver` is pure. It reads a Song's files as they report now, and each file's new `AudioFile.Preferred` flag, filled by `AudioFileStore.FilesOfAsync` from the two tables. It needs no other input.
+  - A Generation plays its preferred file while that file is available. Otherwise it plays the best available file: by format rank, then earliest first seen, then path (ordinal).
+  - A Song plays its available Song-level preferred file. Otherwise it plays the Selected Generation's file, and when the Song's own choice is away, the reason is the Song's fallback reason.
+  - With no selection, the reason is `no_selected_generation`.
+  - `PlaybackService` serves the two playback reads and the marks on the Song's list (`ReportedAudioFile.Marks`).
+  **Why:** One rule with one input gives the same answer everywhere. Reading the choice from the file rows avoids a second read path.
+  **Issue:** #212
+- **Decision:** The API:
+  - `PUT`/`DELETE /generations/{reference}/preferred-audio-file` and `/songs/{reference}/preferred-audio-file` (`songs.write`, owner revision in If-Match) answer the owner (`GenerationResponse`/`SongResponse`), as `selected-generation` does. The owner's revision is checked before the file, so the reference guard can call these routes with a stale revision. An unknown file is 404 `not_found`.
+  - A Generation's choice raises only its revision. A Song's choice raises its revision and sets its updated time.
+  - `AudioFileResponse` gains `isPreferred` (always present) and `playsForGeneration`/`playsForSong`, which appear only on the Song's list.
+  - Playback answers `{source, audioFile {id, fileName, format, durationSeconds, contentUrl}, reason}`, and the Song's answer adds `generation {id, shortcode}`. `contentUrl` is the #217 content route under the page base.
+  **Why:** Answering the owner lets the web keep the Song's revision current (`onSong`) and matches the selection endpoint. `isPreferred` on every file lets #210's dialog warn on the Unmatched Files page too.
+  **Issue:** #212
+- **Decision:** A choice is cleared, and its owner's revision raised, inside `AudioFileAssociationService.AssociateAsync` and `RemoveAsync`, but only when the association actually changes. Naming the current association changes nothing. Deletion clears choices first in `AudioFileLifecycle.ReleaseAsync`, with no revision raise because the owners are going. A restore does not bring them back. `PreferredAudioFileService` (strings and Guids only) and `PlaybackService` are in `Application.Media`, which stays a non-catalog namespace. The invariant 1 guard exercises the four new write routes.
+  **Why:** These follow the discretion lines (clearing raises the owner's revision without the caller sending it; #213 restores no choice). The database's RESTRICT keys make the order mandatory.
+  **Issue:** #212
+- **Decision:** Web:
+  - The Audio Files table gains a "Playback" column, and the panel's file list gains a line. They show the badges "Preferred", "Plays now" (for a Generation's file, its Generation; for a Song-level file, the Song) and "Plays for the Song", plus a note when the preferred file is not the one playing ("Preferred, but Missing: X plays instead.").
+  - Each row offers "Make preferred" or "Clear preferred" before the association actions.
+  - Remove association on a preferred file opens #210's dialog, which now warns ("It is the preferred file of …"), instead of removing at once. Files that are not preferred are still removed at once.
+  **Why:** The AC asks the dialog to say so before the user confirms. The Song page's one-click Remove has no confirmation step, so a preferred file goes through the dialog.
+  **Issue:** #212
+- **Decision:** `MediaMountGuardTests.NotAPath` lists the two PUT bodies' `audioFile` field. The field is a UUID, and anything else is 422. The new resolver code avoids `x.File.Y` member chains through a `Recorded(...)` helper, because `MediaMountAccessTests`' file-system regex matches them. No guard list in the arch test changed.
+  **Why:** The body name is fixed by the discretion (`{ audioFile: <id> }`). This is the same pitfall #210 and #211 hit.
+  **Issue:** #212

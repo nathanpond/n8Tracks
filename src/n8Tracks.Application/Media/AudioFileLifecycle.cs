@@ -8,20 +8,26 @@ namespace n8Tracks.Application.Media;
 /// The files themselves are never touched (invariant 2). #206 brings the minimum every deletion needs;
 /// #213 adds the counts, moves, and restore notes.
 /// </summary>
-public sealed class AudioFileLifecycle(IAudioFileStore files)
+public sealed class AudioFileLifecycle(IAudioFileStore files, IPreferredAudioFileStore preferences)
 {
     /// <summary>
     /// Inside the deleting transaction: the files of the Generations <paramref name="generationIds"/>
     /// become unmatched with the reason "its Generation was deleted", and every file of the Songs
-    /// <paramref name="songIds"/> (Song-level ones included) with "its Song was deleted".
+    /// <paramref name="songIds"/> (Song-level ones included) with "its Song was deleted". The preferred
+    /// file choices of those Generations and Songs go first (#212); they are not retained, so a restore
+    /// does not bring them back.
     /// </summary>
-    internal Task<int> ReleaseAsync(IReadOnlyCollection<Guid> generationIds, IReadOnlyCollection<Guid> songIds, CancellationToken cancellationToken)
+    internal async Task<int> ReleaseAsync(IReadOnlyCollection<Guid> generationIds, IReadOnlyCollection<Guid> songIds, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(generationIds);
         ArgumentNullException.ThrowIfNull(songIds);
 
-        return generationIds.Count == 0 && songIds.Count == 0
-            ? Task.FromResult(0)
-            : files.UnassociateAsync(generationIds, songIds, cancellationToken);
+        if (generationIds.Count == 0 && songIds.Count == 0)
+        {
+            return 0;
+        }
+
+        await preferences.ReleaseAsync(generationIds, songIds, cancellationToken).ConfigureAwait(false);
+        return await files.UnassociateAsync(generationIds, songIds, cancellationToken).ConfigureAwait(false);
     }
 }

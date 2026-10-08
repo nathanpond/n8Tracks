@@ -436,8 +436,25 @@ internal sealed class AudioFileStore(N8TracksDbContext context) : IAudioFileStor
                 .ConfigureAwait(false))
                 .ToDictionary(static row => row.Id, static row => Shortcodes.ForGeneration(row.ShortcodeNumber, row.Number, row.Ordinal));
 
+        // Which of them are their owner's preferred file (#212): a Generation's or, Song-level, a Song's.
+        var ids = rows.Where(static row => row.SongId is not null).Select(static row => row.Id).ToList();
+        var preferred = ids.Count == 0
+            ? []
+            : (await context.GenerationPreferredAudioFiles.AsNoTracking()
+                    .Where(row => ids.Contains(row.AudioFileId))
+                    .Select(static row => row.AudioFileId)
+                    .ToListAsync(cancellationToken)
+                    .ConfigureAwait(false))
+                .Concat(await context.SongPreferredAudioFiles.AsNoTracking()
+                    .Where(row => ids.Contains(row.AudioFileId))
+                    .Select(static row => row.AudioFileId)
+                    .ToListAsync(cancellationToken)
+                    .ConfigureAwait(false))
+                .ToHashSet();
+
         return [.. rows.Select(row => FileOf(row) with
         {
+            Preferred = preferred.Contains(row.Id),
             Link = row.SongId is { } songId
                 ? new AudioFileLink(
                     songs[songId],
