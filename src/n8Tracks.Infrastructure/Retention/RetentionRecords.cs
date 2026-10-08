@@ -48,6 +48,22 @@ public sealed class RetentionRecordRecord
     public required string Document { get; set; }
 }
 
+/// <summary>
+/// One row of <c>retention_released_audio_files</c> (#388): an audio file a deletion left unassociated,
+/// with the reason it was given, so a restore of the group can take that reason away again. Goes with
+/// its group (cascade); names the file by ID with no foreign key, as nothing in retention refers to a
+/// live table.
+/// </summary>
+public sealed class RetentionReleasedAudioFileRecord
+{
+    public required Guid GroupId { get; set; }
+
+    public required Guid AudioFileId { get; set; }
+
+    /// <summary><c>song_deleted</c> or <c>generation_deleted</c>.</summary>
+    public required string Reason { get; set; }
+}
+
 /// <summary>One row of <c>pending_file_deletions</c>: a managed file whose group was pruned, not yet deleted.</summary>
 public sealed class PendingFileDeletionRecord
 {

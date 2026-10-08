@@ -155,11 +155,13 @@ public sealed class SongDeletionService(
                 await tombstones.RecordForAsync(generations, now, ct).ConfigureAwait(false);
 
                 // Every audio file of the Song, Song-level ones included, stays on disk, unassociated
-                // (#206; associations are not retained).
-                await audioFiles.ReleaseAsync([], [id], ct).ConfigureAwait(false);
+                // (#206; associations are not retained); the group remembers which, so its restore
+                // clears their reason (#388).
+                var released = await audioFiles.ReleaseAsync([], [id], ct).ConfigureAwait(false);
                 var group = await retention.RetainWithinAsync(
                     new RetentionRequest(RetainedRecordTypes.Song, Label(song.Shortcode, song.Title), song.Shortcode, roots, files),
                     ct).ConfigureAwait(false);
+                await audioFiles.RememberAsync(group.Id, released, ct).ConfigureAwait(false);
 
                 await store.TouchAsync(
                     [.. song.Albums.Select(static album => album.AlbumId).Distinct()],

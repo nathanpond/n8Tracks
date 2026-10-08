@@ -192,8 +192,9 @@ public sealed class GenerationDeletionService(
                 await versions.RewriteSourcesOfDeletedGenerationsAsync(ids, [], now, ct).ConfigureAwait(false);
                 await tombstones.RecordForAsync(ids, now, ct).ConfigureAwait(false);
 
-                // Its audio files stay on disk, unassociated (#206; associations are not retained).
-                await audioFiles.ReleaseAsync(ids, [], ct).ConfigureAwait(false);
+                // Its audio files stay on disk, unassociated (#206; associations are not retained); the
+                // group remembers which, so its restore clears their reason (#388).
+                var released = await audioFiles.ReleaseAsync(ids, [], ct).ConfigureAwait(false);
                 var group = await retention.RetainWithinAsync(
                     new RetentionRequest(
                         RetainedRecordTypes.Generation,
@@ -202,6 +203,7 @@ public sealed class GenerationDeletionService(
                         [new RetainedRoot(RetainedRecordTypes.Generation, generation.Generation.Id)],
                         files),
                     ct).ConfigureAwait(false);
+                await audioFiles.RememberAsync(group.Id, released, ct).ConfigureAwait(false);
 
                 return new GenerationDeleteOutcome.Deleted(
                     group,

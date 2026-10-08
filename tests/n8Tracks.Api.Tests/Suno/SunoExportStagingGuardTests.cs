@@ -37,7 +37,7 @@ public sealed class SunoExportStagingGuardTests
         "album_links", "album_songs", "albums", "artist_aliases", "artist_links", "artists", "artwork_attachments",
         "audio_files", "download_records", "editor_revisions", "external_suno_references", "generation_comments", "generation_event_links", "generation_events",
         "generation_preferred_audio_files", "generations", "genres", "pending_file_deletions", "playlist_songs", "playlists", "provider_records",
-        "provider_tombstones", "retention_groups", "retention_records", "settings", "shortcode_aliases", "shortcode_sequence",
+        "provider_tombstones", "retention_groups", "retention_records", "retention_released_audio_files", "settings", "shortcode_aliases", "shortcode_sequence",
         "song_artist_credits", "song_genres", "song_links", "song_preferred_audio_files", "song_relationship_types", "song_relationships", "song_tags", "songs",
         "suno_ignored_items", "suno_models", "suno_personas", "suno_playlists", "tags", "used_version_numbers",
         "version_file_inputs", "version_inspiration_playlists", "version_sources", "version_voices", "versions", "workflow_states",

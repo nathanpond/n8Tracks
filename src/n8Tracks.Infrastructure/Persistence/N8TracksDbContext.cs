@@ -161,6 +161,8 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
 
     public DbSet<RetentionRecordRecord> RetentionRecords => Set<RetentionRecordRecord>();
 
+    public DbSet<RetentionReleasedAudioFileRecord> RetentionReleasedAudioFiles => Set<RetentionReleasedAudioFileRecord>();
+
     public DbSet<PendingFileDeletionRecord> PendingFileDeletions => Set<PendingFileDeletionRecord>();
 
     public DbSet<AssetRecord> Assets => Set<AssetRecord>();
@@ -443,6 +445,18 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
             record.HasKey(row => new { row.GroupId, row.Position });
             record.HasIndex(row => new { row.RecordType, row.OriginalId });
             record.HasOne<RetentionGroupRecord>()
+                .WithMany()
+                .HasForeignKey(row => row.GroupId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // The audio files a deletion released (#388), with the reason each was given; they go with the group.
+        modelBuilder.Entity<RetentionReleasedAudioFileRecord>(released =>
+        {
+            released.ToTable("retention_released_audio_files", static table =>
+                table.HasCheckConstraint("ck_retention_released_audio_files_reason", "reason IN ('song_deleted', 'generation_deleted')"));
+            released.HasKey(row => new { row.GroupId, row.AudioFileId });
+            released.HasOne<RetentionGroupRecord>()
                 .WithMany()
                 .HasForeignKey(row => row.GroupId)
                 .OnDelete(DeleteBehavior.Cascade);

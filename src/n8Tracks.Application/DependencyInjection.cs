@@ -52,6 +52,7 @@ public static class DependencyInjection
         services.AddScoped<SunoLibraryService>();
         services.AddScoped<TombstoneService>();
         services.AddScoped<AudioFileLifecycle>();
+        services.AddScoped<IRetentionRestoreParticipant>(static provider => provider.GetRequiredService<AudioFileLifecycle>());
         services.AddScoped<SunoIdMatcher>();
         services.AddScoped<SunoClipLookupService>();
         services.AddScoped<ExternalReferenceResolver>();

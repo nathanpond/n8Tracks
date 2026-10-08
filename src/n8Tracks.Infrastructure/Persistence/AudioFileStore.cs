@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using n8Tracks.Application.Media;
 using n8Tracks.Domain.Media;
 using n8Tracks.Domain.Songs;
+using n8Tracks.Infrastructure.Retention;
 
 namespace n8Tracks.Infrastructure.Persistence;
 
@@ -376,41 +377,87 @@ internal sealed class AudioFileStore(N8TracksDbContext context) : IAudioFileStor
             .ConfigureAwait(false) == 1;
     }
 
-    public async Task<int> UnassociateAsync(IReadOnlyCollection<Guid> generationIds, IReadOnlyCollection<Guid> songIds, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<ReleasedAudioFile>> UnassociateAsync(IReadOnlyCollection<Guid> generationIds, IReadOnlyCollection<Guid> songIds, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(generationIds);
         ArgumentNullException.ThrowIfNull(songIds);
 
-        var changed = 0;
+        var released = new List<ReleasedAudioFile>();
         if (generationIds.Count > 0)
         {
             var ids = generationIds.Distinct().Select(static id => (Guid?)id).ToList();
-            changed += await UnassociateWhereAsync(row => ids.Contains(row.GenerationId), AudioFileAssociations.GenerationDeletedReason, cancellationToken)
-                .ConfigureAwait(false);
+            released.AddRange(await UnassociateWhereAsync(row => ids.Contains(row.GenerationId), UnmatchedReason.GenerationDeleted, cancellationToken)
+                .ConfigureAwait(false));
         }
 
         if (songIds.Count > 0)
         {
             var ids = songIds.Distinct().Select(static id => (Guid?)id).ToList();
-            changed += await UnassociateWhereAsync(row => ids.Contains(row.SongId), AudioFileAssociations.SongDeletedReason, cancellationToken)
-                .ConfigureAwait(false);
+            released.AddRange(await UnassociateWhereAsync(row => ids.Contains(row.SongId), UnmatchedReason.SongDeleted, cancellationToken)
+                .ConfigureAwait(false));
         }
 
-        return changed;
+        return released;
     }
 
-    private Task<int> UnassociateWhereAsync(System.Linq.Expressions.Expression<Func<AudioFileRecord, bool>> which, string reason, CancellationToken cancellationToken) =>
+    public async Task RememberReleaseAsync(Guid groupId, IReadOnlyCollection<ReleasedAudioFile> released, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(released);
+
+        if (released.Count == 0)
+        {
+            return;
+        }
+
+        context.RetentionReleasedAudioFiles.AddRange(released.Select(file => new RetentionReleasedAudioFileRecord
+        {
+            GroupId = groupId,
+            AudioFileId = file.Id,
+            Reason = AudioFileAssociations.Text(file.Reason),
+        }));
+        await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        context.ChangeTracker.Clear();
+    }
+
+    public Task<int> ClearReleaseReasonsAsync(Guid groupId, CancellationToken cancellationToken) =>
         context.AudioFiles
+            .Where(row => row.SongId == null
+                && context.RetentionReleasedAudioFiles.Any(released =>
+                    released.GroupId == groupId && released.AudioFileId == row.Id && released.Reason == row.UnmatchedReason))
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(static row => row.UnmatchedReason, (string?)null)
+                    .SetProperty(static row => row.Revision, static row => row.Revision + 1),
+                cancellationToken);
+
+    /// <summary>The associated files <paramref name="which"/> selects, unassociated with <paramref name="reason"/>.</summary>
+    private async Task<List<ReleasedAudioFile>> UnassociateWhereAsync(System.Linq.Expressions.Expression<Func<AudioFileRecord, bool>> which, UnmatchedReason reason, CancellationToken cancellationToken)
+    {
+        var ids = await context.AudioFiles
             .Where(which)
             .Where(static row => row.SongId != null)
+            .Select(static row => row.Id)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (ids.Count == 0)
+        {
+            return [];
+        }
+
+        var text = AudioFileAssociations.Text(reason);
+        await context.AudioFiles
+            .Where(row => ids.Contains(row.Id))
             .ExecuteUpdateAsync(
                 setters => setters
                     .SetProperty(static row => row.SongId, (Guid?)null)
                     .SetProperty(static row => row.GenerationId, (Guid?)null)
                     .SetProperty(static row => row.AssociationOrigin, (string?)null)
-                    .SetProperty(static row => row.UnmatchedReason, reason)
+                    .SetProperty(static row => row.UnmatchedReason, text)
                     .SetProperty(static row => row.Revision, static row => row.Revision + 1),
-                cancellationToken);
+                cancellationToken)
+            .ConfigureAwait(false);
+        return [.. ids.Select(id => new ReleasedAudioFile(id, reason))];
+    }
 
     /// <summary>The domain files of <paramref name="rows"/>, in their order, with the current shortcodes of what each is associated with (and the Song's title).</summary>
     private async Task<List<AudioFile>> FilesOfAsync(IReadOnlyList<AudioFileRecord> rows, CancellationToken cancellationToken)
