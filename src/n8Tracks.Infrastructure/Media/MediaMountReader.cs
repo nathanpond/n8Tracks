@@ -17,6 +17,11 @@ namespace n8Tracks.Infrastructure.Media;
 /// <c>/proc/self/fd</c> and checked again, which narrows the window between the check and the open;
 /// other systems skip that second check.
 /// </para>
+/// <para>
+/// What it hands out is never its <see cref="FileStream"/> but a <see cref="ReadOnlyContent"/> over it
+/// (#386): no caller can write through it, and none can learn the file's absolute path from it (a
+/// <c>FileStream</c>'s <c>Name</c>), so the mount's path stays here.
+/// </para>
 /// </summary>
 internal sealed class MediaMountReader(N8TracksOptions options) : IMediaMount
 {
@@ -90,14 +95,16 @@ internal sealed class MediaMountReader(N8TracksOptions options) : IMediaMount
         }
     }
 
-    public Stream OpenRead(string relativePath) => Open(relativePath);
+    public Stream OpenRead(string relativePath) => new ReadOnlyContent(Open(relativePath));
 
     public OpenedMediaFile OpenWithStat(string relativePath)
     {
         var stream = Open(relativePath);
 
         // Asked of the handle, never of the path: what is sent is what was opened.
-        return new OpenedMediaFile(stream, () => new MediaFileStat(stream.Length, new DateTimeOffset(File.GetLastWriteTimeUtc(stream.SafeFileHandle), TimeSpan.Zero)));
+        return new OpenedMediaFile(
+            new ReadOnlyContent(stream),
+            () => new MediaFileStat(stream.Length, new DateTimeOffset(File.GetLastWriteTimeUtc(stream.SafeFileHandle), TimeSpan.Zero)));
     }
 
     /// <summary>Opens the file for reading only, after the real-path check, and checks again where the open handle is.</summary>
@@ -285,4 +292,64 @@ internal sealed class MediaMountReader(N8TracksOptions options) : IMediaMount
         string.Equals(real, realRoot, StringComparison.Ordinal) ? string.Empty : string.Join('/', real[Prefix(realRoot).Length..].Split(Separators));
 
     private static string Join(string relativeDirectory, string name) => relativeDirectory.Length == 0 ? name : $"{relativeDirectory}/{name}";
+
+    /// <summary>
+    /// An opened file as callers get it: reads and seeks pass through to the reader's own stream; it
+    /// cannot write, flush data, or change its length, and it has no name or handle to give out.
+    /// </summary>
+    private sealed class ReadOnlyContent(FileStream inner) : Stream
+    {
+        public override bool CanRead => inner.CanRead;
+
+        public override bool CanSeek => inner.CanSeek;
+
+        public override bool CanWrite => false;
+
+        public override long Length => inner.Length;
+
+        public override long Position
+        {
+            get => inner.Position;
+            set => inner.Position = value;
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+
+        public override int Read(Span<byte> buffer) => inner.Read(buffer);
+
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            inner.ReadAsync(buffer, offset, count, cancellationToken);
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            inner.ReadAsync(buffer, cancellationToken);
+
+        public override int ReadByte() => inner.ReadByte();
+
+        public override long Seek(long offset, SeekOrigin origin) => inner.Seek(offset, origin);
+
+        public override void Flush()
+        {
+            // Nothing is ever written, so there is nothing to flush.
+        }
+
+        public override void SetLength(long value) => throw new NotSupportedException("A media file is opened for reading only.");
+
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException("A media file is opened for reading only.");
+
+        public override async ValueTask DisposeAsync()
+        {
+            await inner.DisposeAsync().ConfigureAwait(false);
+            await base.DisposeAsync().ConfigureAwait(false);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                inner.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
+    }
 }

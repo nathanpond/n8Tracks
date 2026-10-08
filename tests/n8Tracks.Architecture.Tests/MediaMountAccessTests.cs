@@ -5,28 +5,39 @@ namespace n8Tracks.Architecture.Tests;
 /// <summary>
 /// Guard for invariant 2 (#205), at the source: only <c>MediaMountReader</c> touches the media mount,
 /// and it only reads. The technique is <see cref="EnvironmentReadGuardTests"/>'s: the code of every
-/// project under <c>src/</c> that ends up in an image is read line by line (comment lines are not
-/// code) and compared with exact lists, so a new line that would reach the mount fails here until
-/// someone has looked at it and added it.
+/// project under <c>src/</c> that ends up in an image is read (comment lines are not code) and
+/// compared with exact lists, so new code that would reach the mount fails here until someone has
+/// looked at it and added it. The file-system, write, and native-code rules read each file's code as
+/// a whole, so a call split across lines is seen (#386).
 /// <list type="bullet">
 /// <item>The media mount setting (<c>N8TRACKS_MEDIA_PATH</c>, <c>MediaPath</c>, a <c>mediaPath</c>
 /// local) is named only by the options loader, the options record, <c>MediaMountReader</c>, the
 /// backup code's <c>IsInside</c> comparisons, which refuse a backup path inside the mount and touch
-/// nothing there, and the media status (#208), which only answers the configured path as text for the
-/// Media page to show.</item>
+/// nothing there, the media status (#208), which only answers the configured path as text for the
+/// Media page to show, and the startup overlap check (#387), which compares the configured paths.</item>
 /// <item>File-system APIs appear only in a fixed list of files (database, data folder, backups,
-/// assets, setup, the frontend's files, and <c>MediaMountReader</c>).</item>
+/// assets, setup, the frontend's files, the startup overlap check, and <c>MediaMountReader</c>); a
+/// <c>System.IO</c> file-system type named in full counts, so an alias (<c>using IOFile =
+/// System.IO.File;</c>) or a <c>using static</c> is seen.</item>
 /// <item>Inside <c>MediaMountReader</c>, nothing creates, writes, appends, moves, copies, renames,
 /// replaces, or deletes, or sets an attribute, a mode, or a time; every <c>FileStream</c> names
-/// <c>FileAccess.Read</c>, and no other access, mode, or sharing appears.</item>
+/// <c>FileAccess.Read</c>; <c>FileMode</c>, <c>FileAccess</c>, <c>FileShare</c>, and <c>FileOptions</c>
+/// appear only as their named reading members, so a numeric cast, a parse, or arithmetic on them
+/// fails; and no <c>System.IO</c> type is aliased or imported statically.</item>
+/// <item>Nothing under <c>src/</c> calls native code (<c>DllImport</c>, <c>LibraryImport</c>,
+/// <c>extern</c>, <c>NativeLibrary</c>, function pointers) or uses <c>dynamic</c>.</item>
 /// <item><c>IMediaMount</c> has a fixed set of users; the media probe and setup only probe through it.</item>
 /// <item>The tag library is given a stream, never a path, and never saves.</item>
 /// </list>
 /// Not covered: a path to the mount that reaches code without naming the setting (the options
 /// record's deconstruction, reflection, a value typed by hand); a path handed to a library that
-/// opens files itself (such as a <c>StreamReader</c> built from a path); and whether the operating
-/// system lets a write through, which <c>MediaMountGuardTests</c> and <c>scripts/smoke-docker.sh</c>
-/// test on a read-only tree.
+/// opens files itself (such as a <c>StreamReader</c> built from a path); a <c>FileMode</c> or
+/// <c>FileAccess</c> value carried in a variable and changed there (<c>mode++</c>) inside the reader,
+/// which the runtime check that the reader never creates a file stands behind
+/// (<c>MediaMountGuardTests</c>); reflection into the stream the reader hands out; and whether the
+/// operating system lets a write through, which <c>MediaMountGuardTests</c> and
+/// <c>scripts/smoke-docker.sh</c> test on a read-only tree. Shell code (<c>docker/entrypoint.sh</c>,
+/// <c>docker/n8tracks</c>) and the <c>Dockerfile</c> are not read here.
 /// </summary>
 public partial class MediaMountAccessTests
 {
@@ -136,6 +147,11 @@ public partial class MediaMountAccessTests
     [InlineData("ZipFile.ExtractToDirectory(archive, target);")]
     [InlineData("var full = Path.GetFullPath(relative);")]
     [InlineData("using var watcher = new FileSystemWatcher(root);")]
+    [InlineData("using IOFile = System.IO.File;")]
+    [InlineData("using static System.IO.File;")]
+    [InlineData("global using Dir = global::System.IO.Directory;")]
+    [InlineData("System.IO.File\n    .Delete(path);")]
+    [InlineData("File\n    .Delete(path);")]
     public void TheRuleFindsAFileSystemApi(string line)
     {
         Assert.Matches(UsesFileSystem(), line);
@@ -146,6 +162,8 @@ public partial class MediaMountAccessTests
     [InlineData("var name = Path.GetFileName(path);")]
     [InlineData("var file = new AudioFile(id, path);")]
     [InlineData("using var reader = new StreamReader(stream);")]
+    [InlineData("using System.IO;")]
+    [InlineData("var file = files.First();\nvar path = file.Path;")]
     public void TheFileSystemRuleAllows(string line)
     {
         Assert.DoesNotMatch(UsesFileSystem(), line);
@@ -185,6 +203,18 @@ public partial class MediaMountAccessTests
     [InlineData("Share = FileShare.Delete,")]
     [InlineData("Options = FileOptions.DeleteOnClose,")]
     [InlineData("using var writer = new StreamWriter(stream);")]
+    [InlineData("Mode = (FileMode)4,")]
+    [InlineData("Mode = ( System.IO.FileMode ) 4,")]
+    [InlineData("Access = FileAccess.Read | (FileAccess)2,")]
+    [InlineData("Access = FileAccess.Read + 1,")]
+    [InlineData("Access = ~FileAccess.Read,")]
+    [InlineData("Mode = Enum.Parse<FileMode>(\"OpenOrCreate\"),")]
+    [InlineData("Share = (FileShare)7,")]
+    [InlineData("Options = (FileOptions)0x4000000,")]
+    [InlineData("using IOFile = System.IO.File;")]
+    [InlineData("using static System.IO.File;")]
+    [InlineData("File\n    .Delete(path);")]
+    [InlineData("_ = IOFile.Delete(path);")]
     public void TheRuleFindsAWriteInTheReader(string line)
     {
         Assert.Matches(Writes(), line);
@@ -200,6 +230,8 @@ public partial class MediaMountAccessTests
     [InlineData("Share = FileShare.Read,")]
     [InlineData("Options = FileOptions.SequentialScan,")]
     [InlineData("return File.Exists(resolved)")]
+    [InlineData("Mode = FileMode.Open,\nAccess = FileAccess.Read,\nShare = FileShare.Read,")]
+    [InlineData("var stream = new FileStream(path, new FileStreamOptions { Access = FileAccess.Read });")]
     public void TheWriteRuleAllows(string line)
     {
         Assert.DoesNotMatch(Writes(), line);
@@ -223,7 +255,7 @@ public partial class MediaMountAccessTests
     [Fact]
     public void OnlyTheListedFilesUseAFileSystemApi()
     {
-        var found = Find(UsesFileSystem()).Select(static line => line[..line.IndexOf(": ", StringComparison.Ordinal)]).Distinct().ToList();
+        var found = FindInCode(UsesFileSystem()).Select(static line => line[..line.IndexOf(": ", StringComparison.Ordinal)]).Distinct().ToList();
         var unexpected = found.Except(AllowedFileSystemFiles, StringComparer.Ordinal).ToList();
 
         Assert.True(
@@ -236,7 +268,7 @@ public partial class MediaMountAccessTests
     [Fact]
     public void TheReaderNeverCreatesWritesMovesOrDeletes()
     {
-        var found = Find(Writes()).Where(static line => line.StartsWith(Reader + ": ", StringComparison.Ordinal)).ToList();
+        var found = FindInCode(Writes()).Where(static line => line.StartsWith(Reader + ": ", StringComparison.Ordinal)).ToList();
 
         Assert.True(found.Count == 0, "MediaMountReader only reads (invariant 2):" + Environment.NewLine + string.Join(Environment.NewLine, found));
     }
@@ -274,6 +306,37 @@ public partial class MediaMountAccessTests
         Assert.True(calls.Count == 0, "Health and setup only probe the media mount:" + Environment.NewLine + string.Join(Environment.NewLine, calls));
     }
 
+    /// <summary>Nothing under <c>src/</c> calls native code or uses <c>dynamic</c> (#386): a P/Invoke or a late-bound call would pass every rule above.</summary>
+    [Fact]
+    public void NothingCallsNativeCodeOrIsLateBound()
+    {
+        var found = FindInCode(NativeOrDynamic());
+
+        Assert.True(found.Count == 0, "Native or late-bound code reaches past every check of invariant 2:" + Environment.NewLine + string.Join(Environment.NewLine, found));
+    }
+
+    [Theory]
+    [InlineData("[DllImport(\"libc\", SetLastError = true)]")]
+    [InlineData("[System.Runtime.InteropServices.LibraryImport(\"libc\")]")]
+    [InlineData("private static extern int unlink(string path);")]
+    [InlineData("var handle = NativeLibrary.Load(\"libc\");")]
+    [InlineData("delegate* unmanaged<string, int> unlink;")]
+    [InlineData("var name = ((dynamic)opened.Content).Name;")]
+    [InlineData("[UnmanagedCallersOnly]")]
+    public void TheNativeRuleFindsNativeAndLateBoundCode(string code)
+    {
+        Assert.Matches(NativeOrDynamic(), code);
+    }
+
+    [Theory]
+    [InlineData("var external = true;")]
+    [InlineData("var dynamicRange = 3;")]
+    [InlineData("var importer = new LibraryImporter();")]
+    public void TheNativeRuleAllows(string code)
+    {
+        Assert.DoesNotMatch(NativeOrDynamic(), code);
+    }
+
     [Theory]
     [InlineData("var entries = mount.List(string.Empty);", true)]
     [InlineData("var stat = mount.Stat(path);", true)]
@@ -300,11 +363,16 @@ public partial class MediaMountAccessTests
     [GeneratedRegex(@"(?i)\w*media_?path\b|""/media/?""")]
     private static partial Regex NamesMediaSetting();
 
-    /// <summary>The .NET APIs that reach the file system (not <c>Path</c>'s string helpers, which touch nothing).</summary>
+    /// <summary>
+    /// The .NET APIs that reach the file system (not <c>Path</c>'s string helpers, which touch
+    /// nothing), and any <c>System.IO</c> file-system type named in full, as an alias or a
+    /// <c>using static</c> names it.
+    /// </summary>
     [GeneratedRegex(
         @"\b(File|Directory)\s*\.\s*[A-Z]\w*"
         + @"|\b(FileStream|FileStreamOptions|FileInfo|DirectoryInfo|FileSystemInfo|DriveInfo|FileSystemWatcher|RandomAccess|SafeFileHandle|ZipFile)\b"
-        + @"|\bPath\s*\.\s*(GetFullPath|GetTempPath|GetTempFileName)\b")]
+        + @"|\bPath\s*\.\s*(GetFullPath|GetTempPath|GetTempFileName)\b"
+        + @"|\bSystem\s*\.\s*IO\s*\.\s*(File|Directory|FileSystem|Enumeration)\w*")]
     private static partial Regex UsesFileSystem();
 
     /// <summary>
@@ -315,8 +383,10 @@ public partial class MediaMountAccessTests
         @"\b(File|Directory)\s*\.\s*(Create\w*|Write\w*|Append\w*|Move|Copy|Replace|Delete|Set\w*|Encrypt|Decrypt|Open|OpenWrite|OpenHandle)\b"
         + @"|\.\s*(Create|CreateSubdirectory|CreateText|AppendText|OpenWrite|Delete|MoveTo|CopyTo|Replace|Encrypt|Decrypt|CreateAsSymbolicLink|SetLength|Write\w*|Flush\w*)\s*\("
         + @"|\.\s*(Attributes|CreationTime\w*|LastAccessTime\w*|LastWriteTime\w*|UnixFileMode|IsReadOnly)\s*=(?!=)"
-        + @"|\bFileMode\s*\.\s*(?!Open\b)\w+|\bFileAccess\s*\.\s*(?!Read\b)\w+|\bFileShare\s*\.\s*(?!Read\b)\w+"
-        + @"|\bFileOptions\s*\.\s*(DeleteOnClose|WriteThrough)\b"
+        + @"|\bFileMode\b(?!\s*\.\s*Open\b)|\bFileAccess\b(?!\s*\.\s*Read\b)|\bFileShare\b(?!\s*\.\s*Read\b)"
+        + @"|\bFileOptions\b(?!\s*\.\s*(None|SequentialScan|RandomAccess|Asynchronous)\b)"
+        + @"|\b(FileMode|FileAccess|FileShare|FileOptions)\s*\.\s*\w+\s*[-+*/%|&^<>]|[~-]\s*\(?\s*(FileMode|FileAccess|FileShare|FileOptions)\b"
+        + @"|\busing\s+(static\s+|\w+\s*=\s*)(global::)?System\s*\.\s*IO\b"
         + @"|\b(StreamWriter|BinaryWriter|TextWriter|ZipFile|Process)\b")]
     private static partial Regex Writes();
 
@@ -326,6 +396,10 @@ public partial class MediaMountAccessTests
 
     [GeneratedRegex(@"\bIMediaMount\b")]
     private static partial Regex NamesMediaMount();
+
+    /// <summary>Native code (a P/Invoke, a function pointer, a loaded library) and late binding.</summary>
+    [GeneratedRegex(@"\b(DllImport|LibraryImport|NativeLibrary|UnmanagedCallersOnly)\b|\bextern\s+\w|\bdelegate\s*\*\s*unmanaged\b|\bdynamic\b|\bMarshal\s*\.\s*GetDelegateForFunctionPointer\b")]
+    private static partial Regex NativeOrDynamic();
 
     [GeneratedRegex(@"\.\s*(List|Stat|OpenRead|OpenWithStat)\s*\(")]
     private static partial Regex CallsBeyondProbe();
@@ -345,6 +419,25 @@ public partial class MediaMountAccessTests
                 .Where(line => !line.StartsWith("//", StringComparison.Ordinal) && rule.IsMatch(line))
                 .Select(line => $"{Relative(file)}: {line}")),
     ];
+
+    /// <summary>
+    /// Every match in the code of every file, a statement split across lines included, as
+    /// <c>path: match</c> with its whitespace collapsed, in path order. Comment lines are not code.
+    /// </summary>
+    private static List<string> FindInCode(Regex rule) =>
+    [
+        .. SourceFiles().SelectMany(file => rule.Matches(Code(file)).Select(match => $"{Relative(file)}: {Normalize(match.Value)}")),
+    ];
+
+    /// <summary>The text with every run of whitespace made one space, and none around a parenthesis or a dot.</summary>
+    private static string Normalize(string text) =>
+        SpacesAroundPunctuation().Replace(Spaces().Replace(text.Trim(), " "), "$1");
+
+    [GeneratedRegex(@"\s+")]
+    private static partial Regex Spaces();
+
+    [GeneratedRegex(@"\s*([().])\s*")]
+    private static partial Regex SpacesAroundPunctuation();
 
     /// <summary>A file's code with its comment lines left out.</summary>
     private static string Code(string file) =>
