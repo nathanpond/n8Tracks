@@ -351,10 +351,24 @@ public sealed class DatabaseStartupTests : IDisposable
         }
 
         SqliteConnection.ClearAllPools();
+
+        // The host's background services keep polling, so one of them can open a pooled connection
+        // after that clear and hand it back to the pool after the delete. The next scope would then get
+        // a handle on the unlinked file, which SQLite refuses with SQLITE_IOERR_FSTAT, not CANTOPEN. The
+        // race is played here on purpose (it failed CI on a slow runner) rather than left to timing.
+        var poller = new SqliteConnection(SqliteDatabase.ConnectionString(TestDatabase.FilePath(directory.Path)));
+        await poller.OpenAsync();
+
         foreach (var file in Directory.EnumerateFiles(directory.Path, "n8tracks.db*"))
         {
             File.Delete(file);
         }
+
+        await poller.DisposeAsync();
+
+        // Clearing again after the delete disposes such a handle, or marks it not to be pooled if it is
+        // still in use: every connection the context opens from here on must find the file at its path.
+        SqliteConnection.ClearAllPools();
 
         // What a background task or a request does next (#300): before, this opened a new, empty file.
         using (var scope = host.Services.CreateScope())
