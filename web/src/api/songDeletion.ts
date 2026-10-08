@@ -1,4 +1,5 @@
 import { apiFetch } from './client';
+import { localAudioFilesOf, type LocalAudioFiles } from './localAudioFiles';
 import { ifMatch } from './saves';
 import { body, isRecord, isSong, type Song } from './songs';
 
@@ -19,6 +20,8 @@ export interface SongDeletionImpact {
   playlistCount: number;
   relationshipCount: number;
   audioFileCount: number;
+  /** Its local audio files (#213), Song-level ones included; `audioFileCount` is their total. */
+  localAudioFiles: LocalAudioFiles;
   /** Whether the title must be typed to confirm; the server decides again at delete time. */
   titleRequired: boolean;
   revision: number;
@@ -35,7 +38,7 @@ const COUNTS = [
   'revision',
 ] as const;
 
-export function isSongDeletionImpact(value: unknown): value is SongDeletionImpact {
+function hasImpactFields(value: unknown): value is Omit<SongDeletionImpact, 'localAudioFiles'> {
   return (
     isRecord(value) &&
     typeof value.id === 'string' &&
@@ -44,6 +47,20 @@ export function isSongDeletionImpact(value: unknown): value is SongDeletionImpac
     typeof value.titleRequired === 'boolean' &&
     COUNTS.every((key) => Number.isInteger(value[key]))
   );
+}
+
+/**
+ * The impact an answer holds, or undefined when it is not one. An answer without
+ * `localAudioFiles` counts none.
+ */
+export function songDeletionImpactOf(value: unknown): SongDeletionImpact | undefined {
+  if (!hasImpactFields(value)) {
+    return undefined;
+  }
+  const localAudioFiles = localAudioFilesOf(
+    'localAudioFiles' in value ? value.localAudioFiles : undefined,
+  );
+  return localAudioFiles === undefined ? undefined : { ...value, localAudioFiles };
 }
 
 /** A Song that was deleted, as a read of it says: its ID, shortcode, title, and when. */
@@ -84,9 +101,9 @@ export async function fetchSongDeletionImpact(
     const response = await apiFetch(`${SONGS_PATH}/${encodeURIComponent(songId)}/deletion-impact`, {
       signal,
     });
-    const answer = await body(response);
-    if (response.ok && isSongDeletionImpact(answer)) {
-      return { kind: 'found', impact: answer };
+    const impact = response.ok ? songDeletionImpactOf(await body(response)) : undefined;
+    if (impact !== undefined) {
+      return { kind: 'found', impact };
     }
     return response.status === 404 ? { kind: 'gone' } : { kind: 'failed' };
   } catch {
@@ -133,13 +150,12 @@ export async function deleteSong(
     ) {
       return { kind: 'conflict', current: answer.current };
     }
-    if (
-      response.status === 422 &&
-      isRecord(answer) &&
-      answer.code === 'confirmation_required' &&
-      isSongDeletionImpact(answer.impact)
-    ) {
-      return { kind: 'confirmation', impact: answer.impact };
+    const impact =
+      response.status === 422 && isRecord(answer) && answer.code === 'confirmation_required'
+        ? songDeletionImpactOf(answer.impact)
+        : undefined;
+    if (impact !== undefined) {
+      return { kind: 'confirmation', impact };
     }
     return response.status === 404 ? { kind: 'gone' } : { kind: 'failed' };
   } catch {

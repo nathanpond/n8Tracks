@@ -2,6 +2,7 @@ import { Button, Group, List, Loader, Modal, Stack, Text, TextInput } from '@man
 import { useEffect, useState } from 'react';
 import { deleteSong, fetchSongDeletionImpact, type SongDeletionImpact } from '../api/songDeletion';
 import type { Song } from '../api/songs';
+import { DeletionAudioFiles } from '../media/DeletionAudioFiles';
 import { songDeletionCounts, titleConfirms } from './songDeletion';
 
 const FAILED_MESSAGE =
@@ -139,6 +140,7 @@ export function DeleteSongDialog({
               It is taken off its Albums and Playlists and out of its relationships; those Albums,
               Playlists, and other Songs remain. Its shortcode is never used for another Song.
             </Text>
+            <DeletionAudioFiles counts={found.localAudioFiles} owner="song" />
           </Stack>
         )}
         {(impact.kind === 'gone' || impact.kind === 'failed') && (

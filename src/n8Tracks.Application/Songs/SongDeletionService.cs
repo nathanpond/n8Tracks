@@ -15,7 +15,11 @@ namespace n8Tracks.Application.Songs;
 /// <param name="Song">The Song, as it is now.</param>
 /// <param name="Counts">What goes with it, and what it is taken out of.</param>
 /// <param name="TitleRequired">Whether the user must type its title to confirm (<see cref="SongDeletionRules.TitleRequired"/>).</param>
-public sealed record SongDeletionImpact(SongSummary Song, SongDeletionCounts Counts, bool TitleRequired);
+/// <param name="LocalAudioFiles">
+/// Its local audio files, Song-level ones included, which stay on disk and become unmatched (#213);
+/// their total is <see cref="SongDeletionCounts.AudioFiles"/>.
+/// </param>
+public sealed record SongDeletionImpact(SongSummary Song, SongDeletionCounts Counts, bool TitleRequired, LocalAudioFileCounts LocalAudioFiles);
 
 /// <summary>A Song deleted within its retention period: how a read of it says it was deleted.</summary>
 /// <param name="Id">Its ID.</param>
@@ -223,6 +227,7 @@ public sealed class SongDeletionService(
         }
 
         var generations = await store.GenerationIdsAsync(id, cancellationToken).ConfigureAwait(false);
+        var localFiles = await audioFiles.CountAsync(id, generations, wholeSong: true, cancellationToken).ConfigureAwait(false);
         var counts = new SongDeletionCounts(
             song.VersionCount,
             generations.Count,
@@ -230,9 +235,9 @@ public sealed class SongDeletionService(
             song.Albums.Count,
             song.Playlists.Count,
             song.Relationships.Count,
+            localFiles.Total);
 
-            // Local audio files arrive in M5; until then a Song has none.
-            AudioFiles: 0);
-        return new SongDeletionImpact(song, counts, SongDeletionRules.TitleRequired(counts));
+        // Audio files do not change which confirmation is required (#213).
+        return new SongDeletionImpact(song, counts, SongDeletionRules.TitleRequired(counts), localFiles);
     }
 }

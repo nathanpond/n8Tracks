@@ -602,6 +602,24 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
       : jsonResponse(404, { code: 'reference_not_found' });
   };
 
+  /**
+   * The served audio files `owns` picks, counted as a deletion impact's `localAudioFiles` (#213): a
+   * hand-associated file is the user's with no Suno ID in its name, or with automatic matching off.
+   */
+  const localAudioFiles = (owns: (file: UnmatchedFile) => boolean) => {
+    const files = server.audioFiles.filter((file) => file.song !== null && owns(file));
+    return {
+      total: files.length,
+      handAssociated: files.filter(
+        (file) =>
+          file.associationOrigin === 'user' &&
+          (file.autoMatchBlocked ||
+            !/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(file.fileName)),
+      ).length,
+      songLevel: files.filter((file) => file.generation === null).length,
+    };
+  };
+
   /** What deleting the Song would do, as the API counts it; the title rule is the API's. */
   const songImpact = () => {
     const song = server.song;
@@ -612,7 +630,7 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
       albumCount: song.albums.length,
       playlistCount: song.playlists.length,
       relationshipCount: song.relationships.length,
-      audioFileCount: 0,
+      audioFileCount: localAudioFiles(() => true).total,
     };
     return {
       id: song.id,
@@ -625,6 +643,7 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
         counts.albumCount > 0 ||
         counts.playlistCount > 0 ||
         counts.relationshipCount > 0,
+      localAudioFiles: localAudioFiles(() => true),
       revision: song.revision,
     };
   };
@@ -779,6 +798,12 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
               isBelow(other.number, version.number),
             ).length,
             isLastVersion: server.versions.length === 1,
+            localAudioFiles: localAudioFiles((file) =>
+              server.generations.some(
+                (generation) =>
+                  generation.id === file.generation?.id && generation.version.id === version.id,
+              ),
+            ),
             revision: version.revision,
           })
         : deletedAnswer(impact[1] ?? '');
@@ -959,6 +984,7 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
               commentCount: generation.comments.length,
               artworkCount: generation.artwork === null ? 0 : 1,
               sourceVersionCount: server.sourceVersionCounts.get(generation.id) ?? 0,
+              localAudioFiles: localAudioFiles((file) => file.generation?.id === generation.id),
               revision: generation.revision,
             });
       }

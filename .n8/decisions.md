@@ -4346,3 +4346,21 @@ Story #210:
 - **Decision:** `MediaMountGuardTests.NotAPath` lists the two PUT bodies' `audioFile` field. The field is a UUID, and anything else is 422. The new resolver code avoids `x.File.Y` member chains through a `Recorded(...)` helper, because `MediaMountAccessTests`' file-system regex matches them. No guard list in the arch test changed.
   **Why:** The body name is fixed by the discretion (`{ audioFile: <id> }`). This is the same pitfall #210 and #211 hit.
   **Issue:** #212
+- **Decision:** Each deletion impact (Generation, Version, Song) gains `localAudioFiles {total, handAssociated, songLevel}`, counted by the new `AudioFileLifecycle.CountAsync` from the Song's file list. `total` includes Missing files. `handAssociated` counts files the user associated whose names carry no Suno ID, or whose automatic matching is off (#210), because no scan would associate those again. `songLevel` counts files with no Generation (Song deletion only). The Song impact's existing `audioFileCount` is now the real total. `SongDeletionRules.TitleRequired` does not read it, so audio files do not change which confirmation #102 requires.
+  **Why:** This follows the discretion line on the impact shape. Auto-match-blocked files are counted as hand-associated because a restore would not re-attach them either. Keeping `audioFileCount` avoids changing #102's contract.
+  **Issue:** #213
+- **Decision:** The Song confirmation's "deleted with it" list no longer has a "N local audio files" line. Files are now described by their own lines (absent at zero), shared by the three dialogs through `media/DeletionAudioFiles.tsx` and `deletionAudioFileRules.ts`.
+  **Why:** Rule 1: the old line listed audio files among what is deleted, which is false (invariant 2). The story's component tests ask for the new line to be absent at zero.
+  **Issue:** #213
+- **Decision:** A move needs no `AudioFileLifecycle` call. `GenerationMoveService` is unchanged. #206's composite key `(generation_id, song_id) → generations(id, song_id)` cascades on update, so the Generation's files follow it. Its Preferred Audio File choice is keyed by Generation (#212), so it moves too. The move dialog's files line comes from the Generation's own `audioFiles.count` (#211, Missing files included) and is absent at zero.
+  **Why:** This deviates from the story's key link ("GenerationMoveService → AudioFileLifecycle"). The database already performs the move in the same statement, so a service call would duplicate it. The API test proves the files, the choice, and the Song-level file's place.
+  **Issue:** #213
+- **Decision:** The story text has `PrepareRestore` null a preference column. That is satisfied by #212's design: separate `generation_/song_preferred_audio_files` tables, removed by `ReleaseAsync` on deletion and never retained. There is no restore code for choices.
+  **Why:** This was the orchestrator's instruction. The preference columns the story assumed do not exist.
+  **Issue:** #213
+- **Decision:** `restore-deleted` (`DeletedItemsService`) adds `AudioFileLifecycle.RestoreNote` under "Left out or changed" when the restore put back a Song or a Generation and the library holds any audio file. The note is general and counts no files. A Version group without Generations, and a library with no local files, get no note.
+  **Why:** The AC says the command's output says so. Printing it on every restore in a library without media would be noise, and existing CLI tests expect no "Left out" section for a plain Song restore.
+  **Issue:** #213
+- **Decision:** After a Song restore, files released with `song_deleted` keep that reason (hand-associated and Song-level ones included). After a Generation restore, an ID-less file loses `generation_deleted` at the next scan, as #206's matcher already does whether or not the Generation is restored. `auto_match_blocked` is never cleared by a delete or a restore (#210).
+  **Why:** This deviates from the discretion line "After a restore, a hand-associated file with no Suno ID is plainly unmatched, with no reason". Associations are not retained (planner), so nothing records which Song released a file. Clearing every `song_deleted` would mislabel files of Songs that are still deleted. A column recording the releasing owner would be a schema change the story does not ask for (Rule 4).
+  **Issue:** #213

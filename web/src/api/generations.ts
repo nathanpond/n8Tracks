@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { isArtwork, type Artwork } from './artwork';
 import { apiFetch } from './client';
+import { localAudioFilesOf, type LocalAudioFiles } from './localAudioFiles';
 import {
   failureOf,
   ifMatch,
@@ -484,6 +485,8 @@ export interface GenerationDeletionImpact {
   commentCount: number;
   artworkCount: number;
   sourceVersionCount: number;
+  /** Its local audio files, which stay on disk and become unmatched (#213). */
+  localAudioFiles: LocalAudioFiles;
   revision: number;
 }
 
@@ -501,7 +504,8 @@ function deletionImpactOf(value: unknown): GenerationDeletionImpact | undefined 
     return undefined;
   }
   const replacements = generationsOf({ items: value.replacements });
-  return replacements === undefined
+  const localAudioFiles = localAudioFilesOf(value.localAudioFiles);
+  return replacements === undefined || localAudioFiles === undefined
     ? undefined
     : {
         id: value.id,
@@ -511,6 +515,7 @@ function deletionImpactOf(value: unknown): GenerationDeletionImpact | undefined 
         commentCount: value.commentCount,
         artworkCount: value.artworkCount,
         sourceVersionCount: value.sourceVersionCount,
+        localAudioFiles,
         revision: value.revision,
       };
 }

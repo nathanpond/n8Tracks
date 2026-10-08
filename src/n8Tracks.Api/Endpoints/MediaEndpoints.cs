@@ -432,6 +432,22 @@ internal sealed record MediaScanCountsResponse(
 /// <summary>The scan's job, and whether it was already queued or running.</summary>
 internal sealed record MediaScanStartResponse(Guid JobId, bool AlreadyInProgress);
 
+/// <summary>
+/// The local audio files a deletion leaves unassociated (#213), in each deletion impact as
+/// <c>localAudioFiles</c>: the <c>total</c> (Missing ones included), those associated by hand that no
+/// scan would associate again after a restore (<c>handAssociated</c>), and those associated with the
+/// Song itself (<c>songLevel</c>, a Song deletion only).
+/// </summary>
+internal sealed record LocalAudioFilesResponse(int Total, int HandAssociated, int SongLevel)
+{
+    public static LocalAudioFilesResponse From(LocalAudioFileCounts counts)
+    {
+        ArgumentNullException.ThrowIfNull(counts);
+
+        return new(counts.Total, counts.HandAssociated, counts.SongLevel);
+    }
+}
+
 /// <summary>A Song's audio files, every one (#211).</summary>
 internal sealed record SongAudioFileListResponse(AudioFileResponse[] Items);
 

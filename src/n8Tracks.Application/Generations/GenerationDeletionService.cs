@@ -15,7 +15,12 @@ namespace n8Tracks.Application.Generations;
 /// state), any of which the Song may select instead; empty otherwise, or when it has none.
 /// </param>
 /// <param name="SourceVersionCount">The Versions that use it as a source, which will show it as Deleted.</param>
-public sealed record GenerationDeletionImpact(GenerationSummary Generation, IReadOnlyList<GenerationSummary> Replacements, int SourceVersionCount)
+/// <param name="LocalAudioFiles">Its local audio files, which stay on disk and become unmatched (#213).</param>
+public sealed record GenerationDeletionImpact(
+    GenerationSummary Generation,
+    IReadOnlyList<GenerationSummary> Replacements,
+    int SourceVersionCount,
+    LocalAudioFileCounts LocalAudioFiles)
 {
     /// <summary>Whether it is its Song's Selected Generation, so the user must say what the Song selects instead.</summary>
     public bool IsSelected => Generation.IsSelected;
@@ -125,7 +130,8 @@ public sealed class GenerationDeletionService(
                     ? [.. (await generationRows.ForSongAsync(generation.Generation.SongId, ct).ConfigureAwait(false)).Where(other => other.Generation.Id != generation.Generation.Id)]
                     : [];
                 var sources = await generationRows.SourceVersionCountAsync(generation.Generation.Id, ct).ConfigureAwait(false);
-                return new GenerationDeletionImpactOutcome.Found(new GenerationDeletionImpact(generation, replacements, sources));
+                var localFiles = await audioFiles.CountAsync(generation.Generation.SongId, [generation.Generation.Id], wholeSong: false, ct).ConfigureAwait(false);
+                return new GenerationDeletionImpactOutcome.Found(new GenerationDeletionImpact(generation, replacements, sources, localFiles));
             },
             cancellationToken);
 

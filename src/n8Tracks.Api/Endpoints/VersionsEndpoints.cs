@@ -213,7 +213,12 @@ internal static class VersionsEndpoints
             && await deletions.ImpactAsync(id, cancellationToken) is VersionDeletionImpactOutcome.Found found)
         {
             var impact = found.Impact;
-            return TypedResults.Ok(new VersionDeletionImpactResponse(impact.GenerationCount, impact.RemainingDescendantCount, impact.IsLastVersion, impact.Version.Revision));
+            return TypedResults.Ok(new VersionDeletionImpactResponse(
+                impact.GenerationCount,
+                impact.RemainingDescendantCount,
+                impact.IsLastVersion,
+                LocalAudioFilesResponse.From(impact.LocalAudioFiles),
+                impact.Version.Revision));
         }
 
         return await MissingVersionAsync(context, reference, deletions, cancellationToken);
@@ -1004,7 +1009,12 @@ internal sealed record VersionDetailResponse(
 internal sealed record VersionListResponse(VersionResponse[] Items, string[] DeletedPlaceholders);
 
 /// <summary>What deleting a Version would do, and the revision a delete must send.</summary>
-internal sealed record VersionDeletionImpactResponse(int GenerationCount, int RemainingDescendantCount, bool IsLastVersion, int Revision);
+internal sealed record VersionDeletionImpactResponse(
+    int GenerationCount,
+    int RemainingDescendantCount,
+    bool IsLastVersion,
+    LocalAudioFilesResponse LocalAudioFiles,
+    int Revision);
 
 /// <summary>
 /// A snapshot request: the lyrics and styles as the editor has them (both required) and, optionally,

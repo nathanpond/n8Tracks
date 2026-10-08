@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
+import { NO_LOCAL_AUDIO_FILES } from '../api/localAudioFiles';
 import { deletedSongOf, type SongDeletionImpact } from '../api/songDeletion';
 import { jsonResponse, renderApp } from '../test/helpers';
 import { baseSong } from '../test/songServer';
@@ -51,8 +52,8 @@ describe('deleting a Song', () => {
       '0 Album memberships',
       '0 Playlist memberships',
       '0 relationships',
-      '0 local audio files',
     ]);
+    expect(within(dialog).queryByTestId('deletion-audio-files')).toBeNull();
     expect(within(dialog).queryByRole('textbox')).toBeNull();
     expect(confirmButton(dialog)).toBeEnabled();
 
@@ -186,6 +187,7 @@ describe('the deletion rules the dialog uses', () => {
     playlistCount: 3,
     relationshipCount: 1,
     audioFileCount: 0,
+    localAudioFiles: NO_LOCAL_AUDIO_FILES,
     titleRequired: true,
     revision: 4,
   };
@@ -198,7 +200,6 @@ describe('the deletion rules the dialog uses', () => {
       '0 Album memberships',
       '3 Playlist memberships',
       '1 relationship',
-      '0 local audio files',
     ]);
   });
 

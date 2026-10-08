@@ -19,6 +19,7 @@ import {
 import { useWorkflowStates, type Song } from '../api/songs';
 import { Notice } from '../components/Notice';
 import { titleError } from '../songs/songRules';
+import { movedAudioFilesLine } from '../media/deletionAudioFileRules';
 import { MOVED_WITH_IT, proposedTitle } from './moveRules';
 
 const FAILED_MESSAGE =
@@ -90,6 +91,7 @@ function MoveForm({
   const [busy, setBusy] = useState(false);
   const states = useWorkflowStates();
   const needsChoice = generation.isSelected;
+  const filesMoving = movedAudioFilesLine(generation.audioFiles.count, song.shortcode);
 
   const choice = (): SelectionChoice => {
     if (!needsChoice) {
@@ -163,6 +165,11 @@ function MoveForm({
               <List.Item key={item}>{item}</List.Item>
             ))}
           </List>
+          {filesMoving !== undefined && (
+            <Text size="sm" data-testid="move-audio-files">
+              {filesMoving}
+            </Text>
+          )}
           <Text size="sm">Its shortcode changes; {generation.shortcode} will still find it.</Text>
         </Notice>
         <TextInput

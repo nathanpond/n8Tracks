@@ -1,6 +1,7 @@
 import { resolveAppUrl } from './baseUrl';
 import { apiFetch } from './client';
 import type { OptionValue } from './createFields';
+import { localAudioFilesOf, type LocalAudioFiles } from './localAudioFiles';
 import { ifMatch, patchWithRevision, type FieldValue, type SaveResult } from './saves';
 import { ANTIFORGERY_HEADER } from './session';
 import {
@@ -222,17 +223,31 @@ export interface DeletionImpact {
   remainingDescendantCount: number;
   /** Whether it is the Song's only Version: a new blank one is created. */
   isLastVersion: boolean;
+  /** Its Generations' local audio files, which stay on disk and become unmatched (#213). */
+  localAudioFiles: LocalAudioFiles;
   revision: number;
 }
 
-function isDeletionImpact(value: unknown): value is DeletionImpact {
-  return (
-    isRecord(value) &&
-    typeof value.generationCount === 'number' &&
-    typeof value.remainingDescendantCount === 'number' &&
-    typeof value.isLastVersion === 'boolean' &&
-    typeof value.revision === 'number'
-  );
+function deletionImpactOf(value: unknown): DeletionImpact | undefined {
+  if (
+    !isRecord(value) ||
+    typeof value.generationCount !== 'number' ||
+    typeof value.remainingDescendantCount !== 'number' ||
+    typeof value.isLastVersion !== 'boolean' ||
+    typeof value.revision !== 'number'
+  ) {
+    return undefined;
+  }
+  const localAudioFiles = localAudioFilesOf(value.localAudioFiles);
+  return localAudioFiles === undefined
+    ? undefined
+    : {
+        generationCount: value.generationCount,
+        remainingDescendantCount: value.remainingDescendantCount,
+        isLastVersion: value.isLastVersion,
+        localAudioFiles,
+        revision: value.revision,
+      };
 }
 
 /** How reading a deletion's impact ended. Never a rejection. */
@@ -249,9 +264,9 @@ export async function fetchDeletionImpact(
       `${VERSIONS_PATH}/${encodeURIComponent(versionId)}/deletion-impact`,
       { signal },
     );
-    const answer = await body(response);
-    if (response.ok && isDeletionImpact(answer)) {
-      return { kind: 'found', impact: answer };
+    const impact = response.ok ? deletionImpactOf(await body(response)) : undefined;
+    if (impact !== undefined) {
+      return { kind: 'found', impact };
     }
     return response.status === 404 ? { kind: 'gone' } : { kind: 'failed' };
   } catch {
