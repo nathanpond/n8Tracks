@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { NO_RELEASE, type Song, type SongPage } from '../api/songs';
 import { testArtist } from '../test/artistServer';
 import { testArtwork } from '../test/songServer';
-import { formatDateTime } from '../api/timeZone';
+import { formatDate, formatDateTime } from '../api/timeZone';
 import {
   healthyReport,
   jsonResponse,
@@ -222,7 +222,7 @@ describe('Songs', () => {
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
   });
 
-  it('lists each Song with its shortcode, title, concept, state, kind, Versions, updated time, and whether it has a Selected Generation', async () => {
+  it('lists each Song with its shortcode, title, concept, state, kind, Versions, Genres, created and updated times, workspace, and Selected Generation', async () => {
     const updated = new Date(Date.now() - 5 * 60 * 1000).toISOString();
     backend({
       list: () =>
@@ -232,6 +232,8 @@ describe('Songs', () => {
             song(3, {
               concept: LONG_CONCEPT,
               updatedAt: updated,
+              genres: [FOLK, ROCK],
+              sunoWorkspace: { id: 'ws-1', name: 'Demos', state: 'available' },
               hasSelectedGeneration: true,
               selectedGeneration: {
                 id: '0199b1a0-0000-7000-c000-000000000001',
@@ -271,15 +273,26 @@ describe('Songs', () => {
       'State',
       'Kind',
       'Versions',
+      'Genre',
       'Tags',
+      'Created',
       'Updated ▼',
-      'Selected',
+      'Workspace',
+      'Selected Generation',
       'Audio files',
     ]);
     const first = row('n8-3');
-    // A check mark where the Song has a Selected Generation (said in words to a screen reader).
-    expect(within(first).getByTestId('song-selected')).toHaveTextContent('✓Yes');
-    expect(within(row('n8-2')).getByTestId('song-selected')).toHaveTextContent(/^No$/);
+    // The Selected Generation's shortcode, or "None" (#224).
+    expect(within(first).getByTestId('song-selected')).toHaveTextContent(/^n8-3-v1-g1$/);
+    expect(within(row('n8-2')).getByTestId('song-selected')).toHaveTextContent(/^None$/);
+    expect(within(first).getByTestId('song-genres')).toHaveTextContent(/^Folk, Rock$/);
+    expect(within(row('n8-2')).getByTestId('song-genres')).toHaveTextContent(/^$/);
+    expect(within(first).getByTestId('song-created')).toHaveTextContent(
+      formatDate('2026-10-01T09:00:00Z', 'UTC'),
+    );
+    expect(within(first).getByTestId('song-workspace')).toHaveTextContent(/^Demos$/);
+    // A Song in no workspace shows a dash, read as "None".
+    expect(within(row('n8-2')).getByTestId('song-workspace')).toHaveTextContent(/^—None$/);
     expect(within(first).getByRole('link', { name: 'Running in a Pack' })).toHaveAttribute(
       'href',
       '/songs/n8-3',

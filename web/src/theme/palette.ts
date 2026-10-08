@@ -28,6 +28,8 @@ export interface SchemePalette {
    * warning marks (also underlined, with a marker), so none relies on colour alone.
    */
   lyrics: { tag: string; parenthetical: string; warning: string };
+  /** A search excerpt's matched words (#224): also bold, so the mark does not rely on colour alone. */
+  highlight: ColorPair;
 }
 
 export const palette: Record<'light' | 'dark', SchemePalette> = {
@@ -42,6 +44,7 @@ export const palette: Record<'light' | 'dark', SchemePalette> = {
       unhealthy: { background: '#c92a2a', text: '#ffffff' },
     },
     lyrics: { tag: '#1864ab', parenthetical: '#862e9c', warning: '#8a5a00' },
+    highlight: { background: '#ffec99', text: '#1a1b1e' },
   },
   dark: {
     body: { background: '#1a1b1e', text: '#e9ecef' },
@@ -54,6 +57,7 @@ export const palette: Record<'light' | 'dark', SchemePalette> = {
       unhealthy: { background: '#ffa8a8', text: '#4a0b0b' },
     },
     lyrics: { tag: '#74c0fc', parenthetical: '#e599f7', warning: '#ffd43b' },
+    highlight: { background: '#5c4400', text: '#fff3bf' },
   },
 };
 

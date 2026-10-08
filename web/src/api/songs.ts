@@ -200,6 +200,71 @@ export interface Song {
    * test fixtures may leave it out, and then Play asks the server when pressed.
    */
   playback?: SongPlayability;
+  /**
+   * With a full-text search (#223), the Song's best matches, best first (at most three); absent
+   * otherwise.
+   */
+  matches?: SongMatch[];
+  /** With a full-text search, how many places the Song matched in all; absent otherwise. */
+  matchCount?: number;
+}
+
+/**
+ * What a matched field belongs to (#223): a Version or Generation (by shortcode, `label` such as
+ * `v2.1` or `v2.1-g3`), or an Album or Playlist (by ID, `label` its title). `state` marks text in
+ * an archived Version, or an archived or trashed Generation.
+ */
+export interface SongMatchOwner {
+  kind: 'version' | 'generation' | 'album' | 'playlist';
+  reference: string;
+  label: string;
+  state: 'active' | 'archived' | 'trashed';
+}
+
+/** A matched word: where it starts in the excerpt's text, and how long it is (UTF-16 code units). */
+export interface SongMatchHighlight {
+  start: number;
+  length: number;
+}
+
+/**
+ * One place a searched Song matched (#223): the field (`lyrics`, `title`, …), what it belongs to
+ * (null for the Song's own text and its Tags), and an excerpt with the matched words as offsets.
+ */
+export interface SongMatch {
+  field: string;
+  owner: SongMatchOwner | null;
+  excerpt: { text: string; highlights: SongMatchHighlight[] };
+}
+
+function isSongMatchOwner(value: unknown): value is SongMatchOwner {
+  return (
+    isRecord(value) &&
+    (value.kind === 'version' ||
+      value.kind === 'generation' ||
+      value.kind === 'album' ||
+      value.kind === 'playlist') &&
+    typeof value.reference === 'string' &&
+    typeof value.label === 'string' &&
+    (value.state === 'active' || value.state === 'archived' || value.state === 'trashed')
+  );
+}
+
+export function isSongMatch(value: unknown): value is SongMatch {
+  return (
+    isRecord(value) &&
+    typeof value.field === 'string' &&
+    (value.owner === null || isSongMatchOwner(value.owner)) &&
+    isRecord(value.excerpt) &&
+    typeof value.excerpt.text === 'string' &&
+    Array.isArray(value.excerpt.highlights) &&
+    value.excerpt.highlights.every(
+      (highlight) =>
+        isRecord(highlight) &&
+        typeof highlight.start === 'number' &&
+        typeof highlight.length === 'number',
+    )
+  );
 }
 
 /**
@@ -264,6 +329,8 @@ export interface SongPage {
   page: number;
   pageSize: number;
   total: number;
+  /** With a full-text search, whether the index is being rebuilt (results may be missing); absent otherwise. */
+  indexRebuilding?: boolean;
 }
 
 export interface WorkflowState {
@@ -276,7 +343,11 @@ export interface WorkflowState {
   songCount?: number;
 }
 
-export type SongSort = 'updated' | 'title' | 'audioFiles';
+/**
+ * How the table is sorted. `relevance` is the order of a full-text search, best first: the list's
+ * default while searching, never sent (the API orders by relevance when `sort` is left out).
+ */
+export type SongSort = 'updated' | 'title' | 'audioFiles' | 'relevance';
 export type SortDirection = 'asc' | 'desc';
 
 /** What the Songs table shows: the list's own query parameters. */
@@ -295,7 +366,26 @@ export interface SongQuery {
    * out (undefined) for every title; never blank.
    */
   title?: string;
+  /**
+   * Full-text search text (#224), as typed and cut to {@link SEARCH_MAXIMUM_LENGTH}: Songs matching
+   * every word, each with where it matched. Left out (undefined) for no search; never blank.
+   */
+  search?: string;
   page: number;
+}
+
+/** The longest search text the page sends: the API reads no more. */
+export const SEARCH_MAXIMUM_LENGTH = 200;
+
+/** `text` cut to {@link SEARCH_MAXIMUM_LENGTH}; undefined when nothing but white space is left. */
+export function searchTextOf(text: string): string | undefined {
+  const cut = text.slice(0, SEARCH_MAXIMUM_LENGTH);
+  return cut.trim() === '' ? undefined : cut;
+}
+
+/** The sort a table shows when none was chosen: relevance while searching, otherwise last update. */
+export function defaultSort(query: Pick<SongQuery, 'search'>): SongSort {
+  return query.search === undefined ? 'updated' : 'relevance';
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -409,7 +499,10 @@ export function isSong(value: unknown): value is Song {
     (value.selectedGeneration === null || isSelectedGeneration(value.selectedGeneration)) &&
     (value.sunoWorkspace === null || isSongWorkspace(value.sunoWorkspace)) &&
     (value.audioFileCount === undefined || typeof value.audioFileCount === 'number') &&
-    (value.playback === undefined || isSongPlayability(value.playback))
+    (value.playback === undefined || isSongPlayability(value.playback)) &&
+    (value.matches === undefined ||
+      (Array.isArray(value.matches) && value.matches.every(isSongMatch))) &&
+    (value.matchCount === undefined || typeof value.matchCount === 'number')
   );
 }
 
@@ -434,7 +527,8 @@ export function isSongPage(value: unknown): value is SongPage {
     value.items.every(isSong) &&
     typeof value.page === 'number' &&
     typeof value.pageSize === 'number' &&
-    typeof value.total === 'number'
+    typeof value.total === 'number' &&
+    (value.indexRebuilding === undefined || typeof value.indexRebuilding === 'boolean')
   );
 }
 
@@ -470,10 +564,15 @@ export async function body(response: Response): Promise<unknown> {
 /** The list's query string for `query`; values that are the API's defaults are left out. */
 export function songListParameters(query: SongQuery): URLSearchParams {
   const parameters = new URLSearchParams();
-  if (query.sort !== 'updated') {
-    parameters.set('sort', query.sort);
+  // Relevance is the API's order for a search when no sort is sent, and is never sent itself.
+  const sort = query.sort === 'relevance' && query.search === undefined ? 'updated' : query.sort;
+  if (query.search !== undefined) {
+    parameters.set('search', query.search);
   }
-  if (query.direction !== defaultDirection(query.sort)) {
+  if (sort !== defaultSort(query) && sort !== 'relevance') {
+    parameters.set('sort', sort);
+  }
+  if (query.direction !== defaultDirection(sort)) {
     parameters.set('direction', query.direction);
   }
   for (const state of query.states) {
@@ -497,11 +596,15 @@ export function songListParameters(query: SongQuery): URLSearchParams {
   return parameters;
 }
 
-/** The direction a sort starts in: newest first by updated time, A to Z by title, most audio files first. */
+/**
+ * The direction a sort starts in: newest first by updated time, A to Z by title, most audio files
+ * first, best first by relevance.
+ */
 export function defaultDirection(sort: SongSort): SortDirection {
   return sort === 'title' ? 'asc' : 'desc';
 }
 
+/** The sorts an address may name: relevance is never named, only implied by a search. */
 const SONG_SORTS: readonly SongSort[] = ['updated', 'title', 'audioFiles'];
 
 /**
@@ -509,10 +612,11 @@ const SONG_SORTS: readonly SongSort[] = ['updated', 'title', 'audioFiles'];
  * its default, so a hand-edited URL still shows a table.
  */
 export function songQueryFrom(parameters: URLSearchParams): SongQuery {
+  const search = searchTextOf(parameters.get('search') ?? '');
   const sortText = parameters.get('sort');
   const sort: SongSort = SONG_SORTS.includes(sortText as SongSort)
     ? (sortText as SongSort)
-    : 'updated';
+    : defaultSort({ search });
   const direction = parameters.get('direction');
   const page = Number(parameters.get('page') ?? '1');
   // A blank title would be refused, so it means no title filter.
@@ -525,6 +629,7 @@ export function songQueryFrom(parameters: URLSearchParams): SongQuery {
     tags: [...new Set(parameters.getAll('tag'))],
     artists: [...new Set(parameters.getAll('artist'))],
     ...(title.trim() === '' ? {} : { title }),
+    ...(search === undefined ? {} : { search }),
     page: Number.isSafeInteger(page) && page >= 1 ? page : 1,
   };
 }
@@ -655,6 +760,36 @@ export async function searchSongs(
     const answer = await body(response);
     return response.ok && isSongPage(answer)
       ? { songs: answer.items, total: answer.total }
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The most matches {@link readSongMatches} answers. */
+export const SONG_MATCHES_LIMIT = 50;
+
+/**
+ * Every place the Song `reference` matched the search `search` (#224), best first: at most
+ * {@link SONG_MATCHES_LIMIT}, and how many there are in all; undefined when they cannot be read.
+ */
+export async function readSongMatches(
+  reference: string,
+  search: string,
+  signal?: AbortSignal,
+): Promise<{ matches: SongMatch[]; matchCount: number } | undefined> {
+  try {
+    const response = await apiFetch(
+      `${SONGS_PATH}/${encodeURIComponent(reference)}/matches?${new URLSearchParams({ search }).toString()}`,
+      { signal },
+    );
+    const answer = await body(response);
+    return response.ok &&
+      isRecord(answer) &&
+      Array.isArray(answer.matches) &&
+      answer.matches.every(isSongMatch) &&
+      typeof answer.matchCount === 'number'
+      ? { matches: answer.matches, matchCount: answer.matchCount }
       : undefined;
   } catch {
     return undefined;

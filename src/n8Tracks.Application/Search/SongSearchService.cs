@@ -87,6 +87,9 @@ public sealed class SongSearchService(ISearchIndex index, IExclusiveTransaction 
     /// <summary>The longest excerpt.</summary>
     public const int ExcerptLength = 160;
 
+    /// <summary>The most matches one Song's full list of matches answers (#224's "n more").</summary>
+    public const int MatchesListLimit = 50;
+
     /// <summary>The terms of <paramref name="query"/>; empty when it has none worth searching for.</summary>
     public static IReadOnlyList<SearchTerm> Parse(string? query)
     {
@@ -151,7 +154,23 @@ public sealed class SongSearchService(ISearchIndex index, IExclusiveTransaction 
     /// null when the query has no term (the list is then not filtered). Changes a write left for the
     /// index without committing through the unit of work are indexed first, so nothing just saved is missed.
     /// </summary>
-    public async Task<SongSearchResult?> SearchAsync(string? query, CancellationToken cancellationToken)
+    public Task<SongSearchResult?> SearchAsync(string? query, CancellationToken cancellationToken) =>
+        SearchAsync(query, MatchesPerSong, cancellationToken);
+
+    /// <summary>
+    /// Where the Song <paramref name="songId"/> matched every term of <paramref name="query"/> (#224): its
+    /// best matches, best first, at most <see cref="MatchesListLimit"/>, and how many there are; no
+    /// match when it does not match the query. Null when the query has no term.
+    /// </summary>
+    public async Task<SongMatches?> MatchesOfAsync(Guid songId, string? query, CancellationToken cancellationToken)
+    {
+        var result = await SearchAsync(query, MatchesListLimit, cancellationToken).ConfigureAwait(false);
+        return result is null
+            ? null
+            : result.Matches.TryGetValue(songId, out var matches) ? matches : new SongMatches([], 0);
+    }
+
+    private async Task<SongSearchResult?> SearchAsync(string? query, int matchesPerSong, CancellationToken cancellationToken)
     {
         var terms = Parse(query);
         if (terms.Count == 0)
@@ -169,11 +188,14 @@ public sealed class SongSearchService(ISearchIndex index, IExclusiveTransaction 
             [.. terms.Select(static term => term.Expression)],
             string.Join(" OR ", terms.Select(static term => term.Expression)),
             cancellationToken).ConfigureAwait(false);
-        return Rank(terms, answer);
+        return Rank(terms, answer, matchesPerSong);
     }
 
-    /// <summary>The ranking and excerpts of <paramref name="answer"/>, the index's answer to <paramref name="terms"/>.</summary>
-    public static SongSearchResult Rank(IReadOnlyList<SearchTerm> terms, SearchIndexAnswer answer)
+    /// <summary>
+    /// The ranking and excerpts of <paramref name="answer"/>, the index's answer to <paramref name="terms"/>,
+    /// listing each Song's best <paramref name="matchesPerSong"/> matches.
+    /// </summary>
+    public static SongSearchResult Rank(IReadOnlyList<SearchTerm> terms, SearchIndexAnswer answer, int matchesPerSong = MatchesPerSong)
     {
         ArgumentNullException.ThrowIfNull(terms);
         ArgumentNullException.ThrowIfNull(answer);
@@ -203,7 +225,7 @@ public sealed class SongSearchService(ISearchIndex index, IExclusiveTransaction 
         var matches = ordered.ToDictionary(
             static id => id,
             id => rows.TryGetValue(id, out var found)
-                ? new SongMatches([.. found.Take(MatchesPerSong).Select(static row => new SearchMatch(row.Field, row.Owner, Excerpt(row.Marked)))], found.Count)
+                ? new SongMatches([.. found.Take(matchesPerSong).Select(static row => new SearchMatch(row.Field, row.Owner, Excerpt(row.Marked)))], found.Count)
                 : new SongMatches([], 0));
         return new SongSearchResult(ordered, matches);
     }

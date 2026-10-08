@@ -160,14 +160,20 @@ test.describe('Ignored Suno items', () => {
       await expect(
         page.getByRole('heading', { level: 2, name: 'Ignored Suno items' }),
       ).toBeVisible();
-      await page.getByRole('textbox', { name: /Search/ }).fill(stamp);
+      await page
+        .getByRole('main')
+        .getByRole('textbox', { name: /Search/ })
+        .fill(stamp);
       await page.getByRole('button', { name: 'Search', exact: true }).click();
       await expect(listRow(page, first)).toBeVisible();
       await expect(listRow(page, second)).toBeVisible();
       await expect(listRow(page, first)).toContainText(workspace);
       await expect(listRow(page, first).getByTestId('item-status')).toHaveText('Present');
       await expectAccessibleInLightAndDark(page);
-      await page.getByRole('textbox', { name: /Search/ }).fill(first);
+      await page
+        .getByRole('main')
+        .getByRole('textbox', { name: /Search/ })
+        .fill(first);
       await page.getByRole('button', { name: 'Search', exact: true }).click();
       await expect(page).toHaveURL(/[?&]q=/);
       await expect(listRow(page, second)).toHaveCount(0);

@@ -23,6 +23,7 @@ internal static class SongsEndpoints
     public const string SongsPath = ApiProblem.VersionPrefix + "/songs";
     public const string SongPath = SongsPath + "/{reference}";
     public const string CreditsPath = SongPath + "/credits";
+    public const string MatchesPath = SongPath + "/matches";
 
     public const string DuplicateIsrcWarning = "duplicate_isrc";
 
@@ -53,6 +54,16 @@ internal static class SongsEndpoints
             .WithSummary("One Song, by its ID or its shortcode (n8-12) in any letter case. A Song deleted within the last 30 days is 404 song_deleted.")
             .RequireScope(CredentialScopes.CatalogRead)
             .Produces<SongResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        endpoints.MapGet(MatchesPath, MatchesAsync)
+            .WithName("ListSongMatches")
+            .WithSummary("Where one Song (by its ID or shortcode) matched a full-text search (search, as the list reads it): its best matches, best first, at most 50, each with field, owner, and excerpt as the list's matches, and matchCount, how many there are. No match when the Song does not match or the text has no word to search for. search is required, once.")
+            .RequireScope(CredentialScopes.CatalogRead)
+            .Produces<SongMatchListResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
@@ -193,6 +204,40 @@ internal static class SongsEndpoints
 
         Revisions.SetETag(context, song.Revision);
         return TypedResults.Ok(SongResponse.From(song, context.Request.PathBase));
+    }
+
+    /// <summary>
+    /// 200 with where the Song matched the search (#224), best first; 400 <c>invalid_request</c> when
+    /// <c>search</c> is missing or repeated; 404 (<c>song_deleted</c> when it was deleted) when there is
+    /// no such Song.
+    /// </summary>
+    private static async Task<Results<Ok<SongMatchListResponse>, ProblemHttpResult>> MatchesAsync(
+        CatalogReference reference,
+        SongService songs,
+        SongSearchService search,
+        SongDeletionService deletions,
+        HttpContext context,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        var text = Single(context.Request.Query, SongService.SearchParameter, out var repeated);
+        if (text is null || repeated)
+        {
+            return ApiProblem.For(
+                context,
+                StatusCodes.Status400BadRequest,
+                ApiProblem.InvalidRequestCode,
+                $"Send {SongService.SearchParameter} once: the text searched for.");
+        }
+
+        if (await songs.FindAsync(reference.Text, cancellationToken) is not { } song)
+        {
+            return await SongDeletionEndpoints.MissingSongAsync(context, reference, deletions, cancellationToken);
+        }
+
+        var matches = await search.MatchesOfAsync(song.Id, text, cancellationToken) ?? new SongMatches([], 0);
+        return TypedResults.Ok(new SongMatchListResponse([.. matches.Best.Select(SongMatchResponse.From)], matches.Count));
     }
 
     /// <summary>
@@ -802,6 +847,9 @@ internal sealed record SongMatchResponse(string Field, SongMatchOwnerResponse? O
             new SongMatchExcerptResponse(match.Excerpt.Text, [.. match.Excerpt.Highlights.Select(static highlight => new SongMatchHighlightResponse(highlight.Start, highlight.Length))]));
     }
 }
+
+/// <summary>Where one searched Song matched (#224): its best matches, best first (at most 50), and how many there are.</summary>
+internal sealed record SongMatchListResponse(SongMatchResponse[] Matches, int MatchCount);
 
 /// <summary>What a match belongs to: <c>kind</c> is version, generation, album, or playlist; <c>state</c> is active, archived, or trashed.</summary>
 internal sealed record SongMatchOwnerResponse(string Kind, string Reference, string Label, string State);

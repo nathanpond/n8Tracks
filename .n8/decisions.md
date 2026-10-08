@@ -4582,3 +4582,46 @@ Story #237 (built in parallel; merged into the milestone branch):
 - **Decision:** The `--healthcheck` AC is tested by chaining: the test host's `/health` answers 503 for `stopped` and 200 for `stalled`, and the command exits 1/0 against a stub answering those codes.
   **Why:** `Program.RunAsync` (the real process) cannot have its worker faulted or its claims held; the command depends only on the status code.
   **Issue:** #237
+
+Story #224:
+
+- **Decision:** #224 adds `GET /api/v1/songs/{reference}/matches?search=` (`catalog.read`), which answers `{matches, matchCount}` with up to 50 matches, best first. It is served by `SongSearchService.MatchesOfAsync`, which runs the whole search with a limit of 50 per Song and keeps that Song's matches. `Rank` takes the limit as an optional parameter.
+  - A missing or repeated `search` is 400 `invalid_request`.
+  - Text with no searchable word, or a Song that does not match, answers `{"matches":[],"matchCount":0}`. An unknown Song is 404, and a deleted one is `song_deleted`.
+  - The route is listed in the scope and reference guards.
+  **Why:** The discretion line expands "n more" by fetching this route, but #223 did not add it. It is a read-only addition and changes no existing contract. Running the whole search costs the same as the list request that came before it, and ranking stays in one place.
+  **Issue:** #224
+- **Decision:** The table moved from `SongsPage.tsx` into a new `web/src/songs/SongsTable.tsx` (`SongsTable`, `FromSongs`). `SongsPage` keeps the address state, the filters, the search box, and the empty and total texts.
+  - Columns, in order: Play, Shortcode, Title, Artist, Concept, State, Kind, Versions, Genre, Tags, Created, Updated, Workspace, Selected Generation, Audio files. The first seven cell positions are unchanged.
+  - Genre lists every Genre, comma-separated. Created is the date in the configured time zone.
+  - Workspace shows the name, or a dash read aloud as "None". Selected Generation shows the shortcode, or "None"; it replaces #120's check column and keeps the `song-selected` testid.
+  - Tags and Workspace are hidden below Mantine's `md` breakpoint.
+  **Why:** The must-have names `SongsTable.tsx`, and the discretion lines name these columns and say which ones narrow screens hide first.
+  **Issue:** #224
+- **Decision:** The web `SongSort` gained `relevance`.
+  - Relevance is the default while searching and is never sent: the API orders by relevance when `sort` is absent, and an address with `sort=relevance` reads as the plain default.
+  - Starting or changing a search moves a sort that was left at its default to the new default. A sort the user chose is kept.
+  - Clearing the search goes back to newest-updated first. "Clear the search and filters" resets the whole view.
+  **Why:** This is the "ordinary order" in the AC, and it means a chosen title sort still applies to results.
+  **Issue:** #224
+- **Decision:** History works as follows.
+  - Typing in the table's box replaces the current entry 300 ms after the last key. Enter adds an entry only when the text differs from the address, so pressing Enter after the debounce has fired does not create a duplicate entry.
+  - The box ignores the arrival of a search it sent itself. That prevents a race where typing done during the debounced navigation was overwritten by the older address (component test).
+  - The header box searches on Enter only and navigates to `/songs?search=…` with nothing else in the address.
+  **Why:** These follow the discretion lines. The race was found by the address round-trip test.
+  **Issue:** #224
+- **Decision:** The header box (`web/src/search/HeaderSearch.tsx`) is a `role="search"` landmark named "Search", holding a plain text box named "Search Songs", not `type="search"`. On the Songs page it shows the active search.
+  - `/` and Ctrl+K or ⌘K focus the table's box on the Songs page and the header box elsewhere. Below `sm`, where the header box is hidden, they open the icon's popover.
+  - The shortcut is ignored with Alt, with Ctrl or ⌘ on `/`, with Shift on K, and while focus is in a field or the editor. That check reuses #220's `isTypingTarget`.
+  - The header now has a second text box whose name contains "Search", so `IgnoredItemsPage.test.tsx` and `ignored-items.spec.ts` look up their own box within `main`.
+  **Why:** A `searchbox` role on every page would have collided with the pages' own search boxes, which several tests look up by role.
+  **Issue:** #224
+- **Decision:** Highlighted words are `<mark>` elements that are bold and use a new palette pair, `highlight` (light: `#ffec99` on `#1a1b1e`; dark: `#5c4400` behind `#fff3bf`). Contrast is tested in `palette.test.ts`. After each excerpt, visually hidden text reads "(matched: “word”, …)".
+  - Archived text in a match row is marked "(Archived)", and a trashed Generation's text "(In Suno’s Trash)".
+  - An archived Song is marked by its State cell, which shows the Archived workflow state.
+  - Album and Playlist matches, like the Song's own fields, show the field name alone and open the Song.
+  **Why:** Highlighting must not rely on colour alone, and screen readers announce `<mark>` inconsistently. The AC defines where only Version and Generation matches open.
+  **Issue:** #224
+- **Decision:** When a search finds nothing, the page says "No Songs match “…”" (adding "with the chosen filters" when filters are set) and offers "Clear the search", plus "Clear the search and filters" when filters are set. A page whose `indexRebuilding` is true shows a one-line note. The total reads "N Songs match “…”" as a polite status.
+  **Why:** These meet the AC's empty state and total. #225 adds its new filters to `filtered` and to `clearAll`.
+  **Issue:** #224

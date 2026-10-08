@@ -61,6 +61,13 @@ describe.each(['light', 'dark'] as const)('the %s scheme', (schemeName) => {
     },
   );
 
+  it('has readable highlighted search words that differ from the page', () => {
+    expect(
+      contrastRatio(scheme.highlight.text, scheme.highlight.background),
+    ).toBeGreaterThanOrEqual(TEXT);
+    expect(scheme.highlight.background).not.toBe(scheme.body.background);
+  });
+
   it.each(knownStatuses)('has a readable %s badge that stands out from the page', (status) => {
     const badge = scheme.status[status];
 
@@ -88,6 +95,8 @@ describe.each(['light', 'dark'] as const)('the %s scheme', (schemeName) => {
     expect(variables['--mantine-color-error']).toBe(scheme.errorText);
     expect(variables['--n8-notice-background']).toBe(scheme.notice.background);
     expect(variables['--n8-notice-text']).toBe(scheme.notice.text);
+    expect(variables['--n8-highlight-background']).toBe(scheme.highlight.background);
+    expect(variables['--n8-highlight-text']).toBe(scheme.highlight.text);
     for (const status of knownStatuses) {
       expect(variables[`--n8-status-${status}-background`]).toBe(scheme.status[status].background);
       expect(variables[`--n8-status-${status}-text`]).toBe(scheme.status[status].text);

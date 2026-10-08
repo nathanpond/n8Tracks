@@ -29,6 +29,36 @@ describe('the Songs view in the URL', () => {
     expect(songListParameters(songQueryFrom(new URLSearchParams(search))).toString()).toBe(search);
   });
 
+  it('reads and writes a search, ordered by relevance unless a sort is chosen', () => {
+    const searched = songQueryFrom(new URLSearchParams('search=lantern+song&page=2'));
+
+    expect(searched).toEqual({
+      sort: 'relevance',
+      direction: 'desc',
+      states: [],
+      genres: [],
+      tags: [],
+      artists: [],
+      search: 'lantern song',
+      page: 2,
+    });
+    // Relevance is never sent: the API orders a search by it when no sort is given.
+    expect(songListParameters(searched).toString()).toBe('search=lantern+song&page=2');
+    const sorted = 'search=lantern&sort=updated&direction=asc';
+    expect(songListParameters(songQueryFrom(new URLSearchParams(sorted))).toString()).toBe(sorted);
+    expect(songQueryFrom(new URLSearchParams('search=lantern&sort=updated')).sort).toBe('updated');
+    // An address cannot ask for relevance, and without a search there is none.
+    expect(songQueryFrom(new URLSearchParams('sort=relevance')).sort).toBe('updated');
+    expect(songListParameters({ ...searched, search: undefined }).toString()).toBe('page=2');
+  });
+
+  it('reads a blank search as none, and cuts a long one to 200 characters', () => {
+    expect(songQueryFrom(new URLSearchParams('search=++')).search).toBeUndefined();
+    expect(songQueryFrom(new URLSearchParams(`search=${'b'.repeat(300)}`)).search).toBe(
+      'b'.repeat(200),
+    );
+  });
+
   it('starts a title sort A to Z', () => {
     expect(songQueryFrom(new URLSearchParams('sort=title')).direction).toBe('asc');
   });

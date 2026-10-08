@@ -48,6 +48,8 @@ function schemeVariables(
     '--n8-lyrics-tag': scheme.lyrics.tag,
     '--n8-lyrics-parenthetical': scheme.lyrics.parenthetical,
     '--n8-lyrics-warning': scheme.lyrics.warning,
+    '--n8-highlight-background': scheme.highlight.background,
+    '--n8-highlight-text': scheme.highlight.text,
   };
 
   for (const status of knownStatuses) {

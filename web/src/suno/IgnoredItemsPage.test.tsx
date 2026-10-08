@@ -144,7 +144,10 @@ describe('the Ignored Suno Items screen', () => {
     const { router } = await openList();
     await screen.findByRole('table', { name: 'Ignored Suno items' });
 
-    await user.type(screen.getByRole('textbox', { name: /Search/ }), 'morning');
+    await user.type(
+      within(screen.getByRole('main')).getByRole('textbox', { name: /Search/ }),
+      'morning',
+    );
     await user.click(screen.getByRole('button', { name: 'Search' }));
     await waitFor(() => {
       expect(router.state.location.search).toBe('?q=morning');
@@ -154,7 +157,7 @@ describe('the Ignored Suno Items screen', () => {
     });
     expect(row('a1')).toBeVisible();
 
-    await user.clear(screen.getByRole('textbox', { name: /Search/ }));
+    await user.clear(within(screen.getByRole('main')).getByRole('textbox', { name: /Search/ }));
     await user.click(screen.getByRole('button', { name: 'Search' }));
     await user.selectOptions(screen.getByRole('combobox', { name: 'Workspace' }), 'Demos');
     await waitFor(() => {
@@ -189,7 +192,9 @@ describe('the Ignored Suno Items screen', () => {
     await waitFor(() => {
       expect(document.querySelectorAll('tr[data-item]')).toHaveLength(1);
     });
-    expect(screen.getByRole('textbox', { name: /Search/ })).toHaveValue('morning');
+    expect(within(screen.getByRole('main')).getByRole('textbox', { name: /Search/ })).toHaveValue(
+      'morning',
+    );
     expect(screen.getByRole('combobox', { name: 'Suno status' })).toHaveValue('present');
     expect(server.queries[0]).toBe('?q=morning&status=present');
   });

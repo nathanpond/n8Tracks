@@ -1,5 +1,4 @@
 import {
-  Anchor,
   Button,
   Chip,
   CloseButton,
@@ -9,25 +8,24 @@ import {
   Pagination,
   Paper,
   Stack,
-  Table,
   Text,
+  TextInput,
   Title,
-  UnstyledButton,
-  VisuallyHidden,
 } from '@mantine/core';
-import { useState } from 'react';
+import { useEffect, useRef, useState, type SyntheticEvent } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
 import { useGenres, type Genre } from '../api/genres';
 import {
   defaultDirection,
-  kindLabel,
+  defaultSort,
   NO_GENRE,
   NO_TAG,
+  SEARCH_MAXIMUM_LENGTH,
+  searchTextOf,
   songListParameters,
   songQueryFrom,
   useSongs,
   useWorkflowStates,
-  type Song,
   type SongQuery,
   type SongSort,
   type WorkflowState,
@@ -35,24 +33,20 @@ import {
 import { useTags, type Tag } from '../api/tags';
 import { useConfiguredTimeZone } from '../api/timeZone';
 import { statesForFilter } from '../api/workflow';
-import { ArtworkImage } from '../common/ArtworkImage';
 import { Notice } from '../components/Notice';
+import { SONGS_SEARCH_ID } from '../search/searchRules';
 import { ArtistFilter } from './ArtistFilter';
 import { NewSongDialog } from './NewSongDialog';
 import { paletteColour } from '../theme/palette';
-import { RelativeTime, StateBadge, TagLabels, TruncatedConcept } from './SongParts';
-import { SongPlayButton } from '../player/SongPlayButton';
+import { SongsTable, type FromSongs } from './SongsTable';
 
-/** How many Tags a row of the table shows before "+N". */
-const TAGS_PER_ROW = 3;
+export type { FromSongs } from './SongsTable';
 
 const FAILED_MESSAGE =
   'n8Tracks did not answer as expected. Check that it is running and try again.';
 
-/** What a Song page is told about the list it was opened from, so it can link back to that view. */
-export interface FromSongs {
-  songsSearch: string;
-}
+/** How long the table's search box waits after the last key before it searches. */
+export const SEARCH_DEBOUNCE_MS = 300;
 
 /** What a page hands the Songs table to tell the user: the Song just deleted. */
 export interface SongsNotice {
@@ -99,36 +93,6 @@ const PAGE_CONTROL_LABELS: Record<'first' | 'previous' | 'next' | 'last', string
   next: 'Next page',
   last: 'Last page',
 };
-
-/** A column header that sorts the table by it: once in its starting direction, again reversed. */
-function SortHeader({
-  label,
-  sort,
-  query,
-  onSort,
-}: {
-  label: string;
-  sort: SongSort;
-  query: SongQuery;
-  onSort: (sort: SongSort) => void;
-}) {
-  const active = query.sort === sort;
-  const ascending = query.direction === 'asc';
-  return (
-    <Table.Th scope="col" aria-sort={active ? (ascending ? 'ascending' : 'descending') : undefined}>
-      <UnstyledButton
-        fw={700}
-        fz="sm"
-        onClick={() => {
-          onSort(sort);
-        }}
-      >
-        {label}
-        <span aria-hidden="true">{active ? (ascending ? ' ▲' : ' ▼') : ''}</span>
-      </UnstyledButton>
-    </Table.Th>
-  );
-}
 
 /** The state filter: any number of states, none meaning every state. */
 function StateFilter({
@@ -257,6 +221,91 @@ function TagFilter({
   );
 }
 
+/**
+ * The table's own search box (#224): it searches 300 ms after typing stops (replacing the current
+ * history entry) and on Enter (adding one); clearing it ends the search. It follows the address, so a
+ * header search or a step back shows here.
+ */
+function SongsSearch({
+  active,
+  onSearch,
+}: {
+  active: string | undefined;
+  onSearch: (text: string, push: boolean) => void;
+}) {
+  const [text, setText] = useState(active ?? '');
+  const [mirrored, setMirrored] = useState(active);
+  // What this box last sent: its arrival in the address must not undo typing done since.
+  const [sent, setSent] = useState<{ search: string | undefined } | null>(null);
+  const timer = useRef<number | undefined>(undefined);
+
+  if (active !== mirrored) {
+    setMirrored(active);
+    if (sent !== null && sent.search === active) {
+      setSent(null);
+    } else if (searchTextOf(text) !== active) {
+      setText(active ?? '');
+    }
+  }
+
+  const send = (next: string, push: boolean) => {
+    setSent({ search: searchTextOf(next) });
+    onSearch(next, push);
+  };
+
+  const cancel = () => {
+    window.clearTimeout(timer.current);
+    timer.current = undefined;
+  };
+  useEffect(() => cancel, []);
+
+  const type = (next: string) => {
+    setText(next);
+    cancel();
+    timer.current = window.setTimeout(() => {
+      timer.current = undefined;
+      send(next, false);
+    }, SEARCH_DEBOUNCE_MS);
+  };
+  const submit = (event: SyntheticEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    cancel();
+    send(text, true);
+  };
+
+  return (
+    <form role="search" aria-label="Songs table search" onSubmit={submit}>
+      <TextInput
+        id={SONGS_SEARCH_ID}
+        type="search"
+        label="Search"
+        description="Words in any of a Song's text; “quoted phrases” in order."
+        placeholder="Lyrics, styles, titles, shortcodes…"
+        value={text}
+        maxLength={SEARCH_MAXIMUM_LENGTH}
+        onChange={(event) => {
+          type(event.currentTarget.value);
+        }}
+        spellCheck={false}
+        autoComplete="off"
+        maw={520}
+        rightSection={
+          text === '' ? undefined : (
+            <CloseButton
+              aria-label="Clear the search text"
+              onClick={() => {
+                cancel();
+                setText('');
+                send('', true);
+              }}
+            />
+          )
+        }
+      />
+    </form>
+  );
+}
+
 /** The title filter, set from a Song page's "same title" list: shown, and cleared with a button. */
 function TitleFilter({ title, onClear }: { title: string; onClear: () => void }) {
   return (
@@ -271,63 +320,16 @@ function TitleFilter({ title, onClear }: { title: string; onClear: () => void })
   );
 }
 
-function SongRow({ song, timeZone, from }: { song: Song; timeZone: string; from: FromSongs }) {
-  return (
-    <Table.Tr data-song={song.shortcode}>
-      <Table.Td>
-        <SongPlayButton song={song} />
-      </Table.Td>
-      <Table.Th scope="row" style={{ whiteSpace: 'nowrap' }}>
-        {song.shortcode}
-      </Table.Th>
-      <Table.Td>
-        <Group gap="sm" wrap="nowrap">
-          <ArtworkImage artwork={song.artwork} title={song.title} size="96" pixels={40} />
-          <Anchor component={Link} to={`/songs/${song.shortcode}`} state={from}>
-            {song.title}
-          </Anchor>
-        </Group>
-      </Table.Td>
-      <Table.Td style={{ maxWidth: 200 }}>{song.credits.primary?.name}</Table.Td>
-      <Table.Td style={{ maxWidth: 260 }}>
-        {song.concept !== null && <TruncatedConcept concept={song.concept} />}
-      </Table.Td>
-      <Table.Td>
-        <StateBadge name={song.state.name} colour={song.state.colour} />
-      </Table.Td>
-      <Table.Td>{kindLabel(song.currentVersion.kind)}</Table.Td>
-      <Table.Td ta="end">{song.versionCount}</Table.Td>
-      <Table.Td style={{ maxWidth: 240 }}>
-        {song.tags.length > 0 && <TagLabels tags={song.tags} limit={TAGS_PER_ROW} />}
-      </Table.Td>
-      <Table.Td style={{ whiteSpace: 'nowrap' }}>
-        <RelativeTime utc={song.updatedAt} timeZone={timeZone} />
-      </Table.Td>
-      <Table.Td ta="center" data-testid="song-selected">
-        {song.hasSelectedGeneration ? (
-          <>
-            <span aria-hidden="true">✓</span>
-            <VisuallyHidden>Yes</VisuallyHidden>
-          </>
-        ) : (
-          <VisuallyHidden>No</VisuallyHidden>
-        )}
-      </Table.Td>
-      <Table.Td ta="end" data-testid="song-audio-file-count">
-        {song.audioFileCount === undefined || song.audioFileCount === 0 ? '' : song.audioFileCount}
-      </Table.Td>
-    </Table.Tr>
-  );
-}
-
 /**
- * Songs: every Song in a table, newest first, sortable by title, by last update, and (#211) by
+ * Songs: every Song in a table ({@link SongsTable}), newest first, sortable by title, by last update, and (#211) by
  * how many local audio files it has (the last column, blank for none), filtered by
  * workflow state, by Genre, by Tag, by Artist (primary or featured), and by title (ignoring case and
  * spacing; set from a Song page and cleared here), fifty to a page. Each row shows its primary
  * Artist, its first three Tags, and "+N" for the rest. The view (sort, direction, states, Genres,
- * Tags, Artists, title, page) is the page URL's query string, the list API's own
- * parameters, so going back to it or reloading shows the same rows.
+ * Tags, Artists, title, search, page) is the page URL's query string, the list API's own
+ * parameters, so going back to it or reloading shows the same rows. A search (#224) keeps the Songs
+ * matching it, by relevance unless a sort is chosen, each with where it matched beneath it; any new
+ * search goes back to the first page, and ending it goes back to the ordinary order.
  */
 export function SongsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -374,6 +376,33 @@ export function SongsPage() {
   const clearTitle = () => {
     show({ ...query, title: undefined, page: 1 });
   };
+  const searchFor = (text: string, push: boolean) => {
+    const search = searchTextOf(text);
+    if (search === query.search) {
+      return;
+    }
+    // A sort left at its default moves to the new default (relevance while searching); a chosen one stays.
+    const sort = query.sort === defaultSort(query) ? defaultSort({ search }) : query.sort;
+    const direction =
+      query.direction === defaultDirection(query.sort) ? defaultDirection(sort) : query.direction;
+    setSearchParams(songListParameters({ ...query, search, sort, direction, page: 1 }), {
+      replace: !push,
+    });
+  };
+  const clearAll = () => {
+    show({
+      ...query,
+      sort: query.sort === 'relevance' ? 'updated' : query.sort,
+      direction: query.sort === 'relevance' ? defaultDirection('updated') : query.direction,
+      states: [],
+      genres: [],
+      tags: [],
+      artists: [],
+      title: undefined,
+      search: undefined,
+      page: 1,
+    });
+  };
 
   const page = state.phase === 'ready' ? state.data : undefined;
   const filtered =
@@ -382,7 +411,8 @@ export function SongsPage() {
     query.tags.length > 0 ||
     query.artists.length > 0 ||
     query.title !== undefined;
-  const empty = page?.total === 0 && !filtered;
+  const searching = query.search !== undefined;
+  const empty = page?.total === 0 && !filtered && !searching;
   const pages = page === undefined ? 0 : Math.ceil(page.total / page.pageSize);
 
   return (
@@ -400,6 +430,8 @@ export function SongsPage() {
         )}
       </Group>
       {deleted !== undefined && <DeletedNotice deleted={deleted} onDismiss={dismiss} />}
+
+      {!empty && <SongsSearch active={query.search} onSearch={searchFor} />}
 
       {statesState.phase === 'ready' && !empty && (
         <StateFilter states={statesState.data} selected={query.states} onChange={filter} />
@@ -448,11 +480,33 @@ export function SongsPage() {
       {page !== undefined && !empty && page.items.length === 0 && (
         <Paper p="sm" withBorder>
           <Stack gap="xs" align="flex-start">
-            {page.total === 0 &&
-            (query.genres.length > 0 ||
-              query.tags.length > 0 ||
-              query.artists.length > 0 ||
-              query.title !== undefined) ? (
+            {page.total === 0 && query.search !== undefined ? (
+              <>
+                <Text data-testid="no-search-results" role="status">
+                  No Songs match “{query.search}”{filtered ? ' with the chosen filters' : ''}.
+                </Text>
+                <Group gap="xs">
+                  <Button
+                    variant="default"
+                    size="xs"
+                    onClick={() => {
+                      searchFor('', true);
+                    }}
+                  >
+                    Clear the search
+                  </Button>
+                  {filtered && (
+                    <Button variant="default" size="xs" onClick={clearAll}>
+                      Clear the search and filters
+                    </Button>
+                  )}
+                </Group>
+              </>
+            ) : page.total === 0 &&
+              (query.genres.length > 0 ||
+                query.tags.length > 0 ||
+                query.artists.length > 0 ||
+                query.title !== undefined) ? (
               <>
                 <Text>No Songs match the chosen filters.</Text>
                 <Button
@@ -505,44 +559,32 @@ export function SongsPage() {
       )}
       {page !== undefined && page.items.length > 0 && (
         <>
-          <Table.ScrollContainer minWidth={1000}>
-            <Table withTableBorder aria-label="Songs">
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th scope="col">
-                    <VisuallyHidden>Play</VisuallyHidden>
-                  </Table.Th>
-                  <Table.Th scope="col">Shortcode</Table.Th>
-                  <SortHeader label="Title" sort="title" query={query} onSort={sortBy} />
-                  <Table.Th scope="col">Artist</Table.Th>
-                  <Table.Th scope="col">Concept</Table.Th>
-                  <Table.Th scope="col">State</Table.Th>
-                  <Table.Th scope="col">Kind</Table.Th>
-                  <Table.Th scope="col" ta="end">
-                    Versions
-                  </Table.Th>
-                  <Table.Th scope="col">Tags</Table.Th>
-                  <SortHeader label="Updated" sort="updated" query={query} onSort={sortBy} />
-                  <Table.Th scope="col" ta="center">
-                    Selected
-                  </Table.Th>
-                  <SortHeader label="Audio files" sort="audioFiles" query={query} onSort={sortBy} />
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {page.items.map((song) => (
-                  <SongRow key={song.id} song={song} timeZone={timeZone} from={from} />
-                ))}
-              </Table.Tbody>
-            </Table>
-          </Table.ScrollContainer>
+          {page.indexRebuilding === true && (
+            <Text size="sm" data-testid="index-rebuilding">
+              The search index is being rebuilt, so some Songs may be missing from these results.
+            </Text>
+          )}
+          <SongsTable
+            songs={page.items}
+            query={query}
+            onSort={sortBy}
+            timeZone={timeZone}
+            from={from}
+          />
           <Group justify="space-between">
-            <Text size="sm">
-              {page.items.length === page.total
-                ? `${String(page.total)} ${page.total === 1 ? 'Song' : 'Songs'}`
-                : `Songs ${String((page.page - 1) * page.pageSize + 1)}–${String(
-                    (page.page - 1) * page.pageSize + page.items.length,
-                  )} of ${String(page.total)}`}
+            <Text size="sm" data-testid="songs-total" role={searching ? 'status' : undefined}>
+              {searching
+                ? `${String(page.total)} ${page.total === 1 ? 'Song matches' : 'Songs match'} “${query.search ?? ''}”` +
+                  (page.items.length === page.total
+                    ? ''
+                    : `, showing ${String((page.page - 1) * page.pageSize + 1)}–${String(
+                        (page.page - 1) * page.pageSize + page.items.length,
+                      )}`)
+                : page.items.length === page.total
+                  ? `${String(page.total)} ${page.total === 1 ? 'Song' : 'Songs'}`
+                  : `Songs ${String((page.page - 1) * page.pageSize + 1)}–${String(
+                      (page.page - 1) * page.pageSize + page.items.length,
+                    )} of ${String(page.total)}`}
             </Text>
             {pages > 1 && (
               <Group component="nav" aria-label="Pages">

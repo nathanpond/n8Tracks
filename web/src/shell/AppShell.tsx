@@ -7,6 +7,7 @@ import { AppHeader } from '../components/AppHeader';
 import { PlayerBar } from '../player/PlayerBar';
 import { usePlayer } from '../player/playerContext';
 import { PlayerProvider } from '../player/PlayerProvider';
+import { HeaderSearch } from '../search/HeaderSearch';
 import { UserMenu } from './UserMenu';
 
 /** A sidebar entry: a link to one page, marked as the current page when it is. */
@@ -50,7 +51,7 @@ export function SignedInShell() {
 }
 
 /**
- * The signed-in shell: the header (sidebar toggle, product name, colour control, Go to box, user menu), the
+ * The signed-in shell: the header (sidebar toggle, product name, colour control, search box (#224), Go to box, user menu), the
  * sidebar, and the current page. The sidebar lists Songs, Artists, Albums, Playlists, Suno import, Ignored Suno items, Library (Media, Unmatched Files), and Settings, and Settings has Account,
  * Credentials, Workflow, Catalog, Genres, Tags, Relationships, Suno, Suno workspaces, Backups, and System; later stories add pages. On a narrow screen the sidebar is hidden until the toggle opens
  * it, and choosing a page closes it again. Once something has been played, the player bar (#218) is
@@ -76,6 +77,7 @@ function ShellLayout() {
       padding="md"
     >
       <AppHeader navigation={{ opened, toggle }}>
+        <HeaderSearch />
         <GoToBox />
         <UserMenu />
       </AppHeader>
