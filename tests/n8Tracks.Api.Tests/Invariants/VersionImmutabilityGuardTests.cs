@@ -1366,6 +1366,9 @@ public sealed class VersionImmutabilityGuardTests
     {
         ["SongService.CreateAsync(SongRequest, CancellationToken)"] = "creates a new Song with a new, mutable Version 1 (its options from the defaults and the request)",
         ["SongService.ListAsync(SongListRequest, CancellationToken)"] = "reads only",
+        ["SongFilterValueService.ListAsync(String, String, IReadOnlyList`1, CancellationToken)"] = "reads only: the filter pickers' values (#225)",
+        ["SongFilterValueService.Matches(String, IReadOnlyList`1)"] = "pure: word-beginning matching",
+        ["SongFilterValueService.WordsOf(String)"] = "pure: folds text into words",
         ["SongService.Validate(SongRequest)"] = "pure validation",
         ["WorkflowStateService.ListAsync(CancellationToken)"] = "reads only",
         ["WorkflowStateService.ListWithUsageAsync(CancellationToken)"] = "reads only",

@@ -352,10 +352,11 @@ public sealed class TagEndpointTests
             [.. (await SongApi.ListAsync(client, "sort=title&" + query)).GetProperty("items").EnumerateArray().Select(static song => song.GetProperty("title").GetString()!)];
 
         Assert.Equal(["A running song", "C running summer song"], await TitlesAsync($"tag={running}"));
-        Assert.Equal(["A running song", "B summer song", "C running summer song"], await TitlesAsync($"tag={running}&tag={summer}"));
+        Assert.Equal(["A running song", "B summer song", "C running summer song"], await TitlesAsync($"tag={running}&tag={summer}&tagMode=any"));
+        Assert.Equal(["C running summer song"], await TitlesAsync($"tag={running}&tag={summer}"));
         Assert.Empty(await TitlesAsync($"tag={unused}"));
         Assert.Equal(["D no tag"], await TitlesAsync("tag=none"));
-        Assert.Equal(["B summer song", "C running summer song", "D no tag"], await TitlesAsync($"tag=none&tag={summer}"));
+        Assert.Equal(["B summer song", "C running summer song", "D no tag"], await TitlesAsync($"tag=none&tag={summer}&tagMode=any"));
         Assert.Equal(4, (await SongApi.ListAsync(client)).GetProperty("total").GetInt32());
 
         // Combined with the state and Genre filters by AND.
@@ -366,8 +367,10 @@ public sealed class TagEndpointTests
         await SongApi.EditAsync(client, first.GetProperty("id").GetString()!, 2, $$"""{"genreIds":["{{folk}}"]}""");
         Assert.Equal(["A running song"], await TitlesAsync($"tag={running}&genre={folk}"));
 
-        // An unknown or malformed Tag is 400.
-        foreach (var wrong in new[] { Guid.CreateVersion7().ToString(), "running", "NONE", string.Empty, folk })
+        // A Tag that does not exist (or a Genre's ID) matches nothing (#225); a malformed one is 400.
+        Assert.Empty(await TitlesAsync($"tag={Guid.CreateVersion7()}"));
+        Assert.Empty(await TitlesAsync($"tag={folk}"));
+        foreach (var wrong in new[] { "running", "NONE", string.Empty })
         {
             using var response = await client.GetAsync(new Uri($"/api/v1/songs?tag={wrong}", UriKind.Relative));
             await SetupApi.ProblemAsync(response, HttpStatusCode.BadRequest, "invalid_request");

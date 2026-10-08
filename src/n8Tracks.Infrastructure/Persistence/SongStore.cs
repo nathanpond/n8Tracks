@@ -104,7 +104,16 @@ internal sealed class SongStore(N8TracksDbContext context, SunoAudioHosts hosts)
                 || (noGenre && !songGenres.Any(songGenre => songGenre.SongId == song.Id)));
         }
 
-        if (query.TagIds.Count > 0 || query.NoTag)
+        if (query.AllTags && query.TagIds.Count > 0)
+        {
+            // Every one of the Tags (#225): one sub-query each.
+            var songTags = context.SongTags;
+            foreach (var tagId in query.TagIds)
+            {
+                songs = songs.Where(song => songTags.Any(songTag => songTag.SongId == song.Id && songTag.TagId == tagId));
+            }
+        }
+        else if (query.TagIds.Count > 0 || query.NoTag)
         {
             // Any of the Tags, or (when asked) none at all.
             var tagIds = query.TagIds.ToList();
@@ -145,6 +154,8 @@ internal sealed class SongStore(N8TracksDbContext context, SunoAudioHosts hosts)
         {
             songs = songs.Where(song => song.SunoWorkspaceId == sunoWorkspaceId);
         }
+
+        songs = Filtered(songs, query);
 
         if (query.MatchedIds is { } matched)
         {
@@ -287,6 +298,87 @@ internal sealed class SongStore(N8TracksDbContext context, SunoAudioHosts hosts)
                     .SetProperty(static song => song.Revision, static song => song.Revision + 1),
                 cancellationToken)
             .ConfigureAwait(false) == 1;
+    }
+
+    /// <summary>
+    /// <paramref name="songs"/> narrowed by #225's filters, each a sub-query on the database, so no
+    /// filter loads the catalog: archived status (the seeded Archived state, by its ID), Album,
+    /// Playlist, model and rating (live Generations, in any state), creation time, Selected
+    /// Generation, and local audio (every associated file, Song-level or a Generation's).
+    /// </summary>
+    private IQueryable<SongRecord> Filtered(IQueryable<SongRecord> songs, SongListQuery query)
+    {
+        var archivedId = DefaultWorkflowStates.Archived.Id;
+        songs = query.Archived switch
+        {
+            SongArchivedFilter.Active => songs.Where(song => song.WorkflowStateId != archivedId),
+            SongArchivedFilter.Archived => songs.Where(song => song.WorkflowStateId == archivedId),
+            _ => songs,
+        };
+
+        if (query.AlbumId is { } albumId)
+        {
+            var albumSongs = context.AlbumSongs;
+            songs = songs.Where(song => albumSongs.Any(entry => entry.SongId == song.Id && entry.AlbumId == albumId));
+        }
+
+        if (query.PlaylistId is { } playlistId)
+        {
+            var playlistSongs = context.PlaylistSongs;
+            songs = songs.Where(song => playlistSongs.Any(entry => entry.SongId == song.Id && entry.PlaylistId == playlistId));
+        }
+
+        var generations = context.Generations;
+        if (query.Models is { Count: > 0 } models)
+        {
+            var wanted = models.ToList();
+            songs = songs.Where(song => generations.Any(generation => generation.SongId == song.Id && generation.ModelVersion != null && wanted.Contains(generation.ModelVersion)));
+        }
+
+        if (query.CreatedFrom is { } createdFrom)
+        {
+            var from = UtcText.From(createdFrom);
+            songs = songs.Where(song => string.Compare(song.CreatedUtc, from) >= 0);
+        }
+
+        if (query.CreatedBefore is { } createdBefore)
+        {
+            var before = UtcText.From(createdBefore);
+            songs = songs.Where(song => string.Compare(song.CreatedUtc, before) < 0);
+        }
+
+        if (query.MinRating is not null || query.Unrated)
+        {
+            // The highest rating at least the minimum, or (when asked) no rated Generation at all.
+            var minimum = query.MinRating ?? int.MaxValue;
+            var unrated = query.Unrated;
+            songs = songs.Where(song =>
+                generations.Any(generation => generation.SongId == song.Id && generation.Rating != null && generation.Rating >= minimum)
+                || (unrated && !generations.Any(generation => generation.SongId == song.Id && generation.Rating != null)));
+        }
+
+        songs = query.HasSelectedGeneration switch
+        {
+            true => songs.Where(static song => song.SelectedGenerationId != null),
+            false => songs.Where(static song => song.SelectedGenerationId == null),
+            null => songs,
+        };
+
+        var audioFiles = context.AudioFiles;
+        const string available = AudioFileRecord.Available;
+        songs = (query.Audio, query.MediaUnavailable) switch
+        {
+            // While the media folder is unavailable every file reports Unavailable (#207).
+            (SongAudioFilter.Available, true) => songs.Where(static song => false),
+            (SongAudioFilter.Available, false) => songs.Where(song => audioFiles.Any(file => file.SongId == song.Id && file.Status == available)),
+            (SongAudioFilter.Unavailable, true) => songs.Where(song => audioFiles.Any(file => file.SongId == song.Id)),
+            (SongAudioFilter.Unavailable, false) => songs.Where(song =>
+                audioFiles.Any(file => file.SongId == song.Id) && !audioFiles.Any(file => file.SongId == song.Id && file.Status == available)),
+            (SongAudioFilter.None, _) => songs.Where(song => !audioFiles.Any(file => file.SongId == song.Id)),
+            _ => songs,
+        };
+
+        return songs;
     }
 
     /// <summary>

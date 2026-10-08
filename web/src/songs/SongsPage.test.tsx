@@ -147,6 +147,9 @@ function backend({ list, song: one, create, states = STATES, catalog, playback }
     if (artist !== undefined) {
       return Promise.resolve(jsonResponse(200, artist));
     }
+    if (path.endsWith('/api/v1/songs/filter-values')) {
+      return Promise.resolve(jsonResponse(200, { items: filterValues(searchOf(input)) }));
+    }
     if (path.endsWith('/api/v1/songs') && method === 'GET' && list) {
       const url = new URL(
         input instanceof Request ? input.url : input.toString(),
@@ -168,6 +171,44 @@ function backend({ list, song: one, create, states = STATES, catalog, playback }
     return Promise.resolve(problem(404, 'not_found'));
   });
   return mock;
+}
+
+const ALBUMS = [{ id: '0199b1a0-0000-7000-c000-000000000001', name: 'First Album' }];
+const PLAYLISTS = [{ id: '0199b1a0-0000-7000-d000-000000000001', name: 'Road Trip' }];
+const MODELS = [
+  { id: 'chirp-v4', name: 'v4' },
+  { id: 'chirp-v5', name: 'v5' },
+];
+
+/** What `GET /songs/filter-values` answers (#225): by kind, by word beginnings, or the IDs asked for. */
+function filterValues(query: string): { id: string; name: string; colour?: string }[] {
+  const parameters = new URLSearchParams(query);
+  const kind = parameters.get('kind');
+  const all: { id: string; name: string; colour?: string }[] =
+    kind === 'genre'
+      ? GENRES.map(({ id, name }) => ({ id, name }))
+      : kind === 'tag'
+        ? TAGS.map(({ id, name, colour }) => ({ id, name, colour }))
+        : kind === 'album'
+          ? ALBUMS
+          : kind === 'playlist'
+            ? PLAYLISTS
+            : MODELS;
+  const ids = parameters.getAll('ids');
+  if (ids.length > 0) {
+    return all.filter((value) => ids.includes(value.id));
+  }
+  const words = (parameters.get('query') ?? '').toLowerCase().split(/\s+/).filter(Boolean);
+  return all
+    .filter((value) =>
+      words.every((word) =>
+        value.name
+          .toLowerCase()
+          .split(/\W+/)
+          .some((part) => part.startsWith(word)),
+      ),
+    )
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /** The query strings the list was asked with, in order. */
@@ -560,6 +601,112 @@ describe('Songs', () => {
     expect(await screen.findByRole('table', { name: 'Songs' })).toBeVisible();
   });
 
+  it('offers every #225 filter in the bar and keeps each in the address', async () => {
+    const mock = backend({ list: () => jsonResponse(200, page([song(1)])) });
+    const user = userEvent.setup();
+
+    renderApp('/songs');
+    const bar = await screen.findByRole('group', { name: 'Filters' });
+
+    await user.click(within(bar).getByRole('radio', { name: 'Active only' }));
+    await waitFor(() => {
+      expect(listRequests(mock).at(-1)).toBe('?archived=active');
+    });
+
+    await user.click(within(bar).getByRole('combobox', { name: 'Album' }));
+    await user.click(await within(bar).findByRole('option', { name: 'First Album' }));
+    await waitFor(() => {
+      expect(listRequests(mock).at(-1)).toBe(`?archived=active&album=${ALBUMS[0]?.id ?? ''}`);
+    });
+
+    await user.click(within(bar).getByRole('combobox', { name: 'Playlist' }));
+    await user.click(await within(bar).findByRole('option', { name: 'Road Trip' }));
+    await user.click(within(bar).getByRole('combobox', { name: 'Model' }));
+    await user.click(await within(bar).findByRole('option', { name: 'v5' }));
+    fireEvent.change(within(bar).getByLabelText('Created from'), {
+      target: { value: '2026-01-10' },
+    });
+    fireEvent.change(within(bar).getByLabelText('Created to'), { target: { value: '2026-01-20' } });
+    await user.click(within(bar).getByRole('combobox', { name: 'Generation rating' }));
+    await user.click(await within(bar).findByRole('option', { name: 'At least 4 stars' }));
+    await user.click(within(bar).getByRole('checkbox', { name: 'Or no rated Generation' }));
+    await user.click(within(bar).getByRole('combobox', { name: 'Selected Generation' }));
+    await user.click(
+      await within(bar).findByRole('option', { name: 'Has no Selected Generation' }),
+    );
+    await user.click(within(bar).getByRole('combobox', { name: 'Local audio' }));
+    await user.click(
+      await within(bar).findByRole('option', { name: 'Has an available local file' }),
+    );
+
+    await waitFor(() => {
+      expect(listRequests(mock).at(-1)).toBe(
+        `?archived=active&album=${ALBUMS[0]?.id ?? ''}&playlist=${PLAYLISTS[0]?.id ?? ''}` +
+          '&model=chirp-v5&createdFrom=2026-01-10&createdTo=2026-01-20&minRating=4&rated=none' +
+          '&selected=no&audio=available',
+      );
+    });
+    expect(within(screen.getByTestId('active-filters')).getAllByRole('listitem')).toHaveLength(10);
+  });
+
+  it('offers only the values that exist, found by typing, and asks the server for them', async () => {
+    const mock = backend({ list: () => jsonResponse(200, page([song(1)])) });
+    const user = userEvent.setup();
+
+    renderApp('/songs');
+    const bar = await screen.findByRole('group', { name: 'Filters' });
+
+    await user.type(within(bar).getByRole('combobox', { name: 'Genre' }), 'ro');
+    expect(await within(bar).findByRole('option', { name: 'Rock' })).toBeVisible();
+    await waitFor(() => {
+      expect(within(bar).queryByRole('option', { name: 'Folk' })).not.toBeInTheDocument();
+    });
+    expect(
+      mock.mock.calls.some(([input]) =>
+        String(input instanceof Request ? input.url : input).includes(
+          'filter-values?kind=genre&query=ro',
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it('shows each active filter as a removable chip, names a deleted one, and clears all', async () => {
+    const gone = '0199b1a0-0000-7000-c000-0000000000ff';
+    const mock = backend({ list: () => jsonResponse(200, page([song(1)])) });
+    const user = userEvent.setup();
+
+    renderApp(
+      `/songs?search=lantern&state=${WRITING.id}&tag=${RUNNING.id}&tag=${SUMMER.id}&album=${gone}&minRating=3&audio=none`,
+    );
+
+    const chips = await screen.findByTestId('active-filters');
+    await waitFor(() => {
+      expect(within(chips).getByText('Album: Deleted item')).toBeVisible();
+    });
+    expect(within(chips).getByText('State: Writing')).toBeVisible();
+    expect(await within(chips).findByText('Tag: running')).toBeVisible();
+    expect(within(chips).getByText('Tag: Summer')).toBeVisible();
+    expect(within(chips).getByText('Rated at least 3 stars')).toBeVisible();
+    expect(within(chips).getByText('Has no local audio')).toBeVisible();
+    // Two Tags: every one of them unless the user says any.
+    expect(screen.getByRole('radio', { name: 'All of these Tags' })).toBeChecked();
+
+    await user.click(
+      within(chips).getByRole('button', { name: 'Remove the filter Album: Deleted item' }),
+    );
+    await waitFor(() => {
+      expect(listRequests(mock).at(-1)).toBe(
+        `?search=lantern&state=${WRITING.id}&tag=${RUNNING.id}&tag=${SUMMER.id}&minRating=3&audio=none`,
+      );
+    });
+
+    await user.click(within(chips).getByRole('button', { name: 'Clear all' }));
+    await waitFor(() => {
+      expect(listRequests(mock).at(-1)).toBe('');
+    });
+    expect(screen.queryByTestId('active-filters')).not.toBeInTheDocument();
+  });
+
   it('filters by any of several Genres or by none, alongside the states', async () => {
     const mock = backend({
       list: (search) =>
@@ -654,7 +801,7 @@ describe('Songs', () => {
     });
   });
 
-  it('filters by any of several Tags or by none, alongside the Genres', async () => {
+  it('filters by Tags, any of them once No Tags is among them, alongside the Genres', async () => {
     const mock = backend({
       list: (search) =>
         jsonResponse(200, search.getAll('tag').includes(NIGHT.id) ? page([]) : page([song(1)])),
@@ -669,9 +816,12 @@ describe('Songs', () => {
     await waitFor(() => {
       expect(listRequests(mock).at(-1)).toBe(`?genre=${FOLK.id}&tag=${RUNNING.id}`);
     });
+    // No Tags beside another Tag can only mean any of them.
     await user.click(await screen.findByRole('option', { name: 'No Tags' }));
     await waitFor(() => {
-      expect(listRequests(mock).at(-1)).toBe(`?genre=${FOLK.id}&tag=${RUNNING.id}&tag=none`);
+      expect(listRequests(mock).at(-1)).toBe(
+        `?genre=${FOLK.id}&tag=${RUNNING.id}&tag=none&tagMode=any`,
+      );
     });
     await user.click(await screen.findByRole('option', { name: 'night' }));
     expect(await screen.findByText('No Songs match the chosen filters.')).toBeVisible();

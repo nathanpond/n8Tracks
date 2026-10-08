@@ -566,6 +566,9 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
             song.HasIndex(record => record.TitleKey);
             song.HasIndex(record => new { record.UpdatedUtc, record.ShortcodeNumber });
 
+            // The Songs list's creation date filter (#225) reads a range of creation times.
+            song.HasIndex(record => new { record.CreatedUtc, record.ShortcodeNumber });
+
             // The duplicate ISRC warning looks codes up. Not unique: a shared ISRC is allowed. The
             // release columns carry no CHECK constraints, which SQLite could add only by rebuilding
             // the table; the rules are the application's (SongReleaseRules).
@@ -686,6 +689,10 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
             generation.HasKey(record => record.Id);
             generation.HasIndex(record => new { record.VersionId, record.Ordinal }).IsUnique();
             generation.HasIndex(record => record.SongId);
+
+            // The Songs list's model filter and the model picker's values (#225): the models reported,
+            // and the Songs reporting one.
+            generation.HasIndex(record => new { record.ModelVersion, record.SongId });
 
             // The parent key of an audio file's (generation_id, song_id) foreign key (#206): an index, not
             // an alternate key, so it is added without rebuilding the table and a move may still change

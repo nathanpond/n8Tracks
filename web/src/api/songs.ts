@@ -371,7 +371,63 @@ export interface SongQuery {
    * every word, each with where it matched. Left out (undefined) for no search; never blank.
    */
   search?: string;
+  /** #225: `any` for Songs with any of {@link tags}; left out for every one of them (the API's default). */
+  tagMode?: TagMode;
+  /** #225: only Songs in the Archived state, or only the others; left out for both. */
+  archived?: ArchivedFilter;
+  /** #225: an Album's ID: only the Songs on it. */
+  album?: string;
+  /** #225: a Playlist's ID: only the Songs on it. */
+  playlist?: string;
+  /** #225: models as Generations report them: Songs with a Generation reporting any of them. */
+  models?: string[];
+  /** #225: a day, `yyyy-mm-dd`, in the configured zone: Songs created on it or later. */
+  createdFrom?: string;
+  /** #225: a day, `yyyy-mm-dd`, in the configured zone: Songs created on it or earlier. */
+  createdTo?: string;
+  /** #225: 1 to 5: Songs whose highest Generation rating is at least it. */
+  minRating?: number;
+  /** #225: `none`: Songs with no rated Generation (with {@link minRating}, either). */
+  rated?: 'none';
+  /** #225: Songs with (`yes`) or without (`no`) a Selected Generation. */
+  selected?: SelectedFilter;
+  /** #225: local-audio availability. */
+  audio?: AudioFilter;
   page: number;
+}
+
+export type TagMode = 'all' | 'any';
+export type ArchivedFilter = 'active' | 'archived';
+export type SelectedFilter = 'yes' | 'no';
+export type AudioFilter = 'available' | 'unavailable' | 'none';
+
+/** The ratings a Generation can have, and so the minimum ratings the filter offers. */
+export const RATING_SCALE = [1, 2, 3, 4, 5] as const;
+
+const ARCHIVED_FILTERS: readonly string[] = ['active', 'archived'];
+const SELECTED_FILTERS: readonly string[] = ['yes', 'no'];
+const AUDIO_FILTERS: readonly string[] = ['available', 'unavailable', 'none'];
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** #225: how many filters are set: each chosen value, each set option (not the search or the page). */
+export function activeFilterCount(query: SongQuery): number {
+  return (
+    query.states.length +
+    query.genres.length +
+    query.tags.length +
+    query.artists.length +
+    (query.title === undefined ? 0 : 1) +
+    (query.archived === undefined ? 0 : 1) +
+    (query.album === undefined ? 0 : 1) +
+    (query.playlist === undefined ? 0 : 1) +
+    (query.models?.length ?? 0) +
+    (query.createdFrom === undefined ? 0 : 1) +
+    (query.createdTo === undefined ? 0 : 1) +
+    (query.minRating === undefined ? 0 : 1) +
+    (query.rated === undefined ? 0 : 1) +
+    (query.selected === undefined ? 0 : 1) +
+    (query.audio === undefined ? 0 : 1)
+  );
 }
 
 /** The longest search text the page sends: the API reads no more. */
@@ -590,6 +646,39 @@ export function songListParameters(query: SongQuery): URLSearchParams {
   if (query.title !== undefined) {
     parameters.set('title', query.title);
   }
+  if (query.tagMode === 'any' && query.tags.length > 0) {
+    parameters.set('tagMode', 'any');
+  }
+  if (query.archived !== undefined) {
+    parameters.set('archived', query.archived);
+  }
+  if (query.album !== undefined) {
+    parameters.set('album', query.album);
+  }
+  if (query.playlist !== undefined) {
+    parameters.set('playlist', query.playlist);
+  }
+  for (const model of query.models ?? []) {
+    parameters.append('model', model);
+  }
+  if (query.createdFrom !== undefined) {
+    parameters.set('createdFrom', query.createdFrom);
+  }
+  if (query.createdTo !== undefined) {
+    parameters.set('createdTo', query.createdTo);
+  }
+  if (query.minRating !== undefined) {
+    parameters.set('minRating', String(query.minRating));
+  }
+  if (query.rated !== undefined) {
+    parameters.set('rated', query.rated);
+  }
+  if (query.selected !== undefined) {
+    parameters.set('selected', query.selected);
+  }
+  if (query.audio !== undefined) {
+    parameters.set('audio', query.audio);
+  }
   if (query.page !== 1) {
     parameters.set('page', String(query.page));
   }
@@ -621,6 +710,15 @@ export function songQueryFrom(parameters: URLSearchParams): SongQuery {
   const page = Number(parameters.get('page') ?? '1');
   // A blank title would be refused, so it means no title filter.
   const title = parameters.get('title') ?? '';
+  const archived = parameters.get('archived') ?? '';
+  const album = parameters.get('album') ?? '';
+  const playlist = parameters.get('playlist') ?? '';
+  const models = [...new Set(parameters.getAll('model'))].filter((model) => model.trim() !== '');
+  const createdFrom = parameters.get('createdFrom') ?? '';
+  const createdTo = parameters.get('createdTo') ?? '';
+  const minRating = Number(parameters.get('minRating') ?? '');
+  const selected = parameters.get('selected') ?? '';
+  const audio = parameters.get('audio') ?? '';
   return {
     sort,
     direction: direction === 'asc' || direction === 'desc' ? direction : defaultDirection(sort),
@@ -630,6 +728,17 @@ export function songQueryFrom(parameters: URLSearchParams): SongQuery {
     artists: [...new Set(parameters.getAll('artist'))],
     ...(title.trim() === '' ? {} : { title }),
     ...(search === undefined ? {} : { search }),
+    ...(parameters.get('tagMode') === 'any' ? { tagMode: 'any' as const } : {}),
+    ...(ARCHIVED_FILTERS.includes(archived) ? { archived: archived as ArchivedFilter } : {}),
+    ...(album === '' ? {} : { album }),
+    ...(playlist === '' ? {} : { playlist }),
+    ...(models.length === 0 ? {} : { models }),
+    ...(DAY.test(createdFrom) ? { createdFrom } : {}),
+    ...(DAY.test(createdTo) ? { createdTo } : {}),
+    ...((RATING_SCALE as readonly number[]).includes(minRating) ? { minRating } : {}),
+    ...(parameters.get('rated') === 'none' ? { rated: 'none' as const } : {}),
+    ...(SELECTED_FILTERS.includes(selected) ? { selected: selected as SelectedFilter } : {}),
+    ...(AUDIO_FILTERS.includes(audio) ? { audio: audio as AudioFilter } : {}),
     page: Number.isSafeInteger(page) && page >= 1 ? page : 1,
   };
 }
@@ -898,4 +1007,58 @@ export function setSongCredits(
     },
     acceptSong,
   );
+}
+
+/** What the Songs filter pickers offer values of (#225). */
+export type FilterValueKind = 'genre' | 'tag' | 'album' | 'playlist' | 'model';
+
+/** One value a filter picker offers: its ID (a model's is its name as reported), its name, a Tag's colour. */
+export interface FilterValue {
+  id: string;
+  name: string;
+  colour?: string;
+}
+
+/** Where the pickers' values are read. */
+export const FILTER_VALUES_PATH = `${SONGS_PATH}/filter-values`;
+
+function isFilterValue(value: unknown): value is FilterValue {
+  return (
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    typeof value.name === 'string' &&
+    (value.colour === undefined || typeof value.colour === 'string')
+  );
+}
+
+/**
+ * The values of `kind` whose name has a word beginning with each word of `query` (every value when
+ * it is blank), at most fifty, by name; or, given `ids`, the values with those IDs that still exist
+ * (one left out was deleted). Undefined when the API did not answer as expected.
+ */
+export async function readFilterValues(
+  kind: FilterValueKind,
+  { query, ids }: { query?: string; ids?: readonly string[] },
+  signal?: AbortSignal,
+): Promise<FilterValue[] | undefined> {
+  const parameters = new URLSearchParams({ kind });
+  if (ids !== undefined) {
+    for (const id of ids) {
+      parameters.append('ids', id);
+    }
+  } else if (query !== undefined && query.trim() !== '') {
+    parameters.set('query', query.trim());
+  }
+  try {
+    const response = await apiFetch(`${FILTER_VALUES_PATH}?${parameters.toString()}`, { signal });
+    const answer = await body(response);
+    return response.ok &&
+      isRecord(answer) &&
+      Array.isArray(answer.items) &&
+      answer.items.every(isFilterValue)
+      ? answer.items
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }

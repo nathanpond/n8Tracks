@@ -70,8 +70,8 @@ public sealed class DuplicateTitleEndpointTests
     [InlineData("title=%20%09%20", "title must not be blank.")]
     [InlineData("title=A&excludeId=n8-1", "excludeId must be the ID of a Song.")]
     [InlineData("title=A&excludeId=", "excludeId must be the ID of a Song.")]
-    [InlineData("title=A&title=B", "Only state, genre, tag, and artist may be given more than once.")]
-    [InlineData("title=A&excludeId=01a10a6e-de01-7000-8000-000000000001&excludeId=01a10a6e-de01-7000-8000-000000000002", "Only state, genre, tag, and artist may be given more than once.")]
+    [InlineData("title=A&title=B", "Only state, genre, tag, artist, and model may be given more than once.")]
+    [InlineData("title=A&excludeId=01a10a6e-de01-7000-8000-000000000001&excludeId=01a10a6e-de01-7000-8000-000000000002", "Only state, genre, tag, artist, and model may be given more than once.")]
     public async Task ABlankTitleOrAMalformedExcludeIdIsRefused(string query, string title)
     {
         using var factory = SongApi.Host();

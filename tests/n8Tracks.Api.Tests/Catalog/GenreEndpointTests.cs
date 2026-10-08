@@ -326,8 +326,9 @@ public sealed class GenreEndpointTests
         var filtered = await SongApi.ListAsync(client, $"genre={folk}&state={DefaultWorkflowStates.Writing.Id}");
         Assert.Equal(1, filtered.GetProperty("total").GetInt32());
 
-        // An unknown or malformed Genre is 400.
-        foreach (var wrong in new[] { Guid.CreateVersion7().ToString(), "folk", "NONE", string.Empty })
+        // A Genre that does not exist matches nothing (#225); a malformed one is 400.
+        Assert.Empty(await TitlesAsync($"genre={Guid.CreateVersion7()}"));
+        foreach (var wrong in new[] { "folk", "NONE", string.Empty })
         {
             using var response = await client.GetAsync(new Uri($"/api/v1/songs?genre={wrong}", UriKind.Relative));
             await SetupApi.ProblemAsync(response, HttpStatusCode.BadRequest, "invalid_request");

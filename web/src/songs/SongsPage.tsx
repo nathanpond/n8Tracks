@@ -1,10 +1,8 @@
 import {
   Button,
-  Chip,
   CloseButton,
   Group,
   Loader,
-  MultiSelect,
   Pagination,
   Paper,
   Stack,
@@ -14,12 +12,10 @@ import {
 } from '@mantine/core';
 import { useEffect, useRef, useState, type SyntheticEvent } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
-import { useGenres, type Genre } from '../api/genres';
 import {
+  activeFilterCount,
   defaultDirection,
   defaultSort,
-  NO_GENRE,
-  NO_TAG,
   SEARCH_MAXIMUM_LENGTH,
   searchTextOf,
   songListParameters,
@@ -28,16 +24,12 @@ import {
   useWorkflowStates,
   type SongQuery,
   type SongSort,
-  type WorkflowState,
 } from '../api/songs';
-import { useTags, type Tag } from '../api/tags';
 import { useConfiguredTimeZone } from '../api/timeZone';
-import { statesForFilter } from '../api/workflow';
 import { Notice } from '../components/Notice';
 import { SONGS_SEARCH_ID } from '../search/searchRules';
-import { ArtistFilter } from './ArtistFilter';
 import { NewSongDialog } from './NewSongDialog';
-import { paletteColour } from '../theme/palette';
+import { SongFilterBar } from './SongFilterBar';
 import { SongsTable, type FromSongs } from './SongsTable';
 
 export type { FromSongs } from './SongsTable';
@@ -93,133 +85,6 @@ const PAGE_CONTROL_LABELS: Record<'first' | 'previous' | 'next' | 'last', string
   next: 'Next page',
   last: 'Last page',
 };
-
-/** The state filter: any number of states, none meaning every state. */
-function StateFilter({
-  states,
-  selected,
-  onChange,
-}: {
-  states: WorkflowState[];
-  selected: string[];
-  onChange: (states: string[]) => void;
-}) {
-  return (
-    <Stack gap={6}>
-      <Text id="songs-state-filter" size="sm" fw={500}>
-        Workflow state
-      </Text>
-      <Group gap="xs" role="group" aria-labelledby="songs-state-filter">
-        <Chip.Group multiple value={selected} onChange={onChange}>
-          {statesForFilter(states, selected).map((state) => (
-            <Chip key={state.id} value={state.id} size="sm">
-              {state.name}
-            </Chip>
-          ))}
-        </Chip.Group>
-        {selected.length > 0 && (
-          <Button
-            variant="subtle"
-            size="compact-sm"
-            onClick={() => {
-              onChange([]);
-            }}
-          >
-            Show every state
-          </Button>
-        )}
-      </Group>
-    </Stack>
-  );
-}
-
-/**
- * The Genre filter: any number of Genres and "No Genre", matching Songs with any of them; none
- * chosen means every Song.
- */
-function GenreFilter({
-  genres,
-  selected,
-  onChange,
-}: {
-  genres: Genre[];
-  selected: string[];
-  onChange: (genres: string[]) => void;
-}) {
-  return (
-    <MultiSelect
-      label="Genre"
-      placeholder={selected.length === 0 ? 'Any Genre' : undefined}
-      data={[
-        { value: NO_GENRE, label: 'No Genre' },
-        ...genres.map((genre) => ({ value: genre.id, label: genre.name })),
-      ]}
-      value={selected}
-      onChange={onChange}
-      searchable
-      clearable
-      clearButtonProps={{ 'aria-label': 'Clear the Genre filter' }}
-      nothingFoundMessage="No Genre has that name."
-      maw={420}
-      comboboxProps={{ withinPortal: false, hideDetached: false }}
-    />
-  );
-}
-
-/**
- * The Tag filter: any number of Tags and "No Tags", matching Songs with any of them; none chosen
- * means every Song. Each suggestion shows the Tag's colour beside its name.
- */
-function TagFilter({
-  tags,
-  selected,
-  onChange,
-}: {
-  tags: Tag[];
-  selected: string[];
-  onChange: (tags: string[]) => void;
-}) {
-  const colours = new Map(tags.map((tag) => [tag.id, tag.colour]));
-  return (
-    <MultiSelect
-      label="Tag"
-      placeholder={selected.length === 0 ? 'Any Tag' : undefined}
-      data={[
-        { value: NO_TAG, label: 'No Tags' },
-        ...tags.map((tag) => ({ value: tag.id, label: tag.name })),
-      ]}
-      value={selected}
-      onChange={onChange}
-      renderOption={({ option }) => {
-        const colour = colours.get(option.value);
-        return (
-          <Group gap={6} wrap="nowrap">
-            {colour !== undefined && (
-              <span
-                aria-hidden="true"
-                style={{
-                  display: 'inline-block',
-                  width: 8,
-                  height: 8,
-                  borderRadius: '50%',
-                  background: paletteColour(colour),
-                  flex: 'none',
-                }}
-              />
-            )}
-            {option.label}
-          </Group>
-        );
-      }}
-      searchable
-      clearable
-      clearButtonProps={{ 'aria-label': 'Clear the Tag filter' }}
-      nothingFoundMessage="No Tag has that name."
-      maw={420}
-      comboboxProps={{ withinPortal: false, hideDetached: false }}
-    />
-  );
-}
 
 /**
  * The table's own search box (#224): it searches 300 ms after typing stops (replacing the current
@@ -323,8 +188,9 @@ function TitleFilter({ title, onClear }: { title: string; onClear: () => void })
 /**
  * Songs: every Song in a table ({@link SongsTable}), newest first, sortable by title, by last update, and (#211) by
  * how many local audio files it has (the last column, blank for none), filtered by
- * workflow state, by Genre, by Tag, by Artist (primary or featured), and by title (ignoring case and
- * spacing; set from a Song page and cleared here), fifty to a page. Each row shows its primary
+ * the filter bar's filters ({@link SongFilterBar}, #225: workflow state, archived status, Genre, Tags,
+ * Artist, Album, Playlist, model, creation date, rating, Selected Generation, local audio) and by
+ * title (ignoring case and spacing; set from a Song page and cleared here), fifty to a page. Each row shows its primary
  * Artist, its first three Tags, and "+N" for the rest. The view (sort, direction, states, Genres,
  * Tags, Artists, title, search, page) is the page URL's query string, the list API's own
  * parameters, so going back to it or reloading shows the same rows. A search (#224) keeps the Songs
@@ -338,8 +204,6 @@ export function SongsPage() {
   const query = songQueryFrom(searchParams);
   const { state, reload } = useSongs(query);
   const { state: statesState } = useWorkflowStates();
-  const { state: genresState } = useGenres();
-  const { state: tagsState } = useTags();
   const timeZone = useConfiguredTimeZone();
   const [creating, setCreating] = useState(false);
   const [deleted, setDeleted] = useState(() =>
@@ -364,15 +228,6 @@ export function SongsPage() {
   const filter = (states: string[]) => {
     show({ ...query, states, page: 1 });
   };
-  const filterGenres = (genres: string[]) => {
-    show({ ...query, genres, page: 1 });
-  };
-  const filterTags = (tags: string[]) => {
-    show({ ...query, tags, page: 1 });
-  };
-  const filterArtists = (artists: string[]) => {
-    show({ ...query, artists, page: 1 });
-  };
   const clearTitle = () => {
     show({ ...query, title: undefined, page: 1 });
   };
@@ -389,28 +244,36 @@ export function SongsPage() {
       replace: !push,
     });
   };
+  // Every filter (#225's too) and the search; the sort is kept unless it was the search's.
   const clearAll = () => {
     show({
-      ...query,
       sort: query.sort === 'relevance' ? 'updated' : query.sort,
       direction: query.sort === 'relevance' ? defaultDirection('updated') : query.direction,
       states: [],
       genres: [],
       tags: [],
       artists: [],
-      title: undefined,
-      search: undefined,
+      page: 1,
+    });
+  };
+  // Every filter but the search.
+  const clearFilters = () => {
+    show({
+      sort: query.sort,
+      direction: query.direction,
+      states: [],
+      genres: [],
+      tags: [],
+      artists: [],
+      ...(query.search === undefined ? {} : { search: query.search }),
       page: 1,
     });
   };
 
   const page = state.phase === 'ready' ? state.data : undefined;
-  const filtered =
-    query.states.length > 0 ||
-    query.genres.length > 0 ||
-    query.tags.length > 0 ||
-    query.artists.length > 0 ||
-    query.title !== undefined;
+  const filtered = activeFilterCount(query) > 0;
+  // Filters beyond the states, which have their own empty state.
+  const filteredBeyondStates = activeFilterCount(query) > query.states.length;
   const searching = query.search !== undefined;
   const empty = page?.total === 0 && !filtered && !searching;
   const pages = page === undefined ? 0 : Math.ceil(page.total / page.pageSize);
@@ -433,16 +296,14 @@ export function SongsPage() {
 
       {!empty && <SongsSearch active={query.search} onSearch={searchFor} />}
 
-      {statesState.phase === 'ready' && !empty && (
-        <StateFilter states={statesState.data} selected={query.states} onChange={filter} />
+      {!empty && (
+        <SongFilterBar
+          query={query}
+          states={statesState.phase === 'ready' ? statesState.data : undefined}
+          onChange={show}
+          onClearAll={clearAll}
+        />
       )}
-      {genresState.phase === 'ready' && !empty && (
-        <GenreFilter genres={genresState.data} selected={query.genres} onChange={filterGenres} />
-      )}
-      {tagsState.phase === 'ready' && !empty && (
-        <TagFilter tags={tagsState.data} selected={query.tags} onChange={filterTags} />
-      )}
-      {!empty && <ArtistFilter selected={query.artists} onChange={filterArtists} />}
       {query.title !== undefined && <TitleFilter title={query.title} onClear={clearTitle} />}
 
       {state.phase === 'loading' && <Loader aria-label="Loading Songs" />}
@@ -502,28 +363,10 @@ export function SongsPage() {
                   )}
                 </Group>
               </>
-            ) : page.total === 0 &&
-              (query.genres.length > 0 ||
-                query.tags.length > 0 ||
-                query.artists.length > 0 ||
-                query.title !== undefined) ? (
+            ) : page.total === 0 && filteredBeyondStates ? (
               <>
                 <Text>No Songs match the chosen filters.</Text>
-                <Button
-                  variant="default"
-                  size="xs"
-                  onClick={() => {
-                    show({
-                      ...query,
-                      states: [],
-                      genres: [],
-                      tags: [],
-                      artists: [],
-                      title: undefined,
-                      page: 1,
-                    });
-                  }}
-                >
+                <Button variant="default" size="xs" onClick={clearFilters}>
                   Show every Song
                 </Button>
               </>

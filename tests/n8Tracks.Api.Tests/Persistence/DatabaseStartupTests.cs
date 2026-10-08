@@ -84,7 +84,8 @@ public sealed class DatabaseStartupTests : IDisposable
             migration => Assert.Matches("^[0-9]{14}_AddPreferredAudioFiles\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_RederiveGenerationAudioUrls\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AddRetentionReleasedAudioFiles\\|10\\.0\\.", migration),
-            migration => Assert.Matches("^[0-9]{14}_AddSearchIndex\\|10\\.0\\.", migration));
+            migration => Assert.Matches("^[0-9]{14}_AddSearchIndex\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddSongFilterIndexes\\|10\\.0\\.", migration));
 
         // ISO 8601 UTC with milliseconds and Z, taken when the migration ran.
         var initialized = TestDatabase.SchemaInitializedUtc(directory.Path);
@@ -176,7 +177,7 @@ public sealed class DatabaseStartupTests : IDisposable
             ],
             TestDatabase.Rows(directory.Path, "SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('generations') ORDER BY cid;"));
         Assert.Equal(
-            ["ix_generations_artwork_asset_id|0|0", "ix_generations_id_song_id|1|0", "ix_generations_song_id|0|0", "ix_generations_suno_id|1|1", "ix_generations_version_id_ordinal|1|0"],
+            ["ix_generations_artwork_asset_id|0|0", "ix_generations_id_song_id|1|0", "ix_generations_model_version_song_id|0|0", "ix_generations_song_id|0|0", "ix_generations_suno_id|1|1", "ix_generations_version_id_ordinal|1|0"],
             TestDatabase.Rows(directory.Path, "SELECT name, CAST(\"unique\" AS TEXT), CAST(partial AS TEXT) FROM pragma_index_list('generations') WHERE origin = 'c' ORDER BY name;"));
         Assert.Equal(
             ["assets|artwork_asset_id|RESTRICT", "songs|song_id|RESTRICT", "versions|version_id|RESTRICT"],
@@ -216,6 +217,11 @@ public sealed class DatabaseStartupTests : IDisposable
             TestDatabase.Rows(directory.Path, "SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('songs') WHERE name = 'suno_workspace_id';").Single());
         Assert.Contains(
             "ix_songs_suno_workspace_id",
+            TestDatabase.Rows(directory.Path, "SELECT name FROM pragma_index_list('songs');"));
+
+        // The creation date filter's index (#225).
+        Assert.Contains(
+            "ix_songs_created_utc_shortcode_number",
             TestDatabase.Rows(directory.Path, "SELECT name FROM pragma_index_list('songs');"));
         Assert.Equal(
             ["suno_id|TEXT|1|1", "name|TEXT|1|0", "description|TEXT|1|0", "state|TEXT|1|0", "first_seen_utc|TEXT|1|0", "last_seen_utc|TEXT|1|0", "raw_json|TEXT|1|0"],
@@ -433,7 +439,7 @@ public sealed class DatabaseStartupTests : IDisposable
 
         Assert.Equal(MigrationStatus.UpToDate, state.Status);
         Assert.Equal(TestDatabase.History(directory.Path)[^1].Split('|')[0], state.LastAppliedMigrationId);
-        Assert.EndsWith("_AddSearchIndex", state.LastAppliedMigrationId, StringComparison.Ordinal);
+        Assert.EndsWith("_AddSongFilterIndexes", state.LastAppliedMigrationId, StringComparison.Ordinal);
     }
 
     [Fact]

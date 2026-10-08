@@ -25,6 +25,9 @@ internal static class SongsEndpoints
     public const string CreditsPath = SongPath + "/credits";
     public const string MatchesPath = SongPath + "/matches";
 
+    /// <summary>The filter pickers' values (#225). A literal segment, so it is matched before <see cref="SongPath"/>.</summary>
+    public const string FilterValuesPath = SongsPath + "/filter-values";
+
     public const string DuplicateIsrcWarning = "duplicate_isrc";
 
     public static IEndpointRouteBuilder MapSongs(this IEndpointRouteBuilder endpoints)
@@ -42,9 +45,18 @@ internal static class SongsEndpoints
 
         endpoints.MapGet(SongsPath, ListAsync)
             .WithName("ListSongs")
-            .WithSummary("A page of Songs, sorted by last update, title, or count of local audio files (audioFiles), optionally only those in given workflow states (state), with any of given Genres (genre: Genre IDs, or none for Songs with no Genre), with any of given Tags (tag: Tag IDs, or none for Songs with no Tag), crediting any of given Artists as primary or featured (artist: Artist IDs, or none for Songs credited to no one), in a Suno workspace (workspace: a known workspace's Suno ID), and matching a search (q: a title substring or shortcode prefix, ignoring case; ten a page by default; nothing for a blank q), or a full-text search (search: Songs matching every word in any of their text, word beginnings, case and diacritics ignored, \"quoted phrases\" in order; by relevance unless sort is given; each item then has matches (at most three: field, owner, excerpt with highlights as offsets) and matchCount, and the page has indexRebuilding; not with q).")
+            .WithSummary("A page of Songs, sorted by last update, title, or count of local audio files (audioFiles), optionally only those in given workflow states (state), with any of given Genres (genre: Genre IDs, or none for Songs with no Genre), with any of given Tags (tag: Tag IDs, or none for Songs with no Tag), crediting any of given Artists as primary or featured (artist: Artist IDs, or none for Songs credited to no one), in a Suno workspace (workspace: a known workspace's Suno ID), and matching a search (q: a title substring or shortcode prefix, ignoring case; ten a page by default; nothing for a blank q), or a full-text search (search: Songs matching every word in any of their text, word beginnings, case and diacritics ignored, \"quoted phrases\" in order; by relevance unless sort is given; each item then has matches (at most three: field, owner, excerpt with highlights as offsets) and matchCount, and the page has indexRebuilding; not with q). The #225 filters combine by AND with each other and the search: tag with tagMode all (the default: every Tag) or any; archived active, archived, or both (the default); album and playlist (an ID each); model (as reported; repeat for any of); createdFrom and createdTo (yyyy-MM-dd in the configured time zone, both included); minRating (1 to 5: the highest rating of the Song's Generations) and rated=none (no rated Generation; with minRating, either); selected yes or no (a Selected Generation); audio available, unavailable (files, none available), or none. A Genre, Tag, Album, or Playlist that does not exist matches nothing; a malformed value is 400 invalid_request naming the parameter.")
             .RequireScope(CredentialScopes.CatalogRead)
             .Produces<SongListResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
+        endpoints.MapGet(FilterValuesPath, FilterValuesAsync)
+            .WithName("ListSongFilterValues")
+            .WithSummary("The values the Songs filters offer (#225), as {items: [{id, name, colour?}]} by name: kind (required) is genre, tag, album, playlist, or model (each model a live Generation reports; its id as reported, its name the model list's when one matches). query keeps those with a word beginning with each word typed (case and diacritics ignored), at most 50; ids (repeatable, not with query) names the values with those IDs that still exist instead.")
+            .RequireScope(CredentialScopes.CatalogRead)
+            .Produces<SongFilterValueListResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden);
@@ -169,14 +181,26 @@ internal static class SongsEndpoints
             Single(query, SongService.TitleParameter, out var titleRepeated),
             Single(query, SongService.ExcludeIdParameter, out var excludeRepeated),
             Single(query, SongService.WorkspaceParameter, out var workspaceRepeated),
-            Single(query, SongService.SearchParameter, out var fullTextRepeated));
-        if (sortRepeated || directionRepeated || pageRepeated || pageSizeRepeated || searchRepeated || titleRepeated || excludeRepeated || workspaceRepeated || fullTextRepeated)
+            Single(query, SongService.SearchParameter, out var fullTextRepeated),
+            Single(query, SongService.TagModeParameter, out var tagModeRepeated),
+            Single(query, SongService.AlbumParameter, out var albumRepeated),
+            Single(query, SongService.PlaylistParameter, out var playlistRepeated),
+            [.. query[SongService.ModelParameter]],
+            Single(query, SongService.CreatedFromParameter, out var createdFromRepeated),
+            Single(query, SongService.CreatedToParameter, out var createdToRepeated),
+            Single(query, SongService.MinRatingParameter, out var minRatingRepeated),
+            Single(query, SongService.RatedParameter, out var ratedRepeated),
+            Single(query, SongService.SelectedParameter, out var selectedRepeated),
+            Single(query, SongService.AudioParameter, out var audioRepeated),
+            Single(query, SongService.ArchivedParameter, out var archivedRepeated));
+        if (sortRepeated || directionRepeated || pageRepeated || pageSizeRepeated || searchRepeated || titleRepeated || excludeRepeated || workspaceRepeated || fullTextRepeated
+            || tagModeRepeated || albumRepeated || playlistRepeated || createdFromRepeated || createdToRepeated || minRatingRepeated || ratedRepeated || selectedRepeated || audioRepeated || archivedRepeated)
         {
             return ApiProblem.For(
                 context,
                 StatusCodes.Status400BadRequest,
                 ApiProblem.InvalidRequestCode,
-                "Only state, genre, tag, and artist may be given more than once.");
+                "Only state, genre, tag, artist, and model may be given more than once.");
         }
 
         return await songs.ListAsync(request, cancellationToken) switch
@@ -184,6 +208,30 @@ internal static class SongsEndpoints
             SongListOutcome.Listed listed => TypedResults.Ok(SongListResponse.From(listed.Page, context.Request.PathBase)),
             SongListOutcome.Invalid invalid => ApiProblem.For(context, StatusCodes.Status400BadRequest, ApiProblem.InvalidRequestCode, invalid.Message),
             _ => throw new InvalidOperationException("Unknown list outcome."),
+        };
+    }
+
+    /// <summary>200 with the values by name; 400 <c>invalid_request</c> for a missing or unknown <c>kind</c>, a malformed ID, or <c>ids</c> with <c>query</c>.</summary>
+    private static async Task<Results<Ok<SongFilterValueListResponse>, ProblemHttpResult>> FilterValuesAsync(
+        SongFilterValueService values,
+        HttpContext context,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        var query = context.Request.Query;
+        var kind = Single(query, SongFilterValueService.KindParameter, out var kindRepeated);
+        var text = Single(query, SongFilterValueService.QueryParameter, out var textRepeated);
+        if (kindRepeated || textRepeated)
+        {
+            return ApiProblem.For(context, StatusCodes.Status400BadRequest, ApiProblem.InvalidRequestCode, "Only ids may be given more than once.");
+        }
+
+        return await values.ListAsync(kind, text, [.. query[SongFilterValueService.IdsParameter]], cancellationToken) switch
+        {
+            SongFilterValuesOutcome.Listed listed => TypedResults.Ok(new SongFilterValueListResponse([.. listed.Values.Select(SongFilterValueResponse.From)])),
+            SongFilterValuesOutcome.Invalid invalid => ApiProblem.For(context, StatusCodes.Status400BadRequest, ApiProblem.InvalidRequestCode, invalid.Message),
+            _ => throw new InvalidOperationException("Unknown filter values outcome."),
         };
     }
 
@@ -868,5 +916,22 @@ internal sealed record SongTagResponse(Guid Id, string Name, string Colour)
         ArgumentNullException.ThrowIfNull(tag);
 
         return new(tag.Id, tag.Name, tag.Colour);
+    }
+}
+
+/// <summary>The values a Songs filter picker offers (#225), by name.</summary>
+internal sealed record SongFilterValueListResponse(SongFilterValueResponse[] Items);
+
+/// <summary>One filter value: its ID (a UUID, or a model as reported), its name, and a Tag's colour (left out otherwise).</summary>
+internal sealed record SongFilterValueResponse(
+    string Id,
+    string Name,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? Colour)
+{
+    public static SongFilterValueResponse From(SongFilterValue value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+
+        return new(value.Id, value.Name, value.Colour);
     }
 }

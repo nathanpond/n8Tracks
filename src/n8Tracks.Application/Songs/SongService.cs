@@ -3,7 +3,10 @@ using System.Text.Json;
 using n8Tracks.Application.Assets;
 using n8Tracks.Application.Auth;
 using n8Tracks.Application.Catalog;
+using n8Tracks.Application.Configuration;
+using n8Tracks.Application.Media;
 using n8Tracks.Application.References;
+using n8Tracks.Application.Scheduling;
 using n8Tracks.Application.Search;
 using n8Tracks.Application.Suno;
 using n8Tracks.Domain.Assets;
@@ -35,6 +38,11 @@ public sealed record SongRequest(
 /// <paramref name="ExcludeId"/> a Song's ID to leave out (<see cref="SongService.ExcludeIdParameter"/>), and
 /// <paramref name="Workspace"/> the Suno ID of a workspace whose Songs alone are listed (<see cref="SongService.WorkspaceParameter"/>), and
 /// <paramref name="Search"/> full-text search text (<see cref="SongService.SearchParameter"/>, #223).
+/// The rest are #225's filters, as sent: <paramref name="TagMode"/> (<see cref="SongService.TagModeParameter"/>),
+/// <paramref name="Album"/> and <paramref name="Playlist"/> (an ID each), <paramref name="Models"/>
+/// (reported model names, any of), <paramref name="CreatedFrom"/> and <paramref name="CreatedTo"/>
+/// (<c>yyyy-MM-dd</c>), <paramref name="MinRating"/>, <paramref name="Rated"/>,
+/// <paramref name="Selected"/>, <paramref name="Audio"/>, and <paramref name="Archived"/>.
 /// </summary>
 public sealed record SongListRequest(
     string? Sort,
@@ -49,7 +57,18 @@ public sealed record SongListRequest(
     string? Title = null,
     string? ExcludeId = null,
     string? Workspace = null,
-    string? Search = null);
+    string? Search = null,
+    string? TagMode = null,
+    string? Album = null,
+    string? Playlist = null,
+    IReadOnlyList<string?>? Models = null,
+    string? CreatedFrom = null,
+    string? CreatedTo = null,
+    string? MinRating = null,
+    string? Rated = null,
+    string? Selected = null,
+    string? Audio = null,
+    string? Archived = null);
 
 /// <summary>How creating a Song ended.</summary>
 public abstract record SongOutcome
@@ -176,6 +195,8 @@ public sealed class SongService(
     ISunoWorkspaceStore workspaces,
     SongSearchService songSearch,
     SearchIndexRebuild searchIndex,
+    MediaAvailability media,
+    N8TracksOptions options,
     IExclusiveTransaction transaction,
     TimeProvider time)
 {
@@ -246,6 +267,50 @@ public sealed class SongService(
     /// <see cref="QueryParameter"/>, the picker's title lookup; text with no word to search for lists every Song.
     /// </summary>
     public const string SearchParameter = "search";
+
+    /// <summary>#225: <see cref="TagModeAll"/> (the default: Songs with every <see cref="TagParameter"/>) or <see cref="TagModeAny"/>.</summary>
+    public const string TagModeParameter = "tagMode";
+    public const string TagModeAll = "all";
+    public const string TagModeAny = "any";
+
+    /// <summary>#225: an Album's ID: only the Songs on it. Once.</summary>
+    public const string AlbumParameter = "album";
+
+    /// <summary>#225: a Playlist's ID: only the Songs on it. Once.</summary>
+    public const string PlaylistParameter = "playlist";
+
+    /// <summary>#225: a model as a Generation reports it (<c>major_model_version</c>); several match any of them.</summary>
+    public const string ModelParameter = "model";
+
+    /// <summary>#225: a day, <c>yyyy-MM-dd</c>, in the configured time zone: Songs created on it or later.</summary>
+    public const string CreatedFromParameter = "createdFrom";
+
+    /// <summary>#225: a day, <c>yyyy-MM-dd</c>, in the configured time zone: Songs created on it or earlier.</summary>
+    public const string CreatedToParameter = "createdTo";
+
+    /// <summary>#225: <see cref="GenerationRating.Minimum"/> to <see cref="GenerationRating.Maximum"/>: Songs whose highest Generation rating is at least it.</summary>
+    public const string MinRatingParameter = "minRating";
+
+    /// <summary>#225: <see cref="RatedNone"/>: Songs with no rated Generation (with <see cref="MinRatingParameter"/>, either).</summary>
+    public const string RatedParameter = "rated";
+    public const string RatedNone = "none";
+
+    /// <summary>#225: <see cref="Yes"/> or <see cref="No"/>: Songs with or without a Selected Generation.</summary>
+    public const string SelectedParameter = "selected";
+    public const string Yes = "yes";
+    public const string No = "no";
+
+    /// <summary>#225: <see cref="AudioAvailable"/>, <see cref="AudioUnavailable"/>, or <see cref="AudioNone"/>.</summary>
+    public const string AudioParameter = "audio";
+    public const string AudioAvailable = "available";
+    public const string AudioUnavailable = "unavailable";
+    public const string AudioNone = "none";
+
+    /// <summary>#225: <see cref="ArchivedActive"/>, <see cref="ArchivedOnly"/>, or <see cref="ArchivedBoth"/> (the default).</summary>
+    public const string ArchivedParameter = "archived";
+    public const string ArchivedActive = "active";
+    public const string ArchivedOnly = "archived";
+    public const string ArchivedBoth = "both";
 
     /// <summary>How many Songs a search answers unless <see cref="PageSizeParameter"/> says otherwise.</summary>
     public const int SearchPageSize = 10;
@@ -652,11 +717,6 @@ public sealed class SongService(
             }
         }
 
-        if (genreIds.Count > 0 && (await genres.ExistingAsync(genreIds, cancellationToken).ConfigureAwait(false)).Count != genreIds.Count)
-        {
-            return Invalid($"Each {GenreParameter} must be the ID of a Genre, or {NoGenre}.");
-        }
-
         var tagIds = new List<Guid>();
         var noTag = false;
         foreach (var tag in request.Tags ?? [])
@@ -675,9 +735,22 @@ public sealed class SongService(
             }
         }
 
-        if (tagIds.Count > 0 && (await tags.ExistingAsync(tagIds, cancellationToken).ConfigureAwait(false)).Count != tagIds.Count)
+        bool allTags;
+        switch (request.TagMode)
         {
-            return Invalid($"Each {TagParameter} must be the ID of a Tag, or {NoTag}.");
+            case null or TagModeAll:
+                allTags = true;
+                break;
+            case TagModeAny:
+                allTags = false;
+                break;
+            default:
+                return Invalid($"{TagModeParameter} must be {TagModeAll} or {TagModeAny}.");
+        }
+
+        if (allTags && noTag && tagIds.Count > 0)
+        {
+            return Invalid($"{TagParameter}={NoTag} cannot be combined with other Tags while {TagModeParameter} is {TagModeAll}: send {TagModeParameter}={TagModeAny}.");
         }
 
         var artistIds = new List<Guid>();
@@ -740,8 +813,31 @@ public sealed class SongService(
             }
         }
 
+        if (FilterProblem(request) is { Length: > 0 } filterProblem)
+        {
+            return Invalid(filterProblem);
+        }
+
+        var filters = Filters(request);
+
+        var mediaUnavailable = filters.Audio is not null
+            && (await media.CurrentAsync(cancellationToken).ConfigureAwait(false)).State == MediaMountState.Unavailable;
         var found = searching ? await songSearch.SearchAsync(request.Search, cancellationToken).ConfigureAwait(false) : null;
-        var query = new SongListQuery(sort, descending, stateIds, page, pageSize, genreIds, noGenre, tagIds, noTag, artistIds, noArtist, search, titleKey, excludeId, request.Workspace, found?.SongIds);
+        var query = new SongListQuery(sort, descending, stateIds, page, pageSize, genreIds, noGenre, tagIds, noTag, artistIds, noArtist, search, titleKey, excludeId, request.Workspace, found?.SongIds)
+        {
+            Archived = filters.Archived,
+            AllTags = allTags,
+            AlbumId = filters.AlbumId,
+            PlaylistId = filters.PlaylistId,
+            Models = filters.Models,
+            CreatedFrom = filters.CreatedFrom,
+            CreatedBefore = filters.CreatedBefore,
+            MinRating = filters.MinRating,
+            Unrated = filters.Unrated,
+            HasSelectedGeneration = filters.HasSelectedGeneration,
+            Audio = filters.Audio,
+            MediaUnavailable = mediaUnavailable,
+        };
         var listed = await songs.ListAsync(query, cancellationToken).ConfigureAwait(false);
         if (request.Search is null)
         {
@@ -775,6 +871,127 @@ public sealed class SongService(
     }
 
     private static SongListOutcome.Invalid Invalid(string message) => new(message);
+
+    /// <summary>What is wrong with the first of #225's filters that is wrong, naming its parameter; empty when none is.</summary>
+    private static string FilterProblem(SongListRequest request)
+    {
+        if (request.Archived is not (null or ArchivedActive or ArchivedOnly or ArchivedBoth))
+        {
+            return $"{ArchivedParameter} must be {ArchivedActive}, {ArchivedOnly}, or {ArchivedBoth}.";
+        }
+
+        if (request.Album is not null && !Guid.TryParseExact(request.Album, "D", out _))
+        {
+            return $"{AlbumParameter} must be the ID of an Album.";
+        }
+
+        if (request.Playlist is not null && !Guid.TryParseExact(request.Playlist, "D", out _))
+        {
+            return $"{PlaylistParameter} must be the ID of a Playlist.";
+        }
+
+        if (request.Models?.Any(static model => string.IsNullOrWhiteSpace(model)) == true)
+        {
+            return $"Each {ModelParameter} must be a model as Suno reports it, not blank.";
+        }
+
+        if (request.CreatedFrom is not null && !TryReadDay(request.CreatedFrom, out _))
+        {
+            return $"{CreatedFromParameter} must be a date, yyyy-MM-dd.";
+        }
+
+        if (request.CreatedTo is not null && !TryReadDay(request.CreatedTo, out _))
+        {
+            return $"{CreatedToParameter} must be a date, yyyy-MM-dd.";
+        }
+
+        if (TryReadDay(request.CreatedFrom, out var from) && TryReadDay(request.CreatedTo, out var to) && from > to)
+        {
+            return $"{CreatedFromParameter} must not be later than {CreatedToParameter}.";
+        }
+
+        if (request.MinRating is not null && !TryReadWhole(request.MinRating, GenerationRating.Minimum, GenerationRating.Maximum, 0, out _))
+        {
+            return string.Create(CultureInfo.InvariantCulture, $"{MinRatingParameter} must be a whole number from {GenerationRating.Minimum} to {GenerationRating.Maximum}.");
+        }
+
+        if (request.Rated is not (null or RatedNone))
+        {
+            return $"{RatedParameter} must be {RatedNone}.";
+        }
+
+        if (request.Selected is not (null or Yes or No))
+        {
+            return $"{SelectedParameter} must be {Yes} or {No}.";
+        }
+
+        if (request.Audio is not (null or AudioAvailable or AudioUnavailable or AudioNone))
+        {
+            return $"{AudioParameter} must be {AudioAvailable}, {AudioUnavailable}, or {AudioNone}.";
+        }
+
+        return string.Empty;
+    }
+
+    /// <summary>#225's filters of a request <see cref="FilterProblem"/> found nothing wrong with.</summary>
+    private ListFilters Filters(SongListRequest request)
+    {
+        var models = request.Models is { Count: > 0 } sent
+            ? sent.Select(static model => model!.Trim()).Distinct(StringComparer.Ordinal).ToList()
+            : null;
+        int? minRating = request.MinRating is null ? null : int.Parse(request.MinRating, NumberStyles.None, CultureInfo.InvariantCulture);
+
+        return new ListFilters(
+            request.Archived switch
+            {
+                ArchivedActive => SongArchivedFilter.Active,
+                ArchivedOnly => SongArchivedFilter.Archived,
+                _ => SongArchivedFilter.Both,
+            },
+            request.Album is null ? null : Guid.ParseExact(request.Album, "D"),
+            request.Playlist is null ? null : Guid.ParseExact(request.Playlist, "D"),
+            models,
+            TryReadDay(request.CreatedFrom, out var from) ? StartOf(from) : null,
+            TryReadDay(request.CreatedTo, out var to) ? StartOf(to.AddDays(1)) : null,
+            minRating,
+            request.Rated == RatedNone,
+            request.Selected switch
+            {
+                Yes => true,
+                No => false,
+                _ => null,
+            },
+            request.Audio switch
+            {
+                AudioAvailable => SongAudioFilter.Available,
+                AudioUnavailable => SongAudioFilter.Unavailable,
+                AudioNone => SongAudioFilter.None,
+                _ => null,
+            });
+    }
+
+    /// <summary>The instant <paramref name="day"/> starts in the configured time zone.</summary>
+    private DateTimeOffset StartOf(DateOnly day) => DailyTaskRules.PlannedOn(day, TimeOnly.MinValue, options.TimeZone);
+
+    /// <summary>A whole day written <c>yyyy-MM-dd</c>; false when missing or written otherwise.</summary>
+    private static bool TryReadDay(string? text, out DateOnly day)
+    {
+        day = default;
+        return text is not null && DateOnly.TryParseExact(text, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out day);
+    }
+
+    /// <summary>#225's filters, read.</summary>
+    private sealed record ListFilters(
+        SongArchivedFilter Archived,
+        Guid? AlbumId,
+        Guid? PlaylistId,
+        IReadOnlyList<string>? Models,
+        DateTimeOffset? CreatedFrom,
+        DateTimeOffset? CreatedBefore,
+        int? MinRating,
+        bool Unrated,
+        bool? HasSelectedGeneration,
+        SongAudioFilter? Audio);
 
     /// <summary>Adds the errors of each release member sent, keyed <c>release.&lt;member&gt;</c>.</summary>
     private static void AddReleaseErrors(Dictionary<string, string[]> errors, SongReleaseEdit release)

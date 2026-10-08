@@ -131,6 +131,30 @@ public enum SongSort
 /// <param name="ExcludeId">Every Song but this one; every Song when null.</param>
 /// <param name="SunoWorkspaceId">Only Songs in the Suno workspace with this ID; every Song when null.</param>
 /// <param name="MatchedIds">Only these Songs, most relevant first (#223: a full-text search's result); every Song when null.</param>
+/// <param name="Archived">
+/// #225: Songs in the seeded Archived workflow state (<see cref="DefaultWorkflowStates.Archived"/>, known
+/// by its ID whatever it is called), the others, or both (the default).
+/// </param>
+/// <param name="AllTags">
+/// #225: Songs with every one of <paramref name="TagIds"/> rather than any of them. Never with
+/// <paramref name="NoTag"/> and Tags together (the service refuses that).
+/// </param>
+/// <param name="AlbumId">#225: only Songs on this Album; every Song when null; nothing when there is no such Album.</param>
+/// <param name="PlaylistId">#225: only Songs on this Playlist; every Song when null; nothing when there is no such Playlist.</param>
+/// <param name="Models">#225: only Songs with a live Generation reporting any of these <c>major_model_version</c>s; every Song when null or empty.</param>
+/// <param name="CreatedFrom">#225: only Songs created at or after this instant; every Song when null.</param>
+/// <param name="CreatedBefore">#225: only Songs created before this instant; every Song when null.</param>
+/// <param name="MinRating">
+/// #225: only Songs whose highest rating over their live Generations (active or archived) is at least
+/// this; with <paramref name="Unrated"/>, also Songs with no rated Generation. Every Song when null.
+/// </param>
+/// <param name="Unrated">#225: only Songs with no rated live Generation (or, with <paramref name="MinRating"/>, these too).</param>
+/// <param name="HasSelectedGeneration">#225: only Songs with (true) or without (false) a Selected Generation; every Song when null.</param>
+/// <param name="Audio">#225: only Songs with this local-audio availability; every Song when null.</param>
+/// <param name="MediaUnavailable">
+/// #225: whether the media folder is unavailable now, when every file reports Unavailable
+/// (<see cref="MediaAvailability.Reported"/>): no Song then has an available file.
+/// </param>
 public sealed record SongListQuery(
     SongSort Sort,
     bool Descending,
@@ -147,7 +171,76 @@ public sealed record SongListQuery(
     string? TitleKey = null,
     Guid? ExcludeId = null,
     string? SunoWorkspaceId = null,
-    IReadOnlyList<Guid>? MatchedIds = null);
+    IReadOnlyList<Guid>? MatchedIds = null,
+    SongArchivedFilter Archived = SongArchivedFilter.Both,
+    bool AllTags = false,
+    Guid? AlbumId = null,
+    Guid? PlaylistId = null,
+    IReadOnlyList<string>? Models = null,
+    DateTimeOffset? CreatedFrom = null,
+    DateTimeOffset? CreatedBefore = null,
+    int? MinRating = null,
+    bool Unrated = false,
+    bool? HasSelectedGeneration = null,
+    SongAudioFilter? Audio = null,
+    bool MediaUnavailable = false);
+
+/// <summary>Which Songs the archived filter (#225) keeps.</summary>
+public enum SongArchivedFilter
+{
+    /// <summary>Every Song: the default, so archived Songs are listed unless filtered out (#59).</summary>
+    Both,
+
+    /// <summary>The Songs not in the Archived workflow state.</summary>
+    Active,
+
+    /// <summary>The Songs in the Archived workflow state.</summary>
+    Archived,
+}
+
+/// <summary>A Song's local-audio availability, as the audio filter (#225) reads it.</summary>
+public enum SongAudioFilter
+{
+    /// <summary>At least one associated audio file reports Available.</summary>
+    Available,
+
+    /// <summary>Associated audio files, none of which reports Available.</summary>
+    Unavailable,
+
+    /// <summary>No associated audio file at all.</summary>
+    None,
+}
+
+/// <summary>What the Songs filter pickers (#225) offer values of.</summary>
+public enum SongFilterValueKind
+{
+    Genre,
+    Tag,
+    Album,
+    Playlist,
+
+    /// <summary>A Generation's <c>major_model_version</c>, as reported.</summary>
+    Model,
+}
+
+/// <summary>
+/// One value a filter picker offers (#225): its ID (a UUID, or the reported model text), its name,
+/// and, for a Tag, its colour.
+/// </summary>
+public sealed record SongFilterValue(string Id, string Name, string? Colour = null);
+
+/// <summary>Where the Songs filter pickers' values (#225) are read.</summary>
+public interface ISongFilterValueStore
+{
+    /// <summary>
+    /// Every value of <paramref name="kind"/> that exists: every Genre, Tag, Album, and Playlist; every
+    /// model a live Generation reports (named as reported). Only IDs, names, and colours are read.
+    /// </summary>
+    Task<IReadOnlyList<SongFilterValue>> ListAsync(SongFilterValueKind kind, CancellationToken cancellationToken);
+
+    /// <summary>The values of <paramref name="kind"/> with these IDs that exist; the rest are left out.</summary>
+    Task<IReadOnlyList<SongFilterValue>> NamedAsync(SongFilterValueKind kind, IReadOnlyList<string> ids, CancellationToken cancellationToken);
+}
 
 /// <summary>A page of Songs and how many match in all.</summary>
 public sealed record SongPage(IReadOnlyList<SongSummary> Items, int Page, int PageSize, int Total)

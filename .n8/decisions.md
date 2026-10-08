@@ -4658,3 +4658,42 @@ Story #234 (built in parallel; merged into the milestone branch):
 - **Decision:** The log settings monitor is off in test hosts (`LoggingSettingsMonitorOptions { Enabled = false }` in `N8TracksApiFactory`), as the other schedulers are. Tests call `LoggingSettingsMonitor.LookAsync` themselves.
   **Why:** Test determinism.
   **Issue:** #234
+
+Story #225:
+
+- **Decision:** A bad filter value is refused with 400 `invalid_request`, naming the parameter, not `invalid_parameter`. This corrects a typo in the AC, which says "as #58 does", and #58 answers `invalid_request`. It is not a replan.
+  **Why:** No `invalid_parameter` code exists. The orchestrator decided to log this as a corrected typo.
+  **Issue:** #225
+- **Decision:** A well-formed Genre or Tag ID that does not exist now matches nothing; before, it was a 400 (#83, #85). An unknown workflow state is still a 400, as AC 12 lists it. `GenreEndpointTests` and `TagEndpointTests` are updated to match.
+  **Why:** The planner's discretion line says this replaces #83's and #85's unknown-ID refusal.
+  **Issue:** #225
+- **Decision:** Repeated `tag` now means every one of those Tags by default (`tagMode=all`), where before it meant any of them. `tagMode=any` restores the old reading. In the web bar, choosing "No Tags" next to another Tag switches to `any` and disables "All of these Tags". The API refuses `tag=none` with other Tags under `all`.
+  **Why:** The discretion line sets the default to `all`, and the AC asks for both all-of and any-of.
+  **Issue:** #225
+- **Decision:** The new filters are trailing members of `SongListRequest` and `SongListQuery`, after `Search`/`MatchedIds` (#223's note). The service sets them with an object initializer. Each one is a sub-query in `SongStore.Filtered` (EXISTS on `album_songs`, `playlist_songs`, `generations`, and `audio_files`), so no filter loads the catalog. In the address, the new parameters come after the existing ones (`search` … `title`) and before `page`.
+  **Why:** The key_link asks for sub-queries. Appending keeps every existing address and test unchanged.
+  **Issue:** #225
+- **Decision:** `audio=available` reads the reported status. While the media folder is recorded Unavailable (`MediaAvailability.CurrentAsync`), no Song has an available file and `unavailable` matches every Song that has files. Local audio counts every file associated with the Song (`audio_files.song_id`), Song-level or a Generation's.
+  **Why:** This is the m6-plan's ID line (#207's reported status) and the discretion line.
+  **Issue:** #225
+- **Decision:** Day boundaries are `DailyTaskRules.PlannedOn(day, 00:00, TZ)`. `createdTo` is exclusive at the start of the next day, so both ends are included. Dates must be `yyyy-MM-dd` exactly.
+  **Why:** The discretion line asks for whole days in the configured zone. This reuses the existing local-midnight rule, including its handling of DST gaps.
+  **Issue:** #225
+- **Decision:** `GET /api/v1/songs/filter-values` (`catalog.read`, `SongFilterValueService`) offers genre, tag, album, playlist, and model. It does not offer workflow states. The state chips keep `GET /workflow-states` with `statesForFilter`, which already applies "shown, plus hidden ones a Song is in". `ids` and `query` cannot be combined. At most 100 IDs.
+  **Why:** States were already offered by the same rule. A second source would duplicate it.
+  **Issue:** #225
+- **Decision:** The values are read as ID/name projections and matched on word beginnings in memory (folded case and diacritics, then the first 50 by name). Model names are the model list's entry when `SunoModelRules.Match` finds one, and the reported text otherwise. The service is excused in the invariant-1 guard as "reads only".
+  **Why:** Personal catalogs are small. Matching on word beginnings with diacritics removed cannot be expressed with SQLite LIKE. Clients still never load a catalog whole.
+  **Issue:** #225
+- **Decision:** This wave's migration is `20261008090000_AddSongFilterIndexes`, with indexes only: `songs (created_utc, shortcode_number)` and `generations (model_version, song_id)`. It uses `CREATE INDEX` and rebuilds no table, so the search triggers stay. The Designer was written from the current snapshot plus these two indexes.
+  **Why:** The creation-date range and the model filter and picker are the new reads that no existing index covers.
+  **Issue:** #225
+- **Decision:** Chips are Mantine `Badge`s with a `CloseButton` named "Remove the filter …", not `Pill`.
+  **Why:** `Pill`'s remove button is hidden from assistive technology (it is built for use inside an input), so a chip could not be removed by keyboard or screen reader.
+  **Issue:** #225
+- **Decision:** Rule 1: `DuplicateTitleEndpointTests` expected the old refusal for a repeated single-value parameter ("Only state, genre, tag, and artist may be given more than once."). Now that `model` is repeatable, the endpoint says "…tag, artist, and model…". The two InlineData expectations are updated to match.
+  **Why:** The full `dotnet test` gate failed on these two cases only. The new message is correct.
+  **Issue:** #225
+- **Decision:** Rule 3: `SongFilterValueStore.cs` failed `dotnet format --verify-no-changes` because of the indentation of its case-block braces. It was fixed with `dotnet format whitespace` on that file alone. There was no code change.
+  **Why:** The format gate must pass.
+  **Issue:** #225

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { songListParameters, songQueryFrom } from './songs';
+import { activeFilterCount, songListParameters, songQueryFrom } from './songs';
 import { formatRelativeTime } from './timeZone';
 
 const STATE = '01a10a6e-dc80-7000-8000-000000000001';
@@ -27,6 +27,45 @@ describe('the Songs view in the URL', () => {
     const search = `sort=title&direction=desc&state=${STATE}&genre=${GENRE}&genre=none&tag=${TAG}&tag=none&artist=${ARTIST}&artist=none&page=3`;
 
     expect(songListParameters(songQueryFrom(new URLSearchParams(search))).toString()).toBe(search);
+  });
+
+  it('reads and writes every #225 filter, after the existing ones and the search', () => {
+    const album = '0199b1a0-0000-7000-c000-000000000001';
+    const playlist = '0199b1a0-0000-7000-d000-000000000001';
+    const search =
+      `search=lantern&state=${STATE}&tag=${TAG}&tag=none&tagMode=any&archived=active&album=${album}` +
+      `&playlist=${playlist}&model=chirp-v4&model=chirp-v5&createdFrom=2026-01-10&createdTo=2026-01-20` +
+      '&minRating=4&rated=none&selected=no&audio=unavailable&page=2';
+
+    const query = songQueryFrom(new URLSearchParams(search));
+    expect(query).toMatchObject({
+      tagMode: 'any',
+      archived: 'active',
+      album,
+      playlist,
+      models: ['chirp-v4', 'chirp-v5'],
+      createdFrom: '2026-01-10',
+      createdTo: '2026-01-20',
+      minRating: 4,
+      rated: 'none',
+      selected: 'no',
+      audio: 'unavailable',
+    });
+    expect(activeFilterCount(query)).toBe(14);
+    expect(songListParameters(query).toString()).toBe(search);
+  });
+
+  it('leaves out filter values the list would refuse, so a hand-edited address still shows a table', () => {
+    const query = songQueryFrom(
+      new URLSearchParams(
+        'tagMode=some&archived=both&model=&createdFrom=20260110&createdTo=2026-1-2&minRating=6&rated=yes&selected=maybe&audio=missing',
+      ),
+    );
+
+    expect(songListParameters(query).toString()).toBe('');
+    expect(activeFilterCount(query)).toBe(0);
+    // All of the Tags is the default and is not written; any of them needs Tags to mean anything.
+    expect(songListParameters({ ...query, tagMode: 'any' }).toString()).toBe('');
   });
 
   it('reads and writes a search, ordered by relevance unless a sort is chosen', () => {

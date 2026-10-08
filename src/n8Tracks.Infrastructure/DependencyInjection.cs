@@ -72,6 +72,7 @@ public static class DependencyInjection
         services.AddScoped<ICredentialStore, CredentialStore>();
         services.AddScoped<IJobStore, JobStore>();
         services.AddScoped<ISongStore, SongStore>();
+        services.AddScoped<ISongFilterValueStore, SongFilterValueStore>();
         services.AddScoped<IGenreStore, GenreStore>();
         services.AddScoped<ITagStore, TagStore>();
         services.AddScoped<IArtistStore, ArtistStore>();
