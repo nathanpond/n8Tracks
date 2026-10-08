@@ -4625,3 +4625,36 @@ Story #224:
 - **Decision:** When a search finds nothing, the page says "No Songs match “…”" (adding "with the chosen filters" when filters are set) and offers "Clear the search", plus "Clear the search and filters" when filters are set. A page whose `indexRebuilding` is true shows a one-line note. The total reads "N Songs match “…”" as a polite status.
   **Why:** These meet the AC's empty state and total. #225 adds its new filters to `filtered` and to `clearAll`.
   **Issue:** #224
+
+Story #234 (built in parallel; merged into the milestone branch):
+
+- **Decision:** The application's log files are written by a small rolling sink of our own (`Infrastructure/Logging/FileLogging.cs`), not by `Serilog.Sinks.File`. This deviates from the planner's discretion line. It is still one more sink of the same Serilog pipeline, sitting behind `WithRedaction()`, and it uses the same `JsonLogFormatter`. No new package was added.
+  **Why:** `Serilog.Sinks.File` 7.0.0 does not fit the story's other requirements. It rolls on local time through an internal static clock, so days cannot be counted in UTC and the test plan's controllable clock cannot drive it. It has no way to tell Diagnostics that the folder cannot be written. It cannot compare the folder with the media folder (#387) before each open. It cannot change the roll size (min(20 MB, cap/4)) while running.
+  **Issue:** #234
+- **Decision:** The cap is enforced at every roll as well as at each sweep. At a roll, the oldest files are deleted until the closed files plus one full roll size fit under the cap. The files therefore never pass the cap by more than one line, which is stricter than the AC's "one file's worth".
+  **Why:** An hourly sweep alone lets a busy hour overshoot by far more than one file.
+  **Issue:** #234
+- **Decision:** Nothing is deleted until the saved limits are in effect (`ILogFiles.Configure`). The "startup sweep" is the monitor's first look, which runs after it has read the setting.
+  **Why:** A sweep with the defaults (14 days, 200 MB) at startup would cut short a saved 90-day / 5 GB setting.
+  **Issue:** #234
+- **Decision:** `confirmation_required` (409, as the discretion line says) counts only the files that the new limits delete and the current limits keep.
+  **Why:** Otherwise a save that only changes the level would ask for confirmation whenever an hourly sweep is due.
+  **Issue:** #234
+- **Decision:** When a saved Debug level reaches its 24 hours, the setting is written back as Information with `debugUntil` null and revision + 1, and one Information line is logged. A Debug level set by `N8TRACKS_LOG_LEVEL` never ends.
+  **Why:** This makes the page and the API show the level that is actually in effect, and a stale client gets a revision conflict.
+  **Issue:** #234
+- **Decision:** Settings → Diagnostics is a new route, `/settings/diagnostics`, with a sidebar entry after System, holding `DiagnosticsSettingsPage`. #235 replaces System and folds into this page.
+  **Why:** The AC names "Settings → Diagnostics", and #235's page does not exist yet.
+  **Issue:** #234
+- **Decision:** Gateway log files are named `n8tracks-gateway-YYYYMMDD[_n].jsonl`. `N8TRACKS_GATEWAY_LOG_PATH` must be an absolute path. The gateway does no media-folder comparison: it has no media setting, and that is recorded in `MediaMountAccessTests`. Its lines are written by the registered JSON `ConsoleFormatter` itself, so they are byte-for-byte its console lines.
+  **Why:** The gateway may share no code with the application, and an operator may point both at one folder; the app ignores other files there.
+  **Issue:** #234
+- **Decision:** Invariant 2 hardening: a link carrying a log file's name is never written through or deleted (the next sequence number is used). The log folder is refused when `MediaFolderOverlap` finds it, or the data folder while the log folder is absent, inside the media folder. The check runs before the folder is created and again after.
+  **Why:** Defense in depth beyond #387's startup check: a `logs` folder that is a second mount of the media folder, or a planted symlink, must not let a write reach `/media`.
+  **Issue:** #234
+- **Decision:** `folderProblem` and the gateway Warning describe the failure in fixed words (not allowed / not writable / inside the media folder), never with the exception message.
+  **Why:** .NET's I/O exception messages contain host paths, which #235 keeps out of Diagnostics.
+  **Issue:** #234
+- **Decision:** The log settings monitor is off in test hosts (`LoggingSettingsMonitorOptions { Enabled = false }` in `N8TracksApiFactory`), as the other schedulers are. Tests call `LoggingSettingsMonitor.LookAsync` themselves.
+  **Why:** Test determinism.
+  **Issue:** #234
