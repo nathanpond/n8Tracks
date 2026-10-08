@@ -14,6 +14,7 @@ public sealed class RetentionService(
     IRetentionStore store,
     IManagedFiles files,
     IEnumerable<ILiveFileReferences> liveReferences,
+    IEnumerable<IRetentionRestoreParticipant> restoreParticipants,
     IExclusiveTransaction transaction,
     TimeProvider time)
 {
@@ -125,6 +126,11 @@ public sealed class RetentionService(
         if (await store.FindAsync(id, cancellationToken).ConfigureAwait(false) is not { } group)
         {
             return new RetentionRestoreOutcome.NotFound();
+        }
+
+        foreach (var participant in restoreParticipants)
+        {
+            await participant.RestoringAsync(id, cancellationToken).ConfigureAwait(false);
         }
 
         var result = await store.RestoreAsync(id, time.GetUtcNow(), cancellationToken).ConfigureAwait(false);

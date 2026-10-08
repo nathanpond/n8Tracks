@@ -373,12 +373,24 @@ jobs:
   # The end-to-end suite, in Chromium, against the application image the `container` job built and
   # smoke-tested: the same image, loaded from the artifact, not built again. Each test also runs
   # the accessibility scan.
+  #
+  # One job per Playwright project, each with containers of its own. Within a project the suite
+  # keeps one worker (the tests share their project's containers), but the two projects never
+  # shared a container, so running them side by side changes nothing they see. Run one after the
+  # other in a single job, they went past the 45-minute limit on a slower runner image (#405: 171
+  # tests, the root project 30 minutes and the sub-path one 14 before the cancel).
   e2e:
-    name: e2e
+    name: e2e (${{ matrix.project }})
     needs: container
     runs-on: ubuntu-latest
-    # One worker by design (the tests share their containers), so the run grows with the suite: M3
-    # took it past 20 minutes on a hosted runner (112 tests). 45 matches the container job.
+    strategy:
+      # Both projects report, even when one fails.
+      fail-fast: false
+      matrix:
+        project: [root, subpath]
+    # Unchanged at 45: the longer leg (root, which also runs the @root-only tests) took about 30
+    # minutes of tests on #405's slower runner. 45 is 1.5 times that, and is what the container
+    # job allows.
     timeout-minutes: 45
     permissions:
       contents: read
@@ -464,13 +476,14 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       # `CI` is set on the runner: playwright.config.ts then retries a failing test once, records a
-      # trace of the retry, and writes the HTML and JSON reports.
+      # trace of the retry, and writes the HTML and JSON reports. Only this leg's project runs.
       - id: test
-        name: npm test
+        name: npm test -- --project=${{ matrix.project }}
         if: ${{ !cancelled() && steps.load.outcome == 'success' && steps.browser.outcome == 'success' }}
         env:
           N8TRACKS_E2E_LOG_DIR: test-results/container-logs
-        run: npm test
+          PROJECT: ${{ matrix.project }}
+        run: npm test -- --project="$PROJECT"
 
       # A flaky test passed on its retry, so the step above is green: this is where it is named.
       - id: summary
@@ -484,7 +497,8 @@ jobs:
         if: ${{ !cancelled() && (steps.test.outcome == 'failure' || (steps.summary.outputs.flaky != '' && steps.summary.outputs.flaky != '0')) }}
         uses: actions/upload-artifact@v7
         with:
-          name: e2e-report
+          # One artifact per leg: two legs uploading under one name would collide.
+          name: e2e-report-${{ matrix.project }}
           path: |
             e2e/playwright-report/
             e2e/test-results/
@@ -495,9 +509,10 @@ jobs:
         if: ${{ failure() }}
         env:
           STEPS: ${{ toJSON(steps) }}
+          PROJECT: ${{ matrix.project }}
         run: |
           {
-            echo "### e2e: failed steps"
+            echo "### e2e (${PROJECT}): failed steps"
             jq -r 'to_entries[] | select(.value.outcome == "failure") | "- `\(.key)`"' <<<"$STEPS"
           } >> "$GITHUB_STEP_SUMMARY"
 

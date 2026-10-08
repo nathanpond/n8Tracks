@@ -242,9 +242,10 @@ public sealed class VersionDeletionService(
         await versions.RewriteSourcesOfDeletedGenerationsAsync(generations, [version.Id], now, cancellationToken).ConfigureAwait(false);
         await tombstones.RecordForAsync(generations, now, cancellationToken).ConfigureAwait(false);
 
-        // The Generations' audio files stay on disk, unassociated (#206; associations are not retained).
-        await audioFiles.ReleaseAsync(generations, [], cancellationToken).ConfigureAwait(false);
-        return await retention.RetainWithinAsync(
+        // The Generations' audio files stay on disk, unassociated (#206; associations are not
+        // retained); the group remembers which, so its restore clears their reason (#388).
+        var released = await audioFiles.ReleaseAsync(generations, [], cancellationToken).ConfigureAwait(false);
+        var group = await retention.RetainWithinAsync(
             new RetentionRequest(
                 RetainedRecordTypes.Version,
                 Label(version.Shortcode),
@@ -253,5 +254,7 @@ public sealed class VersionDeletionService(
                 files,
                 Referring: [RetainedRecordTypes.SelectedGeneration]),
             cancellationToken).ConfigureAwait(false);
+        await audioFiles.RememberAsync(group.Id, released, cancellationToken).ConfigureAwait(false);
+        return group;
     }
 }

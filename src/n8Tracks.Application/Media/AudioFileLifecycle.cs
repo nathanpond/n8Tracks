@@ -1,3 +1,4 @@
+using n8Tracks.Application.Retention;
 using n8Tracks.Domain.Media;
 
 namespace n8Tracks.Application.Media;
@@ -23,11 +24,13 @@ public sealed record LocalAudioFileCounts(int Total, int HandAssociated, int Son
 /// restored (#206, #213). Associations are not kept in the retention store: a deletion removes them
 /// inside its own transaction, before retention captures the rows (the database refuses to remove a
 /// Song or Generation a file still names), and the next scan associates again any file whose name
-/// carries a Suno ID that is live again. A move needs nothing here: the files of a Generation follow it
+/// carries a Suno ID that is live again. What a deletion released is remembered with its group
+/// (#388), and a restore of that group clears those files' reason ("its Song was deleted", "its
+/// Generation was deleted"), so a file the scan does not match again is plainly unmatched. A move needs nothing here: the files of a Generation follow it
 /// to its new Song through the database's composite key (its update cascades), and its Preferred Audio
 /// File choice is keyed by the Generation (#212). The files themselves are never touched (invariant 2).
 /// </summary>
-public sealed class AudioFileLifecycle(IAudioFileStore files, IPreferredAudioFileStore preferences)
+public sealed class AudioFileLifecycle(IAudioFileStore files, IPreferredAudioFileStore preferences) : IRetentionRestoreParticipant
 {
     /// <summary>
     /// What the <c>restore-deleted</c> command says after restoring a Song, Version, or Generation. It is
@@ -79,21 +82,35 @@ public sealed class AudioFileLifecycle(IAudioFileStore files, IPreferredAudioFil
     /// become unmatched with the reason "its Generation was deleted", and every file of the Songs
     /// <paramref name="songIds"/> (Song-level ones included) with "its Song was deleted". The preferred
     /// file choices of those Generations and Songs go first (#212); they are not retained, so a restore
-    /// does not bring them back.
+    /// does not bring them back. The caller hands what was released to <see cref="RememberAsync"/> once
+    /// its retention group exists.
     /// </summary>
-    internal async Task<int> ReleaseAsync(IReadOnlyCollection<Guid> generationIds, IReadOnlyCollection<Guid> songIds, CancellationToken cancellationToken)
+    internal async Task<IReadOnlyList<ReleasedAudioFile>> ReleaseAsync(IReadOnlyCollection<Guid> generationIds, IReadOnlyCollection<Guid> songIds, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(generationIds);
         ArgumentNullException.ThrowIfNull(songIds);
 
         if (generationIds.Count == 0 && songIds.Count == 0)
         {
-            return 0;
+            return [];
         }
 
         await preferences.ReleaseAsync(generationIds, songIds, cancellationToken).ConfigureAwait(false);
         return await files.UnassociateAsync(generationIds, songIds, cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>Inside the deleting transaction: keeps <paramref name="released"/> with the deletion's retention group <paramref name="groupId"/> (#388).</summary>
+    internal Task RememberAsync(Guid groupId, IReadOnlyCollection<ReleasedAudioFile> released, CancellationToken cancellationToken) =>
+        files.RememberReleaseAsync(groupId, released, cancellationToken);
+
+    /// <summary>
+    /// Inside a restore's transaction (#388): the files the group's deletion released lose the reason
+    /// it gave them, where they still have it and are still unassociated. A file associated since, one
+    /// the user unassociated, and one released by another deletion are left as they are; the automatic
+    /// match block (#210) is never touched. The next scan matches by Suno ID as always.
+    /// </summary>
+    public Task RestoringAsync(Guid groupId, CancellationToken cancellationToken) =>
+        files.ClearReleaseReasonsAsync(groupId, cancellationToken);
 
     /// <summary>Whether the user associated <paramref name="file"/> and no scan would associate it again by itself.</summary>
     private static bool IsHandAssociated(AudioFile file) =>

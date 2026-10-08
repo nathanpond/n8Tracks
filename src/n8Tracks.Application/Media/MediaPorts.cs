@@ -360,10 +360,27 @@ public interface IAudioFileStore
     /// Inside the deleting transaction: removes the association of every file associated with one of
     /// <paramref name="generationIds"/> (reason <see cref="UnmatchedReason.GenerationDeleted"/>) or with
     /// one of <paramref name="songIds"/> (reason <see cref="UnmatchedReason.SongDeleted"/>), raising
-    /// each one's revision. Returns how many changed.
+    /// each one's revision. Returns the files it changed, each with the reason it was given.
     /// </summary>
-    Task<int> UnassociateAsync(IReadOnlyCollection<Guid> generationIds, IReadOnlyCollection<Guid> songIds, CancellationToken cancellationToken);
+    Task<IReadOnlyList<ReleasedAudioFile>> UnassociateAsync(IReadOnlyCollection<Guid> generationIds, IReadOnlyCollection<Guid> songIds, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Inside the deleting transaction, once its retention group <paramref name="groupId"/> exists:
+    /// remembers <paramref name="released"/> with the group (#388), so its restore can clear their reasons.
+    /// </summary>
+    Task RememberReleaseAsync(Guid groupId, IReadOnlyCollection<ReleasedAudioFile> released, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Inside a restore's transaction, before the group <paramref name="groupId"/> goes: clears the
+    /// unmatched reason of each file its deletion released, where the file is still unassociated with
+    /// the reason that deletion gave it, raising its revision. Nothing else changes (the automatic
+    /// match block of #210 included). Returns how many changed.
+    /// </summary>
+    Task<int> ClearReleaseReasonsAsync(Guid groupId, CancellationToken cancellationToken);
 }
+
+/// <summary>An audio file a deletion left unassociated, and the reason it was given.</summary>
+public sealed record ReleasedAudioFile(Guid Id, UnmatchedReason Reason);
 
 /// <summary>Where the suggestions for unmatched files read their candidates (#209). Reads only.</summary>
 public interface IMatchCandidateStore

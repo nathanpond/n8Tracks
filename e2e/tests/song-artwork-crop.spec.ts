@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page, type TestInfo } from '@playwright/test';
 import {
   expectAccessibleInLightAndDark,
   expectModalAccessibleInBothSchemes,
@@ -10,6 +10,7 @@ interface Song {
   id: string;
   shortcode: string;
   title: string;
+  revision: number;
   artwork: {
     assetId: string;
     urls: Record<string, string>;
@@ -85,26 +86,55 @@ async function shownEdges(image: Locator): Promise<[Colour, Colour]> {
   });
 }
 
+function stampOf(testInfo: TestInfo): string {
+  return `${testInfo.project.name} ${String(Date.now())} ${String(testInfo.retry)}`;
+}
+
+/** Changes the Song the way the Details panel does: a PATCH based on the revision it reads. */
+async function patchSong(
+  page: Page,
+  base: URL,
+  song: Song,
+  data: Record<string, unknown>,
+): Promise<void> {
+  const current = await readSong(page, base, song);
+  const answer = await page.request.patch(new URL(`api/v1/songs/${song.id}`, base).toString(), {
+    headers: { ...ANTIFORGERY_HEADERS, 'If-Match': `"${String(current.revision)}"` },
+    data,
+  });
+  expect(answer.status(), await answer.text()).toBe(200);
+}
+
+/** Opens the Song with its Details panel shown; the panel's artwork group. */
+async function openDetails(page: Page, song: Song): Promise<Locator> {
+  await page.goto(`./songs/${song.shortcode}`);
+  await expect(page.getByRole('heading', { level: 2, name: song.title })).toBeVisible();
+  await page.getByRole('button', { name: 'Details', exact: true }).click();
+  const picker = page.getByRole('group', { name: 'Artwork' });
+  await expect(picker).toBeVisible();
+  return picker;
+}
+
 /**
- * Walks the story's Demo on the project's shared container, on a Song of its own (title and image
- * bytes stamped with this run): a wide image, red on the left and blue on the right, shows its
- * centre as the square (half red, half blue); the crop control, moved to the left edge with the
- * keyboard and saved, makes the Song's artwork the red left part in the panel, the header, and the
- * Songs table; and Reset brings the centre back. Each state is scanned with axe in both schemes.
+ * Walks the story's Demo on the project's shared container, on Songs of their own (titles and image
+ * bytes stamped with this run):
+ * 1. A wide image, red on the left and blue on the right, shows its centre as the square (half red,
+ *    half blue).
+ * 2. The crop control, moved to the left edge with the keyboard and saved, makes the Song's artwork
+ *    the red left part in the panel, the header, and the Songs table.
+ * 3. Reset brings the centre back.
+ * Each state is scanned with axe in both schemes. The Demo is two tests, so each stays well inside
+ * the test timeout on a slow CI runner (#406); the second starts with the crop saved in the panel's
+ * own calls (upload the image, set it as the Song's artwork, save the crop).
  */
 test.describe('Artwork crop', () => {
-  test('crops a Song’s artwork to its left edge and resets it to the centre', async ({
-    page,
-  }, testInfo) => {
-    const stamp = `${testInfo.project.name} ${String(Date.now())} ${String(testInfo.retry)}`;
+  test('crops a Song’s artwork to its left edge with the keyboard', async ({ page }, testInfo) => {
+    const stamp = stampOf(testInfo);
     const base = await appBase(page);
     const song = await createSong(page, base, `Crop ${String(Date.now()).slice(-7)}`);
     const alt = `Artwork for ${song.title}`;
 
-    await page.goto(`./songs/${song.shortcode}`);
-    await expect(page.getByRole('heading', { level: 2, name: song.title })).toBeVisible();
-    await page.getByRole('button', { name: 'Details', exact: true }).click();
-    const picker = page.getByRole('group', { name: 'Artwork' });
+    const picker = await openDetails(page, song);
     const status = picker.getByTestId('artwork-status');
     const panelImage = picker.getByRole('img', { name: alt });
     const headerImage = page.getByTestId('song-header-artwork').getByRole('img', { name: alt });
@@ -144,6 +174,30 @@ test.describe('Artwork crop', () => {
     expect(await shownEdges(panelImage)).toEqual(['red', 'red']);
     expect(await shownEdges(headerImage)).toEqual(['red', 'red']);
     await expectAccessibleInLightAndDark(page);
+  });
+
+  test('shows the cropped artwork in the Songs table, and resets it to the centre', async ({
+    page,
+  }, testInfo) => {
+    const stamp = stampOf(testInfo);
+    const base = await appBase(page);
+    const song = await createSong(page, base, `Crop ${String(Date.now()).slice(-7)}`);
+    const alt = `Artwork for ${song.title}`;
+
+    // Where step 2 ends: the wide image is the Song's artwork, cropped to its left edge.
+    const uploaded = await page.request.post(new URL('api/v1/artwork', base).toString(), {
+      headers: ANTIFORGERY_HEADERS,
+      multipart: {
+        file: { name: 'wide.png', mimeType: 'image/png', buffer: halvesPng(1200, 600, stamp) },
+      },
+    });
+    expect(uploaded.status(), await uploaded.text()).toBe(201);
+    await patchSong(page, base, song, {
+      artworkAssetId: ((await uploaded.json()) as { id: string }).id,
+    });
+    await patchSong(page, base, song, { artworkCrop: { x: 0, y: 0, size: 600 } });
+    const croppedArtwork = (await readSong(page, base, song)).artwork;
+    expect(croppedArtwork?.crop).toEqual({ x: 0, y: 0, size: 600 });
 
     await page.goto('./songs');
     const tableImage = page
@@ -156,7 +210,11 @@ test.describe('Artwork crop', () => {
     await expectAccessibleInLightAndDark(page);
 
     // 3. Reset: the centre returns.
-    await page.goto(`./songs/${song.shortcode}`);
+    const picker = await openDetails(page, song);
+    const status = picker.getByTestId('artwork-status');
+    const panelImage = picker.getByRole('img', { name: alt });
+    const headerImage = page.getByTestId('song-header-artwork').getByRole('img', { name: alt });
+    expect(await shownEdges(panelImage)).toEqual(['red', 'red']);
     await picker.getByRole('button', { name: 'Reset crop' }).click();
     await expect(status).toHaveText('Crop reset to the centre.');
     expect((await readSong(page, base, song)).artwork?.crop).toBeNull();

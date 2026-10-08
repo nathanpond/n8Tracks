@@ -338,6 +338,71 @@ public sealed partial class MediaMountGuardTests
         Assert.False(Reader(Path.Combine(parent.Path, "file")).Probe());
     }
 
+    /// <summary>
+    /// What the reader hands out is not its <see cref="FileStream"/> (#386): it cannot write or change
+    /// its length, and it has no name, so no caller learns the file's absolute path from it.
+    /// </summary>
+    [Fact]
+    public async Task TheReaderHandsOutAStreamThatCannotWriteAndNamesNoPath()
+    {
+        using var media = new TemporaryDirectory();
+        await File.WriteAllBytesAsync(Path.Combine(media.Path, "a.mp3"), "content"u8.ToArray());
+        var mount = Reader(media.Path);
+
+        await using var opened = mount.OpenWithStat("a.mp3");
+        await using var read = mount.OpenRead("a.mp3");
+        foreach (var stream in new[] { opened.Content, read })
+        {
+            Assert.IsNotAssignableFrom<FileStream>(stream);
+            Assert.Null(stream.GetType().GetProperty("Name"));
+            Assert.Null(stream.GetType().GetProperty("SafeFileHandle"));
+            Assert.True(stream.CanRead);
+            Assert.True(stream.CanSeek);
+            Assert.False(stream.CanWrite);
+            Assert.Throws<NotSupportedException>(() => stream.Write([1], 0, 1));
+            Assert.Throws<NotSupportedException>(() => stream.SetLength(0));
+            stream.Seek(2, SeekOrigin.Begin);
+            using var copy = new MemoryStream();
+            await stream.CopyToAsync(copy);
+            Assert.Equal("ntent"u8.ToArray(), copy.ToArray());
+        }
+
+        Assert.Equal("content"u8.ToArray(), await File.ReadAllBytesAsync(Path.Combine(media.Path, "a.mp3")));
+    }
+
+    /// <summary>
+    /// A cataloged file that is gone by the time it is opened stays gone (#386): the open fails, over
+    /// HTTP too, and creates nothing, so no open mode the source scan misses (a numeric cast to
+    /// <c>OpenOrCreate</c>) can write into the media folder unseen.
+    /// </summary>
+    [Fact]
+    public async Task OpeningACatalogedFileThatVanishedFailsAndCreatesNothing()
+    {
+        using var factory = MediaApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        MediaApi.Place(factory, "kept.mp3", "mp3");
+        var gone = MediaApi.Place(factory, "album/gone.mp3", "mp3");
+        MediaApi.Result(await MediaApi.ScanAsync(client));
+        var (items, _) = await MediaApi.ListAsync(client);
+        File.Delete(gone);
+        var before = MediaApi.Listing(factory.MediaPath);
+
+        var mount = factory.Services.GetRequiredService<IMediaMount>();
+        Assert.Null(mount.Stat("album/gone.mp3"));
+        Assert.ThrowsAny<IOException>(() => mount.OpenRead("album/gone.mp3"));
+        Assert.ThrowsAny<IOException>(() => mount.OpenWithStat("album/gone.mp3"));
+
+        // Still reported Available (no scan since): the content route reaches the open, which fails.
+        using (var response = await client.GetAsync(Content(MediaApi.ByPath(items, "album/gone.mp3").GetProperty("id").GetGuid())))
+        {
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+            Assert.Contains("\"audio_file_unavailable\"", await response.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        }
+
+        Assert.False(File.Exists(gone));
+        Assert.Equal(before, MediaApi.Listing(factory.MediaPath));
+    }
+
     /// <summary>The check after the open asks the kernel where the open file is: a file outside the root fails it.</summary>
     [LinuxFact]
     public void OnLinuxAnOpenedFileIsCheckedAgainThroughProcSelfFd()
@@ -365,6 +430,9 @@ public sealed partial class MediaMountGuardTests
     /// No endpoint takes a path: every handler parameter, and every field of a request body, is read,
     /// and one whose name says path, file, folder, directory, or mount fails the check (an audio file
     /// is named by its ID, which is a UUID, never a text). Routes under the media endpoints are UUIDs.
+    /// This check is by name; the structural guard (#384) is <c>MediaMountAccessTests</c>' list of every
+    /// call that hands the mount a path and of what the types holding the mount accept, which no input
+    /// reaches whatever it is called.
     /// </summary>
     [Fact]
     public void NoEndpointTakesAPath()

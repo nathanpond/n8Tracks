@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page, type TestInfo } from '@playwright/test';
 import {
   expectAccessibleInLightAndDark,
   expectModalAccessibleInBothSchemes,
@@ -10,6 +10,7 @@ interface Song {
   id: string;
   shortcode: string;
   title: string;
+  revision: number;
   artwork: { assetId: string; urls: Record<string, string> } | null;
 }
 
@@ -42,35 +43,78 @@ async function expectLoaded(image: Locator): Promise<void> {
     .toBeGreaterThan(0);
 }
 
+function stampOf(testInfo: TestInfo): string {
+  return `${testInfo.project.name} ${String(Date.now())} ${String(testInfo.retry)}`;
+}
+
 /**
- * Walks the story's Demo on the project's shared container, on a Song of its own (title and image
- * bytes stamped with this run): a PNG uploaded in the Details panel becomes the Song's artwork in
- * the panel, the header, and the Songs table; a text file renamed `cover.jpg` is refused and changes
- * nothing; replacing the artwork shows the new image everywhere; and removing it asks first, then
- * leaves the placeholder. Each state is scanned with axe in both colour schemes.
+ * Makes `buffer` the Song's artwork through the calls the Details panel makes (upload the image,
+ * then set the Song's artwork to it); the Song as it is then.
+ */
+async function giveArtwork(page: Page, base: URL, song: Song, buffer: Buffer): Promise<Song> {
+  const uploaded = await page.request.post(new URL('api/v1/artwork', base).toString(), {
+    headers: ANTIFORGERY_HEADERS,
+    multipart: { file: { name: 'cover.png', mimeType: 'image/png', buffer } },
+  });
+  expect(uploaded.status(), await uploaded.text()).toBe(201);
+  const { id } = (await uploaded.json()) as { id: string };
+  const current = await readSong(page, base, song);
+  const set = await page.request.patch(new URL(`api/v1/songs/${song.id}`, base).toString(), {
+    headers: { ...ANTIFORGERY_HEADERS, 'If-Match': `"${String(current.revision)}"` },
+    data: { artworkAssetId: id },
+  });
+  expect(set.status(), await set.text()).toBe(200);
+  return readSong(page, base, song);
+}
+
+/** Opens the Song with its Details panel shown; the panel's artwork group. */
+async function openDetails(page: Page, song: Song): Promise<Locator> {
+  await page.goto(`./songs/${song.shortcode}`);
+  await expect(page.getByRole('heading', { level: 2, name: song.title })).toBeVisible();
+  await page.getByRole('button', { name: 'Details', exact: true }).click();
+  const picker = page.getByRole('group', { name: 'Artwork' });
+  await expect(picker).toBeVisible();
+  return picker;
+}
+
+/** The Song's row in the Songs table. */
+function songRow(page: Page, song: Song): Locator {
+  return page
+    .getByRole('table', { name: 'Songs' })
+    .getByRole('row')
+    .filter({ has: page.getByRole('rowheader', { name: song.shortcode, exact: true }) });
+}
+
+/**
+ * Walks the story's Demo on the project's shared container, on Songs of their own (titles and image
+ * bytes stamped with this run):
+ * 1. A PNG uploaded in the Details panel becomes the Song's artwork in the panel, the header, and the
+ *    Songs table, and opens larger.
+ * 2. A text file renamed `cover.jpg` is refused and changes nothing.
+ * 3. Replacing the artwork shows the new image everywhere; removing it asks first, then leaves the
+ *    placeholder.
+ * Each state is scanned with axe in both colour schemes. The Demo is two tests, so each stays well
+ * inside the test timeout on a slow CI runner (#406); the second starts where step 1 ends, with the
+ * artwork set through the calls the panel makes.
  */
 test.describe('Song artwork', () => {
-  test('uploads, refuses a renamed text file, replaces, and removes a Song’s artwork', async ({
+  test('uploads a Song’s artwork and shows it in the panel, the header, and the table', async ({
     page,
   }, testInfo) => {
-    const stamp = `${testInfo.project.name} ${String(Date.now())} ${String(testInfo.retry)}`;
+    const stamp = stampOf(testInfo);
     const base = await appBase(page);
     const song = await createSong(page, base, `Artwork ${String(Date.now()).slice(-7)}`);
     const alt = `Artwork for ${song.title}`;
 
-    await page.goto(`./songs/${song.shortcode}`);
-    await expect(page.getByRole('heading', { level: 2, name: song.title })).toBeVisible();
     const header = page.getByTestId('song-header-artwork');
+    const picker = await openDetails(page, song);
     await expect(header.getByRole('img', { name: 'No artwork' })).toBeVisible();
-    await page.getByRole('button', { name: 'Details', exact: true }).click();
-    const picker = page.getByRole('group', { name: 'Artwork' });
     await expect(picker.getByRole('img', { name: 'No artwork' })).toBeVisible();
-    const file = picker.locator('input[type="file"]');
     const status = picker.getByTestId('artwork-status');
     await expectAccessibleInLightAndDark(page);
 
     // 1. Upload a PNG: it appears in the panel, the header, and the table.
-    await file.setInputFiles({
+    await picker.locator('input[type="file"]').setInputFiles({
       name: 'cover.png',
       mimeType: 'image/png',
       buffer: solidPng(600, 400, `${stamp} first`),
@@ -97,18 +141,32 @@ test.describe('Song artwork', () => {
     await expect(enlarged).toBeHidden();
 
     await page.goto('./songs');
-    const row = page
-      .getByRole('table', { name: 'Songs' })
-      .getByRole('row')
-      .filter({ has: page.getByRole('rowheader', { name: song.shortcode, exact: true }) });
-    const tableImage = row.getByRole('img', { name: alt });
+    const tableImage = songRow(page, song).getByRole('img', { name: alt });
     await expect(tableImage).toHaveAttribute('src', first?.urls['96'] ?? '');
     await expectLoaded(tableImage);
     await expectAccessibleInLightAndDark(page);
+  });
+
+  test('refuses a renamed text file, then replaces and removes a Song’s artwork', async ({
+    page,
+  }, testInfo) => {
+    const stamp = stampOf(testInfo);
+    const base = await appBase(page);
+    const created = await createSong(page, base, `Artwork ${String(Date.now()).slice(-7)}`);
+    const alt = `Artwork for ${created.title}`;
+    // Where step 1 ends: a PNG is the Song's artwork.
+    const song = await giveArtwork(page, base, created, solidPng(600, 400, `${stamp} first`));
+    const first = song.artwork;
+    expect(first).not.toBeNull();
+
+    const header = page.getByTestId('song-header-artwork');
+    const picker = await openDetails(page, song);
+    const file = picker.locator('input[type="file"]');
+    const status = picker.getByTestId('artwork-status');
+    const panelImage = picker.getByRole('img', { name: alt });
+    await expect(panelImage).toHaveAttribute('src', first?.urls['320'] ?? '');
 
     // 2. A text file renamed cover.jpg is refused, and the artwork stays as it was.
-    await page.goto(`./songs/${song.shortcode}`);
-    await expect(picker).toBeVisible();
     await file.setInputFiles({
       name: 'cover.jpg',
       mimeType: 'image/jpeg',
@@ -136,6 +194,7 @@ test.describe('Song artwork', () => {
     );
     await expectLoaded(panelImage);
     await page.goto('./songs');
+    const tableImage = songRow(page, song).getByRole('img', { name: alt });
     await expect(tableImage).toHaveAttribute('src', second?.urls['96'] ?? '');
     await expectLoaded(tableImage);
 

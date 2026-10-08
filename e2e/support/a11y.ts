@@ -1,9 +1,50 @@
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { dirname } from 'node:path';
 import { AxeBuilder } from '@axe-core/playwright';
 import { expect, type Page } from '@playwright/test';
 import { setColourScheme } from './shell.ts';
 
 /** WCAG 2.1 levels A and AA, the project's accessibility target. */
 const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
+
+type AxeResults = Awaited<ReturnType<AxeBuilder['analyze']>>;
+
+const require = createRequire(import.meta.url);
+
+/**
+ * The axe-core script `@axe-core/playwright` injects: resolved from that package's own folder, so it
+ * is the copy (and the version) the builder would use. Read once per worker.
+ */
+const AXE_SOURCE = readFileSync(
+  require.resolve('axe-core/axe.min.js', {
+    paths: [dirname(require.resolve('@axe-core/playwright'))],
+  }),
+  'utf8',
+);
+
+/**
+ * Runs axe over the page with the WCAG tags. `AxeBuilder.analyze()` injects axe-core again on
+ * every call and finishes each run in a new blank page, about 190 ms a scan locally, and the suite
+ * scans every state twice. Here axe-core is injected once per document (a navigation or reload
+ * clears it, and the next scan injects it again) and run in place with `axe.run`, the same engine
+ * and rules on the same document, in about 40 ms (#406). A page with a child frame still goes
+ * through the builder, which injects axe into every frame and gathers their results.
+ */
+async function runAxe(page: Page): Promise<AxeResults> {
+  if (page.frames().length > 1) {
+    return new AxeBuilder({ page }).withTags(WCAG_TAGS).analyze();
+  }
+  if (!(await page.evaluate(() => 'axe' in window))) {
+    await page.evaluate(AXE_SOURCE);
+  }
+  return page.evaluate(async (tags) => {
+    const { axe } = window as unknown as {
+      axe: { run: (context: Document, options: object) => Promise<AxeResults> };
+    };
+    return axe.run(document, { runOnly: { type: 'tag', values: tags } });
+  }, WCAG_TAGS);
+}
 
 /**
  * Waits until the page is at rest, so colours are measured as they settle and not half-way: every
@@ -47,7 +88,7 @@ async function animationsFinished(page: Page): Promise<void> {
  */
 export async function expectNoA11yViolations(page: Page): Promise<void> {
   await animationsFinished(page);
-  const results = await new AxeBuilder({ page }).withTags(WCAG_TAGS).analyze();
+  const results = await runAxe(page);
   const violations = results.violations.map((violation) => ({
     rule: violation.id,
     impact: violation.impact,

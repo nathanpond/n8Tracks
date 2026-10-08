@@ -232,6 +232,9 @@ public sealed class DownloadRecordTests
         using (await ReportAsync(client, token, Report(Guid.NewGuid(), ClipA, "mp3", $"Song (suno-{ClipA}).mp3", completed: at.AddMinutes(3))))
         using (await ReportAsync(client, token, Report(Guid.NewGuid(), ClipA, "wav", "Loose (2).wav", completed: at.AddMinutes(2))))
         using (await ReportAsync(client, token, Report(Guid.NewGuid(), ClipA, "m4a", "Gone.m4a", completed: at.AddMinutes(1))))
+        using (await ReportAsync(client, token, Report(Guid.NewGuid(), ClipA, "wav", "Über Lied.wav", completed: at.AddSeconds(-5))))
+        using (await ReportAsync(client, token, Report(Guid.NewGuid(), ClipA, "wav", "Песня (1).wav", completed: at.AddSeconds(-6))))
+        using (await ReportAsync(client, token, Report(Guid.NewGuid(), ClipA, "wav", "ΑΓΑΠΗ (2).wav", completed: at.AddSeconds(-7))))
         using (await ReportAsync(client, token, Report(Guid.NewGuid(), ClipA, "wav", "Loose_.wav", completed: at)))
         {
         }
@@ -239,6 +242,9 @@ public sealed class DownloadRecordTests
         // Another case, the browser's numbering, and a folder: the scan attaches it by its Suno ID.
         MediaApi.Place(factory, $"Album/SONG (suno-{ClipA.ToUpperInvariant()}) (1).mp3", "mp3");
         MediaApi.Place(factory, "loose.wav", "wav");
+        MediaApi.Place(factory, "Über Lied.wav", "wav");
+        MediaApi.Place(factory, "Песня.wav", "wav");
+        MediaApi.Place(factory, "Αγαπη.wav", "wav");
         MediaApi.Result(await MediaApi.ScanAsync(client));
 
         var items = (await ListAsync(client, generation.Shortcode)).ToDictionary(static item => item.GetProperty("fileName").GetString()!);
@@ -249,6 +255,11 @@ public sealed class DownloadRecordTests
         var elsewhere = items["Loose (2).wav"].GetProperty("mediaFolder");
         Assert.Equal("elsewhere", elsewhere.GetProperty("match").GetString());
         Assert.Equal("not-found", items["Gone.m4a"].GetProperty("mediaFolder").GetProperty("match").GetString());
+
+        // Upper-case letters beyond ASCII (Latin, Cyrillic, Greek) are compared without regard to case as well (#389).
+        Assert.Equal(
+            ["elsewhere", "elsewhere", "elsewhere"],
+            new[] { items["Über Lied.wav"], items["Песня (1).wav"], items["ΑΓΑΠΗ (2).wav"] }.Select(static item => item.GetProperty("mediaFolder").GetProperty("match").GetString()));
 
         // "_" is matched as itself, not as any character.
         Assert.Equal("not-found", items["Loose_.wav"].GetProperty("mediaFolder").GetProperty("match").GetString());

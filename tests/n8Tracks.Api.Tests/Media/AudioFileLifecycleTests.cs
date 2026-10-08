@@ -79,11 +79,13 @@ public sealed class AudioFileLifecycleTests
             }
         }
 
-        // The restore puts back no association or choice, and says so.
+        // The restore puts back no association or choice, and says so; the files it released lose
+        // their reason at once (#388).
         var restored = await RestoreAsync(factory, "n8-1-v1-g1");
         Assert.Contains(AudioFileLifecycle.RestoreNote, restored.Notes);
         files = await FilesAsync(client);
-        Assert.All([Wav, Mp3, Gone, Hand], path => Assert.Equal(JsonValueKind.Null, files[path].GetProperty("song").ValueKind));
+        Assert.All([Wav, Mp3, Gone, Hand], path => AssertUnmatched(files[path], null));
+        Assert.Equal("0", TestDatabase.Scalar(factory.DataPath, "SELECT count(*) FROM retention_released_audio_files;"));
 
         // The next scan matches the files carrying its Suno ID again (the Missing one too); the
         // hand-associated file without one stays unmatched, with no reason.
@@ -136,8 +138,11 @@ public sealed class AudioFileLifecycleTests
         // Not matched again while the Version stays deleted; matched again once it is restored.
         Assert.Equal(0, MediaApi.Result(await MediaApi.ScanAsync(client)).GetProperty("associated").GetInt32());
         Assert.Contains(AudioFileLifecycle.RestoreNote, (await RestoreAsync(factory, "n8-1-v2")).Notes);
+        AssertUnmatched((await FilesAsync(client))["v2 by hand.mp3"], null);
         Assert.Equal(1, MediaApi.Result(await MediaApi.ScanAsync(client)).GetProperty("associated").GetInt32());
-        AssertAssociated((await FilesAsync(client))[$"v2 (suno-{Later}).wav"], "n8-1", "n8-1-v2-g1");
+        files = await FilesAsync(client);
+        AssertAssociated(files[$"v2 (suno-{Later}).wav"], "n8-1", "n8-1-v2-g1");
+        AssertUnmatched(files["v2 by hand.mp3"], null);
         Assert.Equal(before, MediaApi.Listing(factory.MediaPath));
     }
 
@@ -161,6 +166,9 @@ public sealed class AudioFileLifecycleTests
         Assert.False(plain.GetProperty("titleRequired").GetBoolean());
         var before = MediaApi.Listing(factory.MediaPath);
 
+        // The user turned automatic matching off for the Song-level file (#210): no restore turns it back on.
+        TestDatabase.Execute(factory.DataPath, $"UPDATE audio_files SET auto_match_blocked = 1 WHERE path = '{Master}';");
+
         var impact = await JsonAsync(client, "songs/n8-1/deletion-impact");
         AssertCounts(impact, total: 6, hand: 2, songLevel: 1);
         Assert.Equal(6, impact.GetProperty("audioFileCount").GetInt32());
@@ -178,15 +186,34 @@ public sealed class AudioFileLifecycleTests
         AssertAssociated(files[Other], "n8-2", "n8-2-v1-g1");
         Assert.Empty(Preferences(factory));
 
-        // Restored: no association comes back by itself; the next scan matches the files carrying
-        // its Generations' Suno IDs, and the Song-level and hand-associated ones keep their reason.
+        // Another Song deleted as well, and left deleted: its file keeps its reason throughout.
+        using (var deleted = await SendAsync(client, HttpMethod.Delete, "songs/n8-3", plain.GetProperty("revision").GetInt32()))
+        {
+            Assert.True(deleted.StatusCode == HttpStatusCode.NoContent, await deleted.Content.ReadAsStringAsync());
+        }
+
+        // Restored: no association comes back by itself, and every file the deletion released loses
+        // its reason at once (#388): the Song is back, so "Its Song was deleted." would be untrue.
         Assert.Contains(AudioFileLifecycle.RestoreNote, (await RestoreAsync(factory, "n8-1")).Notes);
+        files = await FilesAsync(client);
+        foreach (var path in new[] { Wav, Mp3, Gone, Hand, Master, Second })
+        {
+            AssertUnmatched(files[path], null);
+        }
+
+        AssertUnmatched(files["plain.wav"], "song_deleted");
+        Assert.True(files[Master].GetProperty("autoMatchBlocked").GetBoolean());
+
+        // The next scan matches the files carrying its Generations' Suno IDs; the Song-level and
+        // hand-associated ones stay plainly unmatched, the block on the Song-level one still on.
         Assert.Equal(4, MediaApi.Result(await MediaApi.ScanAsync(client)).GetProperty("associated").GetInt32());
         files = await FilesAsync(client);
         AssertAssociated(files[Wav], "n8-1", "n8-1-v1-g1");
         AssertAssociated(files[Second], "n8-1", "n8-1-v1-g2");
-        AssertUnmatched(files[Master], "song_deleted");
-        AssertUnmatched(files[Hand], "song_deleted");
+        AssertUnmatched(files[Master], null);
+        AssertUnmatched(files[Hand], null);
+        AssertUnmatched(files["plain.wav"], "song_deleted");
+        Assert.True(files[Master].GetProperty("autoMatchBlocked").GetBoolean());
         Assert.Empty(Preferences(factory));
         Assert.Equal(before, MediaApi.Listing(factory.MediaPath));
     }

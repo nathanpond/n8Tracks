@@ -17,7 +17,9 @@ function containerOf(testInfo: TestInfo): string {
  * test-only `n8tracks seed-generation` command (the containers switch test seeding on), and
  * returns the new Generation's shortcode. The Version's lyrics and styles are frozen from then on.
  * With `clip` (the text of one Suno clip object), the Generation keeps that clip: the text is
- * written to a file inside the container first, as the command reads it from a path.
+ * written to a file inside the container first, as the command reads it from a path. Writing the
+ * file, seeding, and removing the file again are one `docker exec`: each exec costs a few hundred
+ * milliseconds on a CI runner, and a spec that seeds three Generations paid for nine (#405).
  */
 export function seedGeneration(
   testInfo: TestInfo,
@@ -37,10 +39,9 @@ export async function seedGenerationIn(
     return docker('exec', container, 'n8tracks', 'seed-generation', shortcode);
   }
   const file = `/tmp/seed-clip-${randomUUID()}.json`;
-  await docker('exec', container, 'sh', '-c', 'printf "%s" "$1" > "$2"', 'sh', clip, file);
-  try {
-    return await docker('exec', container, 'n8tracks', 'seed-generation', shortcode, file);
-  } finally {
-    await docker('exec', container, 'rm', '-f', file);
-  }
+  // The file is removed whether the command succeeded or not, and the command's exit status (and
+  // its error output, for the failure docker() throws) is what the exec reports.
+  const script =
+    'printf "%s" "$1" > "$2" || exit; n8tracks seed-generation "$3" "$2"; status=$?; rm -f "$2"; exit "$status"';
+  return docker('exec', container, 'sh', '-c', script, 'sh', clip, file, shortcode);
 }

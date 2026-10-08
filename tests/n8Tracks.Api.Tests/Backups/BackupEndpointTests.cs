@@ -12,6 +12,7 @@ using n8Tracks.Api.Tests.Jobs;
 using n8Tracks.Api.Tests.Logging;
 using n8Tracks.Api.Tests.Setup;
 using n8Tracks.Api.Tests.Songs;
+using n8Tracks.Application.Configuration;
 using n8Tracks.Application.Credentials;
 using n8Tracks.Application.Persistence;
 using n8Tracks.Infrastructure.Backups;
@@ -190,9 +191,13 @@ public sealed class BackupEndpointTests
         }
     }
 
-    /// <summary>Invariant 2: a backup path inside the media mount is never used, probed, or listed.</summary>
+    /// <summary>
+    /// Invariant 2: a backup path inside the media mount is refused at startup (#387), naming the
+    /// variable, before anything is written there; the backup code's own refusal of such a folder
+    /// stays behind it.
+    /// </summary>
     [Fact]
-    public async Task ABackupPathInsideTheMediaMountIsNeverWritten()
+    public void ABackupPathInsideTheMediaMountStopsTheStartAndIsNeverWritten()
     {
         var media = Directory.CreateTempSubdirectory("n8tracks-test-media-backup-").FullName;
         try
@@ -203,12 +208,18 @@ public sealed class BackupEndpointTests
                 [EnvironmentOptionsLoader.MediaPath] = media,
                 [EnvironmentOptionsLoader.BackupPath] = inside,
             });
-            using var client = await SessionApi.SignedInClientAsync(factory);
 
-            var result = await BackupApi.BackUpAsync(client);
-
-            Assert.Equal("data", result.GetProperty("location").GetString());
-            Assert.Equal("data", (await BackupApi.ListAsync(client)).GetProperty("destination").GetString());
+            // The host does not start, and the reason is the backup path's.
+            Assert.ThrowsAny<Exception>(() => factory.CreateClient());
+            var validation = Assert.Throws<ConfigurationValidationException>(() => EnvironmentOptionsLoader.Load(new EnvironmentSnapshot(
+                new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    [EnvironmentOptionsLoader.DataPath] = factory.DataPath,
+                    [EnvironmentOptionsLoader.MediaPath] = media,
+                    [EnvironmentOptionsLoader.BackupPath] = inside,
+                },
+                factory.DataPath)));
+            Assert.Equal(EnvironmentOptionsLoader.BackupPath, Assert.Single(validation.Errors).Variable);
             Assert.Equal(["backup"], BackupApi.Names(media));
             Assert.Empty(BackupApi.Names(inside));
         }

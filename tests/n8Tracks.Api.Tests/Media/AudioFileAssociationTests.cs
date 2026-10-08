@@ -334,6 +334,56 @@ public sealed class AudioFileAssociationTests
         Assert.Equal(JsonValueKind.Null, (await FileAsync(client, $"live (suno-{A}).wav")).GetProperty("song").ValueKind);
     }
 
+    /// <summary>
+    /// A file whose bytes and time change on disk is read again by the next scan (#203 AC4) and keeps
+    /// what it is associated with, how, and its owner's choice of it (#385): one associated by hand
+    /// with a Song alone (no Suno ID in its name), and one attached to a Generation by its Suno ID.
+    /// </summary>
+    [Fact]
+    public async Task AChangedFileKeepsItsAssociationItsOriginAndItsPreferenceOnTheNextScan()
+    {
+        using var factory = MediaApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var catalog = await CatalogAsync(factory, client);
+        const string Loose = "Loose/second master.wav";
+        var bySunoId = $"take (suno-{A}).mp3";
+        MediaApi.Place(factory, Loose, "wav");
+        MediaApi.Place(factory, bySunoId, "mp3");
+        MediaApi.Result(await MediaApi.ScanAsync(client));
+
+        var loose = await FileAsync(client, Loose);
+        using (var associated = await AssociateAsync(client, loose, Revision(loose), """{"song":"n8-2"}"""))
+        {
+            Assert.True(associated.StatusCode == HttpStatusCode.OK, await associated.Content.ReadAsStringAsync());
+        }
+
+        var expected = new[] { $"{catalog.Other.SongId}|null|user|False|null", $"{catalog.First.SongId}|{catalog.First.GenerationId}|suno-id|False|null" };
+        Assert.Equal(expected, new[] { Association(await FileAsync(client, Loose)), Association(await FileAsync(client, bySunoId)) });
+
+        // New bytes and a new time on disk, as an editor's re-export would leave them: read again, kept.
+        await ChangeAsync(factory, Loose, "wav", 2048);
+        await ChangeAsync(factory, bySunoId, "mp3", 2048);
+        Assert.Equal(2, MediaApi.Result(await MediaApi.ScanAsync(client)).GetProperty("changed").GetInt32());
+        Assert.Equal(expected, new[] { Association(await FileAsync(client, Loose)), Association(await FileAsync(client, bySunoId)) });
+
+        // Each its owner's preferred file, then changed again: the choice stands as well.
+        await PreferAsync(client, "songs/n8-2", await FileAsync(client, Loose));
+        await PreferAsync(client, "generations/n8-1-v1-g1", await FileAsync(client, bySunoId));
+        expected = [.. expected.Select(static association => association.Replace("|False|", "|True|", StringComparison.Ordinal))];
+        await ChangeAsync(factory, Loose, "wav", 4096);
+        await ChangeAsync(factory, bySunoId, "mp3", 4096);
+        Assert.Equal(2, MediaApi.Result(await MediaApi.ScanAsync(client)).GetProperty("changed").GetInt32());
+        Assert.Equal(expected, new[] { Association(await FileAsync(client, Loose)), Association(await FileAsync(client, bySunoId)) });
+        Assert.Equal(new FileInfo(MediaApi.Fixture("wav")).Length + 4096, (await FileAsync(client, Loose)).GetProperty("sizeBytes").GetInt64());
+    }
+
+    /// <summary>Rewrites the file at <paramref name="path"/> as the fixture plus <paramref name="padding"/> zero bytes, modified an hour per KiB of padding from now.</summary>
+    private static async Task ChangeAsync(N8TracksApiFactory factory, string path, string format, int padding)
+    {
+        var full = MediaApi.Write(factory, path, [.. await File.ReadAllBytesAsync(MediaApi.Fixture(format)), .. new byte[padding]]);
+        File.SetLastWriteTimeUtc(full, DateTime.UtcNow.AddHours(padding / 1024));
+    }
+
     [Fact]
     public async Task MatchBySunoIdAgainClearsTheBlockAndMatchesAtOnce()
     {
@@ -447,6 +497,23 @@ public sealed class AudioFileAssociationTests
         MediaApi.ByPath((await MediaApi.ListAsync(client)).Items, path);
 
     private static Guid Id(JsonElement file) => file.GetProperty("id").GetGuid();
+
+    /// <summary>Song ID, Generation ID, origin, whether it is its owner's preferred file, and its unmatched reason.</summary>
+    private static string Association(JsonElement file) => string.Join(
+        '|',
+        file.GetProperty("song") is { ValueKind: JsonValueKind.Object } song ? song.GetProperty("id").GetString()! : "null",
+        file.GetProperty("generation") is { ValueKind: JsonValueKind.Object } generation ? generation.GetProperty("id").GetString()! : "null",
+        file.GetProperty("associationOrigin").GetString() ?? "null",
+        file.GetProperty("isPreferred").GetBoolean() ? "True" : "False",
+        file.GetProperty("unmatchedReason").GetString() ?? "null");
+
+    /// <summary>Makes <paramref name="file"/> the preferred file of <paramref name="owner"/> (<c>songs/x</c> or <c>generations/x</c>).</summary>
+    private static async Task PreferAsync(HttpClient client, string owner, JsonElement file)
+    {
+        var current = await SetupApi.JsonAsync(await client.GetAsync(new Uri($"/api/v1/{owner}", UriKind.Relative)));
+        using var response = await SendAsync(client, HttpMethod.Put, $"{owner}/preferred-audio-file", Revision(current), $$"""{"audioFile":"{{Id(file)}}"}""");
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+    }
 
     private static int Revision(JsonElement record) => record.GetProperty("revision").GetInt32();
 

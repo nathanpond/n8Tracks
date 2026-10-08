@@ -101,6 +101,17 @@ public interface ILiveFileReferences
     Task<bool> IsReferencedAsync(string path, CancellationToken cancellationToken);
 }
 
+/// <summary>
+/// Live-side state a deletion changed outside its group's records, put right when that group is
+/// restored (#388: the reasons of the audio files it left unassociated). Each is run inside the
+/// restore's transaction, before the group's records go back and the group goes; a refused restore
+/// rolls its writes back with everything else.
+/// </summary>
+public interface IRetentionRestoreParticipant
+{
+    Task RestoringAsync(Guid groupId, CancellationToken cancellationToken);
+}
+
 /// <summary>The retention prune's record (the <c>settings</c> row <c>retention.prune</c>).</summary>
 public interface IRetentionPruneStateStore
 {

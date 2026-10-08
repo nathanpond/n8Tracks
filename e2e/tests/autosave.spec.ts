@@ -50,14 +50,16 @@ async function cutSaves(page: Page): Promise<() => Promise<void>> {
 }
 
 /**
- * Walks #65's Demo on a Song of its own: typing saves without pressing anything ("Saving…" then
+ * Walks #65's Demo on Songs of their own: typing saves without pressing anything ("Saving…" then
  * "Saved"), the name saves the same way, and with n8Tracks unreachable the indicator says "Not
  * saved", leaving asks, and once it is reachable again the retry brings it back to "Saved". Demo
  * steps 2 to 4 (history) belong to #66. Stopping the server is played by refusing the connection
- * of every save in the browser, so the shared containers keep running for the other specs.
+ * of every save in the browser, so the shared containers keep running for the other specs. The
+ * walk is two tests, so each stays well inside the test timeout on a slow CI runner (#406); the
+ * second starts with the verse and the name saved through the PATCH the editor sends.
  */
 test.describe('saving automatically', () => {
-  test('saves as the user types, and recovers after n8Tracks was unreachable', async ({ page }) => {
+  test('saves the lyrics and the name as the user types', async ({ page }) => {
     const song = await createSong(page, `Autosave ${String(Date.now())}`);
     await page.goto(`./songs/${song.shortcode}`);
     const editor = page.getByRole('textbox', { name: 'Lyrics' });
@@ -80,6 +82,22 @@ test.describe('saving automatically', () => {
     await expect(saveStatus(page)).toHaveText('Saved');
     await expect(page.getByRole('treeitem', { name: /Version 1.*First draft/ })).toBeVisible();
     expect((await stored(page, song)).name).toBe('First draft');
+  });
+
+  test('recovers after n8Tracks was unreachable', async ({ page }) => {
+    const song = await createSong(page, `Autosave ${String(Date.now())}`);
+    // Where the first test ends: the verse and the name are saved.
+    const version = new URL(`api/v1/versions/${song.currentVersion.id}`, page.url()).toString();
+    const read = (await (await page.request.get(version)).json()) as { revision: number };
+    const saved = await page.request.patch(version, {
+      headers: { ...ANTIFORGERY_HEADERS, 'If-Match': `"${String(read.revision)}"` },
+      data: { lyrics: '[Verse]\nRunning with the pack', name: 'First draft' },
+    });
+    expect(saved.status(), await saved.text()).toBe(200);
+    await page.goto(`./songs/${song.shortcode}`);
+    const editor = page.getByRole('textbox', { name: 'Lyrics' });
+    await expect(editor).toContainText('Running with the pack');
+    await expect(saveStatus(page)).toHaveText('Saved');
 
     // 5. n8Tracks cannot be reached: the indicator says "Not saved", and the text stays.
     const restore = await cutSaves(page);

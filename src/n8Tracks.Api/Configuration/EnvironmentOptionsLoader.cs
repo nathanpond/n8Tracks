@@ -74,9 +74,9 @@ internal static class EnvironmentOptionsLoader
         var (baseUrl, pathBase) = ReadBaseUrl(variables, port, errors);
         var timeZone = ReadTimeZone(variables, errors);
         var logLevel = ReadLogLevel(variables, errors);
-        var dataPath = ReadDataPath(variables, environment.WorkingDirectory, errors);
         var mediaPath = ResolvePath(Value(variables, MediaPath) ?? DefaultMediaPath, environment.WorkingDirectory);
-        var backupPath = ResolvePath(Value(variables, BackupPath) ?? DefaultBackupPath, environment.WorkingDirectory);
+        var dataPath = ReadDataPath(variables, environment.WorkingDirectory, mediaPath, errors);
+        var backupPath = ReadBackupPath(variables, environment.WorkingDirectory, mediaPath, errors);
         var sunoAudioHosts = ReadSunoAudioHosts(variables, errors);
 
         if (errors.Count > 0)
@@ -122,7 +122,7 @@ internal static class EnvironmentOptionsLoader
         ArgumentNullException.ThrowIfNull(environment);
 
         var errors = new List<ConfigurationError>();
-        var dataPath = ReadDataPath(environment.Variables, environment.WorkingDirectory, errors);
+        var dataPath = ReadDataPath(environment.Variables, environment.WorkingDirectory, ResolvePath(DefaultMediaPath, environment.WorkingDirectory), errors);
 
         if (errors.Count > 0)
         {
@@ -391,14 +391,20 @@ internal static class EnvironmentOptionsLoader
         return hosts;
     }
 
+    /// <summary>
+    /// The data path, which must be a writable directory, and never the media folder
+    /// <paramref name="mount"/> or inside it (#387, invariant 2): that is checked first, so the write
+    /// probe never runs there.
+    /// </summary>
     private static string ReadDataPath(
         IReadOnlyDictionary<string, string> variables,
         string workingDirectory,
+        string mount,
         List<ConfigurationError> errors)
     {
         var path = ResolvePath(Value(variables, DataPath) ?? DefaultDataPath, workingDirectory);
 
-        var reason = CheckWritableDirectory(path);
+        var reason = InsideTheMediaFolder(path, mount) ?? CheckWritableDirectory(path);
         if (reason is not null)
         {
             errors.Add(new ConfigurationError(DataPath, reason));
@@ -406,6 +412,33 @@ internal static class EnvironmentOptionsLoader
 
         return path;
     }
+
+    /// <summary>The backup path, which may be missing, but is never the media folder <paramref name="mount"/> or inside it (#387, invariant 2).</summary>
+    private static string ReadBackupPath(
+        IReadOnlyDictionary<string, string> variables,
+        string workingDirectory,
+        string mount,
+        List<ConfigurationError> errors)
+    {
+        var path = ResolvePath(Value(variables, BackupPath) ?? DefaultBackupPath, workingDirectory);
+
+        if (InsideTheMediaFolder(path, mount) is { } reason)
+        {
+            errors.Add(new ConfigurationError(BackupPath, reason));
+        }
+
+        return path;
+    }
+
+    /// <summary>
+    /// Why <paramref name="path"/> may not be used, when it is the media folder <paramref name="mount"/>
+    /// or inside it, by real path or (on Linux) by where it really is, so one folder mounted twice is
+    /// seen; null otherwise.
+    /// </summary>
+    private static string? InsideTheMediaFolder(string path, string mount) =>
+        MediaFolderOverlap.IsInside(path, mount)
+            ? $"must not be the media folder or a folder inside it, but '{Echo(path)}' is inside the media folder '{Echo(mount)}' (perhaps the same host folder is mounted at both). n8Tracks writes there, and it never writes to your media. Use a folder outside the media folder."
+            : null;
 
     private static string? CheckWritableDirectory(string path)
     {

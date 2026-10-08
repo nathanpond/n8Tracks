@@ -11,8 +11,15 @@
 # instead of starting the app, so the files a restore writes belong to PUID:PGID too. Any other
 # arguments are ignored: the app is configured by its environment only.
 #
+# Before anything else, either way, it refuses to start when the media folder (/media, or
+# N8TRACKS_MEDIA_PATH) and /data or /backup (or N8TRACKS_DATA_PATH, N8TRACKS_BACKUP_PATH) are the same
+# folder or one holds the other, however they were mounted: compared by device and inode, by real
+# path, and by where each really is in /proc/self/mountinfo (#387). The owner change below would
+# otherwise reach the media, and backups would be written into it.
+#
 # Everything it writes is one JSON object per line with the keys of the application log
-# (timestamp, level, message, properties). /media is never touched.
+# (timestamp, level, message, properties). /media is never touched: nothing here writes to it or
+# changes its owner.
 
 set -eu
 umask 022
@@ -74,6 +81,66 @@ fix_owner() {
     fi
 }
 
+# mount_key PATH: "<major:minor> <path within that filesystem>" for the real path of PATH, by the
+# longest mount point in /proc/self/mountinfo that holds it (the later of two at the same point).
+mount_key() {
+    real=$(readlink -f -- "$1" 2>/dev/null) || return 1
+    [ -r /proc/self/mountinfo ] || return 1
+    awk -v p="$real" '
+        function unescape(s) { gsub(/\\040/, " ", s); gsub(/\\011/, "\t", s); gsub(/\\012/, "\n", s); gsub(/\\134/, "\\", s); return s }
+        {
+            point = unescape($5)
+            if (p == point || point == "/" || index(p, point "/") == 1) {
+                if (!found || length(point) >= length(best)) { found = 1; best = point; device = $3; root = unescape($4) }
+            }
+        }
+        END {
+            if (!found) exit 1
+            rest = (best == "/") ? p : substr(p, length(best) + 1)
+            path = (root == "/") ? rest : root rest
+            if (path == "") path = "/"
+            print device " " path
+        }' /proc/self/mountinfo
+}
+
+# within INNER OUTER: whether the path INNER is OUTER or under it ("/" holds everything).
+within() {
+    [ "$2" = / ] && return 0
+    [ "$1" = "$2" ] && return 0
+    case "$1" in
+        "$2"/*) return 0 ;;
+    esac
+    return 1
+}
+
+# overlaps A B: whether the existing folders A and B are one folder or one holds the other.
+overlaps() {
+    [ -d "$1" ] && [ -d "$2" ] || return 1
+
+    [ "$(stat -L -c '%d:%i' -- "$1" 2>/dev/null)" = "$(stat -L -c '%d:%i' -- "$2" 2>/dev/null)" ] && return 0
+
+    real_a=$(readlink -f -- "$1" 2>/dev/null) && real_b=$(readlink -f -- "$2" 2>/dev/null) || return 1
+    within "$real_a" "$real_b" && return 0
+    within "$real_b" "$real_a" && return 0
+
+    key_a=$(mount_key "$1") && key_b=$(mount_key "$2") || return 1
+    [ "${key_a%% *}" = "${key_b%% *}" ] || return 1
+    within "${key_a#* }" "${key_b#* }" && return 0
+    within "${key_b#* }" "${key_a#* }"
+}
+
+# refuse_overlaps: exits when a folder n8Tracks writes to and the media folder overlap.
+refuse_overlaps() {
+    media="${N8TRACKS_MEDIA_PATH:-/media}"
+    for folder in /data /backup ${N8TRACKS_DATA_PATH:-} ${N8TRACKS_BACKUP_PATH:-}; do
+        if overlaps "$folder" "$media"; then
+            # One line of at most 200 characters (json_text): what overlaps, and what to do.
+            log Error "Refusing to start: $folder and the media folder $media overlap (one folder, or one inside the other). Mount a folder outside your media at $folder; n8Tracks never writes to your media."
+            exit 1
+        fi
+    done
+}
+
 # app [PREFIX...]: replaces this script with the app, so the app is PID 1 and receives the stop signal.
 # Arguments given to the container are not passed on: the app is configured by its environment only.
 app() {
@@ -86,6 +153,9 @@ if [ "$#" -gt 0 ] && [ "$1" = n8tracks ]; then
     command_given=true
     shift
 fi
+
+# Before any owner change, and before the app or a command runs.
+refuse_overlaps
 
 # Not root: Docker was told which user to run as, so PUID and PGID do not apply.
 if [ "$(id -u)" != 0 ]; then
