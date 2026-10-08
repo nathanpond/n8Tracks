@@ -34,6 +34,13 @@ public static class ArtworkRules
     /// <summary>The longest side accepted, in pixels.</summary>
     public const int MaximumSide = 12_000;
 
+    /// <summary>
+    /// The most pixels accepted (width × height): 100 megapixels, whatever the shape (#305). A full
+    /// decode of that many takes <see cref="BytesPerPixel"/> bytes each, 400,000,000 bytes, within
+    /// <see cref="DecodeMemoryCapBytes"/>.
+    /// </summary>
+    public const long MaximumPixels = 100_000_000;
+
     /// <summary>The most memory one decode may take for its pixels (four bytes each).</summary>
     public const long DecodeMemoryCapBytes = 512L * 1024 * 1024;
 
@@ -107,6 +114,10 @@ public static class ArtworkRules
     /// <summary>Whether an image <paramref name="width"/> by <paramref name="height"/> is within <see cref="MaximumSide"/>.</summary>
     public static bool IsWithinMaximumSide(int width, int height) =>
         width is > 0 and <= MaximumSide && height is > 0 and <= MaximumSide;
+
+    /// <summary>Whether an image <paramref name="width"/> by <paramref name="height"/> has no more than <see cref="MaximumPixels"/>.</summary>
+    public static bool IsWithinMaximumPixels(int width, int height) =>
+        width > 0 && height > 0 && (long)width * height <= MaximumPixels;
 
     /// <summary>The bytes decoding <paramref name="width"/> by <paramref name="height"/> pixels takes.</summary>
     public static long DecodeBytes(int width, int height) => (long)width * height * BytesPerPixel;

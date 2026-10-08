@@ -224,6 +224,44 @@ public sealed class ArtworkUploadEndpointTests
         Assert.Equal(ArtworkRules.MaximumSide, strip.GetProperty("width").GetInt32());
     }
 
+    /// <summary>
+    /// The 100-megapixel cap (#305), just under: a real 12,000 × 8,333 image (99,996,000 pixels) is
+    /// stored with its thumbnails.
+    /// </summary>
+    [Fact]
+    public async Task AnImageJustUnderOneHundredMegapixelsIsStored()
+    {
+        using var factory = Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+
+        var asset = await StoreAsync(client, BlankPng(12_000, 8_333));
+        Assert.Equal((12_000, 8_333), (asset.GetProperty("width").GetInt32(), asset.GetProperty("height").GetInt32()));
+        Assert.Equal([96, 320, 1024], asset.GetProperty("sizes").EnumerateArray().Select(static size => size.GetInt32()));
+        Assert.Equal(1, AssetRows(factory));
+    }
+
+    /// <summary>
+    /// The 100-megapixel cap (#305), just over: a real, whole 12,000 × 8,334 image (100,008,000
+    /// pixels), within 12,000 on a side and within the decode memory cap, is refused with 422 and a
+    /// clear message, and leaves no row and no file.
+    /// </summary>
+    [Fact]
+    public async Task AnImageJustOverOneHundredMegapixelsIsRefusedAndLeavesNothing()
+    {
+        using var factory = Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+
+        using var response = await UploadAsync(client, BlankPng(12_000, 8_334));
+        var problem = await SetupApi.ProblemAsync(response, HttpStatusCode.UnprocessableEntity, "artwork_dimensions_exceeded");
+        Assert.Equal((12_000, 8_334), (problem.GetProperty("width").GetInt32(), problem.GetProperty("height").GetInt32()));
+        Assert.Equal(ArtworkRules.MaximumPixels, problem.GetProperty("maximumPixels").GetInt64());
+        Assert.Equal(
+            "The image is 12,000 × 8,334 pixels; artwork can be at most 100 megapixels (100,000,000 pixels).",
+            problem.GetProperty("title").GetString());
+
+        AssertNothingStored(factory);
+    }
+
     [Fact]
     public async Task AnOverDimensionImageIsRefusedFromItsHeaderAndLeavesNothing()
     {
@@ -246,11 +284,11 @@ public sealed class ArtworkUploadEndpointTests
             await SetupApi.ProblemAsync(tall, HttpStatusCode.UnprocessableEntity, "artwork_dimensions_exceeded");
         }
 
-        // Within 12,000 a side, but more pixels than 512 MB holds, in a format that cannot be scaled while decoding.
+        // Within 12,000 a side, but over 100 megapixels (#305): refused from the header too.
         using (var huge = await UploadAsync(client, PngHeaderClaiming(12_000, 12_000)))
         {
             var problem = await SetupApi.ProblemAsync(huge, HttpStatusCode.UnprocessableEntity, "artwork_dimensions_exceeded");
-            Assert.Contains("too many to process", problem.GetProperty("title").GetString(), StringComparison.Ordinal);
+            Assert.Contains("at most 100 megapixels", problem.GetProperty("title").GetString(), StringComparison.Ordinal);
         }
 
         AssertNothingStored(factory);
