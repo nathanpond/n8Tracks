@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.RegularExpressions;
 
 namespace n8Tracks.Architecture.Tests;
@@ -26,7 +27,10 @@ namespace n8Tracks.Architecture.Tests;
 /// fails; and no <c>System.IO</c> type is aliased or imported statically.</item>
 /// <item>Nothing under <c>src/</c> calls native code (<c>DllImport</c>, <c>LibraryImport</c>,
 /// <c>extern</c>, <c>NativeLibrary</c>, function pointers) or uses <c>dynamic</c>.</item>
-/// <item><c>IMediaMount</c> has a fixed set of users; the media probe and setup only probe through it.</item>
+/// <item><c>IMediaMount</c> has a fixed set of users; the media probe and setup only probe through
+/// it; every call that hands it a path is in a reviewed list, with its argument (#384), and the
+/// types that hold it take no path from their callers: the content service passes only the stored
+/// path of a record it found by ID, and the scan only paths it listed.</item>
 /// <item>The tag library is given a stream, never a path, and never saves.</item>
 /// </list>
 /// Not covered: a path to the mount that reaches code without naming the setting (the options
@@ -109,6 +113,39 @@ public partial class MediaMountAccessTests
     [
         "src/n8Tracks.Infrastructure/Media/MediaFolderProbe.cs",
         "src/n8Tracks.Infrastructure/Setup/SetupChecks.cs",
+    ];
+
+    /// <summary>
+    /// Every call that hands the mount a path (#384), with its argument, whatever the receiver is
+    /// called: the content service opens the stored path of the record it found by its ID
+    /// (<c>files.FindAsync(id, ...)</c>), and the scan stats, opens, and lists only what it listed
+    /// itself from the root down. A new call fails here until someone has checked where its path comes
+    /// from: never from a request.
+    /// </summary>
+    private static readonly string[] MountPathCalls =
+    [
+        "src/n8Tracks.Application/Media/AudioContentService.cs: mount.OpenWithStat(file.Path)",
+        "src/n8Tracks.Application/Media/MediaScanService.cs: mount.List(directory)",
+        "src/n8Tracks.Application/Media/MediaScanService.cs: mount.OpenRead(path)",
+        "src/n8Tracks.Application/Media/MediaScanService.cs: mount.Stat(path)",
+    ];
+
+    /// <summary>
+    /// The methods callers can reach on the types built with an <c>IMediaMount</c> (but the reader
+    /// itself), by parameter types (#384): none takes text, so no route, query, or body value can be
+    /// handed on to the mount through them. The scan's progress callback is the job's, not a path.
+    /// </summary>
+    private static readonly string[] MountHolderMethods =
+    [
+        "n8Tracks.Application.Media.AudioContentService.EntityTag(MediaFileStat)",
+        "n8Tracks.Application.Media.AudioContentService.OpenAsync(Guid, CancellationToken)",
+        "n8Tracks.Application.Media.MediaScanService.IsFolderAvailableAsync(CancellationToken)",
+        "n8Tracks.Application.Media.MediaScanService.LastScanAsync(CancellationToken)",
+        "n8Tracks.Application.Media.MediaScanService.RunAsync(Guid, MediaScanTrigger, Action`2, CancellationToken)",
+        "n8Tracks.Application.Media.MediaScanService.StartAsync(MediaScanTrigger, CancellationToken)",
+        "n8Tracks.Infrastructure.Media.MediaFolderProbe.ProbeAsync(CancellationToken)",
+        "n8Tracks.Infrastructure.Setup.SetupChecks.IsDataPathWritableAsync(CancellationToken)",
+        "n8Tracks.Infrastructure.Setup.SetupChecks.IsMediaAvailableAsync(CancellationToken)",
     ];
 
     [Theory]
@@ -306,6 +343,78 @@ public partial class MediaMountAccessTests
         Assert.True(calls.Count == 0, "Health and setup only probe the media mount:" + Environment.NewLine + string.Join(Environment.NewLine, calls));
     }
 
+    /// <summary>
+    /// Every call that hands <c>IMediaMount</c> a path is a reviewed one (#384): a route that passed a
+    /// request value to the mount through any of its users fails here, whatever the value is called.
+    /// </summary>
+    [Fact]
+    public void EveryCallThatHandsTheMountAPathIsAReviewedOne()
+    {
+        var holders = MediaMountUsers.Except(
+            [Reader, "src/n8Tracks.Application/Media/MediaPorts.cs", "src/n8Tracks.Infrastructure/DependencyInjection.cs"],
+            StringComparer.Ordinal);
+        var found = FindInCode(HandsAPath())
+            .Where(call => holders.Any(file => call.StartsWith(file + ": ", StringComparison.Ordinal)))
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+        var unexpected = found.Except(MountPathCalls, StringComparer.Ordinal).ToList();
+        Assert.True(
+            unexpected.Count == 0,
+            "A new call hands the media mount a path: check it never comes from a request (invariant 2), then add it to the list:" + Environment.NewLine
+            + string.Join(Environment.NewLine, unexpected));
+        Assert.Equal(MountPathCalls.Order(StringComparer.Ordinal), found);
+    }
+
+    [Theory]
+    [InlineData("opened = mount.OpenWithStat(file.Path);", "mount.OpenWithStat(file.Path)")]
+    [InlineData("public Stream OpenByRelative(string rel) => mount.OpenRead(rel);", "mount.OpenRead(rel)")]
+    [InlineData("var s = media\n    .Stat( rel );", "media.Stat(rel)")]
+    [InlineData("var entries = this.mount.List(Path.Combine(a, b));", "mount.List(Path.Combine(a, b))")]
+    public void ThePathCallRuleFindsEveryCallWithAnArgument(string code, string call)
+    {
+        Assert.Equal(call, Normalize(Assert.Single(HandsAPath().Matches(code)).Value));
+    }
+
+    [Theory]
+    [InlineData("stat = opened.Stat();")]
+    [InlineData("if (file.Stat() != opened)")]
+    [InlineData("return mount.Probe();")]
+    public void ThePathCallRuleAllowsACallWithNoArgument(string code)
+    {
+        Assert.Empty(HandsAPath().Matches(code));
+    }
+
+    /// <summary>
+    /// The types built with an <c>IMediaMount</c> take no text from their callers (#384): a method
+    /// that would take a path (or any string) to hand to the mount fails here, whatever it is called.
+    /// </summary>
+    [Fact]
+    public void TheTypesThatHoldTheMountTakeNoPathFromTheirCallers()
+    {
+        var mount = typeof(n8Tracks.Application.Media.IMediaMount);
+        var holders = new[] { typeof(n8Tracks.Application.Media.MediaScanService).Assembly, typeof(n8Tracks.Infrastructure.DependencyInjection).Assembly, Assembly.Load("n8Tracks.Api") }
+            .SelectMany(static assembly => assembly.GetTypes())
+            .Where(type => !type.IsInterface
+                && type.Name != "MediaMountReader"
+                && type.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                    .Any(constructor => constructor.GetParameters().Any(parameter => parameter.ParameterType == mount)))
+            .ToList();
+
+        var methods = holders
+            .SelectMany(static type => type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly)
+                .Where(static method => !method.IsPrivate && !method.IsSpecialName)
+                .Select(method => $"{type.FullName}.{method.Name}({string.Join(", ", method.GetParameters().Select(static parameter => parameter.ParameterType.Name))})"))
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+        Assert.Equal(MountHolderMethods, methods);
+        Assert.All(
+            holders.SelectMany(static type => type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly))
+                .Where(static method => !method.IsPrivate),
+            static method => Assert.DoesNotContain(method.GetParameters(), static parameter => parameter.ParameterType == typeof(string) || parameter.ParameterType == typeof(Uri)));
+    }
+
     /// <summary>Nothing under <c>src/</c> calls native code or uses <c>dynamic</c> (#386): a P/Invoke or a late-bound call would pass every rule above.</summary>
     [Fact]
     public void NothingCallsNativeCodeOrIsLateBound()
@@ -396,6 +505,10 @@ public partial class MediaMountAccessTests
 
     [GeneratedRegex(@"\bIMediaMount\b")]
     private static partial Regex NamesMediaMount();
+
+    /// <summary>A call to a member of <c>IMediaMount</c> that takes a path, with its argument (to the closing parenthesis, one level of nesting).</summary>
+    [GeneratedRegex(@"\b\w+\s*\.\s*(List|Stat|OpenRead|OpenWithStat)\s*\(\s*(?=[^\s)])([^()]|\([^()]*\))*\)")]
+    private static partial Regex HandsAPath();
 
     /// <summary>Native code (a P/Invoke, a function pointer, a loaded library) and late binding.</summary>
     [GeneratedRegex(@"\b(DllImport|LibraryImport|NativeLibrary|UnmanagedCallersOnly)\b|\bextern\s+\w|\bdelegate\s*\*\s*unmanaged\b|\bdynamic\b|\bMarshal\s*\.\s*GetDelegateForFunctionPointer\b")]

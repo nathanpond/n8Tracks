@@ -430,6 +430,9 @@ public sealed partial class MediaMountGuardTests
     /// No endpoint takes a path: every handler parameter, and every field of a request body, is read,
     /// and one whose name says path, file, folder, directory, or mount fails the check (an audio file
     /// is named by its ID, which is a UUID, never a text). Routes under the media endpoints are UUIDs.
+    /// This check is by name; the structural guard (#384) is <c>MediaMountAccessTests</c>' list of every
+    /// call that hands the mount a path and of what the types holding the mount accept, which no input
+    /// reaches whatever it is called.
     /// </summary>
     [Fact]
     public void NoEndpointTakesAPath()
