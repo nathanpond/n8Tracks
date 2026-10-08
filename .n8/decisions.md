@@ -4555,3 +4555,30 @@ Story #219 (on the milestone branch):
 - **Decision:** #223: the search tables are classified as not catalog in `SunoExportStagingGuardTests.OtherTables`: `search_index` with its five FTS5 shadow tables, `search_rows`, and `search_dirty_songs`. The services stay outside the invariant-1 catalog namespaces: `Application.Search` takes only IDs, text, and its own records. The rebuild endpoint is excused in the invariant-1 guard ("writes only the search index tables and the settings row"). `search` joins `RedactionPolicy.SensitiveNames`.
   **Why:** The index is derived data, rewritten in the same transaction as the catalog and rebuilt from it. It is never read as the catalog, so an import changing it is not an overwrite. Keeping catalog types out of the services' public surface keeps them out of the guard's namespaces without weakening the guard's complement test.
   **Issue:** #223
+
+Story #237 (built in parallel; merged into the milestone branch):
+
+- **Decision:** The job worker's heartbeat is beaten by the worker's own wake-ups: every poll (1 s) and every progress tick of a running job (1 s), not by an independent timer.
+  **Why:** The story wants both "keeps ticking during a long job" and "stopped reporting but not exited" to mean something. An independent timer would keep beating while the loop is stuck in a call, so `stalled` for a lost heartbeat could never happen; the progress tick already wakes the worker every second during a job, so a long job keeps beating (tested at three times a shortened window).
+  **Issue:** #237
+- **Decision:** Heartbeat age and the 60-second starting window use the monotonic clock (`TimeProvider.GetTimestamp`); a queued job's wait uses the wall clock (`GetUtcNow`) against `jobs.created_utc` and the moment the worker last became idle.
+  **Why:** Wall-clock jumps must not fake a lost heartbeat; the queue's ages are stored as wall-clock times. It also lets a test clock age the queue by an hour without touching liveness.
+  **Issue:** #237
+- **Decision:** Only an exception that escapes the loop counts as a fault (restart after 5 s; three within a minute → the worker exits, process alive, `jobs` unhealthy `stopped`). A failed claim stays "logged, tried again at the next poll" as before.
+  **Why:** Counting claim failures would turn a minute of SQLITE_BUSY or a briefly unreachable database into a permanently stopped worker. A worker that keeps failing claims while a job waits shows as `stalled` after 10 minutes instead.
+  **Issue:** #237
+- **Decision:** `JobWorkerOptions` gains `RestartDelay`, `FaultLimit`, `FaultWindow`, `HeartbeatLostAfter`, `FirstHeartbeatWithin`, and a test seam `BeforePoll` (null in the app), following the `BackupTestHooks` precedent. `JobWorkerOptions` is now also `TryAdd`ed in `AddInfrastructure`, since the health check reads its thresholds.
+  **Why:** The loop has no realistic fault a test can provoke without a seam; tests shorten the 30 s / 5 s windows.
+  **Issue:** #237
+- **Decision:** During maintenance neither new check opens the database: `migrations` reports the last result found (re-read on the first call after maintenance), `jobs` reports from the heartbeat (`idle` when idle, since nothing is claimed in maintenance by design). The overall status caps an unhealthy `migrations` at `degraded` during maintenance (#73); a stopped worker stays unhealthy.
+  **Why:** `HealthService` already avoids opening a database a restore may be replacing; the discretion line says the overall status follows #73 during maintenance.
+  **Issue:** #237
+- **Decision:** When the database check fails, `migrations` is `unhealthy`/`unknown` (it was the startup-captured `up to date`) and `jobs` is `degraded`/`unknown` without trying the queue; three existing health tests were updated for this (and the log-once test now expects four components to fail and recover).
+  **Why:** Discretion: "If the database cannot be reached, migrations keeps today's `unknown`" and "If the queue cannot be read, jobs is degraded with detail unknown".
+  **Issue:** #237
+- **Decision:** Healthy `jobs` details are `idle` and `running`; the web System page labels the component "Background jobs" (between Media library and Maintenance), and the `shell`/`account` e2e specs now expect six rows.
+  **Why:** The AC asks for a one-word detail; the page needs a label for the new key or it shows the raw `jobs`.
+  **Issue:** #237
+- **Decision:** The `--healthcheck` AC is tested by chaining: the test host's `/health` answers 503 for `stopped` and 200 for `stalled`, and the command exits 1/0 against a stub answering those codes.
+  **Why:** `Program.RunAsync` (the real process) cannot have its worker faulted or its claims held; the command depends only on the status code.
+  **Issue:** #237
