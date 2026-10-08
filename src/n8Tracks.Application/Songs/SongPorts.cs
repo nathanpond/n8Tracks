@@ -77,6 +77,12 @@ public sealed record SongSummary(
     /// <summary>What Play on it does (#219), by <see cref="PlaybackResolver.StateOfSong"/>; read with it, never stored.</summary>
     public SongPlayability Playback { get; init; } = SongPlayability.NoGenerations;
 
+    /// <summary>
+    /// The highest rating among its live Generations, in any state (#226: what the rating sort orders
+    /// by); null when none is rated. Read with it, never stored.
+    /// </summary>
+    public int? HighestRating { get; init; }
+
     public string Shortcode => Shortcodes.ForSong(ShortcodeNumber);
 }
 
@@ -92,13 +98,16 @@ public sealed record SongStateSummary(Guid Id, string Name, string Colour);
 /// <summary>A Song's current Version, as a Song shows it: with what it creates, so lists can say so.</summary>
 public sealed record CurrentVersionSummary(Guid Id, string Number, string Shortcode, VersionKind Kind);
 
-/// <summary>What Songs are listed by.</summary>
+/// <summary>What Songs are listed by. Every sort breaks ties by shortcode number, ascending (#226).</summary>
 public enum SongSort
 {
     /// <summary>Last-updated time.</summary>
     Updated,
 
-    /// <summary>Title, ignoring case.</summary>
+    /// <summary>
+    /// Title, by its stored order key (<see cref="SongRules.TitleOrderKey"/>, #226): ignoring case,
+    /// accents, and leading punctuation, with digits in natural order.
+    /// </summary>
     Title,
 
     /// <summary>How many local audio files are associated with it (#211).</summary>
@@ -109,11 +118,29 @@ public enum SongSort
     /// gives: the default with a search and no sort chosen. Descending is best first.
     /// </summary>
     Relevance,
+
+    /// <summary>Creation time (#226).</summary>
+    Created,
+
+    /// <summary>
+    /// The highest rating among its live Generations, in any state (#226); Songs with no rated
+    /// Generation come last in either direction.
+    /// </summary>
+    Rating,
+
+    /// <summary>Its workflow state, in the order the user gave the states (their position), not by name (#226).</summary>
+    State,
+
+    /// <summary>
+    /// The date of its latest live Generation, in any state (#226): each Generation's Suno
+    /// <c>created_at</c>, or else when it was attached. Songs with no Generation come last in either direction.
+    /// </summary>
+    LastGeneration,
 }
 
 /// <summary>
-/// One page of Songs. Ties are broken by shortcode number, in the same direction, so the order is
-/// always total.
+/// One page of Songs. Ties are broken by shortcode number, ascending whatever the direction (#226),
+/// so the order is always total; by <see cref="SongSort.Relevance"/>, by the search's own order.
 /// </summary>
 /// <param name="Sort">What to order by.</param>
 /// <param name="Descending">Whether the order is reversed.</param>

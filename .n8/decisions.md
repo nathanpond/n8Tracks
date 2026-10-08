@@ -4697,3 +4697,44 @@ Story #225:
 - **Decision:** Rule 3: `SongFilterValueStore.cs` failed `dotnet format --verify-no-changes` because of the indentation of its case-block braces. It was fixed with `dotnet format whitespace` on that file alone. There was no code change.
   **Why:** The format gate must pass.
   **Issue:** #225
+- **Decision:** The new title order key is a new column, `songs.title_order_key` (`SongRules.TitleOrderKey`). The existing `title_sort_key` keeps its meaning (NFC, lower case), because `q`'s substring match and the relationship and ISRC orders read it.
+  **Why:** Natural digit order and folded accents would break `q`'s "title contains" match if written into the existing column.
+  **Issue:** #226
+- **Decision:** The key folds accents (FormD, combining marks dropped), lower-cases invariantly, and collapses white space. It strips leading **and trailing** characters that are not letters or digits, and writes each ASCII digit run as its three-digit length plus the digits without leading zeros (`Song 2` → `song 0012`). A title of nothing but punctuation keeps its folded text.
+  **Why:** The discretion line names leading punctuation and quotes. Stripping trailing ones too makes `"Apple"` sort with `apple`, not after `apple pie` because of the closing quote. Length-prefixed digit runs sort naturally at any length within the 300-character title cap.
+  **Issue:** #226
+- **Decision:** This wave's migration is `20261008100000_AddSongOrderKeys`, written by hand:
+  - `ALTER TABLE songs ADD COLUMN title_order_key TEXT NOT NULL DEFAULT ''`;
+  - a back-fill through the new per-connection SQL function `n8_title_order_key`;
+  - plain `CREATE INDEX` for `songs (title_order_key, shortcode_number)`, `generations (song_id, rating)`, and `generations (song_id, suno_created_utc, created_utc)`.
+
+  The Designer is EF's own output from the current snapshot, renamed from the generated timestamp. `has-pending-model-changes` reports none.
+  **Why:** The binding note forbids an EF rebuild of trigger-carrying tables. The back-fill writes no column the search triggers watch. The two Generation indexes back the rating and last-Generation sub-queries, and nothing is stored on the Song.
+  **Issue:** #226
+- **Decision:** The `song` retained shape goes from 3 to 4. The upgrader `SongShape3To4` computes `title_order_key` from the retained title, by the same rule. `retained-shapes.json` is updated, and `SunoWorkspaceRulesTests` now asserts shape `>= 3` instead of `== 3`.
+  **Why:** `RetainedShapeGuardTests` requires a shape bump and an upgrader for any column added to a retained table. A Song retained before this change must restore with a usable key.
+  **Issue:** #226
+- **Decision:** The new keys are `SongSort.Created|Rating|State|LastGeneration` and `sort=created|rating|state|lastGeneration|relevance`. `updated`, `title` and `audioFiles` stay. No new member was needed on `SongListRequest` or `SongListQuery`, because the keys are enum values on the existing `Sort`.
+  **Why:** The discretion line lists the keys. The plan's drift note keeps `audioFiles` as a seventh accepted key.
+  **Issue:** #226
+- **Decision:** The tie-break is the shortcode ascending for every key and in both directions. This replaces the old rule that broke ties in the sort's own direction. The existing `SongEndpointTests` expectation for title descending is updated, and `sort=created` in its 400 theory becomes `sort=newest`, since `created` is now valid.
+  **Why:** The discretion line: "Tie-break is shortcode ascending for every key."
+  **Issue:** #226
+- **Decision:** Rating is the highest rating over live Generations, in any state. Last Generation date is the latest `COALESCE(suno_created_utc, created_utc)` per Generation. Both sorts order by "no value" first, so empty values come last in either direction. State sorts by `workflow_states.position`. Songs gain `highestRating` (`SongSummary.HighestRating`, `SongResponse.highestRating`, `null` when unrated) for the Rating column.
+  **Why:** These follow the discretion lines. The Rating column needs the value, which no answer carried before.
+  **Issue:** #226
+- **Decision:** A `direction` sent with `relevance` is ignored, but an unknown direction text is still a 400. `sort=relevance` without a search is the default order, updated and newest first, in its own first direction. Relevance with a search is now always best first. Before this change, `direction=asc` reversed it.
+  **Why:** The discretion line says "a `direction` sent with `relevance` is ignored". Refusing bad text keeps parameter validation uniform.
+  **Issue:** #226
+- **Decision:** In the web app, relevance is still never written to the address: its absence while searching means relevance. Choosing the default order (Updated, newest first) before a search cannot be told apart from choosing nothing, so a later search orders by relevance. Any other chosen sort is kept.
+  **Why:** The address leaves out defaults (#59 and #224), so this keeps the existing address shape. The Demo (search → Relevance → pick Updated → reload) holds.
+  **Issue:** #226
+- **Decision:** The Sort control is `web/src/songs/SongSortControl.tsx`, a group named "Sort" holding a "Sort by" select and an "Order" select whose wording follows the key (for example "Newest first" or "Workflow order"). The Order select is hidden for Relevance. Its labels live in `songSortRules.ts`, because react-refresh forbids exporting constants from a component file. Headers in `SongsTable.tsx` sort by Title, State, Created, Updated, Rating (a new column after Updated), and Audio files. Last Generation date is only in the control.
+  **Why:** This follows the discretion lines, and native selects are accessible without extra wiring.
+  **Issue:** #226
+- **Decision:** A page past the end now shows the empty table, its headers only, with "There are no Songs on this page." and a link "Go to the last page (page N)". This replaces the "Go to the first page" button, and the existing SongsPage test is updated.
+  **Why:** The discretion line: "A page past the end shows an empty table with a link to the last page."
+  **Issue:** #226
+- **Decision:** Rule 3: the upgrader first read the title with `JsonNode.GetValue<string>()`, which tripped `EnvironmentReadGuardTests`' `.GetValue` pattern. It now uses a `(string?)` cast.
+  **Why:** The architecture gate must pass, and the guard's pattern is name-based.
+  **Issue:** #226

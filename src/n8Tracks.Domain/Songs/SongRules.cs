@@ -88,6 +88,91 @@ public static class SongRules
     /// </summary>
     public static string TitleKey(string title) => Catalog.GenreRules.NameKey(title);
 
+    /// <summary>
+    /// How many digits the length of a run of digits is written in by <see cref="TitleOrderKey"/>:
+    /// a title holds at most <see cref="TitleMaximumLength"/> characters, so three always suffice.
+    /// </summary>
+    private const int DigitRunLengthWidth = 3;
+
+    /// <summary>
+    /// What the Songs list sorts titles by (#226), compared as ordinal text: case- and accent-folded
+    /// (canonical decomposition, combining marks dropped, lower-cased invariantly), leading and trailing
+    /// punctuation, quotes, symbols, and white space ignored (so a quoted title sorts as its words), each inner run of white space as one space, and each
+    /// run of ASCII digits written as its length (three digits) followed by the digits without leading
+    /// zeros, so <c>Song 2</c> comes before <c>Song 10</c>. Articles are not ignored. A title of nothing
+    /// but punctuation keys on its folded text, so it still has a place.
+    /// </summary>
+    public static string TitleOrderKey(string title)
+    {
+        ArgumentNullException.ThrowIfNull(title);
+
+        var folded = new System.Text.StringBuilder(title.Length);
+        foreach (var character in title.Normalize(System.Text.NormalizationForm.FormD))
+        {
+            if (CharUnicodeInfo.GetUnicodeCategory(character) is not (UnicodeCategory.NonSpacingMark or UnicodeCategory.SpacingCombiningMark or UnicodeCategory.EnclosingMark))
+            {
+                folded.Append(char.IsWhiteSpace(character) ? ' ' : character);
+            }
+        }
+
+        var text = folded.ToString().Normalize(System.Text.NormalizationForm.FormC).ToLowerInvariant().Trim();
+        var start = 0;
+        while (start < text.Length && !char.IsLetterOrDigit(text[start]))
+        {
+            start++;
+        }
+
+        if (start < text.Length)
+        {
+            var end = text.Length;
+            while (!char.IsLetterOrDigit(text[end - 1]))
+            {
+                end--;
+            }
+
+            text = text[start..end];
+        }
+
+        var key = new System.Text.StringBuilder(text.Length + 8);
+        for (var index = 0; index < text.Length;)
+        {
+            var character = text[index];
+            if (char.IsAsciiDigit(character))
+            {
+                var end = index;
+                while (end < text.Length && char.IsAsciiDigit(text[end]))
+                {
+                    end++;
+                }
+
+                var digits = text[index..end].TrimStart('0');
+                if (digits.Length == 0)
+                {
+                    digits = "0";
+                }
+
+                key.Append(digits.Length.ToString(new string('0', DigitRunLengthWidth), CultureInfo.InvariantCulture)).Append(digits);
+                index = end;
+            }
+            else if (character == ' ')
+            {
+                if (key.Length == 0 || key[^1] != ' ')
+                {
+                    key.Append(' ');
+                }
+
+                index++;
+            }
+            else
+            {
+                key.Append(character);
+                index++;
+            }
+        }
+
+        return key.ToString();
+    }
+
     /// <summary>A concept as stored: line endings as <c>\n</c>, trimmed, and null when nothing but white space is left.</summary>
     public static string? NormaliseConcept(string? concept)
     {

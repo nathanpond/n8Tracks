@@ -32,34 +32,45 @@ import {
   matchStateText,
 } from '../search/searchRules';
 import { RelativeTime, StateBadge, TagLabels, TruncatedConcept } from './SongParts';
+import { SORT_LABELS } from './songSortRules';
 
 /** How many Tags a row of the table shows before "+N". */
 const TAGS_PER_ROW = 3;
 
 /** How many columns a row has: a Song's match rows span them all. */
-const COLUMN_COUNT = 15;
+const COLUMN_COUNT = 16;
 
 /** What a Song page is told about the list it was opened from, so it can link back to that view. */
 export interface FromSongs {
   songsSearch: string;
 }
 
-/** A column header that sorts the table by it: once in its starting direction, again reversed. */
+/**
+ * A column header that sorts the table by it (#226): once in its starting direction, again
+ * reversed. The sorted column says so: `aria-sort`, and an arrow to the eye.
+ */
 function SortHeader({
-  label,
   sort,
+  label = SORT_LABELS[sort],
   query,
   onSort,
+  ta,
 }: {
-  label: string;
-  sort: SongSort;
+  sort: Exclude<SongSort, 'relevance'>;
+  label?: string;
   query: SongQuery;
   onSort: (sort: SongSort) => void;
+  ta?: 'end';
 }) {
   const active = query.sort === sort;
   const ascending = query.direction === 'asc';
   return (
-    <Table.Th scope="col" aria-sort={active ? (ascending ? 'ascending' : 'descending') : undefined}>
+    <Table.Th
+      scope="col"
+      ta={ta}
+      aria-sort={active ? (ascending ? 'ascending' : 'descending') : undefined}
+      data-testid={`sort-header-${sort}`}
+    >
       <UnstyledButton
         fw={700}
         fz="sm"
@@ -71,6 +82,23 @@ function SortHeader({
         <span aria-hidden="true">{active ? (ascending ? ' ▲' : ' ▼') : ''}</span>
       </UnstyledButton>
     </Table.Th>
+  );
+}
+
+/** A Song's highest Generation rating (#226): its stars, or a dash when none is rated. */
+function RatingCell({ rating }: { rating: number | null | undefined }) {
+  return (
+    <Table.Td ta="end" style={{ whiteSpace: 'nowrap' }} data-testid="song-rating">
+      {rating === null || rating === undefined ? (
+        <NoneDash />
+      ) : (
+        <>
+          <span aria-hidden="true">★ </span>
+          {rating}
+          <VisuallyHidden> of 5</VisuallyHidden>
+        </>
+      )}
+    </Table.Td>
   );
 }
 
@@ -122,6 +150,7 @@ function SongRow({ song, timeZone, from }: { song: Song; timeZone: string; from:
       <Table.Td style={{ whiteSpace: 'nowrap' }}>
         <RelativeTime utc={song.updatedAt} timeZone={timeZone} />
       </Table.Td>
+      <RatingCell rating={song.highestRating} />
       <Table.Td visibleFrom="md" style={{ maxWidth: 200 }} data-testid="song-workspace">
         {song.sunoWorkspace === null ? <NoneDash /> : workspaceName(song.sunoWorkspace)}
       </Table.Td>
@@ -254,8 +283,9 @@ function MatchRows({ song, search, from }: { song: Song; search: string; from: F
 
 /**
  * The Songs table (#59, #224): each Song with its shortcode, title, Artist, Concept, state, kind,
- * Versions, Genres, Tags, creation date, last update, Suno workspace, Selected Generation (its
- * shortcode, or "None"), and local audio files. While a search is active (`search`), each Song has a
+ * Versions, Genres, Tags, creation date, last update, highest Generation rating (#226), Suno
+ * workspace, Selected Generation (its shortcode, or "None"), and local audio files. Title, state,
+ * created, updated, rating, and audio files sort from their headers (#226). While a search is active (`search`), each Song has a
  * row beneath it showing where it matched. On a narrow screen Tags and workspace are hidden first.
  */
 export function SongsTable({
@@ -281,10 +311,10 @@ export function SongsTable({
               <VisuallyHidden>Play</VisuallyHidden>
             </Table.Th>
             <Table.Th scope="col">Shortcode</Table.Th>
-            <SortHeader label="Title" sort="title" query={query} onSort={onSort} />
+            <SortHeader sort="title" query={query} onSort={onSort} />
             <Table.Th scope="col">Artist</Table.Th>
             <Table.Th scope="col">Concept</Table.Th>
-            <Table.Th scope="col">State</Table.Th>
+            <SortHeader sort="state" label="State" query={query} onSort={onSort} />
             <Table.Th scope="col">Kind</Table.Th>
             <Table.Th scope="col" ta="end">
               Versions
@@ -293,13 +323,14 @@ export function SongsTable({
             <Table.Th scope="col" visibleFrom="md">
               Tags
             </Table.Th>
-            <Table.Th scope="col">Created</Table.Th>
-            <SortHeader label="Updated" sort="updated" query={query} onSort={onSort} />
+            <SortHeader sort="created" query={query} onSort={onSort} />
+            <SortHeader sort="updated" query={query} onSort={onSort} />
+            <SortHeader sort="rating" query={query} onSort={onSort} ta="end" />
             <Table.Th scope="col" visibleFrom="md">
               Workspace
             </Table.Th>
             <Table.Th scope="col">Selected Generation</Table.Th>
-            <SortHeader label="Audio files" sort="audioFiles" query={query} onSort={onSort} />
+            <SortHeader sort="audioFiles" query={query} onSort={onSort} />
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>

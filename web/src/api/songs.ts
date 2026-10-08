@@ -196,6 +196,11 @@ export interface Song {
    */
   audioFileCount?: number;
   /**
+   * The highest rating of its live Generations (#226), or null when none is rated. The API always
+   * sends it; test fixtures may leave it out.
+   */
+  highestRating?: number | null;
+  /**
    * What Play on it does (#219), as the server's playback rule decides it. The API always sends it;
    * test fixtures may leave it out, and then Play asks the server when pressed.
    */
@@ -344,10 +349,20 @@ export interface WorkflowState {
 }
 
 /**
- * How the table is sorted. `relevance` is the order of a full-text search, best first: the list's
- * default while searching, never sent (the API orders by relevance when `sort` is left out).
+ * How the table is sorted (#226: title, creation date, last update, highest Generation rating,
+ * workflow state, last Generation date; #211: local audio files). `relevance` is the order of a
+ * full-text search, best first: the list's default while searching, never sent (the API orders by
+ * relevance when `sort` is left out), and with no direction of its own.
  */
-export type SongSort = 'updated' | 'title' | 'audioFiles' | 'relevance';
+export type SongSort =
+  | 'updated'
+  | 'title'
+  | 'audioFiles'
+  | 'relevance'
+  | 'created'
+  | 'rating'
+  | 'state'
+  | 'lastGeneration';
 export type SortDirection = 'asc' | 'desc';
 
 /** What the Songs table shows: the list's own query parameters. */
@@ -555,6 +570,9 @@ export function isSong(value: unknown): value is Song {
     (value.selectedGeneration === null || isSelectedGeneration(value.selectedGeneration)) &&
     (value.sunoWorkspace === null || isSongWorkspace(value.sunoWorkspace)) &&
     (value.audioFileCount === undefined || typeof value.audioFileCount === 'number') &&
+    (value.highestRating === undefined ||
+      value.highestRating === null ||
+      typeof value.highestRating === 'number') &&
     (value.playback === undefined || isSongPlayability(value.playback)) &&
     (value.matches === undefined ||
       (Array.isArray(value.matches) && value.matches.every(isSongMatch))) &&
@@ -628,7 +646,8 @@ export function songListParameters(query: SongQuery): URLSearchParams {
   if (sort !== defaultSort(query) && sort !== 'relevance') {
     parameters.set('sort', sort);
   }
-  if (query.direction !== defaultDirection(sort)) {
+  // Relevance has no direction (the API ignores one).
+  if (sort !== 'relevance' && query.direction !== defaultDirection(sort)) {
     parameters.set('direction', query.direction);
   }
   for (const state of query.states) {
@@ -686,15 +705,23 @@ export function songListParameters(query: SongQuery): URLSearchParams {
 }
 
 /**
- * The direction a sort starts in: newest first by updated time, A to Z by title, most audio files
- * first, best first by relevance.
+ * The direction a sort starts in (#226): A to Z by title, the user's order by workflow state; newest
+ * first by a date, highest first by rating, most audio files first, best first by relevance.
  */
 export function defaultDirection(sort: SongSort): SortDirection {
-  return sort === 'title' ? 'asc' : 'desc';
+  return sort === 'title' || sort === 'state' ? 'asc' : 'desc';
 }
 
 /** The sorts an address may name: relevance is never named, only implied by a search. */
-const SONG_SORTS: readonly SongSort[] = ['updated', 'title', 'audioFiles'];
+const SONG_SORTS: readonly SongSort[] = [
+  'updated',
+  'title',
+  'audioFiles',
+  'created',
+  'rating',
+  'state',
+  'lastGeneration',
+];
 
 /**
  * Reads a table view out of a page URL's query string. Anything it does not understand is left at

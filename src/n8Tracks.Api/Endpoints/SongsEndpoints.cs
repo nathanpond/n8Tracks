@@ -611,7 +611,8 @@ internal sealed record UpdateSongRequest(
 /// workspace it lives in (#129: <c>{ id, name, state }</c>, the ID being Suno's) or null.
 /// <c>audioFileCount</c> (#211) is how many local audio files are associated with it, at Song level or
 /// through its Generations, whatever their status. <c>playback</c> (#219) is what Play on it does:
-/// <c>{ state, reason }</c> (<see cref="SongPlayabilityResponse"/>).
+/// <c>{ state, reason }</c> (<see cref="SongPlayabilityResponse"/>). <c>highestRating</c> (#226) is the
+/// highest rating of its live Generations, or null when none is rated.
 /// </summary>
 internal sealed record SongResponse(
     Guid Id,
@@ -638,7 +639,8 @@ internal sealed record SongResponse(
     SelectedGenerationResponse? SelectedGeneration,
     SongWorkspaceResponse? SunoWorkspace,
     int AudioFileCount,
-    SongPlayabilityResponse Playback)
+    SongPlayabilityResponse Playback,
+    int? HighestRating)
 {
     /// <summary>With a full-text search (#223), the Song's best matches, best first; not sent otherwise.</summary>
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
@@ -693,7 +695,8 @@ internal sealed record SongResponse(
                 : null,
             song.SunoWorkspace is { } workspace ? SongWorkspaceResponse.From(workspace) : null,
             song.AudioFileCount,
-            SongPlayabilityResponse.From(song.Playback));
+            SongPlayabilityResponse.From(song.Playback),
+            song.HighestRating);
     }
 }
 

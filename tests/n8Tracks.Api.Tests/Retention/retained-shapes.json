@@ -11,7 +11,7 @@
   "provider-record": { "shapeVersion": 1, "hash": "eb8ed31721034d29d3bdcda218bc2395af5825556aa129530c30d0fdd2901d91" },
   "generation-comment": { "shapeVersion": 1, "hash": "88be575d82f0cfddf3fb9ff7e2e34a481e04a34203342f3745803383a772d24c" },
   "generation-event-link": { "shapeVersion": 1, "hash": "64d4bf93360f169329b62b8f8fccb65d3674b578309bcc40bf90c4f5e8d87500" },
-  "song": { "shapeVersion": 3, "hash": "8975628d26d38e11b48e0284532beca1adc47306258782926951a39bdaea03cd" },
+  "song": { "shapeVersion": 4, "hash": "6ee613d2f21db762ecf9e9d54e2691b37c6eddfa40c65b9fca0e02b1ffe230d8" },
   "used-version-number": { "shapeVersion": 1, "hash": "f30feb019fece4c1d32bb19851fa7dd8e80e3f9a3b6563943adbd4435adf0b67" },
   "song-link": { "shapeVersion": 1, "hash": "ea8d78cbd0c8c1fdd57de98a7b5ad84952a92a2229056ccc1ecfa9d621b8dbb9" },
   "song-genre": { "shapeVersion": 1, "hash": "5415900a0bbcfa00613202e752c340d95a790dc6aaf4ce4d0325b732e8c53cbb" },

@@ -218,11 +218,13 @@ internal static class RetainedTypes
     /// added its Selected Generation, which is one of its own Generations, so it goes and comes back
     /// with the group; an earlier record restores with none. Shape 3 (#129) added its Suno workspace,
     /// a record that is never deleted, so it comes back as it was; an earlier record restores with none.
+    /// Shape 4 (#226) added the title's sort key, which an earlier record restores with, worked out from
+    /// its title as a live Song's is.
     /// </summary>
-    public static readonly RetainedType Song = new(RetainedRecordTypes.Song, "songs", "Song", ShapeVersion: 3)
+    public static readonly RetainedType Song = new(RetainedRecordTypes.Song, "songs", "Song", ShapeVersion: 4)
     {
         PrepareRestoreAsync = static (row, cancellationToken) => SongRestore.KeepStateAsync(row, cancellationToken),
-        Upgraders = new Dictionary<int, Func<JsonObject, JsonObject>> { [1] = SongShape1To2, [2] = SongShape2To3 }.ToFrozenDictionary(),
+        Upgraders = new Dictionary<int, Func<JsonObject, JsonObject>> { [1] = SongShape1To2, [2] = SongShape2To3, [3] = SongShape3To4 }.ToFrozenDictionary(),
     };
 
     /// <summary>
@@ -425,6 +427,18 @@ internal static class RetainedTypes
         ArgumentNullException.ThrowIfNull(document);
 
         document["suno_workspace_id"] = null;
+        return document;
+    }
+
+    /// <summary>
+    /// A Song retained before #226 (shape 3) as shape 4: with the title sort key a live Song with its
+    /// title has (<see cref="Domain.Songs.SongRules.TitleOrderKey"/>).
+    /// </summary>
+    internal static JsonObject SongShape3To4(JsonObject document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+
+        document["title_order_key"] = Domain.Songs.SongRules.TitleOrderKey((string?)document["title"] ?? string.Empty);
         return document;
     }
 

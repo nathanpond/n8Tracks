@@ -42,6 +42,7 @@ internal sealed class SongStore(N8TracksDbContext context, SunoAudioHosts hosts)
             ShortcodeNumber = song.ShortcodeNumber,
             Title = song.Title,
             TitleSortKey = TitleSortKey(song.Title),
+            TitleOrderKey = SongRules.TitleOrderKey(song.Title),
             TitleKey = SongRules.TitleKey(song.Title),
             Concept = song.Concept,
             WorkflowStateId = song.StateId,
@@ -169,17 +170,7 @@ internal sealed class SongStore(N8TracksDbContext context, SunoAudioHosts hosts)
 
         var total = await songs.CountAsync(cancellationToken).ConfigureAwait(false);
 
-        // Times are fixed-width UTC text, so text order is time order; the shortcode number breaks ties.
-        var audioFiles = context.AudioFiles;
-        var ordered = (query.Sort, query.Descending) switch
-        {
-            (SongSort.AudioFiles, false) => songs.OrderBy(song => audioFiles.Count(file => file.SongId == song.Id)).ThenBy(static song => song.ShortcodeNumber),
-            (SongSort.AudioFiles, true) => songs.OrderByDescending(song => audioFiles.Count(file => file.SongId == song.Id)).ThenByDescending(static song => song.ShortcodeNumber),
-            (SongSort.Title, false) => songs.OrderBy(static song => song.TitleSortKey).ThenBy(static song => song.ShortcodeNumber),
-            (SongSort.Title, true) => songs.OrderByDescending(static song => song.TitleSortKey).ThenByDescending(static song => song.ShortcodeNumber),
-            (_, false) => songs.OrderBy(static song => song.UpdatedUtc).ThenBy(static song => song.ShortcodeNumber),
-            (_, true) => songs.OrderByDescending(static song => song.UpdatedUtc).ThenByDescending(static song => song.ShortcodeNumber),
-        };
+        var ordered = Ordered(songs, query.Sort, query.Descending).ThenBy(static song => song.ShortcodeNumber);
 
         var skip = ((long)query.Page - 1) * query.PageSize;
         var records = skip >= total
@@ -188,6 +179,46 @@ internal sealed class SongStore(N8TracksDbContext context, SunoAudioHosts hosts)
 
         return new SongPage(await SummariesAsync(records, cancellationToken).ConfigureAwait(false), query.Page, query.PageSize, total);
     }
+
+    /// <summary>
+    /// <paramref name="songs"/> by <paramref name="sort"/> (#226), each key computed in the query, so
+    /// nothing is stored on the Song but the title's order key: rating and last Generation date read
+    /// the live Generations (the <c>generations</c> table holds no retained ones) through their
+    /// indexes, and a Song with no value comes last in either direction; state is the state's position.
+    /// Times are fixed-width UTC text, so text order is time order. The caller adds the tie-break.
+    /// </summary>
+    private IOrderedQueryable<SongRecord> Ordered(IQueryable<SongRecord> songs, SongSort sort, bool descending)
+    {
+        var audioFiles = context.AudioFiles;
+        var generations = context.Generations;
+        var states = context.WorkflowStates;
+        return sort switch
+        {
+            SongSort.AudioFiles => By(songs, song => audioFiles.Count(file => file.SongId == song.Id), descending),
+            SongSort.Title => By(songs, static song => song.TitleOrderKey, descending),
+            SongSort.Created => By(songs, static song => song.CreatedUtc, descending),
+            SongSort.State => By(songs, song => states.Where(state => state.Id == song.WorkflowStateId).Select(static state => state.Position).First(), descending),
+            SongSort.Rating => By(
+                songs.OrderBy(song => generations.Where(generation => generation.SongId == song.Id).Max(static generation => generation.Rating) == null),
+                song => generations.Where(generation => generation.SongId == song.Id).Max(static generation => generation.Rating),
+                descending),
+            SongSort.LastGeneration => By(
+                songs.OrderBy(song => !generations.Any(generation => generation.SongId == song.Id)),
+                song => generations
+                    .Where(generation => generation.SongId == song.Id)
+                    .Select(static generation => generation.SunoCreatedUtc ?? generation.CreatedUtc)
+                    .OrderByDescending(static date => date)
+                    .FirstOrDefault(),
+                descending),
+            _ => By(songs, static song => song.UpdatedUtc, descending),
+        };
+    }
+
+    private static IOrderedQueryable<SongRecord> By<TKey>(IQueryable<SongRecord> songs, System.Linq.Expressions.Expression<Func<SongRecord, TKey>> key, bool descending) =>
+        descending ? songs.OrderByDescending(key) : songs.OrderBy(key);
+
+    private static IOrderedQueryable<SongRecord> By<TKey>(IOrderedQueryable<SongRecord> songs, System.Linq.Expressions.Expression<Func<SongRecord, TKey>> key, bool descending) =>
+        descending ? songs.ThenByDescending(key) : songs.ThenBy(key);
 
     /// <summary>
     /// A page of <paramref name="songs"/> (already filtered) in the order of <paramref name="ranked"/>,
@@ -226,6 +257,7 @@ internal sealed class SongStore(N8TracksDbContext context, SunoAudioHosts hosts)
         var title = details.Title;
         var titleSortKey = TitleSortKey(title);
         var titleKey = SongRules.TitleKey(title);
+        var titleOrderKey = SongRules.TitleOrderKey(title);
         var concept = details.Concept;
         var notes = details.Notes;
         var stateId = details.StateId;
@@ -242,6 +274,7 @@ internal sealed class SongStore(N8TracksDbContext context, SunoAudioHosts hosts)
                     .SetProperty(song => song.Title, title)
                     .SetProperty(song => song.TitleSortKey, titleSortKey)
                     .SetProperty(song => song.TitleKey, titleKey)
+                    .SetProperty(song => song.TitleOrderKey, titleOrderKey)
                     .SetProperty(song => song.Concept, concept)
                     .SetProperty(song => song.Notes, notes)
                     .SetProperty(song => song.WorkflowStateId, stateId)
@@ -515,6 +548,14 @@ internal sealed class SongStore(N8TracksDbContext context, SunoAudioHosts hosts)
                     .Select(static generation => new AttachedArtwork(generation.ImageId, null, generation.Width, generation.Height))
                     .First());
 
+        // The highest rating of each Song's live Generations (#226), what the rating sort orders by.
+        var highestRatings = await context.Generations.AsNoTracking()
+            .Where(generation => songIds.Contains(generation.SongId) && generation.Rating != null)
+            .GroupBy(static generation => generation.SongId)
+            .Select(static group => new { SongId = group.Key, Rating = group.Max(static generation => generation.Rating) })
+            .ToDictionaryAsync(static group => group.SongId, static group => group.Rating, cancellationToken)
+            .ConfigureAwait(false);
+
         // Every file associated with the Song counts, at Song level or through a Generation, whatever its status (#211).
         var audioFileCounts = await context.AudioFiles.AsNoTracking()
             .Where(file => file.SongId != null && songIds.Contains(file.SongId.Value))
@@ -601,6 +642,7 @@ internal sealed class SongStore(N8TracksDbContext context, SunoAudioHosts hosts)
             {
                 AudioFileCount = audioFileCounts.GetValueOrDefault(song.Id),
                 Playback = playback[song.Id],
+                HighestRating = highestRatings.GetValueOrDefault(song.Id),
             };
         })];
     }

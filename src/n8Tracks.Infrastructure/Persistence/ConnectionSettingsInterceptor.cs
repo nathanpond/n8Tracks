@@ -10,7 +10,7 @@ namespace n8Tracks.Infrastructure.Persistence;
 /// Applies the per-connection settings each time a connection opens: a busy timeout, so a writer
 /// waits for a lock instead of failing at once, and <c>synchronous=NORMAL</c>, which is safe under
 /// WAL. Neither is stored in the database file, so both are set on every connection. It also
-/// registers <see cref="TitleKeyFunction"/>, so a migration can fill a stored key with the same
+/// registers <see cref="TitleKeyFunction"/> and <see cref="TitleOrderKeyFunction"/>, so a migration can fill a stored key with the same
 /// rule the application writes it by, and <see cref="LowerFunction"/>, so a query can compare text
 /// without regard to case beyond ASCII.
 /// </summary>
@@ -27,6 +27,12 @@ internal sealed class ConnectionSettingsInterceptor : DbConnectionInterceptor
     /// own functions cannot compute (its <c>upper()</c> folds ASCII only, and it has no NFC).
     /// </summary>
     public const string TitleKeyFunction = "n8_title_key";
+
+    /// <summary>
+    /// The SQL function <c>n8_title_order_key(title)</c>: <see cref="SongRules.TitleOrderKey"/> (#226),
+    /// which a migration fills <c>songs.title_order_key</c> with.
+    /// </summary>
+    public const string TitleOrderKeyFunction = "n8_title_order_key";
 
     /// <summary>
     /// The SQL function <c>n8_lower(text)</c>: <see cref="string.ToLowerInvariant"/>, every letter that
@@ -73,6 +79,10 @@ internal sealed class ConnectionSettingsInterceptor : DbConnectionInterceptor
             sqlite.CreateFunction<string?, string?>(
                 TitleKeyFunction,
                 static title => title is null ? null : SongRules.TitleKey(title),
+                isDeterministic: true);
+            sqlite.CreateFunction<string?, string?>(
+                TitleOrderKeyFunction,
+                static title => title is null ? null : SongRules.TitleOrderKey(title),
                 isDeterministic: true);
             sqlite.CreateFunction<string?, string?>(
                 LowerFunction,

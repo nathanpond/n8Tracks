@@ -562,6 +562,9 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
             song.HasIndex(record => record.ShortcodeNumber).IsUnique();
             song.HasIndex(record => new { record.TitleSortKey, record.ShortcodeNumber });
 
+            // The Songs list's title sort (#226), with its shortcode tie-break.
+            song.HasIndex(record => new { record.TitleOrderKey, record.ShortcodeNumber });
+
             // The duplicate title indicator looks titles up by key. Not unique: titles may be shared.
             song.HasIndex(record => record.TitleKey);
             song.HasIndex(record => new { record.UpdatedUtc, record.ShortcodeNumber });
@@ -693,6 +696,11 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
             // The Songs list's model filter and the model picker's values (#225): the models reported,
             // and the Songs reporting one.
             generation.HasIndex(record => new { record.ModelVersion, record.SongId });
+
+            // The Songs list's rating and last Generation date sorts (#226): each Song's highest rating
+            // and latest Generation date, read from the index alone.
+            generation.HasIndex(record => new { record.SongId, record.Rating });
+            generation.HasIndex(record => new { record.SongId, record.SunoCreatedUtc, record.CreatedUtc });
 
             // The parent key of an audio file's (generation_id, song_id) foreign key (#206): an index, not
             // an alternate key, so it is added without rebuilding the table and a move may still change

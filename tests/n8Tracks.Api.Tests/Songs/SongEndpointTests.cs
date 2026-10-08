@@ -200,9 +200,9 @@ public sealed class SongEndpointTests
 
         Assert.Equal(["n8-1", "n8-2", "n8-3", "n8-4"], SongApi.Shortcodes(await SongApi.ListAsync(client, "sort=updated&direction=asc")));
 
-        // Titles ignore case, A to Z by default, the shortcode breaking ties in the same direction.
+        // Titles ignore case, A to Z by default, the shortcode breaking ties ascending in either direction (#226).
         Assert.Equal(["n8-2", "n8-4", "n8-1", "n8-3"], SongApi.Shortcodes(await SongApi.ListAsync(client, "sort=title")));
-        Assert.Equal(["n8-3", "n8-1", "n8-4", "n8-2"], SongApi.Shortcodes(await SongApi.ListAsync(client, "sort=title&direction=desc")));
+        Assert.Equal(["n8-3", "n8-1", "n8-2", "n8-4"], SongApi.Shortcodes(await SongApi.ListAsync(client, "sort=title&direction=desc")));
 
         // Filter: any number of states; a Song in another state is left out.
         TestDatabase.Execute(factory.DataPath, $"UPDATE songs SET workflow_state_id = '{Upper(DefaultWorkflowStates.Archived.Id)}' WHERE shortcode_number = 1;");
@@ -255,7 +255,7 @@ public sealed class SongEndpointTests
     }
 
     [Theory]
-    [InlineData("sort=created")]
+    [InlineData("sort=newest")]
     [InlineData("sort=Title")]
     [InlineData("sort=")]
     [InlineData("direction=up")]

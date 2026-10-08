@@ -1,4 +1,5 @@
 import {
+  Anchor,
   Button,
   CloseButton,
   Group,
@@ -24,12 +25,14 @@ import {
   useWorkflowStates,
   type SongQuery,
   type SongSort,
+  type SortDirection,
 } from '../api/songs';
 import { useConfiguredTimeZone } from '../api/timeZone';
 import { Notice } from '../components/Notice';
 import { SONGS_SEARCH_ID } from '../search/searchRules';
 import { NewSongDialog } from './NewSongDialog';
 import { SongFilterBar } from './SongFilterBar';
+import { SongSortControl } from './SongSortControl';
 import { SongsTable, type FromSongs } from './SongsTable';
 
 export type { FromSongs } from './SongsTable';
@@ -186,8 +189,11 @@ function TitleFilter({ title, onClear }: { title: string; onClear: () => void })
 }
 
 /**
- * Songs: every Song in a table ({@link SongsTable}), newest first, sortable by title, by last update, and (#211) by
- * how many local audio files it has (the last column, blank for none), filtered by
+ * Songs: every Song in a table ({@link SongsTable}), newest first, sortable (#226, from the column
+ * headers and from {@link SongSortControl}) by title, creation date, last update, highest Generation
+ * rating, workflow state, last Generation date, and (#211) how many local audio files it has (the
+ * last column, blank for none); a page past the end shows an empty table and a link to the last
+ * page. It is filtered by
  * the filter bar's filters ({@link SongFilterBar}, #225: workflow state, archived status, Genre, Tags,
  * Artist, Album, Playlist, model, creation date, rating, Selected Generation, local audio) and by
  * title (ignoring case and spacing; set from a Song page and cleared here), fifty to a page. Each row shows its primary
@@ -223,6 +229,10 @@ export function SongsPage() {
   const sortBy = (sort: SongSort) => {
     const direction =
       query.sort === sort ? (query.direction === 'asc' ? 'desc' : 'asc') : defaultDirection(sort);
+    show({ ...query, sort, direction, page: 1 });
+  };
+  // The Sort control (#226): a key in its first direction, or a direction of the key shown.
+  const sortTo = (sort: SongSort, direction: SortDirection) => {
     show({ ...query, sort, direction, page: 1 });
   };
   const filter = (states: string[]) => {
@@ -385,20 +395,23 @@ export function SongsPage() {
               </>
             ) : (
               <>
-                <Text>There are no Songs on this page.</Text>
-                <Button
-                  variant="default"
-                  size="xs"
-                  onClick={() => {
-                    show({ ...query, page: 1 });
-                  }}
+                <Text data-testid="page-past-end">There are no Songs on this page.</Text>
+                <Anchor
+                  component={Link}
+                  to={{ search: songListParameters({ ...query, page: pages }).toString() }}
                 >
-                  Go to the first page
-                </Button>
+                  {`Go to the last page (page ${String(pages)})`}
+                </Anchor>
               </>
             )}
           </Stack>
         </Paper>
+      )}
+      {page !== undefined && !empty && page.items.length === 0 && page.total > 0 && (
+        <SongsTable songs={[]} query={query} onSort={sortBy} timeZone={timeZone} from={from} />
+      )}
+      {page !== undefined && !empty && page.total > 0 && (
+        <SongSortControl query={query} onChange={sortTo} />
       )}
       {page !== undefined && page.items.length > 0 && (
         <>

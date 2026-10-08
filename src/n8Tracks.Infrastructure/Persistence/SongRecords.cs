@@ -18,6 +18,13 @@ public sealed class SongRecord
     public required string TitleSortKey { get; set; }
 
     /// <summary>
+    /// What the Songs list sorts titles by (#226, <see cref="Domain.Songs.SongRules.TitleOrderKey"/>):
+    /// case- and accent-folded, leading punctuation ignored, digits in natural order. Written with the
+    /// title; a row written without it (by hand) holds the empty text.
+    /// </summary>
+    public string TitleOrderKey { get; set; } = string.Empty;
+
+    /// <summary>
     /// What Songs sharing a title are found by (<see cref="Domain.Songs.SongRules.TitleKey"/>):
     /// trimmed, inner white space collapsed, NFC, and upper-cased invariantly. Indexed, not unique.
     /// </summary>

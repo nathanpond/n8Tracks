@@ -87,7 +87,7 @@ public sealed class SunoWorkspaceRulesTests
 
         Assert.True(shape3.ContainsKey("suno_workspace_id"));
         Assert.Null(shape3["suno_workspace_id"]);
-        Assert.Equal(3, RetainedTypes.Song.ShapeVersion);
+        Assert.True(RetainedTypes.Song.ShapeVersion >= 3);
         Assert.True(RetainedTypes.Song.Upgraders.ContainsKey(2));
     }
 }

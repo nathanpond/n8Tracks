@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { activeFilterCount, songListParameters, songQueryFrom } from './songs';
+import {
+  activeFilterCount,
+  defaultDirection,
+  songListParameters,
+  songQueryFrom,
+  type SongSort,
+  type SortDirection,
+} from './songs';
 import { formatRelativeTime } from './timeZone';
 
 const STATE = '01a10a6e-dc80-7000-8000-000000000001';
@@ -100,6 +107,37 @@ describe('the Songs view in the URL', () => {
 
   it('starts a title sort A to Z', () => {
     expect(songQueryFrom(new URLSearchParams('sort=title')).direction).toBe('asc');
+  });
+
+  it('reads and writes each #226 sort, leaving out its first direction', () => {
+    const first: [SongSort, SortDirection][] = [
+      ['title', 'asc'],
+      ['created', 'desc'],
+      ['updated', 'desc'],
+      ['rating', 'desc'],
+      ['state', 'asc'],
+      ['lastGeneration', 'desc'],
+      ['audioFiles', 'desc'],
+    ];
+    for (const [sort, direction] of first) {
+      expect(defaultDirection(sort)).toBe(direction);
+      const query = songQueryFrom(new URLSearchParams(`sort=${sort}&page=2`));
+      expect(query).toMatchObject({ sort, direction, page: 2 });
+      expect(songListParameters(query).toString()).toBe(
+        sort === 'updated' ? 'page=2' : `sort=${sort}&page=2`,
+      );
+      const reversed = `sort=${sort}&direction=${direction === 'asc' ? 'desc' : 'asc'}&page=2`;
+      expect(songListParameters(songQueryFrom(new URLSearchParams(reversed))).toString()).toBe(
+        reversed.replace('sort=updated&', ''),
+      );
+    }
+  });
+
+  it('never writes a direction for relevance', () => {
+    const searched = songQueryFrom(new URLSearchParams('search=lantern&direction=asc'));
+
+    expect(searched.sort).toBe('relevance');
+    expect(songListParameters(searched).toString()).toBe('search=lantern');
   });
 
   it('ignores what it does not understand', () => {

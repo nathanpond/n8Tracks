@@ -320,6 +320,24 @@ public sealed class SongService(
 
     /// <summary>By how many local audio files each Song has (#211); most first unless asked otherwise.</summary>
     public const string SortAudioFiles = "audioFiles";
+
+    /// <summary>#226: by creation time; newest first unless asked otherwise.</summary>
+    public const string SortCreated = "created";
+
+    /// <summary>#226: by the highest rating of the Song's live Generations; highest first unless asked otherwise, unrated last.</summary>
+    public const string SortRating = "rating";
+
+    /// <summary>#226: by workflow state, in the user's order of the states; first state first unless asked otherwise.</summary>
+    public const string SortState = "state";
+
+    /// <summary>#226: by the date of the Song's latest live Generation; newest first unless asked otherwise, none last.</summary>
+    public const string SortLastGeneration = "lastGeneration";
+
+    /// <summary>
+    /// #226: by relevance, best first, with a search (the default then); without one, the default order
+    /// (<see cref="SortUpdated"/>, newest first). A direction sent with it is ignored.
+    /// </summary>
+    public const string SortRelevance = "relevance";
     public const string Ascending = "asc";
     public const string Descending = "desc";
 
@@ -608,9 +626,13 @@ public sealed class SongService(
     }
 
     /// <summary>
-    /// A page of Songs. <c>sort</c> is <c>updated</c> (the default), <c>title</c>, or <c>audioFiles</c>
-    /// (#211); <c>direction</c> is <c>asc</c> or <c>desc</c> (by default newest first, titles A to Z,
-    /// and most audio files first); each <c>state</c> is
+    /// A page of Songs. <c>sort</c> is <c>updated</c> (the default), <c>title</c>, <c>audioFiles</c>
+    /// (#211), or (#226) <c>created</c>, <c>rating</c>, <c>state</c>, <c>lastGeneration</c>, or
+    /// <c>relevance</c> (<see cref="SongSort"/>; any other is refused); <c>direction</c> is <c>asc</c>
+    /// or <c>desc</c> (by default dates newest first, titles A to Z, ratings highest first, states in
+    /// the user's order, and most audio files first; ignored with <c>relevance</c>). Every sort breaks
+    /// ties by shortcode, ascending, and puts Songs with no value (no rated Generation, no Generation)
+    /// last in either direction. A page past the end is empty, with the total. Each <c>state</c> is
     /// the ID of a workflow state; each <c>genre</c> is the ID of a Genre or <see cref="NoGenre"/>,
     /// and several match Songs with any of them; each <c>tag</c> likewise is the ID of a Tag or
     /// <see cref="NoTag"/>; each <c>artist</c> is the ID of an Artist, credited as primary or featured,
@@ -624,8 +646,8 @@ public sealed class SongService(
     /// 1; <c>pageSize</c> is 1 to <see cref="MaximumPageSize"/>, <see cref="DefaultPageSize"/> by
     /// default and <see cref="SearchPageSize"/> with <c>q</c>. <c>search</c> (#223) keeps the Songs
     /// matching every word of it (<see cref="SongSearchService"/>), combines by AND with the rest but
-    /// <c>q</c> (both at once are refused), orders by relevance when no <c>sort</c> is given (descending,
-    /// the default, is best first), and answers where each Song of the page matched and whether the
+    /// <c>q</c> (both at once are refused), orders by relevance, best first, when no <c>sort</c> or
+    /// <c>relevance</c> is given, and answers where each Song of the page matched and whether the
     /// index is being rebuilt; text with no word to search for filters nothing.
     /// </summary>
     public async Task<SongListOutcome> ListAsync(SongListRequest request, CancellationToken cancellationToken)
@@ -638,13 +660,14 @@ public sealed class SongService(
         }
 
         var searching = SongSearchService.Parse(request.Search).Count > 0;
+        var relevanceAsked = request.Sort == SortRelevance;
         SongSort sort;
         switch (request.Sort)
         {
-            case null when searching:
+            case null or SortRelevance when searching:
                 sort = SongSort.Relevance;
                 break;
-            case null or SortUpdated:
+            case null or SortUpdated or SortRelevance:
                 sort = SongSort.Updated;
                 break;
             case SortTitle:
@@ -653,22 +676,32 @@ public sealed class SongService(
             case SortAudioFiles:
                 sort = SongSort.AudioFiles;
                 break;
+            case SortCreated:
+                sort = SongSort.Created;
+                break;
+            case SortRating:
+                sort = SongSort.Rating;
+                break;
+            case SortState:
+                sort = SongSort.State;
+                break;
+            case SortLastGeneration:
+                sort = SongSort.LastGeneration;
+                break;
             default:
-                return Invalid($"{SortParameter} must be {SortUpdated}, {SortTitle}, or {SortAudioFiles}.");
+                return Invalid($"{SortParameter} must be {SortTitle}, {SortCreated}, {SortUpdated}, {SortRating}, {SortState}, {SortLastGeneration}, {SortAudioFiles}, or {SortRelevance}.");
         }
 
-        bool descending;
-        switch (request.Direction)
+        if (request.Direction is not (null or Ascending or Descending))
         {
-            case null:
-                descending = sort is SongSort.Updated or SongSort.AudioFiles or SongSort.Relevance;
-                break;
-            case Ascending or Descending:
-                descending = request.Direction == Descending;
-                break;
-            default:
-                return Invalid($"{DirectionParameter} must be {Ascending} or {Descending}.");
+            return Invalid($"{DirectionParameter} must be {Ascending} or {Descending}.");
         }
+
+        // A direction sent with relevance is ignored (#226): relevance is best first, and relevance
+        // without a search is the default order in its own first direction.
+        var descending = request.Direction is null || relevanceAsked || sort == SongSort.Relevance
+            ? FirstDirectionIsDescending(sort)
+            : request.Direction == Descending;
 
         if (!TryReadWhole(request.Page, 1, int.MaxValue, 1, out var page))
         {
@@ -871,6 +904,12 @@ public sealed class SongService(
     }
 
     private static SongListOutcome.Invalid Invalid(string message) => new(message);
+
+    /// <summary>
+    /// The direction <paramref name="sort"/> starts in (#226): titles A to Z and states in the user's
+    /// order; dates newest first, ratings highest first, audio files most first, relevance best first.
+    /// </summary>
+    private static bool FirstDirectionIsDescending(SongSort sort) => sort is not (SongSort.Title or SongSort.State);
 
     /// <summary>What is wrong with the first of #225's filters that is wrong, naming its parameter; empty when none is.</summary>
     private static string FilterProblem(SongListRequest request)

@@ -318,6 +318,7 @@ describe('Songs', () => {
       'Tags',
       'Created',
       'Updated ▼',
+      'Rating',
       'Workspace',
       'Selected Generation',
       'Audio files',
@@ -1051,8 +1052,8 @@ describe('Songs', () => {
     ).toHaveAttribute('aria-current', 'page');
   });
 
-  it('offers the first page when the page in the URL is past the end', async () => {
-    backend({
+  it('shows an empty table and links to the last page when the page in the URL is past the end', async () => {
+    const mock = backend({
       list: (search) =>
         jsonResponse(
           200,
@@ -1061,11 +1062,16 @@ describe('Songs', () => {
     });
     const user = userEvent.setup();
 
-    renderApp('/songs?page=9');
+    renderApp('/songs?sort=title&page=9');
 
     expect(await screen.findByText('There are no Songs on this page.')).toBeVisible();
-    await user.click(screen.getByRole('button', { name: 'Go to the first page' }));
-    expect(await screen.findByRole('table', { name: 'Songs' })).toBeVisible();
+    const table = screen.getByRole('table', { name: 'Songs' });
+    expect(within(table).queryAllByRole('rowheader')).toEqual([]);
+    await user.click(screen.getByRole('link', { name: 'Go to the last page (page 1)' }));
+    await waitFor(() => {
+      expect(listRequests(mock).at(-1)).toBe('?sort=title');
+    });
+    expect(await screen.findByRole('rowheader', { name: 'n8-1' })).toBeVisible();
   });
 });
 
