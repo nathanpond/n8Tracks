@@ -24,7 +24,7 @@ function sidebar(): HTMLElement {
 }
 
 describe('the signed-in shell', () => {
-  it('has a sidebar listing Songs, Artists, Albums, Playlists, Suno import, Ignored Suno items, Library with Media and Unmatched Files, and Settings with Account, Credentials, Workflow, Catalog, Library, Genres, Tags, Relationships, Suno, Suno workspaces, Backups, and System', async () => {
+  it('has a sidebar listing Home, Songs, Artists, Albums, Playlists, Suno import, Ignored Suno items, Library with Media and Unmatched Files, and Settings with Account, Credentials, Workflow, Catalog, Library, Genres, Tags, Relationships, Suno, Suno workspaces, Backups, and System', async () => {
     stubFetch().mockImplementation(() => Promise.resolve(jsonResponse(200, healthyReport)));
 
     renderAt('/songs');
@@ -32,6 +32,7 @@ describe('the signed-in shell', () => {
     expect(await screen.findByRole('heading', { level: 2, name: 'Songs' })).toBeVisible();
     const links = within(sidebar()).getAllByRole('link');
     expect(links.map((link) => link.textContent)).toEqual([
+      'Home',
       'Songs',
       'Artists',
       'Albums',
@@ -101,16 +102,43 @@ describe('the signed-in shell', () => {
     expect(screen.getByTestId('location')).toHaveTextContent(/^\/songs$/);
   });
 
-  it.each([
-    ['/', '/songs', 'Songs'],
-    ['/settings', '/settings/account', 'Account'],
-  ])('sends %s on to %s', async (path, expected, heading) => {
+  it.each([['/settings', '/settings/account', 'Account']])(
+    'sends %s on to %s',
+    async (path, expected, heading) => {
+      stubFetch().mockImplementation(() => Promise.resolve(jsonResponse(200, healthyReport)));
+
+      renderAt(path);
+
+      expect(await screen.findByRole('heading', { level: 2, name: heading })).toBeVisible();
+      expect(screen.getByTestId('location')).toHaveTextContent(new RegExp(`^${expected}$`));
+    },
+  );
+
+  it('shows the dashboard at / (#228), with Home marked as the current page', async () => {
     stubFetch().mockImplementation(() => Promise.resolve(jsonResponse(200, healthyReport)));
+    const user = userEvent.setup();
 
-    renderAt(path);
+    renderAt('/');
 
-    expect(await screen.findByRole('heading', { level: 2, name: heading })).toBeVisible();
-    expect(screen.getByTestId('location')).toHaveTextContent(new RegExp(`^${expected}$`));
+    expect(await screen.findByRole('heading', { level: 2, name: 'Dashboard' })).toBeVisible();
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/$/);
+    expect(within(sidebar()).getByRole('link', { name: 'Home' })).toHaveAttribute('href', '/');
+    expect(within(sidebar()).getByRole('link', { name: 'Home' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+    expect(within(sidebar()).getByRole('link', { name: 'Songs' })).not.toHaveAttribute(
+      'aria-current',
+    );
+
+    // Home is the current page only at the root, not on every page under it.
+    await user.click(within(sidebar()).getByRole('link', { name: 'Songs' }));
+    expect(await screen.findByRole('heading', { level: 2, name: 'Songs' })).toBeVisible();
+    expect(within(sidebar()).getByRole('link', { name: 'Home' })).not.toHaveAttribute(
+      'aria-current',
+    );
+    await user.click(within(sidebar()).getByRole('link', { name: 'Home' }));
+    expect(await screen.findByRole('heading', { level: 2, name: 'Dashboard' })).toBeVisible();
   });
 
   it('shows a path that is no page as not found, inside the shell', async () => {

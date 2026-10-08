@@ -73,9 +73,9 @@ describe('the setup gate', () => {
 
     renderAt('/setup');
 
-    // The app root, which is the Songs page.
-    expect(await screen.findByRole('heading', { name: 'Songs' })).toBeVisible();
-    expect(screen.getByTestId('location')).toHaveTextContent(/^\/songs$/);
+    // The app root, which is the dashboard (#228).
+    expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeVisible();
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/$/);
     expect(screen.queryByRole('heading', { name: 'Set up n8Tracks' })).not.toBeInTheDocument();
   });
 

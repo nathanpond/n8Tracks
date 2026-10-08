@@ -7,6 +7,7 @@ using n8Tracks.Application.Backups;
 using n8Tracks.Application.Catalog;
 using n8Tracks.Application.Configuration;
 using n8Tracks.Application.Credentials;
+using n8Tracks.Application.Dashboard;
 using n8Tracks.Application.Generations;
 using n8Tracks.Application.Jobs;
 using n8Tracks.Application.Logging;
@@ -113,6 +114,7 @@ public static class DependencyInjection
         services.AddScoped<PlaybackService>();
         services.AddScoped<DownloadRecordService>();
         services.AddScoped<MediaStatusService>();
+        services.AddScoped<DashboardService>();
         services.AddScoped<AudioContentService>();
         services.AddJobHandler<MediaScanJobHandler>(MediaScanService.JobType);
         services.AddSingleton<MediaScanStartup>();

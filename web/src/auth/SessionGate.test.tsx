@@ -151,9 +151,9 @@ describe('without a session', () => {
     renderAt(`/sign-in?returnTo=${encodeURIComponent(returnTo)}`);
     await fillAndSubmit('owner', 'correct horse battery');
 
-    // The app root, which is the Songs page.
-    expect(await screen.findByRole('heading', { name: 'Songs' })).toBeVisible();
-    expect(screen.getByTestId('location')).toHaveTextContent(/^\/songs$/);
+    // The app root, which is the dashboard (#228).
+    expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeVisible();
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/$/);
   });
 
   it('shows one generic message for a wrong username or password and clears the password', async () => {
@@ -271,7 +271,7 @@ describe('with a session', () => {
     await waitFor(() => {
       expect(screen.getByTestId('user-menu')).toBeVisible();
     });
-    expect(screen.getByRole('heading', { name: 'Songs' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
   });
 });
 

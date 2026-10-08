@@ -304,7 +304,8 @@ internal sealed class SongStore(N8TracksDbContext context, SunoAudioHosts hosts)
     /// <paramref name="songs"/> narrowed by #225's filters, each a sub-query on the database, so no
     /// filter loads the catalog: archived status (the seeded Archived state, by its ID), Album,
     /// Playlist, model and rating (live Generations, in any state), creation time, Selected
-    /// Generation, and local audio (every associated file, Song-level or a Generation's).
+    /// Generation, local audio (every associated file, Song-level or a Generation's), and (#228)
+    /// whether it has a live Generation, in any state.
     /// </summary>
     private IQueryable<SongRecord> Filtered(IQueryable<SongRecord> songs, SongListQuery query)
     {
@@ -361,6 +362,13 @@ internal sealed class SongStore(N8TracksDbContext context, SunoAudioHosts hosts)
         {
             true => songs.Where(static song => song.SelectedGenerationId != null),
             false => songs.Where(static song => song.SelectedGenerationId == null),
+            null => songs,
+        };
+
+        songs = query.HasGenerations switch
+        {
+            true => songs.Where(song => generations.Any(generation => generation.SongId == song.Id)),
+            false => songs.Where(song => !generations.Any(generation => generation.SongId == song.Id)),
             null => songs,
         };
 
