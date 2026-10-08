@@ -4738,3 +4738,27 @@ Story #225:
 - **Decision:** Rule 3: the upgrader first read the title with `JsonNode.GetValue<string>()`, which tripped `EnvironmentReadGuardTests`' `.GetValue` pattern. It now uses a `(string?)` cast.
   **Why:** The architecture gate must pass, and the guard's pattern is name-based.
   **Issue:** #226
+
+Story #228 (built in parallel; merged into the milestone branch):
+
+- **Decision:** `DashboardService` (new namespace `n8Tracks.Application.Dashboard`) reads only through `SongService.ListAsync` and `WorkflowStateService.ListWithUsageAsync`. Recently edited is `sort=updated&archived=active&pageSize=10`. Without a Selected Generation is the same plus `selected=no&generations=some`. Each state count is the workflow list's usage count.
+  **Why:** The key link requires the counts and the Songs table to agree. Reusing the list's own filters makes them agree by construction, and the tests check each count against the list total. The service takes no catalog type (it only has `GetAsync(CancellationToken)` and returns its own records), so it stays outside `CatalogServiceNamespaces`, as the M6 rule allows.
+  **Issue:** #228
+- **Decision:** The new `generations=some|none` Songs-list filter (`SongListRequest.Generations`, `SongListQuery.HasGenerations`) is placed after #225's `Archived`/`MediaUnavailable` members. It counts any row in `generations` (live Generations in any state, archived included). A repeated or unknown value gets 400 `invalid_request`. In the web filter bar it is a "Generations" select ("Has Generations" / "Has no Generations") after Local audio, plus a removable chip.
+  **Why:** This follows the story's discretion lines. The parameter order follows the #225 note.
+  **Issue:** #228
+- **Decision:** `GET /api/v1/dashboard` answers each section as `{data}` or `{error:{code:"section_failed"}}`. When every section fails it answers 500 problem `section_failed`. Each failure is logged at Error in the endpoint (Application has no logger), with the exception but no request data.
+  **Why:** This follows the discretion lines. Logging is kept in the Api layer to match the existing endpoints.
+  **Issue:** #228
+- **Decision:** The welcome is shown when the By workflow state section reports zero Songs in every state, archived included. If that section failed, the three sections are shown with their empty or failed states instead.
+  **Why:** Every Song is in exactly one state, so the counts are the exact "no Songs at all" test, and this needed no extra field in the answer.
+  **Issue:** #228
+- **Decision:** The page heading is "Dashboard" and the sidebar entry is "Home" (first, above Songs, current only at `/`). See all links to `/songs?archived=active` (last updated first, the default sort), so the table holds the same Songs the section lists. "Show in Songs" appears only when the count is above zero.
+  **Why:** The story calls the page the dashboard and names the sidebar entry Home. An archived-inclusive See all would not match the section's list.
+  **Issue:** #228
+- **Decision:** The focus refresh reads again only when at least 30 s have passed since the last read began. It keeps the previous data while loading. On failure it keeps that data with a "could not be refreshed" status line. Retry on a failed section re-reads the whole dashboard, with the same keep-on-failure rule.
+  **Why:** This follows the discretion lines. One request serves all three sections.
+  **Issue:** #228
+- **Decision:** Existing e2e and unit expectations that `/` redirects to `/songs` were updated to the dashboard. These are `account.spec.ts` (the sidebar list gains Home, and the landing heading after sign-in changes), `setup.spec.ts`, the `shell.spec.ts` sub-path root, `AppShell.test.tsx`, `SessionGate.test.tsx`, and `SetupGate.test.tsx`.
+  **Why:** This is the AC's intended change of the home page.
+  **Issue:** #228
