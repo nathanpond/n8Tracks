@@ -210,7 +210,9 @@ test.describe('Generate on Suno', () => {
 
       // 1. A connected extension: the request is made and handed over; the page shows it claimed.
       await page.goto(`./songs/${song.shortcode}`);
-      const action = page.getByRole('button', { name: 'Generate on Suno' });
+      // Exact: the Song's own Play control (#219) is named "Play <title>", and this title has
+      // "Generate on Suno" in it.
+      const action = page.getByRole('button', { name: 'Generate on Suno', exact: true });
       await expect(action).toBeEnabled();
       await action.click();
       const state = page.getByTestId('generation-request-state');
