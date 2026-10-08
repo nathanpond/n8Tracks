@@ -282,6 +282,13 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     songPlayback: undefined as unknown,
     /** How many times the Song's playback was asked for (#219). */
     songPlaybackReads: 0,
+    /**
+     * What `GET /songs/{reference}/playback-sources` answers (#220); by default the Song has nothing
+     * to switch between.
+     */
+    playbackSources: undefined as unknown,
+    /** How many times the Song's sources were read (#220). */
+    playbackSourcesReads: 0,
     /** Each Generation's download records (#222), by its ID; none unless set. */
     downloads: new Map<string, GenerationDownload[]>(),
     /** How many times the Song's Generation list was read. */
@@ -1194,6 +1201,18 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
         comments: generation.comments.map((other) => (other === comment ? edited : other)),
       });
       return jsonResponse(200, edited);
+    }
+
+    if (/\/api\/v1\/songs\/[^/]+\/playback-sources$/.test(path) && method === 'GET') {
+      server.playbackSourcesReads++;
+      return jsonResponse(
+        200,
+        server.playbackSources ?? {
+          song: { id: server.song.id, shortcode: server.song.shortcode, title: server.song.title },
+          songFiles: [],
+          generations: [],
+        },
+      );
     }
 
     if (/\/api\/v1\/songs\/[^/]+\/playback$/.test(path) && method === 'GET') {

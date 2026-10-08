@@ -10,12 +10,14 @@ import {
   type SongPlaybackCandidate,
 } from '../api/songPlayback';
 import { body, isRecord } from '../api/songs';
+import { carryTime, nextPair, NO_PAIR, switchFailedText, type ComparePair } from './compare';
 import {
   PlayerContext,
   type PlayChosenOptions,
   type Player,
   type PlayerNotice,
   type PlayerState,
+  type SwitchOptions,
 } from './playerContext';
 import {
   nowPlayingOfFile,
@@ -64,7 +66,21 @@ function initialState(): PlayerState {
     notice: null,
     noticeLink: null,
     starting: null,
+    previous: null,
   };
+}
+
+/**
+ * A switch on its way (#220): its ticket (a later switch replaces it), the source to go back to if it
+ * fails and the time that source had reached (the time carried over), whether to play once there,
+ * and whether it is itself the way back (which, failing, is an ordinary error).
+ */
+interface PendingSwitch {
+  ticket: number;
+  from: NowPlaying;
+  at: number;
+  play: boolean;
+  back: NowPlaying | null;
 }
 
 /**
@@ -100,6 +116,18 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const unmounted = useRef(new AbortController());
   const channel = useRef<BroadcastChannel | null>(null);
   const [tab] = useState(tabName);
+  const switching = useRef<PendingSwitch | null>(null);
+  const switches = useRef(0);
+  const pair = useRef<ComparePair>(NO_PAIR);
+
+  /** `played` actually played (#220): the A/B pair moves on. */
+  const settled = useCallback((played: NowPlaying) => {
+    const next = nextPair(pair.current, played);
+    pair.current = next;
+    setState((previous) =>
+      previous.previous === next.previous ? previous : { ...previous, previous: next.previous },
+    );
+  }, []);
 
   const playElement = useCallback(() => {
     // Older browsers answer play() with nothing rather than a promise.
@@ -114,6 +142,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   const load = useCallback(
     (next: NowPlaying, at: number) => {
+      switching.current = null;
       current.current = next;
       reloadAt.current = null;
       position.current = at;
@@ -295,11 +324,99 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     [start],
   );
 
+  /**
+   * Loads `next` for a switch, seeks it to the pending switch's time once its length is known (its
+   * beginning when it is shorter), and only then plays it (if the switch should) and lets it into the
+   * A/B pair. Superseded meanwhile, it does nothing more.
+   */
+  const begin = useCallback(
+    (next: NowPlaying, pending: PendingSwitch) => {
+      switching.current = pending;
+      current.current = next;
+      reloadAt.current = null;
+      const audio = element();
+      audio.src = next.src;
+      setState((previous) => ({
+        ...previous,
+        current: next,
+        status: pending.play ? 'loading' : 'paused',
+        position: pending.at,
+        duration: null,
+        notice: null,
+        noticeLink: null,
+        starting: null,
+      }));
+      const ready = () => {
+        if (switching.current?.ticket !== pending.ticket) {
+          return;
+        }
+        const target = carryTime(pending.at, durationOf(audio));
+        const arrive = () => {
+          if (switching.current?.ticket !== pending.ticket) {
+            return;
+          }
+          switching.current = null;
+          position.current = target;
+          setState((previous) => ({ ...previous, position: target }));
+          settled(next);
+          if (pending.back !== null) {
+            const failed = pending.back;
+            setState((previous) => ({ ...previous, notice: switchFailedText(failed, next) }));
+          }
+          if (pending.play) {
+            playElement();
+          }
+        };
+        if (target > 0) {
+          audio.addEventListener('seeked', arrive, { once: true });
+          audio.currentTime = target;
+        } else {
+          arrive();
+        }
+      };
+      audio.addEventListener('loadedmetadata', ready, { once: true });
+    },
+    [element, playElement, settled],
+  );
+
+  const switchTo = useCallback(
+    (next: NowPlaying, options: SwitchOptions) => {
+      const pending = switching.current;
+      // The time carried is that of the last source that actually played, never a pending one's.
+      const from = pending?.from ?? current.current;
+      if (from === null) {
+        start(next);
+        return;
+      }
+      if (pending === null && next.fileId === from.fileId) {
+        return;
+      }
+      lookup.current += 1;
+      switches.current += 1;
+      const at = options.keepTime ? (pending?.at ?? position.current) : 0;
+      const play = pending?.play ?? (!element().paused && reloadAt.current === null);
+      begin(next, { ticket: switches.current, from, at, play, back: null });
+    },
+    [begin, element, start],
+  );
+
   const pause = useCallback(() => {
+    const pending = switching.current;
+    if (pending !== null) {
+      pending.play = false;
+      setState((previous) => ({ ...previous, status: 'paused' }));
+      return;
+    }
     element().pause();
   }, [element]);
 
   const resume = useCallback(() => {
+    const pending = switching.current;
+    if (pending !== null) {
+      pending.play = true;
+      setState((previous) => ({ ...previous, status: 'loading' }));
+      return;
+    }
     const loaded = current.current;
     if (loaded === null) {
       return;
@@ -313,7 +430,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [load, playElement]);
 
   const toggle = useCallback(() => {
-    if (element().paused || reloadAt.current !== null) {
+    const pending = switching.current;
+    if (pending !== null ? !pending.play : element().paused || reloadAt.current !== null) {
       resume();
     } else {
       pause();
@@ -325,7 +443,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       if (current.current === null || !Number.isFinite(seconds)) {
         return;
       }
-      if (reloadAt.current !== null) {
+      if (switching.current !== null) {
+        switching.current.at = seconds;
+      } else if (reloadAt.current !== null) {
         reloadAt.current = seconds;
       } else {
         element().currentTime = seconds;
@@ -366,6 +486,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   const close = useCallback(() => {
     lookup.current += 1;
+    switching.current = null;
+    pair.current = NO_PAIR;
     current.current = null;
     reloadAt.current = null;
     position.current = 0;
@@ -381,6 +503,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       notice: null,
       noticeLink: null,
       starting: null,
+      previous: null,
     }));
   }, [element]);
 
@@ -413,12 +536,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       channel.current?.postMessage({ type: 'playing', tab });
     };
     const onPause = () => {
+      // A switch's new source is not playing yet: the bar keeps what the switch will do.
+      if (switching.current !== null) {
+        return;
+      }
       setState((previous) =>
         previous.status === 'error' ? previous : { ...previous, status: 'paused' },
       );
     };
     const onTime = () => {
-      if (reloadAt.current !== null || current.current === null) {
+      if (switching.current !== null || reloadAt.current !== null || current.current === null) {
         return;
       }
       position.current = audio.currentTime;
@@ -426,6 +553,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     };
     const onDuration = () => {
       setState((previous) => ({ ...previous, duration: durationOf(audio) }));
+    };
+    const onLoaded = () => {
+      onDuration();
+      // A source played any other way than by a switch joins the A/B pair once it loads.
+      if (switching.current === null && current.current !== null) {
+        settled(current.current);
+      }
     };
     const onEnded = () => {
       // The player stops, back at the start: Play replays it. Nothing else starts.
@@ -438,6 +572,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       if (failed === null || audio.error === null) {
         return;
       }
+      const pending = switching.current;
+      if (pending !== null && pending.back === null) {
+        // The switch could not load or seek: back to the source before it, at its time (#220).
+        switches.current += 1;
+        begin(pending.from, { ...pending, ticket: switches.current, back: failed });
+        return;
+      }
+      switching.current = null;
       const at = position.current;
       reloadAt.current = at;
       const check = async () => {
@@ -468,7 +610,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     audio.addEventListener('pause', onPause);
     audio.addEventListener('timeupdate', onTime);
     audio.addEventListener('durationchange', onDuration);
-    audio.addEventListener('loadedmetadata', onDuration);
+    audio.addEventListener('loadedmetadata', onLoaded);
     audio.addEventListener('ended', onEnded);
     audio.addEventListener('error', onError);
     return () => {
@@ -476,11 +618,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       audio.removeEventListener('pause', onPause);
       audio.removeEventListener('timeupdate', onTime);
       audio.removeEventListener('durationchange', onDuration);
-      audio.removeEventListener('loadedmetadata', onDuration);
+      audio.removeEventListener('loadedmetadata', onLoaded);
       audio.removeEventListener('ended', onEnded);
       audio.removeEventListener('error', onError);
     };
-  }, [element, tab]);
+  }, [element, tab, begin, settled]);
 
   // Starting playback in another tab of the app pauses this one; volume is not shared.
   useEffect(() => {
@@ -530,6 +672,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       playSong,
       playChosen,
       playFile,
+      switchTo,
       pause,
       resume,
       toggle,
@@ -545,6 +688,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       playSong,
       playChosen,
       playFile,
+      switchTo,
       pause,
       resume,
       toggle,

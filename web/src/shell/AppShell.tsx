@@ -35,7 +35,7 @@ function SidebarLink({
 }
 
 /** The player bar's height (#218): it reserves this much at the bottom, so it never covers the page. */
-const PLAYER_BAR_HEIGHT = { base: 168, sm: 104 };
+const PLAYER_BAR_HEIGHT = { base: 216, sm: 140 };
 
 /**
  * The signed-in shell, inside the app's one player (#218): the player sits above the router outlet,

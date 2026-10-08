@@ -91,6 +91,9 @@ public sealed record SongPlaybackGeneration(
     GenerationRemoteState RemoteState,
     string? SunoId)
 {
+    /// <summary>Its revision, for a rating written from the player bar (#220).</summary>
+    public int Revision { get; init; }
+
     /// <summary>Active and still listed by Suno: listed first by the chooser; the rest follow with a badge.</summary>
     public bool IsCurrent => State == GenerationState.Active && RemoteState == GenerationRemoteState.Present;
 }
@@ -128,6 +131,22 @@ public sealed record SongPlaybackChoice(
     /// <summary>Why it plays what it does, or, when nothing plays, why not: the state's reason (no Generations, nothing available, no selection).</summary>
     public PlaybackReason Reason => Played.Played is null && Playability.Reason is { } why ? why : Played.Reason;
 }
+
+/// <summary>
+/// One file the player can switch to while comparing (#220): an available file, and whether it is the
+/// one its owner plays (<see cref="PlaybackResolver.ForGeneration"/> for a Generation's file; the
+/// Song's preferred Song-level file for a Song-level one).
+/// </summary>
+public sealed record PlaybackSourceFile(ReportedAudioFile File, bool IsPlaybackFile);
+
+/// <summary>A Generation the player can switch to while comparing (#220), with its available files, its playback file first.</summary>
+public sealed record PlaybackSourceGeneration(SongPlaybackGeneration Generation, IReadOnlyList<PlaybackSourceFile> Files);
+
+/// <summary>
+/// Everything of a Song the player can switch to while comparing (#220), in comparison order: its
+/// available Song-level files, then its Generations that have an available file.
+/// </summary>
+public sealed record SongPlaybackSources(IReadOnlyList<PlaybackSourceFile> SongFiles, IReadOnlyList<PlaybackSourceGeneration> Generations);
 
 /// <summary>The codes of <see cref="PlaybackReason"/>, as the API answers them.</summary>
 public static class PlaybackReasons
@@ -331,6 +350,50 @@ public static class PlaybackResolver
             .Concat(generations.Where(static generation => !generation.IsCurrent))
             .Select(generation => new SongPlaybackCandidate(SongPlaybackCandidateKind.Generation, generation, null, PlayabilityOf(statuses[generation.Id])));
         return new SongPlaybackChoice(played, playability, [.. files, .. ofGenerations], selected);
+    }
+
+    /// <summary>
+    /// Every source of a Song the player can switch to while comparing (#220), given every file
+    /// associated with it and its Generations in Version tree order then ordinal: only available files
+    /// (Missing and Unavailable ones are left out). The Song-level files come first, the Song's
+    /// preferred one first and the rest in rank order (<see cref="BestAvailable"/>'s); then each
+    /// Generation with an available file, its playback file (<see cref="ForGeneration"/>) first and its
+    /// other files after, in rank order. A Generation with nothing available is left out.
+    /// </summary>
+    public static SongPlaybackSources SourcesForSong(
+        IReadOnlyCollection<ReportedAudioFile> songFiles,
+        IReadOnlyList<SongPlaybackGeneration> generations)
+    {
+        ArgumentNullException.ThrowIfNull(songFiles);
+        ArgumentNullException.ThrowIfNull(generations);
+
+        var songLevel = InRankOrder(songFiles.Where(static file => GenerationIdOf(file) is null && IsAvailable(file)))
+            .OrderByDescending(static file => Recorded(file).Preferred)
+            .Select(static file => new PlaybackSourceFile(file, Recorded(file).Preferred))
+            .ToList();
+        var byGeneration = songFiles
+            .Where(static file => GenerationIdOf(file) is not null)
+            .ToLookup(static file => GenerationIdOf(file)!.Value);
+        var ofGenerations = new List<PlaybackSourceGeneration>();
+        foreach (var generation in generations)
+        {
+            var files = byGeneration[generation.Id].ToList();
+            if (ForGeneration(files).Played is not { } played)
+            {
+                continue;
+            }
+
+            var playedId = Recorded(played).Id;
+            ofGenerations.Add(new PlaybackSourceGeneration(
+                generation,
+                [
+                    new PlaybackSourceFile(played, true),
+                    .. InRankOrder(files.Where(file => IsAvailable(file) && Recorded(file).Id != playedId))
+                        .Select(static file => new PlaybackSourceFile(file, false)),
+                ]));
+        }
+
+        return new SongPlaybackSources(songLevel, ofGenerations);
     }
 
     /// <summary>What <see cref="StateOfSong"/> needs of one file of a Song's list.</summary>

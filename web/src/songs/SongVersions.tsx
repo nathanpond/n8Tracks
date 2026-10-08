@@ -27,6 +27,7 @@ import { DeleteGenerationDialog } from '../generations/DeleteGenerationDialog';
 import { RETENTION_DAYS } from '../generations/deletionRules';
 import { MoveToNewSongDialog } from '../generations/MoveToNewSongDialog';
 import { useGenerationChoices } from '../generations/useGenerationChoices';
+import { GENERATION_RATED_EVENT, ratedGenerationOf } from '../generations/ratingEvents';
 import { useRateGeneration, type RatingProblem } from '../generations/useRateGeneration';
 import { AssociateFileDialog } from '../media/AssociateFileDialog';
 import { AudioFilesSection, type AudioFileActions } from '../media/AudioFilesSection';
@@ -228,6 +229,24 @@ export function SongVersions({
     },
     [reloadAudioFiles, reloadGenerations],
   );
+  // A rating saved in the player bar (#220) shows here at once, with the revision to send next.
+  const updateGeneration = generations.update;
+  useEffect(() => {
+    const onRated = (event: Event) => {
+      const rated = ratedGenerationOf(event);
+      if (rated?.song.id === song.id) {
+        updateGeneration(rated.id, (current) =>
+          current.revision >= rated.revision
+            ? current
+            : { ...current, rating: rated.rating, revision: rated.revision },
+        );
+      }
+    };
+    window.addEventListener(GENERATION_RATED_EVENT, onRated);
+    return () => {
+      window.removeEventListener(GENERATION_RATED_EVENT, onRated);
+    };
+  }, [song.id, updateGeneration]);
   useEffect(() => {
     const onFocus = () => {
       reloadAudioFiles();

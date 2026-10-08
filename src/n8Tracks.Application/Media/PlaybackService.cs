@@ -6,7 +6,8 @@ namespace n8Tracks.Application.Media;
 /// The playback reads (#212): what plays for a Generation, for a Song, and the marks on a Song's list,
 /// each from the Song's files as they report now, through <see cref="PlaybackResolver"/>, so every part
 /// of the product resolves the same Song or Generation to the same file; and the whole answer to Play
-/// on a Song, with the chooser's candidates when nothing is selected (#219). Reads only.
+/// on a Song, with the chooser's candidates when nothing is selected (#219); and every source a Song's
+/// player can switch to while comparing (#220). Reads only.
 /// </summary>
 public sealed class PlaybackService(AudioFileService files, IGenerationStore generations)
 {
@@ -27,20 +28,33 @@ public sealed class PlaybackService(AudioFileService files, IGenerationStore gen
     public async Task<SongPlaybackChoice> ChoiceForSongAsync(Guid songId, Guid? selectedGenerationId, CancellationToken cancellationToken)
     {
         var songFiles = await files.ListForSongAsync(songId, cancellationToken).ConfigureAwait(false);
-        var ofSong = await generations.ForSongAsync(songId, cancellationToken).ConfigureAwait(false);
-        return PlaybackResolver.ChoiceForSong(
-            songFiles,
-            [.. ofSong.Select(static summary => new SongPlaybackGeneration(
-                summary.Generation.Id,
-                summary.Shortcode,
-                summary.VersionNumber,
-                summary.Generation.Rating,
-                summary.Generation.Clip?.DurationSeconds,
-                summary.Generation.State,
-                summary.Generation.RemoteState,
-                summary.Generation.SunoId))],
-            selectedGenerationId);
+        return PlaybackResolver.ChoiceForSong(songFiles, await GenerationsOfAsync(songId, cancellationToken).ConfigureAwait(false), selectedGenerationId);
     }
+
+    /// <summary>
+    /// Everything of the Song <paramref name="songId"/> the player can switch to while comparing
+    /// (#220): <see cref="PlaybackResolver.SourcesForSong"/> over its files and its Generations
+    /// (Version tree order, then ordinal).
+    /// </summary>
+    public async Task<SongPlaybackSources> SourcesForSongAsync(Guid songId, CancellationToken cancellationToken)
+    {
+        var songFiles = await files.ListForSongAsync(songId, cancellationToken).ConfigureAwait(false);
+        return PlaybackResolver.SourcesForSong(songFiles, await GenerationsOfAsync(songId, cancellationToken).ConfigureAwait(false));
+    }
+
+    private async Task<IReadOnlyList<SongPlaybackGeneration>> GenerationsOfAsync(Guid songId, CancellationToken cancellationToken) =>
+        [.. (await generations.ForSongAsync(songId, cancellationToken).ConfigureAwait(false)).Select(static summary => new SongPlaybackGeneration(
+            summary.Generation.Id,
+            summary.Shortcode,
+            summary.VersionNumber,
+            summary.Generation.Rating,
+            summary.Generation.Clip?.DurationSeconds,
+            summary.Generation.State,
+            summary.Generation.RemoteState,
+            summary.Generation.SunoId)
+        {
+            Revision = summary.Generation.Revision,
+        })];
 
     /// <summary>
     /// The Song's files (<see cref="AudioFileService.ListForSongAsync"/>), each marked with whether it

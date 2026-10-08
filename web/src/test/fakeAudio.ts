@@ -27,6 +27,8 @@ export interface FakeAudio {
   end: () => void;
   /** The audio cannot be loaded or decoded (MEDIA_ERR_SRC_NOT_SUPPORTED by default). */
   fail: (code?: number) => void;
+  /** The next seek fails with a network error, as a source that cannot seek does. */
+  failNextSeek: () => void;
   /** Puts jsdom's own media element back. */
   restore: () => void;
 }
@@ -37,7 +39,8 @@ const METHODS = ['play', 'pause', 'load'] as const;
 /**
  * Replaces jsdom's media element (which plays nothing and reports "not implemented") with a fake:
  * `play()` starts it at once (a `play` event), `pause()` stops it (`pause`), a new `src` starts again
- * from nothing, and the test moves time, ends it, or fails it. Call `restore` after the test.
+ * from nothing, setting `currentTime` lands at once (`seeked`), and the test moves time, ends it, or
+ * fails it. Call `restore` after the test.
  */
 export function installFakeAudio(): FakeAudio {
   const prototype = HTMLMediaElement.prototype;
@@ -47,6 +50,7 @@ export function installFakeAudio(): FakeAudio {
   }
   const states = new WeakMap<HTMLMediaElement, FakeMediaState>();
   const touched: HTMLMediaElement[] = [];
+  let failSeek = false;
   const stateOf = (element: HTMLMediaElement): FakeMediaState => {
     let state = states.get(element);
     if (state === undefined) {
@@ -72,7 +76,17 @@ export function installFakeAudio(): FakeAudio {
       return stateOf(this).currentTime;
     },
     set(this: HTMLMediaElement, value: number) {
-      stateOf(this).currentTime = value;
+      const state = stateOf(this);
+      state.currentTime = value;
+      if (failSeek) {
+        failSeek = false;
+        state.error = { code: 2, message: 'fake seek failure' } as MediaError;
+        state.paused = true;
+        fire(this, 'error');
+        return;
+      }
+      // A fake seek lands at once.
+      fire(this, 'seeked');
     },
   });
   Object.defineProperty(prototype, 'duration', {
@@ -187,6 +201,9 @@ export function installFakeAudio(): FakeAudio {
         state.paused = true;
         fire(audio, 'error');
       });
+    },
+    failNextSeek: () => {
+      failSeek = true;
     },
     restore: () => {
       for (const [name, descriptor] of saved) {

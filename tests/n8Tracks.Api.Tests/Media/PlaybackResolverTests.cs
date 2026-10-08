@@ -251,6 +251,52 @@ public sealed class PlaybackResolverTests
         Assert.Empty(choice.Candidates);
     }
 
+    [Fact]
+    public void TheSourcesToCompareAreSongLevelFilesThenGenerationsInTreeOrderEachPlaybackFileFirst()
+    {
+        var g3 = Guid.CreateVersion7();
+        var nothing = Generation(g3, "1.1");
+        var master = File("master.mp3", null);
+        var preferredMaster = File("chosen.mp3", null, preferred: true);
+        var looseWav = File("loose.wav", null);
+        var missingMaster = File("gone.wav", null, AudioFileReportedStatus.Missing);
+        var g1Mp3 = File("g1.mp3", G1);
+        var g1Wav = File("g1.wav", G1);
+        var g1Chosen = File("g1-chosen.m4a", G1, preferred: true);
+        var g1Missing = File("g1-gone.wav", G1, AudioFileReportedStatus.Missing);
+        var g2Mp3 = File("g2.mp3", G2);
+        var g2Unavailable = File("g2.wav", G2, AudioFileReportedStatus.Unavailable);
+        var g3Missing = File("g3.wav", g3, AudioFileReportedStatus.Missing);
+
+        var sources = PlaybackResolver.SourcesForSong(
+            [master, g1Mp3, g2Unavailable, preferredMaster, g1Wav, missingMaster, g2Mp3, looseWav, g1Chosen, g1Missing, g3Missing],
+            [Generation(G2, "1") with { Revision = 7 }, nothing, Generation(G1, "2")]);
+
+        // The Song's preferred file first, then the rest by rank; Missing ones left out.
+        Assert.Equal(["chosen.mp3", "loose.wav", "master.mp3"], sources.SongFiles.Select(static file => file.File.File.FileName));
+        Assert.Equal([true, false, false], sources.SongFiles.Select(static file => file.IsPlaybackFile));
+
+        // Tree order as given; a Generation with nothing available is left out; each one's playback
+        // file (its choice, or the best format) first, then its other available files by rank.
+        Assert.Equal([G2, G1], sources.Generations.Select(static generation => generation.Generation.Id));
+        Assert.Equal(7, sources.Generations[0].Generation.Revision);
+        Assert.Equal(["g2.mp3"], sources.Generations[0].Files.Select(static file => file.File.File.FileName));
+        Assert.Equal(["g1-chosen.m4a", "g1.wav", "g1.mp3"], sources.Generations[1].Files.Select(static file => file.File.File.FileName));
+        Assert.Equal([true, false, false], sources.Generations[1].Files.Select(static file => file.IsPlaybackFile));
+        Assert.Same(PlaybackResolver.ForGeneration([g1Mp3, g1Wav, g1Chosen, g1Missing]).Played, sources.Generations[1].Files[0].File);
+    }
+
+    [Fact]
+    public void ASongWithNothingAvailableHasNoSourcesToCompare()
+    {
+        var sources = PlaybackResolver.SourcesForSong(
+            [File("gone.wav", null, AudioFileReportedStatus.Missing), File("g1.wav", G1, AudioFileReportedStatus.Unavailable)],
+            [Generation(G1, "1")]);
+
+        Assert.Empty(sources.SongFiles);
+        Assert.Empty(sources.Generations);
+    }
+
     private static Guid GenerationNamed(string name) => name == "1" ? G1 : G2;
 
     private static SongPlaybackGeneration Generation(Guid id, string versionNumber) =>

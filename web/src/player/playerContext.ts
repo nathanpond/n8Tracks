@@ -28,6 +28,16 @@ export interface PlayerState {
   noticeLink: { label: string; href: string } | null;
   /** The Generation (or, for a Song's Play, the Song) whose file is being asked for, or null. */
   starting: string | null;
+  /**
+   * What played before what is loaded now, from the same Song (#220): the other half of the A/B pair,
+   * or null until two sources of this Song have played. Forgotten when the Song changes.
+   */
+  previous: NowPlaying | null;
+}
+
+/** How a switch (#220) starts the new source: at the time the last source reached (`keepTime`), or at its start. */
+export interface SwitchOptions {
+  keepTime: boolean;
 }
 
 /** How a chooser pick is played: whether it was also made the Selected Generation, and a notice to show. */
@@ -66,6 +76,13 @@ export interface Player {
   ) => void;
   /** Plays this file from the start. */
   playFile: (file: UnmatchedFile) => void;
+  /**
+   * Switches to another source (#220) while keeping play or pause and the volume: the new audio is
+   * loaded and sought to the time the last source that actually played had reached (`keepTime`; its
+   * beginning when the new audio is shorter), and only then started. The latest switch wins; one
+   * that cannot load or seek goes back to the source before it, at its time, and says so.
+   */
+  switchTo: (next: NowPlaying, options: SwitchOptions) => void;
   pause: () => void;
   /** Plays what is loaded from where it is (reading it again if it had to stop). */
   resume: () => void;

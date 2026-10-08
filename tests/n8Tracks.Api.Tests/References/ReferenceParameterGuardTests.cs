@@ -157,6 +157,7 @@ public sealed class ReferenceParameterGuardTests
         ["GET /api/v1/songs/{reference}/generations"] = static (c, song, _) => c.SendAsync(HttpMethod.Get, $"songs/{song}/generations"),
         ["GET /api/v1/songs/{reference}/audio-files"] = static (c, song, _) => c.SendAsync(HttpMethod.Get, $"songs/{song}/audio-files"),
         ["GET /api/v1/songs/{reference}/playback"] = static (c, song, _) => c.SendAsync(HttpMethod.Get, $"songs/{song}/playback"),
+        ["GET /api/v1/songs/{reference}/playback-sources"] = static (c, song, _) => c.SendAsync(HttpMethod.Get, $"songs/{song}/playback-sources"),
 
         // 409 revision_conflict: the Song was found, and a revision it is not at chooses nothing (checked before the file).
         ["PUT /api/v1/songs/{reference}/preferred-audio-file"] = static (c, song, _) =>

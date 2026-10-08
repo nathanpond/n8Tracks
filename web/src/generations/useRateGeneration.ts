@@ -1,5 +1,6 @@
 import { useCallback, useRef } from 'react';
 import { rateGeneration, type Generation } from '../api/generations';
+import { announceRated } from './ratingEvents';
 
 /** What became of a rating write that did not go through: changed elsewhere, or failed. */
 export type RatingProblem =
@@ -40,6 +41,8 @@ export function useRateGeneration(
           // The comments shown are kept: each comment write already brought its own answer back.
           const saved = result.record;
           update(id, (current) => ({ ...saved, comments: current.comments }));
+          // The player bar (#220) keeps its own copy of the rating and revision.
+          announceRated(saved);
           break;
         }
         if (result.kind === 'conflict') {

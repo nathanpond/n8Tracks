@@ -26,6 +26,7 @@ internal static class PlaybackEndpoints
 {
     public const string GenerationPlaybackPath = GenerationsEndpoints.GenerationPath + "/playback";
     public const string SongPlaybackPath = SongsEndpoints.SongPath + "/playback";
+    public const string SongPlaybackSourcesPath = SongsEndpoints.SongPath + "/playback-sources";
     public const string GenerationPreferredPath = GenerationsEndpoints.GenerationPath + "/preferred-audio-file";
     public const string SongPreferredPath = SongsEndpoints.SongPath + "/preferred-audio-file";
 
@@ -47,6 +48,15 @@ internal static class PlaybackEndpoints
             .WithSummary("What plays for the Song (by its ID or shortcode): its preferred Song-level audio file while available, otherwise its Selected Generation's file, or nothing local; with the reason and the Generation the file came from.")
             .RequireScope(CredentialScopes.CatalogRead)
             .Produces<SongPlaybackResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        endpoints.MapGet(SongPlaybackSourcesPath, SongPlaybackSourcesAsync)
+            .WithName("GetSongPlaybackSources")
+            .WithSummary("Everything of the Song (by its ID or shortcode) the player can switch to while comparing: its available Song-level files, then its Generations that have an available file (Version tree order, then ordinal), each with its playback file first and its other available files after; Missing and Unavailable files are left out.")
+            .RequireScope(CredentialScopes.CatalogRead)
+            .Produces<SongPlaybackSourcesResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
@@ -154,6 +164,26 @@ internal static class PlaybackEndpoints
             generation,
             SongPlaybackStates.Text(choice.Playability.State),
             [.. choice.Candidates.Select(candidate => SongPlaybackCandidateResponse.From(candidate, context.Request.PathBase))]));
+    }
+
+    /// <summary>200 with the Song's sources in comparison order (#220); 404 (<c>song_deleted</c> when it was deleted) when the reference names no live Song.</summary>
+    private static async Task<Results<Ok<SongPlaybackSourcesResponse>, ProblemHttpResult>> SongPlaybackSourcesAsync(
+        CatalogReference reference,
+        SongService songs,
+        SongDeletionService deletions,
+        PlaybackService playback,
+        HttpContext context,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        if (await songs.FindAsync(reference.Text, cancellationToken) is not { } song)
+        {
+            return await SongDeletionEndpoints.MissingSongAsync(context, reference, deletions, cancellationToken);
+        }
+
+        var sources = await playback.SourcesForSongAsync(song.Id, cancellationToken);
+        return TypedResults.Ok(SongPlaybackSourcesResponse.From(song, sources, context.Request.PathBase));
     }
 
     /// <summary>
@@ -421,6 +451,64 @@ internal sealed record SongPlaybackCandidateResponse(
                 reason)
             : new("file", null, null, null, null, null, null, PlaybackFileResponse.From(candidate.SongFile, pathBase), candidate.Playability.Playable, reason);
     }
+}
+
+/// <summary>
+/// Everything of a Song the player can switch to while comparing (#220): the Song (<c>id</c>,
+/// <c>shortcode</c>, <c>title</c>), its available Song-level files (<c>songFiles</c>, the preferred
+/// one first, marked <c>isPlaybackFile</c>), and its Generations with an available file
+/// (<c>generations</c>, Version tree order then ordinal), each with what the bar shows and writes
+/// (<c>versionNumber</c>, <c>rating</c>, <c>revision</c>, Suno's <c>durationSeconds</c>, <c>state</c>,
+/// <c>remoteState</c>) and its <c>files</c>, the playback file first (<c>isPlaybackFile</c>).
+/// </summary>
+internal sealed record SongPlaybackSourcesResponse(
+    AudioFileSongResponse Song,
+    PlaybackSourceFileResponse[] SongFiles,
+    PlaybackSourceGenerationResponse[] Generations)
+{
+    public static SongPlaybackSourcesResponse From(SongSummary song, SongPlaybackSources sources, PathString pathBase)
+    {
+        ArgumentNullException.ThrowIfNull(song);
+        ArgumentNullException.ThrowIfNull(sources);
+
+        return new(
+            new AudioFileSongResponse(song.Id, song.Shortcode, song.Title),
+            [.. sources.SongFiles.Select(file => PlaybackSourceFileResponse.From(file, pathBase))],
+            [.. sources.Generations.Select(generation => PlaybackSourceGenerationResponse.From(generation, pathBase))]);
+    }
+}
+
+/// <summary>One Generation the player can switch to (#220); see <see cref="SongPlaybackSourcesResponse"/>.</summary>
+internal sealed record PlaybackSourceGenerationResponse(
+    AudioFileLinkResponse Generation,
+    string VersionNumber,
+    int? Rating,
+    int Revision,
+    double? DurationSeconds,
+    string State,
+    string RemoteState,
+    PlaybackSourceFileResponse[] Files)
+{
+    public static PlaybackSourceGenerationResponse From(PlaybackSourceGeneration source, PathString pathBase)
+    {
+        var generation = source.Generation;
+        return new(
+            new AudioFileLinkResponse(generation.Id, generation.Shortcode),
+            generation.VersionNumber,
+            generation.Rating,
+            generation.Revision,
+            generation.DurationSeconds,
+            GenerationStates.NameOf(generation.State),
+            GenerationStates.NameOf(generation.RemoteState),
+            [.. source.Files.Select(file => PlaybackSourceFileResponse.From(file, pathBase))]);
+    }
+}
+
+/// <summary>One file the player can switch to (#220): the file, and whether it is the one its owner plays.</summary>
+internal sealed record PlaybackSourceFileResponse(PlaybackFileResponse AudioFile, bool IsPlaybackFile)
+{
+    public static PlaybackSourceFileResponse From(PlaybackSourceFile source, PathString pathBase) =>
+        new(PlaybackFileResponse.From(source.File, pathBase)!, source.IsPlaybackFile);
 }
 
 /// <summary>The file that plays: its ID, name, format, duration (seconds, or null), and where its content is served, under the page base.</summary>

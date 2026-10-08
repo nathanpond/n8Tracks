@@ -1,6 +1,7 @@
 import { Anchor, Button, Group, Stack, Text } from '@mantine/core';
 import type { KeyboardEvent } from 'react';
 import { Link } from 'react-router';
+import { CompareMenu } from './CompareMenu';
 import type { Player } from './playerContext';
 import {
   clockText,
@@ -25,7 +26,8 @@ const RANGE_STYLE = { accentColor: 'var(--mantine-primary-color-filled)', minWid
  * file, and offers Retry; when a Play could not start it says why, and what was playing goes on.
  * When a Song's Play (#219) started it, the bar also says which rule chose it: the Song's Song-level
  * file, its Selected Generation, or "Chosen for this listen"; when the Selected Generation has nothing
- * to play, the notice offers Open in Suno where there is a link.
+ * to play, the notice offers Open in Suno where there is a link. While a Song's source is loaded, the
+ * Compare row (#220) switches between the Song's Generations and files and rates the playing one.
  */
 export function PlayerBar({ player }: { player: Player }) {
   const { state } = player;
@@ -144,6 +146,7 @@ export function PlayerBar({ player }: { player: Player }) {
           </Button>
         </Group>
       )}
+      {typeof current?.songId === 'string' && <CompareMenu player={player} />}
       {current !== null && state.status === 'error' && (
         <Group gap="sm" wrap="wrap">
           <Text
