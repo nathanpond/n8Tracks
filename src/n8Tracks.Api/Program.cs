@@ -333,6 +333,7 @@ public sealed class Program
             app.MapDownloadRecords();
             app.MapAudioContent();
             app.MapBackups();
+            app.MapDiagnostics();
             app.MapSettings();
             app.MapRestores();
             app.MapMaintenance();

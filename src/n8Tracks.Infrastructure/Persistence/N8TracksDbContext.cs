@@ -57,6 +57,24 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
     public static IReadOnlyList<string> LineageFrozenTriggers(string table) =>
         [$"tr_{table}_frozen_insert", $"tr_{table}_frozen_update", $"tr_{table}_frozen_delete"];
 
+    /// <summary>
+    /// The tables holding text the search index holds of a Song, or which Songs it belongs to (#223),
+    /// each with triggers that record the Songs a write touched (<see cref="SearchTriggers"/>), which
+    /// the unit of work re-indexes before it commits.
+    /// </summary>
+    public static IReadOnlyList<string> SearchTables { get; } =
+        ["songs", "versions", "generations", "generation_comments", "song_tags", "tags", "album_songs", "albums", "playlist_songs", "playlists"];
+
+    /// <summary>
+    /// The names of a <see cref="SearchTables"/> table's search triggers: insert, update, and delete;
+    /// only update and delete on <c>tags</c>, <c>albums</c>, and <c>playlists</c>, whose new rows are on
+    /// no Song yet.
+    /// </summary>
+    public static IReadOnlyList<string> SearchTriggers(string table) =>
+        table is "tags" or "albums" or "playlists"
+            ? [$"tr_{table}_search_update", $"tr_{table}_search_delete"]
+            : [$"tr_{table}_search_insert", $"tr_{table}_search_update", $"tr_{table}_search_delete"];
+
     public DbSet<AppMetadataEntry> AppMetadata => Set<AppMetadataEntry>();
 
     public DbSet<AdministratorRecord> Administrators => Set<AdministratorRecord>();
@@ -534,6 +552,10 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                 table.HasCheckConstraint("ck_songs_shortcode_number", "shortcode_number >= 1");
                 table.HasCheckConstraint("ck_songs_title", "length(title) > 0");
                 table.HasCheckConstraint("ck_songs_revision", "revision >= 1");
+                foreach (var trigger in SearchTriggers("songs"))
+                {
+                    table.HasTrigger(trigger);
+                }
             });
             song.HasKey(record => record.Id);
             song.Property(record => record.ShortcodeNumber).ValueGeneratedNever();
@@ -594,6 +616,10 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                 table.HasTrigger(VersionNumberRecordedTrigger);
                 table.HasTrigger(VersionNumberFixedTrigger);
                 table.HasTrigger(VersionFrozenTrigger);
+                foreach (var trigger in SearchTriggers("versions"))
+                {
+                    table.HasTrigger(trigger);
+                }
             });
             version.HasKey(record => record.Id);
             version.HasIndex(record => new { record.SongId, record.Number }).IsUnique();
@@ -652,6 +678,10 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                 table.HasTrigger(GenerationMoveTrigger);
                 table.HasTrigger(GenerationAliasReservedTrigger);
                 table.HasTrigger(GenerationSunoIdFixedTrigger);
+                foreach (var trigger in SearchTriggers("generations"))
+                {
+                    table.HasTrigger(trigger);
+                }
             });
             generation.HasKey(record => record.Id);
             generation.HasIndex(record => new { record.VersionId, record.Ordinal }).IsUnique();
@@ -967,6 +997,10 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
             {
                 table.HasCheckConstraint("ck_generation_comments_text", "length(text) BETWEEN 1 AND 2000");
                 table.HasCheckConstraint("ck_generation_comments_revision", "revision >= 1");
+                foreach (var trigger in SearchTriggers("generation_comments"))
+                {
+                    table.HasTrigger(trigger);
+                }
             });
             comment.HasKey(record => record.Id);
 
@@ -1044,6 +1078,10 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                 table.HasCheckConstraint(
                     "ck_tags_colour",
                     "colour IN (" + string.Join(", ", TagRules.Palette.Select(static colour => "'" + colour + "'")) + ")");
+                foreach (var trigger in SearchTriggers("tags"))
+                {
+                    table.HasTrigger(trigger);
+                }
             });
             tag.HasKey(record => record.Id);
             tag.HasIndex(record => record.NameKey).IsUnique();
@@ -1051,7 +1089,13 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
 
         modelBuilder.Entity<SongTagRecord>(songTag =>
         {
-            songTag.ToTable("song_tags");
+            songTag.ToTable("song_tags", static table =>
+            {
+                foreach (var trigger in SearchTriggers("song_tags"))
+                {
+                    table.HasTrigger(trigger);
+                }
+            });
 
             // A Song has a Tag at most once.
             songTag.HasKey(record => new { record.SongId, record.TagId });
@@ -1134,6 +1178,10 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
             {
                 table.HasCheckConstraint("ck_albums_title", "length(title) > 0");
                 table.HasCheckConstraint("ck_albums_upc", "upc IS NULL OR ((length(upc) = 12 OR length(upc) = 13) AND upc NOT GLOB '*[^0-9]*')");
+                foreach (var trigger in SearchTriggers("albums"))
+                {
+                    table.HasTrigger(trigger);
+                }
             });
             album.HasKey(record => record.Id);
 
@@ -1169,6 +1217,10 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
             {
                 table.HasCheckConstraint("ck_album_songs_disc", "disc BETWEEN 1 AND 999");
                 table.HasCheckConstraint("ck_album_songs_track", "track BETWEEN 1 AND 999");
+                foreach (var trigger in SearchTriggers("album_songs"))
+                {
+                    table.HasTrigger(trigger);
+                }
             });
 
             // A Song is on an Album at most once, and two tracks on one disc never share a number.
@@ -1193,7 +1245,14 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
 
         modelBuilder.Entity<PlaylistRecord>(playlist =>
         {
-            playlist.ToTable("playlists", static table => table.HasCheckConstraint("ck_playlists_title", "length(title) > 0"));
+            playlist.ToTable("playlists", static table =>
+            {
+                table.HasCheckConstraint("ck_playlists_title", "length(title) > 0");
+                foreach (var trigger in SearchTriggers("playlists"))
+                {
+                    table.HasTrigger(trigger);
+                }
+            });
             playlist.HasKey(record => record.Id);
 
             // The list's order: by title ignoring case, then the earlier created. Not unique.
@@ -1202,7 +1261,14 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
 
         modelBuilder.Entity<PlaylistSongRecord>(entry =>
         {
-            entry.ToTable("playlist_songs", static table => table.HasCheckConstraint("ck_playlist_songs_position", "position >= 0"));
+            entry.ToTable("playlist_songs", static table =>
+            {
+                table.HasCheckConstraint("ck_playlist_songs_position", "position >= 0");
+                foreach (var trigger in SearchTriggers("playlist_songs"))
+                {
+                    table.HasTrigger(trigger);
+                }
+            });
 
             // A Song is on a Playlist at most once, and each place holds one Song.
             entry.HasKey(record => new { record.PlaylistId, record.SongId });

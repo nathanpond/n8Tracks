@@ -14,6 +14,7 @@ using n8Tracks.Application.Maintenance;
 using n8Tracks.Application.Media;
 using n8Tracks.Application.Persistence;
 using n8Tracks.Application.Retention;
+using n8Tracks.Application.Search;
 using n8Tracks.Application.Setup;
 using n8Tracks.Application.Songs;
 using n8Tracks.Application.Suno;
@@ -28,6 +29,7 @@ using n8Tracks.Infrastructure.Media;
 using n8Tracks.Infrastructure.Persistence;
 using n8Tracks.Infrastructure.Retention;
 using n8Tracks.Infrastructure.Scheduling;
+using n8Tracks.Infrastructure.Search;
 using n8Tracks.Infrastructure.Security;
 using n8Tracks.Infrastructure.Setup;
 
@@ -92,6 +94,8 @@ public static class DependencyInjection
         services.AddScoped<IRemoteStateStore, RemoteStateStore>();
         services.AddScoped<IGenerationRequestStore, SunoGenerationRequestStore>();
         services.AddScoped<IVersionDefaultsStore, VersionDefaultsStore>();
+        services.AddScoped<ISearchIndex, SearchIndex>();
+        services.AddScoped<ISearchSourceStore, SearchSourceStore>();
         services.AddSingleton<IMediaMount, MediaMountReader>();
         services.AddSingleton<IMediaScanLog, MediaScanLog>();
         services.AddSingleton<IAudioMetadataReader, AtlAudioMetadataReader>();
@@ -167,6 +171,9 @@ public static class DependencyInjection
         // still queued from before counts as the startup scan, one left running does not.
         services.AddHostedService<MediaScanScheduler>();
         services.AddHostedService<MediaAvailabilityMonitor>();
+
+        // After the worker, whose start marks a rebuild left running by the last process failed.
+        services.AddHostedService<SearchIndexStartup>();
 
         return services;
     }

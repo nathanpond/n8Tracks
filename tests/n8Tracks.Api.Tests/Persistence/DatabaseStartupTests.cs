@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using n8Tracks.Api.Tests.Logging;
 using n8Tracks.Application.Persistence;
 using n8Tracks.Infrastructure.Persistence;
+using n8Tracks.Infrastructure.Search;
 
 namespace n8Tracks.Api.Tests.Persistence;
 
@@ -82,7 +83,8 @@ public sealed class DatabaseStartupTests : IDisposable
             migration => Assert.Matches("^[0-9]{14}_AddAudioFileAutoMatchBlocked\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AddPreferredAudioFiles\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_RederiveGenerationAudioUrls\\|10\\.0\\.", migration),
-            migration => Assert.Matches("^[0-9]{14}_AddRetentionReleasedAudioFiles\\|10\\.0\\.", migration));
+            migration => Assert.Matches("^[0-9]{14}_AddRetentionReleasedAudioFiles\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddSearchIndex\\|10\\.0\\.", migration));
 
         // ISO 8601 UTC with milliseconds and Z, taken when the migration ran.
         var initialized = TestDatabase.SchemaInitializedUtc(directory.Path);
@@ -101,7 +103,7 @@ public sealed class DatabaseStartupTests : IDisposable
         Start();
 
         Assert.Equal(
-            ["__EFMigrationsHistory", "administrators", "album_links", "album_songs", "albums", "app_metadata", "artist_aliases", "artist_links", "artists", "artwork_attachments", "assets", "audio_files", "credentials", "download_records", "editor_revisions", "external_suno_references", "generation_comments", "generation_event_links", "generation_events", "generation_preferred_audio_files", "generations", "genres", "jobs", "pending_file_deletions", "playlist_songs", "playlists", "provider_records", "provider_tombstones", "retention_groups", "retention_records", "retention_released_audio_files", "sessions", "settings", "shortcode_aliases", "shortcode_sequence", "song_artist_credits", "song_genres", "song_links", "song_preferred_audio_files", "song_relationship_types", "song_relationships", "song_tags", "songs", "suno_export_parts", "suno_export_record_playlists", "suno_export_records", "suno_exports", "suno_generation_requests", "suno_ignored_items", "suno_models", "suno_personas", "suno_playlists", "suno_workspaces", "tags", "used_version_numbers", "version_file_inputs", "version_inspiration_playlists", "version_sources", "version_voices", "versions", "workflow_states"],
+            ["__EFMigrationsHistory", "administrators", "album_links", "album_songs", "albums", "app_metadata", "artist_aliases", "artist_links", "artists", "artwork_attachments", "assets", "audio_files", "credentials", "download_records", "editor_revisions", "external_suno_references", "generation_comments", "generation_event_links", "generation_events", "generation_preferred_audio_files", "generations", "genres", "jobs", "pending_file_deletions", "playlist_songs", "playlists", "provider_records", "provider_tombstones", "retention_groups", "retention_records", "retention_released_audio_files", "search_dirty_songs", "search_index", "search_index_config", "search_index_content", "search_index_data", "search_index_docsize", "search_index_idx", "search_rows", "sessions", "settings", "shortcode_aliases", "shortcode_sequence", "song_artist_credits", "song_genres", "song_links", "song_preferred_audio_files", "song_relationship_types", "song_relationships", "song_tags", "songs", "suno_export_parts", "suno_export_record_playlists", "suno_export_records", "suno_exports", "suno_generation_requests", "suno_ignored_items", "suno_models", "suno_personas", "suno_playlists", "suno_workspaces", "tags", "used_version_numbers", "version_file_inputs", "version_inspiration_playlists", "version_sources", "version_voices", "versions", "workflow_states"],
             TestDatabase.Rows(
                 directory.Path,
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> '__EFMigrationsLock' ORDER BY name;"));
@@ -133,10 +135,10 @@ public sealed class DatabaseStartupTests : IDisposable
             ["song_id|TEXT|1|1", "number|TEXT|1|2"],
             TestDatabase.Rows(directory.Path, "SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('used_version_numbers') ORDER BY cid;"));
         Assert.Equal(
-            ["tr_versions_frozen_inputs_never_change", "tr_versions_number_never_changes", "tr_versions_record_number_after_insert", "tr_versions_touch_song_after_insert", "tr_versions_touch_song_after_update"],
+            ["tr_versions_frozen_inputs_never_change", "tr_versions_number_never_changes", "tr_versions_record_number_after_insert", "tr_versions_search_delete", "tr_versions_search_insert", "tr_versions_search_update", "tr_versions_touch_song_after_insert", "tr_versions_touch_song_after_update"],
             TestDatabase.Rows(directory.Path, "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'versions' ORDER BY name;"));
         Assert.Equal(
-            ["tr_generations_aliases_stay_reserved", "tr_generations_move_only_leaving_an_alias", "tr_generations_suno_id_never_changes"],
+            ["tr_generations_aliases_stay_reserved", "tr_generations_move_only_leaving_an_alias", "tr_generations_search_delete", "tr_generations_search_insert", "tr_generations_search_update", "tr_generations_suno_id_never_changes"],
             TestDatabase.Rows(directory.Path, "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'generations' ORDER BY name;"));
 
         // A Version's lineage (#122): each table cascades from its Version and has three freeze triggers.
@@ -292,6 +294,26 @@ public sealed class DatabaseStartupTests : IDisposable
             TestDatabase.Rows(directory.Path, "SELECT name || '|' || \"unique\" FROM pragma_index_list('download_records') WHERE origin = 'c' ORDER BY name;"));
         Assert.Empty(TestDatabase.Rows(directory.Path, "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'download_records';"));
 
+        // The search index (#223): an FTS5 table as the rebuild creates it too, its row map, the Songs
+        // writes touched, and the triggers that record them on every table holding indexed text. A table
+        // rebuild (an EF CHECK change, say) drops a table's triggers, and this fails then.
+        Assert.Equal(
+            [.. SearchIndex.CreateStatements(SearchIndex.IndexTable, SearchIndex.RowsTable).Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(static statement => statement.TrimEnd(';'))],
+            TestDatabase.Rows(directory.Path, "SELECT sql FROM sqlite_master WHERE name IN ('search_index', 'search_rows', 'ix_search_rows_song_id') ORDER BY CASE name WHEN 'search_index' THEN 0 WHEN 'search_rows' THEN 1 ELSE 2 END;"));
+        Assert.Equal(
+            ["song_id|TEXT|1|1"],
+            TestDatabase.Rows(directory.Path, "SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('search_dirty_songs') ORDER BY cid;"));
+        foreach (var table in N8TracksDbContext.SearchTables)
+        {
+            Assert.Subset(
+                TestDatabase.Rows(directory.Path, $"SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = '{table}' ORDER BY name;").ToHashSet(StringComparer.Ordinal),
+                N8TracksDbContext.SearchTriggers(table).ToHashSet(StringComparer.Ordinal));
+        }
+
+        Assert.Equal(
+            N8TracksDbContext.SearchTables.SelectMany(N8TracksDbContext.SearchTriggers).Order(StringComparer.Ordinal),
+            TestDatabase.Rows(directory.Path, "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'tr\\_%\\_search\\_%' ESCAPE '\\' ORDER BY name;"));
+
         // The audio files a deletion released (#388): kept with the group (cascade), naming no live table.
         Assert.Equal(
             ["group_id|TEXT|1|1", "audio_file_id|TEXT|1|2", "reason|TEXT|1|0"],
@@ -411,7 +433,7 @@ public sealed class DatabaseStartupTests : IDisposable
 
         Assert.Equal(MigrationStatus.UpToDate, state.Status);
         Assert.Equal(TestDatabase.History(directory.Path)[^1].Split('|')[0], state.LastAppliedMigrationId);
-        Assert.EndsWith("_AddRetentionReleasedAudioFiles", state.LastAppliedMigrationId, StringComparison.Ordinal);
+        Assert.EndsWith("_AddSearchIndex", state.LastAppliedMigrationId, StringComparison.Ordinal);
     }
 
     [Fact]

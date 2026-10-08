@@ -1065,6 +1065,7 @@ public sealed class VersionImmutabilityGuardTests
         ["DELETE /api/v1/workflow-states/{id:guid}"] = "workflow states; moves Songs to another state, never a Version",
         ["POST /api/v1/backups"] = "queues a backup: reads the database, writes only an archive file",
         ["POST /api/v1/media/scans"] = "queues a media scan (#203): it writes only audio_files and the settings rows media.lastScan, media.lastSuccessfulScan, and media.mount, never a Version",
+        ["POST /api/v1/diagnostics/search-index/rebuild"] = "queues a search index rebuild (#223): it reads the catalog and writes only the search index tables and the settings row search.index, never a Version",
         ["POST /api/v1/audio-files/{id:guid}/content"] = "answers 405 (#217): audio content is only read, and nothing is written",
         ["PUT /api/v1/audio-files/{id:guid}/content"] = "answers 405 (#217): audio content is only read, and nothing is written",
         ["PATCH /api/v1/audio-files/{id:guid}/content"] = "answers 405 (#217): audio content is only read, and nothing is written",

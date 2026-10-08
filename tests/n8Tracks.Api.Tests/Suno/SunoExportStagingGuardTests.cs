@@ -25,8 +25,10 @@ namespace n8Tracks.Api.Tests.Suno;
 /// Not catalog: the staging tables, the workspace records (<c>suno_workspaces</c>: what Suno says about
 /// its own workspaces is provider state, applied at once from a complete list; which workspace a Song
 /// is in is <c>songs.suno_workspace_id</c>, catalog data), stored image content (<c>assets</c>: only an
-/// attachment or a Generation's image makes it part of the catalog), and the instance's own records
-/// (sign-in, credentials, jobs, migrations).
+/// attachment or a Generation's image makes it part of the catalog), the search index (#223:
+/// <c>search_index</c> and the tables FTS5 keeps for it, <c>search_rows</c>, and <c>search_dirty_songs</c>,
+/// derived from the catalog tables in the same transaction as each write and rebuilt from them, never
+/// read as the catalog), and the instance's own records (sign-in, credentials, jobs, migrations).
 /// </para>
 /// </summary>
 public sealed class SunoExportStagingGuardTests
@@ -43,11 +45,12 @@ public sealed class SunoExportStagingGuardTests
         "version_file_inputs", "version_inspiration_playlists", "version_sources", "version_voices", "versions", "workflow_states",
     ];
 
-    /// <summary>Not catalog data: staging, provider state, stored content, and the instance's own records.</summary>
+    /// <summary>Not catalog data: staging, provider state, stored content, the search index (derived), and the instance's own records.</summary>
     public static readonly IReadOnlyList<string> OtherTables =
     [
         "__EFMigrationsHistory", "__EFMigrationsLock", "administrators", "app_metadata", "assets", "credentials", "jobs", "sessions",
         "suno_export_parts", "suno_export_record_playlists", "suno_export_records", "suno_exports", "suno_generation_requests", "suno_workspaces",
+        "search_dirty_songs", "search_index", "search_index_config", "search_index_content", "search_index_data", "search_index_docsize", "search_index_idx", "search_rows",
     ];
 
     [Fact]

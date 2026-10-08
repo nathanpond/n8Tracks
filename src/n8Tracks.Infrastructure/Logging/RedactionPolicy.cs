@@ -92,6 +92,10 @@ public static class RedactionPolicy
 
         // A retained row as it was (retention_records.document): it may hold any of the above.
         "document",
+
+        // Full-text search text (#223: GET /api/v1/songs?search=): what the user looks for may be any
+        // of the above, so the query is never logged.
+        "search",
     ];
 
     /// <summary>Names that end with a sensitive word but never hold a sensitive value.</summary>

@@ -146,6 +146,16 @@ internal sealed class SongStore(N8TracksDbContext context, SunoAudioHosts hosts)
             songs = songs.Where(song => song.SunoWorkspaceId == sunoWorkspaceId);
         }
 
+        if (query.MatchedIds is { } matched)
+        {
+            var matchedIds = matched.ToList();
+            songs = songs.Where(song => matchedIds.Contains(song.Id));
+            if (query.Sort == SongSort.Relevance)
+            {
+                return await ByRelevanceAsync(songs, matchedIds, query, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
         var total = await songs.CountAsync(cancellationToken).ConfigureAwait(false);
 
         // Times are fixed-width UTC text, so text order is time order; the shortcode number breaks ties.
@@ -166,6 +176,36 @@ internal sealed class SongStore(N8TracksDbContext context, SunoAudioHosts hosts)
             : await ordered.Skip((int)skip).Take(query.PageSize).ToListAsync(cancellationToken).ConfigureAwait(false);
 
         return new SongPage(await SummariesAsync(records, cancellationToken).ConfigureAwait(false), query.Page, query.PageSize, total);
+    }
+
+    /// <summary>
+    /// A page of <paramref name="songs"/> (already filtered) in the order of <paramref name="ranked"/>,
+    /// most relevant first when descending, least first otherwise.
+    /// </summary>
+    private async Task<SongPage> ByRelevanceAsync(IQueryable<SongRecord> songs, List<Guid> ranked, SongListQuery query, CancellationToken cancellationToken)
+    {
+        var rank = new Dictionary<Guid, int>(ranked.Count);
+        for (var position = 0; position < ranked.Count; position++)
+        {
+            rank.TryAdd(ranked[position], position);
+        }
+
+        var filtered = await songs.Select(static song => song.Id).ToListAsync(cancellationToken).ConfigureAwait(false);
+        var ordered = query.Descending
+            ? filtered.OrderBy(id => rank[id])
+            : filtered.OrderByDescending(id => rank[id]);
+        var skip = ((long)query.Page - 1) * query.PageSize;
+        var pageIds = skip >= filtered.Count ? [] : ordered.Skip((int)skip).Take(query.PageSize).ToList();
+        var records = pageIds.Count == 0
+            ? []
+            : await context.Songs.AsNoTracking().Where(song => pageIds.Contains(song.Id)).ToListAsync(cancellationToken).ConfigureAwait(false);
+        var byId = records.ToDictionary(static song => song.Id);
+
+        return new SongPage(
+            await SummariesAsync([.. pageIds.Where(byId.ContainsKey).Select(id => byId[id])], cancellationToken).ConfigureAwait(false),
+            query.Page,
+            query.PageSize,
+            filtered.Count);
     }
 
     public async Task<bool> TryUpdateAsync(Guid id, SongDetails details, int revision, DateTimeOffset updatedUtc, CancellationToken cancellationToken)

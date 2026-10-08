@@ -1,4 +1,5 @@
 using n8Tracks.Application.Media;
+using n8Tracks.Application.Search;
 using n8Tracks.Domain.Assets;
 using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
@@ -102,6 +103,12 @@ public enum SongSort
 
     /// <summary>How many local audio files are associated with it (#211).</summary>
     AudioFiles,
+
+    /// <summary>
+    /// How well it matches a full-text search (#223), in the order <see cref="SongListQuery.MatchedIds"/>
+    /// gives: the default with a search and no sort chosen. Descending is best first.
+    /// </summary>
+    Relevance,
 }
 
 /// <summary>
@@ -123,6 +130,7 @@ public enum SongSort
 /// <param name="TitleKey">Not empty: only Songs whose <see cref="Domain.Songs.SongRules.TitleKey"/> is exactly this; every Song when null.</param>
 /// <param name="ExcludeId">Every Song but this one; every Song when null.</param>
 /// <param name="SunoWorkspaceId">Only Songs in the Suno workspace with this ID; every Song when null.</param>
+/// <param name="MatchedIds">Only these Songs, most relevant first (#223: a full-text search's result); every Song when null.</param>
 public sealed record SongListQuery(
     SongSort Sort,
     bool Descending,
@@ -138,10 +146,18 @@ public sealed record SongListQuery(
     string? Search = null,
     string? TitleKey = null,
     Guid? ExcludeId = null,
-    string? SunoWorkspaceId = null);
+    string? SunoWorkspaceId = null,
+    IReadOnlyList<Guid>? MatchedIds = null);
 
 /// <summary>A page of Songs and how many match in all.</summary>
-public sealed record SongPage(IReadOnlyList<SongSummary> Items, int Page, int PageSize, int Total);
+public sealed record SongPage(IReadOnlyList<SongSummary> Items, int Page, int PageSize, int Total)
+{
+    /// <summary>With a full-text search (#223), where each Song of the page matched; null without one.</summary>
+    public IReadOnlyDictionary<Guid, SongMatches>? Matches { get; init; }
+
+    /// <summary>With a full-text search (#223), whether the index is being rebuilt, so the answer comes from the old one; null without one.</summary>
+    public bool? IndexRebuilding { get; init; }
+}
 
 /// <summary>A Song's editable details, as they are to be stored: valid and normalised.</summary>
 /// <param name="Title">Trimmed.</param>

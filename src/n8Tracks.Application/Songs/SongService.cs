@@ -4,6 +4,7 @@ using n8Tracks.Application.Assets;
 using n8Tracks.Application.Auth;
 using n8Tracks.Application.Catalog;
 using n8Tracks.Application.References;
+using n8Tracks.Application.Search;
 using n8Tracks.Application.Suno;
 using n8Tracks.Domain.Assets;
 using n8Tracks.Domain.Catalog;
@@ -32,7 +33,8 @@ public sealed record SongRequest(
 /// <paramref name="Query"/> is the search text (<see cref="SongService.QueryParameter"/>),
 /// <paramref name="Title"/> a title to match exactly (<see cref="SongService.TitleParameter"/>), and
 /// <paramref name="ExcludeId"/> a Song's ID to leave out (<see cref="SongService.ExcludeIdParameter"/>), and
-/// <paramref name="Workspace"/> the Suno ID of a workspace whose Songs alone are listed (<see cref="SongService.WorkspaceParameter"/>).
+/// <paramref name="Workspace"/> the Suno ID of a workspace whose Songs alone are listed (<see cref="SongService.WorkspaceParameter"/>), and
+/// <paramref name="Search"/> full-text search text (<see cref="SongService.SearchParameter"/>, #223).
 /// </summary>
 public sealed record SongListRequest(
     string? Sort,
@@ -46,7 +48,8 @@ public sealed record SongListRequest(
     string? Query = null,
     string? Title = null,
     string? ExcludeId = null,
-    string? Workspace = null);
+    string? Workspace = null,
+    string? Search = null);
 
 /// <summary>How creating a Song ended.</summary>
 public abstract record SongOutcome
@@ -171,6 +174,8 @@ public sealed class SongService(
     SongCreditService credits,
     ArtworkAttachmentService artwork,
     ISunoWorkspaceStore workspaces,
+    SongSearchService songSearch,
+    SearchIndexRebuild searchIndex,
     IExclusiveTransaction transaction,
     TimeProvider time)
 {
@@ -234,6 +239,13 @@ public sealed class SongService(
 
     /// <summary>The Suno ID of a known workspace (#151): only the Songs in it. Blank or unknown is refused.</summary>
     public const string WorkspaceParameter = "workspace";
+
+    /// <summary>
+    /// Full-text search (#223, <see cref="SongSearchService"/>): only Songs matching every word, by
+    /// relevance unless a sort is chosen, each with where it matched. Not combined with
+    /// <see cref="QueryParameter"/>, the picker's title lookup; text with no word to search for lists every Song.
+    /// </summary>
+    public const string SearchParameter = "search";
 
     /// <summary>How many Songs a search answers unless <see cref="PageSizeParameter"/> says otherwise.</summary>
     public const int SearchPageSize = 10;
@@ -545,15 +557,28 @@ public sealed class SongService(
     /// blank or unknown one is refused (states, Genres, Tags, Artists, <c>q</c>, <c>title</c>,
     /// <c>excludeId</c>, and <c>workspace</c> combine by AND); <c>page</c> counts from
     /// 1; <c>pageSize</c> is 1 to <see cref="MaximumPageSize"/>, <see cref="DefaultPageSize"/> by
-    /// default and <see cref="SearchPageSize"/> with <c>q</c>.
+    /// default and <see cref="SearchPageSize"/> with <c>q</c>. <c>search</c> (#223) keeps the Songs
+    /// matching every word of it (<see cref="SongSearchService"/>), combines by AND with the rest but
+    /// <c>q</c> (both at once are refused), orders by relevance when no <c>sort</c> is given (descending,
+    /// the default, is best first), and answers where each Song of the page matched and whether the
+    /// index is being rebuilt; text with no word to search for filters nothing.
     /// </summary>
     public async Task<SongListOutcome> ListAsync(SongListRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        if (request.Search is not null && request.Query is not null)
+        {
+            return Invalid($"{SearchParameter} and {QueryParameter} cannot be combined.");
+        }
+
+        var searching = SongSearchService.Parse(request.Search).Count > 0;
         SongSort sort;
         switch (request.Sort)
         {
+            case null when searching:
+                sort = SongSort.Relevance;
+                break;
             case null or SortUpdated:
                 sort = SongSort.Updated;
                 break;
@@ -571,7 +596,7 @@ public sealed class SongService(
         switch (request.Direction)
         {
             case null:
-                descending = sort is SongSort.Updated or SongSort.AudioFiles;
+                descending = sort is SongSort.Updated or SongSort.AudioFiles or SongSort.Relevance;
                 break;
             case Ascending or Descending:
                 descending = request.Direction == Descending;
@@ -715,8 +740,19 @@ public sealed class SongService(
             }
         }
 
-        var query = new SongListQuery(sort, descending, stateIds, page, pageSize, genreIds, noGenre, tagIds, noTag, artistIds, noArtist, search, titleKey, excludeId, request.Workspace);
-        return new SongListOutcome.Listed(await songs.ListAsync(query, cancellationToken).ConfigureAwait(false));
+        var found = searching ? await songSearch.SearchAsync(request.Search, cancellationToken).ConfigureAwait(false) : null;
+        var query = new SongListQuery(sort, descending, stateIds, page, pageSize, genreIds, noGenre, tagIds, noTag, artistIds, noArtist, search, titleKey, excludeId, request.Workspace, found?.SongIds);
+        var listed = await songs.ListAsync(query, cancellationToken).ConfigureAwait(false);
+        if (request.Search is null)
+        {
+            return new SongListOutcome.Listed(listed);
+        }
+
+        return new SongListOutcome.Listed(listed with
+        {
+            Matches = found is null ? null : listed.Items.ToDictionary(static song => song.Id, song => found.Matches[song.Id]),
+            IndexRebuilding = await searchIndex.IsRebuildingAsync(cancellationToken).ConfigureAwait(false),
+        });
     }
 
     /// <summary>The errors of a create request, keyed by field name; empty when it can be created.</summary>

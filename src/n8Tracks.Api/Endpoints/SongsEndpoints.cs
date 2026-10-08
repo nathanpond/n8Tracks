@@ -5,6 +5,7 @@ using n8Tracks.Api.Problems;
 using n8Tracks.Application.Catalog;
 using n8Tracks.Application.Credentials;
 using n8Tracks.Application.References;
+using n8Tracks.Application.Search;
 using n8Tracks.Application.Songs;
 using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
@@ -40,7 +41,7 @@ internal static class SongsEndpoints
 
         endpoints.MapGet(SongsPath, ListAsync)
             .WithName("ListSongs")
-            .WithSummary("A page of Songs, sorted by last update, title, or count of local audio files (audioFiles), optionally only those in given workflow states (state), with any of given Genres (genre: Genre IDs, or none for Songs with no Genre), with any of given Tags (tag: Tag IDs, or none for Songs with no Tag), crediting any of given Artists as primary or featured (artist: Artist IDs, or none for Songs credited to no one), in a Suno workspace (workspace: a known workspace's Suno ID), and matching a search (q: a title substring or shortcode prefix, ignoring case; ten a page by default; nothing for a blank q).")
+            .WithSummary("A page of Songs, sorted by last update, title, or count of local audio files (audioFiles), optionally only those in given workflow states (state), with any of given Genres (genre: Genre IDs, or none for Songs with no Genre), with any of given Tags (tag: Tag IDs, or none for Songs with no Tag), crediting any of given Artists as primary or featured (artist: Artist IDs, or none for Songs credited to no one), in a Suno workspace (workspace: a known workspace's Suno ID), and matching a search (q: a title substring or shortcode prefix, ignoring case; ten a page by default; nothing for a blank q), or a full-text search (search: Songs matching every word in any of their text, word beginnings, case and diacritics ignored, \"quoted phrases\" in order; by relevance unless sort is given; each item then has matches (at most three: field, owner, excerpt with highlights as offsets) and matchCount, and the page has indexRebuilding; not with q).")
             .RequireScope(CredentialScopes.CatalogRead)
             .Produces<SongListResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
@@ -156,8 +157,9 @@ internal static class SongsEndpoints
             Single(query, SongService.QueryParameter, out var searchRepeated),
             Single(query, SongService.TitleParameter, out var titleRepeated),
             Single(query, SongService.ExcludeIdParameter, out var excludeRepeated),
-            Single(query, SongService.WorkspaceParameter, out var workspaceRepeated));
-        if (sortRepeated || directionRepeated || pageRepeated || pageSizeRepeated || searchRepeated || titleRepeated || excludeRepeated || workspaceRepeated)
+            Single(query, SongService.WorkspaceParameter, out var workspaceRepeated),
+            Single(query, SongService.SearchParameter, out var fullTextRepeated));
+        if (sortRepeated || directionRepeated || pageRepeated || pageSizeRepeated || searchRepeated || titleRepeated || excludeRepeated || workspaceRepeated || fullTextRepeated)
         {
             return ApiProblem.For(
                 context,
@@ -545,6 +547,14 @@ internal sealed record SongResponse(
     int AudioFileCount,
     SongPlayabilityResponse Playback)
 {
+    /// <summary>With a full-text search (#223), the Song's best matches, best first; not sent otherwise.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public SongMatchResponse[]? Matches { get; init; }
+
+    /// <summary>With a full-text search (#223), how many places the Song matched in all; not sent otherwise.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public int? MatchCount { get; init; }
+
     /// <summary>The Song as the API shows it; <paramref name="pathBase"/> starts its artwork's URLs.</summary>
     public static SongResponse From(SongSummary song, PathString pathBase)
     {
@@ -749,16 +759,58 @@ internal sealed record SongStateResponse(Guid Id, string Name, string Colour);
 /// <summary>A Song's current Version, as a Song shows it; <c>kind</c> is what it creates (<c>song</c>, <c>speech</c>, or <c>sound</c>).</summary>
 internal sealed record CurrentVersionResponse(Guid Id, string Number, string Shortcode, string Kind);
 
-/// <summary>A page of Songs.</summary>
-internal sealed record SongListResponse(SongResponse[] Items, int Page, int PageSize, int Total)
+/// <summary>
+/// A page of Songs. With a full-text search (#223), each item carries <c>matches</c> and
+/// <c>matchCount</c>, and the page <c>indexRebuilding</c>; without one, none of the three is sent.
+/// </summary>
+internal sealed record SongListResponse(
+    SongResponse[] Items,
+    int Page,
+    int PageSize,
+    int Total,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] bool? IndexRebuilding = null)
 {
     public static SongListResponse From(SongPage page, PathString pathBase)
     {
         ArgumentNullException.ThrowIfNull(page);
 
-        return new([.. page.Items.Select(song => SongResponse.From(song, pathBase))], page.Page, page.PageSize, page.Total);
+        return new(
+            [.. page.Items.Select(song => page.Matches is { } matches && matches.TryGetValue(song.Id, out var matched)
+                ? SongResponse.From(song, pathBase) with { Matches = [.. matched.Best.Select(SongMatchResponse.From)], MatchCount = matched.Count }
+                : SongResponse.From(song, pathBase))],
+            page.Page,
+            page.PageSize,
+            page.Total,
+            page.IndexRebuilding);
     }
 }
+
+/// <summary>
+/// One place a searched Song matched (#223): the field, what it belongs to (a Version or Generation by
+/// shortcode, an Album or Playlist by ID; null for the Song's own text and its Tags), and an excerpt of
+/// up to 160 characters with the matched words as offsets into it.
+/// </summary>
+internal sealed record SongMatchResponse(string Field, SongMatchOwnerResponse? Owner, SongMatchExcerptResponse Excerpt)
+{
+    public static SongMatchResponse From(SearchMatch match)
+    {
+        ArgumentNullException.ThrowIfNull(match);
+
+        return new(
+            match.Field,
+            match.Owner is { } owner ? new SongMatchOwnerResponse(owner.Kind, owner.Reference, owner.Label, owner.State) : null,
+            new SongMatchExcerptResponse(match.Excerpt.Text, [.. match.Excerpt.Highlights.Select(static highlight => new SongMatchHighlightResponse(highlight.Start, highlight.Length))]));
+    }
+}
+
+/// <summary>What a match belongs to: <c>kind</c> is version, generation, album, or playlist; <c>state</c> is active, archived, or trashed.</summary>
+internal sealed record SongMatchOwnerResponse(string Kind, string Reference, string Label, string State);
+
+/// <summary>An excerpt and its marked words.</summary>
+internal sealed record SongMatchExcerptResponse(string Text, SongMatchHighlightResponse[] Highlights);
+
+/// <summary>A marked word: its start in the excerpt's text and its length, in UTF-16 code units.</summary>
+internal sealed record SongMatchHighlightResponse(int Start, int Length);
 
 /// <summary>A Tag as a Song shows it: its name and the name of its palette colour.</summary>
 internal sealed record SongTagResponse(Guid Id, string Name, string Colour)
