@@ -4846,3 +4846,36 @@ Story #229 (on the milestone branch):
 - **Decision:** The list orders by occurrence time, kept to the millisecond, then by ID. Two notifications in the same millisecond can therefore list in either order, because a UUIDv7's low bits are random. The tests that record notifications directly give each one a later millisecond. The product order is left as it is.
   **Why:** `ListingNeeds…SessionOnly` failed once under load when three notifications recorded back to back shared a millisecond. "Newest first" has no meaningful order inside one millisecond.
   **Issue:** #231
+
+Story #230 (built in parallel; merged into the milestone branch):
+
+- **Decision:** The dashboard arrangement is the `settings` row `ui.dashboard` = `{revision, sections:[{key,hidden}]|null}`; `GET`/`PUT`/`DELETE /api/v1/settings/dashboard`, session-only, with the usual If-Match revision (`"0"` before the first save). Reset+Save is `DELETE`, which keeps the row with `sections: null` so the revision keeps counting and a stale save from before the reset is still refused.
+  **Why:** The plan names a settings row and the revision check; a deleted row would restart the revision at 0 and let a stale "0" save through.
+  **Issue:** #230
+- **Decision:** Unknown keys are dropped and missing keys appended (shown, in the default order) when the arrangement is read, not only when it is written; a repeated key keeps its first place. More than 100 placements, or a placement not `{key: string, hidden: bool}`, is 422.
+  **Why:** A section a later version adds then appears without a write; a key a later version retires disappears the same way.
+  **Issue:** #230
+- **Decision:** `GET`/`PUT /api/v1/settings/last-song` (row `ui.lastSong` = `{song: <id>}`), session-only, no revision. The GET answers `{song:{id,shortcode,title}|null, deleted}`; PUT of an unknown Song is 404, of a non-ID 422. The Song is read through `SongService.FindAsync`, so archived opens and deleted (restorable or purged) answers `deleted: true`.
+  **Why:** Claude's Discretion fixes the shape and "last write wins"; the GET shape lets the button name the Song and give the reason.
+  **Issue:** #230
+- **Decision:** The `open-sync` reply's failure reasons are `unpaired | revoked | missing_scope` as planned plus `unreachable` (the extension cannot reach n8Tracks, or could not open a tab). "Paired with another n8Tracks" and "a host permission removed" count as `unpaired`. An extension older than #230 answers `unknown_type`, which the page shows as "update the extension".
+  **Why:** The extension's connection state has an `unreachable` status the three planned reasons do not cover; folding it into `unpaired` would tell the user to pair again when they need not.
+  **Issue:** #230
+- **Decision:** `open-sync` opens `https://suno.com/me` (the adapter's `sunoListAddress({page:'library'})`) in a new tab beside the n8Tracks tab; the service worker remembers that tab in session storage (`syncPanel`) and its first `sync-resume` answers `{session:null, open:true}` once, which opens the panel on the Sync view's choose step. Nothing is read, staged, or pressed (invariant 4).
+  **Why:** Reuses the existing resume path rather than a new content-script message; the tab ID check means no other Suno tab is affected.
+  **Issue:** #230
+- **Decision:** dnd-kit `@dnd-kit/core` 6.3.1, `@dnd-kit/sortable` 10.0.0, `@dnd-kit/utilities` 3.2.2 (from `npm view`, 2026-10-08). Keyboard reordering is both the Move up/Move down buttons and dnd-kit's keyboard sensor on the drag handle; each move is announced (a polite live region for buttons, dnd-kit's announcements for dragging). Focus stays on the moved section's button, or its other button at an end.
+  **Why:** Claude's Discretion asks for drag handles plus buttons, at the current dnd-kit.
+  **Issue:** #230
+- **Decision:** Quick actions are a region above the sections and not in the arrangement; the empty-catalog welcome no longer has its own New Song button (it points to the quick action). While the arrangement is read, the sections area shows a loader; when it cannot be read, the default arrangement is shown.
+  **Why:** AC "Quick actions are always shown; not a hideable section"; two New Song buttons on one page would be redundant.
+  **Issue:** #230
+- **Decision:** Scan Library reads `GET /media/status` every 30 s while idle and every 5 s while disabled; the scan this page started counts as finished once a read made after the start no longer names it as `activeScanJobId` (queued or running). A start answered `alreadyInProgress` says a scan is already running (`startScan` now returns that flag).
+  **Why:** Claude's Discretion (poll cadence; "pressing during a scan reports that one is running").
+  **Issue:** #230
+- **Decision:** Rule 1: the Customize dialog's close button had no accessible name (axe `button-name`, found by the e2e walk); it is now "Close", as the app's other dialogs do, with a component test.
+  **Why:** Accessibility gate.
+  **Issue:** #230
+- **Decision:** e2e `dashboard-customize.spec.ts` runs on a fresh container (`@root-only`), like `dashboard.spec.ts`, so the saved arrangement is seen by no other spec.
+  **Why:** The arrangement is instance-wide state.
+  **Issue:** #230
