@@ -62,6 +62,18 @@ describe('the Songs view in the URL', () => {
     expect(songListParameters(query).toString()).toBe(search);
   });
 
+  it('reads and writes the #228 generations filter after the #225 ones, and counts it', () => {
+    const search = 'archived=active&selected=no&generations=some';
+
+    const query = songQueryFrom(new URLSearchParams(search));
+    expect(query).toMatchObject({ archived: 'active', selected: 'no', generations: 'some' });
+    expect(activeFilterCount(query)).toBe(3);
+    expect(songListParameters(query).toString()).toBe(search);
+    expect(songQueryFrom(new URLSearchParams('generations=none')).generations).toBe('none');
+    // A value the list would refuse is left out.
+    expect(songQueryFrom(new URLSearchParams('generations=all')).generations).toBeUndefined();
+  });
+
   it('leaves out filter values the list would refuse, so a hand-edited address still shows a table', () => {
     const query = songQueryFrom(
       new URLSearchParams(

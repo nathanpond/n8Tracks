@@ -42,7 +42,8 @@ public sealed record SongRequest(
 /// <paramref name="Album"/> and <paramref name="Playlist"/> (an ID each), <paramref name="Models"/>
 /// (reported model names, any of), <paramref name="CreatedFrom"/> and <paramref name="CreatedTo"/>
 /// (<c>yyyy-MM-dd</c>), <paramref name="MinRating"/>, <paramref name="Rated"/>,
-/// <paramref name="Selected"/>, <paramref name="Audio"/>, and <paramref name="Archived"/>.
+/// <paramref name="Selected"/>, <paramref name="Audio"/>, and <paramref name="Archived"/>; and #228's
+/// <paramref name="Generations"/> (<see cref="SongService.GenerationsParameter"/>).
 /// </summary>
 public sealed record SongListRequest(
     string? Sort,
@@ -68,7 +69,8 @@ public sealed record SongListRequest(
     string? Rated = null,
     string? Selected = null,
     string? Audio = null,
-    string? Archived = null);
+    string? Archived = null,
+    string? Generations = null);
 
 /// <summary>How creating a Song ended.</summary>
 public abstract record SongOutcome
@@ -311,6 +313,14 @@ public sealed class SongService(
     public const string ArchivedActive = "active";
     public const string ArchivedOnly = "archived";
     public const string ArchivedBoth = "both";
+
+    /// <summary>
+    /// #228: <see cref="GenerationsSome"/> or <see cref="GenerationsNone"/>: Songs with at least one
+    /// live Generation (in any state), or with none.
+    /// </summary>
+    public const string GenerationsParameter = "generations";
+    public const string GenerationsSome = "some";
+    public const string GenerationsNone = "none";
 
     /// <summary>How many Songs a search answers unless <see cref="PageSizeParameter"/> says otherwise.</summary>
     public const int SearchPageSize = 10;
@@ -870,6 +880,12 @@ public sealed class SongService(
             HasSelectedGeneration = filters.HasSelectedGeneration,
             Audio = filters.Audio,
             MediaUnavailable = mediaUnavailable,
+            HasGenerations = request.Generations switch
+            {
+                GenerationsSome => true,
+                GenerationsNone => false,
+                _ => null,
+            },
         };
         var listed = await songs.ListAsync(query, cancellationToken).ConfigureAwait(false);
         if (request.Search is null)
@@ -967,6 +983,11 @@ public sealed class SongService(
         if (request.Audio is not (null or AudioAvailable or AudioUnavailable or AudioNone))
         {
             return $"{AudioParameter} must be {AudioAvailable}, {AudioUnavailable}, or {AudioNone}.";
+        }
+
+        if (request.Generations is not (null or GenerationsSome or GenerationsNone))
+        {
+            return $"{GenerationsParameter} must be {GenerationsSome} or {GenerationsNone}.";
         }
 
         return string.Empty;

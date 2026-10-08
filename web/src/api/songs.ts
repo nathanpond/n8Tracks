@@ -408,6 +408,8 @@ export interface SongQuery {
   selected?: SelectedFilter;
   /** #225: local-audio availability. */
   audio?: AudioFilter;
+  /** #228: Songs with at least one Generation, in any state (`some`), or with none (`none`). */
+  generations?: GenerationsFilter;
   page: number;
 }
 
@@ -415,6 +417,7 @@ export type TagMode = 'all' | 'any';
 export type ArchivedFilter = 'active' | 'archived';
 export type SelectedFilter = 'yes' | 'no';
 export type AudioFilter = 'available' | 'unavailable' | 'none';
+export type GenerationsFilter = 'some' | 'none';
 
 /** The ratings a Generation can have, and so the minimum ratings the filter offers. */
 export const RATING_SCALE = [1, 2, 3, 4, 5] as const;
@@ -422,6 +425,7 @@ export const RATING_SCALE = [1, 2, 3, 4, 5] as const;
 const ARCHIVED_FILTERS: readonly string[] = ['active', 'archived'];
 const SELECTED_FILTERS: readonly string[] = ['yes', 'no'];
 const AUDIO_FILTERS: readonly string[] = ['available', 'unavailable', 'none'];
+const GENERATIONS_FILTERS: readonly string[] = ['some', 'none'];
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 /** #225: how many filters are set: each chosen value, each set option (not the search or the page). */
@@ -441,7 +445,8 @@ export function activeFilterCount(query: SongQuery): number {
     (query.minRating === undefined ? 0 : 1) +
     (query.rated === undefined ? 0 : 1) +
     (query.selected === undefined ? 0 : 1) +
-    (query.audio === undefined ? 0 : 1)
+    (query.audio === undefined ? 0 : 1) +
+    (query.generations === undefined ? 0 : 1)
   );
 }
 
@@ -698,6 +703,9 @@ export function songListParameters(query: SongQuery): URLSearchParams {
   if (query.audio !== undefined) {
     parameters.set('audio', query.audio);
   }
+  if (query.generations !== undefined) {
+    parameters.set('generations', query.generations);
+  }
   if (query.page !== 1) {
     parameters.set('page', String(query.page));
   }
@@ -746,6 +754,7 @@ export function songQueryFrom(parameters: URLSearchParams): SongQuery {
   const minRating = Number(parameters.get('minRating') ?? '');
   const selected = parameters.get('selected') ?? '';
   const audio = parameters.get('audio') ?? '';
+  const generations = parameters.get('generations') ?? '';
   return {
     sort,
     direction: direction === 'asc' || direction === 'desc' ? direction : defaultDirection(sort),
@@ -766,6 +775,9 @@ export function songQueryFrom(parameters: URLSearchParams): SongQuery {
     ...(parameters.get('rated') === 'none' ? { rated: 'none' as const } : {}),
     ...(SELECTED_FILTERS.includes(selected) ? { selected: selected as SelectedFilter } : {}),
     ...(AUDIO_FILTERS.includes(audio) ? { audio: audio as AudioFilter } : {}),
+    ...(GENERATIONS_FILTERS.includes(generations)
+      ? { generations: generations as GenerationsFilter }
+      : {}),
     page: Number.isSafeInteger(page) && page >= 1 ? page : 1,
   };
 }

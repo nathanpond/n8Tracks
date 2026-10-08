@@ -116,9 +116,11 @@ test.describe('first-run setup', { tag: '@root-only' }, () => {
     expect(await isSetupComplete(FRESH_URL)).toBe(true);
     await expectAccessibleInLightAndDark(page);
     await signInWithTheForm(page, OWNER.username, OWNER.password);
-    await expect(page.getByRole('heading', { level: 2, name: 'Songs' })).toBeVisible();
+    // The app root is the dashboard (#228), which welcomes an instance with no Songs.
+    await expect(page.getByRole('heading', { level: 2, name: 'Dashboard' })).toBeVisible();
     await expect(userMenu(page)).toHaveText(OWNER.username);
-    await expect(page).toHaveURL(`${FRESH_URL}songs`);
+    await expect(page).toHaveURL(FRESH_URL);
+    await expect(page.getByTestId('dashboard-welcome')).toBeVisible();
     await expectAccessibleInLightAndDark(page);
 
     // The accepted schedule is stored: Settings → Backups shows it, with no backup yet.
@@ -131,15 +133,15 @@ test.describe('first-run setup', { tag: '@root-only' }, () => {
 
     // 5. Reload any URL: the wizard does not come back.
     for (const [path, heading] of [
-      ['setup', 'Songs'],
+      ['setup', 'Dashboard'],
       ['settings/system', 'System'],
-      ['', 'Songs'],
+      ['', 'Dashboard'],
     ] as const) {
       await page.goto(`${FRESH_URL}${path}`);
       await expect(page.getByRole('heading', { level: 2, name: heading })).toBeVisible();
       await expect(page.getByRole('heading', { name: 'Set up n8Tracks' })).toBeHidden();
     }
-    await expect(page).toHaveURL(`${FRESH_URL}songs`);
+    await expect(page).toHaveURL(FRESH_URL);
 
     // And the API: setup is refused, the other endpoint is no longer 503 but asks for a session.
     const again = await request.post(`${FRESH_URL}api/v1/setup`, {

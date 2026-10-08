@@ -650,6 +650,36 @@ describe('Songs', () => {
     expect(within(screen.getByTestId('active-filters')).getAllByRole('listitem')).toHaveLength(10);
   });
 
+  it('filters by whether a Song has Generations (#228), shown as a removable chip', async () => {
+    const mock = backend({ list: () => jsonResponse(200, page([song(1)])) });
+    const user = userEvent.setup();
+
+    renderApp('/songs?archived=active&selected=no&generations=some');
+    const chips = await screen.findByTestId('active-filters');
+    expect(within(chips).getByText('Has Generations')).toBeVisible();
+    expect(within(chips).getByText('Has no Selected Generation')).toBeVisible();
+    await waitFor(() => {
+      expect(listRequests(mock).at(-1)).toBe('?archived=active&selected=no&generations=some');
+    });
+
+    await user.click(
+      within(chips).getByRole('button', { name: 'Remove the filter Has Generations' }),
+    );
+    await waitFor(() => {
+      expect(listRequests(mock).at(-1)).toBe('?archived=active&selected=no');
+    });
+
+    const bar = screen.getByRole('group', { name: 'Filters' });
+    await user.click(within(bar).getByRole('combobox', { name: 'Generations' }));
+    await user.click(await within(bar).findByRole('option', { name: 'Has no Generations' }));
+    await waitFor(() => {
+      expect(listRequests(mock).at(-1)).toBe('?archived=active&selected=no&generations=none');
+    });
+    expect(
+      within(screen.getByTestId('active-filters')).getByText('Has no Generations'),
+    ).toBeVisible();
+  });
+
   it('offers only the values that exist, found by typing, and asks the server for them', async () => {
     const mock = backend({ list: () => jsonResponse(200, page([song(1)])) });
     const user = userEvent.setup();

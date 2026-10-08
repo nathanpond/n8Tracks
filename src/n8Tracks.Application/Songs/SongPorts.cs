@@ -210,7 +210,8 @@ public sealed record SongListQuery(
     bool Unrated = false,
     bool? HasSelectedGeneration = null,
     SongAudioFilter? Audio = null,
-    bool MediaUnavailable = false);
+    bool MediaUnavailable = false,
+    bool? HasGenerations = null);
 
 /// <summary>Which Songs the archived filter (#225) keeps.</summary>
 public enum SongArchivedFilter

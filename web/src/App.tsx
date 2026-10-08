@@ -5,6 +5,7 @@ import { AlbumPage } from './albums/AlbumPage';
 import { AlbumsPage } from './albums/AlbumsPage';
 import { ArtistPage } from './artists/ArtistPage';
 import { ArtistsPage } from './artists/ArtistsPage';
+import { DashboardPage } from './dashboard/DashboardPage';
 import { MaintenanceGate } from './maintenance/MaintenanceGate';
 import { MediaPage } from './media/MediaPage';
 import { UnmatchedFilesPage } from './media/UnmatchedFilesPage';
@@ -51,7 +52,7 @@ export function App() {
           <SessionGate>
             <Routes>
               <Route element={<SignedInShell />}>
-                <Route index element={<Navigate to="/songs" replace />} />
+                <Route index element={<DashboardPage />} />
                 <Route path="songs" element={<SongsPage />} />
                 <Route path="songs/:reference" element={<SongPage />} />
                 <Route path="songs/:reference/v/:number" element={<SongPage />} />

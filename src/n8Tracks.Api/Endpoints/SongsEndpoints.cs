@@ -192,9 +192,11 @@ internal static class SongsEndpoints
             Single(query, SongService.RatedParameter, out var ratedRepeated),
             Single(query, SongService.SelectedParameter, out var selectedRepeated),
             Single(query, SongService.AudioParameter, out var audioRepeated),
-            Single(query, SongService.ArchivedParameter, out var archivedRepeated));
+            Single(query, SongService.ArchivedParameter, out var archivedRepeated),
+            Single(query, SongService.GenerationsParameter, out var generationsRepeated));
         if (sortRepeated || directionRepeated || pageRepeated || pageSizeRepeated || searchRepeated || titleRepeated || excludeRepeated || workspaceRepeated || fullTextRepeated
-            || tagModeRepeated || albumRepeated || playlistRepeated || createdFromRepeated || createdToRepeated || minRatingRepeated || ratedRepeated || selectedRepeated || audioRepeated || archivedRepeated)
+            || tagModeRepeated || albumRepeated || playlistRepeated || createdFromRepeated || createdToRepeated || minRatingRepeated || ratedRepeated || selectedRepeated || audioRepeated || archivedRepeated
+            || generationsRepeated)
         {
             return ApiProblem.For(
                 context,

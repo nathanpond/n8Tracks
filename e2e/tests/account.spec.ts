@@ -94,6 +94,7 @@ test.describe(
       await expect(page.getByRole('heading', { level: 2, name: 'Account' })).toBeVisible();
       await expect(page).toHaveURL(`${FRESH_URL}settings/account`);
       await expect(sidebar(page).getByRole('link')).toHaveText([
+        'Home',
         'Songs',
         'Artists',
         'Albums',
@@ -134,7 +135,7 @@ test.describe(
         const other = await second.newPage();
         await other.goto(FRESH_URL);
         await signInWithTheForm(other, TEST_ADMIN.username, TEST_ADMIN.password);
-        await expect(other.getByRole('heading', { level: 2, name: 'Songs' })).toBeVisible();
+        await expect(other.getByRole('heading', { level: 2, name: 'Dashboard' })).toBeVisible();
 
         // 2. A wrong current password is refused at the field...
         await fillChange(page, 'not the current password', SECOND_PASSWORD);

@@ -192,10 +192,10 @@ test.describe('the System page (the M0 shell page)', () => {
 
 test.describe('the sub-path', { tag: '@subpath-only' }, () => {
   test('serves the page under the sub-path and nothing outside it', async ({ page, request }) => {
-    // The app root is the Songs page, under the sub-path.
+    // The app root is the dashboard (#228), under the sub-path.
     await page.goto('./');
-    await expect(page.getByRole('heading', { level: 2, name: 'Songs' })).toBeVisible();
-    expect(new URL(page.url()).pathname).toBe(`${SUB_PATH}/songs`);
+    await expect(page.getByRole('heading', { level: 2, name: 'Dashboard' })).toBeVisible();
+    expect(new URL(page.url()).pathname).toBe(`${SUB_PATH}/`);
     await expect(page.locator('base')).toHaveAttribute('href', `${SUB_PATH}/`);
 
     await openShell(page);

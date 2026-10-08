@@ -22,6 +22,7 @@ import {
   RATING_SCALE,
   type ArchivedFilter,
   type AudioFilter,
+  type GenerationsFilter,
   type SelectedFilter,
   type SongQuery,
   type WorkflowState,
@@ -45,6 +46,11 @@ const AUDIO_LABELS: Record<AudioFilter, string> = {
   available: 'Has an available local file',
   unavailable: 'Has files, none available',
   none: 'Has no local audio',
+};
+
+const GENERATIONS_LABELS: Record<GenerationsFilter, string> = {
+  some: 'Has Generations',
+  none: 'Has no Generations',
 };
 
 function stars(rating: number): string {
@@ -127,7 +133,8 @@ type OptionalFilter =
   | 'minRating'
   | 'rated'
   | 'selected'
-  | 'audio';
+  | 'audio'
+  | 'generations';
 
 /** One active filter, as a chip removes it. */
 interface ActiveFilter {
@@ -144,7 +151,7 @@ function named(names: ReadonlyMap<string, { name: string }> | undefined, id: str
 /**
  * The Songs table's filter bar (#225): every filter the list offers (workflow state, archived
  * status, Genre, Tags (all of or any of), Artist, Album, Playlist, model, creation date, Generation
- * rating, Selected Generation, and local audio), each active one as a removable chip, and Clear all.
+ * rating, Selected Generation, local audio, and (#228) whether it has Generations), each active one as a removable chip, and Clear all.
  * Each control changes the page address, which is the list's own query, so a reload keeps the
  * filters. On a narrow screen the controls fold behind a Filters button that counts them.
  */
@@ -282,6 +289,15 @@ export function SongFilterBar({
     ...(query.audio === undefined
       ? []
       : [{ key: 'audio', label: AUDIO_LABELS[query.audio], remove: without('audio') }]),
+    ...(query.generations === undefined
+      ? []
+      : [
+          {
+            key: 'generations',
+            label: GENERATIONS_LABELS[query.generations],
+            remove: without('generations'),
+          },
+        ]),
   ];
   const count = activeFilterCount(query);
 
@@ -497,6 +513,23 @@ export function SongFilterBar({
               }}
               allowDeselect={false}
               w={{ base: '100%', sm: 260 }}
+              comboboxProps={{ withinPortal: false, hideDetached: false }}
+            />
+            <Select
+              label="Generations"
+              data={[
+                { value: '', label: 'Either' },
+                { value: 'some', label: GENERATIONS_LABELS.some },
+                { value: 'none', label: GENERATIONS_LABELS.none },
+              ]}
+              value={query.generations ?? ''}
+              onChange={(value) => {
+                change({
+                  generations: value === 'some' || value === 'none' ? value : undefined,
+                });
+              }}
+              allowDeselect={false}
+              w={{ base: '100%', sm: 200 }}
               comboboxProps={{ withinPortal: false, hideDetached: false }}
             />
           </Group>
