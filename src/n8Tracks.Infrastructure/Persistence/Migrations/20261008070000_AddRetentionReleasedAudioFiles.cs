@@ -1,6 +1,7 @@
-﻿using System;
+using System;
 using Microsoft.EntityFrameworkCore.Migrations;
 
+// EF Core writes migrations without nullable annotations; this file keeps that form (#388: one new table, as generated).
 #nullable disable
 
 namespace n8Tracks.Infrastructure.Persistence.Migrations
