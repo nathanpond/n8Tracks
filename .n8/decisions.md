@@ -4502,3 +4502,7 @@ Story #219 (on the milestone branch):
 - **Decision:** #389: a second SQL function, `n8_lower(text)` (`string.ToLowerInvariant`), registered on every connection beside `n8_title_key` and mapped in the EF model as `N8TracksDbContext.Lower`; `DownloadRecordStore.AudioFilesNamedLikeAsync` filters on `n8_lower(file_name) LIKE <lowered stem>%` with the same escape, and lowers the stems itself.
   **Why:** SQLite's `LIKE` and `lower()` fold ASCII only. Lowering both sides with the same .NET rule the service's exact comparison uses keeps the prefilter a superset of the exact match, and the escaped `_` and `%` stay literal. Rule 1 fix with regression cases (Latin with a diacritic, Cyrillic, Greek) in `DownloadRecordTests`.
   **Issue:** #389
+
+- **Decision:** #390: `Media/StreamAddressLoggingTests` stores a stream address on the listed host whose query carries a fresh signature, requests every answer that reads a stored address (Generation and Song playback, with and without a Selected Generation; playback-sources; the Generation, Song, Songs, Song's Generations, Album and Playlist answers) with the log at Trace and telemetry exported to the stub collector, and asserts the signature is in no captured line and in nothing the collector received. It joins `TelemetryCollection`, as the other collector tests do.
+  **Why:** Redaction keys on property names (`audiourl`); a value-based check is what fails when the address is logged under any other name. The playback answers are asserted to carry the address, so the absence is not vacuous.
+  **Issue:** #390
