@@ -343,6 +343,7 @@ public sealed class Program
             app.MapBackups();
             app.MapDiagnostics();
             app.MapSettings();
+            app.MapDashboardSettings();
             app.MapRestores();
             app.MapMaintenance();
             app.MapApiNotFound();

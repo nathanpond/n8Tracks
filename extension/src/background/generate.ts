@@ -176,7 +176,7 @@ export class GenerateCoordinator {
       return null;
     }
     const request = pageRequestOf(message);
-    if (request === null) {
+    if (request === null || request.type === 'open-sync') {
       return failure('invalid_request', 'The page did not send a request ID.');
     }
     if (request.type === 'open-options') {

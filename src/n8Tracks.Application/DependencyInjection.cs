@@ -117,6 +117,8 @@ public static class DependencyInjection
         services.AddScoped<MediaStatusService>();
         services.AddScoped<DashboardService>();
         services.AddScoped<AttentionService>();
+        services.AddScoped<DashboardLayoutService>();
+        services.AddScoped<LastSongService>();
 
         // Notifications (#231): the recorder, the list and its actions, the job-finished hook with one
         // producer per job type, and the direct producers (Suno sync, restore, migration).

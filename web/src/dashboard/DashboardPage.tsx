@@ -11,7 +11,7 @@ import {
   VisuallyHidden,
 } from '@mantine/core';
 import { useState, type ReactNode } from 'react';
-import { Link, useNavigate } from 'react-router';
+import { Link } from 'react-router';
 import {
   dismissProblem,
   problemAddress,
@@ -38,10 +38,12 @@ import {
   type WithoutSelection,
   type WorkflowStateCounts,
 } from '../api/dashboard';
+import { useDashboardLayout } from '../api/dashboardSettings';
 import { importPath } from '../api/sunoImports';
 import { problemText } from './attentionText';
 import { useConfiguredTimeZone } from '../api/timeZone';
-import { NewSongDialog } from '../songs/NewSongDialog';
+import { CustomizeDashboard } from './CustomizeDashboard';
+import { QuickActions } from './QuickActions';
 import { RelativeTime, StateBadge } from '../songs/SongParts';
 
 /** "1 Song", "2 Songs". */
@@ -447,35 +449,16 @@ function SunoProblemsContent({
 
 /** The welcome an instance with no Songs shows in place of the catalog sections. */
 function Welcome() {
-  const navigate = useNavigate();
-  const [creating, setCreating] = useState(false);
   return (
     <Paper p="lg" withBorder data-testid="dashboard-welcome">
       <Stack gap="sm" align="flex-start">
         <Title order={3}>Welcome to n8Tracks</Title>
         <Text>
           There are no Songs yet. A Song needs only a title, and starts with a Version 1 to write
-          in. Once there are Songs, this page shows what you changed last and where each Song
-          stands.
+          in: use New Song above. Once there are Songs, this page shows what you changed last and
+          where each Song stands.
         </Text>
-        <Button
-          onClick={() => {
-            setCreating(true);
-          }}
-        >
-          New Song
-        </Button>
       </Stack>
-      <NewSongDialog
-        opened={creating}
-        onClose={() => {
-          setCreating(false);
-        }}
-        onCreated={(song) => {
-          setCreating(false);
-          void navigate(`/songs/${song.shortcode}`);
-        }}
-      />
     </Paper>
   );
 }
@@ -489,134 +472,215 @@ const TITLES: Record<DashboardSectionKey, string> = {
   sunoProblems: 'Suno problems',
 };
 
+/** The sections of what needs attention (#229), which also show under the empty-catalog welcome. */
+const ATTENTION_KEYS: readonly DashboardSectionKey[] = [
+  'unmatchedFiles',
+  'sunoReviews',
+  'sunoProblems',
+];
+
 /**
- * What needs attention (#229): Unmatched Files, Suno reviews, and Suno problems. Each says so in one
- * line when it has nothing to report, and shows its own failure with Retry.
+ * One section, by key, with its content, loader, or failure. What needs attention (#229) says so in
+ * one line when it has nothing to report.
  */
-function AttentionSections({
+function DashboardSectionView({
+  sectionKey,
   data,
   loading,
   onRetry,
   timeZone,
 }: {
+  sectionKey: DashboardSectionKey;
   data: Dashboard | undefined;
   loading: boolean;
   onRetry: () => void;
   timeZone: string;
 }) {
-  const unmatched = data === undefined ? undefined : sectionData(data.unmatchedFiles);
-  const reviews = data === undefined ? undefined : sectionData(data.sunoReviews);
-  const problems = data === undefined ? undefined : sectionData(data.sunoProblems);
-  const sectionProps = { loading, onRetry };
-  return (
-    <>
-      <Section id="unmatchedFiles" title={TITLES.unmatchedFiles}>
-        <SectionBody title={TITLES.unmatchedFiles} data={unmatched} {...sectionProps}>
-          {(section) => <UnmatchedFilesContent section={section} />}
-        </SectionBody>
-      </Section>
-      <Section id="sunoReviews" title={TITLES.sunoReviews}>
-        <SectionBody title={TITLES.sunoReviews} data={reviews} {...sectionProps}>
-          {(section) => <SunoReviewsContent section={section} timeZone={timeZone} />}
-        </SectionBody>
-      </Section>
-      <Section id="sunoProblems" title={TITLES.sunoProblems}>
-        <SectionBody title={TITLES.sunoProblems} data={problems} {...sectionProps}>
-          {(section) => (
-            <SunoProblemsContent section={section} timeZone={timeZone} onDismissed={onRetry} />
-          )}
-        </SectionBody>
-      </Section>
-    </>
-  );
+  const props = { loading, onRetry };
+  const title = TITLES[sectionKey];
+  switch (sectionKey) {
+    case 'recentlyEdited':
+      return (
+        <Section
+          id="recentlyEdited"
+          title={title}
+          action={
+            <Anchor
+              component={Link}
+              to={recentlyEditedAddress()}
+              size="sm"
+              aria-label="See all active Songs, last updated first"
+            >
+              See all
+            </Anchor>
+          }
+        >
+          <SectionBody
+            title={title}
+            data={data === undefined ? undefined : sectionData(data.recentlyEdited)}
+            {...props}
+          >
+            {(section) => <RecentlyEditedContent section={section} timeZone={timeZone} />}
+          </SectionBody>
+        </Section>
+      );
+    case 'workflowStates':
+      return (
+        <Section id="workflowStates" title={title}>
+          <SectionBody
+            title={title}
+            data={data === undefined ? undefined : sectionData(data.workflowStates)}
+            {...props}
+          >
+            {(section) => <WorkflowStatesContent section={section} />}
+          </SectionBody>
+        </Section>
+      );
+    case 'withoutSelection': {
+      const without = data === undefined ? undefined : sectionData(data.withoutSelection);
+      return (
+        <Section
+          id="withoutSelection"
+          title={title}
+          action={
+            (without?.count ?? 0) > 0 && (
+              <Anchor
+                component={Link}
+                to={withoutSelectionAddress()}
+                size="sm"
+                aria-label="Show in Songs without a Selected Generation"
+              >
+                Show in Songs
+              </Anchor>
+            )
+          }
+        >
+          <SectionBody title={title} data={without} {...props}>
+            {(section) => <WithoutSelectionContent section={section} timeZone={timeZone} />}
+          </SectionBody>
+        </Section>
+      );
+    }
+    case 'unmatchedFiles':
+      return (
+        <Section id="unmatchedFiles" title={title}>
+          <SectionBody
+            title={title}
+            data={data === undefined ? undefined : sectionData(data.unmatchedFiles)}
+            {...props}
+          >
+            {(section) => <UnmatchedFilesContent section={section} />}
+          </SectionBody>
+        </Section>
+      );
+    case 'sunoReviews':
+      return (
+        <Section id="sunoReviews" title={title}>
+          <SectionBody
+            title={title}
+            data={data === undefined ? undefined : sectionData(data.sunoReviews)}
+            {...props}
+          >
+            {(section) => <SunoReviewsContent section={section} timeZone={timeZone} />}
+          </SectionBody>
+        </Section>
+      );
+    case 'sunoProblems':
+      return (
+        <Section id="sunoProblems" title={title}>
+          <SectionBody
+            title={title}
+            data={data === undefined ? undefined : sectionData(data.sunoProblems)}
+            {...props}
+          >
+            {(section) => (
+              <SunoProblemsContent section={section} timeZone={timeZone} onDismissed={onRetry} />
+            )}
+          </SectionBody>
+        </Section>
+      );
+  }
 }
 
 /**
- * The dashboard (#228), the home page: Recently edited (the ten active Songs changed last, with See
- * all), By workflow state (each state's count, opening the Songs table filtered to it), and Without
- * a Selected Generation (how many active Songs with Generations have none selected, the ten changed
- * last, and the Songs table filtered the same way). Every count is the total of the Songs table the
- * link opens. Then (#229) what needs attention: Unmatched Files, Suno reviews, and Suno problems,
- * each count the total of the page it links to. All come from one read, but each shows its own
- * loading, empty, and failed state. An instance with no Songs shows a welcome with New Song instead
- * of the catalog sections, above what needs attention. The page reads again when the
- * window regains focus (at most every 30 seconds), showing what it had meanwhile and a small notice
- * if that read fails. One column on a narrow screen, two on a wide one.
+ * The dashboard (#228), the home page. Quick actions (#230) come first and are always shown. Then
+ * the sections, in the order the user arranged and without those they hid (Customize, #230; the
+ * default order otherwise): Recently edited (the ten active Songs changed last, with See all), By
+ * workflow state (each state's count, opening the Songs table filtered to it), Without a Selected
+ * Generation (how many active Songs with Generations have none selected, the ten changed last, and
+ * the Songs table filtered the same way), and (#229) what needs attention: Unmatched Files, Suno
+ * reviews, and Suno problems. Every count is the total of the page its link opens. All come from one
+ * read, but each shows its own loading, empty, and failed state. An instance with no Songs shows a
+ * welcome in place of the catalog sections, above what needs attention. When every section is hidden
+ * the page says so, with Customize. The page reads again when the window regains focus (at most every
+ * 30 seconds), showing what it had meanwhile and a small notice if that read fails. One column on a
+ * narrow screen, two on a wide one.
  */
 export function DashboardPage() {
   const { state, reload } = useDashboard();
   const timeZone = useConfiguredTimeZone();
+  const arrangement = useDashboardLayout();
+  const [customizing, setCustomizing] = useState(false);
   const data: Dashboard | undefined = state.data;
+  const emptyCatalog = data !== undefined && isEmptyCatalog(data);
 
-  const recent = data === undefined ? undefined : sectionData(data.recentlyEdited);
-  const counts = data === undefined ? undefined : sectionData(data.workflowStates);
-  const without = data === undefined ? undefined : sectionData(data.withoutSelection);
-  const sectionProps = { loading: state.loading, onRetry: reload };
+  const shown = arrangement.layout.sections
+    .filter((section) => !section.hidden)
+    .map((section) => section.key)
+    .filter((key) => !emptyCatalog || ATTENTION_KEYS.includes(key));
+  const everyHidden = arrangement.layout.sections.every((section) => section.hidden);
+  const openCustomize = () => {
+    setCustomizing(true);
+  };
 
   return (
     <Stack gap="lg">
-      <Title order={2}>Dashboard</Title>
+      <Group justify="space-between" align="center">
+        <Title order={2}>Dashboard</Title>
+        <Button variant="default" onClick={openCustomize} disabled={arrangement.loading}>
+          Customize
+        </Button>
+      </Group>
       {state.refreshFailed && (
         <Text size="sm" role="status" data-testid="dashboard-stale">
           The dashboard could not be refreshed, so it shows what was read before.
         </Text>
       )}
-      {data !== undefined && isEmptyCatalog(data) ? (
-        <>
-          <Welcome />
-          {/* #229: what needs attention can come before any Song (a first sync waiting for review). */}
-          <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
-            <AttentionSections data={data} timeZone={timeZone} {...sectionProps} />
-          </SimpleGrid>
-        </>
+      <QuickActions />
+      {emptyCatalog && <Welcome />}
+      {arrangement.loading ? (
+        <Loader size="sm" aria-label="Loading the dashboard’s arrangement" />
+      ) : everyHidden ? (
+        <Stack gap="xs" align="flex-start" data-testid="dashboard-all-hidden">
+          <Text>Every dashboard section is hidden.</Text>
+          <Button variant="default" size="xs" onClick={openCustomize}>
+            Customize the dashboard
+          </Button>
+        </Stack>
       ) : (
         <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
-          <Section
-            id="recentlyEdited"
-            title={TITLES.recentlyEdited}
-            action={
-              <Anchor
-                component={Link}
-                to={recentlyEditedAddress()}
-                size="sm"
-                aria-label="See all active Songs, last updated first"
-              >
-                See all
-              </Anchor>
-            }
-          >
-            <SectionBody title={TITLES.recentlyEdited} data={recent} {...sectionProps}>
-              {(section) => <RecentlyEditedContent section={section} timeZone={timeZone} />}
-            </SectionBody>
-          </Section>
-          <Section id="workflowStates" title={TITLES.workflowStates}>
-            <SectionBody title={TITLES.workflowStates} data={counts} {...sectionProps}>
-              {(section) => <WorkflowStatesContent section={section} />}
-            </SectionBody>
-          </Section>
-          <Section
-            id="withoutSelection"
-            title={TITLES.withoutSelection}
-            action={
-              (without?.count ?? 0) > 0 && (
-                <Anchor
-                  component={Link}
-                  to={withoutSelectionAddress()}
-                  size="sm"
-                  aria-label="Show in Songs without a Selected Generation"
-                >
-                  Show in Songs
-                </Anchor>
-              )
-            }
-          >
-            <SectionBody title={TITLES.withoutSelection} data={without} {...sectionProps}>
-              {(section) => <WithoutSelectionContent section={section} timeZone={timeZone} />}
-            </SectionBody>
-          </Section>
-          <AttentionSections data={data} timeZone={timeZone} {...sectionProps} />
+          {shown.map((key) => (
+            <DashboardSectionView
+              key={key}
+              sectionKey={key}
+              data={data}
+              loading={state.loading}
+              onRetry={reload}
+              timeZone={timeZone}
+            />
+          ))}
         </SimpleGrid>
       )}
+      <CustomizeDashboard
+        opened={customizing}
+        layout={arrangement.layout}
+        titles={TITLES}
+        onClose={() => {
+          setCustomizing(false);
+        }}
+        onSaved={arrangement.replace}
+        onReload={arrangement.reload}
+      />
     </Stack>
   );
 }

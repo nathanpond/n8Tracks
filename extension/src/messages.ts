@@ -71,9 +71,17 @@ export interface PageMessage {
 /**
  * The page messages the extension handles (#144), as the relay passes them on: Generate on Suno hands
  * over the ID of a request n8Tracks made, which the extension claims with its own token; the page
- * may also ask the extension to open its options.
+ * may also ask the extension to open its options, or (#230, the dashboard's Sync with Suno) to open
+ * the user's Suno library with the panel on its Sync view, which starts nothing by itself.
  */
-export type PageRequest = { type: 'generate'; requestId: string } | { type: 'open-options' };
+export type PageRequest =
+  { type: 'generate'; requestId: string } | { type: 'open-options' } | { type: 'open-sync' };
+
+/**
+ * Why `open-sync` opened nothing (#230): not paired with this n8Tracks (or a permission it needs was
+ * removed), the credential was revoked, it lacks `suno.sync`, or n8Tracks cannot be reached.
+ */
+export type OpenSyncFailure = 'unpaired' | 'revoked' | 'missing_scope' | 'unreachable';
 
 /** Why the extension did not take a generation request, for the page to say. */
 export type GenerateFailure =
@@ -90,7 +98,13 @@ export type RelayReply =
   | { type: 'error'; error: 'unknown_type' | GenerateFailure; message: string }
   /** The request is claimed: the extension has it, bound to its credential. */
   | { type: 'generate-accepted'; requestId: string }
-  | { type: 'options-opened' };
+  | { type: 'options-opened' }
+  /**
+   * `open-sync` (#230): the Suno library is opening in a new tab with the panel on its Sync view, with
+   * a warning when the extension and n8Tracks are not compatible versions; or why it is not.
+   */
+  | { type: 'open-sync'; ok: true; warning?: string }
+  | { type: 'open-sync'; ok: false; reason: OpenSyncFailure; message: string };
 
 /**
  * A generation request the extension has claimed (#144), kept in session storage for the steps that
@@ -178,6 +192,8 @@ export function pageRequestOf(message: PageMessage): PageRequest | null {
         : null;
     case 'open-options':
       return { type: 'open-options' };
+    case 'open-sync':
+      return { type: 'open-sync' };
     default:
       return null;
   }
@@ -407,8 +423,11 @@ export interface ResponseFor {
   /** Whether an export of this extension's is waiting for review, which the new one replaces. */
   'sync-preview': { replacesReady: boolean };
   'sync-begin': SyncReply<{ session: SyncSession }>;
-  /** The sync this tab is running, if any. */
-  'sync-resume': { session: SyncSession | null };
+  /**
+   * The sync this tab is running, if any; `open` when this tab was opened by `open-sync` (#230) and
+   * the panel is to open on its Sync view, once.
+   */
+  'sync-resume': { session: SyncSession | null; open?: true };
   'sync-save': SyncReply;
   'sync-create': SyncReply<{ exportId: string }>;
   'sync-part': SyncReply;

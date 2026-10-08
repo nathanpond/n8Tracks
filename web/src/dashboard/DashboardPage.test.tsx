@@ -214,7 +214,7 @@ describe('the dashboard', () => {
     }
   });
 
-  it('welcomes a new, empty instance with New Song in place of the sections', async () => {
+  it('welcomes a new, empty instance in place of the sections, pointing to New Song (#230: a quick action)', async () => {
     server(
       ok(
         dashboard({
@@ -240,7 +240,8 @@ describe('the dashboard', () => {
     expect(screen.queryByRole('region', { name: 'Recently edited' })).not.toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'By workflow state' })).not.toBeInTheDocument();
 
-    await user.click(within(welcome).getByRole('button', { name: 'New Song' }));
+    expect(within(welcome).queryByRole('button')).not.toBeInTheDocument();
+    await user.click(within(section('Quick actions')).getByRole('button', { name: 'New Song' }));
     expect(await screen.findByRole('dialog', { name: 'New Song' })).toBeInTheDocument();
   });
 

@@ -99,7 +99,8 @@ test.describe('the dashboard', { tag: '@root-only' }, () => {
   test('opens after signing in and leads to the Songs behind each count', async ({ page }) => {
     test.setTimeout(240_000);
 
-    // A new instance: signing in lands on the dashboard, which welcomes with New Song.
+    // A new instance: signing in lands on the dashboard, which welcomes, with New Song among the
+    // quick actions (#230).
     await page.goto(FRESH_URL);
     await signInWithTheForm(page, TEST_ADMIN.username, TEST_ADMIN.password);
     await expect(userMenu(page)).toHaveText(TEST_ADMIN.username);
@@ -107,7 +108,9 @@ test.describe('the dashboard', { tag: '@root-only' }, () => {
     await expect(page).toHaveURL(FRESH_URL);
     const welcome = page.getByTestId('dashboard-welcome');
     await expect(welcome.getByRole('heading', { name: 'Welcome to n8Tracks' })).toBeVisible();
-    await expect(welcome.getByRole('button', { name: 'New Song' })).toBeVisible();
+    await expect(
+      section(page, 'Quick actions').getByRole('button', { name: 'New Song' }),
+    ).toBeVisible();
     await expect(
       page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Home' }),
     ).toHaveAttribute('aria-current', 'page');

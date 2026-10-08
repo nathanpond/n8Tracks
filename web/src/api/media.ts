@@ -224,8 +224,12 @@ function failedRead(latest: { data: MediaStatus; readAt: number } | null): Media
   return latest === null ? { phase: 'error' } : { phase: 'ready', ...latest, stale: true };
 }
 
-/** How asking for a scan ended: its job (`started` false when one was already queued or running), or `failed`. */
-export type StartScanResult = { kind: 'started'; jobId: string } | { kind: 'failed' };
+/**
+ * How asking for a scan ended: its job (`alreadyInProgress` when one was already queued or running,
+ * which is answered instead of starting another), or `failed`.
+ */
+export type StartScanResult =
+  { kind: 'started'; jobId: string; alreadyInProgress: boolean } | { kind: 'failed' };
 
 /** Scan Library: queues a scan, or answers the one already queued or running. */
 export async function startScan(): Promise<StartScanResult> {
@@ -234,7 +238,11 @@ export async function startScan(): Promise<StartScanResult> {
     const answer = await body(response);
     if ((response.status === 202 || response.status === 200) && isRecord(answer)) {
       if (typeof answer.jobId === 'string') {
-        return { kind: 'started', jobId: answer.jobId };
+        return {
+          kind: 'started',
+          jobId: answer.jobId,
+          alreadyInProgress: answer.alreadyInProgress === true,
+        };
       }
     }
     return { kind: 'failed' };

@@ -10,6 +10,7 @@ import {
   PART_RETRIES,
   reviewAddress,
   SYNC_KEY,
+  SYNC_PANEL_KEY,
   SyncCoordinator,
   type SyncBrowser,
 } from './sync.ts';
@@ -39,17 +40,17 @@ async function setup(scopes = ['suno.sync'], imageFetch?: ImageFetch) {
     }
     return jsonResponse(200, { id: EXPORT, state: 'ready' });
   };
+  let handshake = (): Response =>
+    jsonResponse(200, {
+      applicationVersion: '0.1.0',
+      credentialName: 'Chrome',
+      scopes,
+      compatible: true,
+    });
   const fetchImpl = vi.fn<Fetch>((input, init) => {
     const path = input.slice(`${ADDRESS}/`.length);
     if (path === 'api/v1/extension/handshake') {
-      return Promise.resolve(
-        jsonResponse(200, {
-          applicationVersion: '0.1.0',
-          credentialName: 'Chrome',
-          scopes,
-          compatible: true,
-        }),
-      );
+      return Promise.resolve(handshake());
     }
     const call = {
       method: init.method ?? 'GET',
@@ -88,7 +89,7 @@ async function setup(scopes = ['suno.sync'], imageFetch?: ImageFetch) {
   });
   const openTabs: { id?: number; url?: string }[] = [{ id: TAB, url: 'https://suno.com/me/trash' }];
   const tabs = {
-    get: vi.fn((tabId: number) => Promise.resolve({ id: tabId, windowId: 3 })),
+    get: vi.fn<SyncBrowser['tabs']['get']>((tabId) => Promise.resolve({ id: tabId, windowId: 3 })),
     query: vi.fn<SyncBrowser['tabs']['query']>(() => Promise.resolve(openTabs)),
     update: vi.fn<SyncBrowser['tabs']['update']>(() => Promise.resolve({})),
     create: vi.fn<SyncBrowser['tabs']['create']>(() => Promise.resolve({})),
@@ -120,6 +121,11 @@ async function setup(scopes = ['suno.sync'], imageFetch?: ImageFetch) {
     answer: (next: (call: Call) => Response) => {
       answer = next;
     },
+    /** Changes how the handshake (re-run before `open-sync`) is answered. */
+    handshake: (next: () => Response) => {
+      handshake = next;
+    },
+    connection,
   };
 }
 
@@ -494,5 +500,98 @@ describe('cover images with a sync (#152)', () => {
     expect(context.local.has(IMAGES_KEY)).toBe(false);
     expect(context.reads).not.toHaveBeenCalled();
     expect(await context.send({ type: 'sync-images' })).toEqual({ images: null });
+  });
+});
+
+describe('opening the Sync view from the dashboard (#230)', () => {
+  const PAGE = `${ADDRESS}/`;
+  const N8TRACKS_TAB = 4;
+
+  it('opens the Suno library in a new tab beside the page, and that tab opens the panel once', async () => {
+    const context = await setup();
+    context.tabs.get.mockResolvedValue({ id: N8TRACKS_TAB, windowId: 3, index: 5 });
+    context.tabs.create.mockResolvedValue({ id: 12 });
+
+    expect(await context.sync.openSync(PAGE, N8TRACKS_TAB)).toEqual({
+      type: 'open-sync',
+      ok: true,
+    });
+    expect(context.tabs.create).toHaveBeenCalledWith({
+      url: 'https://suno.com/me',
+      active: true,
+      windowId: 3,
+      index: 6,
+    });
+    expect(context.session.get(SYNC_PANEL_KEY)).toEqual({ tabId: 12 });
+
+    // It starts nothing: no sync session, and no call to n8Tracks but the handshake.
+    expect(context.session.has(SYNC_KEY)).toBe(false);
+    expect(context.calls).toEqual([]);
+
+    // Another tab's page load is not it; the new tab's first load opens the panel, and only that load.
+    expect(await context.send({ type: 'sync-resume' }, 8)).toEqual({ session: null });
+    expect(await context.send({ type: 'sync-resume' }, 12)).toEqual({ session: null, open: true });
+    expect(await context.send({ type: 'sync-resume' }, 12)).toEqual({ session: null });
+    expect(context.session.has(SYNC_KEY)).toBe(false);
+  });
+
+  it('says why it opens nothing when the credential lacks suno.sync', async () => {
+    const context = await setup(['suno.generate']);
+    const answer = await context.sync.openSync(PAGE, N8TRACKS_TAB);
+    expect(answer).toMatchObject({ type: 'open-sync', ok: false, reason: 'missing_scope' });
+    expect(context.tabs.create).not.toHaveBeenCalled();
+  });
+
+  it('says the credential was revoked when n8Tracks refuses the token on the fresh check', async () => {
+    const context = await setup();
+    context.handshake(() => jsonResponse(401, { code: 'invalid_token' }));
+    expect(await context.sync.openSync(PAGE, N8TRACKS_TAB)).toMatchObject({
+      type: 'open-sync',
+      ok: false,
+      reason: 'revoked',
+    });
+    expect(context.tabs.create).not.toHaveBeenCalled();
+  });
+
+  it('says it is not paired once disconnected, or when the page is another n8Tracks', async () => {
+    const context = await setup();
+    expect(await context.sync.openSync('https://other.example.com/', N8TRACKS_TAB)).toMatchObject({
+      ok: false,
+      reason: 'unpaired',
+    });
+    await context.connection.disconnect();
+    expect(await context.sync.openSync(PAGE, N8TRACKS_TAB)).toMatchObject({
+      ok: false,
+      reason: 'unpaired',
+    });
+    expect(context.tabs.create).not.toHaveBeenCalled();
+  });
+
+  it('says n8Tracks cannot be reached when the handshake does not answer', async () => {
+    const context = await setup();
+    context.handshake(() => {
+      throw new TypeError('Failed to fetch');
+    });
+    expect(await context.sync.openSync(PAGE, N8TRACKS_TAB)).toMatchObject({
+      ok: false,
+      reason: 'unreachable',
+    });
+  });
+
+  it('warns and still opens the tab when the versions are not compatible', async () => {
+    const context = await setup();
+    context.handshake(() =>
+      jsonResponse(200, {
+        applicationVersion: '9.0.0',
+        credentialName: 'Chrome',
+        scopes: ['suno.sync'],
+        compatible: false,
+      }),
+    );
+    context.tabs.create.mockResolvedValue({ id: 12 });
+    const answer = await context.sync.openSync(PAGE, N8TRACKS_TAB);
+    expect(answer).toMatchObject({ type: 'open-sync', ok: true });
+    expect(answer).toHaveProperty('warning', expect.stringContaining('9.0.0'));
+    expect(context.tabs.create).toHaveBeenCalledOnce();
   });
 });

@@ -116,6 +116,27 @@ describe('the Song page', () => {
     expect(await screen.findByLabelText('Loading the Song')).toBeInTheDocument();
   });
 
+  it('records the Song it opened as the last one, and nothing for a Song it could not open (#230)', async () => {
+    const mock = backend((reference) =>
+      reference === 'n8-7' ? jsonResponse(200, song) : jsonResponse(404, { code: 'not_found' }),
+    );
+    const recorded = () =>
+      mock.mock.calls
+        .filter(([input]) => requestPath(input).endsWith('/api/v1/settings/last-song'))
+        .map(([, init]) => ({ method: init?.method, body: init?.body }));
+
+    const { unmount } = renderApp('/songs/n8-99');
+    await screen.findByRole('heading', { level: 2, name: 'Song not found' });
+    expect(recorded()).toEqual([]);
+    unmount();
+
+    renderApp('/songs/n8-7');
+    await screen.findByRole('heading', { level: 2, name: 'Running in a Pack' });
+    await waitFor(() => {
+      expect(recorded()).toEqual([{ method: 'PUT', body: JSON.stringify({ song: song.id }) }]);
+    });
+  });
+
   it('says when there is no such Song', async () => {
     backend(() => jsonResponse(404, { code: 'not_found' }));
 

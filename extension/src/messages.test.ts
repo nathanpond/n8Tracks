@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DISCARD_STEP_MAXIMUM_LENGTH, isRequest } from './messages.ts';
+import { DISCARD_STEP_MAXIMUM_LENGTH, isRequest, pageRequestOf } from './messages.ts';
 
 describe('the sync-discard request (#229)', () => {
   it('takes no reason, a cancel, or a failure with the step', () => {
@@ -22,5 +22,17 @@ describe('the sync-discard request (#229)', () => {
         reason: { reason: 'failed', step: 'x'.repeat(DISCARD_STEP_MAXIMUM_LENGTH + 1) },
       }),
     ).toBe(false);
+  });
+});
+
+describe('the page messages the extension handles', () => {
+  it('takes open-sync (#230) with nothing else from the page', () => {
+    expect(pageRequestOf({ source: 'n8tracks', type: 'open-sync', id: '1', tab: 99 })).toEqual({
+      type: 'open-sync',
+    });
+    expect(pageRequestOf({ source: 'n8tracks', type: 'open-options' })).toEqual({
+      type: 'open-options',
+    });
+    expect(pageRequestOf({ source: 'n8tracks', type: 'sync-begin' })).toBeNull();
   });
 });

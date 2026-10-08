@@ -107,6 +107,8 @@ public static class DependencyInjection
         services.AddScoped<INotificationStore, NotificationStore>();
         services.AddSingleton<INotificationLog, NotificationLog>();
         services.AddSingleton<StartupNotices>();
+        services.AddScoped<IDashboardLayoutStore, DashboardLayoutStore>();
+        services.AddScoped<ILastSongStore, LastSongStore>();
         services.AddScoped<IVersionDefaultsStore, VersionDefaultsStore>();
         services.AddScoped<ISearchIndex, SearchIndex>();
         services.AddScoped<ISearchSourceStore, SearchSourceStore>();
