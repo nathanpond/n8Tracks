@@ -52,6 +52,20 @@ public sealed record GenerationPlayback(ReportedAudioFile? Played, PlaybackReaso
 /// </summary>
 public sealed record SongPlayback(ReportedAudioFile? Played, PlaybackReason Reason, Guid? GenerationId);
 
+/// <summary>
+/// Whether a Generation has something to play (#218), without naming the file: <see cref="Reason"/> is
+/// null when it has, and why not otherwise. The list answers carry it so each row's Play control knows
+/// whether it can play without asking per row.
+/// </summary>
+public sealed record GenerationPlayability(bool Playable, PlaybackReason? Reason)
+{
+    /// <summary>A Generation with no file that could play.</summary>
+    public static GenerationPlayability NothingAvailable { get; } = new(false, PlaybackReason.NothingAvailable);
+
+    /// <summary>A Generation that plays a file.</summary>
+    public static GenerationPlayability Available { get; } = new(true, null);
+}
+
 /// <summary>Whether a file of a Song's list plays now for its Generation, and for the Song (#212).</summary>
 public sealed record PlaybackMarks(bool PlaysForGeneration, bool PlaysForSong);
 
@@ -93,6 +107,20 @@ public static class PlaybackResolver
         }
 
         return new GenerationPlayback(best, preferred is null ? PlaybackReason.FormatOrder : FallbackOf(preferred));
+    }
+
+    /// <summary>
+    /// Whether a Generation whose files report <paramref name="generationFileStatuses"/> plays a file:
+    /// exactly when <see cref="ForGeneration"/> would name one, which is when one of them is available
+    /// (a preferred file plays only while available, and otherwise the best available one does).
+    /// </summary>
+    public static GenerationPlayability PlayabilityOf(IEnumerable<AudioFileReportedStatus> generationFileStatuses)
+    {
+        ArgumentNullException.ThrowIfNull(generationFileStatuses);
+
+        return generationFileStatuses.Any(static status => status == AudioFileReportedStatus.Available)
+            ? GenerationPlayability.Available
+            : GenerationPlayability.NothingAvailable;
     }
 
     /// <summary>

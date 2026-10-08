@@ -1,4 +1,4 @@
-import { Button, Loader, Stack, Text, Title } from '@mantine/core';
+import { Button, Group, Loader, Stack, Text, Title } from '@mantine/core';
 import type { UnmatchedFile } from '../api/audioFiles';
 import type { Generation } from '../api/generations';
 import type { LoadState } from '../api/songs';
@@ -16,13 +16,15 @@ import {
   sizeMbText,
   songFolderText,
 } from '../media/songAudioFilesRules';
+import { PlayButton } from '../player/PlayButton';
 
 /**
  * The Generation panel's local audio files (#211): the Song's list filtered here to this Generation,
  * in the Song list's order (by format), each with its file name, folder, format, duration, size,
  * status (Missing and Unavailable ones listed and marked), how it was associated, what it is for
  * playback (#212: preferred, plays now, and why the two differ), and its Make preferred (or Clear
- * preferred), Change association, and Remove association actions. A Generation with none says so.
+ * preferred), Change association, and Remove association actions, and (#218) its Play control. A
+ * Generation with none says so.
  */
 export function GenerationAudioFiles({
   generation,
@@ -78,9 +80,12 @@ export function GenerationAudioFiles({
               data-plays-now={String(playsNow(file))}
             >
               <Stack gap={4}>
-                <Text size="sm" fw={600} style={{ overflowWrap: 'anywhere' }}>
-                  {file.fileName}
-                </Text>
+                <Group gap="xs" wrap="nowrap" align="flex-start">
+                  <PlayButton target={{ kind: 'file', file }} />
+                  <Text size="sm" fw={600} style={{ overflowWrap: 'anywhere' }}>
+                    {file.fileName}
+                  </Text>
+                </Group>
                 <Text
                   size="xs"
                   c="var(--n8-color-secondary-text)"

@@ -74,6 +74,7 @@ export function testGeneration(
     comments: [],
     artwork: null,
     audioFiles: { count: 0, missing: 0, unavailable: 0, formats: [] },
+    playback: { playable: false, reason: 'nothing_available' },
     ...change,
   };
 }
@@ -265,6 +266,15 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     }[],
     /** When set, answers the next preferred-file write (once) instead of the fake API. */
     nextPreferenceWrite: undefined as (() => Response | Promise<Response>) | undefined,
+    /**
+     * What `GET /generations/{id}/playback` answers (#212) for each Generation, by its ID; a Generation
+     * not listed answers `source: none`.
+     */
+    playback: new Map<string, unknown>(),
+    /** The Generations whose playback was asked for (#218), in order. */
+    playbackReads: [] as string[],
+    /** When set, answers the next playback read (once) instead of the fake API. */
+    nextPlayback: undefined as (() => Response | Promise<Response>) | undefined,
     /** Each Generation's download records (#222), by its ID; none unless set. */
     downloads: new Map<string, GenerationDownload[]>(),
     /** How many times the Song's Generation list was read. */
@@ -1177,6 +1187,21 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
         comments: generation.comments.map((other) => (other === comment ? edited : other)),
       });
       return jsonResponse(200, edited);
+    }
+
+    const playback = /\/api\/v1\/generations\/([^/]+)\/playback$/.exec(path);
+    if (playback && method === 'GET') {
+      const id = decodeURIComponent(playback[1] ?? '');
+      server.playbackReads.push(id);
+      const nextPlayback = server.nextPlayback;
+      if (nextPlayback) {
+        server.nextPlayback = undefined;
+        return nextPlayback();
+      }
+      return jsonResponse(
+        200,
+        server.playback.get(id) ?? { source: 'none', audioFile: null, reason: 'nothing_available' },
+      );
     }
 
     const songAudioFiles = /\/api\/v1\/songs\/([^/]+)\/audio-files$/.exec(path);

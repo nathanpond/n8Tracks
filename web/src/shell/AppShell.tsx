@@ -4,6 +4,9 @@ import { useEffect } from 'react';
 import { Link, Outlet, useLocation } from 'react-router';
 import { GoToBox } from '../common/GoToBox';
 import { AppHeader } from '../components/AppHeader';
+import { PlayerBar } from '../player/PlayerBar';
+import { usePlayer } from '../player/playerContext';
+import { PlayerProvider } from '../player/PlayerProvider';
 import { UserMenu } from './UserMenu';
 
 /** A sidebar entry: a link to one page, marked as the current page when it is. */
@@ -31,15 +34,34 @@ function SidebarLink({
   );
 }
 
+/** The player bar's height (#218): it reserves this much at the bottom, so it never covers the page. */
+const PLAYER_BAR_HEIGHT = { base: 168, sm: 104 };
+
+/**
+ * The signed-in shell, inside the app's one player (#218): the player sits above the router outlet,
+ * so moving between pages never touches what is playing. See {@link ShellLayout}.
+ */
+export function SignedInShell() {
+  return (
+    <PlayerProvider>
+      <ShellLayout />
+    </PlayerProvider>
+  );
+}
+
 /**
  * The signed-in shell: the header (sidebar toggle, product name, colour control, Go to box, user menu), the
  * sidebar, and the current page. The sidebar lists Songs, Artists, Albums, Playlists, Suno import, Ignored Suno items, Library (Media, Unmatched Files), and Settings, and Settings has Account,
  * Credentials, Workflow, Catalog, Genres, Tags, Relationships, Suno, Suno workspaces, Backups, and System; later stories add pages. On a narrow screen the sidebar is hidden until the toggle opens
- * it, and choosing a page closes it again.
+ * it, and choosing a page closes it again. Once something has been played, the player bar (#218) is
+ * the footer of every page, with its own space at the bottom.
  */
-export function SignedInShell() {
+function ShellLayout() {
   const [opened, { toggle, close }] = useDisclosure(false);
   const { pathname } = useLocation();
+  const player = usePlayer();
+  const showPlayer =
+    player !== null && (player.state.current !== null || player.state.notice !== null);
 
   // A page opened some other way (back, a link in a page) closes the sidebar on a narrow screen too.
   useEffect(() => {
@@ -50,6 +72,7 @@ export function SignedInShell() {
     <AppShell
       header={{ height: 56 }}
       navbar={{ width: 220, breakpoint: 'sm', collapsed: { mobile: !opened } }}
+      footer={showPlayer ? { height: PLAYER_BAR_HEIGHT } : undefined}
       padding="md"
     >
       <AppHeader navigation={{ opened, toggle }}>
@@ -116,6 +139,11 @@ export function SignedInShell() {
           <Outlet />
         </Container>
       </AppShell.Main>
+      {showPlayer && (
+        <AppShell.Footer px="md" py="xs" aria-label="Player" style={{ overflowY: 'auto' }}>
+          <PlayerBar player={player} />
+        </AppShell.Footer>
+      )}
     </AppShell>
   );
 }

@@ -37,6 +37,7 @@ import {
   type GenerationRowActions,
 } from '../generations/GenerationParts';
 import { StarRating } from '../generations/StarRating';
+import { PlayButton } from '../player/PlayButton';
 import { compareNumbers } from './versionNesting';
 import { generationsByVersion, isGenerationListed, isListed } from './versionsTableRules';
 
@@ -53,6 +54,7 @@ function GenerationRows({
   timeZone,
   onRate,
   actions,
+  songTitle,
 }: {
   version: Version;
   generations: readonly Generation[];
@@ -62,6 +64,7 @@ function GenerationRows({
   timeZone: string;
   onRate: (generation: Generation, rating: number | null) => void;
   actions: GenerationRowActions;
+  songTitle: string;
 }) {
   if (generations.length === 0) {
     return (
@@ -89,6 +92,9 @@ function GenerationRows({
       >
         <Table.Thead>
           <Table.Tr>
+            <Table.Th scope="col">
+              <VisuallyHidden>Play</VisuallyHidden>
+            </Table.Th>
             <Table.Th scope="col">Shortcode</Table.Th>
             <Table.Th scope="col">Suno title</Table.Th>
             <Table.Th scope="col">Duration</Table.Th>
@@ -115,6 +121,9 @@ function GenerationRows({
                 data-open={open || undefined}
                 bg={open ? 'var(--mantine-color-default-hover)' : undefined}
               >
+                <Table.Td>
+                  <PlayButton target={{ kind: 'generation', generation, songTitle }} />
+                </Table.Td>
                 <Table.Td style={{ whiteSpace: 'nowrap' }}>
                   <ShortcodeBadge shortcode={generation.shortcode} testId="generation-shortcode" />
                 </Table.Td>
@@ -190,7 +199,8 @@ function GenerationRows({
  * while `showArchivedGenerations` is on (the Selected one always is). Each Generation row has its
  * shortcode with a one-click copy, its local audio files (#211: "2 files · WAV, MP3 · 1 missing", or
  * nothing), its star rating (set here too, `onRate`; the Version's highest rating follows at once),
- * its comment count, and an actions menu that archives or reactivates it
+ * its comment count, its Play control (#218: what the playback rule names for it plays in the player
+ * bar; disabled with the reason when nothing can play), and an actions menu that archives or reactivates it
  * and selects it for the Song or clears that (`actions`); its title opens the Generation panel. `revealVersionId`
  * expands that Version's row (a link to one of its Generations); expansion is otherwise this page's.
  */
@@ -209,6 +219,7 @@ export function VersionsTable({
   generationLink,
   onRate,
   actions,
+  songTitle,
 }: {
   versions: readonly Version[];
   generations: LoadState<Generation[]>;
@@ -224,6 +235,8 @@ export function VersionsTable({
   generationLink: (generation: Generation) => string;
   onRate: (generation: Generation, rating: number | null) => void;
   actions: GenerationRowActions;
+  /** The Song's title, which the player bar shows for a Generation played here (#218). */
+  songTitle: string;
 }) {
   const timeZone = useConfiguredTimeZone();
   const [open, setOpen] = useState(true);
@@ -409,6 +422,7 @@ export function VersionsTable({
                                 timeZone={timeZone}
                                 onRate={onRate}
                                 actions={actions}
+                                songTitle={songTitle}
                               />
                             </Table.Td>
                           </Table.Tr>

@@ -86,7 +86,9 @@ describe('Library → Unmatched Files', () => {
     }
     const cells = within(first).getAllByRole('cell');
     expect(within(first).getByRole('rowheader')).toHaveTextContent('My Song Title.mp3');
-    expect(cells.map((cell) => cell.textContent).slice(0, 4)).toEqual([
+    // The first cell holds the file's Play control (#218).
+    expect(cells.map((cell) => cell.textContent).slice(0, 5)).toEqual([
+      'Play',
       'Top level',
       'mp3',
       '3:07',
@@ -99,7 +101,7 @@ describe('Library → Unmatched Files', () => {
       '/go/n8-1',
     );
     expect(within(list).getByText('Title matches the file name')).toBeVisible();
-    expect(within(second).getAllByRole('cell')[0]).toHaveTextContent('Album/Disc 1');
+    expect(within(second).getAllByRole('cell')[1]).toHaveTextContent('Album/Disc 1');
     expect(within(second).getByText('Unknown')).toBeVisible();
     expect(within(second).getByTestId('no-suggestions')).toHaveTextContent('No suggestions');
     expect(screen.getByTestId('unmatched-total')).toHaveTextContent('2 files');
@@ -278,7 +280,7 @@ describe('Library → Unmatched Files', () => {
       within(row)
         .getAllByRole('button')
         .map((button) => button.textContent),
-    ).toEqual(['Associate', 'Choose a Song…']);
+    ).toEqual(['Play', 'Associate', 'Choose a Song…']);
     expect(screen.queryByRole('button', { name: /hide|dismiss|ignore/i })).not.toBeInTheDocument();
   });
 });

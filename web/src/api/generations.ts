@@ -78,6 +78,25 @@ export interface Generation {
   artwork: Artwork | null;
   /** Its local audio files (#211), as they report now: counts and formats only. */
   audioFiles: GenerationAudioFiles;
+  /** Whether it has something to play (#218), as the playback rule decides it. */
+  playback: GenerationPlayability;
+}
+
+/**
+ * Whether a Generation has something to play (#218), decided by the server's playback rule (#212):
+ * `reason` is null when it has, and a playback reason code (`nothing_available`) when not. The Play
+ * controls read it; which file plays is asked only when Play is pressed.
+ */
+export interface GenerationPlayability {
+  playable: boolean;
+  reason: string | null;
+}
+
+/** Nothing to play: also what an answer from before #218 is read as. */
+export const NOT_PLAYABLE: GenerationPlayability = { playable: false, reason: 'nothing_available' };
+
+function isPlayability(value: unknown): value is GenerationPlayability {
+  return isRecord(value) && typeof value.playable === 'boolean' && textOrNull(value.reason);
 }
 
 /**
@@ -181,11 +200,14 @@ export function generationOf(value: unknown): Generation | undefined {
   const artwork = value.artwork ?? null;
   // An answer from before #211 has no audio files field: it has none.
   const audioFiles = value.audioFiles ?? NO_AUDIO_FILES;
+  // An answer from before #218 has no playback field: it has nothing to play.
+  const playback = value.playback ?? NOT_PLAYABLE;
   if (
     !numberOrNull(rating) ||
     comments === undefined ||
     (artwork !== null && !isArtwork(artwork)) ||
-    !isAudioFiles(audioFiles)
+    !isAudioFiles(audioFiles) ||
+    !isPlayability(playback)
   ) {
     return undefined;
   }
@@ -212,6 +234,7 @@ export function generationOf(value: unknown): Generation | undefined {
     comments,
     artwork,
     audioFiles,
+    playback: { playable: playback.playable, reason: playback.reason },
   };
 }
 

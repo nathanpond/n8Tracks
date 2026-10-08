@@ -35,6 +35,29 @@ public sealed class PlaybackResolverTests
         Assert.Equal(PlaybackReason.FormatOrder, playback.Reason);
     }
 
+    public static TheoryData<AudioFileReportedStatus[], bool> Playabilities => new()
+    {
+        { [], false },
+        { [AudioFileReportedStatus.Available], true },
+        { [AudioFileReportedStatus.Missing], false },
+        { [AudioFileReportedStatus.Unavailable, AudioFileReportedStatus.Unavailable], false },
+        { [AudioFileReportedStatus.Missing, AudioFileReportedStatus.Available], true },
+    };
+
+    [Theory]
+    [MemberData(nameof(Playabilities))]
+    public void AGenerationIsPlayableExactlyWhenItResolvesToAFile(AudioFileReportedStatus[] statuses, bool playable)
+    {
+        // The preferred file first, so a Missing or Unavailable choice falls back as it does in ForGeneration.
+        List<ReportedAudioFile> files = [.. statuses.Select((status, index) => File($"take{index}.mp3", G1, status, preferred: index == 0))];
+
+        var playability = PlaybackResolver.PlayabilityOf(statuses);
+
+        Assert.Equal(playable, playability.Playable);
+        Assert.Equal(PlaybackResolver.ForGeneration(files).Played is not null, playability.Playable);
+        Assert.Equal(playable ? null : PlaybackReason.NothingAvailable, playability.Reason);
+    }
+
     [Fact]
     public void TheFormatOrderIsWavM4aMp3FlacOggOpusAac() =>
         Assert.Equal(["wav", "m4a", "mp3", "flac", "ogg", "opus", "aac"], AudioFormats.InRankOrder(AudioFormats.All.Reverse()));

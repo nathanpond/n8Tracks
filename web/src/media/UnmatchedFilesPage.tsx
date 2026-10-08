@@ -12,6 +12,7 @@ import {
   Text,
   TextInput,
   Title,
+  VisuallyHidden,
 } from '@mantine/core';
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
@@ -34,6 +35,7 @@ import type { SaveResult } from '../api/saves';
 import { formatSize } from '../api/backups';
 import { formatDateTime, useConfiguredTimeZone } from '../api/timeZone';
 import { Notice } from '../components/Notice';
+import { PlayButton } from '../player/PlayButton';
 import { AssociateFileDialog } from './AssociateFileDialog';
 import { countText } from './mediaRules';
 import {
@@ -270,6 +272,9 @@ function FileRow({
   const why = unmatchedReasonText(file.unmatchedReason);
   return (
     <Table.Tr data-testid="unmatched-file" data-file={file.path}>
+      <Table.Td>
+        <PlayButton target={{ kind: 'file', file }} />
+      </Table.Td>
       <Table.Th scope="row" fw="normal">
         <Text size="sm" fw={600} style={{ wordBreak: 'break-word' }}>
           {file.fileName}
@@ -391,6 +396,9 @@ function FileTable({
       <Table withTableBorder verticalSpacing="sm" aria-label="Audio files">
         <Table.Thead>
           <Table.Tr>
+            <Table.Th scope="col">
+              <VisuallyHidden>Play</VisuallyHidden>
+            </Table.Th>
             <Table.Th scope="col">File</Table.Th>
             <Table.Th scope="col">Folder</Table.Th>
             <Table.Th scope="col">Format</Table.Th>

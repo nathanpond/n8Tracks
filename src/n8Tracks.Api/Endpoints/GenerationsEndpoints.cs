@@ -517,7 +517,8 @@ internal sealed record GenerationResponse(
     int Revision,
     AttachedArtworkResponse? Artwork,
     string? ArchivedBy,
-    GenerationAudioFilesResponse AudioFiles)
+    GenerationAudioFilesResponse AudioFiles,
+    GenerationPlayabilityResponse Playback)
 {
     /// <summary>The Generation as the API shows it; <paramref name="pathBase"/> starts its image's URLs.</summary>
     public static GenerationResponse From(GenerationSummary summary, PathString pathBase)
@@ -559,7 +560,23 @@ internal sealed record GenerationResponse(
             generation.Revision,
             summary.Artwork is { } artwork ? AttachedArtworkResponse.From(artwork with { Crop = null }, pathBase) : null,
             GenerationStates.ArchiverOf(generation.State, generation.ArchivedBy) is { } archiver ? GenerationStates.NameOf(archiver) : null,
-            GenerationAudioFilesResponse.From(summary.AudioFiles));
+            GenerationAudioFilesResponse.From(summary.AudioFiles),
+            GenerationPlayabilityResponse.From(summary.AudioFiles.Playability));
+    }
+}
+
+/// <summary>
+/// Whether a Generation has something to play (#218): <c>playable</c>, and <c>reason</c>, null when it
+/// has and a playback reason code (<c>nothing_available</c>) when not. The rows' Play controls read it,
+/// so no row asks <c>.../playback</c> before the user presses Play.
+/// </summary>
+internal sealed record GenerationPlayabilityResponse(bool Playable, string? Reason)
+{
+    public static GenerationPlayabilityResponse From(GenerationPlayability playability)
+    {
+        ArgumentNullException.ThrowIfNull(playability);
+
+        return new(playability.Playable, playability.Reason is { } reason ? PlaybackReasons.Text(reason) : null);
     }
 }
 
