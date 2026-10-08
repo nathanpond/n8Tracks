@@ -158,6 +158,34 @@ function writesSince(mock: ReturnType<typeof catalog>['mock'], from: number) {
 }
 
 describe('Compare', () => {
+  it('lists a stream-only Generation as a Suno stream and switches to Suno’s address (#221)', async () => {
+    const stream = 'https://d2lwuy8qc234o3.cloudfront.net/1/clip/two.m4a';
+    const { server } = catalog();
+    const secondId = server.generations[1]?.id ?? '';
+    const sources = server.playbackSources as { generations: Record<string, unknown>[] };
+    sources.generations[1] = {
+      ...sources.generations[1],
+      files: [],
+      sunoAudioUrl: stream,
+      sunoPageUrl: 'https://suno.com/song/two',
+    };
+    await openSong();
+    await playFirst();
+
+    await userEvent.click(screen.getByTestId('compare-button'));
+    const menu = await screen.findByRole('menu');
+    const item = within(menu).getByRole('menuitem', { name: `${G2} · Suno stream` });
+    expect(item).toHaveAttribute('data-source', 'suno');
+    expect(item).toHaveAttribute('data-file', `suno:${secondId}`);
+
+    await userEvent.click(item);
+    fake.loaded(125);
+    await waitFor(() => {
+      expect(src()).toBe(stream);
+    });
+    expect(screen.getByTestId('player-source')).toHaveTextContent('Streaming from Suno');
+  });
+
   it('lists the Song’s sources and switches while playing at the same moment, from the start when shorter', async () => {
     const { mock, secondFile, thirdFile, master, firstFile } = catalog();
     await openSong();

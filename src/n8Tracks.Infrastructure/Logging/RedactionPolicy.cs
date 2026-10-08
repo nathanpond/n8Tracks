@@ -70,6 +70,10 @@ public static class RedactionPolicy
         // Suno's style description of a clip (a Generation's metadata.tags): style text.
         "styletags",
 
+        // A clip's audio address (#221: the stream the browser plays when no local file does; also
+        // sunoAudioUrl): a Suno address may carry a signature, so it is never logged.
+        "audiourl",
+
         // A comment the user keeps on a Generation (generation_comments.text): their own words, under
         // the names it travels by ("text" alone is too common a word to mask everywhere).
         "comment",

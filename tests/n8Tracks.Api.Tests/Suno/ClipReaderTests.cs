@@ -34,8 +34,8 @@ public sealed class ClipReaderTests
                 "C_major",
                 new DateTimeOffset(2026, 10, 3, 14, 19, 53, 697, TimeSpan.Zero),
 
-                // The only media_urls entry is m4a, so the audio address is audio_url, as returned.
-                "https://studio-api.prod.suno.com/api/forbidden",
+                // The only media_urls entry is m4a-opus, which a browser plays (#221): it outranks audio_url.
+                "https://d2lwuy8qc234o3.cloudfront.net/1/clip/00000000-0000-4000-8000-000000000003.m4a",
                 "https://cdn2.suno.ai/image_00000000-0000-4000-8000-000000000003.jpeg",
                 "00000000-0000-4000-8000-000000000004",
                 1),
@@ -127,6 +127,30 @@ public sealed class ClipReaderTests
         // An entry is an MP3 by its content type or its address.
         clip["media_urls"] = new JsonArray(new JsonObject { ["url"] = "https://cdn1.suno.ai/byname.mp3" });
         Assert.Equal("https://cdn1.suno.ai/byname.mp3", Read(clip.ToJsonString()).AudioUrl);
+    }
+
+    [Fact]
+    public void ThePlayableMediaEntriesRankMp3ThenM4aThenOggAndAllOutrankTheAudioUrl()
+    {
+        var clip = JsonNode.Parse(Clips.FixtureClip("feed-v3.completed-clip.response.json"))!.AsObject();
+
+        // #221: by kind first, then by place in the list; entries of another kind are passed over.
+        clip["media_urls"] = new JsonArray(
+            new JsonObject { ["url"] = "https://d2lwuy8qc234o3.cloudfront.net/1/clip/x.wav", ["content_type"] = "wav" },
+            new JsonObject { ["url"] = "https://d2lwuy8qc234o3.cloudfront.net/1/clip/x.ogg", ["content_type"] = "audio/ogg" },
+            new JsonObject { ["url"] = "https://d2lwuy8qc234o3.cloudfront.net/1/clip/first.m4a", ["content_type"] = "m4a-opus" },
+            new JsonObject { ["url"] = "https://d2lwuy8qc234o3.cloudfront.net/1/clip/second.m4a" });
+        Assert.Equal("https://d2lwuy8qc234o3.cloudfront.net/1/clip/first.m4a", Read(clip.ToJsonString()).AudioUrl);
+
+        // An entry's kind is read from its address's path, without its query.
+        clip["media_urls"] = new JsonArray(
+            new JsonObject { ["url"] = "https://d2lwuy8qc234o3.cloudfront.net/1/clip/x.ogg?sig=1" },
+            new JsonObject { ["url"] = "https://d2lwuy8qc234o3.cloudfront.net/1/clip/x.flac?ext=.mp3" });
+        Assert.Equal("https://d2lwuy8qc234o3.cloudfront.net/1/clip/x.ogg?sig=1", Read(clip.ToJsonString()).AudioUrl);
+
+        // Nothing playable listed: audio_url, as returned.
+        clip["media_urls"] = new JsonArray(new JsonObject { ["url"] = "https://d2lwuy8qc234o3.cloudfront.net/1/clip/x.wav", ["content_type"] = "wav" });
+        Assert.Equal("https://studio-api.prod.suno.com/api/forbidden", Read(clip.ToJsonString()).AudioUrl);
     }
 
     [Fact]

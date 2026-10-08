@@ -94,7 +94,7 @@ public sealed class GenerationEndpointTests
         Assert.Equal(130.05, read.GetProperty("averageBpm").GetDouble());
         Assert.Equal("C_major", read.GetProperty("key").GetString());
         Assert.Equal("2026-10-03T14:19:53.697Z", read.GetProperty("sunoCreatedAt").GetString());
-        Assert.Equal("https://studio-api.prod.suno.com/api/forbidden", read.GetProperty("audioUrl").GetString());
+        Assert.Equal("https://d2lwuy8qc234o3.cloudfront.net/1/clip/00000000-0000-4000-8000-000000000003.m4a", read.GetProperty("audioUrl").GetString());
         Assert.Equal("https://cdn2.suno.ai/image_00000000-0000-4000-8000-000000000003.jpeg", read.GetProperty("imageUrl").GetString());
         Assert.Equal("00000000-0000-4000-8000-000000000004", read.GetProperty("workspaceId").GetString());
         Assert.Equal(1, read.GetProperty("batchIndex").GetInt32());

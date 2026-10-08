@@ -359,12 +359,19 @@ internal static class GenerationRows
         var artwork = await ArtworkOfAsync(context, rows.Select(static row => row.generation.ArtworkAssetId), cancellationToken).ConfigureAwait(false);
         var audioFiles = await AudioFilesOfAsync(context, ids, cancellationToken).ConfigureAwait(false);
 
-        return [.. rows.Select(row => new GenerationSummary(ToDomain(row.generation) with { EventId = row.EventId }, row.ShortcodeNumber, row.Number)
+        return [.. rows.Select(row =>
         {
-            Comments = [.. comments[row.generation.Id]],
-            IsSelected = row.IsSelected,
-            Artwork = row.generation.ArtworkAssetId is { } assetId ? artwork.GetValueOrDefault(assetId) : null,
-            AudioFiles = audioFiles.GetValueOrDefault(row.generation.Id) ?? AudioFileTally.None,
+            var generation = ToDomain(row.generation) with { EventId = row.EventId };
+            var tally = audioFiles.GetValueOrDefault(row.generation.Id) ?? AudioFileTally.None;
+            return new GenerationSummary(generation, row.ShortcodeNumber, row.Number)
+            {
+                Comments = [.. comments[row.generation.Id]],
+                IsSelected = row.IsSelected,
+                Artwork = row.generation.ArtworkAssetId is { } assetId ? artwork.GetValueOrDefault(assetId) : null,
+
+                // With no file available, a Generation can still stream from Suno (#221).
+                AudioFiles = tally with { Playability = PlaybackResolver.WithStream(tally.Playability, SunoStream.Of(generation)) },
+            };
         })];
     }
 

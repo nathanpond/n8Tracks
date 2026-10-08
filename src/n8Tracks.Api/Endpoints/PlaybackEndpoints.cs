@@ -9,14 +9,16 @@ using n8Tracks.Application.Media;
 using n8Tracks.Application.References;
 using n8Tracks.Application.Songs;
 using n8Tracks.Domain.Songs;
+using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Api.Endpoints;
 
 /// <summary>
 /// Preferred audio files and playback (#212). <c>GET .../playback</c> (<c>catalog.read</c>) answers what
 /// plays for a Generation or a Song, by the one rule (<see cref="PlaybackResolver"/>):
-/// <c>{ source: "local" | "none", audioFile, reason }</c>, the Song's with the <c>generation</c> its
-/// file came from. <c>PUT</c> and <c>DELETE .../preferred-audio-file</c> (<c>songs.write</c>) set
+/// <c>{ source: "local" | "suno" | "none", audioFile, sunoAudioUrl, sunoPageUrl, reason }</c>, the
+/// Song's with the <c>generation</c> its file came from. A <c>suno</c> source (#221) answers the
+/// Generation's stored Suno address for the browser to stream: the server never requests it. <c>PUT</c> and <c>DELETE .../preferred-audio-file</c> (<c>songs.write</c>) set
 /// (<c>{ audioFile }</c>, the file's ID) or clear the owner's choice under the owner's revision in
 /// <c>If-Match</c>, answering the owner as it is now (its revision raised when the choice changed),
 /// like the Song's Selected Generation. Files are named by ID, never by a path; nothing in the media
@@ -36,7 +38,7 @@ internal static class PlaybackEndpoints
 
         endpoints.MapGet(GenerationPlaybackPath, GenerationPlaybackAsync)
             .WithName("GetGenerationPlayback")
-            .WithSummary("What plays for the Generation (by its ID or shortcode): its preferred audio file while available, otherwise its highest-ranked available file (WAV, M4A, MP3, FLAC, OGG, Opus, AAC), or nothing local; with the reason.")
+            .WithSummary("What plays for the Generation (by its ID or shortcode): its preferred audio file while available, otherwise its highest-ranked available file (WAV, M4A, MP3, FLAC, OGG, Opus, AAC); with no file available, its Suno stream address for the browser to play (never requested by the server), or nothing; with the reason and its Suno page.")
             .RequireScope(CredentialScopes.CatalogRead)
             .Produces<GenerationPlaybackResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
@@ -45,7 +47,7 @@ internal static class PlaybackEndpoints
 
         endpoints.MapGet(SongPlaybackPath, SongPlaybackAsync)
             .WithName("GetSongPlayback")
-            .WithSummary("What plays for the Song (by its ID or shortcode): its preferred Song-level audio file while available, otherwise its Selected Generation's file, or nothing local; with the reason and the Generation the file came from.")
+            .WithSummary("What plays for the Song (by its ID or shortcode): its preferred Song-level audio file while available, otherwise its Selected Generation's file or, with none available, that Generation's Suno stream, or nothing; with the reason and the Generation it came from.")
             .RequireScope(CredentialScopes.CatalogRead)
             .Produces<SongPlaybackResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
@@ -54,7 +56,7 @@ internal static class PlaybackEndpoints
 
         endpoints.MapGet(SongPlaybackSourcesPath, SongPlaybackSourcesAsync)
             .WithName("GetSongPlaybackSources")
-            .WithSummary("Everything of the Song (by its ID or shortcode) the player can switch to while comparing: its available Song-level files, then its Generations that have an available file (Version tree order, then ordinal), each with its playback file first and its other available files after; Missing and Unavailable files are left out.")
+            .WithSummary("Everything of the Song (by its ID or shortcode) the player can switch to while comparing: its available Song-level files, then its Generations that have an available file (Version tree order, then ordinal), each with its playback file first and its other available files after, or, with no file available, its Suno stream; Missing and Unavailable files are left out.")
             .RequireScope(CredentialScopes.CatalogRead)
             .Produces<SongPlaybackSourcesResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
@@ -129,10 +131,12 @@ internal static class PlaybackEndpoints
             return NoSuchGeneration(context);
         }
 
-        var resolved = await playback.ForGenerationAsync(generation.Generation.SongId, generation.Generation.Id, cancellationToken);
+        var resolved = await playback.ForGenerationAsync(generation.Generation.SongId, generation.Generation.Id, SunoStream.Of(generation.Generation), cancellationToken);
         return TypedResults.Ok(new GenerationPlaybackResponse(
-            Source(resolved.Played),
+            Source(resolved.Played, resolved.SunoAudioUrl),
             PlaybackFileResponse.From(resolved.Played, context.Request.PathBase),
+            resolved.SunoAudioUrl,
+            PageUrlOf(generation.Generation.SunoId),
             PlaybackReasons.Text(resolved.Reason)));
     }
 
@@ -158,8 +162,10 @@ internal static class PlaybackEndpoints
             ? new SongPlaybackGenerationResponse(selected.Id, selected.Shortcode, choice.Selected?.SunoId)
             : null;
         return TypedResults.Ok(new SongPlaybackResponse(
-            Source(resolved.Played),
+            Source(resolved.Played, resolved.SunoAudioUrl),
             PlaybackFileResponse.From(resolved.Played, context.Request.PathBase),
+            resolved.SunoAudioUrl,
+            PageUrlOf(generation?.SunoId),
             PlaybackReasons.Text(choice.Reason),
             generation,
             SongPlaybackStates.Text(choice.Playability.State),
@@ -379,7 +385,9 @@ internal static class PlaybackEndpoints
                 [PreferredAudioFileService.AudioFileField] = ["Name the audio file by its ID."],
             });
 
-    private static string Source(ReportedAudioFile? file) => file is null ? "none" : "local";
+    private static string Source(ReportedAudioFile? file, string? sunoAudioUrl) => file is not null ? "local" : sunoAudioUrl is not null ? "suno" : "none";
+
+    private static string? PageUrlOf(string? sunoId) => sunoId is null ? null : ClipFields.PageUrlOf(sunoId);
 
     private static ILogger Log(ILoggerFactory loggers) => loggers.CreateLogger(typeof(PlaybackEndpoints));
 
@@ -391,14 +399,18 @@ internal static class PlaybackEndpoints
 internal sealed record PreferredAudioFileRequest(JsonElement AudioFile);
 
 /// <summary>
-/// What plays for a Generation (#212): <c>source</c> (<c>local</c>, or <c>none</c> when no local file
-/// can play), the file, and <c>reason</c>, a code (<c>generation_preferred</c>, <c>format_order</c>,
-/// <c>preferred_missing_fallback</c>, <c>preferred_unavailable_fallback</c>, <c>nothing_available</c>).
+/// What plays for a Generation (#212): <c>source</c> (<c>local</c>; <c>suno</c> when no local file is
+/// available and it streams from Suno, #221; or <c>none</c>), the file, <c>sunoAudioUrl</c> (the Suno
+/// address the browser streams, only for <c>suno</c>), <c>sunoPageUrl</c> (the clip's Suno page, null
+/// without Suno data), and <c>reason</c>, a code (<c>generation_preferred</c>, <c>format_order</c>,
+/// <c>preferred_missing_fallback</c>, <c>preferred_unavailable_fallback</c>, <c>suno_stream</c>,
+/// <c>nothing_available</c>, <c>suno_not_complete</c>, <c>suno_not_present</c>).
 /// </summary>
-internal sealed record GenerationPlaybackResponse(string Source, PlaybackFileResponse? AudioFile, string Reason);
+internal sealed record GenerationPlaybackResponse(string Source, PlaybackFileResponse? AudioFile, string? SunoAudioUrl, string? SunoPageUrl, string Reason);
 
 /// <summary>
-/// What plays for a Song (#212): as for a Generation, with <c>song_preferred</c>,
+/// What plays for a Song (#212): as for a Generation (the Suno address and page being the Selected
+/// Generation's), with <c>song_preferred</c>,
 /// <c>no_selected_generation</c> and <c>no_generations</c> among the reasons, and <c>generation</c>,
 /// the Selected Generation the file comes from (or that has nothing to play), with its Suno ID for
 /// Open in Suno, or null. <c>state</c> (#219) is what Play does: <c>ready</c>, <c>needs-choice</c>
@@ -408,6 +420,8 @@ internal sealed record GenerationPlaybackResponse(string Source, PlaybackFileRes
 internal sealed record SongPlaybackResponse(
     string Source,
     PlaybackFileResponse? AudioFile,
+    string? SunoAudioUrl,
+    string? SunoPageUrl,
     string Reason,
     SongPlaybackGenerationResponse? Generation,
     string State,
@@ -420,7 +434,8 @@ internal sealed record SongPlaybackGenerationResponse(Guid Id, string Shortcode,
 /// One entry of the chooser (#219): <c>kind</c> <c>generation</c> (with <c>generation</c>
 /// <c>{id, shortcode}</c>, its <c>versionNumber</c>, <c>rating</c>, <c>durationSeconds</c> (Suno's),
 /// <c>state</c> and <c>remoteState</c>) or <c>file</c> (with <c>audioFile</c>, a Song-level file
-/// that plays); <c>playable</c>, and <c>reason</c> (null, or <c>nothing_available</c>).
+/// that plays); <c>playable</c>, and <c>reason</c> (null when a file plays, <c>suno_stream</c> when it
+/// streams from Suno, or why it cannot play).
 /// </summary>
 internal sealed record SongPlaybackCandidateResponse(
     string Kind,
@@ -459,7 +474,9 @@ internal sealed record SongPlaybackCandidateResponse(
 /// one first, marked <c>isPlaybackFile</c>), and its Generations with an available file
 /// (<c>generations</c>, Version tree order then ordinal), each with what the bar shows and writes
 /// (<c>versionNumber</c>, <c>rating</c>, <c>revision</c>, Suno's <c>durationSeconds</c>, <c>state</c>,
-/// <c>remoteState</c>) and its <c>files</c>, the playback file first (<c>isPlaybackFile</c>).
+/// <c>remoteState</c>) and its <c>files</c>, the playback file first (<c>isPlaybackFile</c>); a
+/// Generation with no file available is listed with no files and its Suno stream (<c>sunoAudioUrl</c>,
+/// #221) when it can stream, with <c>sunoPageUrl</c> on every Generation that has Suno data.
 /// </summary>
 internal sealed record SongPlaybackSourcesResponse(
     AudioFileSongResponse Song,
@@ -487,7 +504,9 @@ internal sealed record PlaybackSourceGenerationResponse(
     double? DurationSeconds,
     string State,
     string RemoteState,
-    PlaybackSourceFileResponse[] Files)
+    PlaybackSourceFileResponse[] Files,
+    string? SunoAudioUrl,
+    string? SunoPageUrl)
 {
     public static PlaybackSourceGenerationResponse From(PlaybackSourceGeneration source, PathString pathBase)
     {
@@ -500,7 +519,9 @@ internal sealed record PlaybackSourceGenerationResponse(
             generation.DurationSeconds,
             GenerationStates.NameOf(generation.State),
             GenerationStates.NameOf(generation.RemoteState),
-            [.. source.Files.Select(file => PlaybackSourceFileResponse.From(file, pathBase))]);
+            [.. source.Files.Select(file => PlaybackSourceFileResponse.From(file, pathBase))],
+            source.SunoAudioUrl,
+            generation.SunoId is { } sunoId ? ClipFields.PageUrlOf(sunoId) : null);
     }
 }
 

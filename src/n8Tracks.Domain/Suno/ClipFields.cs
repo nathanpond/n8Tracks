@@ -29,8 +29,10 @@ namespace n8Tracks.Domain.Suno;
 /// <param name="Key">The musical key as returned (<c>metadata.key</c>, such as <c>C_major</c>).</param>
 /// <param name="SunoCreatedUtc">When Suno created the clip (<c>created_at</c>).</param>
 /// <param name="AudioUrl">
-/// The audio address: the first MP3 entry of <c>media_urls</c> when there is one, else <c>audio_url</c>.
-/// Stored as text and never fetched by the server.
+/// The audio address (#221): the first browser-playable entry of <c>media_urls</c>, MP3 before M4A
+/// (Suno's <c>m4a-opus</c> among them) before OGG, when there is one, else <c>audio_url</c>. Stored as
+/// text and never fetched by the server: the browser streams it when no local file plays, and only
+/// from a listed host (<see cref="SunoAudioHosts"/>).
 /// </param>
 /// <param name="ImageUrl">The cover image address (<c>image_url</c>), as text.</param>
 /// <param name="WorkspaceId">The Suno workspace the clip is in (<c>project.id</c>).</param>

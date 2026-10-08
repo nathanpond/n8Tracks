@@ -1,11 +1,21 @@
 import type { PlaybackSourceGeneration, PlaybackSources } from '../api/playbackSources';
 import type { SongPlaybackFile } from '../api/songPlayback';
-import { formatText, nowPlayingOfSong, type NowPlaying } from './playerRules';
+import {
+  formatText,
+  nowPlayingOfSong,
+  nowPlayingOfStream,
+  sourceOf,
+  streamKeyOf,
+  type NowPlaying,
+  type PlaySource,
+} from './playerRules';
 
 /**
  * One source of a Song the player can switch to while comparing (#220): a file (its ID is the key),
  * the Generation it belongs to (null for a Song-level file), whether Previous and Next stop at it
  * (each Song-level file, and each Generation's playback file), and its name in the menu and the bar.
+ * A Generation with no file available is one entry for its Suno stream (#221): `source` `suno`, its
+ * key `suno:<Generation ID>`, and its `file` standing for the stream (Suno's address as `contentUrl`).
  */
 export interface CompareEntry {
   key: string;
@@ -13,6 +23,12 @@ export interface CompareEntry {
   generation: PlaybackSourceGeneration | null;
   stop: boolean;
   name: string;
+  source: PlaySource;
+}
+
+/** What a Suno stream is called in the menu, the bar and notices: "n8-12-v1.1-g3 · Suno stream". */
+export function streamName(shortcode: string): string {
+  return `${shortcode} · Suno stream`;
 }
 
 /** The two sources A/B switches between: what is playing now and what played before it, from this Song. */
@@ -41,9 +57,10 @@ export const COMPARE_SHORTCUT_TEXT: Record<CompareAction, string> = {
 
 /**
  * Every source of the Song as one list in comparison order, as the server sends it: the Song-level
- * files, then each Generation's files (its playback file first). A Generation's file is named by the
- * Generation's shortcode and the format, with the file name when the Generation has two files of that
- * format; a Song-level file by its file name.
+ * files, then each Generation's files (its playback file first), or its Suno stream when it has no
+ * file (#221). A Generation's file is named by the Generation's shortcode and the format, with the
+ * file name when the Generation has two files of that format; a stream by the shortcode and "Suno
+ * stream"; a Song-level file by its file name.
  */
 export function entriesOf(sources: PlaybackSources): CompareEntry[] {
   const songLevel = sources.songFiles.map<CompareEntry>((source) => ({
@@ -52,9 +69,31 @@ export function entriesOf(sources: PlaybackSources): CompareEntry[] {
     generation: null,
     stop: true,
     name: source.audioFile.fileName,
+    source: 'local',
   }));
-  const ofGenerations = sources.generations.flatMap((generation) =>
-    generation.files.map<CompareEntry>((source, index) => {
+  const ofGenerations = sources.generations.flatMap((generation) => {
+    const stream = generation.sunoAudioUrl;
+    if (generation.files.length === 0 && stream !== null) {
+      const key = streamKeyOf(generation.generation.id);
+      const name = streamName(generation.generation.shortcode);
+      return [
+        {
+          key,
+          file: {
+            id: key,
+            fileName: name,
+            format: '',
+            durationSeconds: generation.durationSeconds,
+            contentUrl: stream,
+          },
+          generation,
+          stop: true,
+          name,
+          source: 'suno',
+        } satisfies CompareEntry,
+      ];
+    }
+    return generation.files.map<CompareEntry>((source, index) => {
       const format = source.audioFile.format.toLowerCase();
       const twin =
         generation.files.filter((other) => other.audioFile.format.toLowerCase() === format).length >
@@ -66,9 +105,10 @@ export function entriesOf(sources: PlaybackSources): CompareEntry[] {
         generation,
         stop: index === 0,
         name: twin ? `${name} · ${source.audioFile.fileName}` : name,
+        source: 'local',
       };
-    }),
-  );
+    });
+  });
   return [...songLevel, ...ofGenerations];
 }
 
@@ -140,16 +180,31 @@ export function nowPlayingOfEntry(
     entry.generation === null
       ? null
       : { id: entry.generation.generation.id, shortcode: entry.generation.generation.shortcode };
+  const via = (from?.via ?? null) === null ? null : 'chosen';
+  if (entry.source === 'suno' && generation !== null) {
+    return nowPlayingOfStream(
+      song,
+      generation,
+      { url: entry.file.contentUrl, pageUrl: entry.generation?.sunoPageUrl ?? null },
+      via,
+    );
+  }
   const next = nowPlayingOfSong(song, entry.file, generation, 'chosen');
-  return { ...next, via: (from?.via ?? null) === null ? null : 'chosen' };
+  return { ...next, via, sunoPageUrl: entry.generation?.sunoPageUrl ?? null };
 }
 
-/** What a loaded source is called in a notice: "n8-12-v1.1-g3 · WAV", or a Song-level file's name. */
+/**
+ * What a loaded source is called in a notice: "n8-12-v1.1-g3 · WAV", "n8-12-v1.1-g3 · Suno stream"
+ * (#221), or a Song-level file's name.
+ */
 export function sourceNameOf(playing: NowPlaying): string {
   const { label } = playing;
-  return label.kind === 'generation'
-    ? `${label.shortcode} · ${formatText(label.format)}`
-    : label.fileName;
+  if (label.kind !== 'generation') {
+    return label.fileName;
+  }
+  return sourceOf(playing) === 'suno'
+    ? streamName(label.shortcode)
+    : `${label.shortcode} · ${formatText(label.format)}`;
 }
 
 /** What the bar says when a switch could not load or seek, and the player went back. */

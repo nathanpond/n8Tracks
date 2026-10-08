@@ -84,8 +84,9 @@ export interface Generation {
 
 /**
  * Whether a Generation has something to play (#218), decided by the server's playback rule (#212):
- * `reason` is null when it has, and a playback reason code (`nothing_available`) when not. The Play
- * controls read it; which file plays is asked only when Play is pressed.
+ * `reason` is null when a local file plays, `suno_stream` when it streams from Suno (#221), and why
+ * not otherwise (`nothing_available`, `suno_not_complete`, `suno_not_present`). The Play controls
+ * read it; what plays is asked only when Play is pressed.
  */
 export interface GenerationPlayability {
   playable: boolean;

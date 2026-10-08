@@ -34,13 +34,16 @@ export type SongPlaybackCandidate =
 
 /**
  * What Play on a Song does, as `GET /songs/{reference}/playback` answers it (#212, #219): the file
- * that plays (`source` `local`) or none, why (a playback reason code), the Selected Generation it
- * comes from (or that has nothing to play, with its Suno ID), the state, and the chooser's candidates
- * when it needs a choice.
+ * that plays (`source` `local`), the Selected Generation's Suno stream (`suno`, #221, with its address
+ * in `sunoAudioUrl`) or none, why (a playback reason code), the Selected Generation's Suno page, the
+ * Selected Generation it comes from (or that has nothing to play, with its Suno ID), the state, and
+ * the chooser's candidates when it needs a choice.
  */
 export interface SongPlaybackAnswer {
-  source: 'local' | 'none';
+  source: 'local' | 'suno' | 'none';
   audioFile: SongPlaybackFile | null;
+  sunoAudioUrl: string | null;
+  sunoPageUrl: string | null;
   reason: string;
   generation: { id: string; shortcode: string; sunoId: string | null } | null;
   state: SongPlaybackState;
@@ -127,7 +130,7 @@ function selectedOf(value: unknown): SongPlaybackAnswer['generation'] | undefine
 export function songPlaybackAnswerOf(value: unknown): SongPlaybackAnswer | undefined {
   if (
     !isRecord(value) ||
-    (value.source !== 'local' && value.source !== 'none') ||
+    (value.source !== 'local' && value.source !== 'suno' && value.source !== 'none') ||
     typeof value.reason !== 'string' ||
     !isSongPlaybackState(value.state) ||
     !Array.isArray(value.candidates)
@@ -137,8 +140,14 @@ export function songPlaybackAnswerOf(value: unknown): SongPlaybackAnswer | undef
   const audioFile = value.audioFile === null ? null : songPlaybackFileOf(value.audioFile);
   const generation = selectedOf(value.generation);
   const candidates = value.candidates.map(candidateOf);
+  // Absent before #221: no stream, no page.
+  const sunoAudioUrl = value.sunoAudioUrl ?? null;
+  const sunoPageUrl = value.sunoPageUrl ?? null;
   if (
     audioFile === undefined ||
+    !textOrNull(sunoAudioUrl) ||
+    !textOrNull(sunoPageUrl) ||
+    (value.source === 'suno') !== (sunoAudioUrl !== null) ||
     (value.source === 'local') !== (audioFile !== null) ||
     generation === undefined ||
     candidates.some((candidate) => candidate === undefined)
@@ -148,6 +157,8 @@ export function songPlaybackAnswerOf(value: unknown): SongPlaybackAnswer | undef
   return {
     source: value.source,
     audioFile,
+    sunoAudioUrl,
+    sunoPageUrl,
     reason: value.reason,
     generation,
     state: value.state,

@@ -566,9 +566,10 @@ internal sealed record GenerationResponse(
 }
 
 /// <summary>
-/// Whether a Generation has something to play (#218): <c>playable</c>, and <c>reason</c>, null when it
-/// has and a playback reason code (<c>nothing_available</c>) when not. The rows' Play controls read it,
-/// so no row asks <c>.../playback</c> before the user presses Play.
+/// Whether a Generation has something to play (#218): <c>playable</c>, and <c>reason</c>, null when a
+/// local file plays, <c>suno_stream</c> when it streams from Suno (#221), and why not otherwise
+/// (<c>nothing_available</c>, <c>suno_not_complete</c>, <c>suno_not_present</c>). The rows' Play
+/// controls read it, so no row asks <c>.../playback</c> before the user presses Play.
 /// </summary>
 internal sealed record GenerationPlayabilityResponse(bool Playable, string? Reason)
 {

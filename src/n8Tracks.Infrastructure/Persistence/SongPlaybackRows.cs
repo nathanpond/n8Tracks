@@ -1,14 +1,15 @@
 using Microsoft.EntityFrameworkCore;
 using n8Tracks.Application.Media;
 using n8Tracks.Domain.Media;
+using n8Tracks.Domain.Songs;
 
 namespace n8Tracks.Infrastructure.Persistence;
 
 /// <summary>
 /// What Play does for each Song of a list (#219): the Song lists, the Song itself, Album tracks and
 /// Playlist songs carry it, so each Play control knows whether it is disabled without asking per row.
-/// One batched read of the Songs' files, their preferred Song-level files, and which Songs have
-/// Generations; the state itself is <see cref="PlaybackResolver.StateOfSong"/>, the one rule.
+/// One batched read of the Songs' files, their preferred Song-level files, and their Generations (with
+/// each one's Suno stream, #221); the state itself is <see cref="PlaybackResolver.StateOfSong"/>, the one rule.
 /// </summary>
 internal static class SongPlaybackRows
 {
@@ -36,12 +37,21 @@ internal static class SongPlaybackRows
                 .Select(static choice => choice.AudioFileId)
                 .ToHashSetAsync(cancellationToken)
                 .ConfigureAwait(false);
-        var withGenerations = await context.Generations.AsNoTracking()
+        var generations = await context.Generations.AsNoTracking()
             .Where(generation => songIds.Contains(generation.SongId))
-            .Select(static generation => generation.SongId)
-            .Distinct()
-            .ToHashSetAsync(cancellationToken)
+            .Select(static generation => new { generation.Id, generation.SongId, generation.SunoId, generation.ProviderStatus, generation.RemoteState, generation.AudioUrl })
+            .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
+        var withGenerations = generations.Select(static generation => generation.SongId).ToHashSet();
+
+        // Each Generation's Suno stream (#221), read from its stored address: never requested.
+        var streams = generations
+            .GroupBy(static generation => generation.SongId)
+            .ToDictionary(
+                static group => group.Key,
+                static group => (IReadOnlyDictionary<Guid, SunoStream>)group.ToDictionary(
+                    static generation => generation.Id,
+                    static generation => SunoStream.Of(generation.SunoId, generation.ProviderStatus, GenerationStates.RemoteStateOf(generation.RemoteState), generation.AudioUrl)));
         var mount = files.Count == 0
             ? MediaMountState.Available
             : (await new MediaMountStateStore(context).FindAsync(cancellationToken).ConfigureAwait(false) ?? MediaMountStatus.Unrecorded).State;
@@ -57,6 +67,7 @@ internal static class SongPlaybackRows
                         mount),
                     file.GenerationId is null && preferred.Contains(file.Id)))],
                 pair.Value,
-                withGenerations.Contains(pair.Key)));
+                withGenerations.Contains(pair.Key),
+                streams.GetValueOrDefault(pair.Key)));
     }
 }

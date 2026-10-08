@@ -7,18 +7,29 @@ namespace n8Tracks.Application.Media;
 /// each from the Song's files as they report now, through <see cref="PlaybackResolver"/>, so every part
 /// of the product resolves the same Song or Generation to the same file; and the whole answer to Play
 /// on a Song, with the chooser's candidates when nothing is selected (#219); and every source a Song's
-/// player can switch to while comparing (#220). Reads only.
+/// player can switch to while comparing (#220). A Generation's Suno stream (#221) is read from its
+/// stored address, never requested. Reads only.
 /// </summary>
 public sealed class PlaybackService(AudioFileService files, IGenerationStore generations)
 {
-    /// <summary>What plays for the Generation <paramref name="generationId"/> of the Song <paramref name="songId"/>.</summary>
-    public async Task<GenerationPlayback> ForGenerationAsync(Guid songId, Guid generationId, CancellationToken cancellationToken) =>
-        PlaybackResolver.ForGeneration([.. (await files.ListForSongAsync(songId, cancellationToken).ConfigureAwait(false))
-            .Where(file => PlaybackResolver.GenerationIdOf(file) == generationId)]);
+    /// <summary>
+    /// What plays for the Generation <paramref name="generationId"/> of the Song <paramref name="songId"/>,
+    /// whose Suno stream is <paramref name="stream"/> (#221; it plays only when no file is available).
+    /// </summary>
+    public async Task<GenerationPlayback> ForGenerationAsync(Guid songId, Guid generationId, SunoStream stream, CancellationToken cancellationToken) =>
+        PlaybackResolver.ForGeneration(
+            [.. (await files.ListForSongAsync(songId, cancellationToken).ConfigureAwait(false)).Where(file => PlaybackResolver.GenerationIdOf(file) == generationId)],
+            stream);
 
     /// <summary>What plays for the Song <paramref name="songId"/>, whose Selected Generation is <paramref name="selectedGenerationId"/> (null: none).</summary>
-    public async Task<SongPlayback> ForSongAsync(Guid songId, Guid? selectedGenerationId, CancellationToken cancellationToken) =>
-        PlaybackResolver.ForSong(await files.ListForSongAsync(songId, cancellationToken).ConfigureAwait(false), selectedGenerationId);
+    public async Task<SongPlayback> ForSongAsync(Guid songId, Guid? selectedGenerationId, CancellationToken cancellationToken)
+    {
+        var songFiles = await files.ListForSongAsync(songId, cancellationToken).ConfigureAwait(false);
+        var selected = selectedGenerationId is { } id
+            ? (await GenerationsOfAsync(songId, cancellationToken).ConfigureAwait(false)).FirstOrDefault(generation => generation.Id == id)
+            : null;
+        return PlaybackResolver.ForSong(songFiles, selectedGenerationId, selected?.Stream);
+    }
 
     /// <summary>
     /// The whole answer to Play on the Song <paramref name="songId"/>, whose Selected Generation is
@@ -54,6 +65,7 @@ public sealed class PlaybackService(AudioFileService files, IGenerationStore gen
             summary.Generation.SunoId)
         {
             Revision = summary.Generation.Revision,
+            Stream = SunoStream.Of(summary.Generation),
         })];
 
     /// <summary>

@@ -13,7 +13,9 @@ export interface PlaybackSourceFile {
 
 /**
  * One Generation the player can switch to (#220): what the bar names and writes (its Version number,
- * rating and revision), Suno's duration, its states, and its available files, the playback file first.
+ * rating and revision), Suno's duration, its states, and its available files, the playback file first;
+ * with no file available, no files and its Suno stream (`sunoAudioUrl`, #221). `sunoPageUrl` is its
+ * Suno page (null without Suno data).
  */
 export interface PlaybackSourceGeneration {
   generation: { id: string; shortcode: string };
@@ -24,12 +26,15 @@ export interface PlaybackSourceGeneration {
   state: GenerationState;
   remoteState: RemoteState;
   files: PlaybackSourceFile[];
+  sunoAudioUrl: string | null;
+  sunoPageUrl: string | null;
 }
 
 /**
  * Everything of a Song the player can switch to while comparing, as
  * `GET /songs/{reference}/playback-sources` answers it (#220): the Song, its available Song-level
- * files, then its Generations with an available file, in comparison order (the server's one rule).
+ * files, then its Generations with an available file or a Suno stream (#221), in comparison order
+ * (the server's one rule).
  */
 export interface PlaybackSources {
   song: { id: string; shortcode: string; title: string };
@@ -59,7 +64,12 @@ function sourceGenerationOf(value: unknown): PlaybackSourceGeneration | undefine
   }
   const generation = value.generation;
   const files = filesOf(value.files);
+  // Absent before #221: no stream, no page.
+  const sunoAudioUrl = value.sunoAudioUrl ?? null;
+  const sunoPageUrl = value.sunoPageUrl ?? null;
   if (
+    (sunoAudioUrl !== null && typeof sunoAudioUrl !== 'string') ||
+    (sunoPageUrl !== null && typeof sunoPageUrl !== 'string') ||
     !isRecord(generation) ||
     typeof generation.id !== 'string' ||
     typeof generation.shortcode !== 'string' ||
@@ -84,6 +94,8 @@ function sourceGenerationOf(value: unknown): PlaybackSourceGeneration | undefine
     state: value.state,
     remoteState: value.remoteState,
     files,
+    sunoAudioUrl,
+    sunoPageUrl,
   };
 }
 

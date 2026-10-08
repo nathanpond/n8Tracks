@@ -224,6 +224,24 @@ n8Tracks keeps a record of each file the extension downloaded, so the user can s
 - **The Generation panel** reads `GET /api/v1/generations/{reference}/downloads` (`catalog.read`, newest first, at most 100). Each record shows its format, file name, and time, and "In media folder" when a scanned file of that name is attached to this Generation, "Found, not attached to this Generation" when one exists elsewhere or unmatched, or "Not found in media folder". Names are compared without regard to case and without the browser's ` (n)` numbering; a Missing file still counts as found, shown with its state.
 - **The Download view** gains "Not yet downloaded", which shows only the clips lacking a record in at least one chosen format (in any format when none is chosen), and "Skip files already downloaded", ticked by default, which leaves those files out of the plan and names them in the summary. Files saved in the current run count as downloaded too. While n8Tracks cannot say what was downloaded (not connected, or no `suno.sync`), the filter is off and nothing is skipped.
 
+## Streaming from Suno (#221)
+
+When a Generation has no available local file, the player streams it from Suno.
+
+- **The stored address:** a Generation keeps one audio address. It is the first `media_urls` entry a browser plays: MP3, then M4A (Suno's `m4a-opus` among them), then OGG, matched by `content_type` or by the address's path. With none of those, it is `audio_url`. The migration `20261008060000_RederiveGenerationAudioUrls` re-derived every stored address from its raw clip by this rule. The address is not a compared field, so a sync after it proposes no change.
+- **The server's host list:** `SunoAudioHosts` (`src/n8Tracks.Domain/Suno/`) holds only `d2lwuy8qc234o3.cloudfront.net`, the playback host. The adapter also lists the signed-download host and Suno's API host, and the server leaves both out. The server list must stay a subset of the adapter's `SUNO_AUDIO_HOSTS`, which a test checks. Any other address counts as no address. So does an address that is not plain HTTPS on the default port, or one that carries a user name.
+- **The rule (`PlaybackResolver`, `SunoStream`):**
+  - A local file always wins.
+  - The stream is tried only for a clip whose status is `complete` and whose remote state is `present`. Otherwise Play is disabled, with the reason (`suno_not_complete`, `suno_not_present`, `nothing_available`).
+  - A Song with a Selected Generation that has no local file streams that Generation. It never plays another Generation's file.
+  - The playback answers carry `source: "suno"`, `sunoAudioUrl`, and `sunoPageUrl`. The playback sources list a stream-only Generation with no files and its `sunoAudioUrl`.
+- **The browser plays it:**
+  - The server never requests, proxies, or stores the audio. The architecture tests check that no server type can reach the network.
+  - The audio element sets `referrerpolicy="no-referrer"` and no `crossorigin`, so the request to Suno carries no n8Tracks cookie, token, or referrer path.
+  - Every response sends `Content-Security-Policy: media-src 'self' https://d2lwuy8qc234o3.cloudfront.net` and no other directive. The full policy belongs to the audit milestone.
+  - Every response also sends `Referrer-Policy: strict-origin-when-cross-origin`, the browsers' default made explicit. Browsers do not yet honour the attribute on media elements, so this header is what keeps the path out.
+- **Failure:** a stream that errors, has not started 15 seconds after the play request, or stalls for 30 seconds while playing has failed. The bar says so, offers Open in Suno (a new tab), and suggests syncing again. There is no retry, and the player never falls back to another source.
+
 ## Extension structure
 
 - A service worker holds state and is the only part that calls the n8Tracks API.

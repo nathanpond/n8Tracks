@@ -45,6 +45,8 @@ function generation(
     state: 'active',
     remoteState: 'present',
     files: files.map((audioFile, index) => ({ audioFile, isPlaybackFile: index === 0 })),
+    sunoAudioUrl: null,
+    sunoPageUrl: null,
   };
 }
 
@@ -99,6 +101,58 @@ describe('entriesOf', () => {
       'Version 1 · n8-7-v1-g2 · not rated',
       'Version 1 · n8-7-v1-g3 · 1 star',
     ]);
+  });
+});
+
+describe('Suno streams (#221)', () => {
+  const STREAM = 'https://d2lwuy8qc234o3.cloudfront.net/1/clip/four.m4a';
+  const withStream: PlaybackSources = {
+    ...SOURCES,
+    generations: [
+      ...SOURCES.generations,
+      { ...generation(4, []), sunoAudioUrl: STREAM, sunoPageUrl: 'https://suno.com/song/four' },
+    ],
+  };
+  const entries = entriesOf(withStream);
+  const streamed = entries.at(-1);
+
+  it('lists a Generation with no file by its Suno stream, marked as one, as a stop', () => {
+    expect(entries.map((candidate) => candidate.source)).toEqual([
+      'local',
+      'local',
+      'local',
+      'local',
+      'local',
+      'local',
+      'suno',
+    ]);
+    expect(streamed?.key).toBe('suno:g4');
+    expect(streamed?.name).toBe('n8-7-v1-g4 · Suno stream');
+    expect(streamed?.stop).toBe(true);
+    expect(stepFrom(entries, '3m', 1)?.key).toBe('suno:g4');
+  });
+
+  it('switches to the stream as Suno’s address, labelled as streaming, with its Suno page', () => {
+    if (streamed === undefined) {
+      throw new Error('No stream entry.');
+    }
+    const next = nowPlayingOfEntry(withStream.song, streamed, null);
+    expect(next.source).toBe('suno');
+    expect(next.src).toBe(STREAM);
+    expect(next.fileId).toBe('suno:g4');
+    expect(next.generationId).toBe('g4');
+    expect(next.sunoPageUrl).toBe('https://suno.com/song/four');
+    expect(switchFailedText(next, playing('1w'))).toBe(
+      'n8-7-v1-g4 · Suno stream could not be played, so the player went back to n8-7-v1-g1 · WAV.',
+    );
+  });
+
+  it('never lists the stream of a Generation that has a file', () => {
+    const both = entriesOf({
+      ...SOURCES,
+      generations: [{ ...generation(1, [file('1w', 'one.wav', 'wav')]), sunoAudioUrl: STREAM }],
+    });
+    expect(both.map((candidate) => candidate.source)).toEqual(['local', 'local']);
   });
 });
 

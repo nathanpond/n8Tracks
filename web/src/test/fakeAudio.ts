@@ -21,6 +21,10 @@ export interface FakeAudio {
   time: () => number;
   /** The audio says how long it is (metadata loaded). */
   loaded: (duration: number) => void;
+  /** The audio has data and is actually playing (a `playing` event). */
+  started: () => void;
+  /** The audio stops for want of data (a `waiting` event). */
+  waiting: () => void;
   /** The audio plays on by `seconds`. */
   advance: (seconds: number) => void;
   /** The audio reaches its end. */
@@ -170,6 +174,16 @@ export function installFakeAudio(): FakeAudio {
         stateOf(audio).duration = duration;
         fire(audio, 'durationchange');
         fire(audio, 'loadedmetadata');
+      });
+    },
+    started: () => {
+      act(() => {
+        fire(element(), 'playing');
+      });
+    },
+    waiting: () => {
+      act(() => {
+        fire(element(), 'waiting');
       });
     },
     advance: (seconds) => {

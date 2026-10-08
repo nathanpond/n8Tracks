@@ -275,6 +275,10 @@ public sealed class Program
             // Outermost first: the request ID is on every line and every response, the completion line
             // covers every request, and an unhandled exception is logged once before that line is written.
             app.UseMiddleware<RequestIdMiddleware>();
+
+            // On every response: audio plays only from the app and the listed Suno audio hosts, and no
+            // request to another site names a path of n8Tracks (#221).
+            app.UseMiddleware<BrowserPolicyMiddleware>();
             app.UseSerilogRequestLogging(
                 requestLogging => RequestLog.Configure(requestLogging, app.Services.GetRequiredService<Serilog.ILogger>()));
             app.UseMiddleware<UnhandledExceptionMiddleware>();

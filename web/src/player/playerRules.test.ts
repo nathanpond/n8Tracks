@@ -89,13 +89,36 @@ describe('the player rules', () => {
     const playable = testGeneration('1', 1, { playback: { playable: true, reason: null } });
     expect(unplayableReason(playable)).toBeUndefined();
     expect(unplayableReason(testGeneration('1', 1))).toBe(
-      'Nothing to play: this Generation has no local audio file.',
+      'Nothing to play: this Generation has no local audio file, and there is no Suno audio to stream.',
     );
     const files = (count: number, missing: number, unavailable: number) =>
       testGeneration('1', 1, { audioFiles: { count, missing, unavailable, formats: ['wav'] } });
-    expect(unplayableReason(files(2, 2, 0))).toBe('Nothing to play: its audio files are Missing.');
+    expect(unplayableReason(files(2, 2, 0))).toBe(
+      'Nothing to play: its audio files are Missing, and there is no Suno audio to stream.',
+    );
     expect(unplayableReason(files(2, 0, 2))).toBe(
-      'Nothing to play: the media folder cannot be read.',
+      'Nothing to play: the media folder cannot be read, and there is no Suno audio to stream.',
+    );
+
+    // #221: a Suno stream plays; when Suno cannot stream it, the reason says why.
+    expect(
+      unplayableReason(
+        testGeneration('1', 1, { playback: { playable: true, reason: 'suno_stream' } }),
+      ),
+    ).toBeUndefined();
+    expect(
+      unplayableReason(
+        testGeneration('1', 1, { playback: { playable: false, reason: 'suno_not_complete' } }),
+      ),
+    ).toBe(
+      'Nothing to play: this Generation has no local audio file, and Suno has not finished it, so there is nothing to stream yet.',
+    );
+    expect(
+      unplayableReason(
+        testGeneration('1', 1, { playback: { playable: false, reason: 'suno_not_present' } }),
+      ),
+    ).toBe(
+      'Nothing to play: this Generation has no local audio file, and Suno no longer lists it (in its Trash, or gone), so it is not streamed.',
     );
     expect(unplayableFileReason('available')).toBeUndefined();
     expect(unplayableFileReason('missing')).toBe(

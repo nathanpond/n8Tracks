@@ -4430,3 +4430,50 @@ Story #219 (on the milestone branch):
 - **Decision:** The bar's rating writes `PATCH /generations/{id}` with the revision from the sources answer. A conflict is retried once with the current revision. A failure restores the old value and says so (`player-rating-problem`). A saved rating, from the bar or the Song page (`useRateGeneration`), is announced as the window event `n8tracks:generation-rated` (`generations/ratingEvents.ts`). The Song page's Generations and the bar's copy update from it, but only when the revision is newer.
   **Why:** rating "usable without stopping playback" while the Song page shows the same Generation. Without the event, either copy would show a stale rating and send a stale revision.
   **Issue:** #220
+- **Decision:** The server-side Suno host list the story places "beside the image hosts" does not exist: the image hosts are kept only in the extension (`SUNO_IMAGE_HOSTS`). The new `Domain/Suno/SunoAudioHosts` is the first server-side Suno host list, and it holds audio hosts only. No server image list was made, since the server never needs one.
+  **Why:** orchestrator decision ("adjust inline"). The server has no use for image hosts, so creating a list just to sit beside would add dead code.
+  **Issue:** #221
+- **Decision:** `SunoAudioHosts.Hosts` = `d2lwuy8qc234o3.cloudfront.net` only, the playback host seen in the fixtures' `media_urls` and confirmed by TS-004. Two hosts are left out. `studio-api.prod.suno.com` is excluded by the discretion line, and its `audio_url` answers `/api/forbidden`. `suno-data-uploads.s3.amazonaws.com`, which the adapter also lists, is left out because it serves only the signed one-hour `download_url`s that the extension's downloader uses and the server never stores. So the CSP allows exactly the server list, which is a subset of the adapter's `SUNO_AUDIO_HOSTS`, rather than every adapter host. An architecture test checks the subset, and also that the host is named in one source file only.
+  **Why:** the constraint that the allowed hosts be explicit and narrow, with no wildcard. AC 9 ("exactly the Suno audio hosts the adapter lists") is read as the adapter's audio hosts that a Generation's stored address can be on.
+  **Issue:** #221
+- **Decision:** An address counts as a Suno stream only if it is absolute HTTPS on the default port, has no user info, and is on a listed host (case-insensitive). Anything else is no address (`nothing_available`), as the discretion line says. `SunoStream.Of` tests these in this order:
+  1. No Suno ID: none.
+  2. Remote state not `present`: `suno_not_present`.
+  3. Provider status not `complete` (ordinal): `suno_not_complete`.
+  4. Address not playable: none.
+
+  Three reason codes are new: `suno_stream`, `suno_not_complete` and `suno_not_present`. Generation playability is `{playable: true, reason: "suno_stream"}` when it streams.
+  **Why:** "Play is disabled with the reason" needs a reason for each case. A trashed clip names its trash state even when its address is also gone.
+  **Issue:** #221
+- **Decision:** The resolver's Suno branch is optional parameters and init properties, so every existing call and test is unchanged:
+  - `ForGeneration(files, SunoStream?)`, `PlayabilityOf(statuses, SunoStream?)`, `WithStream(local, stream)` and `ForSong(files, selected, SunoStream?)`.
+  - `StateOfSong(..., IReadOnlyDictionary<Guid, SunoStream>?)`: a stream-only Generation with no files counts for needs-choice.
+  - `SongPlaybackGeneration.Stream`, `GenerationPlayback`/`SongPlayback.SunoAudioUrl` and `PlaybackSourceGeneration.SunoAudioUrl`. A stream-only Generation is listed with `files: []`.
+
+  `PlaybackService.ForGenerationAsync` now takes the stream, and the endpoint passes `SunoStream.Of(generation)`. The Generation summaries (`GenerationStore`) and `SongPlaybackRows` read the stored address, status and remote state in the same batched reads.
+  **Why:** the m5-notes for #218, #219 and #220. The one rule keeps a local file first: a Song follows only its Selected Generation to Suno ("Selected one, from Suno").
+  **Issue:** #221
+- **Decision:** The playback answers gained flat `sunoAudioUrl` (non-null only for `source: "suno"`) and `sunoPageUrl` (the clip's `https://suno.com/song/<id>` whenever there is a Suno ID, for Open in Suno on any error). The Song's answer uses its Selected Generation's. The playback sources' Generations gained both fields as well. The web parsers read an absent field as null, so older fakes still parse.
+  **Why:** AC 1 ("source `suno` with the address and the Suno page link") and AC 3/complement: a local file's error offers Open in Suno when there is a page.
+  **Issue:** #221
+- **Decision:** `ClipReader` now stores the first `media_urls` entry by kind, MP3 then M4A (incl. `m4a-opus`) then OGG, each matched by `content_type` containing the kind or by the URL's path (without query) ending in `.kind`. With no match it falls back to `audio_url`. The data-only migration `20261008060000_RederiveGenerationAudioUrls` re-derives `generations.audio_url` from `provider_records.payload` in SQL (JSON1) with the same rule. It has no schema change, its Designer is a copy of the current snapshot, and Down is a no-op. A theory runs the migration's SQL against nine payloads (the fixtures plus edge cases) and checks it against `ClipReader`. Retained (deleted) Generations keep the address they had.
+  **Why:** the discretion lines. Changing an existing row's address needs the raw clip, and an EF migration runs SQL only. The rule is short enough to state in SQL and prove equal. A sync right after the migration proposes nothing Changed, because the audio address is not a compared field (`SunoExportRules.ChangedFields`, tested). Retained documents are a different shape and are restored as they were, and the next sync of the clip refreshes the address.
+  **Issue:** #221
+- **Decision:** On the browser policies:
+  - **CSP:** every response carries `Content-Security-Policy: media-src 'self' https://d2lwuy8qc234o3.cloudfront.net` through `Api/Frontend/BrowserPolicyMiddleware`, right after the request ID. That is the one directive the story asks for.
+  - **Referrer:** the same middleware also sends `Referrer-Policy: strict-origin-when-cross-origin`, the browsers' default made explicit. The audio element sets `referrerpolicy="no-referrer"` and no `crossorigin`. Browsers do not honour `referrerpolicy` on media elements yet, so the header is what guarantees the request to Suno carries no path.
+  **Why:** the CSP is AC 9 and the discretion line ("only a `media-src` directive"). The referrer header is AC 6 ("no referrer path"). The e2e test checks the request's `Referer` path and that it carries no cookie.
+  **Issue:** #221
+- **Decision:** Player (web):
+  - **Stream source:** `NowPlaying` gained optional `source` (`local` when absent) and `sunoPageUrl`, so existing hand-built fixtures stay valid. A stream's `fileId` is `suno:<generationId>`, and its label is the Generation with format `''`. The detail line drops the format, and the new `SourceBadge` (`player-source`, `data-source`) says "Local file · WAV" or "Streaming from Suno".
+  - **Watchdog:** each play request arms a 15 s timer for a `suno` source. `playing` disarms it. A `waiting` after the stream started arms 30 s. Pause, end, close and a new load disarm it. On timeout or element error, a Suno stream goes to the error state at once with no session check, and its `src` is removed so Suno is not asked again. The alert reads "The Suno audio of <shortcode> could not be played. Suno may have moved it: sync with Suno again to refresh its address." There is no Retry. Play in the bar asks again.
+  - **Local errors:** keep Retry, and add Open in Suno only when `sunoPageUrl` is set.
+  - **Sync hint:** the sync suggestion is always shown for a `suno` error, because a Generation Suno reports as trashed never streams (`suno_not_present`).
+  **Why:** the discretion lines: 15 s to the first `playing`, 30 s stall, no retry, no fall-over, and the sync sentence not shown for trashed.
+  **Issue:** #221
+- **Decision:** Compare lists a stream-only Generation as one stop: key `suno:<id>`, named "<shortcode> · Suno stream", `source: 'suno'` and `data-source="suno"` on the menu item. Switching to it plays Suno's address. A Generation that has a file never lists its stream.
+  **Why:** AC 8 and the #220 note. "A local file always wins" applies within each Generation.
+  **Issue:** #221
+- **Decision:** Rule 2: `audiourl` was added to `RedactionPolicy.SensitiveNames`, which also covers `sunoAudioUrl` and `audio_url`.
+  **Why:** invariant 6. Nothing logs the address today, but a Suno audio address can carry a signature, so any future log property under these names is masked by default.
+  **Issue:** #221

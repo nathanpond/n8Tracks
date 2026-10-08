@@ -8,10 +8,12 @@ import {
   detailOf,
   positionText,
   seekTarget,
+  sourceOf,
   titleOf,
   viaText,
   VOLUME_STEP_PERCENT,
 } from './playerRules';
+import { SourceBadge } from './SourceBadge';
 
 const RANGE_STYLE = { accentColor: 'var(--mantine-primary-color-filled)', minWidth: 0 };
 
@@ -28,6 +30,10 @@ const RANGE_STYLE = { accentColor: 'var(--mantine-primary-color-filled)', minWid
  * file, its Selected Generation, or "Chosen for this listen"; when the Selected Generation has nothing
  * to play, the notice offers Open in Suno where there is a link. While a Song's source is loaded, the
  * Compare row (#220) switches between the Song's Generations and files and rates the playing one.
+ * It always says where the audio comes from (#221): "Local file" with its format, or "Streaming from
+ * Suno". When a Suno stream cannot be played the bar says so, offers Open in Suno (a new tab), and
+ * suggests syncing again; it offers no Retry (Play asks Suno again). A local file that cannot be
+ * played offers Open in Suno too when its Generation has a Suno page.
  */
 export function PlayerBar({ player }: { player: Player }) {
   const { state } = player;
@@ -79,9 +85,12 @@ export function PlayerBar({ player }: { player: Player }) {
                 {titleOf(current.label)}
               </Anchor>
             )}
-            <Text size="xs" truncate="end" data-testid="player-detail">
-              {detailOf(current.label)}
-            </Text>
+            <Group gap={6} wrap="nowrap" miw={0}>
+              <SourceBadge playing={current} />
+              <Text size="xs" truncate="end" data-testid="player-detail">
+                {detailOf(current.label)}
+              </Text>
+            </Group>
             {current.via !== null && (
               <Text size="xs" truncate="end" data-testid="player-via" data-via={current.via}>
                 {viaText(current.via)}
@@ -149,17 +158,51 @@ export function PlayerBar({ player }: { player: Player }) {
       {typeof current?.songId === 'string' && <CompareMenu player={player} />}
       {current !== null && state.status === 'error' && (
         <Group gap="sm" wrap="wrap">
-          <Text
-            size="sm"
-            role="alert"
-            data-testid="player-error"
-            style={{ overflowWrap: 'anywhere' }}
-          >
-            {current.label.fileName} could not be played: the audio could not be loaded or decoded.
-          </Text>
-          <Button variant="default" size="compact-sm" onClick={player.retry}>
-            Retry
-          </Button>
+          {sourceOf(current) === 'suno' ? (
+            <Text
+              size="sm"
+              role="alert"
+              data-testid="player-error"
+              data-source="suno"
+              style={{ overflowWrap: 'anywhere' }}
+            >
+              The Suno audio of{' '}
+              {current.label.kind === 'generation'
+                ? current.label.shortcode
+                : current.label.fileName}{' '}
+              could not be played. Suno may have moved it: sync with Suno again to refresh its
+              address.
+            </Text>
+          ) : (
+            <>
+              <Text
+                size="sm"
+                role="alert"
+                data-testid="player-error"
+                data-source="local"
+                style={{ overflowWrap: 'anywhere' }}
+              >
+                {current.label.fileName} could not be played: the audio could not be loaded or
+                decoded.
+              </Text>
+              <Button variant="default" size="compact-sm" onClick={player.retry}>
+                Retry
+              </Button>
+            </>
+          )}
+          {typeof current.sunoPageUrl === 'string' && (
+            <Anchor
+              href={current.sunoPageUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              size="sm"
+              underline="always"
+              aria-label="Open in Suno (opens a new tab)"
+              data-testid="player-error-suno-link"
+            >
+              Open in Suno
+            </Anchor>
+          )}
         </Group>
       )}
       <Group gap="sm" wrap="wrap">

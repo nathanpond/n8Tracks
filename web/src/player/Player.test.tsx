@@ -388,7 +388,7 @@ describe('the player', () => {
     await userEvent.click(within(generationRow(G1)).getByRole('button', { name: `Play ${G1}` }));
     await waitFor(() => {
       expect(screen.getByTestId('player-notice')).toHaveTextContent(
-        `Playback could not start: ${G1} has no local audio file that can play.`,
+        `Playback could not start: ${G1} has no local audio file that can play, and there is no Suno audio to stream.`,
       );
     });
     expect(fake.element().getAttribute('src')).toContain(master.id);
@@ -410,7 +410,7 @@ describe('the player', () => {
     const disabled = within(generationRow(G1)).getByRole('button', { name: `Play ${G1}` });
     expect(disabled).toHaveAttribute('aria-disabled', 'true');
     expect(disabled).toHaveAccessibleDescription(
-      'Nothing to play: this Generation has no local audio file.',
+      'Nothing to play: this Generation has no local audio file, and there is no Suno audio to stream.',
     );
     disabled.focus();
     expect(disabled).toHaveFocus();
@@ -420,7 +420,9 @@ describe('the player', () => {
 
     expect(
       within(generationRow(G2)).getByRole('button', { name: `Play ${G2}` }),
-    ).toHaveAccessibleDescription('Nothing to play: its audio file is Missing.');
+    ).toHaveAccessibleDescription(
+      'Nothing to play: its audio file is Missing, and there is no Suno audio to stream.',
+    );
     const gone = within(fileRow('Gone.wav')).getByRole('button', { name: 'Play Gone.wav' });
     expect(gone).toHaveAttribute('aria-disabled', 'true');
     expect(gone).toHaveAccessibleDescription(

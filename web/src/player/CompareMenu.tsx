@@ -42,7 +42,8 @@ const KEY_NAMES: Record<CompareAction, string> = {
 /**
  * Compare (#220): while a Song's Generation or file is loaded, the player bar offers the Song's
  * other sources. The Compare menu lists the Song-level files, then each playable Generation (by
- * Version, shortcode and rating) with its files by format; choosing one switches to it at the same
+ * Version, shortcode and rating) with its files by format, or, with no file available, its Suno
+ * stream, named "Suno stream" (#221); choosing one switches to it at the same
  * moment. Previous and Next step through the stops (each Song-level file, each Generation's playback
  * file), wrapping; A/B switches between what plays now and what played before it from this Song.
  * Shortcuts: `[` previous, `]` next, `\` A/B (by physical key, without modifiers or auto-repeat, and
@@ -384,6 +385,7 @@ function CompareItem({
       leftSection={<span aria-hidden="true">{playing ? '▶' : ''}</span>}
       data-testid="compare-entry"
       data-file={entry.key}
+      data-source={entry.source}
       data-playing={playing}
     >
       {label}

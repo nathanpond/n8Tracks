@@ -95,9 +95,23 @@ export type PlayLabel =
 export type PlayVia = 'song-preferred' | 'selected-generation' | 'chosen';
 
 /**
+ * Where what is playing comes from (#221): a local file n8Tracks serves, or Suno's own stream of a
+ * Generation, which the browser plays straight from Suno's address.
+ */
+export type PlaySource = 'local' | 'suno';
+
+/** How long a Suno stream may take from the play request to its first `playing` event before it counts as failed (#221). */
+export const SUNO_START_TIMEOUT_MS = 15_000;
+
+/** How long a Suno stream may stall while playing before it counts as failed (#221). */
+export const SUNO_STALL_TIMEOUT_MS = 30_000;
+
+/**
  * What is loaded in the player: the file, its address, the Generation and Song it belongs to (or
  * null), its label, and, when a Song's Play started it, how (`via`; null for a Generation's or a
- * file's own Play).
+ * file's own Play). `source` says whether it is a local file (absent: local) or a Suno stream (#221,
+ * `fileId` is then `suno:<Generation ID>`); `sunoPageUrl` is the Generation's Suno page, for Open in
+ * Suno when it cannot be played (absent or null: none).
  */
 export interface NowPlaying {
   fileId: string;
@@ -106,6 +120,60 @@ export interface NowPlaying {
   songId: string | null;
   via: PlayVia | null;
   label: PlayLabel;
+  source?: PlaySource;
+  sunoPageUrl?: string | null;
+}
+
+/** Where `playing` comes from: a local file unless it says Suno. */
+export function sourceOf(playing: Pick<NowPlaying, 'source'>): PlaySource {
+  return playing.source ?? 'local';
+}
+
+/** The key a Generation's Suno stream has among the player's sources (in place of a file ID). */
+export function streamKeyOf(generationId: string): string {
+  return `suno:${generationId}`;
+}
+
+/** What the bar's source label says (#221): "Local file · WAV", or "Streaming from Suno". */
+export function sourceText(playing: NowPlaying): string {
+  return sourceOf(playing) === 'suno'
+    ? 'Streaming from Suno'
+    : `Local file · ${formatText(playing.label.format)}`;
+}
+
+/** A Generation's Suno stream as the playback answers name it (#221): its address and the clip's Suno page. */
+export interface SunoStreamSource {
+  url: string;
+  pageUrl: string | null;
+}
+
+/**
+ * What playing a Generation's Suno stream loads (#221): Suno's address as is (never through
+ * n8Tracks), labelled by the Generation, with its Suno page for Open in Suno.
+ */
+export function nowPlayingOfStream(
+  song: { id: string; shortcode: string; title: string },
+  generation: { id: string; shortcode: string },
+  stream: SunoStreamSource,
+  via: PlayVia | null,
+): NowPlaying {
+  return {
+    fileId: streamKeyOf(generation.id),
+    src: stream.url,
+    generationId: generation.id,
+    songId: song.id,
+    via,
+    source: 'suno',
+    sunoPageUrl: stream.pageUrl,
+    label: {
+      kind: 'generation',
+      song: { shortcode: song.shortcode, title: song.title },
+      versionNumber: versionNumberOf(generation.shortcode),
+      shortcode: generation.shortcode,
+      format: '',
+      fileName: `${generation.shortcode} from Suno`,
+    },
+  };
 }
 
 /** A Song as its Play control (#219) needs it: wherever Songs are listed, and on the Song page. */
@@ -239,8 +307,10 @@ export function nowPlayingOfGeneration(
   generation: Generation,
   songTitle: string,
   file: PlaybackFile,
+  sunoPageUrl: string | null = null,
 ): NowPlaying {
   return {
+    sunoPageUrl,
     fileId: file.id,
     src: resolveAppUrl(file.contentUrl).toString(),
     generationId: generation.id,
@@ -267,11 +337,16 @@ export function titleOf(label: PlayLabel): string {
   return label.kind === 'unmatched' ? label.fileName : label.song.title;
 }
 
-/** The line under the title: "Version 1.1 · n8-12-v1.1-g3 · WAV", "Song-level file · name", or the format. */
+/**
+ * The line under the title: "Version 1.1 · n8-12-v1.1-g3 · WAV" (a Suno stream has no format:
+ * "Version 1.1 · n8-12-v1.1-g3"), "Song-level file · name", or the format.
+ */
 export function detailOf(label: PlayLabel): string {
   switch (label.kind) {
     case 'generation':
-      return `Version ${label.versionNumber} · ${label.shortcode} · ${formatText(label.format)}`;
+      return label.format === ''
+        ? `Version ${label.versionNumber} · ${label.shortcode}`
+        : `Version ${label.versionNumber} · ${label.shortcode} · ${formatText(label.format)}`;
     case 'song-level':
       return `Song-level file · ${label.fileName}`;
     case 'unmatched':
@@ -329,26 +404,43 @@ export function seekTarget(
 }
 
 /**
- * Why a Generation's Play is disabled, in words, or undefined when it can play. Until Suno streaming
- * (#221) only local files play, so the reason names what is wrong with them.
+ * Why Suno cannot stream a Generation (#221), from the playback reason code, as a clause after what
+ * is wrong with its local files: Suno has not finished the clip, no longer lists it, or n8Tracks has
+ * no Suno audio address for it.
+ */
+export function noStreamText(reason: string | null): string {
+  switch (reason) {
+    case 'suno_not_complete':
+      return 'Suno has not finished it, so there is nothing to stream yet';
+    case 'suno_not_present':
+      return 'Suno no longer lists it (in its Trash, or gone), so it is not streamed';
+    default:
+      return 'there is no Suno audio to stream';
+  }
+}
+
+/**
+ * Why a Generation's Play is disabled, in words, or undefined when it can play (a local file, or its
+ * Suno stream, #221). It names what is wrong with the local files, then why Suno cannot stream it.
  */
 export function unplayableReason(generation: Generation): string | undefined {
   if (generation.playback.playable) {
     return undefined;
   }
   const files = generation.audioFiles;
+  const suno = noStreamText(generation.playback.reason);
   if (files.count === 0) {
-    return 'Nothing to play: this Generation has no local audio file.';
+    return `Nothing to play: this Generation has no local audio file, and ${suno}.`;
   }
   if (files.unavailable > 0) {
-    return 'Nothing to play: the media folder cannot be read.';
+    return `Nothing to play: the media folder cannot be read, and ${suno}.`;
   }
   if (files.missing === files.count) {
     return files.count === 1
-      ? 'Nothing to play: its audio file is Missing.'
-      : 'Nothing to play: its audio files are Missing.';
+      ? `Nothing to play: its audio file is Missing, and ${suno}.`
+      : `Nothing to play: its audio files are Missing, and ${suno}.`;
   }
-  return 'Nothing to play: none of its audio files can be played.';
+  return `Nothing to play: none of its audio files can be played, and ${suno}.`;
 }
 
 /** Why a file row's Play is disabled, in words, or undefined when the file can play. */

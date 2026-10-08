@@ -3,10 +3,20 @@ import { useState } from 'react';
 import { formatDuration, ratingText } from '../api/generations';
 import type { SongPlaybackCandidate } from '../api/songPlayback';
 import { SelectedGenerationBadges } from '../generations/GenerationParts';
-import { formatText, type PlayableSong } from './playerRules';
+import { formatText, noStreamText, type PlayableSong } from './playerRules';
 
-/** Why a candidate cannot play, in words. */
-const NOTHING_TO_PLAY = 'Nothing to play: it has no local audio file that can play.';
+/** Why a candidate cannot play, in words: no local file, and why Suno cannot stream it (#221). */
+function nothingToPlay(candidate: SongPlaybackCandidate): string {
+  return `Nothing to play: it has no local audio file that can play, and ${noStreamText(candidate.reason)}.`;
+}
+
+/** What a candidate's line ends with: whether it streams from Suno (#221), or why it cannot play. */
+function playText(candidate: SongPlaybackCandidate): string {
+  if (!candidate.playable) {
+    return ` · ${nothingToPlay(candidate)}`;
+  }
+  return candidate.reason === 'suno_stream' ? ' · Streams from Suno' : '';
+}
 
 function keyOf(candidate: SongPlaybackCandidate): string {
   return candidate.kind === 'file'
@@ -130,9 +140,7 @@ function Choices({
                   )}
                 </Group>
               }
-              description={
-                each.playable ? detailOf(each) : `${detailOf(each)} · ${NOTHING_TO_PLAY}`
-              }
+              description={`${detailOf(each)}${playText(each)}`}
             />
           ))}
         </Stack>

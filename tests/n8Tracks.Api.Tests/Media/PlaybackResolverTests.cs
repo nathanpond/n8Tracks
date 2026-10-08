@@ -9,7 +9,9 @@ namespace n8Tracks.Api.Tests.Media;
 /// each place in the format order, duplicates of one format, an explicit choice, a chosen file Missing,
 /// Unavailable, and back, the Song's preferred Song-level file present, Missing, and absent, no Selected
 /// Generation, and nothing available; and the marks on a Song's list. And what Play on a Song does
-/// (#219): its state in each case, which agrees with what plays, and the chooser's candidates.
+/// (#219): its state in each case, which agrees with what plays, and the chooser's candidates. And the
+/// Suno branch (#221): local present (never Suno), no local with a stream, no local and no stream, and
+/// the Song-level cases.
 /// </summary>
 public sealed class PlaybackResolverTests
 {
@@ -295,6 +297,161 @@ public sealed class PlaybackResolverTests
 
         Assert.Empty(sources.SongFiles);
         Assert.Empty(sources.Generations);
+    }
+
+    private const string Address = "https://d2lwuy8qc234o3.cloudfront.net/1/clip/x.m4a";
+
+    private static readonly SunoStream Streams = new(Address, null);
+
+    public static TheoryData<string?, string?, GenerationRemoteState, string?, string?, PlaybackReason?> StreamCases => new()
+    {
+        // A finished clip Suno still lists, on the listed host: it streams.
+        { "id", "complete", GenerationRemoteState.Present, Address, Address, null },
+        { "id", "complete", GenerationRemoteState.Present, "https://D2LWUY8QC234O3.cloudfront.net:443/1/clip/x.mp3", "https://D2LWUY8QC234O3.cloudfront.net:443/1/clip/x.mp3", null },
+
+        // An address anywhere else is no address: Suno's API host, another host, plain HTTP, another port, a user name, not an address.
+        { "id", "complete", GenerationRemoteState.Present, "https://studio-api.prod.suno.com/api/forbidden", null, PlaybackReason.NothingAvailable },
+        { "id", "complete", GenerationRemoteState.Present, "https://suno-data-uploads.s3.amazonaws.com/x.mp3", null, PlaybackReason.NothingAvailable },
+        { "id", "complete", GenerationRemoteState.Present, "https://d2lwuy8qc234o3.cloudfront.net.example/x.m4a", null, PlaybackReason.NothingAvailable },
+        { "id", "complete", GenerationRemoteState.Present, "http://d2lwuy8qc234o3.cloudfront.net/x.m4a", null, PlaybackReason.NothingAvailable },
+        { "id", "complete", GenerationRemoteState.Present, "https://d2lwuy8qc234o3.cloudfront.net:8443/x.m4a", null, PlaybackReason.NothingAvailable },
+        { "id", "complete", GenerationRemoteState.Present, "https://me@d2lwuy8qc234o3.cloudfront.net/x.m4a", null, PlaybackReason.NothingAvailable },
+        { "id", "complete", GenerationRemoteState.Present, "/1/clip/x.m4a", null, PlaybackReason.NothingAvailable },
+        { "id", "complete", GenerationRemoteState.Present, null, null, PlaybackReason.NothingAvailable },
+
+        // Only a complete clip Suno lists is tried.
+        { "id", "streaming", GenerationRemoteState.Present, Address, null, PlaybackReason.SunoNotComplete },
+        { "id", null, GenerationRemoteState.Present, Address, null, PlaybackReason.SunoNotComplete },
+        { "id", "complete", GenerationRemoteState.Trashed, Address, null, PlaybackReason.SunoNotPresent },
+        { "id", "complete", GenerationRemoteState.Missing, Address, null, PlaybackReason.SunoNotPresent },
+
+        // No Suno data: nothing to stream.
+        { null, null, GenerationRemoteState.Present, Address, null, PlaybackReason.NothingAvailable },
+    };
+
+    [Theory]
+    [MemberData(nameof(StreamCases))]
+    public void AGenerationStreamsOnlyAFinishedListedClipFromAListedHost(
+        string? sunoId,
+        string? status,
+        GenerationRemoteState remote,
+        string? stored,
+        string? streamed,
+        PlaybackReason? why)
+    {
+        var stream = SunoStream.Of(sunoId, status, remote, stored);
+
+        Assert.Equal(streamed, stream.AudioUrl);
+        Assert.Equal(why, stream.Unstreamable);
+    }
+
+    [Fact]
+    public void ALocalFileAlwaysWinsOverTheSunoStream()
+    {
+        var file = File("take.mp3", G1);
+
+        var playback = PlaybackResolver.ForGeneration([file], Streams);
+
+        Assert.Same(file, playback.Played);
+        Assert.Null(playback.SunoAudioUrl);
+        Assert.Equal(PlaybackReason.FormatOrder, playback.Reason);
+        Assert.Equal(GenerationPlayability.Available, PlaybackResolver.PlayabilityOf([AudioFileReportedStatus.Available], Streams));
+    }
+
+    [Theory]
+    [InlineData(AudioFileReportedStatus.Missing)]
+    [InlineData(AudioFileReportedStatus.Unavailable)]
+    public void WithNothingLocalAvailableTheGenerationStreamsFromSuno(AudioFileReportedStatus away)
+    {
+        foreach (List<ReportedAudioFile> files in new List<ReportedAudioFile>[] { [], [File("take.wav", G1, away, preferred: true)] })
+        {
+            var playback = PlaybackResolver.ForGeneration(files, Streams);
+
+            Assert.Null(playback.Played);
+            Assert.Equal(Address, playback.SunoAudioUrl);
+            Assert.Equal(PlaybackReason.SunoStream, playback.Reason);
+            Assert.Equal(GenerationPlayability.Suno, PlaybackResolver.PlayabilityOf(files.Select(static file => file.Status), Streams));
+        }
+    }
+
+    [Theory]
+    [InlineData(PlaybackReason.NothingAvailable)]
+    [InlineData(PlaybackReason.SunoNotComplete)]
+    [InlineData(PlaybackReason.SunoNotPresent)]
+    public void WithNoLocalFileAndNoStreamNothingPlaysAndTheReasonSaysWhy(PlaybackReason why)
+    {
+        var stream = new SunoStream(null, why);
+
+        var playback = PlaybackResolver.ForGeneration([File("gone.wav", G1, AudioFileReportedStatus.Missing)], stream);
+
+        Assert.Null(playback.Played);
+        Assert.Null(playback.SunoAudioUrl);
+        Assert.Equal(why, playback.Reason);
+        Assert.Equal(new GenerationPlayability(false, why), PlaybackResolver.PlayabilityOf([AudioFileReportedStatus.Missing], stream));
+    }
+
+    [Fact]
+    public void ASongStreamsItsSelectedGenerationAndNeverBorrowsAnotherGenerationsLocalFile()
+    {
+        // "Selected one, from Suno": G2 has a local file, the Selected G1 has none.
+        var other = File("g2.wav", G2);
+        var selected = Generation(G1, "1") with { Stream = Streams };
+        var songFiles = new[] { other };
+
+        var played = PlaybackResolver.ForSong(songFiles, G1, Streams);
+        Assert.Null(played.Played);
+        Assert.Equal(Address, played.SunoAudioUrl);
+        Assert.Equal(PlaybackReason.SunoStream, played.Reason);
+        Assert.Equal(G1, played.GenerationId);
+
+        var choice = PlaybackResolver.ChoiceForSong(songFiles, [selected, Generation(G2, "2")], G1);
+        Assert.Equal(SongPlaybackState.Ready, choice.Playability.State);
+        Assert.Equal(Address, choice.Played.SunoAudioUrl);
+        Assert.Empty(choice.Candidates);
+        Assert.Equal(new SongPlayability(SongPlaybackState.Ready, null), PlaybackResolver.StateOfSong([PlaybackResolver.FactOf(other)], G1, true, new Dictionary<Guid, SunoStream> { [G1] = Streams }));
+
+        // The Song's own available preferred file still wins over the stream.
+        var songLevel = File("master.wav", null, preferred: true);
+        Assert.Same(songLevel, PlaybackResolver.ForSong([other, songLevel], G1, Streams).Played);
+
+        // Without a stream the Selected Generation has nothing to play, with the stream's reason.
+        var unstreamable = new SunoStream(null, PlaybackReason.SunoNotPresent);
+        Assert.Equal(PlaybackReason.SunoNotPresent, PlaybackResolver.ForSong(songFiles, G1, unstreamable).Reason);
+        Assert.Equal(
+            new SongPlayability(SongPlaybackState.SelectedUnplayable, PlaybackReason.SunoNotPresent),
+            PlaybackResolver.StateOfSong([PlaybackResolver.FactOf(other)], G1, true, new Dictionary<Guid, SunoStream> { [G1] = unstreamable }));
+    }
+
+    [Fact]
+    public void WithNoSelectionAStreamOnlyGenerationMakesTheSongAskAndIsAPlayableCandidate()
+    {
+        var streaming = Generation(G1, "1") with { Stream = Streams };
+        var silent = Generation(G2, "2") with { Stream = new SunoStream(null, PlaybackReason.SunoNotComplete) };
+
+        var choice = PlaybackResolver.ChoiceForSong([], [streaming, silent], null);
+
+        Assert.Equal(SongPlaybackState.NeedsChoice, choice.Playability.State);
+        Assert.Equal([GenerationPlayability.Suno, new GenerationPlayability(false, PlaybackReason.SunoNotComplete)], choice.Candidates.Select(static candidate => candidate.Playability));
+
+        // Without the stream there is nothing to offer.
+        Assert.Equal(SongPlaybackState.None, PlaybackResolver.ChoiceForSong([], [Generation(G1, "1"), silent], null).Playability.State);
+    }
+
+    [Fact]
+    public void AStreamOnlyGenerationIsASourceToCompareInTreeOrder()
+    {
+        var withFile = File("g2.mp3", G2);
+
+        var sources = PlaybackResolver.SourcesForSong(
+            [withFile],
+            [Generation(G1, "1") with { Stream = Streams }, Generation(G2, "2") with { Stream = Streams }]);
+
+        // In tree order; G2 has a file, so its file is its source and its stream is not listed.
+        Assert.Equal([G1, G2], sources.Generations.Select(static generation => generation.Generation.Id));
+        Assert.Empty(sources.Generations[0].Files);
+        Assert.Equal(Address, sources.Generations[0].SunoAudioUrl);
+        Assert.Same(withFile, sources.Generations[1].Files[0].File);
+        Assert.Null(sources.Generations[1].SunoAudioUrl);
     }
 
     private static Guid GenerationNamed(string name) => name == "1" ? G1 : G2;
