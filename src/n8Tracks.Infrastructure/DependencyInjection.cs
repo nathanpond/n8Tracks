@@ -102,6 +102,8 @@ public static class DependencyInjection
         services.AddScoped<IRemoteStateStore, RemoteStateStore>();
         services.AddScoped<IGenerationRequestStore, SunoGenerationRequestStore>();
         services.AddScoped<IAttentionDismissalStore, AttentionDismissalStore>();
+        services.AddScoped<IDashboardLayoutStore, DashboardLayoutStore>();
+        services.AddScoped<ILastSongStore, LastSongStore>();
         services.AddScoped<IVersionDefaultsStore, VersionDefaultsStore>();
         services.AddScoped<ISearchIndex, SearchIndex>();
         services.AddScoped<ISearchSourceStore, SearchSourceStore>();

@@ -116,6 +116,8 @@ public static class DependencyInjection
         services.AddScoped<MediaStatusService>();
         services.AddScoped<DashboardService>();
         services.AddScoped<AttentionService>();
+        services.AddScoped<DashboardLayoutService>();
+        services.AddScoped<LastSongService>();
         services.AddScoped<AudioContentService>();
         services.AddJobHandler<MediaScanJobHandler>(MediaScanService.JobType);
         services.AddSingleton<MediaScanStartup>();

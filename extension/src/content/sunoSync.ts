@@ -159,13 +159,21 @@ export class SunoSync {
     this.options.show({ kind: 'cancelled' });
   }
 
-  /** On every page load: reads this tab's leg, if the tab is in a sync. */
+  /**
+   * On every page load: reads this tab's leg, if the tab is in a sync. A tab the dashboard's Sync with
+   * Suno opened (#230) shows the panel on the Sync view instead, ready for the user's choice: nothing
+   * is started.
+   */
   async resume(): Promise<void> {
     const answer = (await this.options.send({ type: 'sync-resume' }).catch(() => undefined)) as
       ResponseFor['sync-resume'] | undefined;
     const session = isRecord(answer) ? (answer.session ?? null) : null;
     if (session !== null) {
       await this.readLeg(session);
+      return;
+    }
+    if (isRecord(answer) && answer.open === true) {
+      this.options.show({ kind: 'choose' });
     }
   }
 

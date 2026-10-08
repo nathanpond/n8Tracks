@@ -1,8 +1,11 @@
-import { isSunoAddress } from '../adapter/addresses.ts';
+import { isSunoAddress, sunoListAddress } from '../adapter/addresses.ts';
 import { legsFor } from '../adapter/libraryReader.ts';
+import { mismatchWarning } from '../compatibility.ts';
 import type {
   DiscardReason,
   ExportPart,
+  OpenSyncFailure,
+  RelayReply,
   ResponseFor,
   SyncProgress,
   SyncReply,
@@ -35,15 +38,25 @@ export interface SyncBrowser {
     remove(keys: string[]): Promise<void>;
   };
   tabs: {
-    get(tabId: number): Promise<{ id?: number; windowId: number }>;
+    get(tabId: number): Promise<{ id?: number; windowId: number; index?: number }>;
     query(query: { windowId?: number }): Promise<{ id?: number; url?: string }[]>;
     update(tabId: number, properties: { url: string; active: boolean }): Promise<unknown>;
-    create(properties: { url: string; windowId?: number; active: boolean }): Promise<unknown>;
+    create(properties: {
+      url: string;
+      windowId?: number;
+      index?: number;
+      active: boolean;
+    }): Promise<unknown>;
   };
 }
 
 /** The session-storage key of the sync in progress. */
 export const SYNC_KEY = 'sync';
+/**
+ * The session-storage key of the tab `open-sync` opened (#230): its first page load opens the panel
+ * on the Sync view, once.
+ */
+export const SYNC_PANEL_KEY = 'syncPanel';
 /** The local-storage key of the last export this extension created, to warn before replacing it. */
 export const LAST_EXPORT_KEY = 'lastSunoExport';
 
@@ -62,6 +75,15 @@ function onSuno(address: string): boolean {
     return isSunoAddress(new URL(address));
   } catch {
     return false;
+  }
+}
+
+/** The origin of `address`, or null when it is not an address. */
+function originOf(address: string | undefined): string | null {
+  try {
+    return address === undefined ? null : new URL(address).origin;
+  } catch {
+    return null;
   }
 }
 
@@ -119,7 +141,10 @@ export class SyncCoordinator {
         return this.begin(request.scope, tabId);
       case 'sync-resume': {
         const session = await this.session();
-        return { session: session?.tabId === tabId ? session : null };
+        const own = session?.tabId === tabId ? session : null;
+        return (await this.takePanelTab(tabId)) && own === null
+          ? { session: null, open: true }
+          : { session: own };
       }
       case 'sync-save':
         return this.save(request.progress, tabId);
@@ -134,6 +159,81 @@ export class SyncCoordinator {
       case 'sync-images':
         return { images: await this.images.progress(tabId) };
     }
+  }
+
+  /**
+   * The dashboard's Sync with Suno (#230, `open-sync`), passed on by the relay from the page at `senderUrl` in tab
+   * `senderTab`: checks the pairing afresh and, when the extension is connected to that n8Tracks with
+   * `suno.sync`, opens the user's Suno library in a new tab beside it, whose first page load opens the
+   * panel on the Sync view. It starts no sync and reads nothing: the user chooses what to sync and
+   * presses Sync in the panel, as from the toolbar. A version mismatch is answered as a warning and
+   * the tab still opens.
+   */
+  async openSync(
+    senderUrl: string | undefined,
+    senderTab: number | undefined,
+  ): Promise<RelayReply> {
+    const refuse = (reason: OpenSyncFailure, words: string): RelayReply => ({
+      type: 'open-sync',
+      ok: false,
+      reason,
+      message: words,
+    });
+    const state = await this.connection.state(true);
+    switch (state.status) {
+      case 'not-paired':
+        return refuse('unpaired', 'The extension is not paired with n8Tracks.');
+      case 'permission-removed':
+        return refuse(
+          'unpaired',
+          'The extension lost a permission it needs. Connect it again in its options.',
+        );
+      case 'revoked':
+        return refuse(
+          'revoked',
+          'n8Tracks refused the extension’s credential, so it was forgotten. Connect it again in its options.',
+        );
+      case 'unreachable':
+        return refuse('unreachable', 'The extension cannot reach n8Tracks right now.');
+      case 'connected':
+        break;
+    }
+    if (originOf(senderUrl) !== originOf(state.address)) {
+      return refuse('unpaired', 'The extension is paired with another n8Tracks.');
+    }
+    const sync = state.features.find((feature) => feature.feature === 'sync');
+    if (sync?.available !== true) {
+      return refuse('missing_scope', sync?.reason ?? 'This credential lacks suno.sync.');
+    }
+    try {
+      const from = senderTab === undefined ? null : await this.browser.tabs.get(senderTab);
+      const created = await this.browser.tabs.create({
+        url: sunoListAddress({ page: 'library' }).href,
+        active: true,
+        ...(from === null ? {} : { windowId: from.windowId }),
+        ...(from?.index === undefined ? {} : { index: from.index + 1 }),
+      });
+      const tabId = isRecord(created) && typeof created.id === 'number' ? created.id : undefined;
+      if (tabId !== undefined) {
+        await this.browser.session.set({ [SYNC_PANEL_KEY]: { tabId } });
+      }
+    } catch {
+      return refuse('unreachable', 'The extension could not open a Suno tab. Try again.');
+    }
+    const warning = mismatchWarning(state.compatibility);
+    return warning === null
+      ? { type: 'open-sync', ok: true }
+      : { type: 'open-sync', ok: true, warning };
+  }
+
+  /** Whether `tabId` is the tab `open-sync` opened; forgets it, so only its first page load opens the panel. */
+  private async takePanelTab(tabId: number): Promise<boolean> {
+    const stored = (await this.browser.session.get([SYNC_PANEL_KEY]))[SYNC_PANEL_KEY];
+    if (!isRecord(stored) || stored.tabId !== tabId) {
+      return false;
+    }
+    await this.browser.session.remove([SYNC_PANEL_KEY]);
+    return true;
   }
 
   /** Whether a sync is under way, in any tab (the Download view waits for it, #215). */

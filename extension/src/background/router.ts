@@ -127,6 +127,15 @@ export async function route(
         ? { refused: 'diagnostics are not kept here' }
         : diagnostics.report();
     case 'relay': {
+      // Sync with Suno (#230): only from the relay, a content script in a tab that is not on Suno.
+      if (
+        message.message.type === 'open-sync' &&
+        sync !== undefined &&
+        sender.tab !== undefined &&
+        !onSuno(sender)
+      ) {
+        return sync.openSync(sender.url, sender.tab.id);
+      }
       // Generate on Suno (#144): only from the relay, a content script in a tab that is not on Suno.
       if (generate !== undefined && sender.tab !== undefined && !onSuno(sender)) {
         const answer = await generate.handle(message.message, sender.url, sender.tab.id);

@@ -89,6 +89,8 @@ function worker(
   session: SyncSession | null,
   connection: ConnectionState = CONNECTED,
   images: ImageProgress[] = [],
+  /** Whether this tab was opened by the dashboard's Sync with Suno (#230). */
+  open = false,
 ) {
   const asked: Request[] = [];
   let current = session;
@@ -98,7 +100,9 @@ function worker(
       case 'state':
         return Promise.resolve(connection);
       case 'sync-resume':
-        return Promise.resolve({ session: current });
+        return Promise.resolve(
+          open && current === null ? { session: null, open: true } : { session: current },
+        );
       case 'sync-preview':
         return Promise.resolve({ replacesReady: true });
       case 'sync-begin':
@@ -245,6 +249,29 @@ describe('starting a sync from the panel', () => {
     });
     expect(sw.asked).toContainEqual({ type: 'sync-begin', scope: LIBRARY });
     expect(text('.sync-progress')).toContain('Reading: Read the workspace list.');
+  });
+
+  it('opens the panel on the Sync view in a tab the dashboard opened, and starts nothing (#230)', async () => {
+    const sw = worker(null, CONNECTED, [], true);
+    const {
+      content: started,
+      visited,
+      root,
+      button,
+    } = start({ address: 'https://suno.com/me', snapshot: null, worker: sw });
+
+    await started.resumed;
+
+    expect(started.panel.isOpen).toBe(true);
+    expect(root?.querySelector<HTMLInputElement>('input[value="library"]')?.checked).toBe(true);
+    await vi.waitFor(() => {
+      expect(button('Next')?.disabled).toBe(false);
+    });
+    // Invariant 4 and the plan: nothing is read, begun, or pressed until the user chooses.
+    expect(sw.types()).not.toContain('sync-begin');
+    expect(sw.types()).not.toContain('sync-preview');
+    expect(visited).toEqual([]);
+    await expectNoAxeViolations(document);
   });
 
   it('is disabled, saying why, when the extension is not connected', async () => {

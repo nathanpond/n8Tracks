@@ -60,6 +60,29 @@ describe('the service worker router', () => {
     });
   });
 
+  it('passes open-sync from the relay on n8Tracks to the sync, with the page and its tab (#230)', async () => {
+    const opened: [string | undefined, number | undefined][] = [];
+    const sync = {
+      openSync: (senderUrl: string | undefined, senderTab: number | undefined) => {
+        opened.push([senderUrl, senderTab]);
+        return Promise.resolve({ type: 'open-sync', ok: true });
+      },
+    } as unknown as SyncCoordinator;
+    const message = { source: 'n8tracks', type: 'open-sync', id: '8' };
+
+    expect(
+      await route(connection(), { type: 'relay', message }, CONTENT_SCRIPT, ID, undefined, sync),
+    ).toEqual({ type: 'open-sync', ok: true });
+    expect(opened).toEqual([['https://n8tracks.example.com/songs', 4]]);
+
+    // Not from a content script on Suno: that is not the relay.
+    const suno = { id: ID, url: 'https://suno.com/me', tab: { id: 9 } };
+    expect(
+      await route(connection(), { type: 'relay', message }, suno, ID, undefined, sync),
+    ).toMatchObject({ type: 'error', error: 'unknown_type' });
+    expect(opened).toHaveLength(1);
+  });
+
   it('passes a sync message from the Suno content script to the sync, with its tab', async () => {
     const handled: [unknown, number][] = [];
     const sync = {

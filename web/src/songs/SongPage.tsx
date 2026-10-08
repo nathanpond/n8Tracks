@@ -1,7 +1,8 @@
 import { Anchor, Button, Group, Loader, Stack, Text, Title } from '@mantine/core';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router';
 import { ownArtwork } from '../api/artwork';
+import { rememberLastSong } from '../api/dashboardSettings';
 import { deletedSongOf, type DeletedSong } from '../api/songDeletion';
 import type { FieldValue } from '../api/saves';
 import {
@@ -317,6 +318,15 @@ export function SongPage() {
   const { reference = '' } = useParams();
   const { state, reload } = useSong(reference);
   const deletedSong = state.phase === 'not-found' ? deletedSongOf(state.problem) : undefined;
+  const openedId = state.phase === 'ready' ? state.data.id : undefined;
+
+  // #230: each Song opened is recorded for the dashboard's Open last Song, explicitly (reading a
+  // Song records nothing).
+  useEffect(() => {
+    if (openedId !== undefined) {
+      void rememberLastSong(openedId);
+    }
+  }, [openedId]);
 
   return (
     <Stack gap="lg">

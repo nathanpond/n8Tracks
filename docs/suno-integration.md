@@ -166,6 +166,13 @@ Raw objects are sent as Suno returned them. It is uploaded in parts: `POST /api/
   - It then makes the request and posts `{ type: "generate", requestId }`. The extension checks its connection afresh, claims the request, and answers `generate-accepted`. A refused hand-off cancels the request.
   - The page reads the request every two seconds while it is active and offers Cancel.
 
+## Sync with Suno from the dashboard (#230)
+
+- **The page:** the dashboard's Sync with Suno pings the relay (500 ms). When nothing answers, it says the extension is not installed or not paired, links to the pairing instructions (Settings → Credentials), and sends nothing more. Otherwise it posts `{ type: "open-sync" }` and waits two seconds for the answer; no answer in time is shown as not connected too.
+- **The extension:** the service worker checks its pairing afresh (the handshake, bypassing the cache) and answers `{ type: "open-sync", ok: true, warning? }`, or `{ type: "open-sync", ok: false, reason, message }` with `reason` one of `unpaired` (not paired, paired with another n8Tracks, or a host permission removed), `revoked`, `missing_scope` (no `suno.sync`), or `unreachable`. A version mismatch is the `warning`, and the tab still opens. An extension older than this answers `unknown_type`, which the page shows as "update the extension".
+- **What opens:** the user's library (`https://suno.com/me`) in a new tab beside the n8Tracks tab. The service worker remembers that tab in session storage (`syncPanel`), and the tab's first page load (`sync-resume`, answered `{ session: null, open: true }` once) opens the panel on the Sync view's first step. Nothing is read, staged, or pressed: the user chooses what to sync and presses Start sync, as from the toolbar (invariant 4).
+- Only the relay may send it: `open-sync` from a content script on Suno is answered `unknown_type`.
+
 ## Download from Suno (#215)
 
 The panel on Suno has a Download view. The user loads the library, narrows it by workspace and by text in the title, selects clips, and chooses formats from WAV, MP3, M4A, and M4A (streaming quality). They see what would be downloaded before anything is fetched, and Start downloads the files (#216, below).
@@ -246,7 +253,7 @@ When a Generation has no available local file, the player streams it from Suno.
 
 - A service worker holds state and is the only part that calls the n8Tracks API.
 - On `suno.com`: a content script, plus a script in the page's own context that wraps `fetch` and passes copies of matching responses to the content script. It observes only.
-- On the configured n8Tracks origin: a relay content script. The web app talks to the extension with `window.postMessage({ source: "n8tracks", type, ... })` and receives `{ source: "n8tracks-extension", ... }`. The web app detects the extension with a `ping` that times out after 500 ms.
+- On the configured n8Tracks origin: a relay content script. The web app talks to the extension with `window.postMessage({ source: "n8tracks", type, ... })` and receives `{ source: "n8tracks-extension", ... }`. The web app detects the extension with a `ping` that times out after 500 ms. The page messages are `generate`, `open-options` (#144), and `open-sync` (#230).
 - The Suno adapter lives in `extension/src/adapter/` with an `ADAPTER_VERSION` constant. Every selector, address pattern, and workflow step for Suno is inside it.
 - The extension's own interface on the Suno page is a panel the content script injects in a shadow root; settings are on an options page. The popup shows connection state.
 - Pairing: the options page takes the n8Tracks address and a token, asks the browser for the two host permissions, and the service worker checks the token with `GET /api/v1/extension/handshake` before saving it. Any valid token may make the handshake, whatever its scopes. Each call sends `X-N8Tracks-Extension-Version` and `X-N8Tracks-Adapter-Version`. The answer is `{ applicationVersion, credentialName, scopes, compatible }`, and the reported versions are recorded on the credential. The handshake is cached for 60 seconds and is re-run before each sync or generation. A 401 `invalid_token` forgets the token.
