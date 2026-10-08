@@ -4364,3 +4364,27 @@ Story #210:
 - **Decision:** After a Song restore, files released with `song_deleted` keep that reason (hand-associated and Song-level ones included). After a Generation restore, an ID-less file loses `generation_deleted` at the next scan, as #206's matcher already does whether or not the Generation is restored. `auto_match_blocked` is never cleared by a delete or a restore (#210).
   **Why:** This deviates from the discretion line "After a restore, a hand-associated file with no Suno ID is plainly unmatched, with no reason". Associations are not retained (planner), so nothing records which Song released a file. Clearing every `song_deleted` would mislabel files of Songs that are still deleted. A column recording the releasing owner would be a schema change the story does not ask for (Rule 4).
   **Issue:** #213
+
+Story #218 (built in parallel; merged into the milestone branch):
+
+- **Decision:** Rows learn playability from a new `playback {playable, reason}` on every Generation answer, decided by `PlaybackResolver.PlayabilityOf` over the statuses the list already tallies (`AudioFileTally.Playability`); `reason` is null or `nothing_available`.
+  **Why:** the discretion line asks for flags computed by the resolver on the list responses, not a call per row; the resolver's `ForGeneration` names a file exactly when one file is available, which a unit test pins.
+  **Issue:** #218
+- **Decision:** The Play-disabled reason text is worded on the web from the Generation's tally (no file / Missing / media folder unavailable); the server's code stays `nothing_available` (the resolver's own reason).
+  **Why:** keeps one set of resolver reason codes; the tally already says which case it is. #221 widens `playable` with Suno streaming.
+  **Issue:** #218
+- **Decision:** One `HTMLAudioElement`, made once in `PlayerProvider` (held in a ref, appended to a hidden span) and mounted inside `SignedInShell` around the `AppShell`, so route changes never unmount it; signing out unmounts the shell and stops it. The bar is `AppShell.Footer` (height 168 px narrow, 104 px from `sm`), rendered only once something was played, so Mantine reserves the space and nothing is covered.
+  **Why:** the must-have key link (above the router outlet); a footer reserves space by itself. A ref, not state, because the React Compiler lint forbids mutating a `useState` value.
+  **Issue:** #218
+- **Decision:** The seek bar and volume are native `<input type="range">` with `aria-valuetext`; the seek bar handles Arrow (±5 s), Page Up/Down (±30 s), Home/End and Space itself (preventDefault), the volume keeps the browser's own keys (step 5 %). Mute is a toggle button with a fixed name and `aria-pressed`. No global key handler at all.
+  **Why:** native sliders give names, values, and mouse dragging for free and behave the same in jsdom; handling only keys on the bar's own controls is what keeps the space bar from ever being taken from a text field or the editor.
+  **Issue:** #218
+- **Decision:** On an audio `error` the provider reads the session with `fetchSession` (no interceptor); if it ended, the bar goes to paused at the stored position and an `apiFetch('api/v1/session')` raises the in-place sign-in prompt; Play after signing in reloads the src and seeks back. Otherwise the error state names the file and offers Retry (reload at the stored position) and Close.
+  **Why:** the discretion lines on session end; the audio element's own requests do not pass through the shared 401 interceptor.
+  **Issue:** #218
+- **Decision:** Cross-tab pause over `BroadcastChannel('n8tracks-player')` (a `play` posts, other tabs pause); Media Session gets `MediaMetadata({title})` and play/pause handlers only. Volume and mute in `localStorage` key `n8tracks.player.volume`.
+  **Why:** discretion lines; both are feature-detected so old browsers and jsdom are unaffected.
+  **Issue:** #218
+- **Decision:** Play controls: a first (unlabelled "Play") column in the Versions table's Generation rows, the Audio Files section, and Unmatched Files; beside the shortcode in the Generation panel; beside the file name in the panel's file list. The two Unmatched Files component tests that listed cells/buttons by position were updated.
+  **Why:** AC 1 names every one of these; putting it first keeps it visible without scrolling the wide tables.
+  **Issue:** #218
