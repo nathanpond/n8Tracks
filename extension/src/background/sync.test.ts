@@ -183,10 +183,11 @@ describe('starting a sync', () => {
 
     await context.send({ type: 'sync-begin', scope: { kind: 'library' } }, 9);
 
+    // #229: the earlier sync was cancelled, not failed.
     expect(context.calls.at(-1)).toEqual({
       method: 'POST',
       path: `api/v1/suno/exports/${EXPORT}/discard`,
-      body: undefined,
+      body: { reason: 'cancelled' },
     });
     expect(context.session.get(SYNC_KEY)).toMatchObject({ tabId: 9, exportId: null });
   });
@@ -372,6 +373,25 @@ describe('ending a sync without an export', () => {
     expect(context.session.has(SYNC_KEY)).toBe(false);
     // Complement: it was never completed.
     expect(context.calls.some((call) => call.path.endsWith('/complete'))).toBe(false);
+  });
+
+  it('tells n8Tracks why the export is discarded: failed at a step, or cancelled (#229)', async () => {
+    const failed = await created();
+    expect(
+      await failed.send({
+        type: 'sync-discard',
+        reason: { reason: 'failed', step: 'Read the library' },
+      }),
+    ).toEqual({ ok: true });
+    expect(failed.calls.at(-1)).toEqual({
+      method: 'POST',
+      path: `api/v1/suno/exports/${EXPORT}/discard`,
+      body: { reason: 'failed', step: 'Read the library' },
+    });
+
+    const cancelled = await created();
+    await cancelled.send({ type: 'sync-discard', reason: { reason: 'cancelled' } });
+    expect(cancelled.calls.at(-1)?.body).toEqual({ reason: 'cancelled' });
   });
 
   it('discards the export when the Suno tab is closed, and not for another tab', async () => {

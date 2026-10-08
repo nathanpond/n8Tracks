@@ -11,7 +11,10 @@ using n8Tracks.Api.Tests.Setup;
 using n8Tracks.Api.Tests.Songs;
 using n8Tracks.Api.Tests.Suno;
 using n8Tracks.Application.Credentials;
+using n8Tracks.Application.Media;
 using n8Tracks.Application.Songs;
+using n8Tracks.Application.Suno;
+using n8Tracks.Application.Suno.Import;
 using n8Tracks.Domain.Songs;
 
 namespace n8Tracks.Api.Tests.Dashboard;
@@ -230,7 +233,8 @@ public sealed class DashboardTests
     [Fact]
     public async Task EverySectionFailingIsA500()
     {
-        using var factory = FailingHost(failStates: true, failSongs: static _ => true);
+        // #229: what needs attention fails too; with it read, the answer would be 200 (AttentionTests).
+        using var factory = FailingHost(failStates: true, failSongs: static _ => true, failAttention: true);
         using var client = await SessionApi.SignedInClientAsync(factory);
 
         using var response = await client.GetAsync(Dashboard);
@@ -342,7 +346,7 @@ public sealed class DashboardTests
     /// whose Song store throws when listing a query <paramref name="failSongs"/> picks; everything else
     /// is the real store.
     /// </summary>
-    private static N8TracksApiFactory FailingHost(bool failStates, Func<SongListQuery, bool> failSongs) =>
+    private static N8TracksApiFactory FailingHost(bool failStates, Func<SongListQuery, bool> failSongs, bool failAttention = false) =>
         new()
         {
             TestServices = services =>
@@ -351,18 +355,31 @@ public sealed class DashboardTests
                     method.Name == nameof(ISongStore.ListAsync) && arguments?[0] is SongListQuery query && failSongs(query));
                 Wrap<IWorkflowStateStore>(services, (method, _) =>
                     failStates && method.Name == nameof(IWorkflowStateStore.ListWithUsageAsync));
+                if (failAttention)
+                {
+                    Wrap<ISunoWorkspaceStore>(services, static (method, _) => method.Name == nameof(ISunoWorkspaceStore.ListAsync));
+                    Wrap<IAudioFileStore>(services, static (method, _) => method.Name == nameof(IAudioFileStore.ListAsync));
+                    Wrap<ISunoExportStore>(services, static (method, _) => method.Name == nameof(ISunoExportStore.InStatesAsync));
+                }
             },
         };
 
-    /// <summary>Replaces the registration of <typeparamref name="T"/> with the real one wrapped by <see cref="FailingStore{T}"/>.</summary>
-    private static void Wrap<T>(IServiceCollection services, Func<MethodInfo, object?[]?, bool> fails)
+    /// <summary>
+    /// Replaces the registration of <typeparamref name="T"/> with the real one wrapped by
+    /// <see cref="FailingStore{T}"/>: a registration by type or by factory (#229).
+    /// </summary>
+    internal static void Wrap<T>(IServiceCollection services, Func<MethodInfo, object?[]?, bool> fails)
         where T : class
     {
         var registered = services.Single(static descriptor => descriptor.ServiceType == typeof(T));
         services.Remove(registered);
         services.Add(new ServiceDescriptor(
             typeof(T),
-            provider => FailingStore<T>.Wrap((T)ActivatorUtilities.CreateInstance(provider, registered.ImplementationType!), fails),
+            provider => FailingStore<T>.Wrap(
+                registered.ImplementationType is { } type
+                    ? (T)ActivatorUtilities.CreateInstance(provider, type)
+                    : (T)registered.ImplementationFactory!(provider),
+                fails),
             registered.Lifetime));
     }
 }

@@ -8,10 +8,12 @@ using n8Tracks.Application.Dashboard;
 namespace n8Tracks.Api.Endpoints;
 
 /// <summary>
-/// The dashboard (#228): one read of its catalog sections. It needs <c>catalog.read</c>. Each section
-/// is answered on its own: <c>{ data }</c>, or <c>{ error: { code: "section_failed" } }</c> when its
-/// read failed (logged here, never answered), so one failing section leaves the others. The answer is
-/// 500 only when every section failed. Every answer is <c>no-store</c>: it is the catalog as it is now.
+/// The dashboard (#228): one read of its catalog sections, and (#229) of what needs attention
+/// (<see cref="AttentionEndpoints"/>: a bearer token gets those three as counts only). It needs
+/// <c>catalog.read</c>. Each section is answered on its own: <c>{ data }</c>, or
+/// <c>{ error: { code: "section_failed" } }</c> when its read failed (logged here, never answered), so
+/// one failing section leaves the others. The answer is 500 only when every section failed. Every
+/// answer is <c>no-store</c>: it is the catalog as it is now.
 /// </summary>
 internal static partial class DashboardEndpoints
 {
@@ -26,7 +28,7 @@ internal static partial class DashboardEndpoints
 
         endpoints.MapGet(DashboardPath, GetAsync)
             .WithName("GetDashboard")
-            .WithSummary("The dashboard's catalog sections: Recently edited, By workflow state, and Without a Selected Generation, each its data or its error.")
+            .WithSummary("The dashboard's sections: Recently edited, By workflow state, and Without a Selected Generation (#228), and Unmatched Files, Suno reviews, and Suno problems as GET /api/v1/attention answers them (#229), each its data or its error. A bearer token gets the last three as counts only.")
             .RequireScope(CredentialScopes.CatalogRead)
             .Produces<DashboardResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
@@ -51,6 +53,8 @@ internal static partial class DashboardEndpoints
         LogFailure(logger, "workflowStates", sections.WorkflowStates.Failure);
         LogFailure(logger, "withoutSelection", sections.WithoutSelection.Failure);
 
+        var (unmatched, reviews, problems) = AttentionEndpoints.Sections(sections.Attention, context, logger);
+
         if (sections.AllFailed)
         {
             return ApiProblem.For(context, StatusCodes.Status500InternalServerError, SectionFailedCode, "The dashboard could not be read.");
@@ -59,7 +63,10 @@ internal static partial class DashboardEndpoints
         return TypedResults.Ok(new DashboardResponse(
             Section(sections.RecentlyEdited, static recent => new RecentlyEditedResponse([.. recent.Songs.Select(DashboardSongResponse.From)], recent.Total)),
             Section(sections.WorkflowStates, static byState => new WorkflowStatesResponse([.. byState.States.Select(DashboardStateCountResponse.From)])),
-            Section(sections.WithoutSelection, static without => new WithoutSelectionResponse(without.Count, [.. without.Songs.Select(DashboardSongResponse.From)]))));
+            Section(sections.WithoutSelection, static without => new WithoutSelectionResponse(without.Count, [.. without.Songs.Select(DashboardSongResponse.From)])),
+            unmatched,
+            reviews,
+            problems));
     }
 
     private static DashboardSectionResponse<TResponse> Section<TData, TResponse>(DashboardSection<TData> section, Func<TData, TResponse> map)
@@ -81,11 +88,14 @@ internal static partial class DashboardEndpoints
     private static partial void LogSectionFailed(ILogger logger, string section, Exception exception);
 }
 
-/// <summary>The dashboard: each catalog section's data or error.</summary>
+/// <summary>The dashboard: each section's data or error, the catalog's (#228) and then what needs attention (#229).</summary>
 internal sealed record DashboardResponse(
     DashboardSectionResponse<RecentlyEditedResponse> RecentlyEdited,
     DashboardSectionResponse<WorkflowStatesResponse> WorkflowStates,
-    DashboardSectionResponse<WithoutSelectionResponse> WithoutSelection);
+    DashboardSectionResponse<WithoutSelectionResponse> WithoutSelection,
+    DashboardSectionResponse<UnmatchedFilesResponse> UnmatchedFiles,
+    DashboardSectionResponse<SunoReviewsResponse> SunoReviews,
+    DashboardSectionResponse<SunoProblemsResponse> SunoProblems);
 
 /// <summary>One section: <c>data</c> when it was read, otherwise <c>error</c>; never both.</summary>
 internal sealed record DashboardSectionResponse<T>(

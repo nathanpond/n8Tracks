@@ -303,7 +303,8 @@ export type Request =
   | { type: 'sync-create'; header: Record<string, unknown> }
   | { type: 'sync-part'; part: ExportPart }
   | { type: 'sync-complete' }
-  | { type: 'sync-discard' }
+  /** Ends the sync and discards its export, saying why (#229): cancelled, or failed at a step. */
+  | { type: 'sync-discard'; reason?: DiscardReason }
   /** The cover images of this tab's last sync (#152). */
   | { type: 'sync-images' }
   /** The Suno content script: a run that ended and the self-check states (#150). */
@@ -682,9 +683,10 @@ export function isRequest(value: unknown): value is Request {
     case 'sync-preview':
     case 'sync-resume':
     case 'sync-complete':
-    case 'sync-discard':
     case 'sync-images':
       return true;
+    case 'sync-discard':
+      return value.reason === undefined || isDiscardReason(value.reason);
     case 'sync-begin':
       return isSyncScope(value.scope);
     case 'sync-save':
@@ -753,4 +755,27 @@ export async function sendRequest<T extends Request>(
   send: (message: unknown) => Promise<unknown> = (message) => chrome.runtime.sendMessage(message),
 ): Promise<Response<T>> {
   return (await send(request)) as Response<T>;
+}
+
+/**
+ * Why a sync's export is discarded (#229), as n8Tracks records it: the user cancelled it, or it failed
+ * at a step (the step's name as the panel shows it). n8Tracks shows a failed sync until a later one
+ * becomes ready.
+ */
+export type DiscardReason = { reason: 'cancelled' } | { reason: 'failed'; step: string };
+
+/** The longest step name n8Tracks keeps. */
+export const DISCARD_STEP_MAXIMUM_LENGTH = 200;
+
+export function isDiscardReason(value: unknown): value is DiscardReason {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    value.reason === 'cancelled' ||
+    (value.reason === 'failed' &&
+      typeof value.step === 'string' &&
+      value.step.trim().length > 0 &&
+      value.step.length <= DISCARD_STEP_MAXIMUM_LENGTH)
+  );
 }

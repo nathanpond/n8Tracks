@@ -315,6 +315,7 @@ public sealed class Program
             app.MapSongs();
             app.MapSongDeletion();
             app.MapDashboard();
+            app.MapAttention();
             app.MapLanguages();
             app.MapGenres();
             app.MapTags();

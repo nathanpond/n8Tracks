@@ -14,6 +14,10 @@ namespace n8Tracks.Infrastructure.Persistence;
 /// </summary>
 internal sealed class SunoExportStore(N8TracksDbContext context) : ISunoExportStore, ISunoClipLookup, IArtworkAttachments
 {
+    private static readonly string FailedState = SunoExportRules.NameOf(SunoExportState.Failed);
+    private static readonly string DiscardedState = SunoExportRules.NameOf(SunoExportState.Discarded);
+    private static readonly string FailedReason = SunoExportRules.NameOf(SunoExportEndReason.Failed);
+
     public async Task AddAsync(SunoExport export, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(export);
@@ -60,7 +64,31 @@ internal sealed class SunoExportStore(N8TracksDbContext context) : ISunoExportSt
         return [.. records.Select(ToExport)];
     }
 
-    public async Task<bool> TryMoveAsync(Guid id, IReadOnlyCollection<SunoExportState> from, SunoExportState to, DateTimeOffset now, Guid? jobId, CancellationToken cancellationToken)
+    public Task<bool> TryMoveAsync(Guid id, IReadOnlyCollection<SunoExportState> from, SunoExportState to, DateTimeOffset now, Guid? jobId, CancellationToken cancellationToken) =>
+        TryMoveAsync(id, from, to, now, jobId, null, cancellationToken);
+
+    public async Task<SunoExport?> NewestSyncFailureAsync(CancellationToken cancellationToken)
+    {
+        var record = await context.SunoExports.AsNoTracking()
+            .Where(static row => row.EndedUtc != null && (row.State == FailedState || (row.State == DiscardedState && row.EndReason == FailedReason)))
+            .OrderByDescending(static row => row.EndedUtc)
+            .ThenByDescending(static row => row.Id)
+            .FirstOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return record is null ? null : ToExport(record);
+    }
+
+    public async Task<DateTimeOffset?> LastReadyAsync(CancellationToken cancellationToken)
+    {
+        // UtcText is fixed-width ISO 8601, so the text's order is the time's.
+        var last = await context.SunoExports.AsNoTracking()
+            .Where(static row => row.ReadyUtc != null)
+            .MaxAsync(static row => row.ReadyUtc, cancellationToken)
+            .ConfigureAwait(false);
+        return last is null ? null : UtcText.Parse(last);
+    }
+
+    public async Task<bool> TryMoveAsync(Guid id, IReadOnlyCollection<SunoExportState> from, SunoExportState to, DateTimeOffset now, Guid? jobId, SunoExportEnding? ending, CancellationToken cancellationToken)
     {
         var names = from.Select(SunoExportRules.NameOf).ToList();
         var record = await context.SunoExports.SingleOrDefaultAsync(row => row.Id == id && names.Contains(row.State), cancellationToken).ConfigureAwait(false);
@@ -89,6 +117,12 @@ internal sealed class SunoExportStore(N8TracksDbContext context) : ISunoExportSt
         if (jobId is not null)
         {
             record.JobId = jobId;
+        }
+
+        if (ending is not null)
+        {
+            record.EndReason = SunoExportRules.NameOf(ending.Reason);
+            record.FailedStep = ending.Step;
         }
 
         await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
@@ -591,7 +625,8 @@ internal sealed class SunoExportStore(N8TracksDbContext context) : ISunoExportSt
             Optional(record.ReadyUtc),
             Optional(record.EndedUtc),
             record.JobId,
-            record.Revision);
+            record.Revision,
+            SunoExportRules.EndReasonOf(record.EndReason) is { } reason ? new SunoExportEnding(reason, record.FailedStep) : null);
 
     private static DateTimeOffset? Optional(string? text) => text is null ? null : UtcText.Parse(text);
 }

@@ -41,6 +41,10 @@ internal static class SunoExportsEndpoints
     public const string PageSizeParameter = "pageSize";
     public const string SearchParameter = "q";
 
+    /// <summary>The discard body's fields (#229).</summary>
+    public const string ReasonField = "reason";
+    public const string StepField = "step";
+
     /// <summary>The targets query's parameters: the Song (ID or shortcode) and the parent of a new Version.</summary>
     public const string SongParameter = "song";
     public const string ParentParameter = "parent";
@@ -94,13 +98,15 @@ internal static class SunoExportsEndpoints
 
         endpoints.MapPost(DiscardPath, DiscardAsync)
             .WithName("DiscardSunoExport")
-            .WithSummary("Discards an export that is receiving, classifying, or ready: its staged records and images are removed at once. An export that has ended is answered as it is; one being committed, or committed, is 409 export_not_discardable.")
+            .WithSummary("Discards an export that is receiving, classifying, or ready: its staged records and images are removed at once. An optional body says why (#229): { reason: \"cancelled\" } or { reason: \"failed\", step: \"<the step that failed>\" } (at most 200 characters); a failed one is shown on the dashboard and the Suno import page until a later sync becomes ready. An export that has ended is answered as it is (its reason unchanged); one being committed, or committed, is 409 export_not_discardable. 400 invalid_request for a body that is not a JSON object; 422 validation_failed naming reason or step.")
             .RequireScope(CredentialScopes.SunoSync)
             .Produces<SunoExportResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
-            .ProducesProblem(StatusCodes.Status409Conflict);
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         endpoints.MapGet(ExportPath, GetAsync)
             .WithName("GetSunoExport")
@@ -354,10 +360,20 @@ internal static class SunoExportsEndpoints
     {
         SessionEndpoints.NoStore(context);
 
-        switch (await exports.DiscardAsync(id, CallerOf(context.User), cancellationToken))
+        var (ending, problem) = await ReadEndingAsync(context, cancellationToken);
+        if (problem is not null)
+        {
+            return problem;
+        }
+
+        switch (await exports.DiscardAsync(id, CallerOf(context.User), ending, cancellationToken))
         {
             case ExportDiscardOutcome.Discarded discarded:
-                Log(loggers).LogInformation("Suno export discarded: {ExportId} is {ExportState}", id, SunoExportRules.NameOf(discarded.View.Export.State));
+                Log(loggers).LogInformation(
+                    "Suno export discarded: {ExportId} is {ExportState}, reason {DiscardReason}",
+                    id,
+                    SunoExportRules.NameOf(discarded.View.Export.State),
+                    discarded.View.Export.Ending is { } ended ? SunoExportRules.NameOf(ended.Reason) : "none");
                 return TypedResults.Ok(SunoExportResponse.From(discarded.View));
             case ExportDiscardOutcome.NotFound:
                 return NoSuchExport(context);
@@ -370,6 +386,73 @@ internal static class SunoExportsEndpoints
                     [new("state", SunoExportRules.NameOf(late.Export.State))]);
             default:
                 throw new InvalidOperationException("Unknown discard outcome.");
+        }
+    }
+
+    /// <summary>
+    /// The discard's optional body (#229): no body, or <c>{ reason: "cancelled" }</c>, or
+    /// <c>{ reason: "failed", step }</c>. A body that is not a JSON object is 400 <c>invalid_request</c>;
+    /// an unknown reason, a step that is not text of 1 to 200 characters, or a step with a reason other
+    /// than <c>failed</c> is 422 <c>validation_failed</c>. The step is a name the extension shows, never
+    /// logged.
+    /// </summary>
+    private static async Task<(SunoExportEnding? Ending, ProblemHttpResult? Problem)> ReadEndingAsync(HttpContext context, CancellationToken cancellationToken)
+    {
+        if (context.Request.ContentLength == 0 || (context.Request.ContentLength is null && !context.Request.Headers.TransferEncoding.Any()))
+        {
+            return (null, null);
+        }
+
+        JsonDocument document;
+        try
+        {
+            document = await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: cancellationToken);
+        }
+        catch (JsonException)
+        {
+            return (null, ApiProblem.For(context, StatusCodes.Status400BadRequest, ApiProblem.InvalidRequestCode, "The body is not JSON."));
+        }
+
+        using (document)
+        {
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return (null, ApiProblem.For(context, StatusCodes.Status400BadRequest, ApiProblem.InvalidRequestCode, "Send a JSON object, or no body."));
+            }
+
+            var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
+            SunoExportEndReason? reason = null;
+            if (root.TryGetProperty(ReasonField, out var reasonValue) && reasonValue.ValueKind != JsonValueKind.Null)
+            {
+                reason = reasonValue.ValueKind == JsonValueKind.String ? SunoExportRules.EndReasonOf(reasonValue.GetString()) : null;
+                if (reason is not (SunoExportEndReason.Cancelled or SunoExportEndReason.Failed))
+                {
+                    errors[ReasonField] = ["Send cancelled or failed."];
+                    reason = null;
+                }
+            }
+
+            string? step = null;
+            if (root.TryGetProperty(StepField, out var stepValue) && stepValue.ValueKind != JsonValueKind.Null)
+            {
+                step = stepValue.ValueKind == JsonValueKind.String ? stepValue.GetString()?.Trim() : null;
+                if (step is not { Length: > 0 and <= SunoExportRules.MaximumStepLength })
+                {
+                    errors[StepField] = [string.Create(CultureInfo.InvariantCulture, $"Send the step that failed as text of 1 to {SunoExportRules.MaximumStepLength} characters.")];
+                }
+                else if (reason is not SunoExportEndReason.Failed && !errors.ContainsKey(ReasonField))
+                {
+                    errors[StepField] = ["Send a step only with the reason failed."];
+                }
+            }
+
+            if (errors.Count > 0)
+            {
+                return (null, ApiProblem.ValidationFailed(context, errors));
+            }
+
+            return (reason is { } given ? new SunoExportEnding(given, given == SunoExportEndReason.Failed ? step : null) : null, null);
         }
     }
 

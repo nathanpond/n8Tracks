@@ -8,6 +8,7 @@ using n8Tracks.Application.Backups;
 using n8Tracks.Application.Catalog;
 using n8Tracks.Application.Configuration;
 using n8Tracks.Application.Credentials;
+using n8Tracks.Application.Dashboard;
 using n8Tracks.Application.Health;
 using n8Tracks.Application.Jobs;
 using n8Tracks.Application.Logging;
@@ -100,6 +101,7 @@ public static class DependencyInjection
         services.AddScoped<ISongWorkspaceStore, SunoWorkspaceStore>();
         services.AddScoped<IRemoteStateStore, RemoteStateStore>();
         services.AddScoped<IGenerationRequestStore, SunoGenerationRequestStore>();
+        services.AddScoped<IAttentionDismissalStore, AttentionDismissalStore>();
         services.AddScoped<IVersionDefaultsStore, VersionDefaultsStore>();
         services.AddScoped<ISearchIndex, SearchIndex>();
         services.AddScoped<ISearchSourceStore, SearchSourceStore>();

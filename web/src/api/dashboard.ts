@@ -42,11 +42,63 @@ export interface WithoutSelection {
   songs: DashboardSong[];
 }
 
+/** Unmatched Files (#229): how many audio files are associated with nothing, and whether the media folder is unavailable. */
+export interface UnmatchedFiles {
+  count: number;
+  mediaUnavailable: boolean;
+}
+
+/** A Suno export waiting for review (#229). */
+export interface SunoReview {
+  exportId: string;
+  arrivedAt: string;
+  recordCount: number;
+  changedCount: number;
+  conflictCount: number;
+}
+
+/** Suno reviews (#229): how many exports wait, and up to five of them (left out for a bearer token). */
+export interface SunoReviews {
+  count: number;
+  exports?: SunoReview[];
+}
+
+export type SunoProblemKind = 'failedSync' | 'failedGenerate' | 'unavailableWorkspace';
+
+/** A Suno problem (#229): what it is, and what its link needs. */
+export interface SunoProblem {
+  kind: SunoProblemKind;
+  subject: string;
+  occurredAt: string | null;
+  reason: string | null;
+  step: string | null;
+  message: string | null;
+  workspaceName: string | null;
+  songCount: number | null;
+  versionShortcode: string | null;
+  songShortcode: string | null;
+  versionNumber: string | null;
+  dismissible: boolean;
+}
+
+/** Suno problems (#229): how many, and up to five of them (left out for a bearer token). */
+export interface SunoProblems {
+  count: number;
+  problems?: SunoProblem[];
+}
+
 /** One section as the API answers it: its data, or the error that took its place. */
 export type DashboardSection<T> = { data: T } | { error: { code: string } };
 
-/** `GET /api/v1/dashboard` (#228): each catalog section, read on its own. */
-export interface Dashboard {
+/** What needs attention (#229), as `GET /api/v1/attention` and the dashboard answer it. */
+export interface Attention {
+  unmatchedFiles: DashboardSection<UnmatchedFiles>;
+  sunoReviews: DashboardSection<SunoReviews>;
+  sunoProblems: DashboardSection<SunoProblems>;
+}
+
+/** `GET /api/v1/dashboard`: each catalog section (#228) and what needs attention (#229), read on its own. */
+export interface Dashboard extends Attention {
   recentlyEdited: DashboardSection<RecentlyEdited>;
   workflowStates: DashboardSection<WorkflowStateCounts>;
   withoutSelection: DashboardSection<WithoutSelection>;
@@ -111,12 +163,82 @@ function isWithoutSelection(value: unknown): value is WithoutSelection {
   );
 }
 
+const textOrNull = (value: unknown) => value === null || typeof value === 'string';
+
+function isUnmatchedFiles(value: unknown): value is UnmatchedFiles {
+  return (
+    isRecord(value) &&
+    typeof value.count === 'number' &&
+    typeof value.mediaUnavailable === 'boolean'
+  );
+}
+
+function isSunoReview(value: unknown): value is SunoReview {
+  return (
+    isRecord(value) &&
+    typeof value.exportId === 'string' &&
+    typeof value.arrivedAt === 'string' &&
+    typeof value.recordCount === 'number' &&
+    typeof value.changedCount === 'number' &&
+    typeof value.conflictCount === 'number'
+  );
+}
+
+function isSunoReviews(value: unknown): value is SunoReviews {
+  return (
+    isRecord(value) &&
+    typeof value.count === 'number' &&
+    (value.exports === undefined ||
+      (Array.isArray(value.exports) && value.exports.every(isSunoReview)))
+  );
+}
+
+const PROBLEM_KINDS: readonly string[] = ['failedSync', 'failedGenerate', 'unavailableWorkspace'];
+
+function isSunoProblem(value: unknown): value is SunoProblem {
+  return (
+    isRecord(value) &&
+    typeof value.kind === 'string' &&
+    PROBLEM_KINDS.includes(value.kind) &&
+    typeof value.subject === 'string' &&
+    textOrNull(value.occurredAt) &&
+    textOrNull(value.reason) &&
+    textOrNull(value.step) &&
+    textOrNull(value.message) &&
+    textOrNull(value.workspaceName) &&
+    (value.songCount === null || typeof value.songCount === 'number') &&
+    textOrNull(value.versionShortcode) &&
+    textOrNull(value.songShortcode) &&
+    textOrNull(value.versionNumber) &&
+    typeof value.dismissible === 'boolean'
+  );
+}
+
+function isSunoProblems(value: unknown): value is SunoProblems {
+  return (
+    isRecord(value) &&
+    typeof value.count === 'number' &&
+    (value.problems === undefined ||
+      (Array.isArray(value.problems) && value.problems.every(isSunoProblem)))
+  );
+}
+
+export function isAttention(value: unknown): value is Attention {
+  return (
+    isRecord(value) &&
+    isSection(value.unmatchedFiles, isUnmatchedFiles) &&
+    isSection(value.sunoReviews, isSunoReviews) &&
+    isSection(value.sunoProblems, isSunoProblems)
+  );
+}
+
 export function isDashboard(value: unknown): value is Dashboard {
   return (
     isRecord(value) &&
     isSection(value.recentlyEdited, isRecentlyEdited) &&
     isSection(value.workflowStates, isWorkflowStateCounts) &&
-    isSection(value.withoutSelection, isWithoutSelection)
+    isSection(value.withoutSelection, isWithoutSelection) &&
+    isAttention(value)
   );
 }
 

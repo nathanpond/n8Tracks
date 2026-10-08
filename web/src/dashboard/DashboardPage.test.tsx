@@ -39,6 +39,10 @@ function dashboard(change: Partial<Dashboard> = {}): Dashboard {
       },
     },
     withoutSelection: { data: { count: 1, songs: [song(1)] } },
+    // #229's sections, with nothing to report (DashboardAttention.test.tsx covers them).
+    unmatchedFiles: { data: { count: 0, mediaUnavailable: false } },
+    sunoReviews: { data: { count: 0, exports: [] } },
+    sunoProblems: { data: { count: 0, problems: [] } },
     ...change,
   };
 }

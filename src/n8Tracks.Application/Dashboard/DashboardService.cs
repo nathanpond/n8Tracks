@@ -40,14 +40,39 @@ public sealed record DashboardSection<T>(T? Data, Exception? Failure)
     public static DashboardSection<T> Failed(Exception failure) => new(null, failure);
 }
 
-/// <summary>The dashboard's catalog sections (#228), each read on its own.</summary>
+/// <summary>Reading one section on its own.</summary>
+public static class DashboardSection
+{
+    /// <summary>
+    /// The section <paramref name="read"/> gives, or the failure when it throws; a cancelled request is
+    /// not caught.
+    /// </summary>
+    public static async Task<DashboardSection<T>> ReadAsync<T>(Func<Task<T>> read, CancellationToken cancellationToken)
+        where T : class
+    {
+        ArgumentNullException.ThrowIfNull(read);
+
+        try
+        {
+            return DashboardSection<T>.Of(await read().ConfigureAwait(false));
+        }
+        catch (Exception exception) when (!(exception is OperationCanceledException && cancellationToken.IsCancellationRequested))
+        {
+            return DashboardSection<T>.Failed(exception);
+        }
+    }
+}
+
+/// <summary>The dashboard's sections: the catalog's (#228) and what needs attention (#229), each read on its own.</summary>
 public sealed record DashboardSections(
     DashboardSection<RecentlyEditedSection> RecentlyEdited,
     DashboardSection<WorkflowStatesSection> WorkflowStates,
-    DashboardSection<WithoutSelectionSection> WithoutSelection)
+    DashboardSection<WithoutSelectionSection> WithoutSelection,
+    AttentionSections Attention)
 {
     /// <summary>Whether every section failed: then there is nothing to show.</summary>
-    public bool AllFailed => RecentlyEdited.Failure is not null && WorkflowStates.Failure is not null && WithoutSelection.Failure is not null;
+    public bool AllFailed =>
+        RecentlyEdited.Failure is not null && WorkflowStates.Failure is not null && WithoutSelection.Failure is not null && Attention.AllFailed;
 }
 
 /// <summary>
@@ -59,9 +84,10 @@ public sealed record DashboardSections(
 /// every section but their own state's count. "Changed" is the Song's last-updated time, which
 /// import and sync move only when the user accepts a change. Songs in the retention store are not
 /// in the catalog, so no section sees them. Each section is read on its own: one that fails is
-/// answered as failed and the others are still read. Nothing is written.
+/// answered as failed and the others are still read. Nothing is written. What needs attention (#229)
+/// comes from <see cref="AttentionService"/>, after the catalog sections.
 /// </summary>
-public sealed class DashboardService(SongService songs, WorkflowStateService states)
+public sealed class DashboardService(SongService songs, WorkflowStateService states, AttentionService attention)
 {
     /// <summary>How many Songs the Recently edited and Without a Selected Generation sections list.</summary>
     public const int ListLimit = 10;
@@ -122,7 +148,7 @@ public sealed class DashboardService(SongService songs, WorkflowStateService sta
             },
             cancellationToken).ConfigureAwait(false);
 
-        return new DashboardSections(recent, byState, withoutSelection);
+        return new DashboardSections(recent, byState, withoutSelection, await attention.GetAsync(cancellationToken).ConfigureAwait(false));
     }
 
     private async Task<SongPage> ListAsync(SongListRequest request, CancellationToken cancellationToken) =>
@@ -133,18 +159,9 @@ public sealed class DashboardService(SongService songs, WorkflowStateService sta
             _ => throw new InvalidOperationException("Unknown list outcome."),
         };
 
-    private static async Task<DashboardSection<T>> SectionAsync<T>(Func<Task<T>> read, CancellationToken cancellationToken)
-        where T : class
-    {
-        try
-        {
-            return DashboardSection<T>.Of(await read().ConfigureAwait(false));
-        }
-        catch (Exception exception) when (!(exception is OperationCanceledException && cancellationToken.IsCancellationRequested))
-        {
-            return DashboardSection<T>.Failed(exception);
-        }
-    }
+    private static Task<DashboardSection<T>> SectionAsync<T>(Func<Task<T>> read, CancellationToken cancellationToken)
+        where T : class =>
+        DashboardSection.ReadAsync(read, cancellationToken);
 
     private static DashboardSong SongOf(SongSummary song) =>
         new(song.Id, song.Shortcode, song.Title, new DashboardState(song.State.Id, song.State.Name, song.State.Colour), song.UpdatedUtc);

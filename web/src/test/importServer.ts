@@ -10,6 +10,8 @@ import type {
   RecordDiff,
   SunoImport,
 } from '../api/sunoImports';
+import type { Attention } from '../api/dashboard';
+import { isRecord } from '../api/songs';
 import type { RemoteStateRow } from '../api/sunoRemoteStates';
 import { healthyReport, jsonResponse, requestPath, stubFetch } from './helpers';
 import { baseSong } from './songServer';
@@ -278,6 +280,10 @@ export function importServer(records: ImportRecord[], exported: Partial<SunoImpo
     statusChanges: 0,
     remotePatches: [] as ReceivedPatch[],
     current: undefined as { waiting: SunoImport | null; last: SunoImport | null } | undefined,
+    /** What `GET /api/v1/attention` answers (#229); undefined answers 404. */
+    attention: undefined as Attention | undefined,
+    /** Each dismissal received (#229); a dismissed failed sync leaves `attention`. */
+    dismissals: [] as unknown[],
     /** The If-Match of each commit request. */
     commits: [] as (string | null)[],
     nextCommit: undefined as (() => Response) | undefined,
@@ -388,6 +394,28 @@ export function importServer(records: ImportRecord[], exported: Partial<SunoImpo
     const base = `/api/v1/suno/exports/${EXPORT_ID}`;
     if (path.endsWith('/health')) {
       return Promise.resolve(jsonResponse(200, healthyReport));
+    }
+    if (path.endsWith('/api/v1/attention/dismissals') && method === 'POST') {
+      const dismissal: unknown = JSON.parse(typeof init?.body === 'string' ? init.body : 'null');
+      server.dismissals.push(dismissal);
+      const attention = server.attention;
+      if (attention !== undefined && 'data' in attention.sunoProblems) {
+        const problems = (attention.sunoProblems.data.problems ?? []).filter(
+          (problem) => !(isRecord(dismissal) && dismissal.subject === problem.subject),
+        );
+        server.attention = {
+          ...attention,
+          sunoProblems: { data: { count: problems.length, problems } },
+        };
+      }
+      return Promise.resolve(new Response(null, { status: 204 }));
+    }
+    if (path.endsWith('/api/v1/attention')) {
+      return Promise.resolve(
+        server.attention === undefined
+          ? jsonResponse(404, { code: 'not_found' })
+          : jsonResponse(200, server.attention),
+      );
     }
     if (path.endsWith('/api/v1/suno/exports/current')) {
       const ready = server.export.state === 'ready' ? counted() : null;

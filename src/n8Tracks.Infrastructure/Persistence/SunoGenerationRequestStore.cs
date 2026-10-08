@@ -105,6 +105,32 @@ internal sealed class SunoGenerationRequestStore(N8TracksDbContext context) : IG
         return captured is null ? null : UtcText.Parse(captured);
     }
 
+    public async Task<GenerationRequest?> NewestEndedAsync(IReadOnlyCollection<GenerationRequestState> states, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(states);
+
+        // UtcText is fixed-width ISO 8601, so the text's order is the time's.
+        var names = states.Select(GenerationRequestRules.NameOf).ToList();
+        var record = await context.SunoGenerationRequests.AsNoTracking()
+            .Where(row => names.Contains(row.State) && row.EndedUtc != null)
+            .OrderByDescending(static row => row.EndedUtc)
+            .ThenByDescending(static row => row.Id)
+            .FirstOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return record is null ? null : ToRequest(record);
+    }
+
+    public async Task<IReadOnlyList<GenerationRequest>> ActiveAsync(CancellationToken cancellationToken)
+    {
+        var active = GenerationRequestRules.StateNames
+            .Where(static name => GenerationRequestRules.IsActive(GenerationRequestRules.StateOf(name)!.Value))
+            .ToList();
+        return [.. (await context.SunoGenerationRequests.AsNoTracking()
+            .Where(row => active.Contains(row.State))
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false)).Select(ToRequest)];
+    }
+
     private static void Write(SunoGenerationRequestRecord record, GenerationRequest request)
     {
         record.State = GenerationRequestRules.NameOf(request.State);

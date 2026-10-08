@@ -1,8 +1,12 @@
 import { Anchor, Button, Loader, Stack, Text, Title } from '@mantine/core';
+import { useState } from 'react';
 import { Link, Navigate } from 'react-router';
+import { dismissProblem, useAttention } from '../api/attention';
+import { sectionData, type SunoProblem } from '../api/dashboard';
 import { importPath, useCurrentImport, type SunoImport } from '../api/sunoImports';
 import { formatDateTime, useConfiguredTimeZone } from '../api/timeZone';
 import { Notice } from '../components/Notice';
+import { problemText } from '../dashboard/attentionText';
 import { recordCountText } from './importReviewRules';
 
 const FAILED_MESSAGE =
@@ -26,23 +30,82 @@ function lastText(last: SunoImport, timeZone: string): string | undefined {
 }
 
 /**
+ * The failed-sync notice (#229): what failed and at which step, how to try again, and Dismiss. Shown
+ * while the dashboard lists the failed sync: until it is dismissed, 14 days pass, or a later sync
+ * becomes ready.
+ */
+function FailedSyncNotice({
+  failure,
+  onDismissed,
+}: {
+  failure: SunoProblem;
+  onDismissed: () => void;
+}) {
+  const [dismissing, setDismissing] = useState(false);
+  const [failed, setFailed] = useState(false);
+  return (
+    <div data-testid="failed-sync-notice">
+      <Notice title="Your last sync failed">
+        <Text>{`${problemText(failure)} Nothing in your catalog changed.`}</Text>
+        <Text>
+          To try again, open Suno in a browser where the n8Tracks extension is connected, open the
+          n8Tracks panel, and choose Sync. If it stops at the same step again, check that Suno shows
+          that page as usual and that the extension is up to date.
+        </Text>
+        <div>
+          <Button
+            variant="default"
+            size="xs"
+            loading={dismissing}
+            onClick={() => {
+              setDismissing(true);
+              setFailed(false);
+              void dismissProblem(failure).then((dismissed) => {
+                setDismissing(false);
+                if (dismissed) {
+                  onDismissed();
+                } else {
+                  setFailed(true);
+                }
+              });
+            }}
+          >
+            Dismiss
+          </Button>
+        </div>
+        {failed && <Text role="alert">It could not be dismissed. Try again.</Text>}
+      </Notice>
+    </div>
+  );
+}
+
+/**
  * The Suno entry of the sidebar (#139), at `/suno/imports`: it opens the export waiting for review, or
  * explains how to start a sync from the extension, saying what became of the last one (a discarded sync
- * is noticed here).
+ * is noticed here). A failed sync (#229) gets its own notice, with Dismiss.
  */
 export function SunoImportsPage() {
   const timeZone = useConfiguredTimeZone();
   const { state, reload } = useCurrentImport();
+  const attention = useAttention();
 
   if (state.phase === 'ready' && state.data.waiting !== null) {
     return <Navigate to={importPath(state.data.waiting.id)} replace />;
   }
 
+  const problems =
+    attention.state.phase === 'ready' ? sectionData(attention.state.data.sunoProblems) : undefined;
+  const failure = problems?.problems?.find((problem) => problem.kind === 'failedSync');
   const last = state.phase === 'ready' ? state.data.last : null;
-  const notice = last === null ? undefined : lastText(last, timeZone);
+  // The notice says what became of a failed sync; the line below would only repeat it.
+  const notice =
+    last === null || last.id === failure?.subject ? undefined : lastText(last, timeZone);
   return (
     <Stack gap="lg">
       <Title order={2}>Suno import</Title>
+      {failure !== undefined && (
+        <FailedSyncNotice failure={failure} onDismissed={attention.reload} />
+      )}
       {state.phase === 'loading' && <Loader aria-label="Loading the Suno import" />}
       {(state.phase === 'error' || state.phase === 'not-found') && (
         <Notice title="The Suno import could not be loaded">

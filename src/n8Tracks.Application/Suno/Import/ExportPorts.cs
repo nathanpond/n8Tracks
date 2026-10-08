@@ -117,6 +117,18 @@ public interface ISunoExportStore
     /// </summary>
     Task<bool> TryMoveAsync(Guid id, IReadOnlyCollection<SunoExportState> from, SunoExportState to, DateTimeOffset now, Guid? jobId, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// As <see cref="TryMoveAsync(Guid, IReadOnlyCollection{SunoExportState}, SunoExportState, DateTimeOffset, Guid?, CancellationToken)"/>,
+    /// recording why it ended (#229) when <paramref name="ending"/> is given.
+    /// </summary>
+    Task<bool> TryMoveAsync(Guid id, IReadOnlyCollection<SunoExportState> from, SunoExportState to, DateTimeOffset now, Guid? jobId, SunoExportEnding? ending, CancellationToken cancellationToken);
+
+    /// <summary>The failed sync (<see cref="SunoExport.IsSyncFailure"/>) that ended last, whatever came after it; null when there is none (#229).</summary>
+    Task<SunoExport?> NewestSyncFailureAsync(CancellationToken cancellationToken);
+
+    /// <summary>When an export last became ready (whatever became of it since); null when none ever did (#229).</summary>
+    Task<DateTimeOffset?> LastReadyAsync(CancellationToken cancellationToken);
+
     /// <summary>Stores a part's body as received, replacing a part with the same number.</summary>
     Task SavePartAsync(Guid exportId, int partNumber, string body, int clipCount, DateTimeOffset receivedUtc, CancellationToken cancellationToken);
 

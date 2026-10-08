@@ -638,6 +638,69 @@ describe('the Suno import entry', () => {
     expect(screen.getByText(/choose Sync/)).toBeVisible();
   });
 
+  it('notices a failed sync (#229): what failed and at which step, how to try again, and Dismiss', async () => {
+    const server = importServer([]);
+    const failed = testImport({ state: 'discarded', capturedAt: '2026-10-06T12:00:00Z' });
+    server.current = { waiting: null, last: failed };
+    server.attention = {
+      unmatchedFiles: { data: { count: 0, mediaUnavailable: false } },
+      sunoReviews: { data: { count: 0, exports: [] } },
+      sunoProblems: {
+        data: {
+          count: 1,
+          problems: [
+            {
+              kind: 'failedSync',
+              subject: failed.id,
+              occurredAt: '2026-10-06T12:05:00Z',
+              reason: 'failed',
+              step: 'Read the library',
+              message: null,
+              workspaceName: null,
+              songCount: null,
+              versionShortcode: null,
+              songShortcode: null,
+              versionNumber: null,
+              dismissible: true,
+            },
+          ],
+        },
+      },
+    };
+    const user = userEvent.setup();
+    renderApp('/suno/imports');
+
+    const notice = await screen.findByTestId('failed-sync-notice');
+    expect(notice).toHaveTextContent('Your last sync failed');
+    expect(notice).toHaveTextContent(
+      'Your last Suno sync failed at the step “Read the library”. Nothing in your catalog changed.',
+    );
+    expect(within(notice).getByText(/choose Sync/)).toBeVisible();
+    // The notice says what became of it; the line about the last sync would repeat it.
+    expect(screen.queryByTestId('last-import')).toBeNull();
+
+    await user.click(within(notice).getByRole('button', { name: 'Dismiss' }));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('failed-sync-notice')).toBeNull();
+    });
+    expect(server.dismissals).toEqual([{ kind: 'failedSync', subject: failed.id }]);
+  });
+
+  it('shows no failed-sync notice when nothing failed', async () => {
+    const server = importServer([]);
+    server.current = { waiting: null, last: null };
+    server.attention = {
+      unmatchedFiles: { data: { count: 0, mediaUnavailable: false } },
+      sunoReviews: { data: { count: 0, exports: [] } },
+      sunoProblems: { data: { count: 0, problems: [] } },
+    };
+    renderApp('/suno/imports');
+
+    expect(await screen.findByTestId('no-import-waiting')).toBeVisible();
+    expect(screen.queryByTestId('failed-sync-notice')).toBeNull();
+  });
+
   it('says so in Settings → Suno, with a link to the waiting import', async () => {
     importServer(everyClass());
     renderApp('/settings/suno');

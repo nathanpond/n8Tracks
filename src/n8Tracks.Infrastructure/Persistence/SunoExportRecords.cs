@@ -64,6 +64,16 @@ public sealed class SunoExportRecord
     public Guid? JobId { get; set; }
 
     public int Revision { get; set; } = 1;
+
+    /// <summary>
+    /// Why it was discarded or failed (#229): <c>cancelled</c>, <c>failed</c>, <c>replaced</c>, or
+    /// <c>abandoned</c>; null when it has not ended so, or ended without a reason. No CHECK constraint:
+    /// SQLite adds one only by rebuilding the table, which its staged rows cascade from.
+    /// </summary>
+    public string? EndReason { get; set; }
+
+    /// <summary>For a failed sync, the step that failed (as the extension named it, or <c>classifying</c>); null otherwise.</summary>
+    public string? FailedStep { get; set; }
 }
 
 /// <summary>One row of <c>suno_export_parts</c>: a part's body as received, kept until the export is classified or ends.</summary>

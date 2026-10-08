@@ -17,6 +17,10 @@ namespace n8Tracks.Domain.Suno;
 /// <param name="EndedUtc">When it was committed, discarded, failed, or expired.</param>
 /// <param name="JobId">The classification job, when classification ran in the background.</param>
 /// <param name="Revision">Starts at 1; raised by the review's choice changes (#138).</param>
+/// <param name="Ending">
+/// Why it was discarded or failed (#229); null while it has not ended so, and for an export that ended
+/// before reasons were recorded or was discarded without one.
+/// </param>
 public sealed record SunoExport(
     Guid Id,
     SunoExportState State,
@@ -27,10 +31,44 @@ public sealed record SunoExport(
     DateTimeOffset? ReadyUtc,
     DateTimeOffset? EndedUtc,
     Guid? JobId,
-    int Revision)
+    int Revision,
+    SunoExportEnding? Ending = null)
 {
     /// <summary>When a ready export expires: <see cref="SunoExportRules.ReadyLifetime"/> after it became ready.</summary>
     public DateTimeOffset? ExpiresUtc => State == SunoExportState.Ready && ReadyUtc is { } ready ? ready + SunoExportRules.ReadyLifetime : null;
+
+    /// <summary>
+    /// Whether it is a failed sync (#229): it ended <see cref="SunoExportState.Failed"/> (classification
+    /// failed on the server), or it was discarded with a <see cref="SunoExportEndReason.Failed"/> reason
+    /// (the extension stopped at a step). A cancel, a replacement, or an abandoned export is not.
+    /// </summary>
+    public bool IsSyncFailure =>
+        State == SunoExportState.Failed
+        || (State == SunoExportState.Discarded && Ending?.Reason == SunoExportEndReason.Failed);
+}
+
+/// <summary>Why an export was discarded or failed (#229), and at which step when it failed.</summary>
+/// <param name="Reason">The reason.</param>
+/// <param name="Step">
+/// For <see cref="SunoExportEndReason.Failed"/>, the step that failed as the extension named it, or
+/// <see cref="SunoExportRules.ClassifyingStep"/> for a failure on the server; null otherwise.
+/// </param>
+public sealed record SunoExportEnding(SunoExportEndReason Reason, string? Step = null);
+
+/// <summary>Why an export was discarded or failed (#229).</summary>
+public enum SunoExportEndReason
+{
+    /// <summary>The user cancelled the sync.</summary>
+    Cancelled,
+
+    /// <summary>The sync failed: the extension stopped at a step, or classification failed on the server.</summary>
+    Failed,
+
+    /// <summary>A newer export completed and took its place.</summary>
+    Replaced,
+
+    /// <summary>It was never completed and was thrown away after <see cref="SunoExportRules.ReceivingLifetime"/>.</summary>
+    Abandoned,
 }
 
 /// <summary>
@@ -173,6 +211,26 @@ public static class SunoExportRules
     /// <summary>The fields "changed" compares, as the records endpoint names them.</summary>
     public static readonly IReadOnlyList<string> ComparedFields =
         ["title", "tags", "duration", "modelVersion", "modelName", "minimumBpm", "maximumBpm", "averageBpm", "key", "imageUrl"];
+
+    /// <summary>The step named for a failure on the server: classification failed or never finished (#229).</summary>
+    public const string ClassifyingStep = "classifying";
+
+    /// <summary>The longest failed step a discard may name (#229), as a Generate on Suno report's step.</summary>
+    public const int MaximumStepLength = 200;
+
+    /// <summary>The API name of an end reason.</summary>
+    public static string NameOf(SunoExportEndReason reason) => reason switch
+    {
+        SunoExportEndReason.Cancelled => "cancelled",
+        SunoExportEndReason.Failed => "failed",
+        SunoExportEndReason.Replaced => "replaced",
+        SunoExportEndReason.Abandoned => "abandoned",
+        _ => throw new ArgumentOutOfRangeException(nameof(reason)),
+    };
+
+    /// <summary>The end reason an API or stored name stands for, or null when it names none.</summary>
+    public static SunoExportEndReason? EndReasonOf(string? name) =>
+        Enum.GetValues<SunoExportEndReason>().Cast<SunoExportEndReason?>().FirstOrDefault(reason => string.Equals(NameOf(reason!.Value), name, StringComparison.Ordinal));
 
     /// <summary>The API name of a state.</summary>
     public static string NameOf(SunoExportState state) => state switch

@@ -12,15 +12,17 @@ import {
 import type { Page } from '../adapter/primitives.ts';
 import type { AdapterSession } from '../adapter/registry.ts';
 import { loadMore } from '../adapter/workflows/loadMore.ts';
-import type {
-  ImageProgress,
-  Request,
-  ResponseFor,
-  SyncLeg,
-  SyncProgress,
-  SyncReply,
-  SyncScope,
-  SyncSession,
+import {
+  DISCARD_STEP_MAXIMUM_LENGTH,
+  type DiscardReason,
+  type ImageProgress,
+  type Request,
+  type ResponseFor,
+  type SyncLeg,
+  type SyncProgress,
+  type SyncReply,
+  type SyncScope,
+  type SyncSession,
 } from '../messages.ts';
 import type { SyncViewState } from '../panel/SyncView.ts';
 
@@ -153,7 +155,7 @@ export class SunoSync {
       this.controller.abort();
       return;
     }
-    await this.discard();
+    await this.discard({ reason: 'cancelled' });
     this.options.show({ kind: 'cancelled' });
   }
 
@@ -167,16 +169,19 @@ export class SunoSync {
     }
   }
 
-  private async discard(): Promise<void> {
+  /** Ends the sync and discards its export, saying why (#229). */
+  private async discard(reason: DiscardReason): Promise<void> {
     try {
-      await this.options.send({ type: 'sync-discard' });
+      await this.options.send({ type: 'sync-discard', reason });
     } catch {
       // The service worker discards the export when the tab closes or leaves Suno.
     }
   }
 
   private async stop(step: string, expected: string): Promise<void> {
-    await this.discard();
+    // n8Tracks keeps the step's name (#229): never blank, and cut to the length it keeps.
+    const named = step.trim() === '' ? 'Sync' : step.trim().slice(0, DISCARD_STEP_MAXIMUM_LENGTH);
+    await this.discard({ reason: 'failed', step: named });
     this.options.show({ kind: 'stopped', report: report(step, expected) });
   }
 
@@ -247,7 +252,7 @@ export class SunoSync {
     } catch (error) {
       this.controller = null;
       if (error instanceof ReadCancelled || controller.signal.aborted) {
-        await this.discard();
+        await this.discard({ reason: 'cancelled' });
         show({ kind: 'cancelled' });
         return;
       }

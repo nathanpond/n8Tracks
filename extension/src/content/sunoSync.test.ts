@@ -416,6 +416,11 @@ describe('reading a leg after its page loads', () => {
     await started.resumed;
 
     expect(sw.types().filter(notPanelRefresh)).toEqual(['sync-resume', 'sync-discard']);
+    // #229: n8Tracks is told the sync failed, and at which step.
+    expect(sw.asked.find((request) => request.type === 'sync-discard')).toEqual({
+      type: 'sync-discard',
+      reason: { reason: 'failed', step: 'Read the library' },
+    });
     expect(text('.sync-stopped')).toBe(
       "Sync stopped: step 'Read the library' expected a page of the library feed with a list of records, each with an ID. Nothing was sent for review.",
     );
@@ -479,6 +484,11 @@ describe('reading a leg after its page loads', () => {
     await started.resumed;
 
     expect(sw.types()).toContain('sync-discard');
+    // #229: a cancel is told from a failure.
+    expect(sw.asked.find((request) => request.type === 'sync-discard')).toEqual({
+      type: 'sync-discard',
+      reason: { reason: 'cancelled' },
+    });
     expect(sw.types()).not.toContain('sync-complete');
     expect(sw.types()).not.toContain('sync-save');
     expect(visited).toEqual([]);

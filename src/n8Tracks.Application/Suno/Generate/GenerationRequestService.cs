@@ -31,6 +31,12 @@ public interface IGenerationRequestStore
 
     /// <summary>When the Suno library was last read by a sync the user confirmed (the newest committed export's capture time), or null.</summary>
     Task<DateTimeOffset?> LastConfirmedSyncAsync(CancellationToken cancellationToken);
+
+    /// <summary>The request in one of <paramref name="states"/> that ended last, or null (#229).</summary>
+    Task<GenerationRequest?> NewestEndedAsync(IReadOnlyCollection<GenerationRequestState> states, CancellationToken cancellationToken);
+
+    /// <summary>Every request still active, of any Version (#229).</summary>
+    Task<IReadOnlyList<GenerationRequest>> ActiveAsync(CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -138,6 +144,9 @@ public sealed class GenerationRequestService(
     public const string ResolvedWorkspaceField = "resolvedWorkspace";
     public const string VerificationField = "verification";
 
+    /// <summary>The states a failed request ends in (#229): stopped at a step, or expired.</summary>
+    private static readonly GenerationRequestState[] FailedStates = [GenerationRequestState.Stopped, GenerationRequestState.Expired];
+
     /// <summary>
     /// Makes a request from the Version <paramref name="versionId"/> as it is now, for a mutable or a
     /// frozen Version alike. Refused, with nothing made, when a source the Version needs is deleted, in
@@ -201,6 +210,44 @@ public sealed class GenerationRequestService(
         await store.LatestForVersionAsync(versionId, cancellationToken).ConfigureAwait(false) is { } request
             ? await SettleAsync(request, cancellationToken).ConfigureAwait(false)
             : null;
+
+    /// <summary>
+    /// The failed Generate on Suno request that still stands (#229): the request that ended
+    /// <see cref="GenerationRequestState.Stopped"/> or <see cref="GenerationRequestState.Expired"/> last,
+    /// unless a request ended <see cref="GenerationRequestState.Done"/> after it; null when there is none.
+    /// An active request already due to stop or expire by time counts as ended now, as reading it would
+    /// settle it; nothing is written here.
+    /// </summary>
+    public async Task<GenerationRequest?> FailureAsync(CancellationToken cancellationToken = default)
+    {
+        var now = time.GetUtcNow();
+        var failures = new List<GenerationRequest>();
+        if (await store.NewestEndedAsync(FailedStates, cancellationToken).ConfigureAwait(false) is { } stored)
+        {
+            failures.Add(stored);
+        }
+
+        foreach (var active in await store.ActiveAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (GenerationRequestRules.DueBy(active, now) is { } due)
+            {
+                // It failed when it fell due, not when it was read: so it ages as a stored one does.
+                var dueAt = due.State == GenerationRequestState.Stopped
+                    ? active.CreatedUtc + GenerationRequestRules.ClaimTimeout
+                    : active.UpdatedUtc + GenerationRequestRules.IdleLimit;
+                failures.Add(GenerationRequestRules.Moved(active, due.State, active.Step, due.Message, dueAt));
+            }
+        }
+
+        if (failures.OrderByDescending(static request => request.EndedUtc).ThenByDescending(static request => request.Id).FirstOrDefault() is not { EndedUtc: { } ended } failure)
+        {
+            return null;
+        }
+
+        return await store.NewestEndedAsync([GenerationRequestState.Done], cancellationToken).ConfigureAwait(false) is { EndedUtc: { } done } && done > ended
+            ? null
+            : failure;
+    }
 
     /// <summary>
     /// The extension takes the request, binding it to <paramref name="credentialId"/>: only that

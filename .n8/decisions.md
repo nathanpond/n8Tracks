@@ -4762,3 +4762,39 @@ Story #228 (built in parallel; merged into the milestone branch):
 - **Decision:** Existing e2e and unit expectations that `/` redirects to `/songs` were updated to the dashboard. These are `account.spec.ts` (the sidebar list gains Home, and the landing heading after sign-in changes), `setup.spec.ts`, the `shell.spec.ts` sub-path root, `AppShell.test.tsx`, `SessionGate.test.tsx`, and `SetupGate.test.tsx`.
   **Why:** This is the AC's intended change of the home page.
   **Issue:** #228
+
+Story #229 (on the milestone branch):
+
+- **Decision:** One migration, `20261008182421_AddAttentionDismissals` (EF's own timestamp, which sorts after `20261008100000`; the Designer was generated from the snapshot). It adds the table `attention_dismissals (kind, subject, dismissed_utc)`, PK (kind, subject), with a CHECK on kind. It also adds two nullable columns to `suno_exports`, `end_reason` and `failed_step`, as plain `ALTER TABLE ADD COLUMN`. `end_reason` has no CHECK.
+  **Why:** The story names the dismissals table. The discard reason needs storage on the export. SQLite can add a CHECK only by rebuilding the table, and `suno_exports` is the cascade parent of the staged rows. It carries no triggers, so EF's plain add-column is safe, but a rebuild would not be. The application writes only the four names.
+  **Issue:** #229
+- **Decision:** Discard reasons: `POST /suno/exports/{id}/discard` takes an optional body `{reason: "cancelled"}` or `{reason: "failed", step}` (1–200 characters). A step with any other reason is 422, and a non-object body is 400. n8Tracks records its own reasons too: `replaced` for an export a newer one discarded at completion, `abandoned` for one the 24-hour sweep discarded, and `failed` at step `classifying` for a classification failure (inline, in the job, or swept). An export that has already ended keeps its first reason. The extension sends `cancelled` for Cancel sync and for an earlier receiving sync that a new one replaces, and `failed` with its stop step when a sync stops. A closed or lost tab sends no reason.
+  **Why:** This follows the discretion line ("optional reason, cancelled or failed with the step"), so a failure can be told from a cancel or a replacement. Old extensions send no body, which still discards (additive).
+  **Issue:** #229
+- **Decision:** A failed sync is the export with `IsSyncFailure` (state `failed`, or `discarded` with reason `failed`) that ended last. It stands until any export's `ready_utc` is later than its `ended_utc`. That includes an export that returns to ready after an interrupted commit.
+  **Why:** The discretion line says it "clears when a later export reaches ready". Comparing times, not creation order, is what "later" means when exports overlap.
+  **Issue:** #229
+- **Decision:** A failed Generate on Suno request is the request that ended `stopped` or `expired` last. A request that ended `done` later clears it. An active request that is already due by time (unclaimed for 15 s, or quiet for an hour) counts as failed at the moment it fell due. This is judged in memory, and reading the dashboard writes nothing. A request whose Version is gone is not listed. It links to `/songs/<song>/v/<number>`.
+  **Why:** No background job settles requests (they settle when read), and the discretion line says "the sections read live". Dating a due request at its due moment makes it age like a stored one. Using "now" would never let it drop off.
+  **Issue:** #229
+- **Decision:** Suno reviews lists only `ready` exports (a classifying one has no classes yet), oldest first. Each shows `arrivedAt` (its ready time), its record total, and its Changed and Conflict class counts, which are the review page's own counts.
+  **Why:** The discretion line defines "unresolved" as the Changed and Conflict class counts of an export still awaiting review. A committed, discarded, or expired export is no longer awaiting review.
+  **Issue:** #229
+- **Decision:** Unmatched Files counts every audio file associated with nothing, whatever its status. This is the Unmatched Files page's default list. It also answers `mediaUnavailable` from the stored mount state. The page says the folder is unavailable instead of showing the count, and still links to the page.
+  **Why:** The AC says "when the media folder is unavailable it says so instead", and the count must equal the linked page's total, which keeps listing the files (reported unavailable).
+  **Issue:** #229
+- **Decision:** Suno problems are ordered as the failed sync and the failed request (newest first), then the Unavailable workspaces with Songs, by name. Each section lists at most 5. Suno problems' "n more" goes to `/settings/suno-workspaces` (only workspaces can overflow), and Suno reviews' goes to `/suno/imports`. A failed sync links to `/suno/imports` and a workspace to `/settings/suno-workspaces/<id>`.
+  **Why:** These follow the discretion lines on links and "n more". There are at most two failures at a time.
+  **Issue:** #229
+- **Decision:** I added `GET /api/v1/attention` (`catalog.read`). It carries the same three sections in #228's `{data}|{error}` envelope, and is 500 `section_failed` only when all three fail. The dashboard embeds the same sections; its 500 now needs all six to fail. A bearer token gets counts only, with the `exports` and `problems` lists left out.
+  **Why:** The Suno page's notice needs the failed sync without reading the whole dashboard. The artifact line says AttentionService is "shared with the badges" (#233), which will poll it. The discretion line says "a bearer token gets these sections as counts only".
+  **Issue:** #229
+- **Decision:** `POST /api/v1/attention/dismissals` (session-only; the session-only count is now 69) takes `{kind: failedSync|failedGenerate, subject: <export or request ID>}` and answers 204. It is idempotent and keeps the first dismissal time. An unknown export or request is 404. Any other kind, including `unavailableWorkspace`, is 422 on `kind`.
+  **Why:** This follows the discretion lines: dismissals live in `attention_dismissals (kind, subject, time)`, an Unavailable workspace "cannot be dismissed", and a newer failure is a new entry because it has a new subject.
+  **Issue:** #229
+- **Decision:** `AttentionService` lives in `n8Tracks.Application.Dashboard` (not a catalog namespace) and takes no catalog type. The new public reads `ExportStagingService.WaitingForReviewAsync`, `SyncFailureAsync`, and `GenerationRequestService.FailureAsync` are excused in the invariant-1 guard as reads only. The discard endpoint and dismissals are listed in `ApiEndpointsTouchingNoVersion`. `attention_dismissals` is classified Other in `SunoExportStagingGuardTests`.
+  **Why:** This is the M6 rule for new services. The guard enumerates every public method of a catalog namespace.
+  **Issue:** #229
+- **Decision:** On the dashboard, the three sections follow the catalog sections in the same `SimpleGrid`. On an empty catalog they are shown below the welcome, in a grid of their own. The failed-sync notice on `/suno/imports` replaces the "last sync was discarded" line for the same export. It says what failed and at which step, how to try again, and offers Dismiss.
+  **Why:** A first sync can be waiting before any Song exists. The two lines would say the same thing twice.
+  **Issue:** #229

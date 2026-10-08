@@ -129,6 +129,8 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
 
     public DbSet<SunoExportRecord> SunoExports => Set<SunoExportRecord>();
 
+    public DbSet<AttentionDismissalRecord> AttentionDismissals => Set<AttentionDismissalRecord>();
+
     public DbSet<SunoExportPartRecord> SunoExportParts => Set<SunoExportPartRecord>();
 
     public DbSet<StagedClipRecord> StagedClips => Set<StagedClipRecord>();
@@ -790,6 +792,17 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
             });
             request.HasKey(record => record.Id);
             request.HasIndex(record => new { record.VersionId, record.CreatedUtc });
+        });
+
+        // Dismissed problems (#229): not a catalog table. A subject is an export's or a request's ID,
+        // named without a foreign key: the dismissal outlives nothing it names, and is only ever read by it.
+        modelBuilder.Entity<AttentionDismissalRecord>(dismissal =>
+        {
+            dismissal.ToTable("attention_dismissals", static table =>
+            {
+                table.HasCheckConstraint("ck_attention_dismissals_kind", "kind IN ('failedSync', 'failedGenerate')");
+            });
+            dismissal.HasKey(record => new { record.Kind, record.Subject });
         });
 
         // Suno export staging (#131): staging tables, not catalog tables. The rows of an export go with it

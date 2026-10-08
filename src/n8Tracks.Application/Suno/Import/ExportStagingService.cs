@@ -175,6 +175,15 @@ public sealed class ExportStagingService(
     private static readonly SunoExportState[] Classifying = [SunoExportState.Classifying];
     private static readonly SunoExportState[] UnderReview = [SunoExportState.Classifying, SunoExportState.Ready];
 
+    /// <summary>An export a newer one replaced as it completed (#229).</summary>
+    private static readonly SunoExportEnding Replaced = new(SunoExportEndReason.Replaced);
+
+    /// <summary>An export never completed, thrown away by the retention job (#229).</summary>
+    private static readonly SunoExportEnding Abandoned = new(SunoExportEndReason.Abandoned);
+
+    /// <summary>A failure on the server: classification failed or never finished (#229).</summary>
+    private static readonly SunoExportEnding ClassificationFailed = new(SunoExportEndReason.Failed, SunoExportRules.ClassifyingStep);
+
     /// <summary>Creates an export from its header, receiving.</summary>
     public async Task<ExportView> CreateAsync(SunoExportHeader header, Guid? credentialId, CancellationToken cancellationToken = default)
     {
@@ -264,7 +273,7 @@ public sealed class ExportStagingService(
                 var discarded = new List<Guid>();
                 foreach (var earlier in await store.InStatesAsync(UnderReview, ct).ConfigureAwait(false))
                 {
-                    if (earlier.Id != id && await store.TryMoveAsync(earlier.Id, UnderReview, SunoExportState.Discarded, now, null, ct).ConfigureAwait(false))
+                    if (earlier.Id != id && await store.TryMoveAsync(earlier.Id, UnderReview, SunoExportState.Discarded, now, null, Replaced, ct).ConfigureAwait(false))
                     {
                         await store.RemoveStagedAsync(earlier.Id, ct).ConfigureAwait(false);
                         discarded.Add(earlier.Id);
@@ -304,9 +313,11 @@ public sealed class ExportStagingService(
 
     /// <summary>
     /// Discards an export that is receiving, classifying, or ready: its staged records go at once. One that
-    /// has ended already is answered as it is; one being committed, or committed, is refused.
+    /// has ended already is answered as it is; one being committed, or committed, is refused. The caller may
+    /// say why (#229): <see cref="SunoExportEndReason.Cancelled"/>, or <see cref="SunoExportEndReason.Failed"/>
+    /// with the step, which makes it a failed sync until a later export becomes ready.
     /// </summary>
-    public async Task<ExportDiscardOutcome> DiscardAsync(Guid id, Guid? credentialId, CancellationToken cancellationToken = default)
+    public async Task<ExportDiscardOutcome> DiscardAsync(Guid id, Guid? credentialId, SunoExportEnding? ending, CancellationToken cancellationToken = default)
     {
         var refusal = await transaction.RunAsync<ExportDiscardOutcome?>(
             async ct =>
@@ -322,7 +333,7 @@ public sealed class ExportStagingService(
                     return new ExportDiscardOutcome.TooLate(export);
                 }
 
-                if (await store.TryMoveAsync(id, [SunoExportState.Receiving, .. UnderReview], SunoExportState.Discarded, time.GetUtcNow(), null, ct).ConfigureAwait(false))
+                if (await store.TryMoveAsync(id, [SunoExportState.Receiving, .. UnderReview], SunoExportState.Discarded, time.GetUtcNow(), null, ending, ct).ConfigureAwait(false))
                 {
                     await store.RemoveStagedAsync(id, ct).ConfigureAwait(false);
                 }
@@ -333,6 +344,35 @@ public sealed class ExportStagingService(
 
         return refusal ?? new ExportDiscardOutcome.Discarded(
             await ViewAsync((await store.FindAsync(id, cancellationToken).ConfigureAwait(false))!, cancellationToken).ConfigureAwait(false));
+    }
+
+    /// <summary>
+    /// The exports waiting for review (#229): those ready, oldest first, each with its class counts as the
+    /// review page (#139) shows them. One still classifying has no classes yet and is not listed.
+    /// </summary>
+    public async Task<IReadOnlyList<ExportView>> WaitingForReviewAsync(CancellationToken cancellationToken = default)
+    {
+        var views = new List<ExportView>();
+        foreach (var export in await store.InStatesAsync([SunoExportState.Ready], cancellationToken).ConfigureAwait(false))
+        {
+            views.Add(await ViewAsync(export, cancellationToken).ConfigureAwait(false));
+        }
+
+        return views;
+    }
+
+    /// <summary>
+    /// The failed sync that still stands (#229): the newest export that failed (<see cref="SunoExport.IsSyncFailure"/>),
+    /// unless an export became ready after it ended; null when there is none.
+    /// </summary>
+    public async Task<SunoExport?> SyncFailureAsync(CancellationToken cancellationToken = default)
+    {
+        if (await store.NewestSyncFailureAsync(cancellationToken).ConfigureAwait(false) is not { EndedUtc: { } ended } failure)
+        {
+            return null;
+        }
+
+        return await store.LastReadyAsync(cancellationToken).ConfigureAwait(false) is { } ready && ready > ended ? null : failure;
     }
 
     /// <summary>A page of an export's staged records (any caller who reaches this is a signed-in session); null when there is no such export.</summary>
@@ -395,12 +435,12 @@ public sealed class ExportStagingService(
             cancellationToken).ConfigureAwait(false);
         foreach (var export in candidates)
         {
-            var (due, to) = export.State switch
+            var (due, to, ending) = export.State switch
             {
-                SunoExportState.Ready => (Due(export.ReadyUtc, SunoExportRules.ReadyLifetime, now), SunoExportState.Expired),
-                SunoExportState.Receiving => (Due(export.CreatedUtc, SunoExportRules.ReceivingLifetime, now), SunoExportState.Discarded),
-                SunoExportState.Classifying => (Due(export.CompletedUtc ?? export.CreatedUtc, SunoExportRules.ReceivingLifetime, now), SunoExportState.Failed),
-                _ => (Due(export.EndedUtc, SunoExportRules.CommittedStagingLifetime, now), SunoExportState.Committed),
+                SunoExportState.Ready => (Due(export.ReadyUtc, SunoExportRules.ReadyLifetime, now), SunoExportState.Expired, (SunoExportEnding?)null),
+                SunoExportState.Receiving => (Due(export.CreatedUtc, SunoExportRules.ReceivingLifetime, now), SunoExportState.Discarded, Abandoned),
+                SunoExportState.Classifying => (Due(export.CompletedUtc ?? export.CreatedUtc, SunoExportRules.ReceivingLifetime, now), SunoExportState.Failed, ClassificationFailed),
+                _ => (Due(export.EndedUtc, SunoExportRules.CommittedStagingLifetime, now), SunoExportState.Committed, (SunoExportEnding?)null),
             };
             if (!due)
             {
@@ -410,7 +450,7 @@ public sealed class ExportStagingService(
             var done = await transaction.RunAsync(
                 async ct =>
                 {
-                    if (to != SunoExportState.Committed && !await store.TryMoveAsync(export.Id, [export.State], to, now, null, ct).ConfigureAwait(false))
+                    if (to != SunoExportState.Committed && !await store.TryMoveAsync(export.Id, [export.State], to, now, null, ending, ct).ConfigureAwait(false))
                     {
                         return false;
                     }
@@ -545,7 +585,7 @@ public sealed class ExportStagingService(
             await transaction.RunAsync(
                 async ct =>
                 {
-                    if (await store.TryMoveAsync(id, Classifying, SunoExportState.Failed, time.GetUtcNow(), jobId, ct).ConfigureAwait(false))
+                    if (await store.TryMoveAsync(id, Classifying, SunoExportState.Failed, time.GetUtcNow(), jobId, ClassificationFailed, ct).ConfigureAwait(false))
                     {
                         await store.RemoveStagedAsync(id, ct).ConfigureAwait(false);
                     }

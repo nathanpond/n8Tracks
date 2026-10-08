@@ -8,9 +8,17 @@ import {
   Stack,
   Text,
   Title,
+  VisuallyHidden,
 } from '@mantine/core';
 import { useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router';
+import {
+  dismissProblem,
+  problemAddress,
+  problemsAddress,
+  reviewsAddress,
+  unmatchedAddress,
+} from '../api/attention';
 import {
   isEmptyCatalog,
   recentlyEditedAddress,
@@ -23,9 +31,15 @@ import {
   type DashboardSong,
   type DashboardStateCount,
   type RecentlyEdited,
+  type SunoProblem,
+  type SunoProblems,
+  type SunoReviews,
+  type UnmatchedFiles,
   type WithoutSelection,
   type WorkflowStateCounts,
 } from '../api/dashboard';
+import { importPath } from '../api/sunoImports';
+import { problemText } from './attentionText';
 import { useConfiguredTimeZone } from '../api/timeZone';
 import { NewSongDialog } from '../songs/NewSongDialog';
 import { RelativeTime, StateBadge } from '../songs/SongParts';
@@ -212,6 +226,225 @@ function WithoutSelectionContent({
   );
 }
 
+/** "1 audio file", "2 audio files". */
+function fileCountText(count: number): string {
+  return `${String(count)} audio ${count === 1 ? 'file' : 'files'}`;
+}
+
+/** "1 record", "2 records". */
+function recordsText(count: number): string {
+  return `${String(count)} ${count === 1 ? 'record' : 'records'}`;
+}
+
+/** A list's "n more", leading to the area's own page. */
+function More({
+  shown,
+  total,
+  to,
+  label,
+}: {
+  shown: number;
+  total: number;
+  to: string;
+  label: string;
+}) {
+  if (total <= shown) {
+    return null;
+  }
+  const more = total - shown;
+  return (
+    <Anchor component={Link} to={to} size="sm" data-testid="attention-more">
+      {`${String(more)} more`}
+      <VisuallyHidden>{` ${label}`}</VisuallyHidden>
+    </Anchor>
+  );
+}
+
+function UnmatchedFilesContent({ section }: { section: UnmatchedFiles }) {
+  if (section.mediaUnavailable) {
+    return (
+      <Text data-testid="media-unavailable">
+        The media folder is unavailable, so the unmatched audio files are not counted until it is
+        back.{' '}
+        <Anchor component={Link} to={unmatchedAddress()} underline="always">
+          Open Unmatched Files
+        </Anchor>
+      </Text>
+    );
+  }
+  if (section.count === 0) {
+    return <Text>No audio files are waiting to be placed.</Text>;
+  }
+  return (
+    <Text data-testid="unmatched-count">
+      <Anchor
+        component={Link}
+        to={unmatchedAddress()}
+        underline="always"
+        aria-label={`${fileCountText(section.count)} unmatched: open Unmatched Files`}
+      >
+        {fileCountText(section.count)}
+      </Anchor>{' '}
+      {section.count === 1 ? 'is' : 'are'} not associated with a Song or a Generation.
+    </Text>
+  );
+}
+
+function SunoReviewsContent({ section, timeZone }: { section: SunoReviews; timeZone: string }) {
+  const exports = section.exports ?? [];
+  if (section.count === 0) {
+    return <Text>No Suno import is waiting for review.</Text>;
+  }
+  return (
+    <Stack gap="xs">
+      <Stack
+        component="ul"
+        gap="xs"
+        m={0}
+        p={0}
+        style={{ listStyle: 'none' }}
+        aria-label="Suno imports waiting for review"
+      >
+        {exports.map((review) => (
+          <li key={review.exportId} data-testid="suno-review" data-export={review.exportId}>
+            <Stack gap={2}>
+              <Group gap="xs" wrap="wrap">
+                <Anchor component={Link} to={importPath(review.exportId)}>
+                  Review the import
+                </Anchor>
+                <Text size="sm" c="var(--n8-color-secondary-text)">
+                  arrived <RelativeTime utc={review.arrivedAt} timeZone={timeZone} />
+                </Text>
+              </Group>
+              <Text size="sm" data-testid="suno-review-counts">
+                {`${recordsText(review.recordCount)}; ${String(review.changedCount)} changed and ${String(review.conflictCount)} ${review.conflictCount === 1 ? 'Conflict' : 'Conflicts'} to resolve`}
+              </Text>
+            </Stack>
+          </li>
+        ))}
+      </Stack>
+      <More
+        shown={exports.length}
+        total={section.count}
+        to={reviewsAddress()}
+        label="Suno imports"
+      />
+    </Stack>
+  );
+}
+
+/** The link to where a problem is resolved. */
+function problemLinkText(problem: SunoProblem): string {
+  switch (problem.kind) {
+    case 'failedSync':
+      return 'Open Suno import';
+    case 'failedGenerate':
+      return `Open ${problem.versionShortcode ?? 'the Version'}`;
+    case 'unavailableWorkspace':
+      return 'Open the workspace';
+  }
+}
+
+function ProblemRow({
+  problem,
+  timeZone,
+  onDismissed,
+}: {
+  problem: SunoProblem;
+  timeZone: string;
+  onDismissed: () => void;
+}) {
+  const [dismissing, setDismissing] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const text = problemText(problem);
+  return (
+    <li data-testid="suno-problem" data-kind={problem.kind} data-subject={problem.subject}>
+      <Stack gap={4}>
+        <Text size="sm">{text}</Text>
+        <Group gap="xs" wrap="wrap">
+          {problem.occurredAt !== null && (
+            <Text size="sm" c="var(--n8-color-secondary-text)">
+              <RelativeTime utc={problem.occurredAt} timeZone={timeZone} />
+            </Text>
+          )}
+          <Anchor component={Link} to={problemAddress(problem)} size="sm">
+            {problemLinkText(problem)}
+          </Anchor>
+          {problem.dismissible && (
+            <Button
+              variant="subtle"
+              size="compact-xs"
+              loading={dismissing}
+              aria-label={`Dismiss: ${text}`}
+              onClick={() => {
+                setDismissing(true);
+                setFailed(false);
+                void dismissProblem(problem).then((dismissed) => {
+                  setDismissing(false);
+                  if (dismissed) {
+                    onDismissed();
+                  } else {
+                    setFailed(true);
+                  }
+                });
+              }}
+            >
+              Dismiss
+            </Button>
+          )}
+        </Group>
+        {failed && (
+          <Text size="sm" role="alert">
+            It could not be dismissed. Try again.
+          </Text>
+        )}
+      </Stack>
+    </li>
+  );
+}
+
+function SunoProblemsContent({
+  section,
+  timeZone,
+  onDismissed,
+}: {
+  section: SunoProblems;
+  timeZone: string;
+  onDismissed: () => void;
+}) {
+  const problems = section.problems ?? [];
+  if (section.count === 0) {
+    return <Text>No Suno problems to report.</Text>;
+  }
+  return (
+    <Stack gap="xs">
+      <Stack
+        component="ul"
+        gap="sm"
+        m={0}
+        p={0}
+        style={{ listStyle: 'none' }}
+        aria-label="Suno problems"
+      >
+        {problems.map((problem) => (
+          <ProblemRow
+            key={`${problem.kind}:${problem.subject}`}
+            problem={problem}
+            timeZone={timeZone}
+            onDismissed={onDismissed}
+          />
+        ))}
+      </Stack>
+      <More
+        shown={problems.length}
+        total={section.count}
+        to={problemsAddress()}
+        label="Suno workspaces that are unavailable"
+      />
+    </Stack>
+  );
+}
+
 /** The welcome an instance with no Songs shows in place of the catalog sections. */
 function Welcome() {
   const navigate = useNavigate();
@@ -251,15 +484,62 @@ const TITLES: Record<DashboardSectionKey, string> = {
   recentlyEdited: 'Recently edited',
   workflowStates: 'By workflow state',
   withoutSelection: 'Without a Selected Generation',
+  unmatchedFiles: 'Unmatched Files',
+  sunoReviews: 'Suno reviews',
+  sunoProblems: 'Suno problems',
 };
+
+/**
+ * What needs attention (#229): Unmatched Files, Suno reviews, and Suno problems. Each says so in one
+ * line when it has nothing to report, and shows its own failure with Retry.
+ */
+function AttentionSections({
+  data,
+  loading,
+  onRetry,
+  timeZone,
+}: {
+  data: Dashboard | undefined;
+  loading: boolean;
+  onRetry: () => void;
+  timeZone: string;
+}) {
+  const unmatched = data === undefined ? undefined : sectionData(data.unmatchedFiles);
+  const reviews = data === undefined ? undefined : sectionData(data.sunoReviews);
+  const problems = data === undefined ? undefined : sectionData(data.sunoProblems);
+  const sectionProps = { loading, onRetry };
+  return (
+    <>
+      <Section id="unmatchedFiles" title={TITLES.unmatchedFiles}>
+        <SectionBody title={TITLES.unmatchedFiles} data={unmatched} {...sectionProps}>
+          {(section) => <UnmatchedFilesContent section={section} />}
+        </SectionBody>
+      </Section>
+      <Section id="sunoReviews" title={TITLES.sunoReviews}>
+        <SectionBody title={TITLES.sunoReviews} data={reviews} {...sectionProps}>
+          {(section) => <SunoReviewsContent section={section} timeZone={timeZone} />}
+        </SectionBody>
+      </Section>
+      <Section id="sunoProblems" title={TITLES.sunoProblems}>
+        <SectionBody title={TITLES.sunoProblems} data={problems} {...sectionProps}>
+          {(section) => (
+            <SunoProblemsContent section={section} timeZone={timeZone} onDismissed={onRetry} />
+          )}
+        </SectionBody>
+      </Section>
+    </>
+  );
+}
 
 /**
  * The dashboard (#228), the home page: Recently edited (the ten active Songs changed last, with See
  * all), By workflow state (each state's count, opening the Songs table filtered to it), and Without
  * a Selected Generation (how many active Songs with Generations have none selected, the ten changed
  * last, and the Songs table filtered the same way). Every count is the total of the Songs table the
- * link opens. All three come from one read, but each shows its own loading, empty, and failed state.
- * An instance with no Songs shows a welcome with New Song instead. The page reads again when the
+ * link opens. Then (#229) what needs attention: Unmatched Files, Suno reviews, and Suno problems,
+ * each count the total of the page it links to. All come from one read, but each shows its own
+ * loading, empty, and failed state. An instance with no Songs shows a welcome with New Song instead
+ * of the catalog sections, above what needs attention. The page reads again when the
  * window regains focus (at most every 30 seconds), showing what it had meanwhile and a small notice
  * if that read fails. One column on a narrow screen, two on a wide one.
  */
@@ -282,7 +562,13 @@ export function DashboardPage() {
         </Text>
       )}
       {data !== undefined && isEmptyCatalog(data) ? (
-        <Welcome />
+        <>
+          <Welcome />
+          {/* #229: what needs attention can come before any Song (a first sync waiting for review). */}
+          <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
+            <AttentionSections data={data} timeZone={timeZone} {...sectionProps} />
+          </SimpleGrid>
+        </>
       ) : (
         <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
           <Section
@@ -328,6 +614,7 @@ export function DashboardPage() {
               {(section) => <WithoutSelectionContent section={section} timeZone={timeZone} />}
             </SectionBody>
           </Section>
+          <AttentionSections data={data} timeZone={timeZone} {...sectionProps} />
         </SimpleGrid>
       )}
     </Stack>

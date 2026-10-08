@@ -1,6 +1,7 @@
 import { isSunoAddress } from '../adapter/addresses.ts';
 import { legsFor } from '../adapter/libraryReader.ts';
 import type {
+  DiscardReason,
   ExportPart,
   ResponseFor,
   SyncProgress,
@@ -129,7 +130,7 @@ export class SyncCoordinator {
       case 'sync-complete':
         return this.complete(tabId);
       case 'sync-discard':
-        return this.discard(tabId);
+        return this.discard(tabId, request.reason);
       case 'sync-images':
         return { images: await this.images.progress(tabId) };
     }
@@ -170,15 +171,24 @@ export class SyncCoordinator {
     await this.browser.session.set({ [SYNC_KEY]: { ...session, updatedAt: this.now() } });
   }
 
-  /** Forgets the sync, discarding its export in n8Tracks if there is one. Never fails. */
-  private async end(session: SyncSession): Promise<void> {
+  /**
+   * Forgets the sync, discarding its export in n8Tracks if there is one, with the reason when one is
+   * known (#229): a tab closed or taken off Suno gives none. Never fails.
+   */
+  private async end(session: SyncSession, reason?: DiscardReason): Promise<void> {
     await this.browser.session.remove([SYNC_KEY]);
     if (session.exportId !== null) {
       await this.images.discard(session.exportId).catch(() => undefined);
       try {
         await this.connection.call(
           `${EXPORTS_PATH}/${encodeURIComponent(session.exportId)}/discard`,
-          { method: 'POST' },
+          reason === undefined
+            ? { method: 'POST' }
+            : {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(reason),
+              },
         );
       } catch {
         // Not connected or not reachable: n8Tracks expires a receiving export after 24 hours.
@@ -219,7 +229,7 @@ export class SyncCoordinator {
     // A sync still receiving, in this tab or another, is discarded before the new one starts.
     const earlier = await this.session();
     if (earlier !== null) {
-      await this.end(earlier);
+      await this.end(earlier, { reason: 'cancelled' });
     }
     const session: SyncSession = {
       tabId,
@@ -346,10 +356,10 @@ export class SyncCoordinator {
     return { ok: true, reviewUrl };
   }
 
-  private async discard(tabId: number): Promise<SyncReply> {
+  private async discard(tabId: number, reason?: DiscardReason): Promise<SyncReply> {
     const session = await this.ownSession(tabId);
     if (session !== null) {
-      await this.end(session);
+      await this.end(session, reason);
     }
     return { ok: true };
   }
