@@ -1,12 +1,12 @@
 # Suno fixtures
 
-Sanitized examples of Suno's pages and responses for adapter tests, captured in the maintainer's signed-in browser by spikes TS-001 and TS-002 (2026-10-03), TS-003 (#127) and TS-004 (#214) (2026-10-05). The findings are in `docs/spikes/`.
+Sanitized examples of Suno's pages and responses for adapter tests, captured in the maintainer's signed-in browser by spikes TS-001 and TS-002 (2026-10-03), TS-003 (#127) and TS-004 (#214) (2026-10-05), and TS-005 (2026-10-08, for #146, #147, #148). The findings are in `docs/spikes/`.
 
 ## Sanitizing
 
-Every identifier is replaced with a placeholder UUID `00000000-0000-4000-8000-…`. Within one capture session the same real ID always maps to the same placeholder, across all of that session's files (TS-001/002 files use `…000000000001` upward; TS-003/004 files use `…000000000101` upward). Titles, prompts, tags, lyrics, names, handles, and descriptions are replaced with `<redacted N chars>`, one per original line so line counts are kept (TS-001/002 files say `<redacted field>` instead). Avatar addresses are `<redacted url>`. Every address has its query string removed. The Create request's `token`, `create_session_token`, and `user_tier`, and every paging cursor, are redacted.
+Every identifier is replaced with a placeholder UUID `00000000-0000-4000-8000-…`. Within one capture session the same real ID always maps to the same placeholder, across all of that session's files (TS-001/002 files use `…000000000001` upward; TS-003/004 files use `…000000000101` upward; TS-005 files use `…000000000201` upward). Titles, prompts, tags, lyrics, names, handles, and descriptions are replaced with `<redacted N chars>`, one per original line so line counts are kept (TS-001/002 files say `<redacted field>` instead). Avatar addresses are `<redacted url>`. Every address has its query string removed. The Create request's `token`, `create_session_token`, and `user_tier`, and every paging cursor, are redacted.
 
-Page snapshots keep element structure, roles, labels, test attributes, and class names. Scripts and styles are removed. User text is redacted wherever it matches captured user content (including truncated text). In the snapshots of the library, trash, playlist, workspace selector, and Voice and Inspo pickers, every text node is redacted except Suno's own labels, durations, badges, counts, and dates.
+Page snapshots keep element structure, roles, labels, test attributes, and class names. Scripts and styles are removed. User text is redacted wherever it matches captured user content (including truncated text). In the snapshots of the library, trash, playlist, workspace selector, and Voice and Inspo pickers, every text node is redacted except Suno's own labels, durations, badges, counts, and dates. The TS-005 snapshots are redacted that way throughout, text nodes and the `aria-label`, `title`, `alt`, `placeholder`, and `value` attributes alike: what is not one of Suno's own labels is `<redacted N chars>`, and a label built around user text keeps Suno's words only (`Play "<redacted 13 chars>"`, `Cover art for <redacted 13 chars>`, `Remove <redacted 16 chars>`). Text the maintainer typed during the capture (lyrics, styles, the prompt) is redacted too. A profile link is `/@<redacted>` and a style link `/style/<redacted>`.
 
 `extension/scripts/lib/check-fixtures.test.ts` (part of `npm test`) fails on any UUID that is not a placeholder and any address with a query string. Locally it also fails on any term in `docs/.notes/suno/redaction-terms.txt`, the ignored list of the maintainer's titles, names, and lyric lines. CI does not have that list and checks the first two only.
 
@@ -71,3 +71,25 @@ Each `page.<name>.html` is the HTML of the relevant region, taken in the maintai
 | `page.library-list.html` | Library (`/me`) › Songs. |
 | `page.library-trash.html` | Library › the Trash button (`/me/trash`). |
 | `page.playlist.html` | Library › Playlists › a playlist (`/playlist/<id>`). |
+| `page.create-songs-simple-add-menu.html` | TS-005. Create › Songs › Simple, the "+" (Add) menu open: Lyrics, Styles, Playlist, Image, Video, Audio, Voice. The form and the menu. |
+| `page.create-songs-simple-lyrics-submenu.html` | TS-005. + › Lyrics: the submenu, "Write new" and "Use existing". |
+| `page.create-songs-simple-lyrics-dialog.html` | TS-005. + › Lyrics › Write new: the "Lyrics" dialog (the Lexical editor, two lines typed; its Close; the Cowriter). |
+| `page.create-songs-simple-with-lyrics.html` | TS-005. The Lyrics dialog closed: the lyrics chip above the Song description. |
+| `page.create-songs-simple-styles-submenu.html` | TS-005. With lyrics, + › Styles: the submenu. |
+| `page.create-songs-simple-styles-dialog.html` | TS-005. + › Styles › Write new: the "Styles" dialog with a style typed. Closing it showed Suno's toast "Prompt saved." (not in the snapshot). |
+| `page.create-songs-simple-with-lyrics-and-styles.html` | TS-005. Both dialogs closed: the lyrics and styles chips. |
+| `page.create-songs-advanced-duration-auto.html` | TS-005. Create › Songs › Advanced, More Options open, Duration on Auto: Custom and Auto buttons. |
+| `page.create-songs-advanced-duration-custom.html` | TS-005. The same after Custom: the Duration slider at 3:00 and its text box. |
+| `page.create-sounds-key-any.html` | TS-005. Create › Sounds, Advanced Options open, Key Any (popover closed). |
+| `page.create-sounds-key-popover-fsharp-minor.html` | TS-005. The Key popover open (untitled dialog): notes C to B with sharps, Any, Major/Minor, Apply; F# and Minor chosen. |
+| `page.create-sounds-key-applied-fsharp-minor.html` | TS-005. After Apply: the Key button reads "F# min". |
+| `page.clip-page.html` | TS-005. A clip's own page (`/song/<id>`, clip `…204`): its header (cover image, "More options" closed) and one row of the list below it (that page has twelve "More options"). |
+| `page.clip-page-remix-menu.html` | TS-005. The same, More options › Remix open (Cover, Reuse Prompt, Mashup, Sample this song, Use as Inspiration, Voice disabled). |
+| `page.clip-not-found.html` | TS-005. `/song/<an ID that does not exist>`: Suno's 404, "Page not found". A clip in the Trash shows its page as any other (not committed). |
+| `page.create-source-extend.html` | TS-005. Songs › Advanced after a clip's Edit › Extend (clip `…201`): the Audio section with Keep/Recreate and "Extend from 00:54.0". |
+| `page.create-source-sample.html` | TS-005. After Remix › Sample this song: the Audio section, its Selection 00:00.0–01:00.0. |
+| `page.create-source-mashup-one-song.html` | TS-005. After Remix › Mashup: "Mashup songs. 1 of 2 songs selected." and "Add another song to Mashup". |
+| `page.create-source-inspo-one-song.html` | TS-005. After Remix › Use as Inspiration: the Audio section named Inspo, one song, "(1/4)". |
+| `page.overwrite-styles-dialog.html` | TS-005. Remix › Cover onto a form with lyrics and styles, from an instrumental clip: "Overwrite Styles?" with Overwrite and Keep Current (Suno hides the form, `aria-hidden`, while it is open). |
+| `page.voice-picker-with-source.html` | TS-005. Songs › Advanced with an Inspo source, + Voice: the Voice picker (two voices; persona `…203` is the second). |
+| `page.create-voice-selected.html` | TS-005. A voice chosen by pressing its title: the voice row on the form, a link to `/voice/<persona ID>`, and "Remove selected Voice". |

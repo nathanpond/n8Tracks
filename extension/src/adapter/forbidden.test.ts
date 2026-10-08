@@ -162,11 +162,39 @@ describe('the forbidden-control matcher, on the TS-003 snapshots', () => {
     // 2.5 s here and over 5 s on a GitHub runner, so the limit is three times a CI run's ~10 s.
   }, 30_000);
 
-  it('recognises only the Overwrite dialog and the Voice picker, by their titles', () => {
+  it('recognises only the two Overwrite questions, the Voice picker, Simple’s Lyrics and Styles dialogs, and the Key popover', () => {
     expect(RECOGNISED_DIALOGS.map((dialog) => [dialog.title, dialog.allows])).toEqual([
       ['Overwrite Lyrics & Styles?', ['Overwrite', 'Keep Current']],
+      ['Overwrite Styles?', ['Overwrite', 'Keep Current']],
       ['Voice', ['Close', 'My Voices', 'Favorites']],
+      ['Lyrics', ['Close']],
+      ['Styles', ['Close']],
+      [
+        '',
+        [
+          'C',
+          'C#',
+          'D',
+          'D#',
+          'E',
+          'F',
+          'F#',
+          'G',
+          'G#',
+          'A',
+          'A#',
+          'B',
+          'Any',
+          'Major',
+          'Minor',
+          'Apply',
+        ],
+      ],
     ]);
+    // Each was recognised from a snapshot of it.
+    for (const dialog of RECOGNISED_DIALOGS) {
+      expect(SNAPSHOT_NAMES).toContain(dialog.snapshot);
+    }
   });
 
   it('still refuses everything else in the Voice picker', () => {
@@ -174,6 +202,81 @@ describe('the forbidden-control matcher, on the TS-003 snapshots', () => {
     const play = verdictsOf('button', 'Play');
     expect(play.length).toBeGreaterThan(0);
     expect(new Set(play)).toEqual(new Set(['forbidden']));
+  });
+});
+
+describe('the dialogs TS-005 captured (#146, #147, #148)', () => {
+  it.each([
+    ['overwrite-styles-dialog', 'Overwrite', 'allowed'],
+    ['overwrite-styles-dialog', 'Keep Current', 'allowed'],
+    ['overwrite-styles-dialog', 'Close', 'forbidden'],
+    ['create-songs-simple-styles-dialog', 'Close', 'allowed'],
+    ['create-songs-simple-styles-dialog', 'Save prompt', 'forbidden'],
+    ['create-songs-simple-styles-dialog', 'Clear styles', 'forbidden'],
+    ['create-songs-simple-lyrics-dialog', 'New draft', 'forbidden'],
+    ['create-songs-simple-lyrics-dialog', 'Generate', 'forbidden'],
+    ['create-songs-simple-lyrics-dialog', 'Help me write lyrics', 'forbidden'],
+    ['create-sounds-key-popover-fsharp-minor', 'F#', 'allowed'],
+    ['create-sounds-key-popover-fsharp-minor', 'Any', 'allowed'],
+    ['create-sounds-key-popover-fsharp-minor', 'Apply', 'allowed'],
+    ['voice-picker-with-source', 'My Voices', 'allowed'],
+    ['voice-picker-with-source', 'Play', 'forbidden'],
+  ])('in %s, %s is %s', (snapshot, name, verdict) => {
+    load(snapshot);
+    const found = [...document.querySelectorAll('[role="dialog"] *')].filter(
+      (element) => roleOf(element) !== null && nameOf(element) === name,
+    );
+    expect(found.length).toBeGreaterThan(0);
+    expect([...new Set(found.map((element) => verdictOf(element).kind))]).toEqual([verdict]);
+  });
+
+  it('recognises the untitled Key popover only while it holds nothing but its notes, Any, Major, Minor, and Apply', () => {
+    load('create-sounds-key-popover-fsharp-minor');
+    const popover = document.querySelector('[role="dialog"]');
+    const apply = [...(popover?.querySelectorAll('button') ?? [])].find(
+      (button) => button.textContent.trim() === 'Apply',
+    );
+    expect(apply && verdictOf(apply)).toEqual({ kind: 'allowed' });
+
+    // Complement: the same popover with one more control is any other untitled dialog.
+    const extra = document.createElement('button');
+    extra.textContent = 'Share';
+    popover?.append(extra);
+    expect(apply && verdictOf(apply)).toEqual({
+      kind: 'forbidden',
+      reason: 'it is in a dialog the adapter does not recognise',
+    });
+    expect(classify(facts({ dialog: { title: '' }, name: 'Apply' })).kind).toBe('forbidden');
+  });
+
+  it('takes a tab list in a recognised dialog as a container of its tabs, and fails it closed elsewhere', () => {
+    load('create-sounds-key-popover-fsharp-minor');
+    const tablist = document.querySelector('[role="dialog"] [role="tablist"]');
+    expect(tablist && verdictOf(tablist)).toEqual({ kind: 'allowed' });
+    expect(classify(facts({ role: 'tablist', name: '', dialog: { title: 'Rename' } })).kind).toBe(
+      'forbidden',
+    );
+  });
+
+  it('lets a voice be chosen in the Voice picker by its title, and refuses “Create Voice”', () => {
+    load('voice-picker-with-source');
+    const texts = [...document.querySelectorAll('[role="dialog"] span')].filter(
+      (span) => span.children.length === 0 && roleOf(span) === null,
+    );
+    // The voice's title, redacted in the snapshot.
+    const title = texts.find((span) => span.textContent === '<redacted 13 chars>');
+    const create = texts.find((span) => span.textContent === 'Create Voice');
+    expect(title && verdictOf(title)).toEqual({ kind: 'allowed' });
+    expect(create && verdictOf(create)).toEqual({
+      kind: 'forbidden',
+      reason: 'the dialog it is in does not allow it',
+    });
+    // Complement: a text with no role is pressable in the Voice picker only.
+    expect(
+      classify(
+        facts({ role: null, name: '', otherNames: ['A voice'], dialog: { title: 'Styles' } }),
+      ).kind,
+    ).toBe('forbidden');
   });
 });
 

@@ -29,12 +29,19 @@ const SIMPLE = 'create-source-simple';
 const SPEECH_SIMPLE = 'create-speech-simple';
 const SPEECH_ADVANCED = 'create-speech-advanced';
 const SOUNDS = 'create-sounds-advanced-options';
+const DURATION_AUTO = 'create-songs-advanced-duration-auto';
+const DURATION_CUSTOM = 'create-songs-advanced-duration-custom';
+const KEY_ANY = 'create-sounds-key-any';
+const KEY_APPLIED = 'create-sounds-key-applied-fsharp-minor';
+const WITH_LYRICS = 'create-songs-simple-with-lyrics';
 
 /** The field map's tab of each kind. */
 const TAB: Readonly<Record<string, string>> = { song: 'songs', speech: 'speech', sound: 'sounds' };
 
 let standIn: StandIn;
 let page: Page;
+/** Ends the listeners a test put on the document itself, which outlive its body. */
+let documentListeners = new AbortController();
 
 function load(snapshot: string): Page {
   page = loadSnapshot(snapshot, 'https://suno.com/create', fakeClock());
@@ -48,6 +55,8 @@ beforeEach(() => {
 
 afterEach(() => {
   standIn.stop();
+  documentListeners.abort();
+  documentListeners = new AbortController();
   document.body.innerHTML = '';
 });
 
@@ -94,8 +103,8 @@ const ADVANCED_VALUES: Record<string, unknown> = {
 const SIMPLE_VALUES: Record<string, unknown> = {
   model: 'v6-mini',
   simple_prompt: 'a quiet song about trains',
-  simple_add_lyrics: null,
-  simple_add_styles: null,
+  simple_add_lyrics: '[Verse]\nfirst line\nsecond line',
+  simple_add_styles: 'dream pop',
 };
 
 /** Speech and Sounds values unlike the snapshots' own (Female, Background music Off, Loop, 120). */
@@ -118,8 +127,31 @@ const SOUND_VALUES: Record<string, unknown> = {
   sound_scale: 'minor',
 };
 
+/** Entries tested on a TS-005 snapshot that shows their control's starting state. */
+const OWN_SNAPSHOT: Readonly<Record<string, string>> = {
+  'songs.advanced.duration_mode': DURATION_AUTO,
+  'sounds.single.sound_key': KEY_ANY,
+  'sounds.single.sound_scale': KEY_ANY,
+};
+
+/**
+ * Entries set by the same control as another, or shown only once another is set: when one is
+ * broken, the other cannot be set either (Duration's length needs Custom; Key and Key scale share
+ * the Key popover's Apply).
+ */
+const DEPENDS_ON: Readonly<Record<string, readonly string[]>> = {
+  'songs.advanced.duration_mode': ['songs.advanced.duration_seconds'],
+  'sounds.single.sound_key': ['sounds.single.sound_scale'],
+  'sounds.single.sound_scale': ['sounds.single.sound_key'],
+};
+
 /** The snapshot and values each filler is tested with. */
 function caseOf(filler: Filler): { snapshot: string; job: FormJob } {
+  const own = caseOfMode(filler);
+  return { ...own, snapshot: OWN_SNAPSHOT[filler.entry] ?? own.snapshot };
+}
+
+function caseOfMode(filler: Filler): { snapshot: string; job: FormJob } {
   const [tab, mode] = filler.entry.split('.');
   if (tab === 'speech') {
     return mode === 'simple'
@@ -193,9 +225,36 @@ function labelledIn(section: Element, text: string): Element[] {
   );
 }
 
+/** The Simple form's "+" button, through which its Lyrics and Styles sections are added. */
+function addButton(): Element[] {
+  return [...document.querySelectorAll('button[aria-label="Add"][aria-haspopup="menu"]')];
+}
+
+/** The Key button beside its label in Advanced Options. */
+function keyButton(): Element[] {
+  return labelledButtons(advancedOptions(), 'Key').filter(
+    (button) => button.getAttribute('aria-haspopup') === 'dialog',
+  );
+}
+
+function labelledButtons(section: Element, text: string): Element[] {
+  const label = [...section.querySelectorAll('span')].find(
+    (span) => span.textContent.trim() === text,
+  );
+  return [...(label?.parentElement?.parentElement?.querySelectorAll('button') ?? [])];
+}
+
 /** The elements of each filler's control in the snapshot. */
 const CONTROLS: Readonly<Record<string, () => Element[]>> = {
   'songs.simple.simple_prompt': () => [...document.querySelectorAll('textarea')],
+  'songs.simple.simple_add_lyrics': addButton,
+  'songs.simple.simple_add_styles': addButton,
+  'songs.advanced.duration_mode': () =>
+    labelledButtons(moreOptions(), 'Duration').filter((button) =>
+      ['Custom', 'Auto'].includes(button.textContent.trim()),
+    ),
+  'sounds.single.sound_key': keyButton,
+  'sounds.single.sound_scale': keyButton,
   'songs.advanced.lyrics': () => [...document.querySelectorAll('[aria-label="Lyrics editor"]')],
   'songs.advanced.styles': () => [...sectionOf(/^Styles/).querySelectorAll('textarea')],
   'songs.advanced.exclude_styles': () => [
@@ -252,10 +311,40 @@ const BREAKERS: Readonly<Record<string, (controls: Element[]) => void>> = {
   editor: () => {
     Object.defineProperty(document, 'execCommand', { configurable: true, value: () => false });
   },
+  // A dialog's text area that keeps another value (Simple's Styles dialog opens only when pressed).
+  dialogText: () => {
+    document.addEventListener(
+      'input',
+      (event) => {
+        const area = event.target as HTMLTextAreaElement;
+        if (area.closest('[role="dialog"]') !== null) {
+          area.value = 'what Suno kept';
+        }
+      },
+      { capture: true, signal: documentListeners.signal },
+    );
+  },
+  // The Key popover's Apply that does nothing (the popover opens only when pressed).
+  apply: () => {
+    document.addEventListener(
+      'click',
+      (event) => {
+        if ((event.target as Element).closest('button')?.textContent.trim() === 'Apply') {
+          event.stopPropagation();
+        }
+      },
+      { capture: true, signal: documentListeners.signal },
+    );
+  },
 };
 
 const BREAK: Readonly<Record<string, keyof typeof BREAKERS>> = {
   'songs.simple.simple_prompt': 'text',
+  'songs.simple.simple_add_lyrics': 'editor',
+  'songs.simple.simple_add_styles': 'dialogText',
+  'songs.advanced.duration_mode': 'click',
+  'sounds.single.sound_key': 'apply',
+  'sounds.single.sound_scale': 'apply',
   'songs.advanced.lyrics': 'editor',
   'songs.advanced.styles': 'text',
   'songs.advanced.exclude_styles': 'text',
@@ -334,10 +423,11 @@ describe('the Songs form fillers', () => {
       expect(broken?.expected).toBeDefined();
       expect(broken?.found).toBeDefined();
       expect(broken?.found).not.toEqual(broken?.expected);
-      // Every other filler of the mode was still attempted and set.
+      // Every other filler of the mode was still attempted and set (but one set by the same control).
       const others = FILLERS.filter(
         (other) =>
           other.entry !== filler.entry &&
+          !(DEPENDS_ON[filler.entry] ?? []).includes(other.entry) &&
           other.entry.startsWith(filler.entry.split('.', 2).join('.')),
       );
       for (const other of others) {
@@ -515,11 +605,16 @@ describe('the Songs form fillers', () => {
 });
 
 describe('the summary’s other entries', () => {
-  it('lists every entry of Simple mode: the workspace set, sources and files to do by hand, sections blocked on a capture', async () => {
+  it('lists every entry of Simple mode: the workspace and sections set, sources and files to do by hand', async () => {
     load(SIMPLE);
     const simple = job(
       'simple',
-      { ...SIMPLE_VALUES, simple_add_lyrics: 'words', voice: { name: 'Ada' } },
+      {
+        ...SIMPLE_VALUES,
+        simple_add_lyrics: 'words',
+        simple_add_styles: null,
+        voice: { name: 'Ada' },
+      },
       {
         sources: [{ key: 'songs.simple.audio', title: 'Origin', sunoAction: 'cover' }],
         fileInputs: [{ key: 'songs.simple.simple_add_image', description: 'the cover photo' }],
@@ -532,8 +627,8 @@ describe('the summary’s other entries', () => {
     expect(results.map((result) => [result.key, result.outcome])).toEqual([
       ['songs.simple.model', 'manual'],
       ['songs.simple.simple_prompt', 'set'],
-      ['songs.simple.simple_add_lyrics', 'manual'],
-      ['songs.simple.simple_add_styles', 'not_applicable'],
+      ['songs.simple.simple_add_lyrics', 'set'],
+      ['songs.simple.simple_add_styles', 'set'],
       ['songs.simple.simple_add_playlist', 'not_applicable'],
       ['songs.simple.simple_add_image', 'manual'],
       ['songs.simple.simple_add_video', 'not_applicable'],
@@ -549,7 +644,7 @@ describe('the summary’s other entries', () => {
     // No Suno ID: a Song-level source, which only the user can load (#148).
     expect(notes.get('songs.simple.audio')?.note).toContain('Load “Origin” by hand');
     expect(notes.get('songs.simple.voice')?.note).toContain('Choose the voice “Ada”');
-    expect(notes.get('songs.simple.simple_add_lyrics')?.note).toMatch(/cannot add Simple’s Lyrics/);
+    expect(notes.get('songs.simple.simple_add_styles')).toMatchObject({ expected: '' });
   });
 
   it.each(
@@ -571,14 +666,15 @@ describe('the summary’s other entries', () => {
     });
   });
 
-  it('lists the workspace in Advanced mode too, and Duration’s mode as to do by hand', async () => {
+  it('lists the workspace in Advanced mode too, and Duration’s mode as read from the form', async () => {
     load(ADVANCED);
 
     const results = byKey(await verifyForm(page, job('advanced', ADVANCED_VALUES), 'Studio', true));
 
     expect(results.get(WORKSPACE_ENTRY)?.outcome).toBe('set');
+    // The TS-003 snapshot shows the Duration slider, which is Custom (TS-005).
     expect(results.get('songs.advanced.duration_mode')).toMatchObject({
-      outcome: 'manual',
+      outcome: 'set',
       expected: 'custom',
     });
   });
@@ -605,15 +701,10 @@ describe('the coverage of the fill entries on every tab (#146 AC 8, #147 AC 4)',
     expect(coverageProblems(without)).toEqual([`${entry}: has 0 fillers, not one`]);
   });
 
-  it('lists exactly the entries no TS-003 snapshot shows as blocked on a capture (D9)', () => {
+  it('lists exactly the entries no snapshot shows as blocked on a capture: the model menu (D9, #339)', () => {
     expect([...BLOCKED_ON_CAPTURE].sort()).toEqual([
-      'songs.advanced.duration_mode',
       'songs.advanced.model',
       'songs.simple.model',
-      'songs.simple.simple_add_lyrics',
-      'songs.simple.simple_add_styles',
-      'sounds.single.sound_key',
-      'sounds.single.sound_scale',
       'sounds.single.sounds_model',
     ]);
   });
@@ -663,7 +754,7 @@ describe('the Speech and Sounds summaries (#147)', () => {
     expect(pressed.sort()).toEqual(['Male', 'On']);
   });
 
-  it('lists the six Sounds entries: three set, the model, Key and Key scale to do by hand (D9)', async () => {
+  it('lists the six Sounds entries: five set, and the model to do by hand (#339)', async () => {
     load(SOUNDS);
 
     const results = await verifyForm(page, job('single', SOUND_VALUES, {}, 'sound'), null, true);
@@ -673,17 +764,16 @@ describe('the Speech and Sounds summaries (#147)', () => {
       ['sounds.single.sound_description', 'set'],
       ['sounds.single.sound_type', 'set'],
       ['sounds.single.sound_bpm', 'set'],
-      ['sounds.single.sound_key', 'manual'],
-      ['sounds.single.sound_scale', 'manual'],
+      ['sounds.single.sound_key', 'set'],
+      ['sounds.single.sound_scale', 'set'],
     ]);
     const byEntry = byKey(results);
     expect(byEntry.get('sounds.single.sound_key')).toMatchObject({ expected: 'A' });
     expect(byEntry.get('sounds.single.sound_scale')).toMatchObject({ expected: 'minor' });
-    expect(byEntry.get('sounds.single.sound_key')?.note).toMatch(/Key picker/);
   });
 
   it('does not ask for a Key scale when the Key is Any (not applicable)', async () => {
-    load(SOUNDS);
+    load(KEY_APPLIED);
 
     const results = byKey(
       await verifyForm(
@@ -696,9 +786,10 @@ describe('the Speech and Sounds summaries (#147)', () => {
 
     expect(results.get('sounds.single.sound_scale')?.outcome).toBe('not_applicable');
     expect(results.get('sounds.single.sound_key')).toMatchObject({
-      outcome: 'manual',
+      outcome: 'set',
       expected: 'any',
     });
+    expect(keyButton()[0]?.textContent.trim()).toBe('Any');
   });
 
   it('re-selects Auto for an empty BPM: the box is emptied', async () => {
@@ -823,6 +914,263 @@ describe('the Speech and Sounds summaries (#147)', () => {
     expect(CONTROLS['speech.advanced.speech_variety']?.()[0]?.getAttribute('aria-valuenow')).toBe(
       '4',
     );
+  });
+});
+
+/** Records the name of every control pressed, in order. */
+function recordPresses(): string[] {
+  const pressed: string[] = [];
+  document.addEventListener(
+    'click',
+    (event) => {
+      const control = (event.target as Element).closest('button, [role]');
+      pressed.push(
+        control?.getAttribute('aria-label') ?? control?.textContent.trim() ?? '(nothing)',
+      );
+    },
+    { capture: true, signal: documentListeners.signal },
+  );
+  return pressed;
+}
+
+describe('Simple’s Lyrics and Styles sections (#146, TS-005)', () => {
+  it('adds each through + › Lyrics (or Styles) › Write new, types it, closes the dialog, and reads the chip back', async () => {
+    load('create-songs-simple-add-menu');
+    document.querySelector('[role="menu"]')?.remove();
+    const pressed = recordPresses();
+
+    const results = byKey(await verifyForm(page, job('simple', SIMPLE_VALUES), null, true));
+
+    expect(results.get('songs.simple.simple_add_lyrics')).toMatchObject({ outcome: 'set' });
+    expect(results.get('songs.simple.simple_add_styles')).toMatchObject({ outcome: 'set' });
+    expect(pressed).toEqual([
+      'Add',
+      'Lyrics',
+      'Write new',
+      'Close',
+      'Add',
+      'Styles',
+      'Write new',
+      'Close',
+    ]);
+    expect(standIn.commands).toEqual([
+      'insertText',
+      'insertParagraph',
+      'insertText',
+      'insertParagraph',
+      'insertText',
+    ]);
+    expect(document.querySelector('[role="dialog"], [role="menu"]')).toBeNull();
+  });
+
+  it('says that Suno saved the styles to the saved style prompts when its Styles box was closed', async () => {
+    load('create-songs-simple-add-menu');
+
+    const result = byKey(await verifyForm(page, job('simple', SIMPLE_VALUES), null, true)).get(
+      'songs.simple.simple_add_styles',
+    );
+
+    expect(result?.note).toMatch(/saved these styles to your saved style prompts/);
+    expect(result?.note).toContain('Prompt saved.');
+  });
+
+  it('leaves a section already showing the Version’s text alone: nothing is pressed', async () => {
+    // The chip's text in the sanitized snapshot is two redacted lines.
+    load(WITH_LYRICS);
+    const shown = '<redacted 16 chars>\n<redacted 16 chars>';
+    const pressed = recordPresses();
+
+    const results = byKey(
+      await verifyForm(
+        page,
+        job('simple', { ...SIMPLE_VALUES, simple_add_lyrics: shown, simple_add_styles: null }),
+        null,
+        true,
+      ),
+    );
+
+    expect(results.get('songs.simple.simple_add_lyrics')?.outcome).toBe('set');
+    expect(results.get('songs.simple.simple_add_styles')?.outcome).toBe('set');
+    expect(pressed).toEqual([]);
+  });
+
+  it('reports a section the Version does not have as failed, to remove by hand, and never presses Remove', async () => {
+    load(WITH_LYRICS);
+    const pressed = recordPresses();
+
+    const results = byKey(
+      await verifyForm(
+        page,
+        job('simple', {
+          ...SIMPLE_VALUES,
+          simple_add_lyrics: null,
+          simple_add_styles: 'dream pop',
+        }),
+        null,
+        true,
+      ),
+    );
+
+    const lyrics = results.get('songs.simple.simple_add_lyrics');
+    expect(lyrics).toMatchObject({ outcome: 'failed', expected: '' });
+    expect(lyrics?.note).toMatch(
+      /^A Lyrics or Styles section the Version does not have is on Suno’s form: remove it by hand/,
+    );
+    // While it is there, the Styles section is not added either, and says why.
+    expect(results.get('songs.simple.simple_add_styles')).toMatchObject({ outcome: 'failed' });
+    expect(pressed.filter((name) => /^(Remove|Create)/.test(name))).toEqual([]);
+    expect(pressed).toEqual([]);
+  });
+
+  it('is unavailable when the Add menu does not open', async () => {
+    load(SIMPLE);
+    standIn.stop();
+
+    const result = byKey(await verifyForm(page, job('simple', SIMPLE_VALUES), null, true)).get(
+      'songs.simple.simple_add_lyrics',
+    );
+
+    expect(result).toMatchObject({
+      outcome: 'unavailable',
+      note: 'Suno’s “+” (Add) menu did not open.',
+    });
+  });
+});
+
+describe('Duration’s Auto and Custom (#146, TS-005)', () => {
+  it('chooses Custom from Auto, then sets the length on the slider it shows', async () => {
+    load(DURATION_AUTO);
+    const pressed = recordPresses();
+
+    const results = byKey(await verifyForm(page, job('advanced', ADVANCED_VALUES), null, true));
+
+    expect(results.get('songs.advanced.duration_mode')).toMatchObject({
+      outcome: 'set',
+      expected: 'custom',
+    });
+    expect(results.get('songs.advanced.duration_seconds')).toMatchObject({
+      outcome: 'set',
+      expected: 120,
+    });
+    expect(pressed).toContain('Custom');
+  });
+
+  it('leaves Auto as it is, pressing nothing for it, and the length is not applicable', async () => {
+    load(DURATION_AUTO);
+    const pressed = recordPresses();
+
+    const results = byKey(
+      await verifyForm(
+        page,
+        job('advanced', { ...ADVANCED_VALUES, duration_mode: 'auto' }),
+        null,
+        true,
+      ),
+    );
+
+    expect(results.get('songs.advanced.duration_mode')).toMatchObject({
+      outcome: 'set',
+      expected: 'auto',
+    });
+    expect(results.get('songs.advanced.duration_seconds')?.outcome).toBe('not_applicable');
+    expect(pressed).not.toContain('Custom');
+    expect(pressed).not.toContain('Auto');
+  });
+
+  it('reports Custom on the form as failed for an Auto Version, to set back by hand (its icon has no name)', async () => {
+    load(DURATION_CUSTOM);
+
+    const result = byKey(
+      await verifyForm(
+        page,
+        job('advanced', { ...ADVANCED_VALUES, duration_mode: 'auto' }),
+        null,
+        true,
+      ),
+    ).get('songs.advanced.duration_mode');
+
+    expect(result).toMatchObject({ outcome: 'failed', expected: 'auto', found: 'custom' });
+    expect(result?.note).toMatch(/set Duration to Auto by hand/);
+  });
+});
+
+describe('the Sounds Key popover (#147, TS-005)', () => {
+  it('opens the popover, chooses the note and Minor, and presses Apply; the button then reads the key', async () => {
+    load(KEY_ANY);
+    const pressed = recordPresses();
+
+    const results = byKey(
+      await verifyForm(page, job('single', SOUND_VALUES, {}, 'sound'), null, true),
+    );
+
+    expect(results.get('sounds.single.sound_key')).toMatchObject({ outcome: 'set', expected: 'A' });
+    expect(results.get('sounds.single.sound_scale')).toMatchObject({
+      outcome: 'set',
+      expected: 'minor',
+    });
+    expect(pressed.slice(-4)).toEqual(['Any', 'A', 'Minor', 'Apply']);
+    expect(keyButton()[0]?.textContent.trim()).toBe('A min');
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it('reads the captured “F# min” as F# and Minor, pressing nothing', async () => {
+    load(KEY_APPLIED);
+    const pressed = recordPresses();
+
+    const results = byKey(
+      await verifyForm(
+        page,
+        job('single', { ...SOUND_VALUES, sound_key: 'F#', sound_scale: 'minor' }, {}, 'sound'),
+        null,
+        false,
+      ),
+    );
+
+    expect(results.get('sounds.single.sound_key')?.outcome).toBe('set');
+    expect(results.get('sounds.single.sound_scale')?.outcome).toBe('set');
+    expect(pressed).toEqual([]);
+  });
+
+  it('reports a key and scale that did not take as failed, with what the button shows', async () => {
+    load(KEY_APPLIED);
+    BREAKERS.apply?.([]);
+
+    const results = byKey(
+      await verifyForm(
+        page,
+        job('single', { ...SOUND_VALUES, sound_key: 'C', sound_scale: 'major' }, {}, 'sound'),
+        null,
+        true,
+      ),
+    );
+
+    expect(results.get('sounds.single.sound_key')).toMatchObject({
+      outcome: 'failed',
+      expected: 'C',
+      found: 'F#',
+    });
+    expect(results.get('sounds.single.sound_scale')).toMatchObject({
+      outcome: 'failed',
+      expected: 'major',
+      found: 'minor',
+    });
+  });
+
+  it('reports a key Suno does not have as failed without opening the popover', async () => {
+    load(KEY_ANY);
+    const pressed = recordPresses();
+
+    const results = byKey(
+      await verifyForm(
+        page,
+        job('single', { ...SOUND_VALUES, sound_key: 'H' }, {}, 'sound'),
+        null,
+        true,
+      ),
+    );
+
+    expect(results.get('sounds.single.sound_key')).toMatchObject({ outcome: 'failed' });
+    expect(pressed).not.toContain('Apply');
   });
 });
 

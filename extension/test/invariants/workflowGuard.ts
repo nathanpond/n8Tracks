@@ -1,6 +1,6 @@
 import { pressableDialog, type ExceptionName } from '../../src/adapter/forbidden.ts';
 import {
-  dialogTitleOf,
+  dialogFactsOf,
   isDialog,
   nameOf,
   roleOf,
@@ -82,7 +82,7 @@ export function forbiddenControls(document: Document): Spied[] {
       // The dialog's own verdict is on what it sits in; a click anywhere inside an unrecognised
       // one is an activation, and a recognised one's controls (or the Download dialog's, the
       // download exception, #216) are spied one by one.
-      if (!pressableDialog(dialogTitleOf(element))) {
+      if (!pressableDialog(dialogFactsOf(element))) {
         spied.push({ element, words: `${describe(element)} (anything in it)`, exception: null });
       }
       continue;

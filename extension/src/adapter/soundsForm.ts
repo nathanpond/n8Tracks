@@ -8,8 +8,9 @@ import { KIND_TABS } from './songsForm.ts';
  * sits beside the credits, then come the Sound section and the Advanced Options section, whose
  * Type buttons, BPM box, and Key button are each found beside their label inside that section.
  *
- * The Key picker is not here: no snapshot shows its popover open (its note buttons, Any,
- * Major/Minor, and Apply), so the adapter does not set Key or Key scale (decision D9, `fill.ts`).
+ * The Key picker (TS-005, `page.create-sounds-key-*.html`): the Key button, named by what it shows
+ * ("Any", "F# min"), opens an untitled popover of note buttons (C to B with sharps), Any, Major and
+ * Minor tabs, and Apply; the key is set when Apply is pressed, and the button then shows it.
  */
 
 export const SOUNDS_TAB: Target = {
@@ -98,4 +99,47 @@ export const BPM_BOX: Target = {
   role: 'spinbutton',
   within: beside('BPM', 'the BPM label in Advanced Options', 'the BPM box in Advanced Options'),
   description: 'the BPM box in Advanced Options',
+};
+
+/** The Key button, beside its label; it opens the Key popover (`aria-haspopup="dialog"`). */
+export const KEY_BUTTON: Target = {
+  role: 'button',
+  popup: 'dialog',
+  within: beside('Key', 'the Key label in Advanced Options', 'the Key choice in Advanced Options'),
+  description: 'the Key button in Advanced Options',
+};
+
+/** The Key popover: an untitled dialog (the forbidden-control matcher knows it by its controls). */
+export const KEY_POPOVER: Target = {
+  role: 'dialog',
+  name: '',
+  description: 'the Key popover',
+};
+
+/** A note button (C, C#, … B) or Any, in the Key popover. */
+export function keyChoice(note: string): Target {
+  return {
+    role: 'button',
+    name: note,
+    within: KEY_POPOVER,
+    description: note === 'Any' ? 'Any in the Key popover' : 'a note button in the Key popover',
+  };
+}
+
+/** The Major or Minor tab in the Key popover. */
+export function scaleTab(scale: 'Major' | 'Minor'): Target {
+  return {
+    role: 'tab',
+    name: scale,
+    within: KEY_POPOVER,
+    description:
+      scale === 'Major' ? 'the Major tab in the Key popover' : 'the Minor tab in the Key popover',
+  };
+}
+
+export const KEY_APPLY: Target = {
+  role: 'button',
+  name: 'Apply',
+  within: KEY_POPOVER,
+  description: 'the Key popover’s Apply button',
 };

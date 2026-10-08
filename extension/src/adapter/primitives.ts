@@ -4,6 +4,7 @@ import {
   classify,
   forbiddenItself,
   type ControlFacts,
+  type DialogFacts,
   type ExceptionName,
   type Verdict,
 } from './forbidden.ts';
@@ -50,6 +51,7 @@ export type Role =
   | 'option'
   | 'radio'
   | 'radiogroup'
+  | 'region'
   | 'rowgroup'
   | 'slider'
   | 'spinbutton'
@@ -57,7 +59,12 @@ export type Role =
   | 'switch'
   | 'tab'
   | 'tablist'
-  | 'textbox';
+  | 'textbox'
+  /**
+   * Not an ARIA role: an element Suno gives no role, found by its own whole text (`name`, a
+   * string), as {@link TextAnchor} finds one (TS-005: a voice's title in the Voice picker).
+   */
+  | 'text';
 
 /** A region of the page known only by its test attribute (`data-testid`). */
 export interface Scope {
@@ -453,6 +460,13 @@ function linkPathOf(element: Element): string | null {
 }
 
 function matchesTarget(element: Element, target: Target): boolean {
+  if (target.role === 'text') {
+    return (
+      roleOf(element) === null &&
+      typeof target.name === 'string' &&
+      saysExactly(element, target.name)
+    );
+  }
   return (
     roleOf(element) === target.role &&
     (target.testId === undefined || element.getAttribute('data-testid') === target.testId) &&
@@ -602,11 +616,41 @@ export function isDialog(element: Element): boolean {
   return DIALOG_ROLES.has(roleOf(element) ?? '');
 }
 
-/** The dialog `element` is in, by title, or null. */
+/** The roles of the controls a dialog is recognised by when it has no title (`forbidden.ts`). */
+const CONTROL_ROLES = new Set([
+  'button',
+  'checkbox',
+  'combobox',
+  'link',
+  'listbox',
+  'menuitem',
+  'menuitemcheckbox',
+  'menuitemradio',
+  'option',
+  'radio',
+  'searchbox',
+  'slider',
+  'spinbutton',
+  'switch',
+  'tab',
+  'textbox',
+]);
+
+/** What the matcher knows of a dialog: its title, and the names of every visible control in it. */
+export function dialogFactsOf(dialog: Element): DialogFacts {
+  return {
+    title: dialogTitleOf(dialog),
+    controls: elementsUnder(dialog)
+      .filter((inner) => CONTROL_ROLES.has(roleOf(inner) ?? '') && !isHidden(inner))
+      .map((inner) => nameOf(inner)),
+  };
+}
+
+/** The dialog `element` is in, or null. */
 function dialogOf(element: Element): ControlFacts['dialog'] {
   for (let current = parentOf(element); current !== null; current = parentOf(current)) {
     if (isDialog(current)) {
-      return { title: dialogTitleOf(current) };
+      return dialogFactsOf(current);
     }
   }
   return null;
@@ -925,6 +969,38 @@ function stepSlider(element: Element, wanted: number): void {
   }
 }
 
+function readingOf(element: Element): Reading {
+  return {
+    value: valueOf(element),
+    text: collapse(element.textContent),
+    checked: checkedOf(element),
+    selected: selectedOf(element),
+    expanded: expandedOf(element),
+    enabled: isEnabled(element),
+  };
+}
+
+/** The element's own image's address, or that of the one visible image inside it; else null. */
+function imageAddressOf(element: Element): string | null {
+  const images =
+    element.localName === 'img'
+      ? [element]
+      : elementsUnder(element).filter((inner) => inner.localName === 'img' && !isHidden(inner));
+  const [image, ...others] = images;
+  if (image === undefined || others.length > 0) {
+    return null;
+  }
+  const address = image.getAttribute('src');
+  return address === null || address.trim() === '' ? null : address.trim();
+}
+
+/** One element {@link Page.readAll} read: never the element itself. */
+export interface ReadAllEntry {
+  name: string;
+  reading: Reading;
+  image: string | null;
+}
+
 /**
  * Suno's page, through the primitives a workflow may use: find, read, set a value, choose an
  * option, click, and wait. Reading never changes anything; set, choose, and click refuse once the
@@ -1007,15 +1083,7 @@ export class Page {
 
   /** What the element shows. */
   read(found: Found): Reading {
-    const element = elementOf(found);
-    return {
-      value: valueOf(element),
-      text: collapse(element.textContent),
-      checked: checkedOf(element),
-      selected: selectedOf(element),
-      expanded: expandedOf(element),
-      enabled: isEnabled(element),
-    };
+    return readingOf(elementOf(found));
   }
 
   /**
@@ -1025,17 +1093,33 @@ export class Page {
    * source is verified (#148).
    */
   imageAddress(found: Found): string | null {
-    const element = elementOf(found);
-    const images =
-      element.localName === 'img'
-        ? [element]
-        : elementsUnder(element).filter((inner) => inner.localName === 'img' && !isHidden(inner));
-    const [image, ...others] = images;
-    if (image === undefined || others.length > 0) {
-      return null;
+    return imageAddressOf(elementOf(found));
+  }
+
+  /**
+   * Reads every visible element `target` matches, where `find` would not choose between them: what
+   * each shows, its accessible name, and its image's address (as {@link imageAddress}). Read only:
+   * it hands out no element, so nothing can be pressed through it (TS-005: the Simple form's Lyrics
+   * and Styles chips, a Mashup's two songs). An empty list when the target, or what it is looked for
+   * in, is not on the page.
+   */
+  readAll(target: Target): ReadAllEntry[] {
+    this.trail.target = target;
+    let container: ParentNode = this.document;
+    if (target.within !== undefined) {
+      const outer = isRegion(target.within)
+        ? regionFor(this.document, target.within, target)
+        : locate(this.document, target.within);
+      if (outer.kind !== 'one') {
+        return [];
+      }
+      container = outer.element;
     }
-    const address = image.getAttribute('src');
-    return address === null || address.trim() === '' ? null : address.trim();
+    return matching(container, target).map((element) => ({
+      name: nameOf(element),
+      reading: readingOf(element),
+      image: imageAddressOf(element),
+    }));
   }
 
   /**

@@ -754,8 +754,8 @@ describe('Generate on Suno in the Suno tab: Speech and Sounds (#147)', () => {
       ['sounds.single.sound_description', 'set'],
       ['sounds.single.sound_type', 'set'],
       ['sounds.single.sound_bpm', 'set'],
-      ['sounds.single.sound_key', 'manual'],
-      ['sounds.single.sound_scale', 'manual'],
+      ['sounds.single.sound_key', 'set'],
+      ['sounds.single.sound_scale', 'set'],
     ]);
     const report = tab.asked.at(-1);
     expect(report).toMatchObject({

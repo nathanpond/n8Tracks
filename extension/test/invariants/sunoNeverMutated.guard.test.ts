@@ -49,15 +49,17 @@ const RUN_RECIPES: Readonly<Record<string, RunRecipe>> = {
     values: { workspaceName: 'A new Song', created: () => OK },
     exceptions: ['create-workspace'],
   },
-  // Filling the Songs form (#146): tabs, section headers, More Options' toggles, and slider keys
-  // (never Enter); Create is never pressed. Every entry is given a value other than the
+  // Filling the Songs form (#146): tabs, section headers, More Options' toggles, Duration's Custom,
+  // slider keys (never Enter), and Simple's "+" menu with its Lyrics and Styles dialogs (TS-005);
+  // Create is never pressed. Every entry is given a value other than the
   // snapshot's, so every filler acts.
   'switch-form': { values: { mode: 'advanced' } },
   'fill-songs-simple': { values: fillValues('simple') },
   'fill-songs-advanced': { values: fillValues('advanced') },
   'check-songs-form': { values: fillValues('advanced') },
   // Filling the Speech and Sounds forms (#147): their tabs, section headers, choice buttons, the
-  // Variety slider's keys, and the BPM box; Create is never pressed.
+  // Variety slider's keys, the BPM box, and the Key popover's note, Major/Minor, and Apply (TS-005);
+  // Create is never pressed.
   'switch-speech-form': { values: { mode: 'advanced' } },
   'fill-speech-simple': { values: kindValues('speech', 'simple') },
   'fill-speech-advanced': { values: kindValues('speech', 'advanced') },
@@ -136,6 +138,9 @@ function fillValues(mode: string): Record<string, unknown> {
     entries: {
       [`${prefix}model`]: 'v6',
       [`${prefix}simple_prompt`]: 'a quiet song',
+      // Simple's sections (TS-005): the "+" menu, its Lyrics and Styles items, Write new, Close.
+      [`${prefix}simple_add_lyrics`]: 'line one\nline two',
+      [`${prefix}simple_add_styles`]: 'dream pop',
       [`${prefix}lyrics`]: 'line one\nline two',
       [`${prefix}styles`]: 'dream pop',
       [`${prefix}exclude_styles`]: '',

@@ -73,6 +73,120 @@ export const SONG_DESCRIPTION: Target = {
   description: 'the Song description box',
 };
 
+/**
+ * Simple mode's added sections (TS-005, `page.create-songs-simple-*.html`). The "+" button opens
+ * the Add menu (Lyrics, Styles, Playlist, Image, Video, Audio, Voice); Lyrics and Styles each open
+ * a submenu, "Write new" or "Use existing"; "Write new" opens a dialog titled Lyrics or Styles with
+ * the text box, closed by its Close button. The section then shows as a chip above the Song
+ * description: its text (whole, in the chip's title) and a "Remove <text>" button. The chip does
+ * not say whether it is the lyrics or the styles, so a section is known by its text.
+ */
+export type SimpleSection = 'Lyrics' | 'Styles';
+
+/**
+ * The Add menu's Lyrics or Styles item, which opens its submenu. The menu itself has no name the
+ * primitives read (it is labelled by the "+" button, whose only name is its `aria-label`), so the
+ * item is known by its name and its submenu; no other menu on the Create form has one.
+ */
+export function addMenuItem(section: SimpleSection): Target {
+  return {
+    role: 'menuitem',
+    name: section,
+    popup: 'menu',
+    description:
+      section === 'Lyrics' ? 'the Lyrics item of the Add menu' : 'the Styles item of the Add menu',
+  };
+}
+
+/** The submenu that item opens, named by the item. */
+export function sectionMenu(section: SimpleSection): Target {
+  return {
+    role: 'menu',
+    name: section,
+    description:
+      section === 'Lyrics' ? 'the Add menu’s Lyrics submenu' : 'the Add menu’s Styles submenu',
+  };
+}
+
+/** "Write new" in that submenu ("Use existing" picks from the user's saved lyrics or styles). */
+export function writeNewItem(section: SimpleSection): Target {
+  return {
+    role: 'menuitem',
+    name: 'Write new',
+    within: sectionMenu(section),
+    description:
+      section === 'Lyrics' ? 'Write new in the Lyrics submenu' : 'Write new in the Styles submenu',
+  };
+}
+
+/** The dialog "Write new" opens, titled after its section. */
+export function sectionDialog(section: SimpleSection): Target {
+  return {
+    role: 'dialog',
+    name: section,
+    description: section === 'Lyrics' ? 'the Lyrics dialog' : 'the Styles dialog',
+  };
+}
+
+/**
+ * The dialog's text box: Lyrics has the Lexical editor (and a Cowriter prompt beside it); Styles has
+ * one text area.
+ */
+export function sectionEditor(section: SimpleSection): Target {
+  return section === 'Lyrics'
+    ? {
+        role: 'textbox',
+        name: 'Lyrics editor',
+        within: sectionDialog('Lyrics'),
+        description: 'the Lyrics editor in the Lyrics dialog',
+      }
+    : {
+        role: 'textbox',
+        within: sectionDialog('Styles'),
+        description: 'the Styles box in the Styles dialog',
+      };
+}
+
+/**
+ * The dialog's own Close button, beside its title (the Lyrics dialog's Cowriter has a Close too).
+ */
+export function sectionDialogClose(section: SimpleSection): Target {
+  return {
+    role: 'button',
+    name: 'Close',
+    within: {
+      around: {
+        text: section,
+        within: sectionDialog(section),
+        description:
+          section === 'Lyrics' ? 'the Lyrics dialog’s title' : 'the Styles dialog’s title',
+      },
+      levels: 1,
+      description:
+        section === 'Lyrics' ? 'the top of the Lyrics dialog' : 'the top of the Styles dialog',
+    },
+    description:
+      section === 'Lyrics'
+        ? 'the Lyrics dialog’s Close button'
+        : 'the Styles dialog’s Close button',
+  };
+}
+
+/** The chips above the Song description: each one's "Remove …" button, named after its text. */
+export const SECTION_CHIP_REMOVE: Target = {
+  role: 'button',
+  name: /^Remove /,
+  within: SONG_DESCRIPTION.within,
+  description: 'a chip’s Remove button above the Song description',
+};
+
+/** A source chip's thumbnail in the same row: a Simple source chip has one, a section chip none. */
+export const CHIP_THUMBNAIL: Target = {
+  role: 'img',
+  within: SONG_DESCRIPTION.within,
+  description: 'a source chip’s thumbnail above the Song description',
+};
+
 /** Advanced mode's collapsible sections, by their headers. */
 export const LYRICS_SECTION: Target = {
   role: 'button',
@@ -144,6 +258,31 @@ export const VOCAL_FEMALE: Target = {
   name: 'Female',
   within: VOCAL_GENDER,
   description: 'the Vocal Gender Female button in More Options',
+};
+
+const DURATION = beside(
+  label('Duration', 'the Duration label in More Options'),
+  'the Duration choice in More Options',
+);
+
+/**
+ * Duration on Auto shows two buttons, Custom and Auto (TS-005,
+ * `page.create-songs-advanced-duration-auto.html`); Custom replaces them with the slider and a text
+ * box (`…-duration-custom.html`), and the way back to Auto is an icon beside the label that has no
+ * role or name.
+ */
+export const DURATION_CUSTOM: Target = {
+  role: 'button',
+  name: 'Custom',
+  within: DURATION,
+  description: 'the Duration Custom button in More Options',
+};
+
+export const DURATION_AUTO: Target = {
+  role: 'button',
+  name: 'Auto',
+  within: DURATION,
+  description: 'the Duration Auto button in More Options',
 };
 
 export const DURATION_SLIDER: Target = {
