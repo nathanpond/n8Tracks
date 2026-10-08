@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { expect, test, type Locator, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page, type TestInfo } from '@playwright/test';
 import {
   expectAccessibleInLightAndDark,
   expectModalAccessibleInBothSchemes,
@@ -77,60 +77,83 @@ async function select(page: Page, song: Song, generation: string): Promise<void>
   await expect(panel).toBeHidden();
 }
 
+/** Creates a Song of its own for the test; its first Version is its current one. */
+async function createSong(page: Page, api: (path: string) => string): Promise<Song> {
+  const created = await page.request.post(api('songs'), {
+    headers: ANTIFORGERY_HEADERS,
+    data: { title: `Covers ${String(Date.now()).slice(-7)}` },
+  });
+  expect(created.status()).toBe(201);
+  return (await created.json()) as Song;
+}
+
 /**
- * Walks #121's Demo on the built image, on a Song of its own with three Generations seeded by the
- * test-only command:
- * 1. An image is uploaded for g1 the way the extension sends one (a multipart PUT, as `curl` would),
- *    and g1 is selected: the Song shows that image.
+ * Uploads an image for `generation` the way the extension sends one (a multipart PUT, as `curl`
+ * would), its bytes stamped with this run; the new asset's ID.
+ */
+async function uploadArtwork(
+  page: Page,
+  api: (path: string) => string,
+  stamp: string,
+  generation: string,
+  rgb: [number, number, number],
+): Promise<string> {
+  const response = await page.request.put(api(`generations/${generation}/artwork`), {
+    headers: ANTIFORGERY_HEADERS,
+    multipart: {
+      file: {
+        name: 'cover.png',
+        mimeType: 'image/png',
+        buffer: solidPng(400, 400, `${stamp} ${generation}`, rgb),
+      },
+    },
+  });
+  expect(response.status()).toBe(200);
+  const body = (await response.json()) as Generation;
+  expect(body.artwork).not.toBeNull();
+  return body.artwork?.assetId ?? '';
+}
+
+async function readSong(page: Page, api: (path: string) => string, song: Song): Promise<Song> {
+  return (await (await page.request.get(api(`songs/${song.id}`))).json()) as Song;
+}
+
+function stampOf(testInfo: TestInfo): string {
+  return `${testInfo.project.name} ${String(Date.now())} ${String(testInfo.retry)}`;
+}
+
+/**
+ * Walks #121's Demo on the built image, on Songs of their own with Generations seeded by the
+ * test-only command. Each state is scanned with the accessibility helper, in light and in dark, and
+ * every scan costs a couple of seconds; the Demo's four steps are two tests, so each stays well
+ * inside the test timeout on a slow CI runner (as one, it needed 20 of its 30 seconds on a typical
+ * runner and ran out on a slower one; #405):
+ * 1. An image is uploaded for g1 the way the extension sends one, and g1 is selected: the Song
+ *    shows that image.
  * 2. In the artwork control, g2's image is chosen: the Song shows it, as its own.
+ * The second test starts where the first ends, reaching that state through the same API calls the
+ * page makes (g1 selected, g2's image picked as the Song's own), and walks on:
  * 3. Another Generation is selected: the Song's artwork does not change.
  * 4. The Song's own artwork is removed: it shows the Selected Generation's image again.
- * Each state is scanned with the accessibility helper. Runs on the project's shared container,
- * with image bytes stamped with this run.
+ * Both run on the project's shared container, with image bytes stamped with this run.
  */
 test.describe('a Generation’s cover image as the Song’s artwork', () => {
-  test('defaults to the Selected Generation’s, is picked from another, kept, and removed', async ({
+  test('defaults to the Selected Generation’s, and is picked from another', async ({
     page,
   }, testInfo) => {
-    const stamp = `${testInfo.project.name} ${String(Date.now())} ${String(testInfo.retry)}`;
+    const stamp = stampOf(testInfo);
     const api = await apiBase(page);
-    const created = await page.request.post(api('songs'), {
-      headers: ANTIFORGERY_HEADERS,
-      data: { title: `Covers ${String(Date.now()).slice(-7)}` },
-    });
-    expect(created.status()).toBe(201);
-    const song = (await created.json()) as Song;
+    const song = await createSong(page, api);
     const version = song.currentVersion.shortcode;
     const first = await seedGeneration(testInfo, version, clip('First take'));
     const second = await seedGeneration(testInfo, version, clip('Second take'));
-    const third = await seedGeneration(testInfo, version, clip('Third take'));
-
-    const upload = async (generation: string, rgb: [number, number, number]) => {
-      const response = await page.request.put(api(`generations/${generation}/artwork`), {
-        headers: ANTIFORGERY_HEADERS,
-        multipart: {
-          file: {
-            name: 'cover.png',
-            mimeType: 'image/png',
-            buffer: solidPng(400, 400, `${stamp} ${generation}`, rgb),
-          },
-        },
-      });
-      expect(response.status()).toBe(200);
-      const body = (await response.json()) as Generation;
-      expect(body.artwork).not.toBeNull();
-      return body.artwork?.assetId ?? '';
-    };
-    const readSong = async () =>
-      (await (await page.request.get(api(`songs/${song.id}`))).json()) as Song;
     const header = page.getByTestId('song-header-artwork');
-    const alt = `Artwork for ${song.title}`;
 
     // 1. Upload an image for g1 and select g1: the Song shows it.
-    const red = await upload(first, [220, 30, 30]);
+    const red = await uploadArtwork(page, api, stamp, first, [220, 30, 30]);
     await select(page, song, first);
     await expectLoaded(header.locator(`img[data-artwork="${red}"]`));
-    expect((await readSong()).artwork).toMatchObject({
+    expect((await readSong(page, api, song)).artwork).toMatchObject({
       assetId: red,
       source: 'selectedGeneration',
     });
@@ -148,7 +171,7 @@ test.describe('a Generation’s cover image as the Song’s artwork', () => {
     );
 
     // 2. Choose g2's image in the artwork control: the Song shows it, as its own.
-    const blue = await upload(second, [30, 60, 220]);
+    const blue = await uploadArtwork(page, api, stamp, second, [30, 60, 220]);
     await page.reload();
     await expect(page.getByRole('heading', { level: 2, name: song.title })).toBeVisible();
     await openDetails(page);
@@ -162,18 +185,63 @@ test.describe('a Generation’s cover image as the Song’s artwork', () => {
     );
     await expectLoaded(header.locator(`img[data-artwork="${blue}"]`));
     await expect(picker.getByTestId('artwork-inherited')).toHaveCount(0);
-    expect((await readSong()).artwork).toMatchObject({ assetId: blue, source: 'own' });
+    expect((await readSong(page, api, song)).artwork).toMatchObject({
+      assetId: blue,
+      source: 'own',
+    });
     await expectAccessibleInLightAndDark(page);
+  });
+
+  test('is kept when another Generation is selected, and removed for the Selected Generation’s', async ({
+    page,
+  }, testInfo) => {
+    const stamp = stampOf(testInfo);
+    const api = await apiBase(page);
+    const song = await createSong(page, api);
+    const version = song.currentVersion.shortcode;
+    const first = await seedGeneration(testInfo, version, clip('First take'));
+    const second = await seedGeneration(testInfo, version, clip('Second take'));
+    const third = await seedGeneration(testInfo, version, clip('Third take'));
+    const header = page.getByTestId('song-header-artwork');
+    const alt = `Artwork for ${song.title}`;
+
+    // Where the first test ends: g1 (red) selected, and g2's image (blue) picked as the Song's own,
+    // through the calls the Generation panel and the artwork chooser make.
+    const red = await uploadArtwork(page, api, stamp, first, [220, 30, 30]);
+    const blue = await uploadArtwork(page, api, stamp, second, [30, 60, 220]);
+    const selected = await page.request.put(api(`songs/${song.id}/selected-generation`), {
+      headers: {
+        ...ANTIFORGERY_HEADERS,
+        'If-Match': `"${String((await readSong(page, api, song)).revision)}"`,
+      },
+      data: { generation: first },
+    });
+    expect(selected.status(), await selected.text()).toBe(200);
+    const picked = await page.request.post(api(`songs/${song.id}/artwork/from-generation`), {
+      headers: {
+        ...ANTIFORGERY_HEADERS,
+        'If-Match': `"${String((await readSong(page, api, song)).revision)}"`,
+      },
+      data: { generation: second },
+    });
+    expect(picked.status(), await picked.text()).toBe(200);
+    expect((await readSong(page, api, song)).artwork).toMatchObject({
+      assetId: blue,
+      source: 'own',
+    });
 
     // 3. Select another Generation (one with no image): the Song's artwork does not change.
     await select(page, song, third);
     await expectLoaded(header.locator(`img[data-artwork="${blue}"]`));
-    expect((await readSong()).artwork).toMatchObject({ assetId: blue, source: 'own' });
+    expect((await readSong(page, api, song)).artwork).toMatchObject({
+      assetId: blue,
+      source: 'own',
+    });
 
     // 4. Select g1 again and remove the Song's own artwork: it shows the Selected Generation's image.
     await select(page, song, first);
     await expectLoaded(header.locator(`img[data-artwork="${blue}"]`));
-    await openDetails(page);
+    const picker = await openDetails(page);
     await picker.getByRole('button', { name: 'Remove artwork' }).click();
     const confirm = page.getByRole('dialog', { name: 'Remove the artwork?' });
     await expect(confirm.getByTestId('remove-artwork-summary')).toContainText(
@@ -185,7 +253,7 @@ test.describe('a Generation’s cover image as the Song’s artwork', () => {
     await expectLoaded(header.getByRole('img', { name: alt }));
     await expect(header.locator(`img[data-artwork="${red}"]`)).toBeVisible();
     await expect(picker.getByTestId('artwork-inherited')).toContainText(first);
-    expect((await readSong()).artwork).toMatchObject({
+    expect((await readSong(page, api, song)).artwork).toMatchObject({
       assetId: red,
       source: 'selectedGeneration',
     });
