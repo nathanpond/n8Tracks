@@ -10,6 +10,7 @@ using n8Tracks.Application.Configuration;
 using n8Tracks.Application.Credentials;
 using n8Tracks.Application.Health;
 using n8Tracks.Application.Jobs;
+using n8Tracks.Application.Logging;
 using n8Tracks.Application.Maintenance;
 using n8Tracks.Application.Media;
 using n8Tracks.Application.Persistence;
@@ -23,6 +24,7 @@ using n8Tracks.Infrastructure.Assets;
 using n8Tracks.Infrastructure.Backups;
 using n8Tracks.Infrastructure.Health;
 using n8Tracks.Infrastructure.Jobs;
+using n8Tracks.Infrastructure.Logging;
 using n8Tracks.Infrastructure.Maintenance;
 using n8Tracks.Infrastructure.Media;
 using n8Tracks.Infrastructure.Persistence;
@@ -101,6 +103,7 @@ public static class DependencyInjection
         services.AddScoped<IDownloadRecordStore, DownloadRecordStore>();
         services.AddScoped<IMediaScanSummaryStore, MediaScanSummaryStore>();
         services.AddScoped<IMediaScanScheduleStore, MediaScanScheduleStore>();
+        services.AddScoped<ILoggingSettingsStore, LoggingSettingsStore>();
         services.AddSingleton<IMediaFolderProbe, MediaFolderProbe>();
         services.AddScoped<IMediaMountStateStore, MediaMountStateStore>();
         services.AddSingleton<IBackupStorage, BackupFolders>();
@@ -155,6 +158,7 @@ public static class DependencyInjection
         services.TryAddSingleton(new DailyTaskSchedulerOptions());
         services.TryAddSingleton(new MediaScanSchedulerOptions());
         services.TryAddSingleton(new MediaAvailabilityMonitorOptions());
+        services.TryAddSingleton(new LoggingSettingsMonitorOptions());
         services.AddHostedService<BackupStartupCleanup>();
         services.AddHostedService<RestoreHousekeeping>();
 
@@ -167,6 +171,9 @@ public static class DependencyInjection
         // still queued from before counts as the startup scan, one left running does not.
         services.AddHostedService<MediaScanScheduler>();
         services.AddHostedService<MediaAvailabilityMonitor>();
+
+        // The log settings (#234): read every 30 seconds, the log folder swept hourly.
+        services.AddHostedService<LoggingSettingsMonitor>();
 
         return services;
     }

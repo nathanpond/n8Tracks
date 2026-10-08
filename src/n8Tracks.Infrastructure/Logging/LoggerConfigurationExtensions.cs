@@ -22,6 +22,21 @@ public static class LoggerConfigurationExtensions
     }
 
     /// <summary>
+    /// As the overload with a fixed level, with the levels read from <paramref name="switches"/> at
+    /// every event, so a change takes effect without a restart (#234).
+    /// </summary>
+    public static LoggerConfiguration WithN8TracksLevels(this LoggerConfiguration configuration, LogLevelSwitches switches)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+        ArgumentNullException.ThrowIfNull(switches);
+
+        return configuration
+            .MinimumLevel.ControlledBy(switches.Minimum)
+            .MinimumLevel.Override("Microsoft", switches.Framework)
+            .MinimumLevel.Override("System", switches.Framework);
+    }
+
+    /// <summary>
     /// Applies the redaction policy (invariant 6) to every event of the logger, whatever sink it goes
     /// to. Call it last: the masking enricher must run after every other enricher.
     /// </summary>

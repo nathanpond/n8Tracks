@@ -78,3 +78,12 @@ services:
   #     N8TRACKS_GATEWAY_PORT: "8788"
   #     # Trace, Debug, Information, Warning, Error, or Critical.
   #     N8TRACKS_LOG_LEVEL: Information
+  #     # To keep the gateway's log in files as well as on standard output, remove the "# " in front
+  #     # of the next four lines and of the two volume lines below. Files are kept for the days
+  #     # given (1 to 90) and together take at most the megabytes given (10 to 5120), the oldest
+  #     # deleted first. The host folder must be writable by the gateway's user.
+  #     # N8TRACKS_GATEWAY_LOG_PATH: /logs
+  #     # N8TRACKS_GATEWAY_LOG_RETENTION_DAYS: "14"
+  #     # N8TRACKS_GATEWAY_LOG_MAX_MB: "200"
+  #   # volumes:
+  #   #   - ./gateway-logs:/logs

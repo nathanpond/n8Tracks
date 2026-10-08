@@ -6,6 +6,7 @@ using System.Text.Json.Nodes;
 using n8Tracks.Application.Backups;
 using n8Tracks.Application.Catalog;
 using n8Tracks.Application.Credentials;
+using n8Tracks.Application.Logging;
 using n8Tracks.Application.Media;
 using n8Tracks.Application.Songs;
 using n8Tracks.Application.Suno;
@@ -24,6 +25,8 @@ internal static class SettingsEndpoints
     public const string VersionDefaultsPath = ApiProblem.VersionPrefix + "/settings/version-defaults";
     public const string CatalogPath = ApiProblem.VersionPrefix + "/settings/catalog";
     public const string MediaScanPath = ApiProblem.VersionPrefix + "/settings/media-scan";
+    public const string LoggingPath = ApiProblem.VersionPrefix + "/settings/logging";
+    public const string ConfirmationRequiredCode = "confirmation_required";
 
     public static IEndpointRouteBuilder MapSettings(this IEndpointRouteBuilder endpoints)
     {
@@ -109,7 +112,103 @@ internal static class SettingsEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
+        endpoints.MapGet(LoggingPath, GetLoggingAsync)
+            .WithName("GetLoggingSettings")
+            .WithSummary("The log settings: the level (and whether the environment or the saved setting sets it), the days log files are kept, their size cap in MB, when a saved Debug level ends, and why the log folder cannot be written, if it cannot. Revision 0 until first saved.")
+            .SessionOnly()
+            .Produces<LoggingSettingsResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
+        endpoints.MapPut(LoggingPath, PutLoggingAsync)
+            .WithName("SetLoggingSettings")
+            .WithSummary("Replaces the log settings, given their revision in If-Match (\"0\" before the first save). level is error, warning, information, or debug (back to information after 24 hours); retentionDays 1 to 90; maxMegabytes 10 to 5120. Limits that would delete log files are refused with 409 confirmation_required, stating the files and bytes, until sent with confirmDelete: true.")
+            .SessionOnly()
+            .Produces<LoggingSettingsResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
         return endpoints;
+    }
+
+    /// <summary>200 with the log settings; their revision is the <c>ETag</c>.</summary>
+    private static async Task<Ok<LoggingSettingsResponse>> GetLoggingAsync(
+        LoggingSettingsService settings,
+        HttpContext context,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        var view = await settings.GetAsync(cancellationToken);
+        Revisions.SetETag(context, view.Stored.Revision);
+        return TypedResults.Ok(LoggingSettingsResponse.From(view));
+    }
+
+    /// <summary>
+    /// 200 with the new settings; 422 on a missing or wrong field; 409 <c>revision_conflict</c> with
+    /// the current ones; 409 <c>confirmation_required</c> with <c>files</c> and <c>bytes</c> when the
+    /// limits would delete log files and <c>confirmDelete</c> is not true.
+    /// </summary>
+    private static async Task<Results<Ok<LoggingSettingsResponse>, ProblemHttpResult>> PutLoggingAsync(
+        LoggingSettingsRequest? request,
+        LoggingSettingsService settings,
+        HttpContext context,
+        ILoggerFactory loggers,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        var (revision, problem) = Revisions.Read(context, allowUnsaved: true);
+        if (problem is not null)
+        {
+            return problem;
+        }
+
+        var (parsed, errors) = LoggingSettings.Parse(request?.Level ?? default, request?.RetentionDays ?? default, request?.MaxMegabytes ?? default);
+        var confirmDelete = request?.ConfirmDelete.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            null or JsonValueKind.Undefined or JsonValueKind.Null or JsonValueKind.False => false,
+            _ => (bool?)null,
+        };
+        if (confirmDelete is null)
+        {
+            errors[LoggingSettingsRequest.ConfirmDeleteField] = ["Send true to confirm deleting log files, or leave it out."];
+        }
+
+        if (parsed is null || confirmDelete is null)
+        {
+            return ApiProblem.ValidationFailed(context, errors);
+        }
+
+        switch (await settings.UpdateAsync(parsed, revision!.Value, confirmDelete.Value, cancellationToken))
+        {
+            case LoggingSettingsUpdate.Updated updated:
+                loggers.CreateLogger(typeof(SettingsEndpoints)).LogInformation(
+                    "Log settings changed: {LogLevelSetting}, {LogRetentionDays} days, {LogMaxMegabytes} MB, revision {LoggingSettingsRevision}; {LogFilesDeleted} files deleted",
+                    LoggingSettings.LevelName(updated.Current.Stored.Settings.Level),
+                    updated.Current.Stored.Settings.RetentionDays,
+                    updated.Current.Stored.Settings.MaxMegabytes,
+                    updated.Current.Stored.Revision,
+                    updated.Deleted.Files);
+                Revisions.SetETag(context, updated.Current.Stored.Revision);
+                return TypedResults.Ok(LoggingSettingsResponse.From(updated.Current));
+            case LoggingSettingsUpdate.Stale stale:
+                return Revisions.Conflict(context, LoggingSettingsResponse.From(stale.Current));
+            case LoggingSettingsUpdate.ConfirmationRequired required:
+                return ApiProblem.For(
+                    context,
+                    StatusCodes.Status409Conflict,
+                    ConfirmationRequiredCode,
+                    "These limits delete log files. Send confirmDelete: true to save them.",
+                    [new("files", required.Deletion.Files), new("bytes", required.Deletion.Bytes)]);
+            default:
+                throw new InvalidOperationException("Unknown log settings update.");
+        }
     }
 
     /// <summary>200 with the media scan schedule; its revision is the <c>ETag</c>.</summary>
@@ -344,6 +443,48 @@ internal sealed record MediaScanScheduleResponse(bool Enabled, int IntervalMinut
         ArgumentNullException.ThrowIfNull(stored);
 
         return new(stored.Schedule.Enabled, stored.Schedule.IntervalMinutes, stored.Revision);
+    }
+}
+
+/// <summary>
+/// The log settings as a client sends them: <c>level</c>, <c>retentionDays</c>, and
+/// <c>maxMegabytes</c> required, <c>confirmDelete</c> optional. Each is read as raw JSON, so a value
+/// of the wrong type is a 422 keyed by its field, not a 400.
+/// </summary>
+internal sealed record LoggingSettingsRequest(JsonElement Level, JsonElement RetentionDays, JsonElement MaxMegabytes, JsonElement ConfirmDelete)
+{
+    public const string ConfirmDeleteField = "confirmDelete";
+}
+
+/// <summary>
+/// The log settings. <c>level</c> is <c>error</c>, <c>warning</c>, <c>information</c>, or <c>debug</c>
+/// once saved; before that it is <c>N8TRACKS_LOG_LEVEL</c>'s, which may also be <c>trace</c> or
+/// <c>critical</c>, and <c>levelSource</c> is <c>environment</c> rather than <c>setting</c>.
+/// <c>debugUntil</c> is when a saved Debug level switches back to Information; <c>folderProblem</c>
+/// why log files are not being written (null while they are).
+/// </summary>
+internal sealed record LoggingSettingsResponse(
+    int Revision,
+    string Level,
+    string LevelSource,
+    int RetentionDays,
+    int MaxMegabytes,
+    DateTimeOffset? DebugUntil,
+    string? FolderProblem)
+{
+    public static LoggingSettingsResponse From(LoggingView view)
+    {
+        ArgumentNullException.ThrowIfNull(view);
+
+        var settings = view.Stored.Settings;
+        return new(
+            view.Stored.Revision,
+            LoggingSettings.LevelName(settings.Level),
+            view.Source == LogLevelSource.Setting ? "setting" : "environment",
+            settings.RetentionDays,
+            settings.MaxMegabytes,
+            settings.DebugUntil?.ToUniversalTime(),
+            view.FolderProblem);
     }
 }
 

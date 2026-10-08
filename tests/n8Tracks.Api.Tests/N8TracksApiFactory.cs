@@ -8,6 +8,7 @@ using Microsoft.Extensions.Hosting;
 using n8Tracks.Api.Configuration;
 using n8Tracks.Api.Frontend;
 using n8Tracks.Infrastructure.Backups;
+using n8Tracks.Infrastructure.Logging;
 using n8Tracks.Infrastructure.Media;
 using n8Tracks.Infrastructure.Scheduling;
 using n8Tracks.TestSupport;
@@ -123,6 +124,10 @@ public class N8TracksApiFactory : WebApplicationFactory<Program>
             // And the media availability monitor (#207): tests call its look themselves.
             services.RemoveAll<MediaAvailabilityMonitorOptions>();
             services.AddSingleton(new MediaAvailabilityMonitorOptions { Enabled = false });
+
+            // And the log settings monitor (#234): tests call its look (LoggingApi.LookAsync) themselves.
+            services.RemoveAll<LoggingSettingsMonitorOptions>();
+            services.AddSingleton(new LoggingSettingsMonitorOptions { Enabled = false });
             TestServices?.Invoke(services);
         });
     }

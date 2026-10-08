@@ -183,6 +183,7 @@ public sealed class Program
         // Serilog is the only logging provider; the redaction policy sits in front of every sink.
         builder.Logging.ClearProviders();
         builder.Services.AddN8TracksLogging(sink);
+        builder.Services.AddN8TracksFileLogging();
 
         // OpenTelemetry, only when the environment variable OTEL_EXPORTER_OTLP_ENDPOINT is set;
         // otherwise both calls register nothing. Log records leave
@@ -249,6 +250,10 @@ public sealed class Program
                     $"is in use by another n8Tracks process (another container, or the restore command) that holds {dataPathLock.LockFile}. Stop it first.");
                 return 1;
             }
+
+            // The log files start once the lock is held, before the database is touched, so the
+            // upgrade's lines are in them (#234). Until the setting is read, at N8TRACKS_LOG_LEVEL's level.
+            app.Services.GetRequiredService<FileLogging>().Start();
 
             // Before anything else touches the data: an upgrade that failed or was interrupted has its
             // safety backup put back, and the version whose upgrade failed refuses to start.

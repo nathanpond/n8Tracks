@@ -15,9 +15,11 @@ namespace n8Tracks.Architecture.Tests;
 /// local) is named only by the options loader, the options record, <c>MediaMountReader</c>, the
 /// backup code's <c>IsInside</c> comparisons, which refuse a backup path inside the mount and touch
 /// nothing there, the media status (#208), which only answers the configured path as text for the
-/// Media page to show, and the startup overlap check (#387), which compares the configured paths.</item>
+/// Media page to show, the startup overlap check (#387), which compares the configured paths, and
+/// the registration of the log files (#234), which hands the path to that same check.</item>
 /// <item>File-system APIs appear only in a fixed list of files (database, data folder, backups,
-/// assets, setup, the frontend's files, the startup overlap check, and <c>MediaMountReader</c>); a
+/// assets, setup, the frontend's files, the startup overlap check, the application's and the
+/// gateway's log files, and <c>MediaMountReader</c>); a
 /// <c>System.IO</c> file-system type named in full counts, so an alias (<c>using IOFile =
 /// System.IO.File;</c>) or a <c>using static</c> is seen.</item>
 /// <item>Inside <c>MediaMountReader</c>, nothing creates, writes, appends, moves, copies, renames,
@@ -60,6 +62,7 @@ public partial class MediaMountAccessTests
         "src/n8Tracks.Api/Configuration/EnvironmentOptionsLoader.cs: var dataPath = ReadDataPath(environment.Variables, environment.WorkingDirectory, ResolvePath(DefaultMediaPath, environment.WorkingDirectory), errors);",
         "src/n8Tracks.Api/Configuration/EnvironmentOptionsLoader.cs: ResolvePath(DefaultMediaPath, environment.WorkingDirectory),",
         "src/n8Tracks.Api/Configuration/EnvironmentOptionsLoader.cs: MediaPath = ResolvePath(Value(variables, MediaPath) ?? DefaultMediaPath, environment.WorkingDirectory),",
+        "src/n8Tracks.Api/DependencyInjection/LoggingRegistration.cs: return new FileLogging(options.DataPath, options.MediaPath, time);",
         "src/n8Tracks.Api/Endpoints/MediaEndpoints.cs: return TypedResults.Ok(MediaStatusResponse.From(status, options.MediaPath));",
         "src/n8Tracks.Application/Backups/OfflineRestoreService.cs: if (IsInside(fullPath, options.MediaPath))",
         "src/n8Tracks.Application/Configuration/N8TracksOptions.cs: string MediaPath,",
@@ -71,7 +74,12 @@ public partial class MediaMountAccessTests
     /// <summary>
     /// The files that may use a file-system API: none of them names the media mount setting but the
     /// lines above. <c>MediaFolderOverlap</c> (#387) compares the configured folders' real paths and
-    /// reads the mount table; it opens nothing under any of them.
+    /// reads the mount table; it opens nothing under any of them. The application's log files
+    /// (<c>FileLogging</c>, #234) are written under the data folder's <c>logs</c> folder only, after
+    /// <c>MediaFolderOverlap</c> has found that folder outside the media folder (it is handed the media
+    /// path, in <c>LoggingRegistration</c>, for that comparison alone); the gateway's
+    /// (<c>GatewayFileLogging</c>, #234) only in the folder <c>N8TRACKS_GATEWAY_LOG_PATH</c> names, in a
+    /// container that has no media folder setting.
     /// </summary>
     private static readonly string[] AllowedFileSystemFiles =
     [
@@ -81,6 +89,7 @@ public partial class MediaMountAccessTests
         "src/n8Tracks.Api/Configuration/ProcessEnvironment.cs",
         "src/n8Tracks.Application/Backups/OfflineRestoreService.cs",
         "src/n8Tracks.Application/Configuration/MediaFolderOverlap.cs",
+        "src/n8Tracks.Gateway/Logging/GatewayFileLogging.cs",
         "src/n8Tracks.Infrastructure/Assets/ManagedAssetStore.cs",
         "src/n8Tracks.Infrastructure/Backups/BackupFolders.cs",
         "src/n8Tracks.Infrastructure/Backups/BackupWriter.cs",
@@ -90,6 +99,7 @@ public partial class MediaMountAccessTests
         "src/n8Tracks.Infrastructure/Backups/RestoreArchives.cs",
         "src/n8Tracks.Infrastructure/Backups/UpgradeMarkerFile.cs",
         "src/n8Tracks.Infrastructure/Backups/UpgradeSafetyRestore.cs",
+        "src/n8Tracks.Infrastructure/Logging/FileLogging.cs",
         "src/n8Tracks.Infrastructure/Maintenance/MaintenanceStateFile.cs",
         "src/n8Tracks.Infrastructure/Media/MediaMountReader.cs",
         "src/n8Tracks.Infrastructure/Persistence/DatabaseSchemaCheck.cs",

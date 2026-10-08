@@ -9,6 +9,7 @@ using n8Tracks.Application.Configuration;
 using n8Tracks.Application.Credentials;
 using n8Tracks.Application.Generations;
 using n8Tracks.Application.Jobs;
+using n8Tracks.Application.Logging;
 using n8Tracks.Application.Maintenance;
 using n8Tracks.Application.Media;
 using n8Tracks.Application.References;
@@ -114,6 +115,7 @@ public static class DependencyInjection
         services.AddJobHandler<MediaScanJobHandler>(MediaScanService.JobType);
         services.AddSingleton<MediaScanStartup>();
         services.AddScoped<MediaScanScheduleService>();
+        services.AddScoped<LoggingSettingsService>();
         services.AddScoped<MediaAvailability>();
         services.AddSingleton<MediaProbeStreak>();
         services.AddScoped<MediaRecoveryService>();

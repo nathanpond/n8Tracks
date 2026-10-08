@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using n8Tracks.Gateway.Configuration;
 
 namespace n8Tracks.Gateway.Logging;
@@ -25,6 +26,11 @@ internal static class GatewayLogging
         logging.ClearProviders();
         AddJsonLines(logging);
 
+        // The same lines in files too, when N8TRACKS_GATEWAY_LOG_PATH is set (#234).
+        logging.Services.TryAddSingleton(TimeProvider.System);
+        logging.Services.AddSingleton<GatewayFileLoggerProvider>();
+        logging.Services.AddSingleton<ILoggerProvider>(static provider => provider.GetRequiredService<GatewayFileLoggerProvider>());
+
         // The level comes from the environment snapshot in the container, so a test host can supply its own.
         logging.Services.AddOptions<LoggerFilterOptions>()
             .Configure<EnvironmentSnapshot>(static (filter, environment) =>
@@ -41,7 +47,7 @@ internal static class GatewayLogging
     }
 
     /// <summary>
-    /// A log for lines written when startup fails. It does not depend on the settings, so an invalid or
+    /// A log for lines written when startup fails (to the console only). It does not depend on the settings, so an invalid or
     /// very quiet <c>N8TRACKS_LOG_LEVEL</c> cannot hide the reason the gateway stopped.
     /// </summary>
     public static ILoggerFactory CreateStartupLoggerFactory() =>

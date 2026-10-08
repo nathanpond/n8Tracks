@@ -347,6 +347,18 @@ What the container writes before the app starts (the `PUID`/`PGID` errors and wa
 {"timestamp":"2026-10-04T05:50:21.118Z","level":"Error","message":"Invalid configuration: PUID must be a whole number from 0 to 4294967294, but was 'abc'.","properties":{"sourceContext":"n8Tracks.Entrypoint","variable":"PUID","reason":"must be a whole number from 0 to 4294967294, but was 'abc'."}}
 ```
 
+### Log files
+
+Besides standard output, the app writes its log to files in `logs/` in the data folder: `n8tracks-YYYYMMDD.jsonl`, dated in UTC, and `_1`, `_2`, … for a day's later files. Every line has passed the same redaction as standard output, at every level: a file line and an output line are the same event. In **Settings → Diagnostics** the administrator sets:
+
+- the **level**: Error, Warning, Information (the default), or Debug. It takes effect at once, for the files and standard output alike, and in any case within a minute (the setting is read every 30 seconds). Debug switches itself back to Information 24 hours after it was saved, and the page says when. Until a level is saved there, `N8TRACKS_LOG_LEVEL` sets it, `Trace` and `Critical` included. `Microsoft.*` and `System.*` stay at Warning, Debug included.
+- how many **days** files are kept: 1 to 90, by the date in each file's name (default 14). A file exactly that many days old is kept.
+- the **most space** the files take together: 10 MB to 5 GB (default 200 MB). The oldest files are deleted first, and the files never pass it by more than one line.
+
+A file is started each day and whenever the next line would take it past the smaller of 20 MB and a quarter of the cap. Old files are deleted when a file is started, at startup, every hour, and when a change is saved; a change that would delete files asks first and says how many. Other files in `logs/` are left alone. Log files are not part of backups.
+
+If `logs/` cannot be written, the app keeps running and logging to standard output; it writes one Warning line, Settings → Diagnostics says why, and the folder is tried again every hour. The app never writes the log inside the media folder: a `logs/` folder that is the media folder or lies inside it is refused in the same way. The [container health check](#container-health-check), the commands run in the container, and the lines written when startup fails go to standard output only.
+
 ### Building the image
 
 ```sh
@@ -556,7 +568,10 @@ The gateway is configured only through environment variables, read once at start
 | --- | --- | --- | --- |
 | `N8TRACKS_API_URL` | none (required) | `https://nas.example/n8tracks` | URL of n8Tracks as the gateway reaches it. An absolute `http` or `https` URL without query string, fragment, or user info. A path is kept: the example is checked at `https://nas.example/n8tracks/health`. |
 | `N8TRACKS_GATEWAY_PORT` | `8788` | `9001` | Port the gateway listens on: plain HTTP, all interfaces. A whole number from 1 to 65535. |
-| `N8TRACKS_LOG_LEVEL` | `Information` | `Debug` | Minimum log level: `Trace`, `Debug`, `Information`, `Warning`, `Error`, or `Critical` (any letter case). |
+| `N8TRACKS_LOG_LEVEL` | `Information` | `Debug` | Minimum log level: `Trace`, `Debug`, `Information`, `Warning`, `Error`, or `Critical` (any letter case). It applies to the log files too. |
+| `N8TRACKS_GATEWAY_LOG_PATH` | none (no files) | `/logs` | A folder to keep the log in as files as well as on standard output: an absolute path. See [Gateway log files](#gateway-log-files). |
+| `N8TRACKS_GATEWAY_LOG_RETENTION_DAYS` | `14` | `30` | Days log files are kept, by the date in each file's name: a whole number from 1 to 90. |
+| `N8TRACKS_GATEWAY_LOG_MAX_MB` | `200` | `1024` | The most space the log files take together, in MB: a whole number from 10 to 5120. The oldest files are deleted first. |
 
 These variables, and the optional `OTEL_` variables under [Telemetry](#telemetry), are all the gateway reads. It takes no setting from anywhere else .NET would look: not from a command-line argument (`--healthcheck`, under [Gateway health](#gateway-health), is the only argument with a meaning), not from any other environment variable (with an `ASPNETCORE_` or `DOTNET_` prefix or without one), and not from an `appsettings.json`. So no setting of .NET or ASP.NET Core changes what the gateway does, whichever of those it comes from: not `ASPNETCORE_URLS`, `ASPNETCORE_HTTP_PORTS`, `--urls`, or an entry under `Kestrel:Endpoints` (`N8TRACKS_GATEWAY_PORT` is the only way to set the listen address, and nothing adds a second one), not a `Logging` section, not `AllowedHosts`, not `ASPNETCORE_ENVIRONMENT`. The gateway ignores every other `N8TRACKS_` variable, the app's `N8TRACKS_PORT` included. Variables the .NET runtime reads for itself before the gateway's code runs (its garbage collector and diagnostics switches, such as `DOTNET_gcServer`) are outside this rule: they tune the runtime, not the gateway.
 
@@ -569,6 +584,10 @@ The log is one JSON object per line on standard output, in the shape of .NET's J
 ```
 
 Framework categories (`Microsoft`, `System`) are held at Warning unless the level is set higher.
+
+### Gateway log files
+
+With `N8TRACKS_GATEWAY_LOG_PATH` set, the gateway writes the same JSON lines it writes to standard output, at the same level, to `n8tracks-gateway-YYYYMMDD.jsonl` files in that folder (dated in UTC; a day's later files are `_1`, `_2`, …). A file is started each day and whenever the next line would take it past the smaller of 20 MB and a quarter of `N8TRACKS_GATEWAY_LOG_MAX_MB`. A file whose name dates it more than `N8TRACKS_GATEWAY_LOG_RETENTION_DAYS` days before today is deleted (one exactly that old is kept), and the oldest files are deleted first to stay under the size cap, when a file is started and once an hour. Other files in the folder are left alone. A retention or size value that is not valid stops the gateway at startup, as any invalid setting does. A folder the gateway cannot write to does not: it logs one Warning (`Log files are off: …`), goes on with standard output only, and tries the folder again every hour. The `--healthcheck` mode and the lines written when startup fails go to standard output only.
 
 ### Gateway health
 
@@ -602,7 +621,7 @@ The app is configured only through environment variables, read once at startup. 
 | `N8TRACKS_PORT` | `8787` | `9000` | Port the app listens on: plain HTTP, all interfaces. A whole number from 1 to 65535. |
 | `N8TRACKS_BASE_URL` | `http://localhost:<port>` | `https://nas.example/n8tracks` | Public URL of the app. An absolute `http` or `https` URL without query string, fragment, or user info. If it has a path, every route (including `/health`) is served under that path and anything outside it returns 404. |
 | `TZ` | `UTC` | `Europe/Oslo` | Time zone that times are shown in: an IANA time zone ID. |
-| `N8TRACKS_LOG_LEVEL` | `Information` | `Debug` | Minimum log level: `Trace`, `Debug`, `Information`, `Warning`, `Error`, or `Critical` (any letter case). |
+| `N8TRACKS_LOG_LEVEL` | `Information` | `Debug` | Minimum log level: `Trace`, `Debug`, `Information`, `Warning`, `Error`, or `Critical` (any letter case). It applies until a level is saved in Settings → Diagnostics, which then overrides it (see [Log files](#log-files)). |
 | `N8TRACKS_DATA_PATH` | `/data` | `/srv/n8tracks/data` | Directory for the app's own data. It must exist and be writable. |
 | `N8TRACKS_MEDIA_PATH` | `/media` | `/mnt/music` | Directory of your media files. It may be missing at startup. |
 | `N8TRACKS_BACKUP_PATH` | `/backup` | `/mnt/backup` | Directory for backups. It may be missing at startup. |
