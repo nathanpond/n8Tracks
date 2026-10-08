@@ -198,6 +198,34 @@ describe('Settings → System', () => {
     expect(screen.getByText(UNAVAILABLE)).toBeVisible();
   });
 
+  it('shows the background jobs and the maintenance components after the media library', async () => {
+    stubFetch().mockResolvedValue(
+      jsonResponse(200, {
+        ...healthyReport,
+        status: 'degraded',
+        components: {
+          maintenance: { status: 'healthy', detail: 'off' },
+          jobs: { status: 'degraded', detail: 'stalled' },
+          ...healthyReport.components,
+        },
+      }),
+    );
+
+    renderSystem();
+
+    await screen.findByTestId('version');
+    const rows = within(screen.getByRole('table', { name: 'Components' })).getAllByRole('row');
+    expect(rows.slice(1).map((row) => row.textContent)).toEqual([
+      'Applicationhealthyrunning',
+      'Databasehealthyreachable',
+      'Database schemahealthyup to date',
+      'Media libraryhealthyavailable',
+      'Background jobsdegradedstalled',
+      'Maintenancehealthyoff',
+    ]);
+    expect(componentRow('jobs').querySelector('[data-status="degraded"]')).not.toBeNull();
+  });
+
   it('shows a component it does not know under its raw key and an unknown status as plain text', async () => {
     stubFetch().mockResolvedValue(
       jsonResponse(200, {

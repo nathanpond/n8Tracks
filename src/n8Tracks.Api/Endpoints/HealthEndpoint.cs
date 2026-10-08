@@ -21,7 +21,7 @@ internal static class HealthEndpoint
 
         endpoints.MapMethods(Path, [HttpMethods.Get, HttpMethods.Head], GetHealthAsync)
             .WithName("GetHealth")
-            .WithSummary("Reports the health of the application, the database, the schema, the media mount, and maintenance.")
+            .WithSummary("Reports the health of the application, the database, the schema, the media mount, background jobs, and maintenance.")
             .AllowAnonymous()
             .Produces<HealthResponse>(StatusCodes.Status200OK)
             .Produces<HealthResponse>(StatusCodes.Status503ServiceUnavailable)

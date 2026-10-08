@@ -30,6 +30,7 @@ public class HealthReportTests
             new HealthComponent(database, "b"),
             new MigrationsHealthComponent(migrations, "c", null),
             new HealthComponent(media, "d"),
+            new HealthComponent(H, "f"),
             new HealthComponent(H, "e"));
 
         Assert.Equal(expected, report.Status);
@@ -43,9 +44,47 @@ public class HealthReportTests
             new HealthComponent(D, HealthDetails.DatabaseInMaintenance),
             new MigrationsHealthComponent(H, HealthDetails.MigrationsUpToDate, null),
             new HealthComponent(H, HealthDetails.MediaAvailable),
+            new HealthComponent(H, HealthDetails.JobsIdle),
             new HealthComponent(D, HealthDetails.MaintenanceRestoring));
 
         Assert.Equal(D, report.Status);
+    }
+
+    [Theory]
+    [InlineData(HealthDetails.MigrationsPending)]
+    [InlineData(HealthDetails.MigrationsAhead)]
+    [InlineData(HealthDetails.MigrationsUnknown)]
+    public void DuringMaintenanceAnUnhealthySchemaCountsAsDegraded(string detail)
+    {
+        var report = Report(new MigrationsHealthComponent(U, detail, null), maintenance: new HealthComponent(D, HealthDetails.MaintenanceRestoring));
+
+        Assert.Equal(U, report.Migrations.Status);
+        Assert.Equal(D, report.Status);
+
+        // Complement: out of maintenance the same schema makes the instance unhealthy.
+        Assert.Equal(U, Report(new MigrationsHealthComponent(U, detail, null), maintenance: new HealthComponent(H, HealthDetails.MaintenanceOff)).Status);
+    }
+
+    [Fact]
+    public void DuringMaintenanceAStoppedJobWorkerIsStillUnhealthy()
+    {
+        var report = Report(
+            new MigrationsHealthComponent(H, HealthDetails.MigrationsUpToDate, null),
+            jobs: new HealthComponent(U, HealthDetails.JobsStopped),
+            maintenance: new HealthComponent(D, HealthDetails.MaintenanceRestoring));
+
+        Assert.Equal(U, report.Status);
+    }
+
+    [Theory]
+    [InlineData(H, H)]
+    [InlineData(D, D)]
+    [InlineData(U, U)]
+    public void TheJobsComponentCountsLikeAnyOther(HealthStatus jobs, HealthStatus expected)
+    {
+        var report = Report(new MigrationsHealthComponent(H, HealthDetails.MigrationsUpToDate, null), jobs: new HealthComponent(jobs, "x"));
+
+        Assert.Equal(expected, report.Status);
     }
 
     [Fact]
@@ -65,7 +104,16 @@ public class HealthReportTests
             .Select(field => (string)field.GetRawConstantValue()!)
             .ToList();
 
-        Assert.Equal(10, details.Count);
+        Assert.Equal(19, details.Count);
         Assert.All(details, detail => Assert.Matches("^[a-z ]{1,20}$", detail));
     }
+
+    private static HealthReport Report(MigrationsHealthComponent migrations, HealthComponent? jobs = null, HealthComponent? maintenance = null) =>
+        new(
+            new HealthComponent(H, HealthDetails.ApplicationRunning),
+            new HealthComponent(H, HealthDetails.DatabaseReachable),
+            migrations,
+            new HealthComponent(H, HealthDetails.MediaAvailable),
+            jobs ?? new HealthComponent(H, HealthDetails.JobsIdle),
+            maintenance ?? new HealthComponent(H, HealthDetails.MaintenanceOff));
 }

@@ -1,6 +1,9 @@
 namespace n8Tracks.Application.Health;
 
-/// <summary>Reports the health of the instance. Every call runs the checks again; nothing is cached.</summary>
+/// <summary>
+/// Reports the health of the instance. Every call runs the checks again, except that the schema
+/// version is read from the database at most every 30 seconds.
+/// </summary>
 public interface IHealthService
 {
     /// <summary>

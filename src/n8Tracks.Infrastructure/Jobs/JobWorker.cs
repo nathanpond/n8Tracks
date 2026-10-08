@@ -27,6 +27,24 @@ internal sealed class JobWorkerOptions
 
     /// <summary>How often finished jobs past <see cref="Retention"/> are pruned.</summary>
     public TimeSpan PruneInterval { get; init; } = TimeSpan.FromDays(1);
+
+    /// <summary>How long after a fault the worker's loop starts again.</summary>
+    public TimeSpan RestartDelay { get; init; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>How many faults within <see cref="FaultWindow"/> make the worker give up.</summary>
+    public int FaultLimit { get; init; } = 3;
+
+    /// <summary>The span <see cref="FaultLimit"/> counts faults over.</summary>
+    public TimeSpan FaultWindow { get; init; } = TimeSpan.FromMinutes(1);
+
+    /// <summary>How long without a beat before the health check says the worker has stalled.</summary>
+    public TimeSpan HeartbeatLostAfter { get; init; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>How long after the start the health check waits for the first beat before it says the worker stopped.</summary>
+    public TimeSpan FirstHeartbeatWithin { get; init; } = TimeSpan.FromSeconds(60);
+
+    /// <summary>A test seam: called at the top of every poll, so a test can fault the loop. Null in the app.</summary>
+    public Action? BeforePoll { get; init; }
 }
 
 /// <summary>
@@ -42,6 +60,13 @@ internal sealed class JobWorkerOptions
 /// running until the next start marks it so. Finished jobs are pruned daily once they are older
 /// than <see cref="JobWorkerOptions.Retention"/>. While the instance is in maintenance nothing is
 /// claimed: queued work waits until it ends.
+/// <para>
+/// It beats its <see cref="JobWorkerHeartbeat"/> on every poll and on every progress tick of a running
+/// job, for the health check. A fault that escapes the loop is logged and the loop starts again after
+/// <see cref="JobWorkerOptions.RestartDelay"/>; <see cref="JobWorkerOptions.FaultLimit"/> faults within
+/// <see cref="JobWorkerOptions.FaultWindow"/> make it give up: the process stays up, runs no more
+/// jobs, and its health says the worker stopped.
+/// </para>
 /// </summary>
 internal sealed partial class JobWorker(
     IServiceScopeFactory scopes,
@@ -49,13 +74,19 @@ internal sealed partial class JobWorker(
     MaintenanceMode maintenance,
     TimeProvider time,
     JobWorkerOptions options,
+    JobWorkerHeartbeat heartbeat,
     ILogger<JobWorker> logger) : BackgroundService
 {
     /// <summary>Set when shutdown gave up waiting for the running job: nothing more is written for it.</summary>
     private volatile bool abandoned;
 
+    /// <summary>When finished jobs are next pruned; kept across a restart of the loop.</summary>
+    private DateTimeOffset nextPrune;
+
     public override async Task StartAsync(CancellationToken cancellationToken)
     {
+        heartbeat.Started();
+
         // One statement, before the first job can be claimed.
         await FailInterruptedAsync(cancellationToken).ConfigureAwait(false);
         await base.StartAsync(cancellationToken).ConfigureAwait(false);
@@ -63,6 +94,7 @@ internal sealed partial class JobWorker(
 
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
+        heartbeat.Stopping();
         using var grace = new CancellationTokenSource(options.ShutdownGrace, time);
         using var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, grace.Token);
         try
@@ -84,10 +116,58 @@ internal sealed partial class JobWorker(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var nextPrune = time.GetUtcNow();
+        var faults = new Queue<long>();
+        nextPrune = time.GetUtcNow();
 
+        while (true)
+        {
+            try
+            {
+                await LoopAsync(stoppingToken).ConfigureAwait(false);
+                return;
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception exception)
+            {
+                var now = time.GetTimestamp();
+                faults.Enqueue(now);
+                while (time.GetElapsedTime(faults.Peek(), now) > options.FaultWindow)
+                {
+                    faults.Dequeue();
+                }
+
+                if (faults.Count >= options.FaultLimit)
+                {
+                    heartbeat.Exited();
+                    LogGaveUp(logger, exception, faults.Count, options.FaultWindow.TotalSeconds);
+                    return;
+                }
+
+                LogLoopFaulted(logger, exception, options.RestartDelay.TotalSeconds);
+            }
+
+            try
+            {
+                await Task.Delay(options.RestartDelay, time, stoppingToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+        }
+    }
+
+    /// <summary>The loop itself: prune when due, run what is queued, wait for the next poll. A fault escapes to <see cref="ExecuteAsync"/>.</summary>
+    private async Task LoopAsync(CancellationToken stoppingToken)
+    {
         while (!stoppingToken.IsCancellationRequested)
         {
+            heartbeat.Beat();
+            options.BeforePoll?.Invoke();
+
             if (time.GetUtcNow() >= nextPrune && !maintenance.IsActive)
             {
                 await PruneAsync(stoppingToken).ConfigureAwait(false);
@@ -115,14 +195,7 @@ internal sealed partial class JobWorker(
                 continue;
             }
 
-            try
-            {
-                await signal.WaitAsync(options.PollInterval, time, stoppingToken).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                return;
-            }
+            await signal.WaitAsync(options.PollInterval, time, stoppingToken).ConfigureAwait(false);
         }
     }
 
@@ -146,15 +219,23 @@ internal sealed partial class JobWorker(
             return false;
         }
 
-        LogStarted(logger, job.Id, job.Type);
-        var outcome = await RunAsync(job, stoppingToken).ConfigureAwait(false);
-        if (abandoned)
+        heartbeat.Busy();
+        try
         {
+            LogStarted(logger, job.Id, job.Type);
+            var outcome = await RunAsync(job, stoppingToken).ConfigureAwait(false);
+            if (abandoned)
+            {
+                return true;
+            }
+
+            await WriteAsync(job.Id, store => store.FinishAsync(job.Id, outcome, CancellationToken.None)).ConfigureAwait(false);
             return true;
         }
-
-        await WriteAsync(job.Id, store => store.FinishAsync(job.Id, outcome, CancellationToken.None)).ConfigureAwait(false);
-        return true;
+        finally
+        {
+            heartbeat.Idle();
+        }
     }
 
     private async Task<JobOutcome> RunAsync(ClaimedJob job, CancellationToken stoppingToken)
@@ -175,6 +256,7 @@ internal sealed partial class JobWorker(
             while (!run.IsCompleted)
             {
                 await Task.WhenAny(run, Task.Delay(options.ProgressInterval, time)).ConfigureAwait(false);
+                heartbeat.Beat();
                 if (!run.IsCompleted && !abandoned && context.TakePending() is { } report)
                 {
                     var message = JobScrubber.Message(report.Message);
@@ -326,6 +408,12 @@ internal sealed partial class JobWorker(
 
     [LoggerMessage(Level = LogLevel.Error, Message = "The job worker could not look for a queued job; it tries again at the next poll")]
     private static partial void LogLoopFailed(ILogger logger, Exception exception);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "The job worker's loop failed; it starts again in {RestartSeconds} seconds")]
+    private static partial void LogLoopFaulted(ILogger logger, Exception exception, double restartSeconds);
+
+    [LoggerMessage(Level = LogLevel.Critical, Message = "The job worker's loop failed {FaultCount} times within {WindowSeconds} seconds; it has stopped and no job runs until the app is restarted")]
+    private static partial void LogGaveUp(ILogger logger, Exception exception, int faultCount, double windowSeconds);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Writing the state of job {JobId} failed")]
     private static partial void LogWriteFailed(ILogger logger, Exception exception, Guid jobId);

@@ -8,6 +8,7 @@ const componentLabels: Record<string, string> = {
   database: 'Database',
   migrations: 'Database schema',
   media: 'Media library',
+  jobs: 'Background jobs',
   maintenance: 'Maintenance',
 };
 

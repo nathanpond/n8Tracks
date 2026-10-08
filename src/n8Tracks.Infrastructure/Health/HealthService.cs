@@ -4,7 +4,6 @@ using n8Tracks.Application.Backups;
 using n8Tracks.Application.Health;
 using n8Tracks.Application.Maintenance;
 using n8Tracks.Application.Media;
-using n8Tracks.Application.Persistence;
 using n8Tracks.Infrastructure.Persistence;
 
 namespace n8Tracks.Infrastructure.Health;
@@ -14,16 +13,19 @@ namespace n8Tracks.Infrastructure.Health;
 /// last status so that a failure is logged when it starts and when it ends, not on every poll. The
 /// media component is the live answer of the one media probe (#207), and what it saw is recorded as
 /// the mount state at once (the state the audio files report from), which queues a recovery scan when
-/// the folder has just come back; that is skipped while the database cannot be used.
+/// the folder has just come back; that is skipped while the database cannot be used. The schema
+/// version (<see cref="MigrationsHealthCheck"/>) and the job worker (<see cref="JobsHealthCheck"/>)
+/// are checks of their own, under the same deadline, told whether the database answered.
 /// </summary>
 internal sealed class HealthService : IHealthService
 {
-    /// <summary>How long the database check and the media check may each take.</summary>
+    /// <summary>How long each check that reads the database or the media mount may take.</summary>
     public static readonly TimeSpan CheckTimeout = TimeSpan.FromSeconds(2);
 
     private const string DatabaseComponent = "database";
     private const string MigrationsComponent = "migrations";
     private const string MediaComponent = "media";
+    private const string JobsComponent = "jobs";
 
     private static readonly HealthComponent ApplicationRunning = new(HealthStatus.Healthy, HealthDetails.ApplicationRunning);
     private static readonly HealthComponent DatabaseReachable = new(HealthStatus.Healthy, HealthDetails.DatabaseReachable);
@@ -37,7 +39,8 @@ internal sealed class HealthService : IHealthService
     private readonly IDatabaseConnectionFactory connections;
     private readonly IMediaFolderProbe media;
     private readonly IServiceScopeFactory scopes;
-    private readonly IMigrationStateProvider migrationState;
+    private readonly MigrationsHealthCheck migrations;
+    private readonly JobsHealthCheck jobs;
     private readonly IBackupStorage backups;
     private readonly MaintenanceMode maintenance;
     private readonly Serilog.ILogger log;
@@ -50,7 +53,8 @@ internal sealed class HealthService : IHealthService
         IDatabaseConnectionFactory connections,
         IMediaFolderProbe media,
         IServiceScopeFactory scopes,
-        IMigrationStateProvider migrationState,
+        MigrationsHealthCheck migrations,
+        JobsHealthCheck jobs,
         IBackupStorage backups,
         MaintenanceMode maintenance,
         Serilog.ILogger log)
@@ -60,7 +64,8 @@ internal sealed class HealthService : IHealthService
         this.connections = connections;
         this.media = media;
         this.scopes = scopes;
-        this.migrationState = migrationState;
+        this.migrations = migrations;
+        this.jobs = jobs;
         this.backups = backups;
         this.maintenance = maintenance;
         this.log = log.ForContext<HealthService>();
@@ -84,7 +89,13 @@ internal sealed class HealthService : IHealthService
             Observe(DatabaseComponent, database.Status, databaseOutcome);
         }
 
-        var migrations = Migrations(await LastSafetyBackupAtAsync(cancellationToken).ConfigureAwait(false));
+        var access = inMaintenance ? DatabaseAccess.Maintenance
+            : database == DatabaseReachable ? DatabaseAccess.Reachable
+            : DatabaseAccess.Unreachable;
+
+        var lastSafetyBackupAt = await LastSafetyBackupAtAsync(cancellationToken).ConfigureAwait(false);
+        var (migrations, migrationsOutcome) = await this.migrations.CheckAsync(access, lastSafetyBackupAt, cancellationToken).ConfigureAwait(false);
+        Observe(MigrationsComponent, migrations.Status, migrationsOutcome);
 
         var probe = await this.media.ProbeAsync(cancellationToken).ConfigureAwait(false);
         var media = probe.Readable ? MediaAvailable : MediaUnavailable;
@@ -94,7 +105,10 @@ internal sealed class HealthService : IHealthService
             await RecordMediaAsync(probe.Readable, cancellationToken).ConfigureAwait(false);
         }
 
-        return new HealthReport(ApplicationRunning, database, migrations, media, inMaintenance ? MaintenanceRestoring : MaintenanceOff);
+        var (jobs, jobsOutcome) = await this.jobs.CheckAsync(access, cancellationToken).ConfigureAwait(false);
+        Observe(JobsComponent, jobs.Status, jobsOutcome);
+
+        return new HealthReport(ApplicationRunning, database, migrations, media, jobs, inMaintenance ? MaintenanceRestoring : MaintenanceOff);
     }
 
     private bool QueryDatabase(CancellationToken deadline)
@@ -153,33 +167,6 @@ internal sealed class HealthService : IHealthService
         {
             return null;
         }
-    }
-
-    /// <summary>The state captured at startup: it stays as it was even if the database later goes away.</summary>
-    private MigrationsHealthComponent Migrations(DateTimeOffset? lastSafetyBackupAt)
-    {
-        MigrationsHealthComponent component;
-        var outcome = new CheckOutcome(CheckResult.Passed);
-        try
-        {
-            var state = migrationState.Current;
-            component = new MigrationsHealthComponent(
-                HealthStatus.Healthy,
-                HealthDetails.MigrationsUpToDate,
-                state.LastAppliedMigrationId,
-                state.LastOutcome,
-                lastSafetyBackupAt);
-        }
-        catch (InvalidOperationException exception)
-        {
-            // Database startup has not completed. The app does not listen before it has, so this is a fault.
-            component = new MigrationsHealthComponent(HealthStatus.Unhealthy, HealthDetails.MigrationsUnknown, null, MigrationOutcome.None, lastSafetyBackupAt);
-            outcome = new CheckOutcome(CheckResult.Failed, exception);
-        }
-
-        Observe(MigrationsComponent, component.Status, outcome);
-
-        return component;
     }
 
     /// <summary>Logs a component's status only when it differs from the last one seen. A component starts out healthy.</summary>

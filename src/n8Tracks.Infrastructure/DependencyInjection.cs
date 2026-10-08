@@ -50,6 +50,10 @@ public static class DependencyInjection
 
         services.AddSingleton<IDatabaseConnectionFactory, SqliteConnectionFactory>();
         services.AddScoped<IDatabaseSchemaCheck, DatabaseSchemaCheck>();
+        services.TryAddSingleton(new JobWorkerOptions());
+        services.AddSingleton<JobWorkerHeartbeat>();
+        services.AddSingleton<MigrationsHealthCheck>();
+        services.AddSingleton<JobsHealthCheck>();
         services.AddSingleton<IHealthService, HealthService>();
 
         services.AddScoped<IAdministratorStore, AdministratorStore>();

@@ -134,6 +134,37 @@ public sealed class HealthCheckCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task ItFailsWhenTheJobWorkerHasStoppedAndPassesWhenTheQueueHasStalled()
+    {
+        // What /health answers in each case (#237), then what the command makes of that answer.
+        HttpStatusCode stopped;
+        using (var factory = JobsHealthTests.StoppedWorkerHost(out _))
+        using (var client = factory.CreateClient())
+        {
+            await JobsHealthTests.UntilJobs(client, HttpStatusCode.ServiceUnavailable, "unhealthy", "stopped");
+            stopped = HttpStatusCode.ServiceUnavailable;
+        }
+
+        HttpStatusCode stalled;
+        using (var factory = await JobsHealthTests.StalledQueueHostAsync())
+        using (var client = factory.CreateClient())
+        {
+            await JobsHealthTests.UntilJobs(client, HttpStatusCode.OK, "degraded", "stalled");
+            stalled = HttpStatusCode.OK;
+        }
+
+        await using (var stub = StubApp.Start("/health", stopped))
+        {
+            Assert.Equal(1, (await Check(Snapshot(("N8TRACKS_PORT", stub.Port)))).ExitCode);
+        }
+
+        await using (var stub = StubApp.Start("/health", stalled))
+        {
+            Assert.Equal(0, (await Check(Snapshot(("N8TRACKS_PORT", stub.Port)))).ExitCode);
+        }
+    }
+
+    [Fact]
     public async Task ItStartsNoAppAndTouchesNoDirectory()
     {
         // A data path that does not exist would stop the app itself; the check does not look at it.

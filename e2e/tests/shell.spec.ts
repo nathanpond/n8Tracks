@@ -27,12 +27,13 @@ test.describe('the System page (the M0 shell page)', () => {
     await expect(page.getByRole('heading', { level: 1, name: 'n8Tracks' })).toBeVisible();
     await expect(page.getByTestId('version')).toHaveText(VERSION);
     await expect(overallStatus(page)).toHaveText('healthy');
-    await expect(componentRows(page)).toHaveCount(5);
+    await expect(componentRows(page)).toHaveCount(6);
     await expect(componentRows(page).getByRole('rowheader')).toHaveText([
       'Application',
       'Database',
       'Database schema',
       'Media library',
+      'Background jobs',
       'Maintenance',
     ]);
     for (const row of await componentRows(page).all()) {
@@ -105,7 +106,7 @@ test.describe('the System page (the M0 shell page)', () => {
       await page.goto(`${NO_MEDIA_URL}settings/system`);
 
       await expect(overallStatus(page)).toHaveText('degraded');
-      await expect(componentRows(page)).toHaveCount(5);
+      await expect(componentRows(page)).toHaveCount(6);
       const media = componentRows(page).filter({ hasText: 'Media library' });
       await expect(media.getByRole('cell').first()).toHaveText('degraded');
       await expect(media.getByRole('cell').last()).not.toBeEmpty();
@@ -155,7 +156,7 @@ test.describe('the System page (the M0 shell page)', () => {
     await page.getByRole('button', { name: 'Retry' }).click();
     await expect(overallStatus(page)).toHaveText('healthy');
     await expect(page.getByTestId('version')).toHaveText(VERSION);
-    await expect(componentRows(page)).toHaveCount(5);
+    await expect(componentRows(page)).toHaveCount(6);
     await expect(page.getByText('Health information is unavailable.')).toBeHidden();
   });
 
@@ -182,7 +183,7 @@ test.describe('the System page (the M0 shell page)', () => {
     // The last report is still on the page.
     await expect(overallStatus(page)).toHaveText('healthy');
     await expect(page.getByTestId('version')).toHaveText(VERSION);
-    await expect(componentRows(page)).toHaveCount(5);
+    await expect(componentRows(page)).toHaveCount(6);
 
     await expectAccessibleInLightAndDark(page);
     await expect(page.getByText(STALE_NOTICE)).toBeVisible();
