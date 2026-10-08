@@ -42,6 +42,7 @@ import { SongHeader } from './SongHeader';
 import { StateBadge } from './SongParts';
 import { SongVersions } from './SongVersions';
 import type { FromSongs, SongsNotice } from './SongsPage';
+import { SongPlayButton } from '../player/SongPlayButton';
 
 const FAILED_MESSAGE =
   'n8Tracks did not answer as expected. Check that it is running and try again.';
@@ -251,7 +252,15 @@ function LoadedSong({ loaded }: { loaded: Song }) {
   return (
     <Group align="flex-start" gap="lg" wrap="nowrap">
       <Stack gap="lg" style={{ flex: '1 1 0', minWidth: 0 }}>
-        <SongHeader song={song} states={states} save={save} actions={actions} />
+        <SongHeader
+          song={song}
+          states={states}
+          save={save}
+          actions={actions}
+          play={
+            <SongPlayButton song={song} revision={song.revision} onSelected={setSong} size="xs" />
+          }
+        />
         {state.phase === 'loading' && <Loader aria-label="Loading the Versions" />}
         {(state.phase === 'error' || state.phase === 'not-found') && (
           <Notice title="The Versions could not be loaded">

@@ -73,6 +73,9 @@ public sealed record SongSummary(
     /// <summary>How many local audio files are associated with it (#211), at Song level and through its Generations, whatever their status.</summary>
     public int AudioFileCount { get; init; }
 
+    /// <summary>What Play on it does (#219), by <see cref="PlaybackResolver.StateOfSong"/>; read with it, never stored.</summary>
+    public SongPlayability Playback { get; init; } = SongPlayability.NoGenerations;
+
     public string Shortcode => Shortcodes.ForSong(ShortcodeNumber);
 }
 

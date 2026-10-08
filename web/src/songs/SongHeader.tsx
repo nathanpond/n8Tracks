@@ -307,7 +307,7 @@ function SelectedGenerationField({ song }: { song: Song }) {
  * The Song page's header: its artwork (chosen in the Details panel; a placeholder when it has
  * none), shortcode, title, workflow state, and concept, each edited where it is
  * shown, the Song's Tags as coloured labels (chosen in the Details panel), and `actions` (the
- * Details control) beside the shortcode, its Selected Generation with a link to it, and a badge when
+ * Details control) and `play` (the Song's Play control, #219) beside the shortcode, its Selected Generation with a link to it, and a badge when
  * its Suno workspace is unavailable (#129). Every save goes through the
  * page's one `useRevisionedSave` (`save`), so a save based on an old revision is refused and offered
  * for comparison and reapplying instead of overwriting.
@@ -317,12 +317,15 @@ export function SongHeader({
   states,
   save,
   actions,
+  play,
 }: {
   song: Song;
   /** Every workflow state, or undefined while they load. */
   states: WorkflowState[] | undefined;
   save: (key: string, value: FieldValue) => Promise<SaveOutcome>;
   actions?: ReactNode;
+  /** The Song's Play control (#219), beside its shortcode. */
+  play?: ReactNode;
 }) {
   return (
     <>
@@ -333,6 +336,7 @@ export function SongHeader({
         <Stack gap={4} style={{ flex: '1 1 0', minWidth: 0 }}>
           <Group gap="sm" align="center" wrap="wrap">
             <ShortcodeBadge shortcode={song.shortcode} />
+            {play}
             <Text size="sm" data-testid="song-kind">
               Kind: {kindLabel(song.currentVersion.kind)}
             </Text>

@@ -100,6 +100,8 @@ interface Backend {
   states?: unknown[];
   /** The catalog settings; when left out, reading them fails. */
   catalog?: unknown;
+  /** What `GET /songs/{reference}/playback` answers (#219); when left out, it is not found. */
+  playback?: (reference: string) => Response;
 }
 
 /** The query string a request was made with, whatever form `fetch` was given it in. */
@@ -114,7 +116,7 @@ function sentBody(init: RequestInit | undefined): unknown {
 }
 
 /** A backend: the health report names UTC, the states are Idea, Writing, and Archived. */
-function backend({ list, song: one, create, states = STATES, catalog }: Backend) {
+function backend({ list, song: one, create, states = STATES, catalog, playback }: Backend) {
   const mock = stubFetch();
   mock.mockImplementation((input, init) => {
     const path = requestPath(input);
@@ -154,6 +156,10 @@ function backend({ list, song: one, create, states = STATES, catalog }: Backend)
     }
     if (path.endsWith('/api/v1/songs') && method === 'POST' && create) {
       return Promise.resolve(create(sentBody(init)));
+    }
+    const played = /\/api\/v1\/songs\/([^/]+)\/playback$/.exec(path);
+    if (played?.[1] !== undefined && method === 'GET' && playback) {
+      return Promise.resolve(playback(decodeURIComponent(played[1])));
     }
     const match = /\/api\/v1\/songs\/([^/]+)$/.exec(path);
     if (match?.[1] !== undefined && method === 'GET' && one) {
@@ -257,6 +263,7 @@ describe('Songs', () => {
         .getAllByRole('columnheader')
         .map((cell) => cell.textContent),
     ).toEqual([
+      'Play',
       'Shortcode',
       'Title',
       'Artist',
@@ -321,6 +328,60 @@ describe('Songs', () => {
     });
   });
 
+  it('gives each row a Play control for the Song: disabled with the reason when it has nothing, the chooser when nothing is selected', async () => {
+    const asked: string[] = [];
+    const empty = song(1, {
+      title: 'Empty',
+      playback: { state: 'none', reason: 'no_generations' },
+    });
+    const open = song(2, {
+      title: 'Open',
+      playback: { state: 'needs-choice', reason: 'no_selected_generation' },
+    });
+    backend({
+      list: () => jsonResponse(200, page([open, empty])),
+      playback: (reference) => {
+        asked.push(reference);
+        return jsonResponse(200, {
+          source: 'none',
+          audioFile: null,
+          reason: 'no_selected_generation',
+          generation: null,
+          state: 'needs-choice',
+          candidates: [
+            {
+              kind: 'generation',
+              generation: { id: '0199b1a0-0000-7000-8000-0000000000a1', shortcode: 'n8-2-v1-g1' },
+              versionNumber: '1',
+              rating: null,
+              durationSeconds: null,
+              state: 'active',
+              remoteState: 'present',
+              playable: true,
+              reason: null,
+            },
+          ],
+        });
+      },
+    });
+
+    renderApp('/songs');
+    await screen.findByRole('table', { name: 'Songs' });
+
+    const disabled = within(row('n8-1')).getByRole('button', { name: 'Play Empty' });
+    expect(disabled).toHaveAttribute('aria-disabled', 'true');
+    expect(disabled).toHaveAccessibleDescription(
+      'Nothing to play: this Song has no Generations and no audio files.',
+    );
+    await userEvent.click(disabled);
+    expect(asked).toEqual([]);
+
+    await userEvent.click(within(row('n8-2')).getByRole('button', { name: 'Play Open' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Play Open' });
+    expect(within(dialog).getByRole('radio', { name: /Version 1 · n8-2-v1-g1/ })).toBeEnabled();
+    expect(asked).toEqual([open.id]);
+  });
+
   it('offers no Delete, row selection, or bulk action: Songs are deleted from their own page', async () => {
     backend({ list: () => jsonResponse(200, page([song(2), song(1, { title: 'Other' })])) });
 
@@ -330,7 +391,12 @@ describe('Songs', () => {
     // No selection column or row checkboxes to gather Songs for a bulk action.
     expect(within(table).queryAllByRole('checkbox')).toEqual([]);
     for (const shortcode of ['n8-1', 'n8-2']) {
-      expect(within(row(shortcode)).queryAllByRole('button')).toEqual([]);
+      // Its Play control (#219) is the row's only button.
+      expect(
+        within(row(shortcode))
+          .queryAllByRole('button')
+          .map((button) => button.getAttribute('data-testid')),
+      ).toEqual(['song-play-button']);
       expect(within(row(shortcode)).queryAllByRole('menuitem')).toEqual([]);
     }
     // Nowhere on the page is there a Delete, Remove, or bulk action.
@@ -624,8 +690,9 @@ describe('Songs', () => {
     renderApp('/songs');
 
     await screen.findByRole('table', { name: 'Songs' });
-    expect(within(row('n8-2')).getAllByRole('cell')[1]).toHaveTextContent(/^n8$/);
-    expect(within(row('n8-1')).getAllByRole('cell')[1]).toHaveTextContent(/^$/);
+    // After the Play cell and the title cell.
+    expect(within(row('n8-2')).getAllByRole('cell')[2]).toHaveTextContent(/^n8$/);
+    expect(within(row('n8-1')).getAllByRole('cell')[2]).toHaveTextContent(/^$/);
   });
 
   it('shows each Song’s 96-pixel artwork beside its title, as its crop, or a placeholder', async () => {
@@ -649,7 +716,7 @@ describe('Songs', () => {
     renderApp('/songs');
 
     await screen.findByRole('table', { name: 'Songs' });
-    const titleCell = within(row('n8-3')).getAllByRole('cell')[0];
+    const titleCell = within(row('n8-3')).getAllByRole('cell')[1];
     if (titleCell === undefined) {
       throw new Error('No title cell.');
     }

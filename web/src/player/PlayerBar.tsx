@@ -8,6 +8,7 @@ import {
   positionText,
   seekTarget,
   titleOf,
+  viaText,
   VOLUME_STEP_PERCENT,
 } from './playerRules';
 
@@ -22,6 +23,9 @@ const RANGE_STYLE = { accentColor: 'var(--mantine-primary-color-filled)', minWid
  * Page Up and Page Down 30, Home and End to either end, and the space bar on the seek bar plays or
  * pauses, as it does on the Play button. When the audio cannot be played the bar says so, names the
  * file, and offers Retry; when a Play could not start it says why, and what was playing goes on.
+ * When a Song's Play (#219) started it, the bar also says which rule chose it: the Song's Song-level
+ * file, its Selected Generation, or "Chosen for this listen"; when the Selected Generation has nothing
+ * to play, the notice offers Open in Suno where there is a link.
  */
 export function PlayerBar({ player }: { player: Player }) {
   const { state } = player;
@@ -76,6 +80,11 @@ export function PlayerBar({ player }: { player: Player }) {
             <Text size="xs" truncate="end" data-testid="player-detail">
               {detailOf(current.label)}
             </Text>
+            {current.via !== null && (
+              <Text size="xs" truncate="end" data-testid="player-via" data-via={current.via}>
+                {viaText(current.via)}
+              </Text>
+            )}
           </Stack>
           <Group gap={6} wrap="nowrap" style={{ flex: '3 1 240px' }}>
             <Text size="xs" ff="monospace" data-testid="player-elapsed">
@@ -154,6 +163,19 @@ export function PlayerBar({ player }: { player: Player }) {
         <Text size="sm" role="status" data-testid="player-notice">
           {state.notice ?? ''}
         </Text>
+        {state.notice !== null && state.noticeLink !== null && (
+          <Anchor
+            href={state.noticeLink.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            size="sm"
+            underline="always"
+            aria-label={`${state.noticeLink.label} (opens a new tab)`}
+            data-testid="player-notice-link"
+          >
+            {state.noticeLink.label}
+          </Anchor>
+        )}
         {current === null && state.notice !== null && (
           <Button
             variant="default"

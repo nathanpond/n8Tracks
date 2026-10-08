@@ -1,6 +1,8 @@
 import type { AudioFileStatus, UnmatchedFile } from '../api/audioFiles';
 import { resolveAppUrl } from '../api/baseUrl';
 import type { Generation } from '../api/generations';
+import type { SongPlaybackFile } from '../api/songPlayback';
+import type { SongPlayability } from '../api/songs';
 
 /** Where this browser remembers the player's volume and mute (#218); what was playing is not kept. */
 export const VOLUME_STORAGE_KEY = 'n8tracks.player.volume';
@@ -85,12 +87,83 @@ export type PlayLabel =
     }
   | { kind: 'unmatched'; format: string; fileName: string };
 
-/** What is loaded in the player: the file, its address, the Generation it belongs to (or null), and its label. */
+/**
+ * How a Song's Play (#219) came to play what it does: the Song's own choice, by its Song-level
+ * preferred file or by its Selected Generation, or a Generation or Song-level file picked in the
+ * chooser for this one listen.
+ */
+export type PlayVia = 'song-preferred' | 'selected-generation' | 'chosen';
+
+/**
+ * What is loaded in the player: the file, its address, the Generation and Song it belongs to (or
+ * null), its label, and, when a Song's Play started it, how (`via`; null for a Generation's or a
+ * file's own Play).
+ */
 export interface NowPlaying {
   fileId: string;
   src: string;
   generationId: string | null;
+  songId: string | null;
+  via: PlayVia | null;
   label: PlayLabel;
+}
+
+/** A Song as its Play control (#219) needs it: wherever Songs are listed, and on the Song page. */
+export interface PlayableSong {
+  id: string;
+  shortcode: string;
+  title: string;
+  /** What Play does, as the list says; absent, Play asks the server when pressed. */
+  playback?: SongPlayability;
+}
+
+/** What the bar says about how a Song's Play chose what plays. */
+export function viaText(via: PlayVia): string {
+  switch (via) {
+    case 'song-preferred':
+      return 'The Song’s choice: its Song-level file';
+    case 'selected-generation':
+      return 'The Song’s choice: its Selected Generation';
+    case 'chosen':
+      return 'Chosen for this listen';
+  }
+}
+
+/**
+ * What a Song's Play plays: the file the playback rule (or the chooser) named, labelled by the
+ * Generation it belongs to, or as the Song's Song-level file when `generation` is null.
+ */
+export function nowPlayingOfSong(
+  song: PlayableSong,
+  file: Pick<SongPlaybackFile, 'id' | 'fileName' | 'format' | 'contentUrl'>,
+  generation: { id: string; shortcode: string } | null,
+  via: PlayVia,
+): NowPlaying {
+  const base = {
+    fileId: file.id,
+    src: resolveAppUrl(file.contentUrl).toString(),
+    songId: song.id,
+    via,
+  };
+  const owner = { shortcode: song.shortcode, title: song.title };
+  return generation === null
+    ? {
+        ...base,
+        generationId: null,
+        label: { kind: 'song-level', song: owner, format: file.format, fileName: file.fileName },
+      }
+    : {
+        ...base,
+        generationId: generation.id,
+        label: {
+          kind: 'generation',
+          song: owner,
+          versionNumber: versionNumberOf(generation.shortcode),
+          shortcode: generation.shortcode,
+          format: file.format,
+          fileName: file.fileName,
+        },
+      };
 }
 
 /**
@@ -114,7 +187,12 @@ export function contentUrlOf(fileId: string): string {
 
 /** What a file row plays: the file itself, labelled by what it is associated with. */
 export function nowPlayingOfFile(file: UnmatchedFile): NowPlaying {
-  const base = { fileId: file.id, src: contentUrlOf(file.id) };
+  const base = {
+    fileId: file.id,
+    src: contentUrlOf(file.id),
+    songId: file.song?.id ?? null,
+    via: null,
+  };
   if (file.song !== null && file.generation !== null) {
     return {
       ...base,
@@ -166,6 +244,8 @@ export function nowPlayingOfGeneration(
     fileId: file.id,
     src: resolveAppUrl(file.contentUrl).toString(),
     generationId: generation.id,
+    songId: generation.song.id,
+    via: null,
     label: {
       kind: 'generation',
       song: { shortcode: generation.song.shortcode, title: songTitle },

@@ -515,7 +515,8 @@ internal sealed record UpdateSongRequest(
 /// whether it has one, as Album and Playlist tracks say it. <c>sunoWorkspace</c> is the Suno
 /// workspace it lives in (#129: <c>{ id, name, state }</c>, the ID being Suno's) or null.
 /// <c>audioFileCount</c> (#211) is how many local audio files are associated with it, at Song level or
-/// through its Generations, whatever their status.
+/// through its Generations, whatever their status. <c>playback</c> (#219) is what Play on it does:
+/// <c>{ state, reason }</c> (<see cref="SongPlayabilityResponse"/>).
 /// </summary>
 internal sealed record SongResponse(
     Guid Id,
@@ -541,7 +542,8 @@ internal sealed record SongResponse(
     bool HasSelectedGeneration,
     SelectedGenerationResponse? SelectedGeneration,
     SongWorkspaceResponse? SunoWorkspace,
-    int AudioFileCount)
+    int AudioFileCount,
+    SongPlayabilityResponse Playback)
 {
     /// <summary>The Song as the API shows it; <paramref name="pathBase"/> starts its artwork's URLs.</summary>
     public static SongResponse From(SongSummary song, PathString pathBase)
@@ -587,7 +589,8 @@ internal sealed record SongResponse(
                 ? new SelectedGenerationResponse(selected.Id, selected.Shortcode, GenerationStates.NameOf(selected.State), GenerationStates.NameOf(selected.RemoteState))
                 : null,
             song.SunoWorkspace is { } workspace ? SongWorkspaceResponse.From(workspace) : null,
-            song.AudioFileCount);
+            song.AudioFileCount,
+            SongPlayabilityResponse.From(song.Playback));
     }
 }
 

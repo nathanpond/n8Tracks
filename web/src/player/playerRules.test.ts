@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { testGeneration, testSongAudioFile } from '../test/versionServer';
+import { songPlaybackAnswerOf, songUnplayableText } from '../api/songPlayback';
 import {
   clockText,
   DEFAULT_VOLUME,
   detailOf,
   nowPlayingOfFile,
+  nowPlayingOfSong,
   positionText,
   readVolume,
   seekTarget,
@@ -13,6 +15,7 @@ import {
   unplayableFileReason,
   unplayableReason,
   versionNumberOf,
+  viaText,
   VOLUME_STORAGE_KEY,
 } from './playerRules';
 
@@ -98,5 +101,71 @@ describe('the player rules', () => {
     expect(unplayableFileReason('missing')).toBe(
       'Cannot play: the file is Missing from the media folder.',
     );
+  });
+
+  it('labels a Song’s Play by the rule that chose it, as a Generation’s file or a Song-level file (#219)', () => {
+    const song = { id: 's1', shortcode: 'n8-7', title: 'Running in a Pack' };
+    const file = {
+      id: 'f1',
+      fileName: 'Take.wav',
+      format: 'wav',
+      contentUrl: '/api/v1/audio-files/f1/content',
+    };
+
+    const selected = nowPlayingOfSong(
+      song,
+      file,
+      { id: 'g1', shortcode: 'n8-7-v1.2-g3' },
+      'selected-generation',
+    );
+    expect(selected).toMatchObject({
+      fileId: 'f1',
+      generationId: 'g1',
+      songId: 's1',
+      via: 'selected-generation',
+    });
+    expect(detailOf(selected.label)).toBe('Version 1.2 · n8-7-v1.2-g3 · WAV');
+    const songLevel = nowPlayingOfSong(song, file, null, 'song-preferred');
+    expect(songLevel.generationId).toBeNull();
+    expect(detailOf(songLevel.label)).toBe('Song-level file · Take.wav');
+    expect(titleOf(songLevel.label)).toBe('Running in a Pack');
+
+    expect(viaText('song-preferred')).toBe('The Song’s choice: its Song-level file');
+    expect(viaText('selected-generation')).toBe('The Song’s choice: its Selected Generation');
+    expect(viaText('chosen')).toBe('Chosen for this listen');
+    expect(songUnplayableText('no_generations')).toBe(
+      'Nothing to play: this Song has no Generations and no audio files.',
+    );
+    expect(songUnplayableText('nothing_available')).toMatch(/none of this Song’s Generations/);
+  });
+
+  it('reads a Song’s playback answer, and refuses one that does not hold together', () => {
+    const answer = {
+      source: 'none',
+      audioFile: null,
+      reason: 'no_selected_generation',
+      generation: null,
+      state: 'needs-choice',
+      candidates: [
+        {
+          kind: 'file',
+          audioFile: {
+            id: 'f1',
+            fileName: 'M.wav',
+            format: 'wav',
+            durationSeconds: 3,
+            contentUrl: '/c',
+          },
+          playable: true,
+          reason: null,
+        },
+      ],
+    };
+    expect(songPlaybackAnswerOf(answer)?.candidates).toHaveLength(1);
+    expect(songPlaybackAnswerOf({ ...answer, source: 'local' })).toBeUndefined();
+    expect(songPlaybackAnswerOf({ ...answer, state: 'maybe' })).toBeUndefined();
+    expect(
+      songPlaybackAnswerOf({ ...answer, candidates: [{ kind: 'generation' }] }),
+    ).toBeUndefined();
   });
 });

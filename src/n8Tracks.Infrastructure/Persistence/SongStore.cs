@@ -390,6 +390,12 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
             .ToDictionaryAsync(static group => group.SongId, static group => group.Count, cancellationToken)
             .ConfigureAwait(false);
 
+        var playback = await SongPlaybackRows.StatesAsync(
+                context,
+                records.ToDictionary(static song => song.Id, static song => song.SelectedGenerationId),
+                cancellationToken)
+            .ConfigureAwait(false);
+
         var workspaces = await SunoWorkspaceStore.ForIdsAsync(
                 context,
                 [.. records.Select(static song => song.SunoWorkspaceId).OfType<string>().Distinct(StringComparer.Ordinal)],
@@ -460,6 +466,7 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
                 newest.GetValueOrDefault(song.Id))
             {
                 AudioFileCount = audioFileCounts.GetValueOrDefault(song.Id),
+                Playback = playback[song.Id],
             };
         })];
     }

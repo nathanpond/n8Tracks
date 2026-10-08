@@ -1,18 +1,32 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { UnmatchedFile } from '../api/audioFiles';
 import { apiFetch } from '../api/client';
-import type { Generation } from '../api/generations';
+import { sunoSongUrl, type Generation } from '../api/generations';
 import { fetchSession } from '../api/session';
+import {
+  readSongPlayback,
+  songUnplayableText,
+  type SongPlaybackAnswer,
+  type SongPlaybackCandidate,
+} from '../api/songPlayback';
 import { body, isRecord } from '../api/songs';
-import { PlayerContext, type Player, type PlayerState } from './playerContext';
+import {
+  PlayerContext,
+  type PlayChosenOptions,
+  type Player,
+  type PlayerNotice,
+  type PlayerState,
+} from './playerContext';
 import {
   nowPlayingOfFile,
   nowPlayingOfGeneration,
+  nowPlayingOfSong,
   PLAYER_CHANNEL,
   readVolume,
   storeVolume,
   titleOf,
   type NowPlaying,
+  type PlayableSong,
   type PlaybackFile,
 } from './playerRules';
 
@@ -48,6 +62,7 @@ function initialState(): PlayerState {
     volume,
     muted,
     notice: null,
+    noticeLink: null,
     starting: null,
   };
 }
@@ -116,6 +131,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         position: at,
         duration: null,
         notice: null,
+        noticeLink: null,
       }));
       playElement();
     },
@@ -132,51 +148,144 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     [load],
   );
 
-  const playGeneration = useCallback(
-    (generation: Generation, songTitle: string) => {
+  /**
+   * Starts asking for something to play: whatever was asked for before is no longer wanted. The
+   * answer is applied with `settle` only while it is still the latest ask: a NowPlaying is loaded
+   * (with `after`, a notice shown once it starts), a notice is shown and what was playing is left
+   * alone, and undefined does nothing. It answers whether the ask was still the latest.
+   */
+  const ask = useCallback(
+    (starting: string) => {
       lookup.current += 1;
       const ticket = lookup.current;
-      setState((previous) => ({ ...previous, starting: generation.id, notice: null }));
-      const settle = (next: NowPlaying | string) => {
+      setState((previous) => ({ ...previous, starting, notice: null, noticeLink: null }));
+      return (next: NowPlaying | PlayerNotice | undefined, after?: string): boolean => {
         if (ticket !== lookup.current || unmounted.current.signal.aborted) {
-          return;
+          return false;
         }
-        if (typeof next === 'string') {
+        if (next === undefined) {
+          setState((previous) => ({ ...previous, starting: null }));
+        } else if ('text' in next) {
           // What was playing is left alone.
-          setState((previous) => ({ ...previous, starting: null, notice: next }));
+          setState((previous) => ({
+            ...previous,
+            starting: null,
+            notice: next.text,
+            noticeLink: next.link ?? null,
+          }));
         } else {
           setState((previous) => ({ ...previous, starting: null }));
           load(next, 0);
-        }
-      };
-      const ask = async () => {
-        try {
-          const response = await apiFetch(
-            `api/v1/generations/${encodeURIComponent(generation.id)}/playback`,
-            { signal: unmounted.current.signal },
-          );
-          const answer = await body(response);
-          if (!response.ok || !isRecord(answer)) {
-            settle(NOT_ANSWERED);
-            return;
+          if (after !== undefined) {
+            setState((previous) => ({ ...previous, notice: after }));
           }
-          const file = playbackFileOf(answer.audioFile);
-          if (answer.source === 'local' && file !== undefined) {
-            settle(nowPlayingOfGeneration(generation, songTitle, file));
-          } else if (answer.source === 'none') {
-            settle(
-              `Playback could not start: ${generation.shortcode} has no local audio file that can play.`,
-            );
-          } else {
-            settle(NOT_ANSWERED);
-          }
-        } catch {
-          settle(NOT_ANSWERED);
         }
+        return true;
       };
-      void ask();
     },
     [load],
+  );
+
+  /** The file the playback rule (#212) names for a Generation, or a notice saying why there is none. */
+  const generationFile = useCallback(
+    async (generation: { id: string; shortcode: string }): Promise<PlaybackFile | PlayerNotice> => {
+      try {
+        const response = await apiFetch(
+          `api/v1/generations/${encodeURIComponent(generation.id)}/playback`,
+          { signal: unmounted.current.signal },
+        );
+        const answer = await body(response);
+        if (!response.ok || !isRecord(answer)) {
+          return { text: NOT_ANSWERED };
+        }
+        const file = playbackFileOf(answer.audioFile);
+        if (answer.source === 'local' && file !== undefined) {
+          return file;
+        }
+        return answer.source === 'none'
+          ? {
+              text: `Playback could not start: ${generation.shortcode} has no local audio file that can play.`,
+            }
+          : { text: NOT_ANSWERED };
+      } catch {
+        return { text: NOT_ANSWERED };
+      }
+    },
+    [],
+  );
+
+  const playGeneration = useCallback(
+    (generation: Generation, songTitle: string) => {
+      const settle = ask(generation.id);
+      void generationFile(generation).then((found) => {
+        settle('text' in found ? found : nowPlayingOfGeneration(generation, songTitle, found));
+      });
+    },
+    [ask, generationFile],
+  );
+
+  const playSong = useCallback(
+    (song: PlayableSong, onChoice: (answer: SongPlaybackAnswer) => void) => {
+      const settle = ask(song.id);
+      const read = async () => {
+        let answer: SongPlaybackAnswer | undefined;
+        try {
+          answer = await readSongPlayback(song.id, unmounted.current.signal);
+        } catch {
+          answer = undefined;
+        }
+        if (answer === undefined) {
+          settle({ text: NOT_ANSWERED });
+          return;
+        }
+        const selected = answer.generation;
+        if (answer.state === 'ready' && answer.audioFile !== null) {
+          settle(
+            nowPlayingOfSong(
+              song,
+              answer.audioFile,
+              selected,
+              selected === null ? 'song-preferred' : 'selected-generation',
+            ),
+          );
+        } else if (answer.state === 'needs-choice') {
+          // Only while this is still what was asked for: a later Play, or a close, wins.
+          if (settle(undefined)) {
+            onChoice(answer);
+          }
+        } else if (answer.state === 'selected-unplayable' && selected !== null) {
+          settle({
+            text: `Nothing to play: ${song.title}’s Selected Generation, ${selected.shortcode}, has no local audio file that can play.`,
+            link:
+              selected.sunoId === null
+                ? undefined
+                : { label: 'Open in Suno', href: sunoSongUrl(selected.sunoId) },
+          });
+        } else {
+          settle({ text: songUnplayableText(answer.reason) });
+        }
+      };
+      void read();
+    },
+    [ask],
+  );
+
+  const playChosen = useCallback(
+    (song: PlayableSong, candidate: SongPlaybackCandidate, options?: PlayChosenOptions) => {
+      const via = options?.selected === true ? 'selected-generation' : 'chosen';
+      const settle = ask(song.id);
+      if (candidate.kind === 'file') {
+        settle(nowPlayingOfSong(song, candidate.audioFile, null, via), options?.notice);
+        return;
+      }
+      void generationFile(candidate.generation).then((found) => {
+        settle(
+          'text' in found ? found : nowPlayingOfSong(song, found, candidate.generation, via),
+          options?.notice,
+        );
+      });
+    },
+    [ask, generationFile],
   );
 
   const playFile = useCallback(
@@ -270,6 +379,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       position: 0,
       duration: null,
       notice: null,
+      noticeLink: null,
       starting: null,
     }));
   }, [element]);
@@ -417,6 +527,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     () => ({
       state,
       playGeneration,
+      playSong,
+      playChosen,
       playFile,
       pause,
       resume,
@@ -430,6 +542,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     [
       state,
       playGeneration,
+      playSong,
+      playChosen,
       playFile,
       pause,
       resume,

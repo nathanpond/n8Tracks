@@ -544,19 +544,24 @@ internal sealed record PlaylistResponse(
                 song.Title,
                 song.PrimaryArtist is { } artist ? new PlaylistSongArtistResponse(artist.Id, artist.Name) : null,
                 new PlaylistSongStateResponse(song.State.Id, song.State.Name, song.State.Colour),
-                song.HasSelectedGeneration))],
+                song.HasSelectedGeneration,
+                SongPlayabilityResponse.From(song.Playback)))],
             summary.Artwork);
     }
 }
 
-/// <summary>A Song on a Playlist: its shortcode, title, primary Artist, workflow state, and whether it has a Selected Generation.</summary>
+/// <summary>
+/// A Song on a Playlist: its shortcode, title, primary Artist, workflow state, whether it has a
+/// Selected Generation, and what Play on it does (#219, <see cref="SongPlayabilityResponse"/>).
+/// </summary>
 internal sealed record PlaylistSongResponse(
     Guid Id,
     string Shortcode,
     string Title,
     PlaylistSongArtistResponse? PrimaryArtist,
     PlaylistSongStateResponse State,
-    bool HasSelectedGeneration);
+    bool HasSelectedGeneration,
+    SongPlayabilityResponse Playback);
 
 /// <summary>An Artist as a Playlist's Song names it.</summary>
 internal sealed record PlaylistSongArtistResponse(Guid Id, string Name);

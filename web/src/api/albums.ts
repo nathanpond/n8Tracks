@@ -2,7 +2,14 @@ import { isArtwork, type Artwork, type ArtworkCrop } from './artwork';
 import { apiFetch } from './client';
 import { deleteCollection, type DeleteCollectionResult } from './collectionDeletion';
 import { ifMatch, patchWithRevision, type SaveResult } from './saves';
-import { body, isErrorMap, isRecord, useResource } from './songs';
+import {
+  body,
+  isErrorMap,
+  isRecord,
+  isSongPlayability,
+  useResource,
+  type SongPlayability,
+} from './songs';
 
 const ALBUMS_PATH = 'api/v1/albums';
 
@@ -44,6 +51,8 @@ export interface AlbumTrack {
   track: number;
   /** False marks the track incomplete. */
   hasSelectedGeneration: boolean;
+  /** What Play on the Song does (#219); the API always sends it, test fixtures may leave it out. */
+  playback?: SongPlayability;
 }
 
 /** An Album as the API answers it. Dates are partial dates as entered; times are UTC ISO 8601. */
@@ -123,7 +132,8 @@ function isAlbumTrack(value: unknown): value is AlbumTrack {
     typeof value.state.colour === 'string' &&
     typeof value.disc === 'number' &&
     typeof value.track === 'number' &&
-    typeof value.hasSelectedGeneration === 'boolean'
+    typeof value.hasSelectedGeneration === 'boolean' &&
+    (value.playback === undefined || isSongPlayability(value.playback))
   );
 }
 

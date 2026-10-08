@@ -8,6 +8,7 @@ using n8Tracks.Application.Generations;
 using n8Tracks.Application.Media;
 using n8Tracks.Application.References;
 using n8Tracks.Application.Songs;
+using n8Tracks.Domain.Songs;
 
 namespace n8Tracks.Api.Endpoints;
 
@@ -141,15 +142,18 @@ internal static class PlaybackEndpoints
             return await SongDeletionEndpoints.MissingSongAsync(context, reference, deletions, cancellationToken);
         }
 
-        var resolved = await playback.ForSongAsync(song.Id, song.SelectedGeneration?.Id, cancellationToken);
+        var choice = await playback.ChoiceForSongAsync(song.Id, song.SelectedGeneration?.Id, cancellationToken);
+        var resolved = choice.Played;
         var generation = resolved.GenerationId is { } id && song.SelectedGeneration is { } selected && selected.Id == id
-            ? new AudioFileLinkResponse(selected.Id, selected.Shortcode)
+            ? new SongPlaybackGenerationResponse(selected.Id, selected.Shortcode, choice.Selected?.SunoId)
             : null;
         return TypedResults.Ok(new SongPlaybackResponse(
             Source(resolved.Played),
             PlaybackFileResponse.From(resolved.Played, context.Request.PathBase),
-            PlaybackReasons.Text(resolved.Reason),
-            generation));
+            PlaybackReasons.Text(choice.Reason),
+            generation,
+            SongPlaybackStates.Text(choice.Playability.State),
+            [.. choice.Candidates.Select(candidate => SongPlaybackCandidateResponse.From(candidate, context.Request.PathBase))]));
     }
 
     /// <summary>
@@ -364,11 +368,60 @@ internal sealed record PreferredAudioFileRequest(JsonElement AudioFile);
 internal sealed record GenerationPlaybackResponse(string Source, PlaybackFileResponse? AudioFile, string Reason);
 
 /// <summary>
-/// What plays for a Song (#212): as for a Generation, with <c>song_preferred</c> and
-/// <c>no_selected_generation</c> among the reasons, and <c>generation</c>, the Generation the file
-/// came from (the Selected Generation), or null.
+/// What plays for a Song (#212): as for a Generation, with <c>song_preferred</c>,
+/// <c>no_selected_generation</c> and <c>no_generations</c> among the reasons, and <c>generation</c>,
+/// the Selected Generation the file comes from (or that has nothing to play), with its Suno ID for
+/// Open in Suno, or null. <c>state</c> (#219) is what Play does: <c>ready</c>, <c>needs-choice</c>
+/// (with the chooser's <c>candidates</c>; empty in every other state), <c>selected-unplayable</c>, or
+/// <c>none</c>.
 /// </summary>
-internal sealed record SongPlaybackResponse(string Source, PlaybackFileResponse? AudioFile, string Reason, AudioFileLinkResponse? Generation);
+internal sealed record SongPlaybackResponse(
+    string Source,
+    PlaybackFileResponse? AudioFile,
+    string Reason,
+    SongPlaybackGenerationResponse? Generation,
+    string State,
+    SongPlaybackCandidateResponse[] Candidates);
+
+/// <summary>The Song's Selected Generation in its playback answer: its ID, shortcode, and Suno ID (null without Suno data).</summary>
+internal sealed record SongPlaybackGenerationResponse(Guid Id, string Shortcode, string? SunoId);
+
+/// <summary>
+/// One entry of the chooser (#219): <c>kind</c> <c>generation</c> (with <c>generation</c>
+/// <c>{id, shortcode}</c>, its <c>versionNumber</c>, <c>rating</c>, <c>durationSeconds</c> (Suno's),
+/// <c>state</c> and <c>remoteState</c>) or <c>file</c> (with <c>audioFile</c>, a Song-level file
+/// that plays); <c>playable</c>, and <c>reason</c> (null, or <c>nothing_available</c>).
+/// </summary>
+internal sealed record SongPlaybackCandidateResponse(
+    string Kind,
+    AudioFileLinkResponse? Generation,
+    string? VersionNumber,
+    int? Rating,
+    double? DurationSeconds,
+    string? State,
+    string? RemoteState,
+    PlaybackFileResponse? AudioFile,
+    bool Playable,
+    string? Reason)
+{
+    public static SongPlaybackCandidateResponse From(SongPlaybackCandidate candidate, PathString pathBase)
+    {
+        var reason = candidate.Playability.Reason is { } why ? PlaybackReasons.Text(why) : null;
+        return candidate.Generation is { } generation
+            ? new(
+                "generation",
+                new AudioFileLinkResponse(generation.Id, generation.Shortcode),
+                generation.VersionNumber,
+                generation.Rating,
+                generation.DurationSeconds,
+                GenerationStates.NameOf(generation.State),
+                GenerationStates.NameOf(generation.RemoteState),
+                null,
+                candidate.Playability.Playable,
+                reason)
+            : new("file", null, null, null, null, null, null, PlaybackFileResponse.From(candidate.SongFile, pathBase), candidate.Playability.Playable, reason);
+    }
+}
 
 /// <summary>The file that plays: its ID, name, format, duration (seconds, or null), and where its content is served, under the page base.</summary>
 internal sealed record PlaybackFileResponse(Guid Id, string FileName, string Format, decimal? DurationSeconds, string ContentUrl)
@@ -387,5 +440,21 @@ internal sealed record PlaybackFileResponse(Guid Id, string FileName, string For
             file.Format,
             file.Duration is { } duration ? Math.Round((decimal)duration.TotalMilliseconds / 1000m, 3) : null,
             $"{pathBase}{AudioContentEndpoint.ContentPath.Replace("{id:guid}", file.Id.ToString("D", CultureInfo.InvariantCulture), StringComparison.Ordinal)}");
+    }
+}
+
+/// <summary>
+/// What Play on a Song does (#219), as Song answers, Album tracks and Playlist songs carry it:
+/// <c>state</c> (<c>ready</c>, <c>needs-choice</c>, <c>selected-unplayable</c>, <c>none</c>; only
+/// <c>none</c> disables Play) and <c>reason</c> (null when ready; <c>no_selected_generation</c>,
+/// <c>nothing_available</c>, or <c>no_generations</c>).
+/// </summary>
+internal sealed record SongPlayabilityResponse(string State, string? Reason)
+{
+    public static SongPlayabilityResponse From(SongPlayability playability)
+    {
+        ArgumentNullException.ThrowIfNull(playability);
+
+        return new(SongPlaybackStates.Text(playability.State), playability.Reason is { } reason ? PlaybackReasons.Text(reason) : null);
     }
 }

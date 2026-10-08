@@ -124,15 +124,17 @@ test.describe('the Songs screen, from empty', { tag: '@root-only' }, () => {
     const first = songRow(page, 'n8-1');
     await expect(first).toBeVisible();
     await expect(first.getByRole('link', { name: TITLE })).toBeVisible();
-    await expect(first.getByRole('cell').nth(0)).toHaveText(TITLE);
+    // The first cell holds the Song's Play control (#219).
+    await expect(first.getByRole('cell').nth(0).getByTestId('song-play-button')).toBeVisible();
+    await expect(first.getByRole('cell').nth(1)).toHaveText(TITLE);
     // No default Artist on the fresh container, so the Artist cell is empty.
-    await expect(first.getByRole('cell').nth(1)).toHaveText('');
-    await expect(first.getByRole('cell').nth(2)).toHaveText(CONCEPT);
-    await expect(first.getByRole('cell').nth(3)).toHaveText('Idea');
-    await expect(first.getByRole('cell').nth(4)).toHaveText('Song');
-    await expect(first.getByRole('cell').nth(5)).toHaveText('1');
+    await expect(first.getByRole('cell').nth(2)).toHaveText('');
+    await expect(first.getByRole('cell').nth(3)).toHaveText(CONCEPT);
+    await expect(first.getByRole('cell').nth(4)).toHaveText('Idea');
+    await expect(first.getByRole('cell').nth(5)).toHaveText('Song');
+    await expect(first.getByRole('cell').nth(6)).toHaveText('1');
     // The long concept is cut to one line, and all of it shows on keyboard focus.
-    const concept = first.getByRole('cell').nth(2).locator('[tabindex="0"]');
+    const concept = first.getByRole('cell').nth(3).locator('[tabindex="0"]');
     const box = await concept.boundingBox();
     expect(box?.height).toBeLessThan(30);
     // From the title link, the way a keyboard user gets there: Tab.

@@ -195,6 +195,45 @@ export interface Song {
    * Generations, whatever their status. The API always sends it; test fixtures may leave it out.
    */
   audioFileCount?: number;
+  /**
+   * What Play on it does (#219), as the server's playback rule decides it. The API always sends it;
+   * test fixtures may leave it out, and then Play asks the server when pressed.
+   */
+  playback?: SongPlayability;
+}
+
+/**
+ * What Play on a Song does (#219): `ready` plays its choice (its Song-level preferred file or its
+ * Selected Generation's file), `needs-choice` asks which Generation to play (nothing is selected),
+ * `selected-unplayable` says the Selected Generation has nothing to play, and `none` has nothing to
+ * offer: only it disables Play. `reason` is null when ready, and a playback reason code otherwise.
+ */
+export type SongPlaybackState = 'ready' | 'needs-choice' | 'selected-unplayable' | 'none';
+
+/** What Play on a Song does, as Song answers, Album tracks and Playlist songs carry it (#219). */
+export interface SongPlayability {
+  state: SongPlaybackState;
+  reason: string | null;
+}
+
+const SONG_PLAYBACK_STATES: readonly string[] = [
+  'ready',
+  'needs-choice',
+  'selected-unplayable',
+  'none',
+];
+
+export function isSongPlaybackState(value: unknown): value is SongPlaybackState {
+  return typeof value === 'string' && SONG_PLAYBACK_STATES.includes(value);
+}
+
+/** Whether `value` is a Song's playability; an absent one (`undefined`) is allowed by the callers. */
+export function isSongPlayability(value: unknown): value is SongPlayability {
+  return (
+    isRecord(value) &&
+    isSongPlaybackState(value.state) &&
+    (value.reason === null || typeof value.reason === 'string')
+  );
 }
 
 /**
@@ -369,7 +408,8 @@ export function isSong(value: unknown): value is Song {
     typeof value.hasSelectedGeneration === 'boolean' &&
     (value.selectedGeneration === null || isSelectedGeneration(value.selectedGeneration)) &&
     (value.sunoWorkspace === null || isSongWorkspace(value.sunoWorkspace)) &&
-    (value.audioFileCount === undefined || typeof value.audioFileCount === 'number')
+    (value.audioFileCount === undefined || typeof value.audioFileCount === 'number') &&
+    (value.playback === undefined || isSongPlayability(value.playback))
   );
 }
 

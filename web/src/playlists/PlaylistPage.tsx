@@ -30,6 +30,7 @@ import { SongSearch } from '../common/SongSearch';
 import { useRevisionedSave, type SavedField } from '../common/useRevisionedSave';
 import { Notice } from '../components/Notice';
 import { StateBadge } from '../songs/SongParts';
+import { SongPlayButton } from '../player/SongPlayButton';
 
 const FAILED_MESSAGE =
   'n8Tracks did not answer as expected. Check that it is running and try again.';
@@ -186,6 +187,7 @@ function SongRow({
             )}
           </Group>
           <Group gap={6} wrap="wrap">
+            <SongPlayButton song={song} size="xs" />
             <Button
               size="xs"
               variant="default"

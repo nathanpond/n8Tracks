@@ -275,6 +275,13 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     playbackReads: [] as string[],
     /** When set, answers the next playback read (once) instead of the fake API. */
     nextPlayback: undefined as (() => Response | Promise<Response>) | undefined,
+    /**
+     * What `GET /songs/{reference}/playback` answers (#219); by default the Song has nothing to play
+     * (`state` `none`, no Generations).
+     */
+    songPlayback: undefined as unknown,
+    /** How many times the Song's playback was asked for (#219). */
+    songPlaybackReads: 0,
     /** Each Generation's download records (#222), by its ID; none unless set. */
     downloads: new Map<string, GenerationDownload[]>(),
     /** How many times the Song's Generation list was read. */
@@ -1187,6 +1194,21 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
         comments: generation.comments.map((other) => (other === comment ? edited : other)),
       });
       return jsonResponse(200, edited);
+    }
+
+    if (/\/api\/v1\/songs\/[^/]+\/playback$/.test(path) && method === 'GET') {
+      server.songPlaybackReads++;
+      return jsonResponse(
+        200,
+        server.songPlayback ?? {
+          source: 'none',
+          audioFile: null,
+          reason: 'no_generations',
+          generation: null,
+          state: 'none',
+          candidates: [],
+        },
+      );
     }
 
     const playback = /\/api\/v1\/generations\/([^/]+)\/playback$/.exec(path);

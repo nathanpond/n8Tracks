@@ -1,4 +1,5 @@
 using n8Tracks.Domain.Media;
+using n8Tracks.Domain.Songs;
 
 namespace n8Tracks.Application.Media;
 
@@ -25,6 +26,107 @@ public enum PlaybackReason
 
     /// <summary>No file that could play is available.</summary>
     NothingAvailable,
+
+    /// <summary>The Song has no Generations and no available Song-level file (#219).</summary>
+    NoGenerations,
+}
+
+/// <summary>
+/// What pressing Play on a Song does (#219): <see cref="Ready"/> plays the Song's choice (its preferred
+/// Song-level file, or its Selected Generation's file); <see cref="NeedsChoice"/> asks which Generation
+/// or Song-level file to play, since nothing is selected; <see cref="SelectedUnplayable"/> says the
+/// Selected Generation has nothing to play (the user chose it, so nothing else is offered);
+/// <see cref="None"/> has nothing to offer, and only it disables Play.
+/// </summary>
+public enum SongPlaybackState
+{
+    Ready,
+    NeedsChoice,
+    SelectedUnplayable,
+    None,
+}
+
+/// <summary>The codes of <see cref="SongPlaybackState"/>, as the API answers them.</summary>
+public static class SongPlaybackStates
+{
+    public static string Text(SongPlaybackState state) => state switch
+    {
+        SongPlaybackState.Ready => "ready",
+        SongPlaybackState.NeedsChoice => "needs-choice",
+        SongPlaybackState.SelectedUnplayable => "selected-unplayable",
+        SongPlaybackState.None => "none",
+        _ => throw new ArgumentOutOfRangeException(nameof(state), state, "Unknown Song playback state."),
+    };
+}
+
+/// <summary>
+/// What pressing Play on a Song does (#219), without naming the file: its <see cref="State"/>, and
+/// <see cref="Reason"/>, null when it is ready, and why not otherwise. Song lists carry it, so each
+/// row's Play control knows whether it is disabled without asking per row.
+/// </summary>
+public sealed record SongPlayability(SongPlaybackState State, PlaybackReason? Reason)
+{
+    /// <summary>A Song with no Generations and no files: nothing to play.</summary>
+    public static SongPlayability NoGenerations { get; } = new(SongPlaybackState.None, PlaybackReason.NoGenerations);
+}
+
+/// <summary>
+/// One file of a Song, as far as the Song's <see cref="SongPlayability"/> needs it: the Generation it
+/// belongs to (null at Song level), how it reports now, and whether it is its owner's preferred file.
+/// </summary>
+public readonly record struct SongFileFact(Guid? GenerationId, AudioFileReportedStatus Status, bool Preferred);
+
+/// <summary>
+/// One of a Song's Generations as the chooser lists it (#219): what it is called, its Version number,
+/// the user's rating, Suno's duration, its states, and its Suno ID (for Open in Suno), in the Song's
+/// Version tree order, then ordinal.
+/// </summary>
+public sealed record SongPlaybackGeneration(
+    Guid Id,
+    string Shortcode,
+    string VersionNumber,
+    int? Rating,
+    double? DurationSeconds,
+    GenerationState State,
+    GenerationRemoteState RemoteState,
+    string? SunoId)
+{
+    /// <summary>Active and still listed by Suno: listed first by the chooser; the rest follow with a badge.</summary>
+    public bool IsCurrent => State == GenerationState.Active && RemoteState == GenerationRemoteState.Present;
+}
+
+/// <summary>What a chooser candidate is (#219): one of the Song's Generations, or one of its Song-level files.</summary>
+public enum SongPlaybackCandidateKind
+{
+    Generation,
+    File,
+}
+
+/// <summary>
+/// One entry of the chooser (#219): a Generation (<see cref="Generation"/>, with whether it can play
+/// and why not, as <see cref="PlaybackResolver.PlayabilityOf"/> decides) or an available Song-level
+/// file (<see cref="SongFile"/>, always playable).
+/// </summary>
+public sealed record SongPlaybackCandidate(
+    SongPlaybackCandidateKind Kind,
+    SongPlaybackGeneration? Generation,
+    ReportedAudioFile? SongFile,
+    GenerationPlayability Playability);
+
+/// <summary>
+/// The whole answer to Play on a Song (#219): what plays (<see cref="Played"/>, by
+/// <see cref="PlaybackResolver.ForSong"/>), the <see cref="Playability"/> state, the chooser's
+/// <see cref="Candidates"/> (only when it needs a choice; empty otherwise), and the Selected
+/// Generation when it has one.
+/// </summary>
+public sealed record SongPlaybackChoice(
+    SongPlayback Played,
+    SongPlayability Playability,
+    IReadOnlyList<SongPlaybackCandidate> Candidates,
+    SongPlaybackGeneration? Selected)
+{
+    /// <summary>Why it plays what it does, or, when nothing plays, why not: the state's reason (no Generations, nothing available, no selection).</summary>
+    public PlaybackReason Reason => Played.Played is null && Playability.Reason is { } why ? why : Played.Reason;
 }
 
 /// <summary>The codes of <see cref="PlaybackReason"/>, as the API answers them.</summary>
@@ -39,6 +141,7 @@ public static class PlaybackReasons
         PlaybackReason.PreferredUnavailableFallback => "preferred_unavailable_fallback",
         PlaybackReason.NoSelectedGeneration => "no_selected_generation",
         PlaybackReason.NothingAvailable => "nothing_available",
+        PlaybackReason.NoGenerations => "no_generations",
         _ => throw new ArgumentOutOfRangeException(nameof(reason), reason, "Unknown playback reason."),
     };
 }
@@ -152,6 +255,93 @@ public static class PlaybackResolver
     }
 
     /// <summary>
+    /// What Play on a Song does (#219), from its files (<see cref="SongFileFact"/>), its Selected
+    /// Generation, and whether it has any Generation; it agrees with <see cref="ForSong"/> on what plays:
+    /// <list type="bullet">
+    /// <item>Ready when the preferred Song-level file is available, or the Selected Generation has a
+    /// file to play.</item>
+    /// <item>Selected-unplayable when the Selected Generation has nothing to play: the user chose it,
+    /// so nothing else is offered.</item>
+    /// <item>With no Selected Generation, needs-choice when any Song-level file is available or any
+    /// Generation has a file to play (<see cref="PlayabilityOf"/>): n8Tracks never picks one itself.</item>
+    /// <item>Otherwise none: <see cref="PlaybackReason.NoGenerations"/> without Generations,
+    /// <see cref="PlaybackReason.NothingAvailable"/> with them.</item>
+    /// </list>
+    /// </summary>
+    public static SongPlayability StateOfSong(IReadOnlyCollection<SongFileFact> songFiles, Guid? selectedGenerationId, bool hasGenerations)
+    {
+        ArgumentNullException.ThrowIfNull(songFiles);
+
+        if (songFiles.Any(static file => file is { GenerationId: null, Preferred: true, Status: AudioFileReportedStatus.Available }))
+        {
+            return new SongPlayability(SongPlaybackState.Ready, null);
+        }
+
+        if (selectedGenerationId is { } selected)
+        {
+            return PlayabilityOf(songFiles.Where(file => file.GenerationId == selected).Select(static file => file.Status)).Playable
+                ? new SongPlayability(SongPlaybackState.Ready, null)
+                : new SongPlayability(SongPlaybackState.SelectedUnplayable, PlaybackReason.NothingAvailable);
+        }
+
+        var anySongLevel = songFiles.Any(static file => file is { GenerationId: null, Status: AudioFileReportedStatus.Available });
+        var anyGeneration = songFiles
+            .Where(static file => file.GenerationId is not null)
+            .GroupBy(static file => file.GenerationId)
+            .Any(static group => PlayabilityOf(group.Select(static file => file.Status)).Playable);
+        if (anySongLevel || anyGeneration)
+        {
+            return new SongPlayability(SongPlaybackState.NeedsChoice, PlaybackReason.NoSelectedGeneration);
+        }
+
+        return new SongPlayability(SongPlaybackState.None, hasGenerations ? PlaybackReason.NothingAvailable : PlaybackReason.NoGenerations);
+    }
+
+    /// <summary>
+    /// The whole answer to Play on a Song (#219), given every file associated with it, its Generations
+    /// in Version tree order then ordinal, and its Selected Generation: what plays
+    /// (<see cref="ForSong"/>), the state (<see cref="StateOfSong"/>), and, when it needs a choice,
+    /// the chooser's candidates: the available Song-level files first (in <see cref="BestAvailable"/>
+    /// order), then the Active Generations still listed by Suno, then the others (Archived, in Suno's
+    /// Trash, or no longer listed), each with whether it can play.
+    /// </summary>
+    public static SongPlaybackChoice ChoiceForSong(
+        IReadOnlyCollection<ReportedAudioFile> songFiles,
+        IReadOnlyList<SongPlaybackGeneration> generations,
+        Guid? selectedGenerationId)
+    {
+        ArgumentNullException.ThrowIfNull(songFiles);
+        ArgumentNullException.ThrowIfNull(generations);
+
+        var played = ForSong(songFiles, selectedGenerationId);
+        var playability = StateOfSong([.. songFiles.Select(FactOf)], selectedGenerationId, generations.Count > 0);
+        var selected = selectedGenerationId is { } id ? generations.FirstOrDefault(generation => generation.Id == id) : null;
+        if (playability.State != SongPlaybackState.NeedsChoice)
+        {
+            return new SongPlaybackChoice(played, playability, [], selected);
+        }
+
+        var files = InRankOrder(songFiles.Where(static file => GenerationIdOf(file) is null && IsAvailable(file)))
+            .Select(static file => new SongPlaybackCandidate(SongPlaybackCandidateKind.File, null, file, GenerationPlayability.Available));
+        var statuses = songFiles
+            .Where(static file => GenerationIdOf(file) is not null)
+            .ToLookup(static file => GenerationIdOf(file)!.Value, static file => file.Status);
+        var ofGenerations = generations
+            .Where(static generation => generation.IsCurrent)
+            .Concat(generations.Where(static generation => !generation.IsCurrent))
+            .Select(generation => new SongPlaybackCandidate(SongPlaybackCandidateKind.Generation, generation, null, PlayabilityOf(statuses[generation.Id])));
+        return new SongPlaybackChoice(played, playability, [.. files, .. ofGenerations], selected);
+    }
+
+    /// <summary>What <see cref="StateOfSong"/> needs of one file of a Song's list.</summary>
+    public static SongFileFact FactOf(ReportedAudioFile file)
+    {
+        ArgumentNullException.ThrowIfNull(file);
+
+        return new SongFileFact(GenerationIdOf(file), file.Status, Recorded(file).Preferred);
+    }
+
+    /// <summary>
     /// The marks of each file of a Song's list: whether it plays for its Generation (each Generation
     /// resolved on its own), and whether it plays for the Song. Song-level files never play for a
     /// Generation.
@@ -175,13 +365,15 @@ public static class PlaybackResolver
     {
         ArgumentNullException.ThrowIfNull(files);
 
-        return files
-            .Where(IsAvailable)
+        return InRankOrder(files.Where(IsAvailable)).FirstOrDefault();
+    }
+
+    /// <summary>By format rank, then earliest first seen, then path (ordinal).</summary>
+    private static IOrderedEnumerable<ReportedAudioFile> InRankOrder(IEnumerable<ReportedAudioFile> files) =>
+        files
             .OrderBy(static file => Recorded(file).Format, Comparer<string>.Create(AudioFormats.CompareByRank))
             .ThenBy(static file => Recorded(file).FirstSeenUtc)
-            .ThenBy(static file => Recorded(file).Path, StringComparer.Ordinal)
-            .FirstOrDefault();
-    }
+            .ThenBy(static file => Recorded(file).Path, StringComparer.Ordinal);
 
     /// <summary>The Generation a file of a Song's list belongs to, or null for a Song-level file.</summary>
     public static Guid? GenerationIdOf(ReportedAudioFile file)

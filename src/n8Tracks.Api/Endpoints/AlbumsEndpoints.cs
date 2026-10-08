@@ -429,7 +429,8 @@ internal sealed record AlbumResponse(
 
 /// <summary>
 /// A track: the Song (its ID, shortcode, title, primary Artist, and workflow state), its disc and
-/// track number, and whether the Song has a Selected Generation (a track without one is incomplete).
+/// track number, whether the Song has a Selected Generation (a track without one is incomplete), and
+/// what Play on it does (#219, <see cref="SongPlayabilityResponse"/>).
 /// </summary>
 internal sealed record AlbumTrackResponse(
     Guid SongId,
@@ -439,7 +440,8 @@ internal sealed record AlbumTrackResponse(
     AlbumTrackStateResponse State,
     int Disc,
     int Track,
-    bool HasSelectedGeneration)
+    bool HasSelectedGeneration,
+    SongPlayabilityResponse Playback)
 {
     public static AlbumTrackResponse From(AlbumTrack track)
     {
@@ -453,7 +455,8 @@ internal sealed record AlbumTrackResponse(
             new AlbumTrackStateResponse(track.State.Id, track.State.Name, track.State.Colour),
             track.Disc,
             track.Track,
-            track.HasSelectedGeneration);
+            track.HasSelectedGeneration,
+            SongPlayabilityResponse.From(track.Playback));
     }
 }
 

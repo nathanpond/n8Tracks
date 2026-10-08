@@ -1,3 +1,4 @@
+using n8Tracks.Application.Media;
 using n8Tracks.Domain.Assets;
 using n8Tracks.Domain.Catalog;
 
@@ -13,7 +14,11 @@ namespace n8Tracks.Application.Catalog;
 /// Whether its Song has a Selected Generation (#120); a
 /// Song without one stays on the Playlist and is marked.
 /// </param>
-public sealed record PlaylistSong(Guid Id, string Shortcode, string Title, PlaylistSongArtist? PrimaryArtist, PlaylistSongState State, bool HasSelectedGeneration);
+public sealed record PlaylistSong(Guid Id, string Shortcode, string Title, PlaylistSongArtist? PrimaryArtist, PlaylistSongState State, bool HasSelectedGeneration)
+{
+    /// <summary>What Play on it does (#219), by <see cref="PlaybackResolver.StateOfSong"/>; read with it, never stored.</summary>
+    public SongPlayability Playback { get; init; } = SongPlayability.NoGenerations;
+}
 
 /// <summary>An Artist as a Playlist's Song names it: its ID and display name.</summary>
 public sealed record PlaylistSongArtist(Guid Id, string Name);

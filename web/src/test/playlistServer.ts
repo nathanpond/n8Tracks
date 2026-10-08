@@ -94,6 +94,10 @@ export function playlistServer(playlists: Playlist[] = [], songs: Song[] = SONGS
     deleted: [] as string[],
     searches: [] as string[],
     next: undefined as (() => Response) | undefined,
+    /** What `GET /songs/{id}/playback` answers (#219), by the Song's ID; unlisted, nothing to play. */
+    songPlayback: new Map<string, unknown>(),
+    /** The Songs whose playback was asked for, in order. */
+    songPlaybackReads: [] as string[],
     changeElsewhere(id: string, change: Partial<Playlist>) {
       server.playlists = server.playlists.map((playlist) =>
         playlist.id === id
@@ -125,6 +129,24 @@ export function playlistServer(playlists: Playlist[] = [], songs: Song[] = SONGS
     const url = new URL(input instanceof Request ? input.url : input.toString(), document.baseURI);
     if (path.endsWith('/health')) {
       return Promise.resolve(jsonResponse(200, healthyReport));
+    }
+    const songPlayback = /\/api\/v1\/songs\/([^/]+)\/playback$/.exec(path);
+    if (songPlayback && method === 'GET') {
+      const id = decodeURIComponent(songPlayback[1] ?? '');
+      server.songPlaybackReads.push(id);
+      return Promise.resolve(
+        jsonResponse(
+          200,
+          server.songPlayback.get(id) ?? {
+            source: 'none',
+            audioFile: null,
+            reason: 'no_generations',
+            generation: null,
+            state: 'none',
+            candidates: [],
+          },
+        ),
+      );
     }
     const body = (): Record<string, unknown> =>
       JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as Record<string, unknown>;

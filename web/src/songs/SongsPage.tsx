@@ -41,6 +41,7 @@ import { ArtistFilter } from './ArtistFilter';
 import { NewSongDialog } from './NewSongDialog';
 import { paletteColour } from '../theme/palette';
 import { RelativeTime, StateBadge, TagLabels, TruncatedConcept } from './SongParts';
+import { SongPlayButton } from '../player/SongPlayButton';
 
 /** How many Tags a row of the table shows before "+N". */
 const TAGS_PER_ROW = 3;
@@ -273,6 +274,9 @@ function TitleFilter({ title, onClear }: { title: string; onClear: () => void })
 function SongRow({ song, timeZone, from }: { song: Song; timeZone: string; from: FromSongs }) {
   return (
     <Table.Tr data-song={song.shortcode}>
+      <Table.Td>
+        <SongPlayButton song={song} />
+      </Table.Td>
       <Table.Th scope="row" style={{ whiteSpace: 'nowrap' }}>
         {song.shortcode}
       </Table.Th>
@@ -505,6 +509,9 @@ export function SongsPage() {
             <Table withTableBorder aria-label="Songs">
               <Table.Thead>
                 <Table.Tr>
+                  <Table.Th scope="col">
+                    <VisuallyHidden>Play</VisuallyHidden>
+                  </Table.Th>
                   <Table.Th scope="col">Shortcode</Table.Th>
                   <SortHeader label="Title" sort="title" query={query} onSort={sortBy} />
                   <Table.Th scope="col">Artist</Table.Th>

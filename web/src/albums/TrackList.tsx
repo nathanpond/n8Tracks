@@ -34,6 +34,7 @@ import {
   renumber,
   withTrackNumber,
 } from './trackOrder';
+import { SongPlayButton } from '../player/SongPlayButton';
 
 const FAILED_MESSAGE =
   'n8Tracks did not answer as expected. Check that it is running and try again.';
@@ -230,6 +231,15 @@ function TrackRow({
             )}
           </Group>
           <Group gap={6} wrap="wrap">
+            <SongPlayButton
+              song={{
+                id: track.songId,
+                shortcode: track.shortcode,
+                title: track.title,
+                playback: track.playback,
+              }}
+              size="xs"
+            />
             <Button
               size="xs"
               variant="default"
