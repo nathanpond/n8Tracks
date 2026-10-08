@@ -521,6 +521,10 @@ mounted() {
     health="$(curl --silent --max-time 5 "$(url /health)")"
     expect "health status" healthy "$(printf '%s' "$health" | json_field status)" "$name"
     expect "health reports the version in the VERSION file" "$expected_version" "$(printf '%s' "$health" | json_field version)" "$name"
+    # The schema version and the job worker are checked when asked (#237); a fresh container has both healthy.
+    expect "health's migrations component" healthy "$(printf '%s' "$health" | json_field components | json_field migrations | json_field status)" "$name"
+    expect "health's migrations detail" "up to date" "$(printf '%s' "$health" | json_field components | json_field migrations | json_field detail)" "$name"
+    expect "health's jobs component" healthy "$(printf '%s' "$health" | json_field components | json_field jobs | json_field status)" "$name"
 
     # A new instance refuses its API until the administrator is created; health and setup still answer.
     expect "setup status before setup" false "$(api_field "$(url /api/v1/setup/status)" complete)" "$name"

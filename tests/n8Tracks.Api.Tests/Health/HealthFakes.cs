@@ -177,3 +177,85 @@ internal sealed class ClaimCountingJobStore(N8TracksDbContext context, ClaimCoun
         }
     }
 }
+
+/// <summary>
+/// The real job store, except that the worker's look for a queued job can be made to fail (it is
+/// logged and tried again at the next poll, so the worker stays idle and alive) or to hang (the
+/// worker stops beating). Everything else is the real store's.
+/// </summary>
+internal sealed class ClaimControlledJobStore(N8TracksDbContext context, ClaimControlledJobStore.Control control) : IJobStore
+{
+    private readonly JobStore inner = new(context);
+
+    /// <summary>Replaces the job store; registers the shared <see cref="Control"/>.</summary>
+    public static void Register(IServiceCollection services)
+    {
+        services.AddSingleton<Control>();
+        services.RemoveAll<IJobStore>();
+        services.AddScoped<IJobStore, ClaimControlledJobStore>();
+    }
+
+    public Task AddAsync(NewJob job, CancellationToken cancellationToken) => inner.AddAsync(job, cancellationToken);
+
+    public Task<JobSummary?> FindAsync(Guid id, CancellationToken cancellationToken) => inner.FindAsync(id, cancellationToken);
+
+    public Task<Guid?> FindActiveAsync(string type, CancellationToken cancellationToken) => inner.FindActiveAsync(type, cancellationToken);
+
+    public Task<bool> AnyActiveAsync(CancellationToken cancellationToken) => inner.AnyActiveAsync(cancellationToken);
+
+    public Task<IReadOnlyList<JobSummary>> ListRecentAsync(int count, CancellationToken cancellationToken) => inner.ListRecentAsync(count, cancellationToken);
+
+    public async Task<ClaimedJob?> ClaimNextAsync(DateTimeOffset startedUtc, CancellationToken cancellationToken)
+    {
+        await control.Hold.WaitAsync(cancellationToken).ConfigureAwait(false);
+        if (control.FailClaims)
+        {
+            throw new InvalidOperationException("claim refused by the test");
+        }
+
+        return await inner.ClaimNextAsync(startedUtc, cancellationToken).ConfigureAwait(false);
+    }
+
+    public Task ReportProgressAsync(Guid id, int progress, string? message, CancellationToken cancellationToken) =>
+        inner.ReportProgressAsync(id, progress, message, cancellationToken);
+
+    public Task FinishAsync(Guid id, JobOutcome outcome, CancellationToken cancellationToken) => inner.FinishAsync(id, outcome, cancellationToken);
+
+    public Task<int> FailRunningAsync(string error, DateTimeOffset finishedUtc, CancellationToken cancellationToken) =>
+        inner.FailRunningAsync(error, finishedUtc, cancellationToken);
+
+    public Task<int> PruneAsync(DateTimeOffset finishedBefore, CancellationToken cancellationToken) => inner.PruneAsync(finishedBefore, cancellationToken);
+
+    public Task<bool> DeleteFinishedAsync(Guid id, CancellationToken cancellationToken) => inner.DeleteFinishedAsync(id, cancellationToken);
+
+    public Task<JobSummary?> FindLatestFinishedAsync(string type, CancellationToken cancellationToken) => inner.FindLatestFinishedAsync(type, cancellationToken);
+
+    /// <summary>What the worker's next looks for a queued job do.</summary>
+    internal sealed class Control
+    {
+        private volatile bool failClaims;
+        private volatile TaskCompletionSource hold = Released();
+
+        /// <summary>When set, every look throws (the worker logs it and polls again).</summary>
+        public bool FailClaims
+        {
+            get => failClaims;
+            set => failClaims = value;
+        }
+
+        /// <summary>Completed unless <see cref="Hang"/> was called.</summary>
+        public Task Hold => hold.Task;
+
+        /// <summary>Makes the next looks wait until <see cref="Release"/>.</summary>
+        public void Hang() => hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void Release() => hold.TrySetResult();
+
+        private static TaskCompletionSource Released()
+        {
+            var source = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            source.SetResult();
+            return source;
+        }
+    }
+}

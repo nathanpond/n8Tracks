@@ -17,7 +17,7 @@ internal sealed record HealthResponse(HealthStatus Status, string Version, strin
             report.Status,
             version,
             timeZone,
-            new HealthComponentsResponse(report.Application, report.Database, report.Migrations, report.Media, report.Maintenance));
+            new HealthComponentsResponse(report.Application, report.Database, report.Migrations, report.Media, report.Jobs, report.Maintenance));
     }
 }
 
@@ -26,4 +26,5 @@ internal sealed record HealthComponentsResponse(
     HealthComponent Database,
     MigrationsHealthComponent Migrations,
     HealthComponent Media,
+    HealthComponent Jobs,
     HealthComponent Maintenance);

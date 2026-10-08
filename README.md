@@ -403,7 +403,7 @@ docker run -d --name n8tracks-gateway --network n8tracks -p 8788:8788 \
 
 ## Health
 
-`GET /health` (under the base URL path, if there is one) reports the instance in one JSON document. It needs no sign-in, is never cached (`Cache-Control: no-store`), answers `HEAD` too, and is checked afresh on every request.
+`GET /health` (under the base URL path, if there is one) reports the instance in one JSON document. It needs no sign-in, is never cached (`Cache-Control: no-store`), answers `HEAD` too, and is checked afresh on every request (the schema version is read from the database at most every 30 seconds).
 
 ```json
 {
@@ -414,7 +414,9 @@ docker run -d --name n8tracks-gateway --network n8tracks -p 8788:8788 \
     "application": { "status": "healthy", "detail": "running" },
     "database": { "status": "healthy", "detail": "reachable" },
     "migrations": { "status": "healthy", "detail": "up to date", "lastApplied": "20261004042959_InitialCreate" },
-    "media": { "status": "degraded", "detail": "unavailable" }
+    "media": { "status": "degraded", "detail": "unavailable" },
+    "jobs": { "status": "healthy", "detail": "idle" },
+    "maintenance": { "status": "healthy", "detail": "off" }
   }
 }
 ```
@@ -423,10 +425,12 @@ docker run -d --name n8tracks-gateway --network n8tracks -p 8788:8788 \
 | --- | --- | --- |
 | `application` | The app answers. | |
 | `database` | A trivial query succeeds within 2 seconds. | `unhealthy`, detail `unreachable`. |
-| `migrations` | Always, once the app has started: `lastApplied` is the newest migration applied at startup. | |
+| `migrations` | The database's migration history matches this version's migrations (detail `up to date`), read within 2 seconds. `lastApplied` is the newest migration applied at startup. | `unhealthy`, detail `pending` when the database lacks migrations this version has, `ahead` when a newer version has migrated it, `unknown` when the database cannot be read. During maintenance the database is not read and the last result stands; the overall status stays `degraded`. |
 | `media` | `N8TRACKS_MEDIA_PATH` is a directory that can be listed within 2 seconds. A read-only mount is fine. | `degraded`, detail `unavailable`. |
+| `jobs` | The background job worker is alive (detail `idle`, or `running` while a job runs, however long it takes; `starting` for up to a minute after start; `stopping` during shutdown). | `degraded`, detail `stalled`, when a queued job has waited more than 10 minutes with nothing running, or the worker has not reported for 30 seconds without exiting; `degraded`, detail `unknown`, when the queue cannot be read. `unhealthy`, detail `stopped`, when the worker has exited (its loop failed three times within a minute; a single failure restarts it after 5 seconds) or never reported. |
+| `maintenance` | No restore is running (detail `off`). | `degraded`, detail `restoring a backup`. |
 
-The overall `status` is the worst of the components. The HTTP status is 200 for `healthy` and `degraded` (the app keeps working without the media mount) and 503 for `unhealthy`, so a container health check can use the status code alone. The response never contains paths, connection strings, or error text: the cause of a failure is written to the log once, as a Warning, when a component stops being healthy, and its recovery as an Information line.
+The overall `status` is the worst of the components. The HTTP status is 200 for `healthy` and `degraded` (the app keeps working without the media mount, or with a stalled queue) and 503 for `unhealthy`, so a container health check can use the status code alone: a stalled queue keeps the container healthy, a stopped worker or a database at the wrong schema version does not. The response never contains paths, connection strings, or error text: the cause of a failure is written to the log once, as a Warning, when a component stops being healthy, and its recovery as an Information line.
 
 ## Frontend
 

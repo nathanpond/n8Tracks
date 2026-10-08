@@ -200,7 +200,7 @@ test.describe(
       await expect(page).toHaveURL(`${FRESH_URL}settings/system`);
       await expect(page.getByTestId('version')).not.toBeEmpty();
       await expect(overallStatus(page)).toHaveText('healthy');
-      await expect(componentRows(page)).toHaveCount(5);
+      await expect(componentRows(page)).toHaveCount(6);
       await expectAccessibleInLightAndDark(page);
     });
   },

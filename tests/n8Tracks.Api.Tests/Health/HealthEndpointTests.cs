@@ -27,6 +27,7 @@ public class HealthEndpointTests
     {
         using var factory = new N8TracksApiFactory();
         using var client = factory.CreateClient();
+        await UntilTheJobWorkerHasReported(client);
 
         using var response = await client.GetAsync(Health);
         var body = await response.Content.ReadAsStringAsync();
@@ -56,6 +57,7 @@ public class HealthEndpointTests
                     ["lastSafetyBackupAt"] = null,
                 },
                 ["media"] = new JsonObject { ["status"] = "healthy", ["detail"] = "available" },
+                ["jobs"] = new JsonObject { ["status"] = "healthy", ["detail"] = "idle" },
                 ["maintenance"] = new JsonObject { ["status"] = "healthy", ["detail"] = "off" },
             },
         };
@@ -211,8 +213,8 @@ public class HealthEndpointTests
         AssertComponent(report, "application", "healthy", "running");
         AssertComponent(report, "media", "healthy", "available");
 
-        // The migration state is the one captured at startup.
-        AssertComponent(report, "migrations", "healthy", "up to date");
+        // The schema cannot be read, so it is unknown (#237); the fields captured at startup stay.
+        AssertComponent(report, "migrations", "unhealthy", "unknown");
         Assert.Equal(
             TestDatabase.History(factory.DataPath)[^1].Split('|')[0],
             report.GetProperty("components").GetProperty("migrations").GetProperty("lastApplied").GetString());
@@ -279,7 +281,7 @@ public class HealthEndpointTests
             Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
             Assert.Equal("unhealthy", report.GetProperty("status").GetString());
             AssertComponent(report, "database", "unhealthy", "unreachable");
-            AssertComponent(report, "migrations", "healthy", "up to date");
+            AssertComponent(report, "migrations", "unhealthy", "unknown");
             AssertSaysNothingAboutWhereThingsAre(body, factory);
             Assert.DoesNotContain("SQLite", body, StringComparison.OrdinalIgnoreCase);
         }
@@ -354,11 +356,15 @@ public class HealthEndpointTests
         };
         using var client = factory.CreateClient();
 
+        // The schema and the queue are read through the same factory (the schema at most every 30
+        // seconds), so the database's count only has to grow with every request.
+        var databaseCalls = 0;
         for (var request = 1; request <= 3; request++)
         {
             await Report(client, HttpStatusCode.OK);
 
-            Assert.Equal(request, database.Calls);
+            Assert.True(database.Calls > databaseCalls, $"Request {request} did not check the database.");
+            databaseCalls = database.Calls;
             Assert.Equal(request, media.Calls);
         }
     }
@@ -377,6 +383,7 @@ public class HealthEndpointTests
             },
         };
         using var client = factory.CreateClient();
+        await UntilTheJobWorkerHasReported(client);
 
         await Report(client, HttpStatusCode.OK);
         Assert.Empty(HealthLines(factory));
@@ -388,11 +395,11 @@ public class HealthEndpointTests
             await Report(client, HttpStatusCode.ServiceUnavailable);
         }
 
+        // The schema and the queue cannot be read without the database, so they go with it.
         var failures = HealthLines(factory);
-        Assert.Equal(["database", "media"], failures.Select(line => LoggingApiFactory.Property(line, "component")));
+        Assert.Equal(["database", "migrations", "media", "jobs"], failures.Select(line => LoggingApiFactory.Property(line, "component")));
         Assert.All(failures, line => Assert.Equal("Warning", line.GetProperty("level").GetString()));
-        Assert.Equal("Unhealthy", LoggingApiFactory.Property(failures[0], "healthStatus"));
-        Assert.Equal("Degraded", LoggingApiFactory.Property(failures[1], "healthStatus"));
+        Assert.Equal(["Unhealthy", "Unhealthy", "Degraded", "Degraded"], failures.Select(line => LoggingApiFactory.Property(line, "healthStatus")));
 
         // The operator gets the cause in the log, which is the only place it goes.
         Assert.Contains(FaultText, failures[0].GetProperty("exception").GetProperty("message").GetString(), StringComparison.Ordinal);
@@ -404,8 +411,8 @@ public class HealthEndpointTests
             await Report(client, HttpStatusCode.OK);
         }
 
-        var recoveries = HealthLines(factory).Skip(2).ToList();
-        Assert.Equal(["database", "media"], recoveries.Select(line => LoggingApiFactory.Property(line, "component")));
+        var recoveries = HealthLines(factory).Skip(4).ToList();
+        Assert.Equal(["database", "migrations", "media", "jobs"], recoveries.Select(line => LoggingApiFactory.Property(line, "component")));
         Assert.All(recoveries, line => Assert.Equal("Information", line.GetProperty("level").GetString()));
     }
 
@@ -482,6 +489,24 @@ public class HealthEndpointTests
         var report = await Report(client, expected);
 
         return (report, watch.Elapsed);
+    }
+
+    /// <summary>Until the job worker has beaten once, so the <c>jobs</c> component is past <c>starting</c>.</summary>
+    internal static async Task UntilTheJobWorkerHasReported(HttpClient client)
+    {
+        var giveUp = Stopwatch.StartNew();
+        while (true)
+        {
+            using var response = await client.GetAsync(Health);
+            var report = JsonSerializer.Deserialize<JsonElement>(await response.Content.ReadAsStringAsync());
+            if (report.GetProperty("components").GetProperty("jobs").GetProperty("detail").GetString() != "starting")
+            {
+                return;
+            }
+
+            Assert.True(giveUp.Elapsed < TimeSpan.FromSeconds(10), "The job worker did not report.");
+            await Task.Delay(TimeSpan.FromMilliseconds(20));
+        }
     }
 
     private static async Task UntilHealthy(HttpClient client)
