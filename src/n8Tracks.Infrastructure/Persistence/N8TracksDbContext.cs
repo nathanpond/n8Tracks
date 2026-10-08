@@ -131,6 +131,8 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
 
     public DbSet<AttentionDismissalRecord> AttentionDismissals => Set<AttentionDismissalRecord>();
 
+    public DbSet<NotificationRecord> Notifications => Set<NotificationRecord>();
+
     public DbSet<SunoExportPartRecord> SunoExportParts => Set<SunoExportPartRecord>();
 
     public DbSet<StagedClipRecord> StagedClips => Set<StagedClipRecord>();
@@ -803,6 +805,22 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                 table.HasCheckConstraint("ck_attention_dismissals_kind", "kind IN ('failedSync', 'failedGenerate')");
             });
             dismissal.HasKey(record => new { record.Kind, record.Subject });
+        });
+
+        // Notifications (#231): not a catalog table. The kind has no CHECK, so later kinds need no
+        // migration; an import's retry names its export without a foreign key (the export may be gone).
+        modelBuilder.Entity<NotificationRecord>(notification =>
+        {
+            notification.ToTable("notifications", static table =>
+            {
+                table.HasCheckConstraint("ck_notifications_severity", "severity IN ('success', 'warning', 'failure')");
+                table.HasCheckConstraint("ck_notifications_count", "count >= 1");
+            });
+            notification.HasKey(record => record.Id);
+            notification.HasIndex(record => new { record.OccurredUtc, record.Id });
+            notification.HasIndex(record => new { record.Kind, record.Subject });
+            notification.HasIndex(record => record.CoalesceKey);
+            notification.HasIndex(record => record.Topic);
         });
 
         // Suno export staging (#131): staging tables, not catalog tables. The rows of an export go with it

@@ -129,6 +129,36 @@ public sealed class UpgradeSafetyTests : IDisposable
         Assert.Contains(UpgradeMigrations.ChangesDataId, string.Join(',', TestDatabase.History(directory.Path)), StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// #231: the first start after an upgrade records it as a notification, and a start that succeeds
+    /// after a failed upgrade records that failure too, from its marker. Neither offers Retry.
+    /// </summary>
+    [Fact]
+    public async Task AnUpgradeAndAnEarlierFailedOneAreEachRecordedAsANotificationWithoutRetry()
+    {
+        await SeedAsync();
+        Assert.Equal(1, (await Run(UpgradeMigrations.Use<UpgradeThatFails>)).ExitCode);
+        ChangeMarker(marker => marker["applicationVersion"] = "0.0.1-older");
+
+        using var factory = Host(UpgradeMigrations.Use<UpgradeThatSucceeds>);
+        using var client = factory.CreateClient();
+        using (var signIn = await SessionApi.SignInAsync(client, SetupApi.TestUsername, SetupApi.TestPassword))
+        {
+            Assert.Equal(HttpStatusCode.Created, signIn.StatusCode);
+        }
+
+        using var response = await client.GetAsync(new Uri("/api/v1/notifications", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var items = (await SetupApi.JsonAsync(response)).GetProperty("items").EnumerateArray().ToList();
+        Assert.Equal(2, items.Count);
+        Assert.All(items, static item => Assert.Equal(("migration", "/settings/diagnostics", false), (item.GetProperty("kind").GetString(), item.GetProperty("link").GetString(), item.GetProperty("retryable").GetBoolean())));
+        var upgraded = Assert.Single(items, static item => item.GetProperty("severity").GetString() == "success");
+        Assert.Equal("The database was upgraded: 1 migration applied after a safety backup.", upgraded.GetProperty("summary").GetString());
+        var failed = Assert.Single(items, static item => item.GetProperty("severity").GetString() == "failure");
+        Assert.Contains("restored from its safety backup", failed.GetProperty("summary").GetString(), StringComparison.Ordinal);
+        Assert.DoesNotContain(directory.Path, failed.ToString(), StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task AnEarlierFailedUpgradeFileIsKeptAndTheNewOneGetsATimeSuffix()
     {

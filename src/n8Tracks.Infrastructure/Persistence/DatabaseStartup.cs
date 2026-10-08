@@ -5,8 +5,11 @@ using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
 using n8Tracks.Application.Backups;
 using n8Tracks.Application.Configuration;
+using n8Tracks.Application.Maintenance;
+using n8Tracks.Application.Notifications;
 using n8Tracks.Application.Persistence;
 using n8Tracks.Infrastructure.Backups;
+using n8Tracks.Infrastructure.Notifications;
 
 namespace n8Tracks.Infrastructure.Persistence;
 
@@ -134,6 +137,7 @@ public static class DatabaseStartup
                 + $"This version does not try again: start a different version of n8Tracks, or delete {markerFile.FilePath} to let this one try again.");
         }
 
+        services.GetRequiredService<StartupNotices>().UpgradeFailed(marker.StartedAt);
         markerFile.Clear();
         log.Information(
             "Removed the marker of a failed database upgrade by n8Tracks {MarkerVersion}; n8Tracks {ApplicationVersion} upgrades the database itself",
@@ -251,6 +255,7 @@ public static class DatabaseStartup
 
                 scope.ServiceProvider.GetRequiredService<MigrationStateHolder>().Set(
                     new MigrationState(MigrationStatus.UpToDate, last, pending.Count > 0 ? MigrationOutcome.Succeeded : MigrationOutcome.None));
+                await NotifyAsync(services, marker is null ? null : (pending.Count, last), cancellationToken).ConfigureAwait(false);
 
                 log.Information(
                     "Database is up to date: {AppliedCount} migration(s) applied at this start, last applied {LastAppliedMigrationId}",
@@ -283,6 +288,67 @@ public static class DatabaseStartup
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Once the database is up to date (#231), in a scope of its own: the upgrade this start made, an
+    /// earlier upgrade that failed, and a restore a restart cut short, each recorded as a notification.
+    /// Recording never stops the start.
+    /// </summary>
+    private static async Task NotifyAsync(IServiceProvider services, (int Applied, string To)? upgraded, CancellationToken cancellationToken)
+    {
+        var (failedUpgrade, restorePutBack) = services.GetRequiredService<StartupNotices>().Take();
+        var recoveredRestore = services.GetRequiredService<MaintenanceMode>().RecoveredAtStart;
+        if (upgraded is null && failedUpgrade is null && restorePutBack is null && !recoveredRestore)
+        {
+            return;
+        }
+
+        try
+        {
+            await RecordAsync(services, upgraded, failedUpgrade, restorePutBack, recoveredRestore, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            services.GetRequiredService<Serilog.ILogger>().ForContext(typeof(DatabaseStartup))
+                .Error(exception, "The startup's notifications could not be recorded; the start goes on");
+        }
+    }
+
+    private static async Task RecordAsync(
+        IServiceProvider services,
+        (int Applied, string To)? upgraded,
+        DateTimeOffset? failedUpgrade,
+        Guid? restorePutBack,
+        bool recoveredRestore,
+        CancellationToken cancellationToken)
+    {
+        var scope = services.CreateAsyncScope();
+        await using (scope.ConfigureAwait(false))
+        {
+            var migrations = scope.ServiceProvider.GetRequiredService<MigrationNotifications>();
+            var restores = scope.ServiceProvider.GetRequiredService<RestoreNotifications>();
+            var now = scope.ServiceProvider.GetRequiredService<TimeProvider>().GetUtcNow();
+            if (failedUpgrade is { } started)
+            {
+                await migrations.FailedAsync(started, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (upgraded is { } upgrade)
+            {
+                await migrations.UpgradedAsync(upgrade.Applied, upgrade.To, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (restorePutBack is { } restoreId)
+            {
+                await restores.RecordAsync(MaintenanceOutcome.RolledBack, restoreId.ToString(), now, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (recoveredRestore)
+            {
+                await restores.RecordAsync(MaintenanceOutcome.Failed, $"recovered:{now.UtcTicks}", now, cancellationToken).ConfigureAwait(false);
+            }
+        }
     }
 
     /// <summary>

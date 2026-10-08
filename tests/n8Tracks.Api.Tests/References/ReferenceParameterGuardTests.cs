@@ -50,6 +50,8 @@ public sealed class ReferenceParameterGuardTests
         "PATCH /api/v1/suno/exports/{id:guid}/remote-states: id",
         "PUT /api/v1/suno/exports/{id:guid}/artwork/{sunoId}: id",
         "POST /api/v1/suno/exports/{id:guid}/commit: id",
+        "POST /api/v1/notifications/{id:guid}/dismiss: id",
+        "POST /api/v1/notifications/{id:guid}/retry: id",
         "GET /api/v1/suno/generation-requests/{id:guid}: id",
         "POST /api/v1/suno/generation-requests/{id:guid}/claim: id",
         "PATCH /api/v1/suno/generation-requests/{id:guid}: id",

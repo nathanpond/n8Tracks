@@ -112,6 +112,9 @@ public sealed class ImportCommitService(
     /// <summary>409: the export was committed already.</summary>
     public const string CommittedCode = "export_committed";
 
+    /// <summary>The key a failed commit job marks its exception with when it applied nothing (#231).</summary>
+    internal const string NothingAppliedKey = "n8tracks.import-commit.nothing-applied";
+
     private static readonly SunoExportState[] Committing = [SunoExportState.Committing];
 
     /// <summary>
@@ -201,6 +204,18 @@ public sealed class ImportCommitService(
             cancellationToken);
 
     /// <summary>
+    /// Whether a commit job failed with <paramref name="exception"/> before it applied anything (#231): then
+    /// its export, back to <c>ready</c> with its choices, can be committed again as it was. A commit that
+    /// applied anything, or was interrupted, is not marked.
+    /// </summary>
+    public static bool AppliedNothing(Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+
+        return exception.Data[NothingAppliedKey] is true;
+    }
+
+    /// <summary>
     /// Puts a <c>committing</c> export back to <c>ready</c> and classifies its records again, so what the
     /// interrupted commit imported is linked and is not offered again (#140: the job is not resumable).
     /// A failed commit job names itself (<paramref name="jobId"/>), so its failure can be read from the export.
@@ -267,23 +282,37 @@ internal sealed class ImportCommitJob(
             return JsonSerializer.SerializeToElement(new { exportId, state = "abandoned" });
         }
 
+        var trace = new CommitTrace();
         try
         {
-            var result = await ApplyAsync(export, context, cancellationToken).ConfigureAwait(false);
+            var result = await ApplyAsync(export, context, trace, cancellationToken).ConfigureAwait(false);
+            trace.MayHaveApplied = true;
             await commits.MarkCommittedAsync(exportId, context.JobId, cancellationToken).ConfigureAwait(false);
             context.Report(100);
             return JsonSerializer.SerializeToElement(result, ResultJson.Options);
         }
-        catch (Exception)
+        catch (Exception exception)
         {
-            // Not resumable: the export goes back to ready, what was imported already now linked.
+            // Not resumable: the export goes back to ready, what was imported already now linked. A commit
+            // that applied nothing (#231) is marked so: its notification offers Retry, which commits it again.
+            if (!trace.MayHaveApplied && !(exception is OperationCanceledException && cancellationToken.IsCancellationRequested))
+            {
+                exception.Data[ImportCommitService.NothingAppliedKey] = true;
+            }
+
             await commits.ReturnToReadyAsync(exportId, context.JobId, CancellationToken.None).ConfigureAwait(false);
             throw;
         }
     }
 
+    /// <summary>Whether a commit may have changed anything yet: set before the first step that writes, and by each target applied.</summary>
+    private sealed class CommitTrace
+    {
+        public bool MayHaveApplied { get; set; }
+    }
+
     /// <summary>Applies every record's choice; the result by record.</summary>
-    private async Task<CommitResult> ApplyAsync(SunoExport export, IJobContext context, CancellationToken cancellationToken)
+    private async Task<CommitResult> ApplyAsync(SunoExport export, IJobContext context, CommitTrace trace, CancellationToken cancellationToken)
     {
         var results = new Dictionary<string, RecordResult>(StringComparer.Ordinal);
         var plan = CommitPlan.Of(await store.CommitRecordsAsync(export.Id, cancellationToken).ConfigureAwait(false), results);
@@ -307,6 +336,7 @@ internal sealed class ImportCommitJob(
             switch (restored)
             {
                 case RestoreResult.Restored back:
+                    trace.MayHaveApplied = true;
                     results[clip.SunoId] = RecordResult.Created(back.Generation, restored: true);
                     songs.TryAdd(back.Song.Id, back.Song);
                     attached.Add((clip, back.Generation.Generation.Id));
@@ -360,6 +390,7 @@ internal sealed class ImportCommitJob(
             }
             else
             {
+                trace.MayHaveApplied = true;
                 if (applied.NewSongKey is { } key)
                 {
                     newSongs[key] = applied.Song.Id;
@@ -400,6 +431,7 @@ internal sealed class ImportCommitJob(
             }
 
             results[clip.SunoId] = resolution.Result;
+            trace.MayHaveApplied |= resolution.Result.Outcome != ImportCommitOutcomes.Failed;
             created.Versions += resolution.CreatedVersion ? 1 : 0;
             if (resolution.ArtworkFor is { } generationId)
             {
@@ -410,7 +442,8 @@ internal sealed class ImportCommitJob(
         }
 
         // Suno's final status of a clip it finished since (#314): written to a Generation whose status is not
-        // final yet, whatever the record's choice, and nothing else of it.
+        // final yet, whatever the record's choice, and nothing else of it. From here on every step may write.
+        trace.MayHaveApplied = true;
         var statuses = await InScopeAsync<SunoStatusService, IReadOnlyList<FinishedStatusApplied>>(
             status => status.ApplyAsync(export.Id, cancellationToken)).ConfigureAwait(false);
 

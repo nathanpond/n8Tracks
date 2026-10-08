@@ -148,7 +148,7 @@ internal sealed class ClaimCountingJobStore(N8TracksDbContext context, ClaimCoun
 
     public Task FinishAsync(Guid id, JobOutcome outcome, CancellationToken cancellationToken) => inner.FinishAsync(id, outcome, cancellationToken);
 
-    public Task<int> FailRunningAsync(string error, DateTimeOffset finishedUtc, CancellationToken cancellationToken) =>
+    public Task<IReadOnlyList<ClaimedJob>> FailRunningAsync(string error, DateTimeOffset finishedUtc, CancellationToken cancellationToken) =>
         inner.FailRunningAsync(error, finishedUtc, cancellationToken);
 
     public Task<int> PruneAsync(DateTimeOffset finishedBefore, CancellationToken cancellationToken) => inner.PruneAsync(finishedBefore, cancellationToken);
@@ -221,7 +221,7 @@ internal sealed class ClaimControlledJobStore(N8TracksDbContext context, ClaimCo
 
     public Task FinishAsync(Guid id, JobOutcome outcome, CancellationToken cancellationToken) => inner.FinishAsync(id, outcome, cancellationToken);
 
-    public Task<int> FailRunningAsync(string error, DateTimeOffset finishedUtc, CancellationToken cancellationToken) =>
+    public Task<IReadOnlyList<ClaimedJob>> FailRunningAsync(string error, DateTimeOffset finishedUtc, CancellationToken cancellationToken) =>
         inner.FailRunningAsync(error, finishedUtc, cancellationToken);
 
     public Task<int> PruneAsync(DateTimeOffset finishedBefore, CancellationToken cancellationToken) => inner.PruneAsync(finishedBefore, cancellationToken);

@@ -48,7 +48,7 @@ public sealed class SunoExportStagingGuardTests
     /// <summary>Not catalog data: staging, provider state, stored content, the search index (derived), and the instance's own records.</summary>
     public static readonly IReadOnlyList<string> OtherTables =
     [
-        "__EFMigrationsHistory", "__EFMigrationsLock", "administrators", "app_metadata", "assets", "attention_dismissals", "credentials", "jobs", "sessions",
+        "__EFMigrationsHistory", "__EFMigrationsLock", "administrators", "app_metadata", "assets", "attention_dismissals", "credentials", "jobs", "notifications", "sessions",
         "suno_export_parts", "suno_export_record_playlists", "suno_export_records", "suno_exports", "suno_generation_requests", "suno_workspaces",
         "search_dirty_songs", "search_index", "search_index_config", "search_index_content", "search_index_data", "search_index_docsize", "search_index_idx", "search_rows",
     ];

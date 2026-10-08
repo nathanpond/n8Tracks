@@ -253,8 +253,9 @@ internal static class RestoreApi
     }
 
     /// <summary>
-    /// Every row of every table but <c>sessions</c> (which each signed-in request touches), hashed: the
-    /// same before and after means nothing in the catalog, settings, credentials, or jobs changed.
+    /// Every row of every table but <c>sessions</c> (which each signed-in request touches) and
+    /// <c>notifications</c> (#231: what the work under test recorded about itself, written as it ends),
+    /// hashed: the same before and after means nothing in the catalog, settings, credentials, or jobs changed.
     /// </summary>
     public static string Fingerprint(string dataPath, params string[] alsoLeaveOut)
     {
@@ -269,7 +270,7 @@ internal static class RestoreApi
         var tables = new List<string>();
         using (var list = connection.CreateCommand())
         {
-            list.CommandText = "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> 'sessions' ORDER BY name;";
+            list.CommandText = "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('sessions', 'notifications') ORDER BY name;";
             using var reader = list.ExecuteReader();
             while (reader.Read())
             {

@@ -84,6 +84,13 @@ public sealed record MediaScanCounts(
     /// did not get that far, and for a summary written before #208.
     /// </summary>
     public int AvailableBefore { get; init; }
+
+    /// <summary>
+    /// How many of the files this scan added are still unassociated once the Suno ID matcher has run
+    /// (#231: what makes a startup or scheduled scan worth a notification). 0 for a scan that did not
+    /// complete; not kept in the last-scan summary.
+    /// </summary>
+    public int NewUnmatched { get; init; }
 }
 
 /// <summary>

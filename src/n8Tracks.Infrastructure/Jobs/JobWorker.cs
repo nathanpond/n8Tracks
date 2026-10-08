@@ -223,12 +223,14 @@ internal sealed partial class JobWorker(
         try
         {
             LogStarted(logger, job.Id, job.Type);
-            var outcome = await RunAsync(job, stoppingToken).ConfigureAwait(false);
+            var (outcome, payload, result, exception) = await RunAsync(job, stoppingToken).ConfigureAwait(false);
             if (abandoned)
             {
                 return true;
             }
 
+            // Told first, so whoever sees the job ended finds its notification already there.
+            await TellFinishedAsync(new FinishedJob(job.Id, job.Type, payload, outcome.Status, result, outcome.Error, exception, outcome.FinishedUtc)).ConfigureAwait(false);
             await WriteAsync(job.Id, store => store.FinishAsync(job.Id, outcome, CancellationToken.None)).ConfigureAwait(false);
             return true;
         }
@@ -238,18 +240,20 @@ internal sealed partial class JobWorker(
         }
     }
 
-    private async Task<JobOutcome> RunAsync(ClaimedJob job, CancellationToken stoppingToken)
+    /// <summary>Runs the job's handler: the outcome to store, and for the job-finished hook its payload, its unscrubbed result, and what it threw.</summary>
+    private async Task<(JobOutcome Outcome, JsonElement? Payload, JsonElement? Result, Exception? Exception)> RunAsync(ClaimedJob job, CancellationToken stoppingToken)
     {
         var scope = scopes.CreateAsyncScope();
         await using (scope.ConfigureAwait(false))
         {
+            var parsed = job.Payload is { } payload ? Parse(payload) : (JsonElement?)null;
             if (scope.ServiceProvider.GetKeyedService<IJobHandler>(job.Type) is not { } handler)
             {
                 LogUnknownType(logger, job.Id, job.Type);
-                return Failed(0, null, JobErrors.UnknownJobType);
+                return (Failed(0, null, JobErrors.UnknownJobType), parsed, null, null);
             }
 
-            var context = new JobContext(job.Id, job.Payload is { } payload ? Parse(payload) : null);
+            var context = new JobContext(job.Id, parsed);
             var run = Start(handler, context, stoppingToken);
 
             // Writes the latest progress at most once per interval while the handler runs.
@@ -269,17 +273,17 @@ internal sealed partial class JobWorker(
             {
                 var result = await run.ConfigureAwait(false);
                 LogSucceeded(logger, job.Id, job.Type);
-                return new JobOutcome(JobStatus.Succeeded, 100, JobScrubber.Message(lastMessage), JobScrubber.Result(result), null, time.GetUtcNow());
+                return (new JobOutcome(JobStatus.Succeeded, 100, JobScrubber.Message(lastMessage), JobScrubber.Result(result), null, time.GetUtcNow()), parsed, result, null);
             }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            catch (OperationCanceledException exception) when (stoppingToken.IsCancellationRequested)
             {
                 LogInterrupted(logger, job.Id, job.Type);
-                return Failed(progress, lastMessage, JobErrors.InterruptedByRestart);
+                return (Failed(progress, lastMessage, JobErrors.InterruptedByRestart), parsed, null, exception);
             }
             catch (Exception exception)
             {
                 LogFailed(logger, exception, job.Id, job.Type);
-                return Failed(progress, lastMessage, JobScrubber.Error(exception));
+                return (Failed(progress, lastMessage, JobScrubber.Error(exception)), parsed, null, exception);
             }
         }
     }
@@ -300,6 +304,29 @@ internal sealed partial class JobWorker(
     private JobOutcome Failed(int progress, string? message, string error) =>
         new(JobStatus.Failed, progress, JobScrubber.Message(message), null, error, time.GetUtcNow());
 
+    /// <summary>
+    /// Tells the job-finished hook (#231), in a scope of its own, just before the outcome is stored. A hook
+    /// that fails is logged; it never changes the job or stops the worker.
+    /// </summary>
+    private async Task TellFinishedAsync(FinishedJob finished)
+    {
+        try
+        {
+            var scope = scopes.CreateAsyncScope();
+            await using (scope.ConfigureAwait(false))
+            {
+                foreach (var hook in scope.ServiceProvider.GetServices<IJobFinishedHook>())
+                {
+                    await hook.JobFinishedAsync(finished, CancellationToken.None).ConfigureAwait(false);
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            LogHookFailed(logger, exception, finished.Id, finished.Type);
+        }
+    }
+
     private async Task FailInterruptedAsync(CancellationToken cancellationToken)
     {
         try
@@ -307,12 +334,21 @@ internal sealed partial class JobWorker(
             var scope = scopes.CreateAsyncScope();
             await using (scope.ConfigureAwait(false))
             {
+                var finishedUtc = time.GetUtcNow();
                 var failed = await scope.ServiceProvider.GetRequiredService<IJobStore>()
-                    .FailRunningAsync(JobErrors.InterruptedByRestart, time.GetUtcNow(), cancellationToken)
+                    .FailRunningAsync(JobErrors.InterruptedByRestart, finishedUtc, cancellationToken)
                     .ConfigureAwait(false);
-                if (failed > 0)
+                if (failed.Count > 0)
                 {
-                    LogMarkedInterrupted(logger, failed);
+                    LogMarkedInterrupted(logger, failed.Count);
+                }
+
+                // A job a crash or an abandoned shutdown left running ends here: the hook is told (#231),
+                // as for one interrupted while the worker stopped, so its failure is not lost.
+                foreach (var job in failed)
+                {
+                    var payload = job.Payload is { } text ? Parse(text) : (JsonElement?)null;
+                    await TellFinishedAsync(new FinishedJob(job.Id, job.Type, payload, JobStatus.Failed, null, JobErrors.InterruptedByRestart, null, finishedUtc)).ConfigureAwait(false);
                 }
             }
         }
@@ -414,6 +450,9 @@ internal sealed partial class JobWorker(
 
     [LoggerMessage(Level = LogLevel.Critical, Message = "The job worker's loop failed {FaultCount} times within {WindowSeconds} seconds; it has stopped and no job runs until the app is restarted")]
     private static partial void LogGaveUp(ILogger logger, Exception exception, int faultCount, double windowSeconds);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "Telling that job {JobId} of type {JobType} finished failed; the job's outcome stands")]
+    private static partial void LogHookFailed(ILogger logger, Exception exception, Guid jobId, string jobType);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Writing the state of job {JobId} failed")]
     private static partial void LogWriteFailed(ILogger logger, Exception exception, Guid jobId);

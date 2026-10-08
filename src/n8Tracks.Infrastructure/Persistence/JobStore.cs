@@ -135,21 +135,35 @@ internal sealed class JobStore(N8TracksDbContext context) : IJobStore
                 cancellationToken);
     }
 
-    public Task<int> FailRunningAsync(string error, DateTimeOffset finishedUtc, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<ClaimedJob>> FailRunningAsync(string error, DateTimeOffset finishedUtc, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(error);
 
         var finished = UtcText.From(finishedUtc);
 
-        return context.Jobs
+        // Read first, for the job-finished hook (#231); only those read are failed, so the two agree.
+        var running = await context.Jobs.AsNoTracking()
             .Where(static job => job.Status == JobRecord.Running)
+            .Select(static job => new ClaimedJob(job.Id, job.Type, job.Payload))
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (running.Count == 0)
+        {
+            return running;
+        }
+
+        var ids = running.Select(static job => job.Id).ToList();
+        await context.Jobs
+            .Where(job => ids.Contains(job.Id) && job.Status == JobRecord.Running)
             .ExecuteUpdateAsync(
                 setters => setters
                     .SetProperty(static job => job.Status, JobRecord.Failed)
                     .SetProperty(static job => job.Error, error)
                     .SetProperty(static job => job.FinishedUtc, finished)
                     .SetProperty(static job => job.Payload, (string?)null),
-                cancellationToken);
+                cancellationToken)
+            .ConfigureAwait(false);
+        return running;
     }
 
     public Task<int> PruneAsync(DateTimeOffset finishedBefore, CancellationToken cancellationToken)

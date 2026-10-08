@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using n8Tracks.Application.Backups;
 using n8Tracks.Application.Maintenance;
+using n8Tracks.Infrastructure.Notifications;
 
 namespace n8Tracks.Infrastructure.Backups;
 
@@ -25,6 +26,11 @@ public static class RestoreStartup
         switch (recovery.Outcome)
         {
             case RestoreRecoveryOutcome.PutBack:
+                if (journal is not null)
+                {
+                    scope.ServiceProvider.GetRequiredService<StartupNotices>().RestorePutBack(journal.RestoreId);
+                }
+
                 startupLog.Warning(
                     "A restart interrupted restore {RestoreId}; the data from before it was put back, and the instance is open. The safety backup is {SafetyBackupPath}",
                     journal?.RestoreId,

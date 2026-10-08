@@ -55,9 +55,10 @@ public interface IJobStore
 
     /// <summary>
     /// Marks every running job failed with <paramref name="error"/> at <paramref name="finishedUtc"/>,
-    /// clearing its payload, and returns how many there were.
+    /// clearing its payload, and returns them as they were claimed (with their payloads), so the
+    /// job-finished hook (#231) is told of a job a crash or an abandoned shutdown left running.
     /// </summary>
-    Task<int> FailRunningAsync(string error, DateTimeOffset finishedUtc, CancellationToken cancellationToken);
+    Task<IReadOnlyList<ClaimedJob>> FailRunningAsync(string error, DateTimeOffset finishedUtc, CancellationToken cancellationToken);
 
     /// <summary>Deletes every job that finished before <paramref name="finishedBefore"/> and returns how many.</summary>
     Task<int> PruneAsync(DateTimeOffset finishedBefore, CancellationToken cancellationToken);

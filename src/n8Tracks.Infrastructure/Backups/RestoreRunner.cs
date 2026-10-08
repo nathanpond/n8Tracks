@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using n8Tracks.Application.Backups;
 using n8Tracks.Application.Maintenance;
+using n8Tracks.Application.Notifications;
 
 namespace n8Tracks.Infrastructure.Backups;
 
@@ -66,10 +67,11 @@ internal sealed partial class RestoreRunner(IServiceScopeFactory scopes, ILogger
     {
         try
         {
+            RestoreRunResult result;
             var scope = scopes.CreateAsyncScope();
             await using (scope.ConfigureAwait(false))
             {
-                var result = await scope.ServiceProvider.GetRequiredService<RestoreService>().RunAsync(plan, stopping.Token).ConfigureAwait(false);
+                result = await scope.ServiceProvider.GetRequiredService<RestoreService>().RunAsync(plan, stopping.Token).ConfigureAwait(false);
                 if (result.Outcome == MaintenanceOutcome.Succeeded)
                 {
                     LogSucceeded(logger, plan.Id, result.SafetyBackup);
@@ -90,6 +92,8 @@ internal sealed partial class RestoreRunner(IServiceScopeFactory scopes, ILogger
                     LogFailed(logger, result.Error, plan.Id, result.Outcome, result.Detail, result.SafetyBackup);
                 }
             }
+
+            await NotifyAsync(plan.Id, result).ConfigureAwait(false);
         }
         catch (Exception exception)
         {
@@ -99,6 +103,38 @@ internal sealed partial class RestoreRunner(IServiceScopeFactory scopes, ILogger
             scope.ServiceProvider.GetRequiredService<MaintenanceMode>().End(MaintenanceOutcome.Failed);
         }
     }
+
+    /// <summary>
+    /// Records the restore's notification (#231) in a scope of its own, so a succeeded restore's is written
+    /// into the restored database. One that left the instance in maintenance records nothing now.
+    /// </summary>
+    private async Task NotifyAsync(Guid restoreId, RestoreRunResult result)
+    {
+        if (result.Outcome == MaintenanceOutcome.RollbackFailed)
+        {
+            return;
+        }
+
+        try
+        {
+            var scope = scopes.CreateAsyncScope();
+            await using (scope.ConfigureAwait(false))
+            {
+                var time = scope.ServiceProvider.GetRequiredService<TimeProvider>();
+                await scope.ServiceProvider.GetRequiredService<RestoreNotifications>()
+                    .RecordAsync(result.Outcome, restoreId.ToString(), time.GetUtcNow(), CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+        }
+        catch (Exception exception)
+        {
+            // The restore's outcome stands; only its notification is lost.
+            LogNotifyFailed(logger, exception, restoreId);
+        }
+    }
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "The notification of restore {RestoreId} could not be recorded; the restore's outcome stands")]
+    private static partial void LogNotifyFailed(ILogger logger, Exception exception, Guid restoreId);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Restore {RestoreId} started; the instance is in maintenance")]
     private static partial void LogStarted(ILogger logger, Guid restoreId);

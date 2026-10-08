@@ -204,12 +204,19 @@ public sealed class MediaScanService(
         // Pass 2: look at each file, compare, read what changed, write in batches.
         var known = await files.KnownAsync(cancellationToken).ConfigureAwait(false);
         var batch = new List<AudioFileWrite>(options.BatchSize);
+        var added = new HashSet<Guid>();
         for (var index = 0; index < found.Count; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
             var (path, name, format) = found[index];
-            batch.Add(await LookAsync(path, name, format, known, started, tally, cancellationToken).ConfigureAwait(false));
+            var write = await LookAsync(path, name, format, known, started, tally, cancellationToken).ConfigureAwait(false);
+            batch.Add(write);
+            if (write is AudioFileWrite.Added(var addedFile))
+            {
+                added.Add(addedFile.Id);
+            }
+
             if (batch.Count >= options.BatchSize)
             {
                 await files.WriteAsync(batch, started, cancellationToken).ConfigureAwait(false);
@@ -230,6 +237,11 @@ public sealed class MediaScanService(
         report(99, Progress(found.Count, found.Count, tally) + "; matching Suno IDs");
         var matched = await matcher.MatchAllAsync(cancellationToken).ConfigureAwait(false);
 
+        // The files this scan added that the matcher left unassociated (#231: a scheduled scan's news).
+        var newUnmatched = added.Count == 0
+            ? 0
+            : (await files.MatchableAsync(cancellationToken).ConfigureAwait(false)).Count(file => added.Contains(file.Id));
+
         // Missing comes last (#207), so a scan stopped at any earlier point marks nothing Missing, and
         // only once the root still answers: a folder that went away during the walk fails the scan.
         cancellationToken.ThrowIfCancellationRequested();
@@ -248,7 +260,7 @@ public sealed class MediaScanService(
             .ToList();
         var missing = gone.Count == 0 ? 0 : await files.MarkMissingAsync(gone, cancellationToken).ConfigureAwait(false);
         var availableBefore = known.Values.Count(static file => file.Status == AudioFileStatus.Available);
-        return tally.Counts() with { Associated = matched.Associated, Unmatched = matched.Unmatched, Missing = missing, AvailableBefore = availableBefore };
+        return tally.Counts() with { Associated = matched.Associated, Unmatched = matched.Unmatched, Missing = missing, AvailableBefore = availableBefore, NewUnmatched = newUnmatched };
     }
 
     /// <summary>What to write about one found file, counted as new, changed, or unchanged, and as unreadable when its header could not be read.</summary>
@@ -494,6 +506,7 @@ public sealed class MediaScanJobHandler(MediaScanService scans) : IJobHandler
             missing = counts.Missing,
             restored = counts.Restored,
             availableBefore = counts.AvailableBefore,
+            newUnmatched = counts.NewUnmatched,
             skippedLinks = new
             {
                 escaping = counts.SkippedLinks.Escaping,

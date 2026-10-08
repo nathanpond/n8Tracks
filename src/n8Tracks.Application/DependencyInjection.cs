@@ -13,6 +13,7 @@ using n8Tracks.Application.Jobs;
 using n8Tracks.Application.Logging;
 using n8Tracks.Application.Maintenance;
 using n8Tracks.Application.Media;
+using n8Tracks.Application.Notifications;
 using n8Tracks.Application.References;
 using n8Tracks.Application.Retention;
 using n8Tracks.Application.Scheduling;
@@ -116,6 +117,27 @@ public static class DependencyInjection
         services.AddScoped<MediaStatusService>();
         services.AddScoped<DashboardService>();
         services.AddScoped<AttentionService>();
+
+        // Notifications (#231): the recorder, the list and its actions, the job-finished hook with one
+        // producer per job type, and the direct producers (Suno sync, restore, migration).
+        services.AddScoped<NotificationRecorder>();
+        services.AddScoped<NotificationService>();
+        services.AddScoped<IJobFinishedHook, JobNotifications>();
+        services.AddSingleton<MediaScanNotifications>();
+        services.AddSingleton<BackupNotifications>();
+        services.AddSingleton<ImportCommitNotifications>();
+        services.AddSingleton<IJobNotificationProducer>(static provider => provider.GetRequiredService<MediaScanNotifications>());
+        services.AddSingleton<IJobNotificationProducer>(static provider => provider.GetRequiredService<BackupNotifications>());
+        services.AddSingleton<IJobNotificationProducer>(static provider => provider.GetRequiredService<ImportCommitNotifications>());
+        services.AddScoped<SunoSyncNotifications>();
+        services.AddScoped<RestoreNotifications>();
+        services.AddScoped<MigrationNotifications>();
+        services.AddScoped<INotificationProducer>(static provider => provider.GetRequiredService<MediaScanNotifications>());
+        services.AddScoped<INotificationProducer>(static provider => provider.GetRequiredService<BackupNotifications>());
+        services.AddScoped<INotificationProducer>(static provider => provider.GetRequiredService<ImportCommitNotifications>());
+        services.AddScoped<INotificationProducer>(static provider => provider.GetRequiredService<SunoSyncNotifications>());
+        services.AddScoped<INotificationProducer>(static provider => provider.GetRequiredService<RestoreNotifications>());
+        services.AddScoped<INotificationProducer>(static provider => provider.GetRequiredService<MigrationNotifications>());
         services.AddScoped<AudioContentService>();
         services.AddJobHandler<MediaScanJobHandler>(MediaScanService.JobType);
         services.AddSingleton<MediaScanStartup>();

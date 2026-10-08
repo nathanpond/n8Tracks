@@ -2,6 +2,7 @@ using System.Text.Json;
 using n8Tracks.Application.Assets;
 using n8Tracks.Application.Auth;
 using n8Tracks.Application.Jobs;
+using n8Tracks.Application.Notifications;
 using n8Tracks.Domain.Assets;
 using n8Tracks.Domain.Suno;
 
@@ -123,6 +124,7 @@ public sealed record ExportExpirySummary(int Expired, int Discarded, int Failed,
 /// job above that. Only one export is under review at a time: completing one discards any earlier ready
 /// export, and an export being committed makes a new one wait with <c>import_in_progress</c>.
 /// <para>
+/// Each sync's ending is recorded as a notification (#231, <see cref="SunoSyncNotifications"/>).
 /// Nothing here changes the catalog (invariant 3). The one thing applied at once is what Suno says about
 /// its own workspaces when the export's workspace list is complete (their names and availability:
 /// provider state, through <see cref="SunoWorkspaceService"/>); Song associations change only at the
@@ -142,6 +144,7 @@ public sealed class ExportStagingService(
     ISunoClipLookup clips,
     IJobQueue jobs,
     IExclusiveTransaction transaction,
+    SunoSyncNotifications notifications,
     TimeProvider time)
 {
     /// <summary>The job type that classifies a large export.</summary>
@@ -319,9 +322,11 @@ public sealed class ExportStagingService(
     /// </summary>
     public async Task<ExportDiscardOutcome> DiscardAsync(Guid id, Guid? credentialId, SunoExportEnding? ending, CancellationToken cancellationToken = default)
     {
+        var discarded = false;
         var refusal = await transaction.RunAsync<ExportDiscardOutcome?>(
             async ct =>
             {
+                discarded = false;
                 var export = await store.FindAsync(id, ct).ConfigureAwait(false);
                 if (!Visible(export, credentialId))
                 {
@@ -336,11 +341,17 @@ public sealed class ExportStagingService(
                 if (await store.TryMoveAsync(id, [SunoExportState.Receiving, .. UnderReview], SunoExportState.Discarded, time.GetUtcNow(), null, ending, ct).ConfigureAwait(false))
                 {
                     await store.RemoveStagedAsync(id, ct).ConfigureAwait(false);
+                    discarded = true;
                 }
 
                 return null;
             },
             cancellationToken).ConfigureAwait(false);
+
+        if (discarded)
+        {
+            await notifications.DiscardedAsync(id, ending, CancellationToken.None).ConfigureAwait(false);
+        }
 
         return refusal ?? new ExportDiscardOutcome.Discarded(
             await ViewAsync((await store.FindAsync(id, cancellationToken).ConfigureAwait(false))!, cancellationToken).ConfigureAwait(false));
@@ -468,12 +479,14 @@ public sealed class ExportStagingService(
             {
                 case SunoExportState.Expired:
                     expired++;
+                    await notifications.ExpiredAsync(export.Id, CancellationToken.None).ConfigureAwait(false);
                     break;
                 case SunoExportState.Discarded:
                     discarded++;
                     break;
                 case SunoExportState.Failed:
                     failed++;
+                    await notifications.ClassificationFailedAsync(export.Id, CancellationToken.None).ConfigureAwait(false);
                     break;
                 default:
                     cleared++;
@@ -578,21 +591,34 @@ public sealed class ExportStagingService(
                     return true;
                 },
                 cancellationToken).ConfigureAwait(false);
-            return ready ? new ExportClassification.Ready() : new ExportClassification.Abandoned();
+            if (!ready)
+            {
+                return new ExportClassification.Abandoned();
+            }
+
+            var counts = await store.CountsAsync(id, CancellationToken.None).ConfigureAwait(false);
+            await notifications.ReadyAsync(id, counts.Values.Sum(), CancellationToken.None).ConfigureAwait(false);
+            return new ExportClassification.Ready();
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            await transaction.RunAsync(
+            var failed = await transaction.RunAsync(
                 async ct =>
                 {
-                    if (await store.TryMoveAsync(id, Classifying, SunoExportState.Failed, time.GetUtcNow(), jobId, ClassificationFailed, ct).ConfigureAwait(false))
+                    if (!await store.TryMoveAsync(id, Classifying, SunoExportState.Failed, time.GetUtcNow(), jobId, ClassificationFailed, ct).ConfigureAwait(false))
                     {
-                        await store.RemoveStagedAsync(id, ct).ConfigureAwait(false);
+                        return false;
                     }
 
+                    await store.RemoveStagedAsync(id, ct).ConfigureAwait(false);
                     return true;
                 },
                 CancellationToken.None).ConfigureAwait(false);
+            if (failed)
+            {
+                await notifications.ClassificationFailedAsync(id, CancellationToken.None).ConfigureAwait(false);
+            }
+
             return new ExportClassification.Failed(exception);
         }
     }
