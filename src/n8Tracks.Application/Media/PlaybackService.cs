@@ -1,4 +1,5 @@
 using n8Tracks.Application.Generations;
+using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Application.Media;
 
@@ -10,7 +11,7 @@ namespace n8Tracks.Application.Media;
 /// player can switch to while comparing (#220). A Generation's Suno stream (#221) is read from its
 /// stored address, never requested. Reads only.
 /// </summary>
-public sealed class PlaybackService(AudioFileService files, IGenerationStore generations)
+public sealed class PlaybackService(AudioFileService files, IGenerationStore generations, SunoAudioHosts hosts)
 {
     /// <summary>
     /// What plays for the Generation <paramref name="generationId"/> of the Song <paramref name="songId"/>,
@@ -54,7 +55,7 @@ public sealed class PlaybackService(AudioFileService files, IGenerationStore gen
     }
 
     private async Task<IReadOnlyList<SongPlaybackGeneration>> GenerationsOfAsync(Guid songId, CancellationToken cancellationToken) =>
-        [.. (await generations.ForSongAsync(songId, cancellationToken).ConfigureAwait(false)).Select(static summary => new SongPlaybackGeneration(
+        [.. (await generations.ForSongAsync(songId, cancellationToken).ConfigureAwait(false)).Select(summary => new SongPlaybackGeneration(
             summary.Generation.Id,
             summary.Shortcode,
             summary.VersionNumber,
@@ -65,7 +66,7 @@ public sealed class PlaybackService(AudioFileService files, IGenerationStore gen
             summary.Generation.SunoId)
         {
             Revision = summary.Generation.Revision,
-            Stream = SunoStream.Of(summary.Generation),
+            Stream = SunoStream.Of(hosts, summary.Generation),
         })];
 
     /// <summary>

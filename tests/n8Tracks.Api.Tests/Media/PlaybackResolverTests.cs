@@ -1,6 +1,7 @@
 using n8Tracks.Application.Media;
 using n8Tracks.Domain.Media;
 using n8Tracks.Domain.Songs;
+using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Api.Tests.Media;
 
@@ -339,7 +340,7 @@ public sealed class PlaybackResolverTests
         string? streamed,
         PlaybackReason? why)
     {
-        var stream = SunoStream.Of(sunoId, status, remote, stored);
+        var stream = SunoStream.Of(SunoAudioHosts.Default, sunoId, status, remote, stored);
 
         Assert.Equal(streamed, stream.AudioUrl);
         Assert.Equal(why, stream.Unstreamable);

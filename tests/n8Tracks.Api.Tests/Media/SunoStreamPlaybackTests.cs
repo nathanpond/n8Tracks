@@ -158,12 +158,62 @@ public sealed class SunoStreamPlaybackTests
             // Complement: exactly one directive, no wildcard, no scheme or host beyond the list.
             var directives = policy.Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
             var sources = Assert.Single(directives).Split(' ').Skip(1).ToList();
-            Assert.Equal(["'self'", .. SunoAudioHosts.Hosts.Select(static host => "https://" + host)], sources);
+            Assert.Equal(["'self'", .. SunoAudioHosts.Default.Hosts.Select(static host => "https://" + host)], sources);
             Assert.DoesNotContain(sources, static source => source.Contains('*', StringComparison.Ordinal) || source.EndsWith(':'));
 
             // A request to Suno's host names at most n8Tracks' origin, never a path.
             Assert.Equal("strict-origin-when-cross-origin", Assert.Single(response.Headers.GetValues("Referrer-Policy")));
         }
+    }
+
+    [Fact]
+    public async Task AConfiguredHostListReplacesTheDefaultInThePolicyAndInEveryPlayabilityAnswer()
+    {
+        const string moved = "https://audio.example.net/clips/a.m4a";
+        using var factory = new N8TracksApiFactory(new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["N8TRACKS_SUNO_AUDIO_HOSTS"] = " Audio.Example.NET , cdn2.example.net ",
+        })
+        {
+            TestServices = MediaApi.UseCountingMount,
+        };
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        await SongApi.CreateAsync(client, "Moved");
+        await SongApi.AttachGenerationAsync(factory, "n8-1-v1", Clip(A, moved));
+        await SongApi.CreateAsync(client, "Default host");
+        await SongApi.AttachGenerationAsync(factory, "n8-2-v1", Clip(B, Stream));
+
+        // The policy names exactly the configured hosts, lower case, and not the default.
+        using (var response = await client.GetAsync(new Uri("/api/v1/songs", UriKind.Relative)))
+        {
+            Assert.Equal(
+                "media-src 'self' https://audio.example.net https://cdn2.example.net",
+                Assert.Single(response.Headers.GetValues("Content-Security-Policy")));
+        }
+
+        // An address on a configured host streams, through every answer that says whether it plays.
+        var playback = await ReadAsync(client, "generations/n8-1-v1-g1/playback");
+        Assert.Equal("suno", playback.GetProperty("source").GetString());
+        Assert.Equal(moved, playback.GetProperty("sunoAudioUrl").GetString());
+        AssertPlayable(await ReadAsync(client, "generations/n8-1-v1-g1"), true, "suno_stream");
+        var song = await ReadAsync(client, "songs/n8-1/playback");
+        Assert.Equal("needs-choice", song.GetProperty("state").GetString());
+        var candidate = Assert.Single(song.GetProperty("candidates").EnumerateArray());
+        Assert.True(candidate.GetProperty("playable").GetBoolean());
+        Assert.Equal("suno_stream", candidate.GetProperty("reason").GetString());
+        Assert.Equal(moved, Assert.Single((await ReadAsync(client, "songs/n8-1/playback-sources")).GetProperty("generations").EnumerateArray()).GetProperty("sunoAudioUrl").GetString());
+
+        // Complement: the default host is no longer listed, so its address is no address.
+        playback = await ReadAsync(client, "generations/n8-2-v1-g1/playback");
+        Assert.Equal(JsonValueKind.Null, playback.GetProperty("sunoAudioUrl").ValueKind);
+        Assert.Equal("nothing_available", playback.GetProperty("reason").GetString());
+        AssertPlayable(await ReadAsync(client, "generations/n8-2-v1-g1"), false, "nothing_available");
+        Assert.Empty((await ReadAsync(client, "songs/n8-2/playback-sources")).GetProperty("generations").EnumerateArray());
+
+        var states = (await ReadAsync(client, "songs")).GetProperty("items").EnumerateArray()
+            .ToDictionary(static item => item.GetProperty("shortcode").GetString()!, static item => item.GetProperty("playback").GetProperty("state").GetString());
+        Assert.Equal("needs-choice", states["n8-1"]);
+        Assert.Equal("none", states["n8-2"]);
     }
 
     public static TheoryData<string> Payloads => new()

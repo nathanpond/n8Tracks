@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using n8Tracks.Application.Media;
 using n8Tracks.Domain.Media;
 using n8Tracks.Domain.Songs;
+using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Infrastructure.Persistence;
 
@@ -13,9 +14,13 @@ namespace n8Tracks.Infrastructure.Persistence;
 /// </summary>
 internal static class SongPlaybackRows
 {
-    /// <summary>The state of each of <paramref name="selectedBySong"/>' Songs (its ID, and its Selected Generation's, or null).</summary>
+    /// <summary>
+    /// The state of each of <paramref name="selectedBySong"/>' Songs (its ID, and its Selected
+    /// Generation's, or null), streaming from the Suno hosts <paramref name="hosts"/> lists.
+    /// </summary>
     public static async Task<Dictionary<Guid, SongPlayability>> StatesAsync(
         N8TracksDbContext context,
+        SunoAudioHosts hosts,
         IReadOnlyDictionary<Guid, Guid?> selectedBySong,
         CancellationToken cancellationToken)
     {
@@ -49,9 +54,9 @@ internal static class SongPlaybackRows
             .GroupBy(static generation => generation.SongId)
             .ToDictionary(
                 static group => group.Key,
-                static group => (IReadOnlyDictionary<Guid, SunoStream>)group.ToDictionary(
+                group => (IReadOnlyDictionary<Guid, SunoStream>)group.ToDictionary(
                     static generation => generation.Id,
-                    static generation => SunoStream.Of(generation.SunoId, generation.ProviderStatus, GenerationStates.RemoteStateOf(generation.RemoteState), generation.AudioUrl)));
+                    generation => SunoStream.Of(hosts, generation.SunoId, generation.ProviderStatus, GenerationStates.RemoteStateOf(generation.RemoteState), generation.AudioUrl)));
         var mount = files.Count == 0
             ? MediaMountState.Available
             : (await new MediaMountStateStore(context).FindAsync(cancellationToken).ConfigureAwait(false) ?? MediaMountStatus.Unrecorded).State;

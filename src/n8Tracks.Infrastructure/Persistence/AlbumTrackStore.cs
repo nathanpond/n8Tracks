@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using n8Tracks.Application.Catalog;
 using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
+using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Infrastructure.Persistence;
 
@@ -47,7 +48,7 @@ internal sealed class AlbumTrackStore(N8TracksDbContext context) : IAlbumTrackSt
     }
 
     /// <summary>Each of <paramref name="albumIds"/>' tracks, by disc and then track number (Albums without tracks are left out).</summary>
-    internal static async Task<Dictionary<Guid, IReadOnlyList<AlbumTrack>>> ForAlbumsAsync(N8TracksDbContext context, IReadOnlyCollection<Guid> albumIds, CancellationToken cancellationToken)
+    internal static async Task<Dictionary<Guid, IReadOnlyList<AlbumTrack>>> ForAlbumsAsync(N8TracksDbContext context, SunoAudioHosts hosts, IReadOnlyCollection<Guid> albumIds, CancellationToken cancellationToken)
     {
         var ids = albumIds.ToList();
         var rows = await (
@@ -63,6 +64,7 @@ internal sealed class AlbumTrackStore(N8TracksDbContext context) : IAlbumTrackSt
         var credits = await SongCreditStore.ForSongsAsync(context, [.. rows.Select(static row => row.Id).Distinct()], cancellationToken).ConfigureAwait(false);
         var playback = await SongPlaybackRows.StatesAsync(
                 context,
+                hosts,
                 rows.DistinctBy(static row => row.Id).ToDictionary(static row => row.Id, static row => row.SelectedGenerationId),
                 cancellationToken)
             .ConfigureAwait(false);

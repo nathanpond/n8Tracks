@@ -229,7 +229,7 @@ n8Tracks keeps a record of each file the extension downloaded, so the user can s
 When a Generation has no available local file, the player streams it from Suno.
 
 - **The stored address:** a Generation keeps one audio address. It is the first `media_urls` entry a browser plays: MP3, then M4A (Suno's `m4a-opus` among them), then OGG, matched by `content_type` or by the address's path. With none of those, it is `audio_url`. The migration `20261008060000_RederiveGenerationAudioUrls` re-derived every stored address from its raw clip by this rule. The address is not a compared field, so a sync after it proposes no change.
-- **The server's host list:** `SunoAudioHosts` (`src/n8Tracks.Domain/Suno/`) holds only `d2lwuy8qc234o3.cloudfront.net`, the playback host. The adapter also lists the signed-download host and Suno's API host, and the server leaves both out. The server list must stay a subset of the adapter's `SUNO_AUDIO_HOSTS`, which a test checks. Any other address counts as no address. So does an address that is not plain HTTPS on the default port, or one that carries a user name.
+- **The server's host list:** `SunoAudioHosts` (`src/n8Tracks.Domain/Suno/`) holds by default only `d2lwuy8qc234o3.cloudfront.net`, the playback host. The adapter also lists the signed-download host and Suno's API host, and the server leaves both out. The default must stay a subset of the adapter's `SUNO_AUDIO_HOSTS`, which a test checks. The operator can replace the list with `N8TRACKS_SUNO_AUDIO_HOSTS` (see the README's Configuration) in case Suno moves its audio; that list is outside the subset check, and it is what both the policy below and the address check use. Any other address counts as no address. So does an address that is not plain HTTPS on the default port, or one that carries a user name.
 - **The rule (`PlaybackResolver`, `SunoStream`):**
   - A local file always wins.
   - The stream is tried only for a clip whose status is `complete` and whose remote state is `present`. Otherwise Play is disabled, with the reason (`suno_not_complete`, `suno_not_present`, `nothing_available`).
@@ -238,7 +238,7 @@ When a Generation has no available local file, the player streams it from Suno.
 - **The browser plays it:**
   - The server never requests, proxies, or stores the audio. The architecture tests check that no server type can reach the network.
   - The audio element sets `referrerpolicy="no-referrer"` and no `crossorigin`, so the request to Suno carries no n8Tracks cookie, token, or referrer path.
-  - Every response sends `Content-Security-Policy: media-src 'self' https://d2lwuy8qc234o3.cloudfront.net` and no other directive. The full policy belongs to the audit milestone.
+  - Every response sends `Content-Security-Policy: media-src 'self' https://d2lwuy8qc234o3.cloudfront.net` (with the default host list; one `https://` origin per configured host otherwise) and no other directive. The full policy belongs to the audit milestone.
   - Every response also sends `Referrer-Policy: strict-origin-when-cross-origin`, the browsers' default made explicit. Browsers do not yet honour the attribute on media elements, so this header is what keeps the path out.
 - **Failure:** a stream that errors, has not started 15 seconds after the play request, or stalls for 30 seconds while playing has failed. The bar says so, offers Open in Suno (a new tab), and suggests syncing again. There is no retry, and the player never falls back to another source.
 

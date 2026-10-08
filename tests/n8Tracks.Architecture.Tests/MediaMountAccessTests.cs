@@ -37,9 +37,9 @@ public partial class MediaMountAccessTests
     [
         "src/n8Tracks.Api/Configuration/EnvironmentOptionsLoader.cs: public const string MediaPath = \"N8TRACKS_MEDIA_PATH\";",
         "src/n8Tracks.Api/Configuration/EnvironmentOptionsLoader.cs: public const string DefaultMediaPath = \"/media\";",
-        "src/n8Tracks.Api/Configuration/EnvironmentOptionsLoader.cs: Port, BaseUrl, TimeZone, LogLevel, DataPath, MediaPath, BackupPath, EnableTestSeeding,",
+        "src/n8Tracks.Api/Configuration/EnvironmentOptionsLoader.cs: Port, BaseUrl, TimeZone, LogLevel, DataPath, MediaPath, BackupPath, SunoAudioHosts, EnableTestSeeding,",
         "src/n8Tracks.Api/Configuration/EnvironmentOptionsLoader.cs: var mediaPath = ResolvePath(Value(variables, MediaPath) ?? DefaultMediaPath, environment.WorkingDirectory);",
-        "src/n8Tracks.Api/Configuration/EnvironmentOptionsLoader.cs: return new N8TracksOptions(port, baseUrl!, pathBase, timeZone!, logLevel, dataPath, mediaPath, backupPath);",
+        "src/n8Tracks.Api/Configuration/EnvironmentOptionsLoader.cs: return new N8TracksOptions(port, baseUrl!, pathBase, timeZone!, logLevel, dataPath, mediaPath, backupPath)",
         "src/n8Tracks.Api/Configuration/EnvironmentOptionsLoader.cs: ResolvePath(DefaultMediaPath, environment.WorkingDirectory),",
         "src/n8Tracks.Api/Configuration/EnvironmentOptionsLoader.cs: MediaPath = ResolvePath(Value(variables, MediaPath) ?? DefaultMediaPath, environment.WorkingDirectory),",
         "src/n8Tracks.Api/Endpoints/MediaEndpoints.cs: return TypedResults.Ok(MediaStatusResponse.From(status, options.MediaPath));",

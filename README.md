@@ -604,6 +604,7 @@ The app is configured only through environment variables, read once at startup. 
 | `N8TRACKS_DATA_PATH` | `/data` | `/srv/n8tracks/data` | Directory for the app's own data. It must exist and be writable. |
 | `N8TRACKS_MEDIA_PATH` | `/media` | `/mnt/music` | Directory of your media files. It may be missing at startup. |
 | `N8TRACKS_BACKUP_PATH` | `/backup` | `/mnt/backup` | Directory for backups. It may be missing at startup. |
+| `N8TRACKS_SUNO_AUDIO_HOSTS` | `d2lwuy8qc234o3.cloudfront.net` | `d2lwuy8qc234o3.cloudfront.net,audio.example.net` | Hosts your browser may stream a Generation's Suno audio from when it has no local file: a comma-separated list of bare DNS host names (no scheme, port, path, or wildcard), at least one. It replaces the default, so keep the default in the list unless Suno has moved. The Content Security Policy's `media-src` allows exactly these hosts over HTTPS, and a stored Suno address on any other host is not played. |
 
 Behind a reverse proxy on a sub-path, set `N8TRACKS_BASE_URL` to the public URL and have the proxy forward the path unchanged: with `https://nas.example/n8tracks`, the health check is `/n8tracks/health` and the prefix matches in any letter case. A single trailing slash is ignored. Path segments may contain only letters, digits, `.`, `_`, `~`, and `-`.
 

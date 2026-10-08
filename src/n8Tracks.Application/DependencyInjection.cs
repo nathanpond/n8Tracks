@@ -5,6 +5,7 @@ using n8Tracks.Application.Assets;
 using n8Tracks.Application.Auth;
 using n8Tracks.Application.Backups;
 using n8Tracks.Application.Catalog;
+using n8Tracks.Application.Configuration;
 using n8Tracks.Application.Credentials;
 using n8Tracks.Application.Generations;
 using n8Tracks.Application.Jobs;
@@ -18,6 +19,7 @@ using n8Tracks.Application.Songs;
 using n8Tracks.Application.Suno;
 using n8Tracks.Application.Suno.Generate;
 using n8Tracks.Application.Suno.Import;
+using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Application;
 
@@ -29,6 +31,9 @@ public static class DependencyInjection
         ArgumentNullException.ThrowIfNull(services);
 
         services.TryAddSingleton(TimeProvider.System);
+
+        // The Suno audio hosts the settings hold (#221): every reader of the list takes this one.
+        services.TryAddSingleton<SunoAudioHosts>(static provider => provider.GetRequiredService<N8TracksOptions>().SunoAudioHosts);
         services.AddSingleton<SetupCompletion>();
         services.AddScoped<SetupService>();
         services.AddSingleton<DummyPasswordHash>();

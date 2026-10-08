@@ -121,6 +121,7 @@ internal static class PlaybackEndpoints
         CatalogReference reference,
         GenerationService generations,
         PlaybackService playback,
+        SunoAudioHosts hosts,
         HttpContext context,
         CancellationToken cancellationToken)
     {
@@ -131,7 +132,7 @@ internal static class PlaybackEndpoints
             return NoSuchGeneration(context);
         }
 
-        var resolved = await playback.ForGenerationAsync(generation.Generation.SongId, generation.Generation.Id, SunoStream.Of(generation.Generation), cancellationToken);
+        var resolved = await playback.ForGenerationAsync(generation.Generation.SongId, generation.Generation.Id, SunoStream.Of(hosts, generation.Generation), cancellationToken);
         return TypedResults.Ok(new GenerationPlaybackResponse(
             Source(resolved.Played, resolved.SunoAudioUrl),
             PlaybackFileResponse.From(resolved.Played, context.Request.PathBase),

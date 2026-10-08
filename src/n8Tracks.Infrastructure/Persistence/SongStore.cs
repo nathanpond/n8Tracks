@@ -3,10 +3,11 @@ using n8Tracks.Application.Songs;
 using n8Tracks.Domain.Assets;
 using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
+using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Infrastructure.Persistence;
 
-internal sealed class SongStore(N8TracksDbContext context) : ISongStore
+internal sealed class SongStore(N8TracksDbContext context, SunoAudioHosts hosts) : ISongStore
 {
     public async Task<long> NextShortcodeNumberAsync(CancellationToken cancellationToken)
     {
@@ -392,6 +393,7 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
 
         var playback = await SongPlaybackRows.StatesAsync(
                 context,
+                hosts,
                 records.ToDictionary(static song => song.Id, static song => song.SelectedGenerationId),
                 cancellationToken)
             .ConfigureAwait(false);

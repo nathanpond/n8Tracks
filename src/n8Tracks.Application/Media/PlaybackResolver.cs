@@ -44,7 +44,7 @@ public enum PlaybackReason
 /// <summary>
 /// Whether a Generation can be streamed from Suno when nothing local is available (#221): its stored
 /// audio address (<see cref="ClipFields.AudioUrl"/>) when it is on a listed host
-/// (<see cref="SunoAudioHosts"/>), Suno's status for the clip is <c>complete</c>, and Suno still lists
+/// (<see cref="SunoAudioHosts"/>, as configured), Suno's status for the clip is <c>complete</c>, and Suno still lists
 /// it; otherwise no address and why not (<see cref="Unstreamable"/>). The server only answers the
 /// address; the browser plays it.
 /// </summary>
@@ -63,10 +63,13 @@ public sealed record SunoStream(string? AudioUrl, PlaybackReason? Unstreamable)
     /// The stream of a Generation with the Suno ID <paramref name="sunoId"/>, Suno's status
     /// <paramref name="providerStatus"/>, the remote state <paramref name="remoteState"/>, and the stored
     /// address <paramref name="audioUrl"/>: none without Suno data; not present unless Suno lists it;
-    /// not complete unless Suno finished it; none for an address that is missing or on an unlisted host.
+    /// not complete unless Suno finished it; none for an address that is missing or on a host
+    /// <paramref name="hosts"/> does not list.
     /// </summary>
-    public static SunoStream Of(string? sunoId, string? providerStatus, GenerationRemoteState remoteState, string? audioUrl)
+    public static SunoStream Of(SunoAudioHosts hosts, string? sunoId, string? providerStatus, GenerationRemoteState remoteState, string? audioUrl)
     {
+        ArgumentNullException.ThrowIfNull(hosts);
+
         if (sunoId is null)
         {
             return None;
@@ -82,15 +85,15 @@ public sealed record SunoStream(string? AudioUrl, PlaybackReason? Unstreamable)
             return new(null, PlaybackReason.SunoNotComplete);
         }
 
-        return SunoAudioHosts.Playable(audioUrl) is { } address ? new(address, null) : None;
+        return hosts.Playable(audioUrl) is { } address ? new(address, null) : None;
     }
 
-    /// <summary>The stream of <paramref name="generation"/>.</summary>
-    public static SunoStream Of(Generation generation)
+    /// <summary>The stream of <paramref name="generation"/>, from the hosts <paramref name="hosts"/> lists.</summary>
+    public static SunoStream Of(SunoAudioHosts hosts, Generation generation)
     {
         ArgumentNullException.ThrowIfNull(generation);
 
-        return Of(generation.SunoId, generation.ProviderStatus, generation.RemoteState, generation.Clip?.AudioUrl);
+        return Of(hosts, generation.SunoId, generation.ProviderStatus, generation.RemoteState, generation.Clip?.AudioUrl);
     }
 }
 

@@ -3,10 +3,11 @@ using n8Tracks.Application.Catalog;
 using n8Tracks.Domain.Assets;
 using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
+using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Infrastructure.Persistence;
 
-internal sealed class PlaylistStore(N8TracksDbContext context) : IPlaylistStore
+internal sealed class PlaylistStore(N8TracksDbContext context, SunoAudioHosts hosts) : IPlaylistStore
 {
     public async Task<PlaylistPage> ListAsync(int page, int pageSize, CancellationToken cancellationToken)
     {
@@ -60,6 +61,7 @@ internal sealed class PlaylistStore(N8TracksDbContext context) : IPlaylistStore
         var credits = await SongCreditStore.ForSongsAsync(context, [.. rows.Select(static row => row.Id)], cancellationToken).ConfigureAwait(false);
         var playback = await SongPlaybackRows.StatesAsync(
                 context,
+                hosts,
                 rows.DistinctBy(static row => row.Id).ToDictionary(static row => row.Id, static row => row.SelectedGenerationId),
                 cancellationToken)
             .ConfigureAwait(false);
