@@ -78,6 +78,11 @@ public sealed class SongAudioFilesTests
         AssertTally(generations["n8-1-v2-g2"], 0, 0, 0);
         AssertTally((await GenerationsAsync(client, "n8-2"))["n8-2-v1-g1"], 1, 0, 0, "wav");
 
+        // Whether each has a file to play (#218): every one with an available file; not the one with none.
+        AssertPlayable(generations["n8-1-v1-g1"], true);
+        AssertPlayable(generations["n8-1-v1-g2"], true);
+        AssertPlayable(generations["n8-1-v2-g2"], false);
+
         // One Generation, read alone, says the same.
         AssertTally(await SetupApi.JsonAsync(await client.GetAsync(new Uri("/api/v1/generations/n8-1-v1-g1", UriKind.Relative))), 2, 0, 0, "wav", "mp3");
 
@@ -119,6 +124,13 @@ public sealed class SongAudioFilesTests
         Assert.Equal(5, items.Count);
         Assert.Equal("missing", MediaApi.ByPath(items, $"take (suno-{A}).mp3").GetProperty("status").GetString());
         AssertTally((await GenerationsAsync(client, "n8-1"))["n8-1-v1-g1"], 2, 1, 0, "wav", "mp3");
+        AssertPlayable((await GenerationsAsync(client, "n8-1"))["n8-1-v1-g1"], true);
+
+        // A Generation whose only file is Missing has nothing to play (#218).
+        File.Move(MediaApi.FullPath(factory, $"second (suno-{B}).m4a"), MediaApi.FullPath(factory, "renamed.m4a"));
+        MediaApi.Result(await MediaApi.ScanAsync(client));
+        AssertTally((await GenerationsAsync(client, "n8-1"))["n8-1-v1-g2"], 1, 1, 0, "m4a");
+        AssertPlayable((await GenerationsAsync(client, "n8-1"))["n8-1-v1-g2"], false);
         Assert.Equal(5, (await SetupApi.JsonAsync(await client.GetAsync(SongApi.Song("n8-1")))).GetProperty("audioFileCount").GetInt32());
 
         // While the media folder is unavailable, every file says so, and every count with it.
@@ -131,6 +143,7 @@ public sealed class SongAudioFilesTests
         Assert.All(items, static item => Assert.Equal("unavailable", item.GetProperty("status").GetString()));
         Assert.Equal("missing", MediaApi.ByPath(items, $"take (suno-{A}).mp3").GetProperty("storedStatus").GetString());
         AssertTally((await GenerationsAsync(client, "n8-1"))["n8-1-v1-g1"], 2, 0, 2, "wav", "mp3");
+        Assert.All((await GenerationsAsync(client, "n8-1")).Values, static generation => AssertPlayable(generation, false));
         Assert.Equal(5, (await SetupApi.JsonAsync(await client.GetAsync(SongApi.Song("n8-1")))).GetProperty("audioFileCount").GetInt32());
     }
 
@@ -233,6 +246,21 @@ public sealed class SongAudioFilesTests
         Assert.Equal(missing, tally.GetProperty("missing").GetInt32());
         Assert.Equal(unavailable, tally.GetProperty("unavailable").GetInt32());
         Assert.Equal(formats, tally.GetProperty("formats").EnumerateArray().Select(static format => format.GetString()));
+    }
+
+    /// <summary>The Generation's <c>playback</c>: playable with no reason, or not with <c>nothing_available</c>.</summary>
+    private static void AssertPlayable(JsonElement generation, bool playable)
+    {
+        var playback = generation.GetProperty("playback");
+        Assert.Equal(playable, playback.GetProperty("playable").GetBoolean());
+        if (playable)
+        {
+            Assert.Equal(JsonValueKind.Null, playback.GetProperty("reason").ValueKind);
+        }
+        else
+        {
+            Assert.Equal("nothing_available", playback.GetProperty("reason").GetString());
+        }
     }
 
     private static async Task<HttpResponseMessage> SendAsync(HttpClient client, HttpMethod method, string path, int revision, string json)

@@ -805,6 +805,7 @@ export function SongVersions({
         generationLink={generationLink}
         onRate={rate}
         actions={generationActions}
+        songTitle={song.title}
       />
       <AudioFilesSection
         files={audioFiles.state}
@@ -833,6 +834,7 @@ export function SongVersions({
         problem={ratingProblem}
         movedFrom={movedFromOf(location.state)}
         audioFiles={panelAudioFiles}
+        songTitle={song.title}
       />
       {choices.dialog}
       <DeleteGenerationDialog

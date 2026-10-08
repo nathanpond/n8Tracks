@@ -17,6 +17,7 @@ import type { Generation } from '../api/generations';
 import type { LoadState } from '../api/songs';
 import type { Version } from '../api/versions';
 import { Notice } from '../components/Notice';
+import { PlayButton } from '../player/PlayButton';
 import {
   fileDurationText,
   formatLabel,
@@ -249,7 +250,8 @@ function Owner({
  * and marked, never hidden), the Generation it belongs to (its shortcode opens the Generation panel;
  * one archived, or of an archived Version, is marked) or "Song-level", how it was associated, what
  * it is for playback (#212: preferred, plays now, and why the two differ), and its Make preferred (or
- * Clear preferred), Change association, and Remove association actions. A Song with none says so and
+ * Clear preferred), Change association, and Remove association actions, and (#218) its Play control,
+ * which plays that file (disabled while it is Missing or Unavailable). A Song with none says so and
  * links to Unmatched Files. `announcement` and `problem` say what the last action did.
  */
 export function AudioFilesSection({
@@ -318,6 +320,9 @@ export function AudioFilesSection({
             <Table withTableBorder verticalSpacing="xs" aria-labelledby="audio-files-heading">
               <Table.Thead>
                 <Table.Tr>
+                  <Table.Th scope="col">
+                    <VisuallyHidden>Play</VisuallyHidden>
+                  </Table.Th>
                   <Table.Th scope="col">File</Table.Th>
                   <Table.Th scope="col">Folder</Table.Th>
                   <Table.Th scope="col">Format</Table.Th>
@@ -342,6 +347,9 @@ export function AudioFilesSection({
                     data-preferred={String(file.isPreferred)}
                     data-plays-now={String(playsNow(file))}
                   >
+                    <Table.Td>
+                      <PlayButton target={{ kind: 'file', file }} />
+                    </Table.Td>
                     <Table.Th scope="row" fw="normal" style={{ wordBreak: 'break-word' }}>
                       <Text size="sm" fw={600} span>
                         {file.fileName}
