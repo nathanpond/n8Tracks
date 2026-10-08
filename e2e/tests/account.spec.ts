@@ -114,6 +114,7 @@ test.describe(
         'Suno workspaces',
         'Backups',
         'System',
+        'Diagnostics',
       ]);
       await expect(sidebar(page).getByRole('link', { name: 'Account' })).toHaveAttribute(
         'aria-current',

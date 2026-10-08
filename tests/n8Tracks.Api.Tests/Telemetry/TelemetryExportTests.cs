@@ -46,8 +46,10 @@ public sealed class TelemetryExportTests
         Assert.DoesNotContain(services.GetServices<ILoggerProvider>(), provider => TelemetryRegistrations.IsTelemetryType(provider.GetType()));
         Assert.DoesNotContain(services.GetServices<IHostedService>(), hosted => TelemetryRegistrations.IsTelemetryType(hosted.GetType()));
 
-        // The application log has its standard-output sink and no export sink.
-        Assert.IsType<JsonLinesSink>(Assert.Single(services.GetServices<ILogEventSink>()));
+        // The application log has its standard-output and file sinks (#234) and no export sink.
+        Assert.Equal(
+            [typeof(JsonLinesSink), typeof(n8Tracks.Infrastructure.Logging.FileLogging)],
+            services.GetServices<ILogEventSink>().Select(static sink => sink.GetType()));
     }
 
     [Fact]
@@ -69,7 +71,7 @@ public sealed class TelemetryExportTests
         Assert.NotNull(services.GetService<TracerProvider>());
         Assert.NotNull(services.GetService<MeterProvider>());
         Assert.Contains(services.GetServices<IHostedService>(), hosted => TelemetryRegistrations.IsTelemetryType(hosted.GetType()));
-        Assert.Equal(2, services.GetServices<ILogEventSink>().Count());
+        Assert.Equal(3, services.GetServices<ILogEventSink>().Count());
 
         // Logs leave through the Serilog sink only: no OpenTelemetry logging provider beside it.
         Assert.DoesNotContain(services.GetServices<ILoggerProvider>(), provider => TelemetryRegistrations.IsTelemetryType(provider.GetType()));
@@ -84,7 +86,7 @@ public sealed class TelemetryExportTests
 
         Assert.Null(factory.Services.GetService<TracerProvider>());
         Assert.Null(factory.Services.GetService<MeterProvider>());
-        Assert.Single(factory.Services.GetServices<ILogEventSink>());
+        Assert.Equal(2, factory.Services.GetServices<ILogEventSink>().Count());
     }
 
     [Fact]

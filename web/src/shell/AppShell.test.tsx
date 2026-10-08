@@ -52,6 +52,7 @@ describe('the signed-in shell', () => {
       'Suno workspaces',
       'Backups',
       'System',
+      'Diagnostics',
     ]);
     expect(within(sidebar()).getByRole('group', { name: 'Settings' })).toBeInTheDocument();
     expect(

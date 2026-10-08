@@ -12,9 +12,20 @@ internal static class GatewayOptionsLoader
     public const string Port = "N8TRACKS_GATEWAY_PORT";
     public const string ApiUrl = "N8TRACKS_API_URL";
     public const string LogLevelVariable = "N8TRACKS_LOG_LEVEL";
+    public const string LogPath = "N8TRACKS_GATEWAY_LOG_PATH";
+    public const string LogRetentionDays = "N8TRACKS_GATEWAY_LOG_RETENTION_DAYS";
+    public const string LogMaxMegabytes = "N8TRACKS_GATEWAY_LOG_MAX_MB";
 
     public const int DefaultPort = 8788;
     public const LogLevel DefaultLogLevel = LogLevel.Information;
+
+    /// <summary>The application's defaults and bounds for its log files (#234).</summary>
+    public const int DefaultLogRetentionDays = 14;
+    public const int MinimumLogRetentionDays = 1;
+    public const int MaximumLogRetentionDays = 90;
+    public const int DefaultLogMaxMegabytes = 200;
+    public const int MinimumLogMaxMegabytes = 10;
+    public const int MaximumLogMaxMegabytes = 5120;
 
     private const int MaxEchoedLength = 200;
 
@@ -41,13 +52,80 @@ internal static class GatewayOptionsLoader
         var port = ReadPort(variables, errors);
         var apiUrl = ReadApiUrl(variables, errors);
         var logLevel = ReadLogLevel(variables, errors);
+        var logFiles = ReadLogFiles(variables, errors);
 
         if (errors.Count > 0)
         {
             throw new ConfigurationValidationException(errors);
         }
 
-        return new GatewayOptions(port, apiUrl!, logLevel);
+        return new GatewayOptions(port, apiUrl!, logLevel) { LogFiles = logFiles };
+    }
+
+    /// <summary>
+    /// Where and how the log is also written to files, or null when it is not (no path, or a value
+    /// that is invalid). Logging is set up before the settings are validated, so this must not throw;
+    /// <see cref="Load"/> reports an invalid value, and the gateway does not start.
+    /// </summary>
+    public static GatewayLogFiles? LogFilesOrDefault(EnvironmentSnapshot environment)
+    {
+        ArgumentNullException.ThrowIfNull(environment);
+
+        var errors = new List<ConfigurationError>();
+        var files = ReadLogFiles(environment.Variables, errors);
+        return errors.Count > 0 ? null : files;
+    }
+
+    /// <summary>
+    /// The three log file variables: the path (an absolute folder; unset means no files) and, read
+    /// whether or not a path is set so a wrong value is never silently ignored, the days kept and the
+    /// size cap in MB, with the application's defaults and bounds.
+    /// </summary>
+    private static GatewayLogFiles? ReadLogFiles(IReadOnlyDictionary<string, string> variables, List<ConfigurationError> errors)
+    {
+        var days = ReadWholeNumber(variables, LogRetentionDays, DefaultLogRetentionDays, MinimumLogRetentionDays, MaximumLogRetentionDays, "days", errors);
+        var megabytes = ReadWholeNumber(variables, LogMaxMegabytes, DefaultLogMaxMegabytes, MinimumLogMaxMegabytes, MaximumLogMaxMegabytes, "megabytes", errors);
+
+        var path = Value(variables, LogPath);
+        if (path is null)
+        {
+            return null;
+        }
+
+        if (!Path.IsPathFullyQualified(path))
+        {
+            errors.Add(new ConfigurationError(LogPath, $"must be an absolute path to a folder, such as /data/logs, but was '{Echo(path)}'."));
+            return null;
+        }
+
+        return new GatewayLogFiles(path, days, megabytes);
+    }
+
+    private static int ReadWholeNumber(
+        IReadOnlyDictionary<string, string> variables,
+        string name,
+        int defaultValue,
+        int minimum,
+        int maximum,
+        string unit,
+        List<ConfigurationError> errors)
+    {
+        var value = Value(variables, name);
+        if (value is null)
+        {
+            return defaultValue;
+        }
+
+        // Canonical decimal only, as for the port.
+        if (value.Length <= 9 && value[0] != '0' && value.All(char.IsAsciiDigit)
+            && int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var number)
+            && number >= minimum && number <= maximum)
+        {
+            return number;
+        }
+
+        errors.Add(new ConfigurationError(name, $"must be a whole number of {unit} from {minimum} to {maximum}, but was '{Echo(value)}'."));
+        return defaultValue;
     }
 
     /// <summary>

@@ -1,5 +1,6 @@
 using n8Tracks.Api.Logging;
 using n8Tracks.Application.Configuration;
+using n8Tracks.Application.Logging;
 using n8Tracks.Infrastructure.Logging;
 using n8Tracks.ServiceDefaults;
 using OpenTelemetry;
@@ -53,15 +54,52 @@ internal static class LoggingRegistration
 
         services.AddSingleton(sink);
 
+        // The level starts at N8TRACKS_LOG_LEVEL's and follows the saved setting once it is read (#234).
+        services.AddSingleton(static provider => new LogLevelSwitches(ConfiguredLevel(provider)));
+        services.AddSingleton<ILogLevelControl>(static provider => provider.GetRequiredService<LogLevelSwitches>());
+
         // The static Log.Logger is left alone: several hosts can run in one process under test.
         return services.AddSerilog(
             static (provider, configuration) => configuration
-                .WithN8TracksLevels(ToSerilogLevel(ConfiguredLevel(provider)))
+                .WithN8TracksLevels(provider.GetRequiredService<LogLevelSwitches>())
                 .ReadFrom.Services(provider)
                 .Enrich.FromLogContext()
                 .Enrich.With<HostScopeTrimEnricher>()
                 .WithRedaction(),
             preserveStaticLogger: true);
+    }
+
+    /// <summary>
+    /// Adds the log files (#234): one more sink of the application logger, registered as the
+    /// standard-output sink is, so it sits behind the same redaction and writes the same lines. It
+    /// writes nothing until <see cref="FileLogging.Start"/>, which the server calls once it holds the
+    /// data folder's lock. Only the server adds it: a command run in the container, the health check,
+    /// and the startup logger write to the console only. With invalid settings there are no files.
+    /// </summary>
+    public static IServiceCollection AddN8TracksFileLogging(this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        services.AddSingleton(static provider => CreateFileLogging(provider));
+        services.AddSingleton<ILogEventSink>(static provider => provider.GetRequiredService<FileLogging>());
+        return services.AddSingleton<ILogFiles>(static provider => provider.GetRequiredService<FileLogging>());
+    }
+
+    private static FileLogging CreateFileLogging(IServiceProvider provider)
+    {
+        var time = provider.GetRequiredService<TimeProvider>();
+        try
+        {
+            var options = provider.GetRequiredService<N8TracksOptions>();
+
+            // The media folder is handed over only to be compared with (#387, invariant 2): no file is written inside it.
+            return new FileLogging(options.DataPath, options.MediaPath, time);
+        }
+        catch (ConfigurationValidationException)
+        {
+            // Program reports the invalid settings and exits before anything would be written.
+            return FileLogging.Off(time);
+        }
     }
 
     /// <summary>
@@ -112,16 +150,6 @@ internal static class LoggingRegistration
                 },
                 name => name == ServiceNameVariable ? null : environment.GetValueOrDefault(name))
             .CreateLogger();
-
-    internal static LogEventLevel ToSerilogLevel(N8TracksLogLevel level) => level switch
-    {
-        N8TracksLogLevel.Trace => LogEventLevel.Verbose,
-        N8TracksLogLevel.Debug => LogEventLevel.Debug,
-        N8TracksLogLevel.Information => LogEventLevel.Information,
-        N8TracksLogLevel.Warning => LogEventLevel.Warning,
-        N8TracksLogLevel.Error => LogEventLevel.Error,
-        _ => LogEventLevel.Fatal,
-    };
 
     private static N8TracksLogLevel ConfiguredLevel(IServiceProvider provider)
     {

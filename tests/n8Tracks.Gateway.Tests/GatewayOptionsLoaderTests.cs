@@ -146,6 +146,68 @@ public class GatewayOptionsLoaderTests
         Assert.Equal(8788, options.Port);
     }
 
+    [Fact]
+    public void WithoutALogPathThereAreNoLogFilesAndTheOtherTwoVariablesStillCount()
+    {
+        Assert.Null(Load((GatewayOptionsLoader.ApiUrl, "http://n8tracks")).LogFiles);
+
+        var error = Assert.Single(Errors((GatewayOptionsLoader.ApiUrl, "http://n8tracks"), (GatewayOptionsLoader.LogRetentionDays, "0")));
+        Assert.Equal("N8TRACKS_GATEWAY_LOG_RETENTION_DAYS", error.Variable);
+    }
+
+    [Fact]
+    public void ALogPathTakesTheApplicationsDefaults()
+    {
+        var files = Load((GatewayOptionsLoader.ApiUrl, "http://n8tracks"), (GatewayOptionsLoader.LogPath, "/data/logs")).LogFiles;
+
+        Assert.Equal(new GatewayLogFiles("/data/logs", 14, 200), files);
+    }
+
+    [Theory]
+    [InlineData("N8TRACKS_GATEWAY_LOG_RETENTION_DAYS", "1", true)]
+    [InlineData("N8TRACKS_GATEWAY_LOG_RETENTION_DAYS", "90", true)]
+    [InlineData("N8TRACKS_GATEWAY_LOG_RETENTION_DAYS", "0", false)]
+    [InlineData("N8TRACKS_GATEWAY_LOG_RETENTION_DAYS", "91", false)]
+    [InlineData("N8TRACKS_GATEWAY_LOG_RETENTION_DAYS", "07", false)]
+    [InlineData("N8TRACKS_GATEWAY_LOG_RETENTION_DAYS", "seven", false)]
+    [InlineData("N8TRACKS_GATEWAY_LOG_MAX_MB", "10", true)]
+    [InlineData("N8TRACKS_GATEWAY_LOG_MAX_MB", "5120", true)]
+    [InlineData("N8TRACKS_GATEWAY_LOG_MAX_MB", "9", false)]
+    [InlineData("N8TRACKS_GATEWAY_LOG_MAX_MB", "5121", false)]
+    [InlineData("N8TRACKS_GATEWAY_LOG_MAX_MB", "1.5", false)]
+    [InlineData("N8TRACKS_GATEWAY_LOG_MAX_MB", "-10", false)]
+    public void EachLogFileBoundIsAcceptedAndOneBeyondItRefusesToStart(string variable, string value, bool accepted)
+    {
+        (string, string)[] variables = [(GatewayOptionsLoader.ApiUrl, "http://n8tracks"), (GatewayOptionsLoader.LogPath, "/data/logs"), (variable, value)];
+
+        if (accepted)
+        {
+            var files = Load(variables).LogFiles!;
+            Assert.Equal(int.Parse(value, System.Globalization.CultureInfo.InvariantCulture), variable == GatewayOptionsLoader.LogMaxMegabytes ? files.MaxMegabytes : files.RetentionDays);
+            Assert.NotNull(GatewayOptionsLoader.LogFilesOrDefault(Snapshot(variables)));
+        }
+        else
+        {
+            var error = Assert.Single(Errors(variables));
+            Assert.Equal(variable, error.Variable);
+            Assert.Contains("whole number", error.Reason, StringComparison.Ordinal);
+
+            // Logging is set up before the settings are checked: it writes no files, and does not throw.
+            Assert.Null(GatewayOptionsLoader.LogFilesOrDefault(Snapshot(variables)));
+        }
+    }
+
+    [Theory]
+    [InlineData("logs")]
+    [InlineData("./logs")]
+    public void ARelativeLogPathIsRefused(string value)
+    {
+        var error = Assert.Single(Errors((GatewayOptionsLoader.ApiUrl, "http://n8tracks"), (GatewayOptionsLoader.LogPath, value)));
+
+        Assert.Equal("N8TRACKS_GATEWAY_LOG_PATH", error.Variable);
+        Assert.Contains("absolute", error.Reason, StringComparison.Ordinal);
+    }
+
     private static GatewayOptions Load(params (string Name, string Value)[] variables) =>
         GatewayOptionsLoader.Load(Snapshot(variables));
 

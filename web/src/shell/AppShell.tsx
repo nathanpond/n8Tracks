@@ -133,6 +133,7 @@ function ShellLayout() {
             />
             <SidebarLink to="/settings/backups" label="Backups" onNavigate={close} />
             <SidebarLink to="/settings/system" label="System" onNavigate={close} />
+            <SidebarLink to="/settings/diagnostics" label="Diagnostics" onNavigate={close} />
           </div>
         </Stack>
       </AppShell.Navbar>

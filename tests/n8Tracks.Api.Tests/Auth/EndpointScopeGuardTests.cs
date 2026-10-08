@@ -252,7 +252,7 @@ public sealed class EndpointScopeGuardTests
             }
         }
 
-        Assert.Equal(66, sessionOnly);
+        Assert.Equal(68, sessionOnly);
 
         // An anonymous endpoint answers as it would without the header, even to a token that is not one.
         using var status = await CredentialApi.SendRawAsync(client, HttpMethod.Get, SetupApi.Status, "Bearer not-a-token");

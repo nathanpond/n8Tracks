@@ -51,8 +51,10 @@ public sealed class TelemetrySwitchTests
         Assert.DoesNotContain(services.GetServices<ILoggerProvider>(), provider => TelemetryRegistrations.IsTelemetryType(provider.GetType()));
         Assert.DoesNotContain(services.GetServices<IHostedService>(), hosted => TelemetryRegistrations.IsTelemetryType(hosted.GetType()));
 
-        // The application log has its standard-output sink and no export sink.
-        Assert.IsType<JsonLinesSink>(Assert.Single(services.GetServices<ILogEventSink>()));
+        // The application log has its standard-output and file sinks (#234) and no export sink.
+        Assert.Equal(
+            [typeof(JsonLinesSink), typeof(n8Tracks.Infrastructure.Logging.FileLogging)],
+            services.GetServices<ILogEventSink>().Select(static sink => sink.GetType()));
 
         using var client = factory.CreateClient();
         using var response = await client.GetAsync(new Uri("/health", UriKind.Relative));

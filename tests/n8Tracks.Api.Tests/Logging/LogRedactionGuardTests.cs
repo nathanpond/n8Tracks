@@ -144,6 +144,42 @@ public sealed class LogRedactionGuardTests
     }
 
     /// <summary>
+    /// The same request at Debug, read back from the log files (#234): they hold none of the
+    /// sensitive sentinels, while the title and the request's lines do, and the file's completion
+    /// line is standard output's, so a file line and a console line are the same redacted event.
+    /// The complement shows what the test would catch: the file writer does not redact on its own,
+    /// so an event that reached it without passing the pipeline's redaction would put a sentinel in
+    /// the file.
+    /// </summary>
+    [Fact]
+    public async Task SensitiveSentinelsNeverReachTheLogFilesWhileTheTitleDoes()
+    {
+        using var factory = new LoggingApiFactory("Debug").WithProbe(ProbePath, LogEverythingAboutTheRequest);
+
+        var requestId = await SendTheSentinels(factory);
+        var console = await factory.CompletionLine(requestId);
+        var file = await LoggingApi.WaitForFileLineAsync(
+            factory,
+            line => LoggingApiFactory.Property(line, "requestId") == requestId && LoggingApiFactory.IsCompletion(line));
+        var files = LoggingApi.FilesText(factory);
+
+        Assert.Contains(TitleSentinel, files, StringComparison.Ordinal);
+        Assert.Contains("[REDACTED]", files, StringComparison.Ordinal);
+        Assert.Equal(console.GetRawText(), file.GetRawText());
+        Assert.All(SensitiveSentinels, sentinel => Assert.DoesNotContain(sentinel, files, StringComparison.Ordinal));
+
+        // The bite: straight into the file writer, unredacted, a sentinel is written.
+        var writer = factory.Services.GetRequiredService<n8Tracks.Infrastructure.Logging.FileLogging>();
+        writer.Emit(new Serilog.Events.LogEvent(
+            DateTimeOffset.UtcNow,
+            Serilog.Events.LogEventLevel.Information,
+            exception: null,
+            new Serilog.Parsing.MessageTemplateParser().Parse("{Lyrics}"),
+            [new Serilog.Events.LogEventProperty("Lyrics", new Serilog.Events.ScalarValue(LyricsSentinel))]));
+        Assert.Contains(LyricsSentinel, LoggingApi.FilesText(factory), StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// The setup submission carries the administrator's password twice. At Debug, whether it is
     /// refused (the two differ) or accepted, neither the password, the confirmation, nor the stored
     /// hash reaches the log, while the username does not need hiding and the request is logged.

@@ -146,6 +146,12 @@ public sealed partial class Program
                 return 1;
             }
 
+            // An unwritable log folder leaves the gateway logging to standard output only (#234).
+            if (app.Services.GetRequiredService<GatewayFileLoggerProvider>().Problem is { } logFilesProblem)
+            {
+                LogLogFilesOff(app.Logger, GatewayOptionsLoader.LogPath, logFilesProblem);
+            }
+
             app.MapGatewayHealth();
 
             // A test host swaps Kestrel for an in-memory server that binds no port.
@@ -195,6 +201,9 @@ public sealed partial class Program
 
     [LoggerMessage(EventId = 3, Level = LogLevel.Critical, Message = "The n8Tracks gateway stopped because of an unexpected error.")]
     private static partial void LogUnexpectedError(ILogger logger, Exception exception);
+
+    [LoggerMessage(EventId = 5, Level = LogLevel.Warning, Message = "Log files are off: {Variable} {Reason} The gateway logs to standard output only, and tries the folder again hourly.")]
+    private static partial void LogLogFilesOff(ILogger logger, string variable, string reason);
 
     [LoggerMessage(EventId = 4, Level = LogLevel.Information, Message = "The n8Tracks gateway {Version} is listening on port {Port}.")]
     private static partial void LogListening(ILogger logger, int port, string version);

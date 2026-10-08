@@ -14,6 +14,7 @@ import { AccountPage } from './settings/AccountPage';
 import { BackupsPage } from './settings/BackupsPage';
 import { CatalogPage } from './settings/CatalogPage';
 import { CredentialsPage } from './settings/CredentialsPage';
+import { DiagnosticsSettingsPage } from './settings/DiagnosticsSettingsPage';
 import { GenresPage } from './settings/GenresPage';
 import { LibrarySettingsPage } from './settings/LibrarySettingsPage';
 import { SunoPage } from './settings/SunoPage';
@@ -81,6 +82,7 @@ export function App() {
                 <Route path="settings/suno-workspaces/:id" element={<SunoWorkspacePage />} />
                 <Route path="settings/backups" element={<BackupsPage />} />
                 <Route path="settings/system" element={<SystemPage />} />
+                <Route path="settings/diagnostics" element={<DiagnosticsSettingsPage />} />
                 <Route path="*" element={<NotFoundPage />} />
               </Route>
             </Routes>
