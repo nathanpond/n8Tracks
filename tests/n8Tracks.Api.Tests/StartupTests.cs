@@ -53,6 +53,24 @@ public sealed class StartupTests : IDisposable
         Assert.Contains(variable, line.GetProperty("message").GetString(), StringComparison.Ordinal);
     }
 
+    /// <summary>A data folder inside the media folder stops the start with one line naming the variable, and nothing is written there (#387).</summary>
+    [Fact]
+    public async Task ADataFolderInsideTheMediaFolderStopsTheStartAndNothingIsWrittenThere()
+    {
+        var media = Directory.CreateDirectory(Path.Combine(directory.Path, "music")).FullName;
+        var data = Directory.CreateDirectory(Path.Combine(media, "n8tracks")).FullName;
+
+        var (exitCode, lines) = await RunToExit(("N8TRACKS_DATA_PATH", data), ("N8TRACKS_MEDIA_PATH", media));
+
+        Assert.Equal(1, exitCode);
+        var line = Assert.Single(lines);
+        Assert.Equal("Error", line.GetProperty("level").GetString());
+        Assert.Equal("N8TRACKS_DATA_PATH", line.GetProperty("properties").GetProperty("variable").GetString());
+        Assert.Contains("inside the media folder", line.GetProperty("properties").GetProperty("reason").GetString(), StringComparison.Ordinal);
+        Assert.Equal([data], Directory.EnumerateFileSystemEntries(media));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(data));
+    }
+
     [Fact]
     public async Task TheBaseUrlValueIsNeverWritten()
     {

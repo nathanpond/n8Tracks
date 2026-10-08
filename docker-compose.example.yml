@@ -43,12 +43,15 @@ services:
       # Hosts the browser may stream Suno audio from, comma-separated bare host names. Change it
       # only if Suno moves its audio to another host.
       N8TRACKS_SUNO_AUDIO_HOSTS: d2lwuy8qc234o3.cloudfront.net
+    # Three separate host folders. Never mount the media folder, or a folder inside it (or one that
+    # holds it), at /data or /backup: n8Tracks writes there and gives those folders to PUID:PGID, and
+    # the container refuses to start when they overlap.
     volumes:
       # The app's own data, database included. Keep this folder: it is what you back up.
       - ./data:/data
       # Your media files, read-only: n8Tracks never writes here.
       - ./media:/media:ro
-      # A folder for backups, on another disk if you can. Optional.
+      # A folder for backups, on another disk if you can, never inside the media folder. Optional.
       # - ./backup:/backup
 
   # The MCP gateway is a separate service with its own image, built from this repository too. To run

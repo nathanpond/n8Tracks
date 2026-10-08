@@ -54,7 +54,10 @@ public partial class MediaMountAccessTests
         "src/n8Tracks.Api/Configuration/EnvironmentOptionsLoader.cs: public const string DefaultMediaPath = \"/media\";",
         "src/n8Tracks.Api/Configuration/EnvironmentOptionsLoader.cs: Port, BaseUrl, TimeZone, LogLevel, DataPath, MediaPath, BackupPath, SunoAudioHosts, EnableTestSeeding,",
         "src/n8Tracks.Api/Configuration/EnvironmentOptionsLoader.cs: var mediaPath = ResolvePath(Value(variables, MediaPath) ?? DefaultMediaPath, environment.WorkingDirectory);",
+        "src/n8Tracks.Api/Configuration/EnvironmentOptionsLoader.cs: var dataPath = ReadDataPath(variables, environment.WorkingDirectory, mediaPath, errors);",
+        "src/n8Tracks.Api/Configuration/EnvironmentOptionsLoader.cs: var backupPath = ReadBackupPath(variables, environment.WorkingDirectory, mediaPath, errors);",
         "src/n8Tracks.Api/Configuration/EnvironmentOptionsLoader.cs: return new N8TracksOptions(port, baseUrl!, pathBase, timeZone!, logLevel, dataPath, mediaPath, backupPath)",
+        "src/n8Tracks.Api/Configuration/EnvironmentOptionsLoader.cs: var dataPath = ReadDataPath(environment.Variables, environment.WorkingDirectory, ResolvePath(DefaultMediaPath, environment.WorkingDirectory), errors);",
         "src/n8Tracks.Api/Configuration/EnvironmentOptionsLoader.cs: ResolvePath(DefaultMediaPath, environment.WorkingDirectory),",
         "src/n8Tracks.Api/Configuration/EnvironmentOptionsLoader.cs: MediaPath = ResolvePath(Value(variables, MediaPath) ?? DefaultMediaPath, environment.WorkingDirectory),",
         "src/n8Tracks.Api/Endpoints/MediaEndpoints.cs: return TypedResults.Ok(MediaStatusResponse.From(status, options.MediaPath));",
@@ -65,7 +68,11 @@ public partial class MediaMountAccessTests
         "src/n8Tracks.Infrastructure/Media/MediaMountReader.cs: private string Root() => Path.TrimEndingDirectorySeparator(options.MediaPath);",
     ];
 
-    /// <summary>The files that may use a file-system API: none of them names the media mount setting but the lines above.</summary>
+    /// <summary>
+    /// The files that may use a file-system API: none of them names the media mount setting but the
+    /// lines above. <c>MediaFolderOverlap</c> (#387) compares the configured folders' real paths and
+    /// reads the mount table; it opens nothing under any of them.
+    /// </summary>
     private static readonly string[] AllowedFileSystemFiles =
     [
         "src/n8Tracks.Api/Cli/RestoreCommand.cs",
@@ -73,6 +80,7 @@ public partial class MediaMountAccessTests
         "src/n8Tracks.Api/Configuration/EnvironmentOptionsLoader.cs",
         "src/n8Tracks.Api/Configuration/ProcessEnvironment.cs",
         "src/n8Tracks.Application/Backups/OfflineRestoreService.cs",
+        "src/n8Tracks.Application/Configuration/MediaFolderOverlap.cs",
         "src/n8Tracks.Infrastructure/Assets/ManagedAssetStore.cs",
         "src/n8Tracks.Infrastructure/Backups/BackupFolders.cs",
         "src/n8Tracks.Infrastructure/Backups/BackupWriter.cs",

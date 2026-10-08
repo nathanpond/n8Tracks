@@ -877,6 +877,62 @@ read_only_data() {
 
 section "Complement: /data mounted read-only" read_only_data
 
+# host_listing FOLDER: every entry under FOLDER on the host, with its size, modification time, owner,
+# and mode, one per line, sorted: what must not change when the container refuses to start.
+host_listing() {
+    python3 -c '
+import os, sys
+
+root = sys.argv[1]
+for folder, directories, files in os.walk(root):
+    for name in sorted(directories + files):
+        path = os.path.join(folder, name)
+        info = os.lstat(path)
+        print(os.path.relpath(path, root), info.st_size, info.st_mtime_ns, f"{info.st_uid}:{info.st_gid}", oct(info.st_mode))
+' "$1" | sort
+}
+
+# Invariant 2 (#387): the media folder, or a folder inside it or holding it, mounted at /data or
+# /backup as well. The container refuses to start before any owner change, with one Error line, and
+# the host media folder gains no file and changes no owner, mode, or time.
+overlapping_mounts() {
+    local name="$PREFIX-overlap" music="$WORK/overlap/music" data="$WORK/overlap/data" before
+
+    mkdir -p "$music/sub" "$data"
+    cp "$media/tone.mp3" "$music/tone.mp3"
+    cp "$media/tone.mp3" "$music/sub/tone.mp3"
+    before="$(host_listing "$WORK/overlap")"
+
+    # refused LABEL FOLDER DOCKER-RUN-ARGUMENTS...: the container with those mounts stops at once.
+    refused() {
+        local label="$1" folder="$2" code
+        shift 2
+        docker run --detach --name "$name" --env PUID="$RUN_UID" --env PGID="$RUN_GID" "$@" "$IMAGE" >/dev/null
+        code="$(wait_for_exit "$name")"
+        refute "$label: the exit code is not 0 (it is $code)" "$name" [ "$code" = "0" ]
+        assert_log_is_json "$name"
+        verify "$label: an Error line names $folder and the media folder" "$name" \
+            log_has "$name" Error "Refusing to start: $folder and the media folder /media overlap"
+        refute "$label: no owner was changed" "$name" grep -q 'Changed the owner' <<<"$(docker logs "$name" 2>&1)"
+        expect "$label: lines written" 1 "$(docker logs "$name" 2>&1 | wc -l | tr -d '[:space:]')" "$name"
+        expect "$label: the host media folder is as it was" "$before" "$(host_listing "$WORK/overlap")" "$name"
+        remove "$name"
+    }
+
+    refused "a folder inside the media folder at /backup" /backup \
+        --volume "$music:/media:ro" --volume "$music/sub:/backup" --volume "$data:/data"
+    refused "a folder inside the media folder at /data" /data \
+        --volume "$music:/media:ro" --volume "$music/sub:/data"
+    refused "the media folder itself at /data" /data \
+        --volume "$music:/media:ro" --volume "$music:/data"
+    refused "the folder holding the media folder at /backup" /backup \
+        --volume "$music:/media:ro" --volume "$WORK/overlap:/backup" --volume "$data:/data"
+    refused "a folder inside the media folder at /backup, with Docker's own user setting" /backup \
+        --user "$RUN_UID:$RUN_GID" --volume "$music:/media:ro" --volume "$music/sub:/backup" --volume "$data:/data"
+}
+
+section "Complement: the media folder overlaps /data or /backup" overlapping_mounts
+
 # ---------------------------------------------------------------------------------------------------
 
 gateway_with_app() {
