@@ -4498,3 +4498,7 @@ Story #219 (on the milestone branch):
 - **Decision:** #385 is a test only: `AudioFileAssociationTests.AChangedFileKeepsItsAssociationItsOriginAndItsPreferenceOnTheNextScan` changes a hand-associated Song-level file and a Suno-ID file twice (bytes and mtime), first with no preferred choice and then with each its owner's preferred file, and asserts song, generation, origin, preference and reason after each rescan.
   **Why:** With a preferred choice in place the database already refuses an association change (the composite keys of #212), so the bite would only fail the scan; the first round, without a choice, is what proves the scan's Changed path keeps the association.
   **Issue:** #385
+
+- **Decision:** #389: a second SQL function, `n8_lower(text)` (`string.ToLowerInvariant`), registered on every connection beside `n8_title_key` and mapped in the EF model as `N8TracksDbContext.Lower`; `DownloadRecordStore.AudioFilesNamedLikeAsync` filters on `n8_lower(file_name) LIKE <lowered stem>%` with the same escape, and lowers the stems itself.
+  **Why:** SQLite's `LIKE` and `lower()` fold ASCII only. Lowering both sides with the same .NET rule the service's exact comparison uses keeps the prefilter a superset of the exact match, and the escaped `_` and `%` stay literal. Rule 1 fix with regression cases (Latin with a diacritic, Cyrillic, Greek) in `DownloadRecordTests`.
+  **Issue:** #389

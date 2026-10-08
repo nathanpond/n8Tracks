@@ -182,9 +182,18 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
         configurationBuilder.Conventions.Add(static _ => new SnakeCaseNamingConvention());
     }
 
+    /// <summary>
+    /// <paramref name="text"/> in lower case, every letter that has one (not only ASCII): the SQL
+    /// function <see cref="ConnectionSettingsInterceptor.LowerFunction"/>, for queries only.
+    /// </summary>
+    public static string? Lower(string? text) => throw new NotSupportedException("Only for queries: SQLite computes it.");
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ArgumentNullException.ThrowIfNull(modelBuilder);
+
+        modelBuilder.HasDbFunction(typeof(N8TracksDbContext).GetMethod(nameof(Lower), [typeof(string)])!)
+            .HasName(ConnectionSettingsInterceptor.LowerFunction);
 
         modelBuilder.Entity<AppMetadataEntry>().HasKey(entry => entry.Key);
 

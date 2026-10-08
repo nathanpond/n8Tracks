@@ -96,15 +96,16 @@ internal sealed class DownloadRecordStore(N8TracksDbContext context) : IDownload
     {
         ArgumentNullException.ThrowIfNull(stems);
 
-        // LIKE compares ASCII letters without regard to case; the caller compares the names exactly.
-        var patterns = stems.Select(static stem => EscapeLike(stem) + "%").ToList();
+        // Both sides in lower case, every letter that has one: LIKE alone folds ASCII letters only
+        // (#389). The caller compares the names exactly.
+        var patterns = stems.Select(static stem => EscapeLike(stem.ToLowerInvariant()) + "%").ToList();
         if (patterns.Count == 0)
         {
             return [];
         }
 
         var rows = await context.AudioFiles.AsNoTracking()
-            .Where(file => patterns.Any(pattern => EF.Functions.Like(file.FileName, pattern, Escape)))
+            .Where(file => patterns.Any(pattern => EF.Functions.Like(N8TracksDbContext.Lower(file.FileName), pattern, Escape)))
             .Select(static file => new { file.Id, file.FileName, file.GenerationId, file.Status })
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
