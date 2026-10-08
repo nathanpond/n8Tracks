@@ -1,3 +1,4 @@
+using n8Tracks.Application.Media;
 using n8Tracks.Domain.Assets;
 using n8Tracks.Domain.Catalog;
 
@@ -37,6 +38,9 @@ public sealed record AlbumDetails(
 /// </param>
 public sealed record AlbumTrack(Guid SongId, string Shortcode, string Title, AlbumNamed? PrimaryArtist, AlbumTrackState State, int Disc, int Track, bool HasSelectedGeneration)
 {
+    /// <summary>What Play on its Song does (#219), by <see cref="PlaybackResolver.StateOfSong"/>; read with it, never stored.</summary>
+    public SongPlayability Playback { get; init; } = SongPlayability.NoGenerations;
+
     /// <summary>Its place on the Album.</summary>
     public AlbumTrackPlace Place => new(SongId, Disc, Track);
 }

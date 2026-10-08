@@ -179,6 +179,57 @@ describe('the page observer, replaying the TS-003 fixtures', () => {
     expect(JSON.stringify(posted)).not.toContain('"T"');
   });
 
+  it("forwards only the download counts of the page's own billing answer, and the page gets it whole (#215)", async () => {
+    const whole = {
+      ...(sunoFixture('billing-info.download-excerpt.response') as Record<string, unknown>),
+      plan: { name: 'Premier' },
+    };
+    const { view, posted } = suno(() => jsonResponse(200, whole));
+
+    const answer = await view.fetch(`${API}/api/billing/info/`);
+    await settled();
+
+    expect(posted.map(({ message }) => message.kind)).toEqual(['billing']);
+    expect(posted[0]?.message.body).toEqual({
+      download_usage: {
+        current_period_downloads_used: 0,
+        current_period_downloads_limit: 60,
+        additional_download_remaining: 0,
+      },
+    });
+    expect(JSON.stringify(posted)).not.toContain('price');
+    expect(JSON.stringify(posted)).not.toContain('Premier');
+    expect(await answer.json()).toEqual(whole);
+  });
+
+  it("forwards a prepared download's status and address only, with the clip and format its address names (#216)", async () => {
+    const whole = {
+      ...(sunoFixture('download-clip.wav.ready.response') as Record<string, unknown>),
+      token: 'T',
+      credits: 3,
+    };
+    const { view, posted } = suno(() => jsonResponse(200, whole));
+
+    const answer = await view.fetch(
+      `${API}/api/download/clip/00000000-0000-4000-8000-000000000139?format=wav`,
+    );
+    await settled();
+
+    expect(posted.map(({ message }) => message.kind)).toEqual(['download-clip']);
+    expect(posted[0]?.message.body).toStrictEqual({
+      status: 'ready',
+      download_url:
+        'https://suno-data-uploads.s3.amazonaws.com/studio/uploads/00000000-0000-4000-8000-000000000139.wav',
+    });
+    expect(posted[0]?.message.download).toEqual({
+      clipId: '00000000-0000-4000-8000-000000000139',
+      format: 'wav',
+    });
+    expect(JSON.stringify(posted)).not.toContain('"T"');
+    expect(JSON.stringify(posted)).not.toContain('credits');
+    expect(await answer.json()).toEqual(whole);
+  });
+
   it('never forwards a token, session token, or tier, in a request or a response, at any depth', async () => {
     const response = sunoFixture('feed-v3.library-page-2.response') as {
       clips: Record<string, unknown>[];

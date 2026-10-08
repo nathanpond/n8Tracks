@@ -40,6 +40,9 @@ services:
       N8TRACKS_DATA_PATH: /data
       N8TRACKS_MEDIA_PATH: /media
       N8TRACKS_BACKUP_PATH: /backup
+      # Hosts the browser may stream Suno audio from, comma-separated bare host names. Change it
+      # only if Suno moves its audio to another host.
+      N8TRACKS_SUNO_AUDIO_HOSTS: d2lwuy8qc234o3.cloudfront.net
     volumes:
       # The app's own data, database included. Keep this folder: it is what you back up.
       - ./data:/data

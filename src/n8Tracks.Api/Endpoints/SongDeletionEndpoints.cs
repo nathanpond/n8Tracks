@@ -221,6 +221,7 @@ internal sealed record SongDeletionImpactResponse(
     int PlaylistCount,
     int RelationshipCount,
     int AudioFileCount,
+    LocalAudioFilesResponse LocalAudioFiles,
     bool TitleRequired,
     int Revision)
 {
@@ -240,6 +241,7 @@ internal sealed record SongDeletionImpactResponse(
             counts.PlaylistMemberships,
             counts.Relationships,
             counts.AudioFiles,
+            LocalAudioFilesResponse.From(impact.LocalAudioFiles),
             impact.TitleRequired,
             impact.Song.Revision);
     }

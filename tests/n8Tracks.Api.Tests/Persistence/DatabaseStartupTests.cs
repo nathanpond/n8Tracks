@@ -75,7 +75,13 @@ public sealed class DatabaseStartupTests : IDisposable
             migration => Assert.Matches("^[0-9]{14}_RememberDeclinedSunoChanges\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AddGenerationRequestVerification\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AddObservedCreates\\|10\\.0\\.", migration),
-            migration => Assert.Matches("^[0-9]{14}_ProtectGenerationSunoId\\|10\\.0\\.", migration));
+            migration => Assert.Matches("^[0-9]{14}_ProtectGenerationSunoId\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddAudioFiles\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddAudioFileAssociations\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddDownloadRecords\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddAudioFileAutoMatchBlocked\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_AddPreferredAudioFiles\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_RederiveGenerationAudioUrls\\|10\\.0\\.", migration));
 
         // ISO 8601 UTC with milliseconds and Z, taken when the migration ran.
         var initialized = TestDatabase.SchemaInitializedUtc(directory.Path);
@@ -94,7 +100,7 @@ public sealed class DatabaseStartupTests : IDisposable
         Start();
 
         Assert.Equal(
-            ["__EFMigrationsHistory", "administrators", "album_links", "album_songs", "albums", "app_metadata", "artist_aliases", "artist_links", "artists", "artwork_attachments", "assets", "credentials", "editor_revisions", "external_suno_references", "generation_comments", "generation_event_links", "generation_events", "generations", "genres", "jobs", "pending_file_deletions", "playlist_songs", "playlists", "provider_records", "provider_tombstones", "retention_groups", "retention_records", "sessions", "settings", "shortcode_aliases", "shortcode_sequence", "song_artist_credits", "song_genres", "song_links", "song_relationship_types", "song_relationships", "song_tags", "songs", "suno_export_parts", "suno_export_record_playlists", "suno_export_records", "suno_exports", "suno_generation_requests", "suno_ignored_items", "suno_models", "suno_personas", "suno_playlists", "suno_workspaces", "tags", "used_version_numbers", "version_file_inputs", "version_inspiration_playlists", "version_sources", "version_voices", "versions", "workflow_states"],
+            ["__EFMigrationsHistory", "administrators", "album_links", "album_songs", "albums", "app_metadata", "artist_aliases", "artist_links", "artists", "artwork_attachments", "assets", "audio_files", "credentials", "download_records", "editor_revisions", "external_suno_references", "generation_comments", "generation_event_links", "generation_events", "generation_preferred_audio_files", "generations", "genres", "jobs", "pending_file_deletions", "playlist_songs", "playlists", "provider_records", "provider_tombstones", "retention_groups", "retention_records", "sessions", "settings", "shortcode_aliases", "shortcode_sequence", "song_artist_credits", "song_genres", "song_links", "song_preferred_audio_files", "song_relationship_types", "song_relationships", "song_tags", "songs", "suno_export_parts", "suno_export_record_playlists", "suno_export_records", "suno_exports", "suno_generation_requests", "suno_ignored_items", "suno_models", "suno_personas", "suno_playlists", "suno_workspaces", "tags", "used_version_numbers", "version_file_inputs", "version_inspiration_playlists", "version_sources", "version_voices", "versions", "workflow_states"],
             TestDatabase.Rows(
                 directory.Path,
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> '__EFMigrationsLock' ORDER BY name;"));
@@ -167,7 +173,7 @@ public sealed class DatabaseStartupTests : IDisposable
             ],
             TestDatabase.Rows(directory.Path, "SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('generations') ORDER BY cid;"));
         Assert.Equal(
-            ["ix_generations_artwork_asset_id|0|0", "ix_generations_song_id|0|0", "ix_generations_suno_id|1|1", "ix_generations_version_id_ordinal|1|0"],
+            ["ix_generations_artwork_asset_id|0|0", "ix_generations_id_song_id|1|0", "ix_generations_song_id|0|0", "ix_generations_suno_id|1|1", "ix_generations_version_id_ordinal|1|0"],
             TestDatabase.Rows(directory.Path, "SELECT name, CAST(\"unique\" AS TEXT), CAST(partial AS TEXT) FROM pragma_index_list('generations') WHERE origin = 'c' ORDER BY name;"));
         Assert.Equal(
             ["assets|artwork_asset_id|RESTRICT", "songs|song_id|RESTRICT", "versions|version_id|RESTRICT"],
@@ -233,6 +239,57 @@ public sealed class DatabaseStartupTests : IDisposable
             ["suno_id|TEXT|1|1", "title|TEXT|0|0", "workspace_id|TEXT|0|0", "ignored_utc|TEXT|1|0", "last_status|TEXT|0|0", "last_seen_utc|TEXT|0|0"],
             TestDatabase.Rows(directory.Path, "SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('suno_ignored_items') ORDER BY cid;"));
         Assert.Empty(TestDatabase.Rows(directory.Path, "SELECT \"table\" FROM pragma_foreign_key_list('suno_ignored_items');"));
+
+        // Audio files (#203, associations #206): a Song by RESTRICT key, and a Generation by a composite
+        // key to generations (id, song_id), RESTRICT on delete and CASCADE on update, so the Generation
+        // is always the Song's and follows its moves. No triggers, so later stories may rebuild it.
+        // #210 added auto_match_blocked by a plain ADD COLUMN, so the keys below survived it.
+        Assert.Equal(
+            [
+                "id|TEXT|1|1", "path|TEXT|1|0", "file_name|TEXT|1|0", "format|TEXT|1|0", "size_bytes|INTEGER|1|0", "modified_utc|TEXT|1|0",
+                "first_seen_utc|TEXT|1|0", "last_seen_utc|TEXT|1|0", "status|TEXT|1|0", "metadata_readable|INTEGER|1|0", "duration_ms|INTEGER|0|0",
+                "title|TEXT|0|0", "artist|TEXT|0|0", "song_id|TEXT|0|0", "generation_id|TEXT|0|0", "association_origin|TEXT|0|0",
+                "unmatched_reason|TEXT|0|0", "revision|INTEGER|1|0", "auto_match_blocked|INTEGER|1|0",
+            ],
+            TestDatabase.Rows(directory.Path, "SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('audio_files') ORDER BY cid;"));
+        Assert.Equal(
+            ["generations|generation_id|id|RESTRICT|CASCADE", "generations|song_id|song_id|RESTRICT|CASCADE", "songs|song_id|id|RESTRICT|NO ACTION"],
+            TestDatabase.Rows(directory.Path, "SELECT \"table\" || '|' || \"from\" || '|' || \"to\" || '|' || on_delete || '|' || on_update FROM pragma_foreign_key_list('audio_files') ORDER BY 1;"));
+        Assert.Equal(
+            ["ix_audio_files_generation_id_song_id|0", "ix_audio_files_id_generation_id|1", "ix_audio_files_id_song_id|1", "ix_audio_files_path|1", "ix_audio_files_song_id|0", "ix_audio_files_status|0"],
+            TestDatabase.Rows(directory.Path, "SELECT name || '|' || \"unique\" FROM pragma_index_list('audio_files') WHERE origin = 'c' ORDER BY name;"));
+        Assert.Empty(TestDatabase.Rows(directory.Path, "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'audio_files';"));
+
+        // Preferred audio files (#212): one per Generation and one per Song, each by a RESTRICT key to its
+        // owner and a composite key to audio_files (id, generation_id) or (id, song_id), RESTRICT both
+        // ways, so a choice is always of the owner's file and outlives no association change.
+        foreach (var (table, owner, ownerTable) in new[] { ("generation_preferred_audio_files", "generation_id", "generations"), ("song_preferred_audio_files", "song_id", "songs") })
+        {
+            Assert.Equal(
+                [$"{owner}|TEXT|1|1", "audio_file_id|TEXT|1|0"],
+                TestDatabase.Rows(directory.Path, $"SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('{table}') ORDER BY cid;"));
+            Assert.Equal(
+                [$"audio_files|audio_file_id|id|RESTRICT|RESTRICT", $"audio_files|{owner}|{owner}|RESTRICT|RESTRICT", $"{ownerTable}|{owner}|id|RESTRICT|NO ACTION"],
+                TestDatabase.Rows(directory.Path, $"SELECT \"table\" || '|' || \"from\" || '|' || \"to\" || '|' || on_delete || '|' || on_update FROM pragma_foreign_key_list('{table}') ORDER BY 1;"));
+            Assert.Equal(
+                [$"ix_{table}_audio_file_id|1"],
+                TestDatabase.Rows(directory.Path, $"SELECT name || '|' || \"unique\" FROM pragma_index_list('{table}') WHERE origin = 'c' ORDER BY name;"));
+            Assert.Empty(TestDatabase.Rows(directory.Path, $"SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = '{table}';"));
+        }
+
+        // Download records (#222): by Suno ID, indexed, with no foreign key, so a record outlives its
+        // Generation and may come before it.
+        Assert.Equal(
+            [
+                "id|TEXT|1|1", "suno_id|TEXT|1|0", "format|TEXT|1|0", "file_name|TEXT|1|0", "completed_utc|TEXT|1|0",
+                "received_utc|TEXT|1|0", "size_bytes|INTEGER|0|0", "spent_unlock|INTEGER|1|0",
+            ],
+            TestDatabase.Rows(directory.Path, "SELECT name, type, CAST(\"notnull\" AS TEXT), CAST(pk AS TEXT) FROM pragma_table_info('download_records') ORDER BY cid;"));
+        Assert.Empty(TestDatabase.Rows(directory.Path, "SELECT \"table\" FROM pragma_foreign_key_list('download_records');"));
+        Assert.Equal(
+            ["ix_download_records_suno_id|0"],
+            TestDatabase.Rows(directory.Path, "SELECT name || '|' || \"unique\" FROM pragma_index_list('download_records') WHERE origin = 'c' ORDER BY name;"));
+        Assert.Empty(TestDatabase.Rows(directory.Path, "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'download_records';"));
         Assert.Equal(
             ["MigrationId", "ProductVersion"],
             TestDatabase.Rows(directory.Path, "SELECT name FROM pragma_table_info('__EFMigrationsHistory') ORDER BY cid;"));
@@ -331,7 +388,7 @@ public sealed class DatabaseStartupTests : IDisposable
 
         Assert.Equal(MigrationStatus.UpToDate, state.Status);
         Assert.Equal(TestDatabase.History(directory.Path)[^1].Split('|')[0], state.LastAppliedMigrationId);
-        Assert.EndsWith("_ProtectGenerationSunoId", state.LastAppliedMigrationId, StringComparison.Ordinal);
+        Assert.EndsWith("_RederiveGenerationAudioUrls", state.LastAppliedMigrationId, StringComparison.Ordinal);
     }
 
     [Fact]

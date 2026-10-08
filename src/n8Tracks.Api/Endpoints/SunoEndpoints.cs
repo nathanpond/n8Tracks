@@ -60,6 +60,7 @@ internal static class SunoEndpoints
         endpoints.MapSunoIgnored();
         endpoints.MapSunoGenerationRequests();
         endpoints.MapSunoRemoteStates();
+        endpoints.MapSunoClipLookup();
 
         return endpoints;
     }

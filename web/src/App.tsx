@@ -6,6 +6,8 @@ import { AlbumsPage } from './albums/AlbumsPage';
 import { ArtistPage } from './artists/ArtistPage';
 import { ArtistsPage } from './artists/ArtistsPage';
 import { MaintenanceGate } from './maintenance/MaintenanceGate';
+import { MediaPage } from './media/MediaPage';
+import { UnmatchedFilesPage } from './media/UnmatchedFilesPage';
 import { PlaylistPage } from './playlists/PlaylistPage';
 import { PlaylistsPage } from './playlists/PlaylistsPage';
 import { AccountPage } from './settings/AccountPage';
@@ -13,6 +15,7 @@ import { BackupsPage } from './settings/BackupsPage';
 import { CatalogPage } from './settings/CatalogPage';
 import { CredentialsPage } from './settings/CredentialsPage';
 import { GenresPage } from './settings/GenresPage';
+import { LibrarySettingsPage } from './settings/LibrarySettingsPage';
 import { SunoPage } from './settings/SunoPage';
 import { SunoWorkspacePage, SunoWorkspacesPage } from './settings/SunoWorkspacesPage';
 import { RelationshipsPage } from './settings/RelationshipsPage';
@@ -61,12 +64,15 @@ export function App() {
                 <Route path="suno/imports" element={<SunoImportsPage />} />
                 <Route path="suno/ignored" element={<IgnoredItemsPage />} />
                 <Route path="suno/imports/:id" element={<ImportReviewPage />} />
+                <Route path="library/media" element={<MediaPage />} />
+                <Route path="library/unmatched" element={<UnmatchedFilesPage />} />
                 <Route path="go/:reference" element={<GoPage />} />
                 <Route path="settings" element={<Navigate to="/settings/account" replace />} />
                 <Route path="settings/account" element={<AccountPage />} />
                 <Route path="settings/credentials" element={<CredentialsPage />} />
                 <Route path="settings/workflow" element={<WorkflowPage />} />
                 <Route path="settings/catalog" element={<CatalogPage />} />
+                <Route path="settings/library" element={<LibrarySettingsPage />} />
                 <Route path="settings/genres" element={<GenresPage />} />
                 <Route path="settings/tags" element={<TagsPage />} />
                 <Route path="settings/relationships" element={<RelationshipsPage />} />

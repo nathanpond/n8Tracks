@@ -1,3 +1,4 @@
+using n8Tracks.Application.Media;
 using n8Tracks.Domain.Assets;
 using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
@@ -69,6 +70,11 @@ public sealed record SongSummary(
     SunoWorkspace? SunoWorkspace = null,
     AttachedArtwork? NewestGenerationArtwork = null)
 {
+    /// <summary>How many local audio files are associated with it (#211), at Song level and through its Generations, whatever their status.</summary>
+    public int AudioFileCount { get; init; }
+
+    /// <summary>What Play on it does (#219), by <see cref="PlaybackResolver.StateOfSong"/>; read with it, never stored.</summary>
+    public SongPlayability Playback { get; init; } = SongPlayability.NoGenerations;
 
     public string Shortcode => Shortcodes.ForSong(ShortcodeNumber);
 }
@@ -93,6 +99,9 @@ public enum SongSort
 
     /// <summary>Title, ignoring case.</summary>
     Title,
+
+    /// <summary>How many local audio files are associated with it (#211).</summary>
+    AudioFiles,
 }
 
 /// <summary>
@@ -397,6 +406,12 @@ public sealed record GenerationSummary(Generation Generation, long SongShortcode
     /// never a crop (a Generation's image is shown whole); null when it has none.
     /// </summary>
     public AttachedArtwork? Artwork { get; init; }
+
+    /// <summary>
+    /// The local audio files associated with it (#211), as they report now: counts and formats only.
+    /// Read with it, never stored on it.
+    /// </summary>
+    public AudioFileTally AudioFiles { get; init; } = AudioFileTally.None;
 
     public string Shortcode => Shortcodes.ForGeneration(SongShortcodeNumber, VersionNumber, Generation.Ordinal);
 

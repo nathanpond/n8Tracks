@@ -1,5 +1,6 @@
 using n8Tracks.Api.Configuration;
 using n8Tracks.Application.Configuration;
+using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Api.Tests;
 
@@ -23,6 +24,8 @@ public sealed class EnvironmentOptionsLoaderTests : IDisposable
         Assert.Equal(directory.Path, options.DataPath);
         Assert.Equal(Path.GetFullPath("/media"), options.MediaPath);
         Assert.Equal(Path.GetFullPath("/backup"), options.BackupPath);
+        Assert.Equal(["d2lwuy8qc234o3.cloudfront.net"], options.SunoAudioHosts.Hosts);
+        Assert.Same(SunoAudioHosts.Default, options.SunoAudioHosts);
     }
 
     [Fact]
@@ -72,7 +75,8 @@ public sealed class EnvironmentOptionsLoaderTests : IDisposable
             ("TZ", value),
             ("N8TRACKS_LOG_LEVEL", value),
             ("N8TRACKS_MEDIA_PATH", value),
-            ("N8TRACKS_BACKUP_PATH", value));
+            ("N8TRACKS_BACKUP_PATH", value),
+            ("N8TRACKS_SUNO_AUDIO_HOSTS", value));
 
         Assert.Equal(8787, options.Port);
         Assert.Equal(new Uri("http://localhost:8787"), options.BaseUrl);
@@ -80,6 +84,7 @@ public sealed class EnvironmentOptionsLoaderTests : IDisposable
         Assert.Equal(N8TracksLogLevel.Information, options.LogLevel);
         Assert.Equal(Path.GetFullPath("/media"), options.MediaPath);
         Assert.Equal(Path.GetFullPath("/backup"), options.BackupPath);
+        Assert.Same(SunoAudioHosts.Default, options.SunoAudioHosts);
     }
 
     [Fact]
@@ -353,6 +358,63 @@ public sealed class EnvironmentOptionsLoaderTests : IDisposable
             exception.Errors.Select(error => error.Variable));
     }
 
+    [Theory]
+    [InlineData("audio.example.net", new[] { "audio.example.net" })]
+    [InlineData(" Audio.Example.NET , cdn-2.example.net ", new[] { "audio.example.net", "cdn-2.example.net" })]
+    [InlineData("a.example.net,A.EXAMPLE.NET,,b.example.net", new[] { "a.example.net", "b.example.net" })]
+    [InlineData("localhost", new[] { "localhost" })]
+    public void AListOfSunoAudioHostsReplacesTheDefault(string value, string[] expected)
+    {
+        Assert.Equal(expected, Load(("N8TRACKS_SUNO_AUDIO_HOSTS", value)).SunoAudioHosts.Hosts);
+    }
+
+    [Theory]
+    [InlineData(",", "must name at least one host")]
+    [InlineData(" , ,", "must name at least one host")]
+    [InlineData("https://audio.example.net", "with no scheme, but 'https://audio.example.net' has one.")]
+    [InlineData("a.example.net,//audio.example.net", "with no path, but '//audio.example.net' has one.")]
+    [InlineData("audio.example.net:443", "with no port, but 'audio.example.net:443' has one.")]
+    [InlineData("audio.example.net/clips", "with no path, but 'audio.example.net/clips' has one.")]
+    [InlineData("audio.example.net?x=1", "with no path, but 'audio.example.net?x=1' has one.")]
+    [InlineData("*.cloudfront.net", "with no wildcard, but '*.cloudfront.net' has one.")]
+    [InlineData("*", "with no wildcard, but '*' has one.")]
+    [InlineData("audio_files.example.net", "'audio_files.example.net' is not a DNS host name.")]
+    [InlineData("audio..example.net", "'audio..example.net' is not a DNS host name.")]
+    [InlineData("audio.example.net.", "'audio.example.net.' is not a DNS host name.")]
+    [InlineData("-audio.example.net", "'-audio.example.net' is not a DNS host name.")]
+    [InlineData("audio example.net", "'audio example.net' is not a DNS host name.")]
+    [InlineData("192.168.1.10", "'192.168.1.10' is not a DNS host name.")]
+    [InlineData("[::1]", "with no port, but '[::1]' has one.")]
+    public void AnInvalidSunoAudioHostListIsRefusedAndSaysWhy(string value, string reason)
+    {
+        var error = SingleError(("N8TRACKS_SUNO_AUDIO_HOSTS", value));
+
+        Assert.Equal("N8TRACKS_SUNO_AUDIO_HOSTS", error.Variable);
+        Assert.Contains(reason, error.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ASunoAudioHostWithAPasswordIsRefusedWithoutEchoingIt()
+    {
+        var error = SingleError(("N8TRACKS_SUNO_AUDIO_HOSTS", "user:hunter2@audio.example.net"));
+
+        Assert.Equal("N8TRACKS_SUNO_AUDIO_HOSTS", error.Variable);
+        Assert.Contains("no user name or password", error.Reason, StringComparison.Ordinal);
+        Assert.DoesNotContain("hunter2", error.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ALongestValidHostNameIsAcceptedAndOneCharacterMoreIsRefused()
+    {
+        var label = new string('a', 63);
+        var longest = $"{label}.{label}.{label}.{new string('b', 61)}";
+        Assert.Equal(253, longest.Length);
+        Assert.Equal([longest], Load(("N8TRACKS_SUNO_AUDIO_HOSTS", longest)).SunoAudioHosts.Hosts);
+
+        Assert.Contains("is not a DNS host name", SingleError(("N8TRACKS_SUNO_AUDIO_HOSTS", longest + "b")).Reason, StringComparison.Ordinal);
+        Assert.Contains("is not a DNS host name", SingleError(("N8TRACKS_SUNO_AUDIO_HOSTS", new string('a', 64) + ".example.net")).Reason, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void UnknownProductVariablesAreFound()
     {
@@ -377,7 +439,8 @@ public sealed class EnvironmentOptionsLoaderTests : IDisposable
             ("N8TRACKS_LOG_LEVEL", "1"),
             ("N8TRACKS_DATA_PATH", "1"),
             ("N8TRACKS_MEDIA_PATH", "1"),
-            ("N8TRACKS_BACKUP_PATH", "1")));
+            ("N8TRACKS_BACKUP_PATH", "1"),
+            ("N8TRACKS_SUNO_AUDIO_HOSTS", "1")));
 
         Assert.Empty(unknown);
     }

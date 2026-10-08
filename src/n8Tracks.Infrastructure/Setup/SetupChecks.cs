@@ -1,4 +1,5 @@
 using n8Tracks.Application.Configuration;
+using n8Tracks.Application.Media;
 using n8Tracks.Application.Setup;
 using n8Tracks.Infrastructure.Health;
 using n8Tracks.Infrastructure.Persistence;
@@ -26,18 +27,17 @@ internal sealed class SetupChecks : ISetupChecks
     private readonly DeadlineCheck mediaCheck;
     private readonly Serilog.ILogger log;
 
-    public SetupChecks(N8TracksOptions options, IDatabaseConnectionFactory connections, IMediaMountProbe mediaProbe, Serilog.ILogger log)
+    public SetupChecks(N8TracksOptions options, IDatabaseConnectionFactory connections, IMediaMount media, Serilog.ILogger log)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(log);
-        ArgumentNullException.ThrowIfNull(mediaProbe);
+        ArgumentNullException.ThrowIfNull(media);
 
         this.connections = connections;
         this.log = log.ForContext<SetupChecks>();
         dataPath = options.DataPath;
         storageCheck = new DeadlineCheck(WriteDataPath, HealthService.CheckTimeout);
-        var mediaPath = options.MediaPath;
-        mediaCheck = new DeadlineCheck(_ => mediaProbe.IsReadable(mediaPath), HealthService.CheckTimeout);
+        mediaCheck = new DeadlineCheck(_ => media.Probe(), HealthService.CheckTimeout);
     }
 
     public async Task<bool> IsDataPathWritableAsync(CancellationToken cancellationToken)

@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
+import { NO_LOCAL_AUDIO_FILES } from '../api/localAudioFiles';
 import { renderApp } from '../test/helpers';
 import { testVersion, versionServer } from '../test/versionServer';
 import { deletionSummary } from './versionDeletion';
@@ -228,6 +229,7 @@ describe('what the confirmation says', () => {
         generationCount: 2,
         remainingDescendantCount: 3,
         isLastVersion: false,
+        localAudioFiles: NO_LOCAL_AUDIO_FILES,
         revision: 1,
       }),
     ).toEqual([
@@ -241,6 +243,7 @@ describe('what the confirmation says', () => {
         generationCount: 0,
         remainingDescendantCount: 0,
         isLastVersion: true,
+        localAudioFiles: NO_LOCAL_AUDIO_FILES,
         revision: 1,
       }),
     ).toEqual([

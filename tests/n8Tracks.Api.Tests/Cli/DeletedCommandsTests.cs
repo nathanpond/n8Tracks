@@ -7,6 +7,7 @@ using n8Tracks.Api.Tests.Auth;
 using n8Tracks.Api.Tests.Persistence;
 using n8Tracks.Api.Tests.Setup;
 using n8Tracks.Api.Tests.Songs;
+using n8Tracks.Application.Media;
 using n8Tracks.Application.Retention;
 using SkiaSharp;
 using static n8Tracks.Api.Tests.Assets.ArtworkApi;
@@ -381,6 +382,28 @@ public sealed class DeletedCommandsTests
         Assert.DoesNotContain("membership of a Playlist: 1", report, StringComparison.Ordinal);
         var first = TestDatabase.Scalar(factory.DataPath, "SELECT id FROM workflow_states WHERE hidden = 0 ORDER BY position LIMIT 1;");
         Assert.Equal(first, Upper((await SongAsync(client, "n8-1")).GetProperty("state").GetProperty("id").GetGuid()));
+    }
+
+    [Fact]
+    public async Task ARestoreInALibraryWithLocalFilesSaysAssociationsAreNotRestored()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        await SongApi.CreateAsync(client, "Has files");
+        var id = Upper(Guid.CreateVersion7());
+        TestDatabase.Execute(
+            factory.DataPath,
+            "INSERT INTO audio_files (id, path, file_name, format, size_bytes, modified_utc, first_seen_utc, last_seen_utc, status, metadata_readable) "
+            + $"VALUES ('{id}', 'a.mp3', 'a.mp3', 'mp3', 1, '2026-10-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z', 'available', 0);");
+        await DeleteSongAsync(client, "n8-1", "Has files");
+
+        var run = await RunAsync(factory.DataPath, ["restore-deleted", "n8-1"]);
+
+        Assert.True(run.ExitCode == 0, run.Error);
+        var report = run.Output.ReplaceLineEndings("\n");
+        Assert.Contains("Left out or changed:\n", report, StringComparison.Ordinal);
+        Assert.Contains("  " + AudioFileLifecycle.RestoreNote + "\n", report, StringComparison.Ordinal);
+        Assert.Contains("next media scan associates again", AudioFileLifecycle.RestoreNote, StringComparison.Ordinal);
     }
 
     [Fact]

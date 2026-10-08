@@ -135,6 +135,11 @@ export class SyncCoordinator {
     }
   }
 
+  /** Whether a sync is under way, in any tab (the Download view waits for it, #215). */
+  async running(): Promise<boolean> {
+    return (await this.session()) !== null;
+  }
+
   /** The Suno tab of a sync was closed: the export is discarded. */
   async tabRemoved(tabId: number): Promise<void> {
     const session = await this.session();

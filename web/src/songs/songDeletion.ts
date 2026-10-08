@@ -7,8 +7,9 @@ function count(n: number, singular: string, plural = `${singular}s`): string {
 
 /**
  * What the confirmation lists deleting a Song affects, one line each, with counts: its Versions
- * (archived included), Generations, managed artwork, Album and Playlist memberships, relationships,
- * and local audio files. Every count is shown, zero included, so the list reads the same each time.
+ * (archived included), Generations, managed artwork, Album and Playlist memberships, and
+ * relationships. Every count is shown, zero included, so the list reads the same each time. Local
+ * audio files are not in it: they are never deleted, and the dialog says so on its own (#213).
  */
 export function songDeletionCounts(impact: SongDeletionImpact): string[] {
   return [
@@ -18,7 +19,6 @@ export function songDeletionCounts(impact: SongDeletionImpact): string[] {
     count(impact.albumCount, 'Album membership'),
     count(impact.playlistCount, 'Playlist membership'),
     count(impact.relationshipCount, 'relationship'),
-    count(impact.audioFileCount, 'local audio file'),
   ];
 }
 

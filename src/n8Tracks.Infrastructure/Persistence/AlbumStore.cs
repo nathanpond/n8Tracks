@@ -2,10 +2,11 @@ using Microsoft.EntityFrameworkCore;
 using n8Tracks.Application.Catalog;
 using n8Tracks.Domain.Assets;
 using n8Tracks.Domain.Catalog;
+using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Infrastructure.Persistence;
 
-internal sealed class AlbumStore(N8TracksDbContext context) : IAlbumStore
+internal sealed class AlbumStore(N8TracksDbContext context, SunoAudioHosts hosts) : IAlbumStore
 {
     public async Task<AlbumPage> ListAsync(AlbumListQuery query, CancellationToken cancellationToken)
     {
@@ -206,7 +207,7 @@ internal sealed class AlbumStore(N8TracksDbContext context) : IAlbumStore
                 .ToListAsync(cancellationToken)
                 .ConfigureAwait(false);
         var byUpc = sameUpc.ToLookup(static album => album.UpcKey!, StringComparer.Ordinal);
-        var tracks = await AlbumTrackStore.ForAlbumsAsync(context, ids, cancellationToken).ConfigureAwait(false);
+        var tracks = await AlbumTrackStore.ForAlbumsAsync(context, hosts, ids, cancellationToken).ConfigureAwait(false);
         var artwork = await ArtworkAttachmentStore.ForOwnersAsync(context, ArtworkOwnerTypes.Album, ids, cancellationToken).ConfigureAwait(false);
 
         return [.. records.Select(record => new AlbumDetails(

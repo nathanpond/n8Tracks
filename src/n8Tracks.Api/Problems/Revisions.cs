@@ -20,9 +20,10 @@ internal static class Revisions
 
     /// <summary>
     /// The revision the request's <c>If-Match</c> names, or the problem to answer instead. Exactly one
-    /// of the two is not null.
+    /// of the two is not null. <paramref name="allowUnsaved"/> also takes <c>"0"</c>, for a setting
+    /// whose first save is based on the defaults it answers at revision 0 (the media scan schedule).
     /// </summary>
-    public static (int? Revision, ProblemHttpResult? Problem) Read(HttpContext context)
+    public static (int? Revision, ProblemHttpResult? Problem) Read(HttpContext context, bool allowUnsaved = false)
     {
         ArgumentNullException.ThrowIfNull(context);
 
@@ -37,6 +38,11 @@ internal static class Revisions
         }
 
         var value = values.Count == 1 ? values[0] : null;
+        if (allowUnsaved && value == "\"0\"")
+        {
+            return (0, null);
+        }
+
         if (value is { Length: > 2 } && value[0] == '"' && value[^1] == '"'
             && value.AsSpan(1, value.Length - 2) is var digits
             && digits[0] != '0'

@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using n8Tracks.Application.Catalog;
 using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
+using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Infrastructure.Persistence;
 
@@ -47,7 +48,7 @@ internal sealed class AlbumTrackStore(N8TracksDbContext context) : IAlbumTrackSt
     }
 
     /// <summary>Each of <paramref name="albumIds"/>' tracks, by disc and then track number (Albums without tracks are left out).</summary>
-    internal static async Task<Dictionary<Guid, IReadOnlyList<AlbumTrack>>> ForAlbumsAsync(N8TracksDbContext context, IReadOnlyCollection<Guid> albumIds, CancellationToken cancellationToken)
+    internal static async Task<Dictionary<Guid, IReadOnlyList<AlbumTrack>>> ForAlbumsAsync(N8TracksDbContext context, SunoAudioHosts hosts, IReadOnlyCollection<Guid> albumIds, CancellationToken cancellationToken)
     {
         var ids = albumIds.ToList();
         var rows = await (
@@ -61,6 +62,12 @@ internal sealed class AlbumTrackStore(N8TracksDbContext context) : IAlbumTrackSt
             .ConfigureAwait(false);
 
         var credits = await SongCreditStore.ForSongsAsync(context, [.. rows.Select(static row => row.Id).Distinct()], cancellationToken).ConfigureAwait(false);
+        var playback = await SongPlaybackRows.StatesAsync(
+                context,
+                hosts,
+                rows.DistinctBy(static row => row.Id).ToDictionary(static row => row.Id, static row => row.SelectedGenerationId),
+                cancellationToken)
+            .ConfigureAwait(false);
         return rows
             .GroupBy(static row => row.AlbumId)
             .ToDictionary(
@@ -73,7 +80,10 @@ internal sealed class AlbumTrackStore(N8TracksDbContext context) : IAlbumTrackSt
                     new AlbumTrackState(row.StateId, row.StateName, row.Colour),
                     row.Disc,
                     row.Track,
-                    HasSelectedGeneration: row.SelectedGenerationId != null))]);
+                    HasSelectedGeneration: row.SelectedGenerationId != null)
+                {
+                    Playback = playback[row.Id],
+                })]);
     }
 
     /// <summary>The Albums each of <paramref name="songIds"/> is on, with its disc and track, by Album title (ignoring case), the earlier created first on a tie.</summary>

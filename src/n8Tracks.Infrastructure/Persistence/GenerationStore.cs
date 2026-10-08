@@ -1,8 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using n8Tracks.Application.Assets;
 using n8Tracks.Application.Generations;
+using n8Tracks.Application.Media;
 using n8Tracks.Application.Songs;
 using n8Tracks.Domain.Assets;
+using n8Tracks.Domain.Media;
 using n8Tracks.Domain.Songs;
 using n8Tracks.Domain.Suno;
 
@@ -19,7 +21,7 @@ namespace n8Tracks.Infrastructure.Persistence;
 /// a Generation an observed Create made (<see cref="TryCompleteClipAsync"/>, #154), and its status alone,
 /// once, from not final to Suno's final status at a confirmed sync (<see cref="TryFinishStatusAsync"/>, #314).
 /// </summary>
-internal sealed class GenerationStore(N8TracksDbContext context) : IGenerationStore, IArtworkAttachments
+internal sealed class GenerationStore(N8TracksDbContext context, SunoAudioHosts hosts) : IGenerationStore, IArtworkAttachments
 {
     /// <summary>A Generation's cover image (#121) keeps its asset live, as an owner's attachment does.</summary>
     public Task<bool> IsAttachedAsync(Guid assetId, CancellationToken cancellationToken) =>
@@ -135,18 +137,18 @@ internal sealed class GenerationStore(N8TracksDbContext context) : IGenerationSt
             .CountAsync(cancellationToken);
 
     public async Task<GenerationSummary?> FindAsync(Guid id, CancellationToken cancellationToken) =>
-        (await GenerationRows.SummariesAsync(context, context.Generations.Where(generation => generation.Id == id), cancellationToken).ConfigureAwait(false))
+        (await GenerationRows.SummariesAsync(context, hosts, context.Generations.Where(generation => generation.Id == id), cancellationToken).ConfigureAwait(false))
             .SingleOrDefault();
 
     public async Task<GenerationSummary?> FindBySunoIdAsync(string sunoId, CancellationToken cancellationToken) =>
-        (await GenerationRows.SummariesAsync(context, context.Generations.Where(generation => generation.SunoId == sunoId), cancellationToken).ConfigureAwait(false))
+        (await GenerationRows.SummariesAsync(context, hosts, context.Generations.Where(generation => generation.SunoId == sunoId), cancellationToken).ConfigureAwait(false))
             .SingleOrDefault();
 
     public Task<IReadOnlyList<GenerationSummary>> ForVersionAsync(Guid versionId, CancellationToken cancellationToken) =>
-        GenerationRows.SummariesAsync(context, context.Generations.Where(generation => generation.VersionId == versionId), cancellationToken);
+        GenerationRows.SummariesAsync(context, hosts, context.Generations.Where(generation => generation.VersionId == versionId), cancellationToken);
 
     public Task<IReadOnlyList<GenerationSummary>> ForSongAsync(Guid songId, CancellationToken cancellationToken) =>
-        GenerationRows.SummariesAsync(context, context.Generations.Where(generation => generation.SongId == songId), cancellationToken);
+        GenerationRows.SummariesAsync(context, hosts, context.Generations.Where(generation => generation.SongId == songId), cancellationToken);
 
     public async Task SaveProviderRecordAsync(ProviderRecord record, CancellationToken cancellationToken)
     {
@@ -321,6 +323,7 @@ internal static class GenerationRows
     /// </summary>
     public static async Task<IReadOnlyList<GenerationSummary>> SummariesAsync(
         N8TracksDbContext context,
+        SunoAudioHosts hosts,
         IQueryable<GenerationRecord> query,
         CancellationToken cancellationToken)
     {
@@ -355,13 +358,59 @@ internal static class GenerationRows
             .ToLookup(static comment => comment.GenerationId);
 
         var artwork = await ArtworkOfAsync(context, rows.Select(static row => row.generation.ArtworkAssetId), cancellationToken).ConfigureAwait(false);
+        var audioFiles = await AudioFilesOfAsync(context, ids, cancellationToken).ConfigureAwait(false);
 
-        return [.. rows.Select(row => new GenerationSummary(ToDomain(row.generation) with { EventId = row.EventId }, row.ShortcodeNumber, row.Number)
+        return [.. rows.Select(row =>
         {
-            Comments = [.. comments[row.generation.Id]],
-            IsSelected = row.IsSelected,
-            Artwork = row.generation.ArtworkAssetId is { } assetId ? artwork.GetValueOrDefault(assetId) : null,
+            var generation = ToDomain(row.generation) with { EventId = row.EventId };
+            var tally = audioFiles.GetValueOrDefault(row.generation.Id) ?? AudioFileTally.None;
+            return new GenerationSummary(generation, row.ShortcodeNumber, row.Number)
+            {
+                Comments = [.. comments[row.generation.Id]],
+                IsSelected = row.IsSelected,
+                Artwork = row.generation.ArtworkAssetId is { } assetId ? artwork.GetValueOrDefault(assetId) : null,
+
+                // With no file available, a Generation can still stream from Suno (#221).
+                AudioFiles = tally with { Playability = PlaybackResolver.WithStream(tally.Playability, SunoStream.Of(hosts, generation)) },
+            };
         })];
+    }
+
+    /// <summary>
+    /// The local audio files associated with each of <paramref name="generationIds"/> that has any
+    /// (#211), tallied as they report now: every file reports Unavailable while the media folder's
+    /// recorded state is unavailable (#207).
+    /// </summary>
+    private static async Task<Dictionary<Guid, AudioFileTally>> AudioFilesOfAsync(
+        N8TracksDbContext context,
+        List<Guid> generationIds,
+        CancellationToken cancellationToken)
+    {
+        if (generationIds.Count == 0)
+        {
+            return [];
+        }
+
+        var files = await context.AudioFiles.AsNoTracking()
+            .Where(file => file.GenerationId != null && generationIds.Contains(file.GenerationId.Value))
+            .Select(static file => new { GenerationId = file.GenerationId!.Value, file.Status, file.Format })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (files.Count == 0)
+        {
+            return [];
+        }
+
+        var mount = (await new MediaMountStateStore(context).FindAsync(cancellationToken).ConfigureAwait(false) ?? MediaMountStatus.Unrecorded).State;
+        return files
+            .GroupBy(static file => file.GenerationId)
+            .ToDictionary(
+                static group => group.Key,
+                group => AudioFileTally.Of(
+                    [.. group.Select(static file => (
+                        AudioFormats.ParseStatus(file.Status) ?? throw new InvalidOperationException("An audio file has an unknown status."),
+                        file.Format))],
+                    mount));
     }
 
     /// <summary>

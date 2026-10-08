@@ -1,3 +1,5 @@
+using n8Tracks.Domain.Suno;
+
 namespace n8Tracks.Application.Configuration;
 
 /// <summary>
@@ -20,4 +22,11 @@ public sealed record N8TracksOptions(
     N8TracksLogLevel LogLevel,
     string DataPath,
     string MediaPath,
-    string BackupPath);
+    string BackupPath)
+{
+    /// <summary>
+    /// The hosts the browser may stream a Generation's Suno audio from (#221): the Content Security
+    /// Policy's <c>media-src</c> and the check of a stored address both use this list.
+    /// </summary>
+    public SunoAudioHosts SunoAudioHosts { get; init; } = SunoAudioHosts.Default;
+}

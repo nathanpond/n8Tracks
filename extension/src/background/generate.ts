@@ -352,6 +352,11 @@ export class GenerateCoordinator {
     return { ok: true };
   }
 
+  /** Whether a Suno tab is working on a request (the Download view waits for it, #215). */
+  async running(): Promise<boolean> {
+    return (await this.tab()) !== null;
+  }
+
   /** The Suno tab of a generation was closed: the request stops, saying so. */
   async tabRemoved(tabId: number): Promise<void> {
     const tab = await this.tab();

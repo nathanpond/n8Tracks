@@ -5,7 +5,7 @@ using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Infrastructure.Persistence;
 
-internal sealed class VersionStore(N8TracksDbContext context, TimeProvider time) : IVersionStore
+internal sealed class VersionStore(N8TracksDbContext context, TimeProvider time, SunoAudioHosts hosts) : IVersionStore
 {
     public async Task<VersionNumberingFacts?> FindNumberingAsync(Guid id, CancellationToken cancellationToken)
     {
@@ -440,7 +440,7 @@ internal sealed class VersionStore(N8TracksDbContext context, TimeProvider time)
     }
 
     public async Task<GenerationSummary?> FindGenerationAsync(Guid id, CancellationToken cancellationToken) =>
-        (await GenerationRows.SummariesAsync(context, context.Generations.Where(generation => generation.Id == id), cancellationToken).ConfigureAwait(false))
+        (await GenerationRows.SummariesAsync(context, hosts, context.Generations.Where(generation => generation.Id == id), cancellationToken).ConfigureAwait(false))
             .SingleOrDefault();
 
     public async Task<IReadOnlyList<Guid>> GenerationIdsAsync(Guid versionId, CancellationToken cancellationToken) =>

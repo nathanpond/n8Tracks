@@ -1,11 +1,12 @@
 import {
+  downloadRequestOf,
+  forwardedBody,
   isObserverReady,
   observedKindOf,
   observedRequestOf,
   OBSERVER_BUFFER,
   OBSERVER_SOURCE,
   submittedOf,
-  withoutSecrets,
   type ObservedMessage,
 } from '../adapter/observed.ts';
 
@@ -15,7 +16,9 @@ import {
  * one of the lists the adapter reads (`adapter/observed.ts`), a copy of the body is posted to the
  * content script, which checks the origin as this does. Nothing else is read: no header, no
  * cookie, and no request body beyond the paging fields and, for the user's own Create click (#149),
- * the values at the import field map's `createRequest` paths; `token`, `create_session_token`, and
+ * the values at the import field map's `createRequest` paths; of the plan's billing answer only the
+ * download counts go (#215), and of a prepared download only its status and address (#216);
+ * `token`, `create_session_token`, and
  * `user_tier` are left out at any depth (invariant 6). It sends no request of its own (invariant
  * 4's guard allows this file to name `fetch` only to wrap it).
  *
@@ -80,8 +83,11 @@ export function installObserver(view: ObservedWindow): void {
         type: 'observed',
         kind,
         request: observedRequestOf(address, view.location.href, body),
-        body: withoutSecrets(copy),
+        body: forwardedBody(kind, copy),
         ...(kind === 'create' ? { submitted: submittedOf(body) } : {}),
+        ...(kind === 'download-clip'
+          ? { download: downloadRequestOf(address, view.location.href) }
+          : {}),
       });
     } catch {
       // Not JSON: the reader sees nothing and stops at its step, with the step named.

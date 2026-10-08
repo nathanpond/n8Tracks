@@ -5,6 +5,7 @@ using n8Tracks.Api.Auth;
 using n8Tracks.Api.Problems;
 using n8Tracks.Application.Credentials;
 using n8Tracks.Application.Generations;
+using n8Tracks.Application.Media;
 using n8Tracks.Application.References;
 using n8Tracks.Application.Songs;
 using n8Tracks.Domain.Songs;
@@ -481,7 +482,7 @@ internal sealed record GenerationOwnerResponse(Guid Id, string Shortcode);
 /// <c>comments</c> (oldest first) are the user's own. <c>artwork</c> (#121) is its cover image in the
 /// managed store, shown whole (<c>crop</c> is always null), or null. <c>archivedBy</c> (#142) says who
 /// archived an archived Generation, <c>user</c> or <c>sync</c> (its clip was in Suno's Trash); null while
-/// active. Times are UTC. Never the raw clip.
+/// active. <c>audioFiles</c> (#211) counts its local audio files. Times are UTC. Never the raw clip.
 /// </summary>
 internal sealed record GenerationResponse(
     Guid Id,
@@ -515,7 +516,9 @@ internal sealed record GenerationResponse(
     DateTime CreatedAt,
     int Revision,
     AttachedArtworkResponse? Artwork,
-    string? ArchivedBy)
+    string? ArchivedBy,
+    GenerationAudioFilesResponse AudioFiles,
+    GenerationPlayabilityResponse Playback)
 {
     /// <summary>The Generation as the API shows it; <paramref name="pathBase"/> starts its image's URLs.</summary>
     public static GenerationResponse From(GenerationSummary summary, PathString pathBase)
@@ -556,7 +559,40 @@ internal sealed record GenerationResponse(
             generation.CreatedUtc.UtcDateTime,
             generation.Revision,
             summary.Artwork is { } artwork ? AttachedArtworkResponse.From(artwork with { Crop = null }, pathBase) : null,
-            GenerationStates.ArchiverOf(generation.State, generation.ArchivedBy) is { } archiver ? GenerationStates.NameOf(archiver) : null);
+            GenerationStates.ArchiverOf(generation.State, generation.ArchivedBy) is { } archiver ? GenerationStates.NameOf(archiver) : null,
+            GenerationAudioFilesResponse.From(summary.AudioFiles),
+            GenerationPlayabilityResponse.From(summary.AudioFiles.Playability));
+    }
+}
+
+/// <summary>
+/// Whether a Generation has something to play (#218): <c>playable</c>, and <c>reason</c>, null when a
+/// local file plays, <c>suno_stream</c> when it streams from Suno (#221), and why not otherwise
+/// (<c>nothing_available</c>, <c>suno_not_complete</c>, <c>suno_not_present</c>). The rows' Play
+/// controls read it, so no row asks <c>.../playback</c> before the user presses Play.
+/// </summary>
+internal sealed record GenerationPlayabilityResponse(bool Playable, string? Reason)
+{
+    public static GenerationPlayabilityResponse From(GenerationPlayability playability)
+    {
+        ArgumentNullException.ThrowIfNull(playability);
+
+        return new(playability.Playable, playability.Reason is { } reason ? PlaybackReasons.Text(reason) : null);
+    }
+}
+
+/// <summary>
+/// The local audio files associated with a Generation (#211), as they report now: <c>count</c> (all of
+/// them, Missing and Unavailable ones included), <c>missing</c>, <c>unavailable</c> (every one while
+/// the media folder cannot be read), and <c>formats</c> once each, WAV, M4A, MP3, FLAC, OGG, Opus, AAC.
+/// </summary>
+internal sealed record GenerationAudioFilesResponse(int Count, int Missing, int Unavailable, string[] Formats)
+{
+    public static GenerationAudioFilesResponse From(AudioFileTally tally)
+    {
+        ArgumentNullException.ThrowIfNull(tally);
+
+        return new(tally.Count, tally.Missing, tally.Unavailable, [.. tally.Formats]);
     }
 }
 

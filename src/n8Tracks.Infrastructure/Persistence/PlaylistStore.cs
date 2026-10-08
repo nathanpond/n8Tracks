@@ -3,10 +3,11 @@ using n8Tracks.Application.Catalog;
 using n8Tracks.Domain.Assets;
 using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
+using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Infrastructure.Persistence;
 
-internal sealed class PlaylistStore(N8TracksDbContext context) : IPlaylistStore
+internal sealed class PlaylistStore(N8TracksDbContext context, SunoAudioHosts hosts) : IPlaylistStore
 {
     public async Task<PlaylistPage> ListAsync(int page, int pageSize, CancellationToken cancellationToken)
     {
@@ -58,13 +59,22 @@ internal sealed class PlaylistStore(N8TracksDbContext context) : IPlaylistStore
             .ConfigureAwait(false);
 
         var credits = await SongCreditStore.ForSongsAsync(context, [.. rows.Select(static row => row.Id)], cancellationToken).ConfigureAwait(false);
+        var playback = await SongPlaybackRows.StatesAsync(
+                context,
+                hosts,
+                rows.DistinctBy(static row => row.Id).ToDictionary(static row => row.Id, static row => row.SelectedGenerationId),
+                cancellationToken)
+            .ConfigureAwait(false);
         var songs = rows.Select(row => new PlaylistSong(
             row.Id,
             Shortcodes.ForSong(row.ShortcodeNumber),
             row.Title,
             credits.GetValueOrDefault(row.Id)?.Primary is { } primary ? new PlaylistSongArtist(primary.Id, primary.Name) : null,
             new PlaylistSongState(row.StateId, row.StateName, row.Colour),
-            HasSelectedGeneration: row.SelectedGenerationId != null)).ToList();
+            HasSelectedGeneration: row.SelectedGenerationId != null)
+        {
+            Playback = playback[row.Id],
+        }).ToList();
 
         var artwork = await ArtworkAttachmentStore.ForOwnersAsync(context, ArtworkOwnerTypes.Playlist, [id], cancellationToken).ConfigureAwait(false);
         return new PlaylistDetails(Summary(record, songs.Count, artwork.GetValueOrDefault(id)), songs);

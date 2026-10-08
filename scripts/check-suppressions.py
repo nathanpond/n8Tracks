@@ -279,6 +279,7 @@ ESLINT_LOOKUP = tuple(f"eslint.config.{extension}" for extension in ("js", "mjs"
 BINARY = (
     ".png", ".jpg", ".jpeg", ".gif", ".ico", ".webp", ".avif", ".woff", ".woff2", ".ttf", ".otf",
     ".eot", ".zip", ".gz", ".tgz", ".pdf", ".mp3", ".wav", ".flac", ".ogg", ".m4a", ".mp4", ".webm",
+    ".opus", ".aac",
 )
 # What C#, JavaScript, and YAML all read as the end of a line.
 NEWLINES = re.compile("\r\n|[\r\u0085\u2028\u2029]")

@@ -190,6 +190,50 @@ export interface Song {
   selectedGeneration: SelectedGeneration | null;
   /** The Suno workspace it lives in (#129), by Suno's ID, with its name and state; null when it is in none. */
   sunoWorkspace: SongWorkspace | null;
+  /**
+   * How many local audio files are associated with it (#211), at Song level or through its
+   * Generations, whatever their status. The API always sends it; test fixtures may leave it out.
+   */
+  audioFileCount?: number;
+  /**
+   * What Play on it does (#219), as the server's playback rule decides it. The API always sends it;
+   * test fixtures may leave it out, and then Play asks the server when pressed.
+   */
+  playback?: SongPlayability;
+}
+
+/**
+ * What Play on a Song does (#219): `ready` plays its choice (its Song-level preferred file or its
+ * Selected Generation's file), `needs-choice` asks which Generation to play (nothing is selected),
+ * `selected-unplayable` says the Selected Generation has nothing to play, and `none` has nothing to
+ * offer: only it disables Play. `reason` is null when ready, and a playback reason code otherwise.
+ */
+export type SongPlaybackState = 'ready' | 'needs-choice' | 'selected-unplayable' | 'none';
+
+/** What Play on a Song does, as Song answers, Album tracks and Playlist songs carry it (#219). */
+export interface SongPlayability {
+  state: SongPlaybackState;
+  reason: string | null;
+}
+
+const SONG_PLAYBACK_STATES: readonly string[] = [
+  'ready',
+  'needs-choice',
+  'selected-unplayable',
+  'none',
+];
+
+export function isSongPlaybackState(value: unknown): value is SongPlaybackState {
+  return typeof value === 'string' && SONG_PLAYBACK_STATES.includes(value);
+}
+
+/** Whether `value` is a Song's playability; an absent one (`undefined`) is allowed by the callers. */
+export function isSongPlayability(value: unknown): value is SongPlayability {
+  return (
+    isRecord(value) &&
+    isSongPlaybackState(value.state) &&
+    (value.reason === null || typeof value.reason === 'string')
+  );
 }
 
 /**
@@ -232,7 +276,7 @@ export interface WorkflowState {
   songCount?: number;
 }
 
-export type SongSort = 'updated' | 'title';
+export type SongSort = 'updated' | 'title' | 'audioFiles';
 export type SortDirection = 'asc' | 'desc';
 
 /** What the Songs table shows: the list's own query parameters. */
@@ -363,7 +407,9 @@ export function isSong(value: unknown): value is Song {
     (value.artwork === null || isSongArtwork(value.artwork)) &&
     typeof value.hasSelectedGeneration === 'boolean' &&
     (value.selectedGeneration === null || isSelectedGeneration(value.selectedGeneration)) &&
-    (value.sunoWorkspace === null || isSongWorkspace(value.sunoWorkspace))
+    (value.sunoWorkspace === null || isSongWorkspace(value.sunoWorkspace)) &&
+    (value.audioFileCount === undefined || typeof value.audioFileCount === 'number') &&
+    (value.playback === undefined || isSongPlayability(value.playback))
   );
 }
 
@@ -451,17 +497,22 @@ export function songListParameters(query: SongQuery): URLSearchParams {
   return parameters;
 }
 
-/** The direction a sort starts in: newest first by updated time, A to Z by title. */
+/** The direction a sort starts in: newest first by updated time, A to Z by title, most audio files first. */
 export function defaultDirection(sort: SongSort): SortDirection {
-  return sort === 'updated' ? 'desc' : 'asc';
+  return sort === 'title' ? 'asc' : 'desc';
 }
+
+const SONG_SORTS: readonly SongSort[] = ['updated', 'title', 'audioFiles'];
 
 /**
  * Reads a table view out of a page URL's query string. Anything it does not understand is left at
  * its default, so a hand-edited URL still shows a table.
  */
 export function songQueryFrom(parameters: URLSearchParams): SongQuery {
-  const sort: SongSort = parameters.get('sort') === 'title' ? 'title' : 'updated';
+  const sortText = parameters.get('sort');
+  const sort: SongSort = SONG_SORTS.includes(sortText as SongSort)
+    ? (sortText as SongSort)
+    : 'updated';
   const direction = parameters.get('direction');
   const page = Number(parameters.get('page') ?? '1');
   // A blank title would be refused, so it means no title filter.
@@ -584,17 +635,21 @@ export const SONG_SEARCH_RESULTS = 10;
 
 /**
  * The first Songs whose title contains `search` (ignoring case) or whose shortcode starts with it,
- * by title, and how many match in all. Nothing for blank text; undefined when the list cannot be
- * read.
+ * by title, and how many match in all: {@link SONG_SEARCH_RESULTS} of them, or `limit` when given.
+ * Nothing for blank text; undefined when the list cannot be read.
  */
 export async function searchSongs(
   search: string,
   signal?: AbortSignal,
+  limit?: number,
 ): Promise<{ songs: Song[]; total: number } | undefined> {
   if (search.trim() === '') {
     return { songs: [], total: 0 };
   }
   const parameters = new URLSearchParams({ q: search.trim(), sort: 'title' });
+  if (limit !== undefined) {
+    parameters.set('pageSize', String(limit));
+  }
   try {
     const response = await apiFetch(`${SONGS_PATH}?${parameters.toString()}`, { signal });
     const answer = await body(response);

@@ -1,11 +1,17 @@
 import { Anchor, Button, Divider, Drawer, Group, Loader, Stack, Text } from '@mantine/core';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
+import type { UnmatchedFile } from '../api/audioFiles';
 import { generationDuration, ratingText, reportedModel, type Generation } from '../api/generations';
+import type { LoadState } from '../api/songs';
 import { formatDateTime, useConfiguredTimeZone } from '../api/timeZone';
 import { ArtworkImage } from '../common/ArtworkImage';
 import { ShortcodeBadge } from '../common/ShortcodeBadge';
+import type { AudioFileActions } from '../media/AudioFilesSection';
+import { PlayButton } from '../player/PlayButton';
+import { GenerationAudioFiles } from './GenerationAudioFiles';
 import { GenerationComments, type UpdateGeneration } from './GenerationComments';
+import { GenerationDownloads } from './GenerationDownloads';
 import { selectionActionLabel, stateActionLabel } from './evaluationRules';
 import {
   GenerationStateBadges,
@@ -14,6 +20,13 @@ import {
   type GenerationRowActions,
 } from './GenerationParts';
 import { StarRating } from './StarRating';
+
+/** The Song's local audio files (#211), which the panel filters to its Generation, and their actions. */
+export interface PanelAudioFiles {
+  files: LoadState<UnmatchedFile[]>;
+  onRetry: () => void;
+  actions: AudioFileActions;
+}
 
 /** What the panel shows: a Generation, one still loading, or one that cannot be found. */
 export type GenerationPanelContent =
@@ -43,6 +56,8 @@ function Details({
   onRate,
   update,
   actions,
+  audioFiles,
+  songTitle,
 }: {
   generation: Generation;
   versionLink: string;
@@ -50,11 +65,16 @@ function Details({
   onRate: (generation: Generation, rating: number | null) => void;
   update: UpdateGeneration;
   actions: GenerationRowActions;
+  audioFiles: PanelAudioFiles;
+  songTitle: string;
 }) {
   const timeZone = useConfiguredTimeZone();
   return (
     <Stack gap="md">
-      <ShortcodeBadge shortcode={generation.shortcode} testId="generation-panel-shortcode" />
+      <Group gap="sm" wrap="wrap">
+        <ShortcodeBadge shortcode={generation.shortcode} testId="generation-panel-shortcode" />
+        <PlayButton target={{ kind: 'generation', generation, songTitle }} size="compact-sm" />
+      </Group>
       <div data-testid="generation-panel-artwork">
         {generation.artwork === null ? (
           <Text size="sm" c="var(--n8-color-secondary-text)">
@@ -170,6 +190,15 @@ function Details({
         </Group>
       )}
       <Divider />
+      <GenerationAudioFiles
+        generation={generation}
+        files={audioFiles.files}
+        onRetry={audioFiles.onRetry}
+        actions={audioFiles.actions}
+      />
+      <Divider />
+      <GenerationDownloads generation={generation} />
+      <Divider />
       <GenerationComments generation={generation} update={update} />
     </Stack>
   );
@@ -185,8 +214,11 @@ function Details({
  * clears that, and (#121) its cover image, shown whole. `problem` says why a rating or a choice was
  * not saved. "Create new Song from Generation" (#123) opens through `actions`; `movedFrom` (the old
  * shortcode it was opened by) says the Generation moved. "Delete Generation" (#124) opens its
- * confirmation through `actions`. A reference that names no Generation of this Song says so. Closes with Escape or its close
- * control.
+ * confirmation through `actions`. Its local audio files (#211, `audioFiles`: the Song's list, filtered
+ * here) are listed with their Change and Remove association actions. The files the extension
+ * downloaded for its clip (#222) are listed with whether each is in the media folder. Its Play control (#218)
+ * plays it in the player bar. A reference that names no Generation of this Song says
+ * so. Closes with Escape or its close control.
  */
 export function GenerationPanel({
   opened,
@@ -197,6 +229,8 @@ export function GenerationPanel({
   actions,
   problem,
   movedFrom,
+  audioFiles,
+  songTitle,
 }: {
   opened: boolean;
   content: GenerationPanelContent;
@@ -206,6 +240,9 @@ export function GenerationPanel({
   actions: GenerationRowActions;
   problem?: string | undefined;
   movedFrom?: string | undefined;
+  audioFiles: PanelAudioFiles;
+  /** The Song's title, which the player bar shows for the Generation played here (#218). */
+  songTitle: string;
 }) {
   const title =
     content.kind === 'found'
@@ -255,6 +292,8 @@ export function GenerationPanel({
           onRate={onRate}
           update={update}
           actions={actions}
+          audioFiles={audioFiles}
+          songTitle={songTitle}
         />
       )}
     </Drawer>

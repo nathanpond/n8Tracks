@@ -461,6 +461,148 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.AudioFileRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Artist")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("artist");
+
+                    b.Property<string>("AssociationOrigin")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("association_origin");
+
+                    b.Property<bool>("AutoMatchBlocked")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("auto_match_blocked");
+
+                    b.Property<long?>("DurationMs")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("duration_ms");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("file_name");
+
+                    b.Property<string>("FirstSeenUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("first_seen_utc");
+
+                    b.Property<string>("Format")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("format");
+
+                    b.Property<Guid?>("GenerationId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("generation_id");
+
+                    b.Property<string>("LastSeenUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("last_seen_utc");
+
+                    b.Property<bool>("MetadataReadable")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("metadata_readable");
+
+                    b.Property<string>("ModifiedUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("modified_utc");
+
+                    b.Property<string>("Path")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("path");
+
+                    b.Property<int>("Revision")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(1)
+                        .HasColumnName("revision");
+
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("size_bytes");
+
+                    b.Property<Guid?>("SongId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("song_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("status");
+
+                    b.Property<string>("Title")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("title");
+
+                    b.Property<string>("UnmatchedReason")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("unmatched_reason");
+
+                    b.HasKey("Id")
+                        .HasName("pk_audio_files");
+
+                    b.HasIndex("Path")
+                        .IsUnique()
+                        .HasDatabaseName("ix_audio_files_path");
+
+                    b.HasIndex("SongId")
+                        .HasDatabaseName("ix_audio_files_song_id");
+
+                    b.HasIndex("Status")
+                        .HasDatabaseName("ix_audio_files_status");
+
+                    b.HasIndex("GenerationId", "SongId")
+                        .HasDatabaseName("ix_audio_files_generation_id_song_id");
+
+                    b.HasIndex("Id", "GenerationId")
+                        .IsUnique()
+                        .HasDatabaseName("ix_audio_files_id_generation_id");
+
+                    b.HasIndex("Id", "SongId")
+                        .IsUnique()
+                        .HasDatabaseName("ix_audio_files_id_song_id");
+
+                    b.ToTable("audio_files", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_audio_files_artist", "artist IS NULL OR length(artist) BETWEEN 1 AND 500");
+
+                            t.HasCheckConstraint("ck_audio_files_association", "(song_id IS NULL) = (association_origin IS NULL) AND (generation_id IS NULL OR song_id IS NOT NULL) AND (association_origin IS NOT 'suno-id' OR generation_id IS NOT NULL) AND (unmatched_reason IS NULL OR song_id IS NULL)");
+
+                            t.HasCheckConstraint("ck_audio_files_association_origin", "association_origin IS NULL OR association_origin IN ('suno-id', 'user')");
+
+                            t.HasCheckConstraint("ck_audio_files_duration_ms", "duration_ms IS NULL OR duration_ms > 0");
+
+                            t.HasCheckConstraint("ck_audio_files_file_name", "length(file_name) > 0");
+
+                            t.HasCheckConstraint("ck_audio_files_format", "format IN ('wav', 'm4a', 'mp3', 'flac', 'ogg', 'opus', 'aac')");
+
+                            t.HasCheckConstraint("ck_audio_files_metadata_readable", "metadata_readable = (duration_ms IS NOT NULL)");
+
+                            t.HasCheckConstraint("ck_audio_files_path", "length(path) > 0 AND substr(path, 1, 1) <> '/'");
+
+                            t.HasCheckConstraint("ck_audio_files_revision", "revision >= 1");
+
+                            t.HasCheckConstraint("ck_audio_files_size_bytes", "size_bytes >= 0");
+
+                            t.HasCheckConstraint("ck_audio_files_status", "status IN ('available', 'missing')");
+
+                            t.HasCheckConstraint("ck_audio_files_title", "title IS NULL OR length(title) BETWEEN 1 AND 500");
+
+                            t.HasCheckConstraint("ck_audio_files_unmatched_reason", "unmatched_reason IS NULL OR unmatched_reason IN ('generation_deleted', 'multiple_suno_ids', 'unassociated_by_user', 'song_deleted')");
+                        });
+                });
+
             modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.CredentialRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -539,6 +681,66 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("ck_credentials_revision", "revision >= 1");
 
                             t.HasCheckConstraint("ck_credentials_scopes", "length(scopes) > 0");
+                        });
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.DownloadRecordRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("CompletedUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("completed_utc");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("file_name");
+
+                    b.Property<string>("Format")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("format");
+
+                    b.Property<string>("ReceivedUtc")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("received_utc");
+
+                    b.Property<long?>("SizeBytes")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("size_bytes");
+
+                    b.Property<bool>("SpentUnlock")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("spent_unlock");
+
+                    b.Property<string>("SunoId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("suno_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_download_records");
+
+                    b.HasIndex("SunoId")
+                        .HasDatabaseName("ix_download_records_suno_id");
+
+                    b.ToTable("download_records", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_download_records_completed_utc", "completed_utc <= received_utc");
+
+                            t.HasCheckConstraint("ck_download_records_file_name", "length(file_name) BETWEEN 1 AND 255 AND instr(file_name, '/') = 0 AND instr(file_name, '\\') = 0");
+
+                            t.HasCheckConstraint("ck_download_records_format", "format IN ('wav', 'mp3', 'm4a', 'm4a-stream')");
+
+                            t.HasCheckConstraint("ck_download_records_size_bytes", "size_bytes IS NULL OR size_bytes >= 0");
+
+                            t.HasCheckConstraint("ck_download_records_suno_id", "length(suno_id) = 36 AND suno_id = lower(suno_id)");
                         });
                 });
 
@@ -743,6 +945,26 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.GenerationPreferredAudioFileRecord", b =>
+                {
+                    b.Property<Guid>("GenerationId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("generation_id");
+
+                    b.Property<Guid>("AudioFileId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("audio_file_id");
+
+                    b.HasKey("GenerationId")
+                        .HasName("pk_generation_preferred_audio_files");
+
+                    b.HasIndex("AudioFileId")
+                        .IsUnique()
+                        .HasDatabaseName("ix_generation_preferred_audio_files_audio_file_id");
+
+                    b.ToTable("generation_preferred_audio_files", (string)null);
+                });
+
             modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.GenerationRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -888,6 +1110,10 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasDatabaseName("ix_generations_suno_id")
                         .HasFilter("suno_id IS NOT NULL");
+
+                    b.HasIndex("Id", "SongId")
+                        .IsUnique()
+                        .HasDatabaseName("ix_generations_id_song_id");
 
                     b.HasIndex("VersionId", "Ordinal")
                         .IsUnique()
@@ -1527,6 +1753,26 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("ck_song_links_url", "url LIKE 'http://%' OR url LIKE 'https://%'");
                         });
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.SongPreferredAudioFileRecord", b =>
+                {
+                    b.Property<Guid>("SongId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("song_id");
+
+                    b.Property<Guid>("AudioFileId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("audio_file_id");
+
+                    b.HasKey("SongId")
+                        .HasName("pk_song_preferred_audio_files");
+
+                    b.HasIndex("AudioFileId")
+                        .IsUnique()
+                        .HasDatabaseName("ix_song_preferred_audio_files_audio_file_id");
+
+                    b.ToTable("song_preferred_audio_files", (string)null);
                 });
 
             modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.SongRecord", b =>
@@ -2945,6 +3191,15 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         .HasConstraintName("fk_artwork_attachments_assets_asset_id");
                 });
 
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.AudioFileRecord", b =>
+                {
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.SongRecord", null)
+                        .WithMany()
+                        .HasForeignKey("SongId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_audio_files_songs_song_id");
+                });
+
             modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.EditorRevisionRecord", b =>
                 {
                     b.HasOne("n8Tracks.Infrastructure.Persistence.VersionRecord", null)
@@ -2980,6 +3235,16 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_generation_event_links_generations_generation_id");
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.GenerationPreferredAudioFileRecord", b =>
+                {
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.GenerationRecord", null)
+                        .WithMany()
+                        .HasForeignKey("GenerationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_generation_preferred_audio_files_generations_generation_id");
                 });
 
             modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.GenerationRecord", b =>
@@ -3084,6 +3349,16 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_song_links_songs_song_id");
+                });
+
+            modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.SongPreferredAudioFileRecord", b =>
+                {
+                    b.HasOne("n8Tracks.Infrastructure.Persistence.SongRecord", null)
+                        .WithMany()
+                        .HasForeignKey("SongId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_song_preferred_audio_files_songs_song_id");
                 });
 
             modelBuilder.Entity("n8Tracks.Infrastructure.Persistence.SongRecord", b =>

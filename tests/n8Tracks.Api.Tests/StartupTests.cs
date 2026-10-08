@@ -36,6 +36,12 @@ public sealed class StartupTests : IDisposable
     [InlineData("N8TRACKS_BASE_URL", "nas.example/n8tracks")]
     [InlineData("N8TRACKS_LOG_LEVEL", "Chatty")]
     [InlineData("N8TRACKS_DATA_PATH", "/definitely/not/here")]
+    [InlineData("N8TRACKS_SUNO_AUDIO_HOSTS", ",")]
+    [InlineData("N8TRACKS_SUNO_AUDIO_HOSTS", "https://audio.example.net")]
+    [InlineData("N8TRACKS_SUNO_AUDIO_HOSTS", "audio.example.net:443")]
+    [InlineData("N8TRACKS_SUNO_AUDIO_HOSTS", "audio.example.net/clips")]
+    [InlineData("N8TRACKS_SUNO_AUDIO_HOSTS", "*.cloudfront.net")]
+    [InlineData("N8TRACKS_SUNO_AUDIO_HOSTS", "audio_files.example.net")]
     public async Task AnInvalidValueExitsWithOneErrorLineNamingTheVariable(string variable, string value)
     {
         var (exitCode, lines) = await RunToExit((variable, value));

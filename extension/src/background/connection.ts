@@ -316,6 +316,15 @@ export class Connection {
     return response;
   }
 
+  /**
+   * The n8Tracks address paired with while a token is held, or null: what download reports (#222)
+   * are kept for. It asks n8Tracks nothing.
+   */
+  async pairedAddress(): Promise<string | null> {
+    const pairing = await this.pairing();
+    return pairing?.token === undefined ? null : pairing.address;
+  }
+
   private connected(address: string, answer: Handshake): ConnectedState {
     return {
       status: 'connected',

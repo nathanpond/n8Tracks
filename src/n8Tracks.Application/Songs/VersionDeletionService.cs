@@ -1,6 +1,7 @@
 using System.Globalization;
 using n8Tracks.Application.Artwork;
 using n8Tracks.Application.Auth;
+using n8Tracks.Application.Media;
 using n8Tracks.Application.References;
 using n8Tracks.Application.Retention;
 using n8Tracks.Application.Suno;
@@ -13,7 +14,8 @@ namespace n8Tracks.Application.Songs;
 /// <param name="GenerationCount">Its Generations, which are deleted with it.</param>
 /// <param name="RemainingDescendantCount">Its descendant Versions (archived ones included), which stay where they are.</param>
 /// <param name="IsLastVersion">Whether it is its Song's only Version, so a new blank one is created.</param>
-public sealed record VersionDeletionImpact(VersionSummary Version, int GenerationCount, int RemainingDescendantCount, bool IsLastVersion);
+/// <param name="LocalAudioFiles">Its Generations' local audio files, which stay on disk and become unmatched (#213).</param>
+public sealed record VersionDeletionImpact(VersionSummary Version, int GenerationCount, int RemainingDescendantCount, bool IsLastVersion, LocalAudioFileCounts LocalAudioFiles);
 
 /// <summary>A Version deleted on its own, within its retention period: how a read of it says it was deleted.</summary>
 /// <param name="Id">Its ID.</param>
@@ -78,6 +80,7 @@ public sealed class VersionDeletionService(
     ISongStore songs,
     GenerationArtworkService generationArtwork,
     TombstoneService tombstones,
+    AudioFileLifecycle audioFiles,
     IExclusiveTransaction transaction,
     TimeProvider time)
 {
@@ -217,7 +220,8 @@ public sealed class VersionDeletionService(
             version,
             generations.Count,
             VersionDeletionRules.RemainingDescendants(VersionNumber.Parse(version.Number), all.Select(static other => VersionNumber.Parse(other.Number))),
-            all.Count == 1);
+            all.Count == 1,
+            await audioFiles.CountAsync(version.SongId, generations, wholeSong: false, cancellationToken).ConfigureAwait(false));
     }
 
     /// <summary>
@@ -237,6 +241,9 @@ public sealed class VersionDeletionService(
         var now = time.GetUtcNow();
         await versions.RewriteSourcesOfDeletedGenerationsAsync(generations, [version.Id], now, cancellationToken).ConfigureAwait(false);
         await tombstones.RecordForAsync(generations, now, cancellationToken).ConfigureAwait(false);
+
+        // The Generations' audio files stay on disk, unassociated (#206; associations are not retained).
+        await audioFiles.ReleaseAsync(generations, [], cancellationToken).ConfigureAwait(false);
         return await retention.RetainWithinAsync(
             new RetentionRequest(
                 RetainedRecordTypes.Version,

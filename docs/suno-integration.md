@@ -14,7 +14,7 @@ Shared design the M4 stories refer to as "the Suno integration design". A story'
 - The extension never constructs its own authenticated request to Suno and never reads Suno cookies or authorization headers. It reads Suno's data by observing the responses to the page's own requests (a wrapper around `fetch` in the page, as spike TS-001 did) and causes those requests by operating the page (navigating, scrolling, opening menus).
 - Two exceptions to observing:
   - A clip's cover image is read with a plain request that carries no cookies or authorization, sent only to hosts the adapter lists as Suno image hosts.
-  - An audio address is handed to the browser's downloads interface, which fetches it with no credential added by the extension. The address is either one the page's own traffic exposed (a signed `download_url` from `GET /api/download/clip/<id>?format=…`, valid for one hour) or a clip's `media_urls` playback address. It is used only when it is on a listed Suno audio host: `suno-data-uploads.s3.amazonaws.com` and `d2lwuy8qc234o3.cloudfront.net` (spike TS-004).
+  - An audio address is handed to the browser's downloads interface, which fetches it with no credential added by the extension. The address is either one the page's own traffic exposed (a signed `download_url` from `GET /api/download/clip/<id>?format=…`, valid for one hour) or a clip's `media_urls` playback address. It is used only when it is on a listed Suno audio host: `suno-data-uploads.s3.amazonaws.com` and `d2lwuy8qc234o3.cloudfront.net` (spike TS-004). Only the download queue (`extension/src/download/downloader.ts`, #216) uses the downloads interface, and it passes only the address, the name, `conflictAction: "uniquify"`, and `saveAs: false`: the invariant 4 guard's static scan checks the call.
 - The extension changes Suno in exactly two ways:
   - It may create a workspace.
   - It may unlock a clip for download by clicking the Download dialog's "Unlock & Download". This spends one of the user's plan downloads, and only after the user has confirmed, before the run, how many unlocks the run uses against the allowance remaining. It never buys download packs. (Maintainer's decision on TS-004, 2026-10-05.)
@@ -26,7 +26,7 @@ Shared design the M4 stories refer to as "the Suno integration design". A story'
 
 Two scopes join the list from #56:
 
-- `suno.sync`: create and upload an export, upload Generation artwork for it, read the state of exports this credential created, and report workspace discovery.
+- `suno.sync`: create and upload an export, upload Generation artwork for it, read the state of exports this credential created, report workspace discovery, and look up which Suno clips are Generations for the Download view (#215).
 - `suno.generate`: claim and read a pending generation request, report its progress, report Suno's workspace list as it reads it, record the workspace the user chose for the Song, and report an observed Create and its finished clips (which attaches Generations to the requested Version, or to a new child Version when the submitted inputs differ) with their artwork.
 
 Committing an import, resolving diffs, managing the ignore list, deleting Generations, and reassigning workspaces are session-only. Rating, commenting, archiving, and selecting use `generations.evaluate`.
@@ -166,6 +166,82 @@ Raw objects are sent as Suno returned them. It is uploaded in parts: `POST /api/
   - It then makes the request and posts `{ type: "generate", requestId }`. The extension checks its connection afresh, claims the request, and answers `generate-accepted`. A refused hand-off cancels the request.
   - The page reads the request every two seconds while it is active and offers Cancel.
 
+## Download from Suno (#215)
+
+The panel on Suno has a Download view. The user loads the library, narrows it by workspace and by text in the title, selects clips, and chooses formats from WAV, MP3, M4A, and M4A (streaming quality). They see what would be downloaded before anything is fetched, and Start downloads the files (#216, below).
+
+- **Reading:** Load library and Refresh first ask the service worker (`download-begin`). It refuses while a sync or Generate on Suno runs, and says why. Then Library › Songs (`/me`) is opened again, and on that page load (`download-resume`) the library feed is read to its end with the reader a sync uses (`libraryReader.ts` `readLibrary`, scrolling with `load-more`). The list covers every workspace. Suno leaves trashed clips out of the feed, and a clip marked trashed is shown disabled. The selection is carried across the page load. A read that stops or is cancelled keeps what it read under an "incomplete" banner, and Select all stays off.
+- **What each clip shows:** title ("Untitled" when blank), duration, created date, workspace, whether it is unlocked for download on Suno (`is_download_unlocked`), and whether n8Tracks has it.
+  - A clip that is still generating, has failed, is in the Trash, or has no audio is shown disabled with the reason.
+  - A hidden clip can be selected.
+- **Already in n8Tracks:** `POST /api/v1/suno/clips/lookup` (`suno.sync`, 1 to 500 Suno IDs; the extension sends batches) answers `{ items: [{ sunoId, generation { id, shortcode } | null, artist, deleted, downloadedFormats }] }`.
+  - `generation` is the live Generation holding the clip, archived or not.
+  - `artist` is the Song's primary Artist.
+  - `deleted` is true for a provider tombstone. An ignored clip has no Generation and is not deleted.
+  - `downloadedFormats` lists the formats the clip's download records name (#222, below), in the order offered.
+  - The lookup changes nothing. When the extension is not connected, or lacks `suno.sync`, the column says it is unavailable and why. When the lookup fails while connected, the column shows unknown with a Retry.
+- **Unlocks:** the summary counts the selected clips not yet unlocked when WAV, MP3, or M4A is chosen. One unlock covers all three formats, and the stream needs none. The allowance comes from the page's own `GET /api/billing/info/`, which the page requests when a clip's Download dialog opens. The observer forwards only its `download_usage` counts. Start is refused, with the reason, when the run needs more unlocks than remain or when no reading has been seen yet.
+- **Plan handed to #216:** `[{ sunoId, title, displayName, artist, format, unlocked, streamAddress }]`, with formats `wav`, `mp3`, `m4a`, and `m4a-stream`. `artist` is the lookup's Artist only for a clip that is a Generation in n8Tracks. The stream is offered only for a clip whose data has `media_urls[0]`, whose address is `streamAddress`. The formats chosen are remembered in `chrome.storage.local`.
+
+## Downloading the files (#216)
+
+Start downloads every file of the plan to the browser's download folder, into its `n8Tracks` subfolder, without a save prompt per file. The files go nowhere near n8Tracks: the user copies them into the media folder, and n8Tracks never writes there (invariant 2). Downloading imports, syncs, and changes nothing in the catalog; the queue itself calls nothing in n8Tracks, and each saved file is then reported as a download record (#222, below).
+
+- **Start:** a run that unlocks clips needs the user to tick "Use N Suno download unlocks for this run" first. The tick is asked again when the count changes. The summary always says to turn off the browser's "Ask where to save each file before downloading" setting, which the extension cannot read. Start sends `download-start { files, unlocks }`. The service worker refuses it while a sync or Generate on Suno runs, and when `unlocks` is not the plan's count of clips not yet unlocked in WAV, MP3, or M4A. Pressing Start while a run is under way adds to it, and a clip and format already queued is not added twice.
+- **File names** (`extension/src/download/fileName.ts`): `<Artist> - <Title> (suno-<Suno ID>).<ext>`, or `<Title> (suno-<Suno ID>).<ext>` with no Artist. The streaming-quality M4A ends ` stream.m4a`.
+  - The Artist is the Song's primary Artist when the clip is a Generation in n8Tracks, else the Suno display name, else none.
+  - Text is normalised to NFC. Control and bidirectional characters are removed, and `< > : " / \ | ? *` become `_`.
+  - Leading and trailing dots and spaces are removed, an empty title is "Untitled", and a Windows device name gets a leading `_`.
+  - A name is at most 180 UTF-16 units and 240 bytes of UTF-8. Cuts fall on whole characters, the title first and then the Artist, never the token or the extension. The ID is written in lower case.
+  - The browser numbers a name that is taken (`… (1).wav`). `extension/fixtures/filenames.json` holds names the downloader produces, read by both the extension's tests and the server's matcher test (#206), the numbered form included.
+- **The queue** (`extension/src/download/downloader.ts`) lives in the service worker and is kept in `chrome.storage.local` (`downloadQueue`). Two files are worked on at a time, in plan order, and one that fails never stops the rest.
+  - **WAV, MP3, M4A** are prepared in the run's Suno tab (the queue sends it `download-prepare`), one at a time, just before each is downloaded, because a signed address expires after an hour. On the Library page, the adapter (`extension/src/adapter/downloadSteps.ts`, workflows `open-clip-menu`, `choose-download`, `choose-download-format`, `close-download-dialog`) does the following:
+    1. It finds the clip's row by its `/song/<id>` link and presses the row's "More options", then the menu's Download.
+    2. In the Download dialog it presses the format, then "Unlock & Download".
+    3. It waits up to 30 seconds for the page's own `GET /api/download/clip/<id>?format=…` answer with `status: "ready"`. The observer forwards only `status` and `download_url`, and the clip and format the address names.
+    4. It closes the dialog if it is still open.
+  - **The Download dialog's controls** (the formats, "Unlock & Download", Close) are invariant 4's second named exception (`download-clip` in `adapter/forbidden.ts`). Only `Page.downloadDialogClick`, called from `adapter/workflows/download.ts`, presses them. "MP4 video asset", Stems & MIDI's Manage, and every forbidden control stay refused.
+  - **Unlocks:** a clip not yet unlocked is unlocked only when the user confirmed it at Start, and once per clip; a run never unlocks more. For a clip already unlocked, Suno answers the button with `already_unlocked` and spends nothing (TS-004's `download-authorize` fixture). TS-004 captured the button only as "Unlock & Download". A dialog whose button is named otherwise stops the step, and no other name is pressed.
+  - **The stream** is downloaded from the clip data's `media_urls[0]`, with no page step.
+  - **Failures:** a clip not in the list on the page stops that file, saying to scroll to it and Retry. Suno not preparing the file in 30 seconds also stops that file. A step that no longer matches Suno's page stops every waiting file of that format, naming the step, and other formats go on. A signed address that has expired (`SERVER_FORBIDDEN`, `SERVER_UNAUTHORIZED`) is prepared afresh once. Any other interruption fails the file with the browser's reason.
+  - **Cancel** stops queued files and cancels the files in flight with `chrome.downloads.cancel`. **Retry failed downloads** runs only the files that failed, from the start.
+  - **Tabs and restarts:** if the run's Suno tab is closed, or is not on the Library, the files that need the page wait for Resume, and the stream goes on. A restarted service worker carries on with the downloads in the browser. After a browser restart, which the queue detects because `chrome.storage.session` is empty, the queue waits for Resume, and files in flight start again from zero.
+- **After each file:** the final name is read back from the downloads interface (`chrome.downloads.search`).
+  - When it is not the name asked for (or the browser's numbering of it), or not in the `n8Tracks` folder, the file is reported as saved under a different name, with that name. TS-004 saw another extension apply the address's own name, `<id>.wav` or `<id>_lyrics.mp3`, which the matcher still finds.
+  - An M4A saved as `.mp4` is flagged to be renamed to `.m4a` before n8Tracks scans it.
+- **Progress:** the queue pushes each change to the run's tab (`download-progress`), and a page load reads it (`download-run`). The panel shows each file (waiting, being prepared, downloading with a percentage, saved, failed with its reason, or cancelled) and the whole run, with Cancel downloads, Retry failed downloads, and Resume.
+- **Suno's own copy:** when the maintainer downloaded through the Download dialog in TS-004, Suno's page saved the file itself, as `<title>.<ext>`. So a run may leave that copy too. That copy carries no Suno ID, so the summary says n8Tracks cannot match it. The extension does not remove it.
+
+## Download records (#222)
+
+n8Tracks keeps a record of each file the extension downloaded, so the user can see which outputs they already have, and in which formats. A record says a file reached the user's computer, not that it is in the media folder: that is an audio file, which a scan finds.
+
+- **Reporting** (`extension/src/background/downloadRecords.ts`): when a file of the queue reaches `saved`, it gets a record ID of its own, and the service worker sends `POST /api/v1/suno/downloads` (`suno.sync`) with `{ id, sunoId, format, fileName, completedAt, sizeBytes, spentUnlock }`. `fileName` is the base name the browser saved it under, its ` (n)` numbering included, never a path. `spentUnlock` says whether the run spent a Suno unlock on the clip. No address and nothing of Suno's data is sent.
+  - A failed or cancelled file is not reported. Reporting never holds up or fails a download.
+  - A report is tried three times. One that still fails is kept in `chrome.storage.local` (`downloadRecords`) for the paired n8Tracks, at most 500, the oldest dropped first, and sent when the connection next works (a service worker start, the next saved file, or the panel reading the run). Pairing with another n8Tracks discards them.
+  - A report refused for good (422, or 403 without `suno.sync`) is dropped and counted. A file saved while the extension holds no token is not recorded. The Download view says how many of the run's files are not yet recorded, could not be recorded, or were not recorded because it was not connected.
+- **n8Tracks** stores each report in `download_records` by Suno ID, with no link to a Generation: a record is kept for a clip that is not a Generation yet (and creates nothing), for a deleted clip, and indefinitely. A clip imported later shows its earlier records. A repeated download is a new record; a report sent again under the same ID changes nothing and answers the stored record (200 instead of 201). It is refused with 422 unless the format is `wav`, `mp3`, `m4a`, or `m4a-stream`, the Suno ID is a UUID, and the name is 1 to 255 characters without a folder. The extension's completion time is stored with n8Tracks' own receipt time, and is never later than it.
+- **The Generation panel** reads `GET /api/v1/generations/{reference}/downloads` (`catalog.read`, newest first, at most 100). Each record shows its format, file name, and time, and "In media folder" when a scanned file of that name is attached to this Generation, "Found, not attached to this Generation" when one exists elsewhere or unmatched, or "Not found in media folder". Names are compared without regard to case and without the browser's ` (n)` numbering; a Missing file still counts as found, shown with its state.
+- **The Download view** gains "Not yet downloaded", which shows only the clips lacking a record in at least one chosen format (in any format when none is chosen), and "Skip files already downloaded", ticked by default, which leaves those files out of the plan and names them in the summary. Files saved in the current run count as downloaded too. While n8Tracks cannot say what was downloaded (not connected, or no `suno.sync`), the filter is off and nothing is skipped.
+
+## Streaming from Suno (#221)
+
+When a Generation has no available local file, the player streams it from Suno.
+
+- **The stored address:** a Generation keeps one audio address. It is the first `media_urls` entry a browser plays: MP3, then M4A (Suno's `m4a-opus` among them), then OGG, matched by `content_type` or by the address's path. With none of those, it is `audio_url`. The migration `20261008060000_RederiveGenerationAudioUrls` re-derived every stored address from its raw clip by this rule. The address is not a compared field, so a sync after it proposes no change.
+- **The server's host list:** `SunoAudioHosts` (`src/n8Tracks.Domain/Suno/`) holds by default only `d2lwuy8qc234o3.cloudfront.net`, the playback host. The adapter also lists the signed-download host and Suno's API host, and the server leaves both out. The default must stay a subset of the adapter's `SUNO_AUDIO_HOSTS`, which a test checks. The operator can replace the list with `N8TRACKS_SUNO_AUDIO_HOSTS` (see the README's Configuration) in case Suno moves its audio; that list is outside the subset check, and it is what both the policy below and the address check use. Any other address counts as no address. So does an address that is not plain HTTPS on the default port, or one that carries a user name.
+- **The rule (`PlaybackResolver`, `SunoStream`):**
+  - A local file always wins.
+  - The stream is tried only for a clip whose status is `complete` and whose remote state is `present`. Otherwise Play is disabled, with the reason (`suno_not_complete`, `suno_not_present`, `nothing_available`).
+  - A Song with a Selected Generation that has no local file streams that Generation. It never plays another Generation's file.
+  - The playback answers carry `source: "suno"`, `sunoAudioUrl`, and `sunoPageUrl`. The playback sources list a stream-only Generation with no files and its `sunoAudioUrl`.
+- **The browser plays it:**
+  - The server never requests, proxies, or stores the audio. The architecture tests check that no server type can reach the network.
+  - The audio element sets `referrerpolicy="no-referrer"` and no `crossorigin`, so the request to Suno carries no n8Tracks cookie, token, or referrer path.
+  - Every response sends `Content-Security-Policy: media-src 'self' https://d2lwuy8qc234o3.cloudfront.net` (with the default host list; one `https://` origin per configured host otherwise) and no other directive. The full policy belongs to the audit milestone.
+  - Every response also sends `Referrer-Policy: strict-origin-when-cross-origin`, the browsers' default made explicit. Browsers do not yet honour the attribute on media elements, so this header is what keeps the path out.
+- **Failure:** a stream that errors, has not started 15 seconds after the play request, or stalls for 30 seconds while playing has failed. The bar says so, offers Open in Suno (a new tab), and suggests syncing again. There is no retry, and the player never falls back to another source.
+
 ## Extension structure
 
 - A service worker holds state and is the only part that calls the n8Tracks API.
@@ -174,7 +250,7 @@ Raw objects are sent as Suno returned them. It is uploaded in parts: `POST /api/
 - The Suno adapter lives in `extension/src/adapter/` with an `ADAPTER_VERSION` constant. Every selector, address pattern, and workflow step for Suno is inside it.
 - The extension's own interface on the Suno page is a panel the content script injects in a shadow root; settings are on an options page. The popup shows connection state.
 - Pairing: the options page takes the n8Tracks address and a token, asks the browser for the two host permissions, and the service worker checks the token with `GET /api/v1/extension/handshake` before saving it. Any valid token may make the handshake, whatever its scopes. Each call sends `X-N8Tracks-Extension-Version` and `X-N8Tracks-Adapter-Version`. The answer is `{ applicationVersion, credentialName, scopes, compatible }`, and the reported versions are recorded on the credential. The handshake is cached for 60 seconds and is re-run before each sync or generation. A 401 `invalid_token` forgets the token.
-- Manifest: `permissions` are `storage`, `scripting`, `tabs`, and `alarms` (the completion watch's ten minutes, #154). `optional_host_permissions` are `https://suno.com/*`, `https://*/*`, and `http://*/*`; at pairing the extension requests exactly `https://suno.com/*` and the one n8Tracks origin the user entered, and nothing else is ever requested.
+- Manifest: `permissions` are `storage`, `scripting`, `tabs`, `alarms` (the completion watch's ten minutes, #154), and `downloads` (the download queue, #216; required, because the panel is a content script and cannot show a permission prompt). `optional_host_permissions` are `https://suno.com/*`, `https://*/*`, and `http://*/*`; at pairing the extension requests exactly `https://suno.com/*` and the one n8Tracks origin the user entered, and nothing else is ever requested.
 - Extension logs follow invariant 6: tokens, lyrics, prompts, and raw payloads are never written to the console or to the diagnostic report.
 
 ## Testing

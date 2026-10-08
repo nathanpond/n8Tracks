@@ -7,6 +7,7 @@ import {
   type Version,
   type VersionDetail,
 } from '../api/versions';
+import { DeletionAudioFiles } from '../media/DeletionAudioFiles';
 import { deletionSummary } from './versionDeletion';
 
 const FAILED_MESSAGE =
@@ -115,6 +116,7 @@ export function DeleteVersionDialog({
               {deletionSummary(version.number, impact.impact).map((line) => (
                 <Text key={line}>{line}</Text>
               ))}
+              <DeletionAudioFiles counts={impact.impact.localAudioFiles} owner="version" />
             </Stack>
           )}
           {(impact.kind === 'gone' || impact.kind === 'failed') && (

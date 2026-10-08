@@ -38,13 +38,18 @@ const CONNECTED: ConnectedState = {
 
 /**
  * Leaves out what the panel asks each time it refreshes (the state and the diagnostic report,
- * #150) and the page load's question whether its tab is generating (#145, never in a sync's tab).
+ * #150), the page load's question whether its tab is generating (#145, never in a sync's tab), and
+ * the Download view's questions (#215: no library load, and the formats last chosen; #216: the
+ * download queue as it stands).
  */
 const PANEL_REFRESH = new Set([
   'state',
   'diagnostics-record',
   'diagnostic-report',
   'generate-resume',
+  'download-resume',
+  'download-formats',
+  'download-run',
 ]);
 const notPanelRefresh = (type: string) => !PANEL_REFRESH.has(type);
 

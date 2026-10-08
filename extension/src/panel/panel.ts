@@ -31,6 +31,8 @@ export interface PanelOptions {
   sync?: HTMLElement;
   /** Generate on Suno (#145), shown under the sync when given. */
   generate?: HTMLElement;
+  /** Download from Suno (#215), shown under Generate on Suno when given. */
+  download?: HTMLElement;
   /** Makes and revokes the report's Blob address; the browser's `URL` unless a test stands in. */
   objectUrls?: ObjectUrls;
 }
@@ -53,6 +55,7 @@ const GROUPS: readonly { feature: Feature; heading: string }[] = [
   { feature: 'page', heading: 'Suno page' },
   { feature: 'sync', heading: 'Library sync' },
   { feature: 'generate', heading: 'Generate on Suno' },
+  { feature: 'download', heading: 'Download from Suno' },
 ];
 
 /** How the panel says a workflow's state. */
@@ -174,6 +177,7 @@ export class Panel {
       this.features,
       ...(options.sync === undefined ? [] : [options.sync]),
       ...(options.generate === undefined ? [] : [options.generate]),
+      ...(options.download === undefined ? [] : [options.download]),
       workflowsHeading,
       this.workflowList,
       check,

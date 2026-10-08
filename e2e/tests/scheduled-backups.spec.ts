@@ -86,6 +86,9 @@ test.describe('Settings → Backups: the schedule', { tag: '@root-only' }, () =>
       .poll(
         async () => {
           await page.reload();
+          // isVisible() does not wait: sample only once the reloaded page has its schedule status,
+          // not while it still shows "Loading the schedule".
+          await expect(page.getByTestId('backup-schedule-status')).toBeVisible();
           return page.getByText(/^The latest scheduled backup succeeded/).isVisible();
         },
         { timeout: 60_000, intervals: [2_000] },

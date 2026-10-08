@@ -16,6 +16,7 @@ internal static class EnvironmentOptionsLoader
     public const string DataPath = "N8TRACKS_DATA_PATH";
     public const string MediaPath = "N8TRACKS_MEDIA_PATH";
     public const string BackupPath = "N8TRACKS_BACKUP_PATH";
+    public const string SunoAudioHosts = "N8TRACKS_SUNO_AUDIO_HOSTS";
 
     /// <summary>
     /// Test-only: <c>1</c> makes the <c>seed-generation</c> command available outside Development. The
@@ -43,7 +44,7 @@ internal static class EnvironmentOptionsLoader
 
     private static readonly HashSet<string> KnownVariables = new(StringComparer.Ordinal)
     {
-        Port, BaseUrl, TimeZone, LogLevel, DataPath, MediaPath, BackupPath, EnableTestSeeding,
+        Port, BaseUrl, TimeZone, LogLevel, DataPath, MediaPath, BackupPath, SunoAudioHosts, EnableTestSeeding,
     };
 
     private static readonly Dictionary<string, N8TracksLogLevel> LogLevels =
@@ -76,13 +77,17 @@ internal static class EnvironmentOptionsLoader
         var dataPath = ReadDataPath(variables, environment.WorkingDirectory, errors);
         var mediaPath = ResolvePath(Value(variables, MediaPath) ?? DefaultMediaPath, environment.WorkingDirectory);
         var backupPath = ResolvePath(Value(variables, BackupPath) ?? DefaultBackupPath, environment.WorkingDirectory);
+        var sunoAudioHosts = ReadSunoAudioHosts(variables, errors);
 
         if (errors.Count > 0)
         {
             throw new ConfigurationValidationException(errors);
         }
 
-        return new N8TracksOptions(port, baseUrl!, pathBase, timeZone!, logLevel, dataPath, mediaPath, backupPath);
+        return new N8TracksOptions(port, baseUrl!, pathBase, timeZone!, logLevel, dataPath, mediaPath, backupPath)
+        {
+            SunoAudioHosts = sunoAudioHosts!,
+        };
     }
 
     /// <summary>
@@ -367,6 +372,23 @@ internal static class EnvironmentOptionsLoader
             LogLevel,
             $"must be one of {string.Join(", ", Enum.GetNames<N8TracksLogLevel>())}, but was '{Echo(value)}'."));
         return DefaultLogLevel;
+    }
+
+    private static Domain.Suno.SunoAudioHosts? ReadSunoAudioHosts(IReadOnlyDictionary<string, string> variables, List<ConfigurationError> errors)
+    {
+        var value = Value(variables, SunoAudioHosts);
+        if (value is null)
+        {
+            return Domain.Suno.SunoAudioHosts.Default;
+        }
+
+        var hosts = Domain.Suno.SunoAudioHosts.Parse(value, out var reason);
+        if (hosts is null)
+        {
+            errors.Add(new ConfigurationError(SunoAudioHosts, reason!));
+        }
+
+        return hosts;
     }
 
     private static string ReadDataPath(

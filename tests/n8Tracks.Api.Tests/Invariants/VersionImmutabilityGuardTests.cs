@@ -924,7 +924,107 @@ public sealed class VersionImmutabilityGuardTests
                 await target.InputsJsonAsync($$"""{"generation":"{{target.VersionShortcode}}-g1",""", "}"));
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         }),
+
+        // An audio file's association (#210) names a Song and one of its Generations, by shortcode,
+        // with the Version's inputs alongside: only the file's record changes.
+        ["PUT /api/v1/audio-files/{id:guid}/association"] = new(async target =>
+        {
+            var file = CatalogedFile(target, "associated");
+            using var response = await SendAsync(
+                target.Client,
+                HttpMethod.Put,
+                new Uri($"/api/v1/audio-files/{file}/association", UriKind.Relative),
+                SongApi.Quoted(1),
+                await target.InputsJsonAsync($$"""{"song":"{{target.SongShortcode}}","generation":"{{target.VersionShortcode}}-g1",""", "}"));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }),
+        ["DELETE /api/v1/audio-files/{id:guid}/association"] = new(async target =>
+        {
+            var file = CatalogedFile(target, "removed");
+            using var associated = await SendAsync(
+                target.Client,
+                HttpMethod.Put,
+                new Uri($"/api/v1/audio-files/{file}/association", UriKind.Relative),
+                SongApi.Quoted(1),
+                $$"""{"song":"{{target.SongId}}"}""");
+            Assert.Equal(HttpStatusCode.OK, associated.StatusCode);
+            using var response = await SendAsync(target.Client, HttpMethod.Delete, new Uri($"/api/v1/audio-files/{file}/association", UriKind.Relative), SongApi.Quoted(2), json: null);
+            Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        }),
+        ["POST /api/v1/audio-files/{id:guid}/rematch"] = new(async target =>
+        {
+            var file = CatalogedFile(target, "rematched");
+            using var response = await SendAsync(target.Client, HttpMethod.Post, new Uri($"/api/v1/audio-files/{file}/rematch", UriKind.Relative), SongApi.Quoted(1), json: null);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }),
+
+        // Preferred audio files (#212): a file associated with the frozen Version's Generation, or with
+        // its Song alone, chosen and cleared by shortcode, with the Version's inputs alongside: only the
+        // choice and its owner's revision change.
+        ["PUT /api/v1/generations/{reference}/preferred-audio-file"] = new(async target =>
+        {
+            var file = await AssociatedFileAsync(target, "generation-preferred", $"{target.VersionShortcode}-g1");
+            var revision = await GenerationRevisionAsync(target, $"{target.VersionShortcode}-g1");
+            using var response = await SendAsync(
+                target.Client,
+                HttpMethod.Put,
+                new Uri($"/api/v1/generations/{target.VersionShortcode}-g1/preferred-audio-file", UriKind.Relative),
+                SongApi.Quoted(revision),
+                await target.InputsJsonAsync($$"""{"audioFile":"{{file}}",""", "}"));
+            Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        }),
+        ["DELETE /api/v1/generations/{reference}/preferred-audio-file"] = new(async target =>
+        {
+            var revision = await GenerationRevisionAsync(target, $"{target.VersionShortcode}-g1");
+            using var response = await SendAsync(target.Client, HttpMethod.Delete, new Uri($"/api/v1/generations/{target.VersionShortcode}-g1/preferred-audio-file", UriKind.Relative), SongApi.Quoted(revision), json: null);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }),
+        ["PUT /api/v1/songs/{reference}/preferred-audio-file"] = new(async target =>
+        {
+            var file = await AssociatedFileAsync(target, "song-preferred", generation: null);
+            var (_, revision) = await target.SongAsync();
+            using var response = await SendAsync(
+                target.Client,
+                HttpMethod.Put,
+                new Uri($"/api/v1/songs/{target.SongShortcode}/preferred-audio-file", UriKind.Relative),
+                SongApi.Quoted(revision),
+                await target.InputsJsonAsync($$"""{"audioFile":"{{file}}",""", "}"));
+            Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        }),
+        ["DELETE /api/v1/songs/{reference}/preferred-audio-file"] = new(async target =>
+        {
+            var (_, revision) = await target.SongAsync();
+            using var response = await SendAsync(target.Client, HttpMethod.Delete, new Uri($"/api/v1/songs/{target.SongShortcode}/preferred-audio-file", UriKind.Relative), SongApi.Quoted(revision), json: null);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }),
     };
+
+    /// <summary>A cataloged file associated by the API with the target's Song and, when given, its Generation <paramref name="generation"/>.</summary>
+    private static async Task<Guid> AssociatedFileAsync(Target target, string name, string? generation)
+    {
+        var file = CatalogedFile(target, name);
+        var body = generation is null
+            ? $$"""{"song":"{{target.SongShortcode}}"}"""
+            : $$"""{"song":"{{target.SongShortcode}}","generation":"{{generation}}"}""";
+        using var response = await SendAsync(target.Client, HttpMethod.Put, new Uri($"/api/v1/audio-files/{file}/association", UriKind.Relative), SongApi.Quoted(1), body);
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        return file;
+    }
+
+    private static async Task<int> GenerationRevisionAsync(Target target, string generation) =>
+        (await SetupApi.JsonAsync(await target.Client.GetAsync(new Uri($"/api/v1/generations/{generation}", UriKind.Relative)))).GetProperty("revision").GetInt32();
+
+    /// <summary>A cataloged, unassociated audio file at revision 1, written straight to the table (no scan is needed to associate one).</summary>
+    private static Guid CatalogedFile(Target target, string name)
+    {
+        var id = Guid.CreateVersion7();
+        var path = $"guard/{name}-{id:N}.mp3";
+        TestDatabase.Execute(
+            target.Factory.DataPath,
+            "INSERT INTO audio_files (id, path, file_name, format, size_bytes, modified_utc, first_seen_utc, last_seen_utc, status, metadata_readable) "
+            + $"VALUES ('{id.ToString().ToUpperInvariant()}', '{path}', '{path[6..]}', 'mp3', 1, '2026-10-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z', 'available', 0);");
+        return id;
+    }
 
     /// <summary>Unsafe endpoints that take neither a Song nor a Version, and why they cannot change one's inputs.</summary>
     private static Dictionary<string, string> ApiEndpointsTouchingNoVersion() => new(StringComparer.Ordinal)
@@ -964,14 +1064,22 @@ public sealed class VersionImmutabilityGuardTests
         ["PUT /api/v1/suno/models/order"] = "reorders the model list; a Version's model is not touched",
         ["DELETE /api/v1/workflow-states/{id:guid}"] = "workflow states; moves Songs to another state, never a Version",
         ["POST /api/v1/backups"] = "queues a backup: reads the database, writes only an archive file",
+        ["POST /api/v1/media/scans"] = "queues a media scan (#203): it writes only audio_files and the settings rows media.lastScan, media.lastSuccessfulScan, and media.mount, never a Version",
+        ["POST /api/v1/audio-files/{id:guid}/content"] = "answers 405 (#217): audio content is only read, and nothing is written",
+        ["PUT /api/v1/audio-files/{id:guid}/content"] = "answers 405 (#217): audio content is only read, and nothing is written",
+        ["PATCH /api/v1/audio-files/{id:guid}/content"] = "answers 405 (#217): audio content is only read, and nothing is written",
+        ["DELETE /api/v1/audio-files/{id:guid}/content"] = "answers 405 (#217): audio content is only read, and nothing is written",
         ["DELETE /api/v1/backups/{location}/{name}"] = "deletes an archive file, never a database row",
         ["PUT /api/v1/settings/backup-schedule"] = "the backup schedule: one settings row",
         ["PUT /api/v1/settings/version-defaults"] = "the defaults for new Versions: one settings row, applied only when a Song is created",
         ["PUT /api/v1/settings/catalog"] = "the default Artist: one settings row, applied only as a new Song's credit",
+        ["PUT /api/v1/settings/media-scan"] = "the media scan schedule (#204): one settings row; the scans it leads to write only audio_files and the media.* settings rows",
         ["POST /api/v1/restores/validate"] = "reads a backup archive into a temporary folder; changes no row",
         ["POST /api/v1/restores/uploads"] = "writes an uploaded archive to a temporary file and reads it; changes no row",
         ["POST /api/v1/artwork"] = "stores an uploaded image as an asset (assets and its files); attaching it is the owner's own edit, and no Version is touched",
         ["POST /api/v1/restores"] = "starts maintenance and a safety backup; it replaces the instance as a whole (#74), never edits a Version",
+        ["POST /api/v1/suno/clips/lookup"] = "reads only: which Suno clips are Generations, for the extension's Download view (#215); nothing is written",
+        ["POST /api/v1/suno/downloads"] = "records a file the extension downloaded (download_records, #222), by Suno ID with no link to a Generation; no Song, Version, or Generation is touched",
         ["PUT /api/v1/suno/workspaces/discovered"] = "records Suno workspaces as the extension reports them (suno_workspaces, #129); no Song or Version is touched, even when one becomes unavailable",
         ["POST /api/v1/suno/exports"] = "stages a Suno export's header (suno_exports, #131); the catalog is not touched (invariant 3, SunoExportStagingGuardTests)",
         ["POST /api/v1/suno/exports/{id:guid}/parts"] = "stages a part of a Suno export (suno_export_parts, #131); the catalog is not touched",
@@ -1312,6 +1420,7 @@ public sealed class VersionImmutabilityGuardTests
         ["IgnoreListService.ListAsync(IgnoredItemQuery, CancellationToken)"] = "reads only: the ignore list (#143)",
         ["IgnoreListService.RemoveAsync(IReadOnlyCollection`1, CancellationToken)"] = "removes Suno IDs from the ignore list (#143) and reclassifies a ready export's records; nothing is imported and no Version is touched",
         ["TombstoneService.TombstonedAsync(IReadOnlyCollection`1, CancellationToken)"] = "reads only",
+        ["SunoClipLookupService.LookupAsync(IReadOnlyList`1, CancellationToken)"] = "reads only: which Suno clips are Generations, for the extension's Download view (#215)",
         ["VersionDefaultsService.GetAsync(CancellationToken)"] = "reads only: the user's defaults",
         ["VersionDefaultsService.NewVersionInputsAsync(String, CancellationToken)"] = "reads only: the inputs a new, mutable Version starts with",
         ["VersionDefaultsService.UpdateAsync(IReadOnlyDictionary`2, Int32, CancellationToken)"] = "the user's defaults for new Versions; an existing Version is not touched",

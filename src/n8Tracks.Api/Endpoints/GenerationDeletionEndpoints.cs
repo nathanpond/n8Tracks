@@ -69,6 +69,7 @@ internal static class GenerationDeletionEndpoints
             impact.CommentCount,
             impact.ArtworkCount,
             impact.SourceVersionCount,
+            LocalAudioFilesResponse.From(impact.LocalAudioFiles),
             impact.Generation.Generation.Revision));
     }
 
@@ -195,7 +196,8 @@ internal static class GenerationDeletionEndpoints
 /// What deleting a Generation would do: its <c>id</c> and <c>shortcode</c>; whether it
 /// <c>isSelected</c>; the <c>replacements</c> its Song may select instead (when selected); its
 /// <c>commentCount</c> and <c>artworkCount</c>, deleted with it; how many Versions use it as a source
-/// (<c>sourceVersionCount</c>); and its <c>revision</c>, to delete it under.
+/// (<c>sourceVersionCount</c>); its <c>localAudioFiles</c>, which stay on disk and become unmatched
+/// (#213); and its <c>revision</c>, to delete it under.
 /// </summary>
 internal sealed record GenerationDeletionImpactResponse(
     Guid Id,
@@ -205,6 +207,7 @@ internal sealed record GenerationDeletionImpactResponse(
     int CommentCount,
     int ArtworkCount,
     int SourceVersionCount,
+    LocalAudioFilesResponse LocalAudioFiles,
     int Revision);
 
 /// <summary>What deleting a Generation answers: its <c>song</c> as it is now (its selection and state).</summary>

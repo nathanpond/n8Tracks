@@ -161,7 +161,8 @@ test.describe('credits', { tag: '@root-only' }, () => {
     await expect(page).toHaveURL(new RegExp(`artist=${guest.id}`));
     const rows = page.getByRole('table', { name: 'Songs' }).locator('tbody tr');
     await expect(rows).toHaveCount(1);
-    await expect(rows.first().getByRole('cell').nth(1)).toHaveText('n8');
+    // Cells, the shortcode being the row header: the Play control (#219), the title, the Artist.
+    await expect(rows.first().getByRole('cell').nth(2)).toHaveText('n8');
     await expectAccessibleInLightAndDark(page);
 
     // The Artist page lists the Song with each Artist's role.

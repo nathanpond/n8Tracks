@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { sunoFixture } from '../testing/sunoResponses.ts';
 import {
+  downloadRequestOf,
+  forwardedBody,
   isObservedMessage,
   isObserverReady,
   observedKindOf,
@@ -26,6 +29,8 @@ describe('which responses the observer forwards', () => {
     ['/api/feed/v3/', 'POST', 'library-feed'],
     // The answer to the user's own Create click (#149); the extension never clicks Create itself.
     [`${API}/api/generate/v2-web/`, 'POST', 'create'],
+    // The plan's download allowance, which the page reads when a Download dialog opens (#215).
+    [`${API}/api/billing/info/`, 'GET', 'billing'],
   ])('forwards %s (%s) as %s', (address, method, kind) => {
     expect(observedKindOf(address, method, PAGE)).toBe(kind);
   });
@@ -35,7 +40,7 @@ describe('which responses the observer forwards', () => {
     [`${API}/api/generate/v2-web/`, 'GET'],
     [`${API}/api/generate/v2`, 'POST'],
     [`${API}/api/persona/get-personas/?page=1`, 'GET'],
-    [`${API}/api/billing/info/`, 'GET'],
+    [`${API}/api/billing/info/`, 'POST'],
     [`${API}/api/download/authorize`, 'POST'],
     [`${API}/api/feed/v3`, 'GET'],
     [`${API}/api/feed/v3/extra`, 'POST'],
@@ -197,5 +202,75 @@ describe('the messages between the observer and the content script', () => {
     expect(isObservedMessage({ ...message, request: null })).toBe(false);
     expect(isObserverReady({ source: 'n8tracks-suno-content', type: 'observer-ready' })).toBe(true);
     expect(isObserverReady({ source: OBSERVER_SOURCE, type: 'observer-ready' })).toBe(false);
+  });
+});
+
+describe('what the observer forwards of the billing answer (#215)', () => {
+  it('forwards only the download counts: no plan, no offers, nothing else', () => {
+    const body = {
+      ...(sunoFixture('billing-info.download-excerpt.response') as Record<string, unknown>),
+      plan: { name: 'Premier', renews: 'soon' },
+      token: 'never',
+    };
+
+    expect(forwardedBody('billing', body)).toEqual({
+      download_usage: {
+        current_period_downloads_used: 0,
+        current_period_downloads_limit: 60,
+        additional_download_remaining: 0,
+      },
+    });
+  });
+
+  it('forwards an empty body when the answer has no download counts', () => {
+    expect(forwardedBody('billing', { plan: 'x' })).toEqual({});
+    expect(forwardedBody('billing', null)).toEqual({});
+    expect(
+      forwardedBody('billing', { download_usage: { current_period_downloads_used: 'many' } }),
+    ).toEqual({ download_usage: {} });
+  });
+
+  it('forwards every other kind whole, less the secrets', () => {
+    expect(forwardedBody('trash', { clips: [], token: 't' })).toEqual({ clips: [] });
+  });
+});
+
+describe("a prepared download's answer (#216, TS-004)", () => {
+  it.each([
+    [`${API}/api/download/clip/abc?format=wav`, 'GET', 'download-clip'],
+    [`${API}/api/download/clip/abc/?format=mp3`, 'GET', 'download-clip'],
+    [`${API}/api/download/clip/abc?format=m4a`, 'POST', null],
+    [`${API}/api/download/clip/abc/more?format=wav`, 'GET', null],
+    [`${API}/api/download/authorize`, 'POST', null],
+    ['https://example.com/api/download/clip/abc?format=wav', 'GET', null],
+  ])('%s (%s) is %s', (address, method, kind) => {
+    expect(observedKindOf(address, method, PAGE)).toBe(kind);
+  });
+
+  it('names the clip and format from the address, only for a format Suno prepares', () => {
+    expect(downloadRequestOf(`${API}/api/download/clip/AbC-1?format=wav`, PAGE)).toEqual({
+      clipId: 'AbC-1',
+      format: 'wav',
+    });
+    expect(downloadRequestOf(`${API}/api/download/clip/x?format=mp4`, PAGE)).toBeNull();
+    expect(downloadRequestOf(`${API}/api/download/clip/x`, PAGE)).toBeNull();
+  });
+
+  it('forwards only the status and the address', () => {
+    expect(
+      forwardedBody('download-clip', {
+        ok: true,
+        status: 'ready',
+        download_url: 'https://suno-data-uploads.s3.amazonaws.com/x.wav',
+        token: 'T',
+      }),
+    ).toEqual({
+      status: 'ready',
+      download_url: 'https://suno-data-uploads.s3.amazonaws.com/x.wav',
+    });
+    expect(
+      forwardedBody('download-clip', sunoFixture('download-clip.wav.processing.response')),
+    ).toEqual({ status: 'processing' });
+    expect(forwardedBody('download-clip', 'not json')).toEqual({});
   });
 });

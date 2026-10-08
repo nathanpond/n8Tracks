@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { isArtwork, type Artwork } from './artwork';
 import { apiFetch } from './client';
+import { localAudioFilesOf, type LocalAudioFiles } from './localAudioFiles';
 import {
   failureOf,
   ifMatch,
@@ -75,6 +76,59 @@ export interface Generation {
   comments: GenerationComment[];
   /** Its cover image in n8Tracks' artwork store (#121), shown whole (`crop` is always null); null when it has none. */
   artwork: Artwork | null;
+  /** Its local audio files (#211), as they report now: counts and formats only. */
+  audioFiles: GenerationAudioFiles;
+  /** Whether it has something to play (#218), as the playback rule decides it. */
+  playback: GenerationPlayability;
+}
+
+/**
+ * Whether a Generation has something to play (#218), decided by the server's playback rule (#212):
+ * `reason` is null when a local file plays, `suno_stream` when it streams from Suno (#221), and why
+ * not otherwise (`nothing_available`, `suno_not_complete`, `suno_not_present`). The Play controls
+ * read it; what plays is asked only when Play is pressed.
+ */
+export interface GenerationPlayability {
+  playable: boolean;
+  reason: string | null;
+}
+
+/** Nothing to play: also what an answer from before #218 is read as. */
+export const NOT_PLAYABLE: GenerationPlayability = { playable: false, reason: 'nothing_available' };
+
+function isPlayability(value: unknown): value is GenerationPlayability {
+  return isRecord(value) && typeof value.playable === 'boolean' && textOrNull(value.reason);
+}
+
+/**
+ * How many local audio files are associated with a Generation (#211): in all (Missing and Unavailable
+ * ones included), how many are Missing, how many are Unavailable (every one while the media folder
+ * cannot be read), and their formats once each, WAV, M4A, MP3, FLAC, OGG, Opus, AAC.
+ */
+export interface GenerationAudioFiles {
+  count: number;
+  missing: number;
+  unavailable: number;
+  formats: string[];
+}
+
+/** No local audio files. */
+export const NO_AUDIO_FILES: GenerationAudioFiles = {
+  count: 0,
+  missing: 0,
+  unavailable: 0,
+  formats: [],
+};
+
+function isAudioFiles(value: unknown): value is GenerationAudioFiles {
+  return (
+    isRecord(value) &&
+    typeof value.count === 'number' &&
+    typeof value.missing === 'number' &&
+    typeof value.unavailable === 'number' &&
+    Array.isArray(value.formats) &&
+    value.formats.every((format) => typeof format === 'string')
+  );
 }
 
 function isOwner(value: unknown): value is { id: string; shortcode: string } {
@@ -145,10 +199,16 @@ export function generationOf(value: unknown): Generation | undefined {
   const comments = commentsOf(value.comments);
   // An answer from before #121 has no image field: it has no image.
   const artwork = value.artwork ?? null;
+  // An answer from before #211 has no audio files field: it has none.
+  const audioFiles = value.audioFiles ?? NO_AUDIO_FILES;
+  // An answer from before #218 has no playback field: it has nothing to play.
+  const playback = value.playback ?? NOT_PLAYABLE;
   if (
     !numberOrNull(rating) ||
     comments === undefined ||
-    (artwork !== null && !isArtwork(artwork))
+    (artwork !== null && !isArtwork(artwork)) ||
+    !isAudioFiles(audioFiles) ||
+    !isPlayability(playback)
   ) {
     return undefined;
   }
@@ -174,6 +234,8 @@ export function generationOf(value: unknown): Generation | undefined {
     rating,
     comments,
     artwork,
+    audioFiles,
+    playback: { playable: playback.playable, reason: playback.reason },
   };
 }
 
@@ -447,6 +509,8 @@ export interface GenerationDeletionImpact {
   commentCount: number;
   artworkCount: number;
   sourceVersionCount: number;
+  /** Its local audio files, which stay on disk and become unmatched (#213). */
+  localAudioFiles: LocalAudioFiles;
   revision: number;
 }
 
@@ -464,7 +528,8 @@ function deletionImpactOf(value: unknown): GenerationDeletionImpact | undefined 
     return undefined;
   }
   const replacements = generationsOf({ items: value.replacements });
-  return replacements === undefined
+  const localAudioFiles = localAudioFilesOf(value.localAudioFiles);
+  return replacements === undefined || localAudioFiles === undefined
     ? undefined
     : {
         id: value.id,
@@ -474,6 +539,7 @@ function deletionImpactOf(value: unknown): GenerationDeletionImpact | undefined 
         commentCount: value.commentCount,
         artworkCount: value.artworkCount,
         sourceVersionCount: value.sourceVersionCount,
+        localAudioFiles,
         revision: value.revision,
       };
 }

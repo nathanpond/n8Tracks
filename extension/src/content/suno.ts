@@ -11,9 +11,11 @@ import {
 import { ADAPTER_WORKFLOWS } from '../adapter/workflows/index.ts';
 import type { DiagnosticReport } from '../diagnostics/report.ts';
 import type { ConnectionState, Request } from '../messages.ts';
+import { DownloadView } from '../panel/DownloadView.ts';
 import { GenerateView } from '../panel/GenerateView.ts';
 import { Panel, type ObjectUrls } from '../panel/panel.ts';
 import { SyncView } from '../panel/SyncView.ts';
+import { SunoDownload } from './sunoDownload.ts';
 import { SunoGenerate } from './sunoGenerate.ts';
 import { SunoSync } from './sunoSync.ts';
 
@@ -43,11 +45,15 @@ export interface SunoContent {
   syncView: SyncView;
   generate: SunoGenerate;
   generateView: GenerateView;
+  download: SunoDownload;
+  downloadView: DownloadView;
   observations: ObservationFeed;
   /** The resume check of this page load: whether this tab is in a sync, and if so its leg. */
   resumed: Promise<void>;
   /** The same for Generate on Suno (#145): whether this tab works on a request, and its steps. */
   generating: Promise<void>;
+  /** The same for the Download view (#215): whether this page load is to read the library. */
+  downloading: Promise<void>;
   /** Opens the panel if closed, closes it if open; opening runs the self-check. */
   toggle(): Promise<void>;
   /** Reads the connection and runs the self-check again, if the panel is open. */
@@ -191,6 +197,29 @@ export function startSunoContent(options: SunoContentOptions): SunoContent {
     },
   });
 
+  // Set below, like the sync: the view's buttons call the controller.
+  let download: SunoDownload | null = null;
+  const downloadView = new DownloadView(page, {
+    load: () => {
+      void download?.load();
+    },
+    cancel: () => {
+      download?.cancel();
+    },
+    retryLookup: () => {
+      void download?.retryLookup();
+    },
+    formatsChanged: (formats) => {
+      void download?.rememberFormats(formats);
+    },
+    start: (unlocks) => {
+      void download?.start(unlocks);
+    },
+    control: (action) => {
+      void download?.control(action);
+    },
+  });
+
   const panel = new Panel(page, {
     versions: { extension: options.extensionVersion, adapter: ADAPTER_VERSION },
     ...(options.objectUrls === undefined ? {} : { objectUrls: options.objectUrls }),
@@ -203,6 +232,7 @@ export function startSunoContent(options: SunoContentOptions): SunoContent {
     },
     sync: syncView.element,
     generate: generateView.element,
+    download: downloadView.element,
   });
 
   sync = new SunoSync({
@@ -239,6 +269,21 @@ export function startSunoContent(options: SunoContentOptions): SunoContent {
     },
     ...(options.clock === undefined ? {} : { clock: options.clock }),
   });
+  download = new SunoDownload({
+    page: sunoPage,
+    session,
+    observations,
+    send,
+    view: downloadView,
+    open: () => {
+      if (!panel.isOpen) {
+        panel.open();
+        watch();
+        void refresh();
+      }
+    },
+    ...(options.clock === undefined ? {} : { clock: options.clock }),
+  });
   observations.start();
 
   const watch = () => {
@@ -260,6 +305,8 @@ export function startSunoContent(options: SunoContentOptions): SunoContent {
   const resumed = sync.resume();
   // Never starts a request either: only works on one n8Tracks handed over and this tab was opened for.
   const generating = generate.resume();
+  // Reads the library only when this tab's own Load library opened this page (#215).
+  const downloading = download.resume();
 
   return {
     session,
@@ -268,9 +315,12 @@ export function startSunoContent(options: SunoContentOptions): SunoContent {
     syncView,
     generate,
     generateView,
+    download,
+    downloadView,
     observations,
     resumed,
     generating,
+    downloading,
     toggle: async () => {
       if (panel.isOpen) {
         panel.close();
@@ -279,7 +329,7 @@ export function startSunoContent(options: SunoContentOptions): SunoContent {
       }
       panel.open();
       watch();
-      await refresh();
+      await Promise.all([refresh(), download.prepare()]);
     },
     refresh,
     stop: () => {

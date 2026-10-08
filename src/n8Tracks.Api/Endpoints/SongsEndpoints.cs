@@ -40,7 +40,7 @@ internal static class SongsEndpoints
 
         endpoints.MapGet(SongsPath, ListAsync)
             .WithName("ListSongs")
-            .WithSummary("A page of Songs, sorted by last update or title, optionally only those in given workflow states (state), with any of given Genres (genre: Genre IDs, or none for Songs with no Genre), with any of given Tags (tag: Tag IDs, or none for Songs with no Tag), crediting any of given Artists as primary or featured (artist: Artist IDs, or none for Songs credited to no one), in a Suno workspace (workspace: a known workspace's Suno ID), and matching a search (q: a title substring or shortcode prefix, ignoring case; ten a page by default; nothing for a blank q).")
+            .WithSummary("A page of Songs, sorted by last update, title, or count of local audio files (audioFiles), optionally only those in given workflow states (state), with any of given Genres (genre: Genre IDs, or none for Songs with no Genre), with any of given Tags (tag: Tag IDs, or none for Songs with no Tag), crediting any of given Artists as primary or featured (artist: Artist IDs, or none for Songs credited to no one), in a Suno workspace (workspace: a known workspace's Suno ID), and matching a search (q: a title substring or shortcode prefix, ignoring case; ten a page by default; nothing for a blank q).")
             .RequireScope(CredentialScopes.CatalogRead)
             .Produces<SongListResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
@@ -514,6 +514,9 @@ internal sealed record UpdateSongRequest(
 /// <c>{ id, shortcode, state, remoteState }</c>) or null, and <c>hasSelectedGeneration</c> says
 /// whether it has one, as Album and Playlist tracks say it. <c>sunoWorkspace</c> is the Suno
 /// workspace it lives in (#129: <c>{ id, name, state }</c>, the ID being Suno's) or null.
+/// <c>audioFileCount</c> (#211) is how many local audio files are associated with it, at Song level or
+/// through its Generations, whatever their status. <c>playback</c> (#219) is what Play on it does:
+/// <c>{ state, reason }</c> (<see cref="SongPlayabilityResponse"/>).
 /// </summary>
 internal sealed record SongResponse(
     Guid Id,
@@ -538,7 +541,9 @@ internal sealed record SongResponse(
     SongArtworkResponse? Artwork,
     bool HasSelectedGeneration,
     SelectedGenerationResponse? SelectedGeneration,
-    SongWorkspaceResponse? SunoWorkspace)
+    SongWorkspaceResponse? SunoWorkspace,
+    int AudioFileCount,
+    SongPlayabilityResponse Playback)
 {
     /// <summary>The Song as the API shows it; <paramref name="pathBase"/> starts its artwork's URLs.</summary>
     public static SongResponse From(SongSummary song, PathString pathBase)
@@ -583,7 +588,9 @@ internal sealed record SongResponse(
             song.SelectedGeneration is { } selected
                 ? new SelectedGenerationResponse(selected.Id, selected.Shortcode, GenerationStates.NameOf(selected.State), GenerationStates.NameOf(selected.RemoteState))
                 : null,
-            song.SunoWorkspace is { } workspace ? SongWorkspaceResponse.From(workspace) : null);
+            song.SunoWorkspace is { } workspace ? SongWorkspaceResponse.From(workspace) : null,
+            song.AudioFileCount,
+            SongPlayabilityResponse.From(song.Playback));
     }
 }
 

@@ -2,6 +2,7 @@ using System.Globalization;
 using n8Tracks.Application.Artwork;
 using n8Tracks.Application.Assets;
 using n8Tracks.Application.Auth;
+using n8Tracks.Application.Media;
 using n8Tracks.Application.References;
 using n8Tracks.Application.Retention;
 using n8Tracks.Application.Suno;
@@ -14,7 +15,11 @@ namespace n8Tracks.Application.Songs;
 /// <param name="Song">The Song, as it is now.</param>
 /// <param name="Counts">What goes with it, and what it is taken out of.</param>
 /// <param name="TitleRequired">Whether the user must type its title to confirm (<see cref="SongDeletionRules.TitleRequired"/>).</param>
-public sealed record SongDeletionImpact(SongSummary Song, SongDeletionCounts Counts, bool TitleRequired);
+/// <param name="LocalAudioFiles">
+/// Its local audio files, Song-level ones included, which stay on disk and become unmatched (#213);
+/// their total is <see cref="SongDeletionCounts.AudioFiles"/>.
+/// </param>
+public sealed record SongDeletionImpact(SongSummary Song, SongDeletionCounts Counts, bool TitleRequired, LocalAudioFileCounts LocalAudioFiles);
 
 /// <summary>A Song deleted within its retention period: how a read of it says it was deleted.</summary>
 /// <param name="Id">Its ID.</param>
@@ -84,6 +89,7 @@ public sealed class SongDeletionService(
     ArtworkAttachmentService artwork,
     GenerationArtworkService generationArtwork,
     TombstoneService tombstones,
+    AudioFileLifecycle audioFiles,
     RetentionService retention,
     IExclusiveTransaction transaction,
     TimeProvider time)
@@ -147,6 +153,10 @@ public sealed class SongDeletionService(
                 var now = time.GetUtcNow();
                 await versions.RewriteSourcesOfDeletedGenerationsAsync(generations, [.. all.Select(static version => version.Id)], now, ct).ConfigureAwait(false);
                 await tombstones.RecordForAsync(generations, now, ct).ConfigureAwait(false);
+
+                // Every audio file of the Song, Song-level ones included, stays on disk, unassociated
+                // (#206; associations are not retained).
+                await audioFiles.ReleaseAsync([], [id], ct).ConfigureAwait(false);
                 var group = await retention.RetainWithinAsync(
                     new RetentionRequest(RetainedRecordTypes.Song, Label(song.Shortcode, song.Title), song.Shortcode, roots, files),
                     ct).ConfigureAwait(false);
@@ -217,6 +227,7 @@ public sealed class SongDeletionService(
         }
 
         var generations = await store.GenerationIdsAsync(id, cancellationToken).ConfigureAwait(false);
+        var localFiles = await audioFiles.CountAsync(id, generations, wholeSong: true, cancellationToken).ConfigureAwait(false);
         var counts = new SongDeletionCounts(
             song.VersionCount,
             generations.Count,
@@ -224,9 +235,9 @@ public sealed class SongDeletionService(
             song.Albums.Count,
             song.Playlists.Count,
             song.Relationships.Count,
+            localFiles.Total);
 
-            // Local audio files arrive in M5; until then a Song has none.
-            AudioFiles: 0);
-        return new SongDeletionImpact(song, counts, SongDeletionRules.TitleRequired(counts));
+        // Audio files do not change which confirmation is required (#213).
+        return new SongDeletionImpact(song, counts, SongDeletionRules.TitleRequired(counts), localFiles);
     }
 }

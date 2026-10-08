@@ -4,6 +4,7 @@ import { SNAPSHOT_NAMES, snapshotHtml } from '../testing/snapshots.ts';
 import {
   classify,
   CREATE_WORKSPACE,
+  DOWNLOAD_CLIP,
   EXCEPTIONS,
   RECOGNISED_DIALOGS,
   type ControlFacts,
@@ -71,8 +72,8 @@ describe('the forbidden-control matcher, on the TS-003 snapshots', () => {
     ['library-list', 'button', 'Trash'],
     ['library-trash', 'button', 'Delete permanently'],
     ['create-source-simple', 'button', /^Remove /],
-    ['download-dialog', 'button', 'Unlock & Download'],
-    ['download-dialog', 'button', 'MP3'],
+    ['download-dialog', 'button', 'MP4 video asset'],
+    ['download-dialog', 'button', 'Manage'],
     ['inspo-picker', 'button', 'Close'],
     ['overwrite-lyrics-styles-dialog', 'button', 'Close'],
   ])('recognises in %s the %s %s', (snapshot, role, name) => {
@@ -119,8 +120,23 @@ describe('the forbidden-control matcher, on the TS-003 snapshots', () => {
     expect(verdictsOf('button', 'Create new workspace')).toEqual(['exception']);
   });
 
-  it('names exactly one permitted change, creating a workspace, and finds it nowhere else', () => {
-    expect(EXCEPTIONS.map((exception) => exception.name)).toEqual(['create-workspace']);
+  it.each(['WAV', 'MP3', 'M4A', 'Unlock & Download', 'Close'])(
+    "recognises the Download dialog's %s as the download exception, pressed only by its primitive (#216)",
+    (name) => {
+      load('download-dialog');
+      const [control] = controls('button', name);
+      expect(control && verdictOf(control)).toEqual({
+        kind: 'exception',
+        exception: 'download-clip',
+      });
+    },
+  );
+
+  it('names exactly two permitted changes, creating a workspace and preparing a download, and finds them nowhere else', () => {
+    expect(EXCEPTIONS.map((exception) => exception.name)).toEqual([
+      'create-workspace',
+      'download-clip',
+    ]);
     expect(CREATE_WORKSPACE.snapshots).toEqual(['workspace-selector', 'create-workspace-dialog']);
 
     const found: string[] = [];
@@ -134,8 +150,14 @@ describe('the forbidden-control matcher, on the TS-003 snapshots', () => {
     }
     expect(found).toEqual([
       'create-workspace-dialog: Confirm',
+      'download-dialog: Close',
+      'download-dialog: M4A',
+      'download-dialog: MP3',
+      'download-dialog: WAV',
+      'download-dialog: Unlock & Download',
       'workspace-selector: Create new workspace',
     ]);
+    expect(DOWNLOAD_CLIP.snapshots).toEqual(['download-dialog']);
     // The matcher's verdict on every element of every snapshot reads jsdom's computed styles: about
     // 2.5 s here and over 5 s on a GitHub runner, so the limit is three times a CI run's ~10 s.
   }, 30_000);

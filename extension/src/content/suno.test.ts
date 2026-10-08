@@ -57,16 +57,22 @@ afterEach(() => {
 });
 
 describe('the Suno content script', () => {
-  it('adds the panel closed, and asks nothing until it is opened but whether its tab is in a sync or a generation', async () => {
+  it('adds the panel closed, and asks nothing until it is opened but whether its tab is in a sync, a generation, or a library load', async () => {
     const { content: started, sent } = start({ current: 'https://suno.com/me' }, () =>
       Promise.resolve(CONNECTED),
     );
     await started.resumed;
+    await started.downloading;
 
     expect(started.panel.isOpen).toBe(false);
-    // The questions of every page load (#134, #145): they start nothing, and an answer of no sync
-    // and no generation leaves the panel closed.
-    expect(sent).toEqual([{ type: 'sync-resume' }, { type: 'generate-resume' }]);
+    // The questions of every page load (#134, #145, #215, #216): they start nothing, and an answer
+    // of no sync, no generation, no library load, and no download run leaves the panel closed.
+    expect(sent).toEqual([
+      { type: 'sync-resume' },
+      { type: 'generate-resume' },
+      { type: 'download-resume' },
+      { type: 'download-run' },
+    ]);
   });
 
   it('opens from the toolbar with the connection, the version warning, and the self-check', async () => {
@@ -79,10 +85,14 @@ describe('the Suno content script', () => {
     await started.toggle();
 
     expect(started.panel.isOpen).toBe(true);
-    expect(sent.map((request) => request.type)).toEqual([
+    // The download queue's state (#216) is asked after the page load's question, whenever it answers.
+    expect(sent.map((request) => request.type)).toContain('download-run');
+    expect(sent.map((request) => request.type).filter((type) => type !== 'download-run')).toEqual([
       'sync-resume',
       'generate-resume',
+      'download-resume',
       'state',
+      'download-formats',
       'diagnostics-record',
       'diagnostic-report',
     ]);

@@ -3915,6 +3915,572 @@ Track b (#322 #327 #328 #329 #330 #331 #332 #335 #339 #341 #342 #343 #344):
   **Why:** It reproduces #379 against the built image. With the old check, that report got 422.
   **Issue:** #379
 
+## /n8-exec M5 — 2026-10-07
+
+- **Decision:** `audio_files` is a new table (migration `20261008010000_AddAudioFiles`). Its status check already allows `missing` as well as `available`. A scan writes only `available`; the domain `AudioFileStatus` declares both. The association columns (#206) and `revision` (#210) are not added here.
+  **Why:** #207 writes `missing`. #206 may put a hand-written trigger on `audio_files`, and widening a CHECK later would rebuild the table and drop that trigger (orchestrator rule). The association columns depend on #206's FK/trigger design, so adding them now would guess at that story's schema.
+  **Issue:** #203
+
+- **Decision:** The scan does not follow symbolic links, whether to a file or a directory, and whether they lead inside or outside the mount. Each link counts as `skipped`. `MediaMountReader` also refuses any relative path with an empty, `.`, or `..` segment, a backslash, a NUL, or a rooted form.
+  **Why:** Invariant 2: until #205 brings real-path resolution and the `skippedLinks` reasons, never following a link is the only rule that cannot read outside the mount. #205 changes "inside links" to followed.
+  **Issue:** #203
+
+- **Decision:** `POST /api/v1/media/scans` answers 202 with `{jobId, alreadyInProgress:false}` and the job as `Location` when it queues a scan. When a scan is already queued or running, it answers 200 with `{jobId, alreadyInProgress:true}`, not a 409 like backups. A token gets 403 `session_required`.
+  **Why:** The AC says it "returns that job instead of starting another", so a client should treat both answers as success. The status code and the flag tell them apart.
+  **Issue:** #203
+
+- **Decision:** The last-scan summary is the `settings` row `media.lastScan` `{jobId, trigger, outcome, startedUtc, finishedUtc, counts, error}`, written on success and on failure, including interruption. A failed job carries no result (the worker drops it), so its progress message carries the counts reached ("N of M files: … new, … changed, …"). File counts move only once their batch is written.
+  **Why:** The discretion asks for a summary outside the jobs table, and for a failed job to report the counts reached. The worker keeps a failed job's last message, not its result. Counting on write keeps the summary equal to what is in the table.
+  **Issue:** #203
+
+- **Decision:** The scan uses one timestamp for every record: `last_seen_utc` (and `first_seen_utc` for new files) is the time the scan started. A file that is listed but cannot be stat'ed is counted unreadable. If it is cataloged, it counts as unchanged and keeps its record. If it is new, it is cataloged with size 0 and the epoch as its modified time, so the next scan sees it as changed and reads it. A zero-byte file is never opened. This also covers FIFOs and devices, which report size 0, so opening one cannot hang.
+  **Why:** One timestamp per scan lets #207 mark `missing` as "last seen before this scan began". The partition new/changed/unchanged = seen must hold for every listed file.
+  **Issue:** #203
+
+- **Decision:** Header reading uses `z440.atl.core` 7.18.0 (the latest on NuGet, published 2026-09-28) in Infrastructure, behind `IAudioMetadataReader`, given the read-only `FileStream` and the extension. Its process-wide settings are: `NullAbsentValues`, no title made up from a file name, `ReadAllMetaFrames` off, and stack traces kept off the console. Only duration, title and artist are taken. Title and artist are trimmed and cut to 500 characters, and duration is stored in milliseconds. A header counts as unreadable when there is no duration or the duration is zero.
+  **Why:** This is the story's discretion. A cap keeps a damaged or hostile tag from filling the database.
+  **Issue:** #203
+
+- **Decision:** The test fixtures are seven 1.5 s tones tagged "Fixture Title" / "Fixture Artist", made with ffmpeg (Docker `linuxserver/ffmpeg`) and committed under `tests/n8Tracks.Api.Tests/Media/Fixtures/`. `scripts/check-suppressions.py` now counts `.opus` and `.aac` as binary, beside `.ogg`, `.m4a` and the others. The `config-file-not-utf8` good fixture gained a `.opus` and a `.aac` file, and fails without the change (checked).
+  **Why:** The scanner refuses any tracked non-UTF-8 file whose extension is not on its binary list. These two audio formats are now real repository content. A two-entry widening of the binary list loosens no warning rule.
+  **Issue:** #203
+
+- **Decision:** The `association` filter accepts `any`, `associated`, and `none`. Until #206, `associated` answers an empty page. `status` accepts `available` and `missing`. `metadataReadable` accepts `true` and `false`. `offset` defaults to 0 and `limit` to 200 (range 1–200). Any other value, or a repeated parameter, answers 422 `validation_failed` keyed by the parameter. `audio_files` counts as catalog data in the invariant 3 guard. `POST /media/scans` is in the invariant 1 table of endpoints that touch no Version. `Application.Media` takes no catalog type, so it is not in `CatalogServiceNamespaces`.
+  **Why:** These follow the story's JSON-shape discretion and the M5 orchestrator rules for new tables and namespaces.
+  **Issue:** #203
+
+- **Decision:** Migration `20261008020000_AddAudioFileAssociations` gives `audio_files` five new columns: `song_id`, `generation_id`, `association_origin` (`suno-id`/`user`), `unmatched_reason` (all four codes: `generation_deleted`, `multiple_suno_ids`, `unassociated_by_user`, `song_deleted`) and `revision`.
+  - Enforcement: a check `ck_audio_files_association`, a RESTRICT FK to `songs`, and a composite FK `(generation_id, song_id) → generations (id, song_id)` with ON DELETE RESTRICT and ON UPDATE CASCADE.
+  - `generations` gains only the unique index `ix_generations_id_song_id`, as the composite key's parent, with no rebuild.
+  - `audio_files` is rebuilt by hand inside the migration's transaction. It has no triggers and no referrers.
+  - The composite FK is not modelled in EF (the Song FK and both indexes are).
+  **Why:**
+  - The planner's trigger premise is stale (m5-plan 3b). A composite FK makes the database refuse a Generation of another Song.
+  - The update cascade means a move (#123/#141 change `generations.song_id`) takes the Generation's files along, instead of failing.
+  - EF would model the parent as an alternate key, which it refuses to change, and its SQLite rebuild switches foreign keys off outside the transaction.
+  - `revision` and every reason code are declared now, so #210 and #213 need no rebuild.
+  **Issue:** #206
+
+- **Decision:** Rule 1 (minimal retention handling): a new `Application.Media.AudioFileLifecycle.ReleaseAsync` (internal) is called by the Generation, Version and Song deletion services inside their transaction, just before `RetainWithinAsync`.
+  - It unassociates the files of the deleted Generations (reason `generation_deleted`) or every file of the deleted Song (reason `song_deleted`), and raises each one's revision.
+  - Associations are not retained.
+  - #213 adds the counts, the move warning, and the restore notes on this class.
+  **Why:** With the new RESTRICT keys, `RetentionStore` refuses to delete a Song or Generation that a file still names (the test proves a 500 without the hook). The branch must never have a broken delete path (orchestrator).
+  **Issue:** #206
+
+- **Decision:** `SunoIdMatcher` (`Application.Media`) finds Suno IDs in the file name only, never in the directory. The pattern is `(?<![\p{L}\p{N}])` UUID `(?![\p{L}\p{N}])`, any case, deduplicated, lower-cased.
+  - Lookup: live Generations and provider tombstones are compared with `lower(suno_id)`.
+  - Exactly one live Generation → associate. Two or more → `multiple_suno_ids`. Otherwise `generation_deleted` when a found ID is tombstoned, or no reason.
+  - When it runs: at the end of a completed scan, over every unassociated record except `unassociated_by_user`. Each file gets its own IMMEDIATE transaction: the Generation is read, then one conditional UPDATE (still unassociated, not user-removed) raises `revision`.
+  - A recomputed reason replaces `generation_deleted` and `multiple_suno_ids`. `song_deleted` is kept unless the file now matches or carries several live IDs.
+  **Why:**
+  - This follows the story's discretion.
+  - Suno IDs are stored as Suno sends them (lower case), but a hand-attached one could differ in case.
+  - Keeping `song_deleted` honours #213's "files of a deleted Song show song_deleted": the Song's Generations are tombstoned too, so a plain recompute would turn it into `generation_deleted`. #213 owns clearing it on a Song restore.
+  **Issue:** #206
+
+- **Decision:** The scan result, the `media.lastScan` summary counts and `MediaScanCounts` gain `associated` (associated by this scan) and `unmatched` (every unassociated record after the scan, Missing and user-removed included). A summary written before reads both as 0. The API's `AudioFileResponse` fills `song`/`generation` as `{id, shortcode}` (current shortcodes, read at answer time), `associationOrigin` and `unmatchedReason`, and adds `revision`. `association=associated|none` is now real.
+  **Why:** This follows the story's discretion on the API shape and the scan counts. `revision` is what #210's If-Match will use.
+  **Issue:** #206
+
+- **Decision:** The shared fixture `extension/fixtures/filenames.json` holds 14 example names, each with the Suno IDs expected in it. It covers the PRD example, browser numbering, the stream name, bare `<id>.wav` and `<id>_lyrics.mp3`, and negatives. The server's matcher test reads it, copied into the test output as `Media/Fixtures/filenames.json`.
+  **Why:** #216's key link: the extension's downloader test reads the same file, so the names it produces are proven to match.
+  **Issue:** #206
+
+- **Decision:** `Application.Media` stays out of `CatalogServiceNamespaces`. `SunoIdMatcher` and `AudioFileLifecycle` take only IDs, strings and `Domain.Media` types; the deletion hook is `internal`. `audio_files` stays classified as catalog in `SunoExportStagingGuardTests`, and no new table was added.
+  **Why:** This is the orchestrator rule: a namespace joins the guard only if it takes catalog types.
+  **Issue:** #206
+
+Story #204 (built in parallel; merged into the milestone branch):
+
+- **Decision:** The scheduler is its own hosted service, `Infrastructure/Media/MediaScanScheduler`, looking every 30 s. It is not an `IDailyTask` on the once-a-minute daily scheduler. Each look calls `MediaScanScheduleService.TickAsync` (`Application/Media`), which enqueues only through `MediaScanService.StartAsync(Startup|Scheduled)`, the method `POST /media/scans` calls.
+  **Why:** The story fixes a 30-second check. The daily scheduler's whole-minute pacing and "planned local time" rules do not fit an interval counted from the end of the last scan.
+  **Issue:** #204
+- **Decision:** Whether a scan is due is computed as `media.lastScan.finishedUtc + interval <= now`, from the stored summary of any scan, manual and failed ones included. When no scan has ever ended, a scan is due at once.
+  **Why:** The Claude's Discretion line says due "from the stored last-scan summary, not from memory". With no summary yet, the only way to reach a scheduled look is that the startup scan's job vanished, so running one at once is the safe choice.
+  **Issue:** #204
+- **Decision:** The startup scan is queued once per process, at the first look that may queue anything: after setup is complete and outside maintenance, whatever the schedule, even with the folder unavailable. A singleton `MediaScanStartup` flag records it. If a `media-scan` job is already queued or running at that look, it counts as the startup scan.
+  **Why:** This covers the discretion lines on setup, maintenance, an unavailable mount, and a leftover queued job in one place. The startup scan is therefore queued up to 30 s after setup completes, not at the instant it completes.
+  **Issue:** #204
+- **Decision:** The scheduler enqueues nothing while the media folder is unavailable. `MediaScanService.IsFolderAvailableAsync` lists the root within the existing listing timeout, and it is called only when a scan is otherwise due. `IMediaMount` and `MediaMountReader` are not changed, and neither is the legacy `IMediaMountProbe`.
+  **Why:** This avoids a merge conflict with #205, which reworks the mount reader and folds in the probe. The check costs one root listing only when a scan is otherwise due.
+  **Issue:** #204
+- **Decision:** An empty startup or scheduled scan is deleted from the jobs table when the next scan finishes, whether that scan succeeds or fails. "Empty" means it succeeded with `new == 0 && changed == 0` (`MediaScanCounts.FoundNothing`, `MediaScanScheduleRules.IsForgettable`). The deletion uses a new `IJobStore.DeleteFinishedAsync(id)`, which deletes only a succeeded or failed job. Manual and recovery scans, and failed scans, are kept.
+  **Why:** This is the discretion line on keeping the jobs list uncrowded. A failed unattended scan is information, so it is kept. #207 must add its `missing` count to `FoundNothing`.
+  **Issue:** #204
+- **Decision:** The setting has revision 0 until it is first saved. `Revisions.Read(context, allowUnsaved: true)` accepts `If-Match: "0"` on `PUT /settings/media-scan` only; every other route still answers 400 `invalid_revision` to `"0"`.
+  **Why:** The discretion line requires `If-Match: "0"` for the first PUT, but the project convention, and existing tests, refuse `"0"` everywhere else.
+  **Issue:** #204
+- **Decision:** `PUT /settings/media-scan` binds both fields as `JsonElement` and validates them in `MediaScanSchedule.Parse`. So `1.5`, `"15"`, `null`, or a missing interval is a 422 keyed `intervalMinutes`, not a 400 from the binder. The interval is required and range-checked even when the schedule is off.
+  **Why:** The test plan requires a 422 for a non-integer. The discretion line says a PUT must always carry a valid interval.
+  **Issue:** #204
+- **Decision:** Settings → Library is a new sidebar entry after Catalog (`/settings/library`). The page has a switch and a "Minutes between scans" number field, which is disabled while the switch is off but keeps its value. It validates 1 to 1,440 on the page before sending, and shows the API's 422 messages.
+  **Why:** The discretion line puts it under Settings in the sidebar. Placing it after Catalog groups it with the other catalog settings.
+  **Issue:** #204
+- **Decision:** Test hosts switch the media scan scheduler off (`MediaScanSchedulerOptions { Enabled = false }` in `N8TracksApiFactory`), like the daily scheduler. One test runs the real loop at 50 ms on a `TestClock`.
+  **Why:** Without this, every existing test host would get a startup scan job, which would change job counts and restore's "jobs active" check.
+  **Issue:** #204
+- **Decision:** The "no file-change notifications" guard is an architecture test, `NoFileWatchingTests`, with two checks. A NetArchTest check finds no dependency on `System.IO.FileSystemWatcher` in Domain, Application, Infrastructure, or Api; a test-local sample type proves the rule bites. A source scan finds no file under `src/` that names `FileSystemWatcher`. It does not cover `IFileProvider.Watch`, inotify through P/Invoke, or watchers the framework creates for itself.
+  **Why:** This is the test plan's architecture test, with a complement so that an empty answer means something.
+  **Issue:** #204
+- **Decision:** The e2e `library-settings.spec.ts` walks the whole Demo on the fresh container, not only the settings steps. Copied files are fake `.wav` bytes. Step 3's two-minute wait is a 5-second poll that fails at once if the file is listed, not a `waitForTimeout` with a suppression. The spec is tagged `@root-only` and takes about 2.6 min.
+  **Why:** The test plan asks only for the settings steps with accessibility scans. Steps 2 and 3 are this story's "must-have truth" (files show up within the interval without the user doing anything) and can only be shown on a real container.
+  **Issue:** #204
+
+Story #215 (built in parallel; merged into the milestone branch):
+
+- **Decision:** The Download view reads only Library › Songs (`/me`) through a new `readLibrary` export of `libraryReader.ts`, which reuses the sync's private `readList` and `LIBRARY` spec and the `load-more` workflow. It does not read the workspace or Trash lists.
+  **Why:** The key link requires "the same reader and observer; no second way of reading the library". The library feed already holds every workspace's clips, and each clip carries `project.{id,name}`, so the workspace list adds nothing. Suno's feed leaves trashed clips out (`trashed: "False"`), so a trashed clip cannot be selected. A clip that arrives marked `is_trashed` is shown disabled with the reason.
+  **Issue:** #215
+- **Decision:** Load library and Refresh always reopen `/me` and read on the next page load, like a sync leg. The service worker keeps the request and the selected Suno IDs in `chrome.storage.session` (`downloadLoad`, tab-bound, taken once, forgotten after 2 minutes). The library is not read from the observation queue of the page as it already is.
+  **Why:** The observation queue is consumed by reading and limited to 200 messages, so a second read (Refresh) on the same page would see nothing. Reopening the page gives a fresh first page each time, as the sync does. Carrying the selection across the reload keeps the rule that "selections survive Refresh".
+  **Issue:** #215
+- **Decision:** The plan's download allowance comes from observing the page's own `GET /api/billing/info/`. This adds the observed kind `billing`, and the observer forwards only the three `download_usage` counts. The extension does not open the Download dialog itself in #215. While no reading has been seen, the summary says how to make the page read it (open any clip's More options › Download and close it), and Start is refused with that reason. `ADAPTER_VERSION` is 10 → 11.
+  **Why:** TS-004 found that only opening the Download dialog makes the page request billing info. #133 reserves recognising that dialog for #216's own primitive, and the extension may never construct its own Suno request. Refusing Start when the remaining count is unknown is the safe reading of "never needs more unlocks than remain". #216's dialog primitive will produce the reading as a side effect.
+  **Issue:** #215
+- **Decision:** Start is always disabled in #215, and its reason line shows the most relevant refusal. The order is: no clip selected, no format chosen, unlocks unknown, too few unlocks, and then `START_NOT_YET` ("Downloading arrives in a later version …"). #216 replaces the last one.
+  **Why:** The discretion line says "Until #216 lands, Start is shown disabled". Demo step 3 needs the no-selection reason.
+  **Issue:** #215
+- **Decision:** The lookup is the read-only `Application.Suno.SunoClipLookupService` with a new port, `ISunoClipCatalogLookup`, implemented by `Infrastructure/Persistence/SunoClipCatalogLookup.cs`. It is exposed as `POST /api/v1/suno/clips/lookup` (`RequireScope(suno.sync)`; 1 to 500 non-blank IDs, otherwise 422 `validation_failed`; distinct IDs in the order sent). `deleted` is true when the clip has a provider tombstone. An ignored clip gets `generation: null, deleted: false` with no extra read.
+  **Why:** Invariant 5 requires one application-service layer. The ignore list and tombstones never overlap (#143), so reading the ignore list would change no answer. The invariant-1 guard lists the endpoint and the service method as "reads only". The scope guard has the new marker.
+  **Issue:** #215
+- **Decision:** A clip is not selectable while its status is submitted, queued, or streaming ("Still generating in Suno"), when its status is `error`, when it is trashed, or when it has no `media_urls[0]` ("no audio"). A hidden clip can be selected. M4A (streaming quality) is planned only for clips that have `media_urls[0]`. WAV, MP3, and M4A are always offered, and per-file failures are left to #216. The formats chosen are kept in `chrome.storage.local` (`downloadFormats`), and none is ticked the first time.
+  **Why:** These follow the story's discretion lines and TS-004.
+  **Issue:** #215
+
+Story #205 (built in parallel; merged into the milestone branch):
+
+- **Decision:** `IMediaMountProbe` is folded into `IMediaMount.Probe()`, which takes no path and probes the mount root. `HealthService` and `SetupChecks` call it through the interface, and `IMediaMountProbe` and `MediaMountProbe` are deleted. `HealthService` no longer takes `N8TracksOptions`.
+  **Why:** #203's note and the planner's discretion: no second type may touch the mount. This also settles the #205/#207 difference on where the probe lives, since it now sits behind the Application-layer port #207 asked for.
+  **Issue:** #205
+- **Decision:** Real paths are resolved by a managed walk, segment by segment (`FileSystemInfo.LinkTarget` on each segment, 40 hops at most, which is Linux's limit). It starts from the root's own real path, so the root may itself be a link, and it runs on every `List`, `Stat`, and `OpenRead`. Paths are compared ordinally, so on a case-insensitive file system a link spelled in another case is refused as escaping, not followed. On Linux, `OpenRead` reads the handle's path back through `/proc/self/fd` and checks it again; other systems skip that check. No native interop.
+  **Why:** The planner's discretion. The ordinal comparison only ever refuses more, never less.
+  **Issue:** #205
+- **Decision:** `MediaEntryKind.Link` is replaced:
+  - A link that resolves inside the mount is listed as `File` or `Directory` with `ViaLink`.
+  - The other links are listed as `EscapingLink`, `DanglingLink`, or `LoopingLink`.
+  - Directories carry `RealPath`, relative to the root's real path.
+  - The scan ends a branch when a directory's real path is already on its chain of ancestors. A chain of links that never resolves (ELOOP) is also counted as `cycle`.
+  - `skippedLinks {escaping, cycle, dangling}` is added to the job result and the stored summary. It is an init property on `MediaScanCounts`, so a summary row written before this change reads as none skipped. Skipped links are also counted in `skipped`.
+  **Why:** The AC asks for skipped links to be counted with these reasons, and for a cycle to end its branch without hanging. A link loop is literally a cycle.
+  **Issue:** #205
+- **Decision:** One Warning per scan for skipped links: the count and at most ten relative paths. It goes through a new Application port, `IMediaScanLog`, implemented in Infrastructure as `MediaScanLog` with `LoggerMessage`. It is logged on success and on failure.
+  **Why:** The Application project has no logging package, and a port keeps it that way.
+  **Issue:** #205
+- **Decision:** The architecture guard `MediaMountAccessTests` scans the source line by line against exact lists, using the `EnvironmentReadGuardTests` technique:
+  - The media setting is named, case-insensitively as `media_?path` or as the `"/media"` literal, only by the options loader, the options record, `MediaMountReader`, and the three backup `IsInside` lines.
+  - File-system APIs appear only in 20 listed files.
+  - `MediaMountReader` matches a denylist of write, move, delete, attribute, mode, and time APIs, and of non-Read mode, access, sharing, and options. Every `new FileStream(...)` statement in it must name `FileAccess.Read`.
+  - Only six files name `IMediaMount`, and health and setup call nothing but `Probe`.
+  - ATL is constructed only as `new Track(stream, …)`, and the media adapters never save.
+  To keep the denylist strict, the reader avoids `string.Create` and `string.Replace` rather than loosening it.
+  **Why:** The planner's discretion names this technique. Exact lists make every new file-system user a deliberate review.
+  **Issue:** #205
+- **Decision:** The "no API input is a path" check reads every endpoint: route parameters, handler parameters of plain types (query and header), and the request body type from `IAcceptsMetadata`, recursively. It flags names that contain path, file, folder, directory, dir, or mount as a camel-case word. The one allowed entry is the `/api/v1/{**path}` 404 fallback, which never reads the value. A test with deliberate path inputs proves the check bites.
+  **Why:** Handlers like the audio-file list read `Request.Query` by hand, so the structural guarantee is the `IMediaMount`-users rule. The name check catches the obvious regression.
+  **Issue:** #205
+- **Decision:** `scripts/smoke-docker.sh`'s `mounted` section now puts a real fixture (`tone.mp3`) and a link out (`escape.mp3` -> `/etc/hostname`) in the `:ro` media folder. It then runs a manual scan through the API and expects it to succeed, with `seen` 2 (the existing fake `track.flac` counts as unreadable), `skippedLinks.escaping` 1, and no `read-only file system`, `EROFS`, or `UnauthorizedAccess` text in the log. The `api` helper moved above `mounted`. This is a manual scan because the startup scan arrives with #204, in parallel.
+  **Why:** The test plan's container proof. #204 can switch it to the startup scan.
+  **Issue:** #205
+
+Step A reconcile (merging #205 after #204, #206, and #215):
+
+- **Decision:** `MediaScanService.IsFolderAvailableAsync` (#204) asks `IMediaMount.Probe` within the listing limit instead of listing the whole root. #207 then routes it through `IMediaFolderProbe`. The #205 guard lists needed no change for #204's or #206's files: none of them names `IMediaMount` or `MediaPath`, or uses a file-system API.
+  **Why:** #205 made `Probe` the one check of the mount root, and the merge brief asked to consider it. A root listing in a large library reads every entry only to answer yes or no.
+  **Issue:** #205
+
+Story #207:
+
+- **Decision:** The mount state is the `settings` row `media.mount` `{state, sinceUtc, recoveryQueuedUtc}`, through `IMediaMountStateStore`. No row means available with `since` null. `MediaAvailability.RecordAsync` writes it only when the state changes, in an exclusive transaction. Nothing is written per file: a file reports `unavailable` while the mount is unavailable, and its stored status otherwise (`MediaAvailability.Reported`).
+  **Why:** These are the planner's discretion lines. No migration is needed: `audio_files.status` already allows `missing` (#203).
+  **Issue:** #207
+- **Decision:** `IMediaMountProbe` is replaced by an Application port, `IMediaFolderProbe`. It is implemented once, as `Infrastructure/Media/MediaFolderProbe`, a singleton `DeadlineCheck` over `IMediaMount.Probe` with health's 2-second deadline. `HealthService`, `MediaAvailability`, the scheduler's `IsFolderAvailableAsync`, and the scan's last check all use it. `HealthService` no longer names `IMediaMount`. In `MediaMountAccessTests`, `MediaFolderProbe` replaces `HealthService` in `MediaMountUsers` and `ProbeOnlyUsers`. `SetupChecks` is unchanged.
+  **Why:** The discretion line says the health service and `MediaAvailability` share the probe and its 2-second deadline. #205 had already folded the old probe into `IMediaMount.Probe`, so the port wraps that. The guard stays exact: the probe may only call `Probe`.
+  **Issue:** #207
+- **Decision:** The health probe changes the state at once both ways. The 60-second monitor (`MediaAvailabilityMonitor` → `MediaRecoveryService.CheckAsync`) needs two failed probes in a row (`MediaProbeStreak`, a singleton) and one readable probe. A readable probe from health also resets the streak. Health records the state only when its database check passed. Nothing is probed or recorded during maintenance or before setup is complete.
+  **Why:** The discretion lines say both "the health probe flips the mount state itself" and "two failed probes in a row" for the monitor. The AC needs health, the media status, and the files to agree, so a failure that health shows has to show in the files as well. Recording needs the database. Health is polled before setup, and recording then would put a row in a settings table that holds nothing before setup.
+  **Issue:** #207
+- **Decision:** A recovery scan is queued only when the state goes from unavailable to available through a probe (health or the monitor). It goes through `MediaScanService.StartAsync(MediaScanTrigger.Recovery)`, after `MediaAvailability.TryClaimRecoveryAsync` records `recoveryQueuedUtc`, at most once every 5 minutes. A completed scan makes the mount available without queuing one. A scan that fails with `media folder unavailable` makes it unavailable at once.
+  **Why:** #204's note asks for `StartAsync(Recovery)`, which also takes a scan already queued or running. A completed scan already did the recovery work. The 5-minute spacing is the discretion line, and it is kept in the row so a restart does not reset it.
+  **Issue:** #207
+- **Decision:** Missing is written as the very last step of a scan: after pass 2 and the Suno ID matcher, and after a fresh probe of the root. If that probe fails, the scan fails as `media folder unavailable` and the mount becomes unavailable. Only Available records the walk did not find are marked, and not those whose path is under a subdirectory that could not be listed. This uses one `IAudioFileStore.MarkMissingAsync` transaction, in chunks of 500 IDs. The status changes leave `revision` alone. Missing files found again become Available in the same batch writes, through `Seen(id, Available)` and `Changed(..., Available)`. A listed file that cannot be looked at, or whose changed content cannot be opened, keeps its status.
+  **Why:** The AC requires that a scan that fails or is interrupted part-way marks nothing missing. The key link says Missing is written only after the root is probed again, and only for directories actually listed. #203's note says the same. "Under a directory that could not be listed" is used rather than "in a listed directory", so a folder deleted whole, or an empty mount, still marks its files Missing (the discretion line). The matcher runs before Missing, so it is unaffected: it already covers Missing records.
+  **Issue:** #207
+- **Decision:** `MediaScanCounts` gains `Missing` (records newly marked Missing) and `Restored` (Missing records found again) as trailing optional parameters. They are in the job result (`missing`, `restored`) and the stored summary, where a summary written before reads them as 0. `FoundNothing` is `New == 0 && Changed == 0 && Missing == 0 && Restored == 0 && Associated == 0`.
+  **Why:** #204 asked for `Missing == 0`. The orchestrator added `Associated == 0`: a scan that linked files did something. `Restored == 0` is added for the same reason. #208's discretion line lists "newly Missing, restored" among the counts shown.
+  **Issue:** #207
+- **Decision:** The audio file API answers `status` (reported: `available`, `missing`, or `unavailable`) and `storedStatus`. The `status` filter and the total use the reported status, so `status=unavailable` is now accepted. `AudioFileService` takes an `AudioFileListRequest` and returns `ReportedAudioFile`s. The store keeps `AudioFileQuery` by stored status.
+  **Why:** This is the discretion line ("filters and counts use the reported one").
+  **Issue:** #207
+- **Decision:** Added `GET /api/v1/media/status` (`catalog.read`, no-store), which answers `{mount: {state, since}}`. #208 extends it with counts, scans, and the warning.
+  **Why:** AC 7 says "the media status in the API". #208's discretion line gives this endpoint and its `mount` shape, so this story starts it rather than adding a second one.
+  **Issue:** #207
+- **Decision:** AC 1's "preferred-file choice pointing at it is kept" is satisfied by construction, because no scan deletes or rewrites a record's ID or association. The preference itself arrives with #212.
+  **Why:** No preference exists yet. The tests assert that row counts and associated-row counts never drop.
+  **Issue:** #207
+
+Story #216 (built in parallel; merged into the milestone branch):
+
+- **Decision:** WAV, MP3, and M4A are prepared from the Library page (`/me`). The adapter finds the clip's row by its `/song/<id>` link (a new read-only `Target.address`), presses the row's "More options" (a region 6 levels out from the link), then the menu's Download, the format, and "Unlock & Download".
+  **Why:** the clip's own page (`/song/<id>`) has no snapshot (#341, D10). `page.library-list.html` shows one link and one More options per row, `page.clip-download-menu.html` shows the menu, and `page.download-dialog.html` shows the dialog. Every page state pressed has a TS-003 or TS-004 snapshot.
+  **Issue:** #216
+- **Decision:** a clip whose row is not rendered in the list fails that file only, with "scroll to it there, then press Retry failed". The extension does not scroll to look for it.
+  **Why:** no snapshot shows how Suno's list virtualises rows. Searching by scrolling would act on unrecorded page states. The library read has scrolled to the end, so loaded rows are normally present.
+  **Issue:** #216
+- **Decision:** the Download dialog's button is pressed only under its captured name, "Unlock & Download", whether or not the clip is already unlocked. A dialog that names it otherwise stops the step for that format, and no other name is pressed. The unlock is controlled in the service worker. A clip not yet unlocked (`is_download_unlocked` false and not unlocked earlier in the run) gets the page step only when the user confirmed it at Start, and once per clip.
+  **Why:** TS-004 captured only the locked state. The authorize fixture's `already_unlocked` member shows that Suno answers an unlocked clip without spending. Guessing another name would invent page structure, which m4-notes rules out (BLOCKED_ON_CAPTURE). The owner's demo with already-unlocked clips will show the real name. If it differs, the WAV/MP3/M4A path for such clips needs a capture.
+  **Issue:** #216
+- **Decision:** the Download dialog's controls (WAV, MP3, M4A, "Unlock & Download", Close) are a second named exception in `forbidden.ts` (`download-clip`, recognised by the dialog title `/^Download\b/`). `Page.downloadDialogClick` presses them, and the static scan allows it only from `adapter/workflows/download.ts`. `RECOGNISED_DIALOGS` is unchanged. "MP4 video asset" and Manage stay forbidden. The guard's `forbiddenControls` spies the Download dialog control by control (`pressableDialog`).
+  **Why:** #133 reserved the dialog for #216's own primitive. The invariant text already allows the unlock, which `docs/suno-integration.md` amended on 2026-10-05. The exception mirrors `create-workspace`.
+  **Issue:** #216
+- **Decision:** the #133 static scan's downloads rule is narrowed instead of adding a `NETWORK_EXEMPTIONS` entry. `chrome.downloads` and its members are refused everywhere except `src/download/downloader.ts`. That file may use only `download`, `cancel`, `search`, and `onChanged`, and `download` only with an object of `url`, `filename`, `conflictAction`, and `saveAs`. Its `url` must have the adapter's branded type `AudioAddress` (`audioAddressOf` in `addresses.ts`). Bite tests cover a header, an unchecked address, `removeFile`, and the same code in another file.
+  **Why:** `downloader.ts` sends no `fetch`, so a network exemption would widen the wrong rule. This proves both "listed host" and "no credential added" statically.
+  **Issue:** #216
+- **Decision:** the streaming-quality M4A is named `… (suno-<id>) stream.m4a`. Every other format is `… (suno-<id>).<ext>`.
+  **Why:** with only the extension to tell them apart, M4A and the stream in one run would collide into `(1)` numbering. #206 had already put this form in the shared fixture. The token stays whole, so the matcher still finds it.
+  **Issue:** #216
+- **Decision:** unlock confirmation is an explicit checkbox, "Use N Suno download unlocks for this run", which resets when N changes. Start sends N, and the service worker refuses a Start whose N is not the plan's count of distinct clips not yet unlocked in a paid format. The run keeps the confirmed clip IDs, not just a number.
+  **Why:** the AC requires the count to be confirmed in the summary. A set of confirmed clips makes "never more unlocks than confirmed" hold by construction.
+  **Issue:** #216
+- **Decision:** queue mechanics. The service worker sends `download-prepare` (`chrome.tabs.sendMessage`) to the run's tab and waits for the answer, and pushes `download-progress` there. The tab reads `download-run` on each page load that has no library read. A browser restart is detected by an empty `chrome.storage.session` marker (`downloadQueueAlive`). Progress is polled every second while a file downloads, because `downloads.onChanged` reports no bytes. An expired address (`SERVER_FORBIDDEN`, `SERVER_UNAUTHORIZED`) is prepared again once.
+  **Why:** these follow the story's discretion lines (the queue lives in the service worker and survives restarts, Resume after a browser restart, refetch once). Start, too, is refused while a sync or Generate on Suno runs (the page is shared).
+  **Issue:** #216
+- **Decision:** the page's own copy of a prepared file (`<title>.<ext>`, TS-004) is not removed or suppressed. The summary and the docs say it has no Suno ID.
+  **Why:** TS-004 did not establish how the page saves the file. Cancelling downloads the extension did not start is out of scope and not covered by the story's exception.
+  **Issue:** #216
+- **Decision:** `ADAPTER_VERSION` is 12. The new observed kind `download-clip` forwards only `status` and `download_url`, plus `{clipId, format}` from the address, and only ready answers are queued. The workflow `Feature` gains `download` (panel group "Download from Suno"). The manifest's `permissions` gain `downloads`, and the validator's allow-list is widened explicitly with complements: the list without `downloads` fails, and an extra permission fails.
+  **Why:** these are adapter pattern changes, and D4 gave the `downloads` permission to #216.
+  **Issue:** #216
+
+Story #222:
+
+- **Decision:** Migration `20261008030000_AddDownloadRecords` adds only the new table `download_records` (EF `CreateTable`; no existing table rebuilt, no trigger touched). Its Designer was generated from the current snapshot and renamed to sort after `20261008020000`. Checks: format in the four, `suno_id` a lower-case 36-character text, `file_name` 1 to 255 characters with no `/` or `\`, `size_bytes` null or not negative, `completed_utc <= received_utc`. Index on `suno_id`; no foreign key. It is classified **catalog** in `SunoExportStagingGuardTests` (an import must never change it) and listed in `DatabaseStartupTests`.
+  **Why:** The story's discretion lines give the table and its keys. Catalog is the stricter side of the invariant 3 guard.
+  **Issue:** #222
+- **Decision:** `DownloadRecordService` lives in `Application.Media` (an existing namespace, not a catalog namespace) and takes no catalog type. `GET /generations/{reference}/downloads` resolves the reference with `GenerationService.FindAsync` and passes the Generation's ID and Suno ID to `ListForGenerationAsync(Guid, string?)`. No change to `CatalogServiceNamespaces` was needed. `POST /api/v1/suno/downloads` is listed in the invariant 1 guard's endpoints touching no Version.
+  **Why:** Taking `CatalogReference` would put a catalog type in a service outside the guarded namespaces, which the guard refuses. The endpoint stays a thin resolver.
+  **Issue:** #222
+- **Decision:** A report sent again under the same ID answers 200 with the stored record (201 for a new one), whatever its body says. The Suno ID is stored in lower case, and the clip lookup matches it whatever the case it is asked in. A Generation's records are read by its Suno ID; one without a Suno ID has none.
+  **Why:** The discretion line makes a repeated ID a no-op; answering the stored record lets the extension treat both as recorded.
+  **Issue:** #222
+- **Decision:** "A scanned audio file of that name" strips the browser's ` (n)` numbering (just before the extension, digits only) from both names and compares them without regard to case. The store first narrows `audio_files` with `LIKE '<stem>%'` (escaped), then the service compares exactly. Match: `attached` when such a file's `generation_id` is this Generation, else `elsewhere` (any other or no association), else `not-found`. A Missing file counts as found, with its reported status.
+  **Why:** The discretion lines give the three texts and the rules. SQLite's LIKE folds only ASCII case, so a name differing only in the case of a non-ASCII letter is not found; the extension's names always carry the ASCII `(suno-<id>)` token, so this is accepted.
+  **Issue:** #222
+- **Decision:** The extension reports from `background/downloadRecords.ts` (`DownloadRecorder`), called in order from the queue's `onChange(run)` in `service-worker.ts`. A saved file gets `recordId` (a fresh UUID per save) and `savedAt` in `downloader.ts`. Kept state is `chrome.storage.local` `downloadRecords {address, pending, seen, refused, unrecorded}`. A report is tried three times (waits 1 s, 4 s); 2xx is recorded, 403/422 dropped and counted, anything else (network, 5xx, 404 from an older n8Tracks) kept for later. Pending reports are sent again on a service worker start, the next saved file, and each `download-run` (a page load of the panel). Pairing with another address discards them; a revoked token keeps them for the same address.
+  **Why:** The story's discretion lines (three tries, kept per address, at most 500, refused counted). `Connection.pairedAddress()` is new so the recorder knows the address without a handshake. The file is under `background/` rather than `download/`, since it calls n8Tracks through the connection (the plan comment said `download/records.ts`).
+  **Issue:** #222
+- **Decision:** "When the extension is not connected" means no token is held when the file is saved: nothing is queued, and the file is counted as not recorded. The run section says so, and the lookup line, when unavailable, now adds "but they are not recorded in n8Tracks". The panel's counts (refused, not recorded) are per run; the waiting count is for all runs.
+  **Why:** The AC says nothing is recorded while not connected, while the discretion line keeps failed reports for later; the two are told apart by whether a token existed when the file was saved.
+  **Issue:** #222
+- **Decision:** In the Download view, "Not yet downloaded" is a filter checkbox, disabled until the lookup answers; "Skip files already downloaded" is ticked by default and is not remembered. Files saved in the current run count as downloaded. The summary names up to 20 skipped files, then "and N more". `unlocksNeeded()` now counts the plan's clips (after skipping), so a clip whose paid formats are all skipped needs no unlock, and the count still equals the queue's `clipsToUnlock` check.
+  **Why:** The AC gives the filter rule and the default; counting unlocks from the skipped plan keeps the confirmation and the service worker's refusal in step.
+  **Issue:** #222
+
+Story #208 (built in parallel; merged into the milestone branch):
+
+- **Decision:** `GET /api/v1/media/status` answers `{mount{state,since,path}, counts{total,available,missing,associated,unmatched}, lastScan, lastSuccessfulScan, activeScanJobId, schedule{enabled,intervalMinutes}, nextScheduledScan, majorityMissingWarning}`; each scan is `{jobId, trigger, outcome, startedAt, finishedAt, durationSeconds, counts, failure}` with `failure` one of `media_folder_unavailable|interrupted|failed`. Built by a new `Application.Media.MediaStatusService` (read-only; not a catalog namespace for the invariant 1 guard).
+  **Why:** The planner's shape, plus the schedule itself (the page must say "off" and link to Settings) and a failure code so the page words known causes without parsing error text.
+  **Issue:** #208
+- **Decision:** The majority-missing count base is a new `MediaScanCounts.AvailableBefore` (init property): the records whose stored status was Available when pass 2 began, kept in the summary JSON (`counts.availableBefore`) and the job result. Rule: `missing > 0 && missing * 2 > availableBefore`, never while Unavailable, read from the last *successful* scan, so only the next successful scan clears it.
+  **Why:** #207's `missing` counts only newly marked files; the denominator must be what was Available before. Old summaries read 0 and never warn.
+  **Issue:** #208
+- **Decision:** The last successful scan is kept in a second `settings` row, `media.lastSuccessfulScan`, written by `MediaScanSummaryStore.WriteAsync` whenever the summary succeeded; before it exists, a succeeded `media.lastScan` stands in. No migration.
+  **Why:** Discretion asks for `lastSuccessfulScan` kept in a stored summary so pruning never empties the page, and a failed scan must show the previous counts.
+  **Issue:** #208
+- **Decision:** `lastScan` is the stored summary unless the newest finished `media-scan` job (new `IJobStore.FindLatestFinishedAsync`) is a different, later job; then that job (trigger and counts null, failure from its error, e.g. `interrupted by restart`).
+  **Why:** Discretion says the last result is read from the newest finished job, but a scan cut off by a process stop writes no summary; the summary stays the source otherwise so pruning never empties the page.
+  **Issue:** #208
+- **Decision:** The page shows `mount.path`, the configured media path (`N8TracksOptions.MediaPath`, the container path), answered by the status endpoint; the one new line naming it is added to `MediaMountAccessTests.AllowedMediaPathLines` (it only answers the text; nothing touches the mount).
+  **Why:** Discretion: "shows the container path from configuration"; the #205 guard requires every line naming the setting to be listed.
+  **Issue:** #208
+- **Decision:** Route `/library/media`; the sidebar gains a "Library" group (role=group, like Settings) between Ignored Suno items and Settings, holding Media only (#209 adds Unmatched Files there). The Unmatched count is plain text until #209 links it.
+  **Why:** Discretion: Library is a new sidebar group holding Media and Unmatched Files.
+  **Issue:** #208
+- **Decision:** The progress bar writes its own ARIA (`withAria={false}` on Mantine's section): no `aria-valuenow` while indeterminate (queued, or the names-only listing pass), `aria-valuetext` with the job's message; completion is announced in a polite `role=status` region ("The scan has finished." / "The scan has stopped."). The state badge uses the theme's default/filled variants.
+  **Why:** Mantine always states a value (wrong for an indeterminate bar) and its light green/red badge failed axe contrast in the e2e.
+  **Issue:** #208
+- **Decision:** Rule 1: `e2e/tests/account.spec.ts`'s exact sidebar list lacked Settings → Library (added by #204, so the spec was already failing on the milestone branch); it now lists `Media` and `Library`.
+  **Why:** The sidebar list is asserted exactly; found while adding Media to it.
+  **Issue:** #208
+- **Decision:** The e2e walks Demo step 1 on its own fresh container (`@root-only`, like `library-settings.spec.ts`), holding the first `GET /jobs/{id}` with `page.route` until the bar has been checked and scanned with axe. Demo steps 2 and 3 (rename the host folder) are covered by `MediaStatusTests` and component tests, not e2e.
+  **Why:** A 3-file scan ends faster than the bar can be observed; the shared containers' media folder path is not exposed to specs.
+  **Issue:** #208
+
+Story #217 (built in parallel; merged into the milestone branch):
+
+- **Decision:** A record whose reported status is not `available` (stored Missing, or the media folder Unavailable) is 404 `audio_file_unavailable` without opening the file, even when the file is back on disk. The live read decides only for a record that reports Available: a file gone since the last scan, or one that cannot be opened, is 404 as well. The request never changes the record.
+  **Why:** AC 3 and the orchestrator's #207 note ("serve a file only when its reported status is available") override the planner's discretion line "a file marked Missing that is in fact present is served". The next scan restores such a file.
+  **Issue:** #217
+- **Decision:** `IMediaMount` gains `OpenWithStat(relativePath)`, which returns `OpenedMediaFile` (the read-only stream, plus `Stat()` read from the open handle: `FileStream.Length` and `File.GetLastWriteTimeUtc(SafeFileHandle)`). `OpenRead` is unchanged, and both go through the same private `Open` (real-path check plus the `/proc/self/fd` re-check).
+  **Why:** the discretion requires the length, tag and modified time to come from the opened handle. Only `MediaMountReader` may use a file-system API, and changing `OpenRead`'s return type would have touched the scan and every fake. The probe-only rule in `MediaMountAccessTests` now also names `OpenWithStat`.
+  **Issue:** #217
+- **Decision:** Ranges and conditionals use ASP.NET Core's own `TypedResults.Stream(..., lastModified, entityTag, enableRangeProcessing: true)`. That covers single, open-ended and suffix ranges, 416 with `Content-Range: bytes */len`, several ranges → 200 with the whole file, `If-Range`, `If-None-Match` → 304, and HEAD without a body. The endpoint runs the result itself so it can catch `AudioContentChangedException` and `Abort()` the connection. `Content-Disposition` is set by hand (`inline`, `ContentDispositionHeaderValue.SetHttpFileName`: an ASCII fallback plus RFC 5987 `filename*`), because the result's own file name would make it `attachment`.
+  **Why:** this avoids hand-writing range parsing that the framework already gets right, and it matches every discretion line.
+  **Issue:** #217
+- **Decision:** "Other methods get 405" is an explicit `POST,PUT,PATCH,DELETE` mapping on the content route. It answers 405 `method_not_allowed` with `Allow: GET, HEAD` and is marked `RequireScope(catalog.read)` (`EndpointScopeGuardTests` lists it).
+  **Why:** the `/api/v1/{**path}` fallback matches every method, so without the mapping ASP.NET Core answers 404 instead of 405.
+  **Issue:** #217
+- **Decision:** The content stream (`AudioContentStream`, internal to `Application/Media/AudioContentService.cs`) checks the handle's stat on every read. It throws `AudioContentChangedException` when the stat differs from the stat at open, or when a read returns 0 before the length. The endpoint then logs a Warning (ID only) and aborts the connection. The entity tag is `"<size hex>-<modified ticks hex>"`. The media type is `AudioFormats.MediaType(format)` in Domain.
+  **Why:** a response is never completed with bytes that do not match its length and tag. The cost is one fstat per 64 KB read.
+  **Issue:** #217
+- **Decision:** Logging is done in the endpoint, not in the service, because Application services take no `ILogger`; the media code logs through ports. The "could not be opened" Warning carries `audioFileId` only, never the exception, whose message holds the absolute path (invariant 6). The access log line already holds only the URL, which carries the ID.
+  **Why:** invariant 6. Tests assert that the log holds neither the file name, the folder name, nor the mount root.
+  **Issue:** #217
+
+Story #209:
+
+- **Decision:** Unmatched Files reads the existing `GET /api/v1/audio-files` with new query parameters, not a new route: `sort=path|name|folder|firstSeen` (default `path`, so existing callers are unchanged), `direction=asc|desc` (first seen defaults to newest first, the others to ascending), `q` (trimmed, at most 200 characters, matched case-insensitively for ASCII letters against the relative path, which is the folder plus the name), and `include=suggestions`. With suggestions the limit is at most 100 (default 100), and over that is 422 keyed `limit`. Every order ends with the path, so pages never overlap. `suggestions` appears only when asked for, and is `[]` for an associated file.
+  **Why:** The plan's key link names this endpoint with `include=suggestions`, and the discretion pages at 100. The `sort`/`direction`/`q` names follow the Songs and Ignored-items lists.
+  **Issue:** #209
+- **Decision:** `Application/Media/MatchSuggester` is a pure static scorer that follows every discretion line. Title signals: stem = title 100, embedded title 90, Generation Suno title = stem 80 (that Generation), title in the stem as whole words 60, folder = title 40. Artist +20, duration within 2 s +10. A title under 4 characters needs a second signal for a contained or folder match. The closest Generation is suggested, and an exact tie suggests none. Ties go to the most recently updated Song, then the newest by UUIDv7. The API answers reason codes with parameters (`generation`, `folder`, `artist`, `artistSource`, `differenceSeconds`), and the page writes the sentences.
+  **Why:** The scoring and evidence shape are given by the discretion. The extra UUIDv7 tie-break makes equal timestamps deterministic.
+  **Issue:** #209
+- **Decision:** The stem is compared in two forms, with and without a leading track number (`01 `, `03 - `). Either may equal the title. Suno ID tokens (with or without `suno-` and brackets), the extension, and a trailing ` (n)` are always dropped. Apostrophes are deleted; other punctuation, `_` and `-` become spaces.
+  **Why:** Dropping the number alone would stop "7 Rings.mp3" from equalling "7 Rings". Deleting apostrophes keeps "Don't" equal to "Dont".
+  **Issue:** #209
+- **Decision:** "Archived Songs" are Songs in the default Archived workflow state (`DefaultWorkflowStates.Archived`, by its fixed ID). Songs have no other archive flag. Archived Generations of a live Song stay candidates. A "credited Artist" is any credit, of any role. Aliases are not compared.
+  **Why:** The PRD's only Song-level "Archived" is the workflow state. Narrowing Generations or roles further was not asked for.
+  **Issue:** #209
+- **Decision:** Candidates come from a new read-only port `IMatchCandidateStore` (`Infrastructure/Persistence/MatchCandidateStore`): three reads per request, made only when the page holds an unassociated file. The types carry IDs, shortcodes and text only, so `Application.Media` stays outside the invariant 1 guard's catalog namespaces. A deleted Generation is never a candidate, because deletion removes its row. The API test proves this.
+  **Why:** The discretion says "loaded once per request and scored in memory". Keeping catalog types out of the signatures avoids widening the invariant 1 guard.
+  **Issue:** #209
+- **Decision:** The page (`/library/unmatched`) is a table with the File (row header, plus the unmatched reason sentence), Folder ("Top level" at the root), Format, Duration (`m:ss`, "Unknown"), Size, Status (a filled "Missing"/"Unavailable" badge), First seen, and Suggested Songs (an ordered list linking `/go/<shortcode>` for the Song and Generation, with a bulleted list of reasons). Sort is one "Sort by" select of six order/direction pairs. Search, sort and page are kept in the address. It has no hide or dismiss control. The Media page's Unmatched count is a link named "N unmatched: open Unmatched Files".
+  **Why:** The AC lists the columns and orders, and #208's note asks for the link and the sidebar entry. The #210 Associate action will go in the row.
+  **Issue:** #209
+
+Story #210:
+
+- **Decision:** The "unassociated by you" flag (`user_unassociated` in the story's discretion) is the existing `unmatched_reason = unassociated_by_user` code, which #206 declared. Only `auto_match_blocked` is new: migration `20261008040000_AddAudioFileAutoMatchBlocked` adds it as `INTEGER NOT NULL DEFAULT 0`, with a plain `ALTER TABLE ... ADD COLUMN` (and `DROP COLUMN` in Down). There is no check constraint. `DatabaseStartupTests` lists the column and still asserts #206's composite FK.
+  **Why:** #206 already holds the reason, and the matcher already skips it. A plain ADD COLUMN does not rebuild `audio_files`, so the composite FK that #206 wrote by hand survives (EF Core's DropColumn would rebuild the table). The story's key link names the new column.
+  **Issue:** #210
+- **Decision:** The matcher skips a file whose `auto_match_blocked` is set, as well as `unassociated_by_user`. Both `MatchableAsync` and the conditional `TryAssociateBySunoIdAsync` check it. The flag is set when the user removes or replaces an association on a file whose name holds a UUID (`SunoIdMatcher.FindIds`, whether or not the UUID names a Generation). Nothing clears it except "Match by Suno ID again". It therefore survives a later re-association and a `song_deleted` release. A test proves that the block alone keeps a `song_deleted` file unmatched. A first association of an unmatched file never sets it.
+  **Why:** The discretion says replacing sets it, and the user's decision outranks any scan. Keeping it across a later Song deletion stops a scan from bringing back the match the user moved the file away from.
+  **Issue:** #210
+- **Decision:** API: `PUT /api/v1/audio-files/{id}/association` takes `{song, generation?}`, each an ID or shortcode, as JSON text (any other JSON type is 422 `validation_failed` keyed by field). It answers 200 with the file and its revision as the ETag. `DELETE` on the same route answers 204 with the ETag. `POST /api/v1/audio-files/{id}/rematch` answers 200 with the file. All three need `songs.write` and `If-Match`. The checks run in this order: file (404) → body → Song (404 `not_found`; a deleted Song is 404 `not_found`, not `song_deleted`) → Generation (404) → `generation_not_in_song` (422) → revision (409 with `current`). A PUT naming the current association, or a DELETE on a file with none, stores nothing but still checks the revision. Rematch on an associated file is 422 `audio_file_associated`, with `current`. The files live in `Api/Endpoints/AudioFileAssociationEndpoints.cs` and `Application/Media/AudioFileAssociationService.cs`. Each runs in one exclusive transaction.
+  **Why:** The order and no-op behaviour follow the selection endpoints (#120). The discretion gives the 404s and scope. Rematch refusing an associated file is my choice: it has nothing to match, and the UI never offers it there.
+  **Issue:** #210
+- **Decision:** "Match by Suno ID again" clears both the block and the reason, then runs `SunoIdMatcher.ResolveAsync` for that file only. On no match, the file keeps the reason a scan would give (`generation_deleted` or `multiple_suno_ids`), or no reason. Each write raises the revision, so a rematch that associates raises it twice.
+  **Why:** The discretion says "stays unmatched with no reason". I read that as no user reason: a scan would compute the other two anyway, so the rematch shows them straight away.
+  **Issue:** #210
+- **Decision:** Audio file responses gain `autoMatchBlocked`, and `song` gains `title` (`{id, shortcode, title}`, the current title joined at read, through an optional `CatalogLink.Title`). Both are additive.
+  **Why:** The dialog must name the current association, and a shortcode alone does not tell the user which Song it is.
+  **Issue:** #210
+- **Decision:** `AudioFileAssociationService` signatures take only `Guid`, `string`, and `int`. Its outcomes carry IDs, shortcodes, and `ReportedAudioFile`. It resolves references internally through `SongService.FindAsync(ISongStore, …)` and `GenerationService.FindAsync`. `Application.Media` therefore stays out of `CatalogServiceNamespaces`. The three endpoints are exercised by the invariant 1 API guard on a frozen Version, with the Version's inputs in the body. The reference guard lists their `id` as non-catalog.
+  **Why:** This is the same approach as #209. The guard still proves that the endpoints cannot change a frozen Version.
+  **Issue:** #210
+- **Decision:** Web changes:
+  - Each suggestion has an "Associate" button (named "Associate <file> with <Song> (<shortcode>)[, Generation <g>]"). It associates in one action, with the suggested Generation when there is one.
+  - Every unmatched row has "Choose a Song…", and an associated row has "Change or remove…". Both open `AssociateFileDialog`.
+  - A file with `autoMatchBlocked` has "Match by Suno ID again".
+  - The page has a "Show" select (Unmatched by default, Associated, All), kept in the address as `show`.
+  - After every write the list is read again, and a polite status announces what changed. The last column is now "Song", and "None" became "No suggestions".
+  - The dialog searches Songs with the shared `SongSearch`, which gained optional `limit` (20 here) and `noteOf` ("Archived" by the fixed `ARCHIVED_STATE_ID`) props. It then offers "None: the Song only" (the default) and every Generation of the Song as radios, with the "a Generation is preferred" sentence.
+  - On a 409 the dialog keeps `current`, so trying again uses the new revision.
+  **Why:** These follow the AC and discretion. The #209 note put the action in `FileRow` and the reload after it. Reusing `SongSearch` keeps one Song finder. Radios make "Song only" an explicit choice.
+  **Issue:** #210
+- **Decision:** A Song's list is `GET /api/v1/songs/{reference}/audio-files` (`catalog.read`, in `MediaEndpoints`), answering `{items: AudioFileResponse[]}` without suggestions, not paged. The endpoint finds the Song with `SongService.FindAsync` (404 `song_deleted` through `MissingSongAsync`), then calls `AudioFileService.ListForSongAsync(Guid)`, so `Application.Media` still takes IDs only and stays outside the invariant 1 guard's catalog namespaces.
+  **Why:** One item shape with the audio-file endpoints lets the web reuse `acceptFile` and hand a row straight to #210's `AssociateFileDialog`. Resolving the reference in the endpoint follows the #222 downloads endpoint.
+  **Issue:** #211
+- **Decision:** The order is computed in `AudioFileStore.ListForSongAsync`: Song-level first, then `versions.number_sort_key`, Generation ordinal, format rank (new `AudioFormats.CompareByRank`/`InRankOrder`: WAV, M4A, MP3, then the rest by name), folder, file name, path (all ordinal). The rank is a Domain rule, so #212's preferred-file and player stories can reuse it.
+  **Why:** The discretion fixes the order, and the server is where the Version tree order is known.
+  **Issue:** #211
+- **Decision:** `GenerationSummary` gains `AudioFiles` (`AudioFileTally {Count, Missing, Unavailable, Formats}`, in Application.Media). It is filled in `GenerationRows.SummariesAsync` with one grouped read of `audio_files` plus the `media.mount` settings row (read through `MediaMountStateStore`, with the #207 rule `MediaAvailability.Reported`). So every Generation answer carries `audioFiles`, not only the Song's list. Counts include Missing and Unavailable files; while the folder is unavailable, `unavailable` = `count` and `missing` = 0.
+  **Why:** The discretion asks for Generation responses to carry the counts, and they are built in many places (list, one, rate, select, move). One read path keeps them all the same. Reading the state row in Infrastructure avoids threading the mount state through 15 response call sites.
+  **Issue:** #211
+- **Decision:** `SongSummary.AudioFileCount` (init) and `SongResponse.audioFileCount` are on every Song answer, not only list rows. `SongSort.AudioFiles` (`sort=audioFiles`) orders by a correlated count, most first by default, with the shortcode number breaking ties. An unknown `sort` still gets the existing 400 `invalid_request`, and its message now names `audioFiles`.
+  **Why:** Song answers are one record type. "Most first" matches the column's purpose (finding Songs that have audio), as Updated starts newest first. No column chooser exists, so the column is shown after Selected, per the discretion's fallback.
+  **Issue:** #211
+- **Decision:** Web:
+  - `useSongAudioFiles` lives in `SongVersions`, which already owns the Generations and the panel. The Song's list feeds both `AudioFilesSection` (below the Versions table) and `GenerationAudioFiles` (the panel filters it by Generation ID).
+  - Both lists, and the Generations (for their counts), are read again on window `focus` and after every association change. Reading again keeps what is already shown.
+  - Remove association calls #210's DELETE at once, with a polite announcement and no confirmation step. Change association opens #210's dialog, which shows the current association.
+  - Archived marks come from the loaded Generations and Versions.
+  - Size is MB to one decimal, with 1 MB = 1,048,576 bytes. A Song-level file's Generation cell reads "Song-level".
+  - The panel lists files compactly (one line of details each) rather than as a table, because the drawer is narrow.
+  - `Generation.audioFiles` defaults to none when absent, and `Song.audioFileCount` is optional, as with the existing artwork and `songCount` fixture tolerance.
+  **Why:**
+  - Remove is reversible (associate again), and the dialog already offers it.
+  - One list read serves both views.
+  - The rest follows the discretion lines.
+  **Issue:** #211
+- **Decision:** `MediaMountAccessTests`' file-system regex matched an anonymous member named `File` (`row.File.Path`), so the member was renamed `Row`. No guard list changed. The reference guard lists the new route.
+  **Why:** This is the pitfall #210 noted. The source never touches the file system.
+  **Issue:** #211
+- **Decision:** Rule 1: the empty state's "Open Unmatched Files" link sits inside a sentence, so it is underlined always. Axe `link-in-text-block` failed on every Song page with no files, in the existing versions-table, songs, generation-downloads and generation-evaluation e2e specs. The e2e rerun of those specs is the regression check.
+  **Why:** WCAG 1.4.1: a link in a text block must not be told apart by colour alone.
+  **Issue:** #211
+- **Decision:** Preferences live in two new tables, `generation_preferred_audio_files (generation_id PK, audio_file_id)` and `song_preferred_audio_files (song_id PK, audio_file_id)`, not in nullable foreign-key columns on `generations` and `songs` as the planner's discretion line says. Migration `20261008050000_AddPreferredAudioFiles` writes the tables by hand. Each table has:
+  - a RESTRICT key to its owner;
+  - a composite key `(audio_file_id, generation_id|song_id)` to `audio_files (id, generation_id|song_id)`, RESTRICT on delete and update;
+  - a unique `audio_file_id`.
+
+  `audio_files` only gains the two unique parent-key indexes, by plain `CREATE INDEX`, so it is not rebuilt and its composite foreign key survives. The composite keys are not in the EF model, as with #206's key; `DatabaseStartupTests` asserts them.
+  **Why:** This follows the orchestrator's binding #212 decision and m5-plan's drift row. Columns would bump the retained shapes (`generation` 6→7, `song` 3→4) and need upgraders. EF would also rebuild both trigger-carrying tables to add a foreign key. With the composite keys, the database itself refuses two things: a choice of a file that is not the owner's, and an association change that leaves a choice behind.
+  **Issue:** #212
+- **Decision:** Rule 1: `AudioFormats.CompareByRank` now ranks every format in the order of `AudioFormats.All`: WAV, M4A, MP3, FLAC, OGG, Opus, AAC. #211 ranked "WAV, M4A, MP3, then the rest by name", which put AAC before FLAC. The Song's list order, the Generation tally's formats, and the playback fallback all use this one rank. #211's unit test and its API summaries were updated.
+  **Why:** #212's AC fixes the order (the user's file-type answer), and the plan says one rank serves the lists and the resolver.
+  **Issue:** #212
+- **Decision:** `Application/Media/PlaybackResolver` is pure. It reads a Song's files as they report now, and each file's new `AudioFile.Preferred` flag, filled by `AudioFileStore.FilesOfAsync` from the two tables. It needs no other input.
+  - A Generation plays its preferred file while that file is available. Otherwise it plays the best available file: by format rank, then earliest first seen, then path (ordinal).
+  - A Song plays its available Song-level preferred file. Otherwise it plays the Selected Generation's file, and when the Song's own choice is away, the reason is the Song's fallback reason.
+  - With no selection, the reason is `no_selected_generation`.
+  - `PlaybackService` serves the two playback reads and the marks on the Song's list (`ReportedAudioFile.Marks`).
+  **Why:** One rule with one input gives the same answer everywhere. Reading the choice from the file rows avoids a second read path.
+  **Issue:** #212
+- **Decision:** The API:
+  - `PUT`/`DELETE /generations/{reference}/preferred-audio-file` and `/songs/{reference}/preferred-audio-file` (`songs.write`, owner revision in If-Match) answer the owner (`GenerationResponse`/`SongResponse`), as `selected-generation` does. The owner's revision is checked before the file, so the reference guard can call these routes with a stale revision. An unknown file is 404 `not_found`.
+  - A Generation's choice raises only its revision. A Song's choice raises its revision and sets its updated time.
+  - `AudioFileResponse` gains `isPreferred` (always present) and `playsForGeneration`/`playsForSong`, which appear only on the Song's list.
+  - Playback answers `{source, audioFile {id, fileName, format, durationSeconds, contentUrl}, reason}`, and the Song's answer adds `generation {id, shortcode}`. `contentUrl` is the #217 content route under the page base.
+  **Why:** Answering the owner lets the web keep the Song's revision current (`onSong`) and matches the selection endpoint. `isPreferred` on every file lets #210's dialog warn on the Unmatched Files page too.
+  **Issue:** #212
+- **Decision:** A choice is cleared, and its owner's revision raised, inside `AudioFileAssociationService.AssociateAsync` and `RemoveAsync`, but only when the association actually changes. Naming the current association changes nothing. Deletion clears choices first in `AudioFileLifecycle.ReleaseAsync`, with no revision raise because the owners are going. A restore does not bring them back. `PreferredAudioFileService` (strings and Guids only) and `PlaybackService` are in `Application.Media`, which stays a non-catalog namespace. The invariant 1 guard exercises the four new write routes.
+  **Why:** These follow the discretion lines (clearing raises the owner's revision without the caller sending it; #213 restores no choice). The database's RESTRICT keys make the order mandatory.
+  **Issue:** #212
+- **Decision:** Web:
+  - The Audio Files table gains a "Playback" column, and the panel's file list gains a line. They show the badges "Preferred", "Plays now" (for a Generation's file, its Generation; for a Song-level file, the Song) and "Plays for the Song", plus a note when the preferred file is not the one playing ("Preferred, but Missing: X plays instead.").
+  - Each row offers "Make preferred" or "Clear preferred" before the association actions.
+  - Remove association on a preferred file opens #210's dialog, which now warns ("It is the preferred file of …"), instead of removing at once. Files that are not preferred are still removed at once.
+  **Why:** The AC asks the dialog to say so before the user confirms. The Song page's one-click Remove has no confirmation step, so a preferred file goes through the dialog.
+  **Issue:** #212
+- **Decision:** `MediaMountGuardTests.NotAPath` lists the two PUT bodies' `audioFile` field. The field is a UUID, and anything else is 422. The new resolver code avoids `x.File.Y` member chains through a `Recorded(...)` helper, because `MediaMountAccessTests`' file-system regex matches them. No guard list in the arch test changed.
+  **Why:** The body name is fixed by the discretion (`{ audioFile: <id> }`). This is the same pitfall #210 and #211 hit.
+  **Issue:** #212
+- **Decision:** Each deletion impact (Generation, Version, Song) gains `localAudioFiles {total, handAssociated, songLevel}`, counted by the new `AudioFileLifecycle.CountAsync` from the Song's file list. `total` includes Missing files. `handAssociated` counts files the user associated whose names carry no Suno ID, or whose automatic matching is off (#210), because no scan would associate those again. `songLevel` counts files with no Generation (Song deletion only). The Song impact's existing `audioFileCount` is now the real total. `SongDeletionRules.TitleRequired` does not read it, so audio files do not change which confirmation #102 requires.
+  **Why:** This follows the discretion line on the impact shape. Auto-match-blocked files are counted as hand-associated because a restore would not re-attach them either. Keeping `audioFileCount` avoids changing #102's contract.
+  **Issue:** #213
+- **Decision:** The Song confirmation's "deleted with it" list no longer has a "N local audio files" line. Files are now described by their own lines (absent at zero), shared by the three dialogs through `media/DeletionAudioFiles.tsx` and `deletionAudioFileRules.ts`.
+  **Why:** Rule 1: the old line listed audio files among what is deleted, which is false (invariant 2). The story's component tests ask for the new line to be absent at zero.
+  **Issue:** #213
+- **Decision:** A move needs no `AudioFileLifecycle` call. `GenerationMoveService` is unchanged. #206's composite key `(generation_id, song_id) → generations(id, song_id)` cascades on update, so the Generation's files follow it. Its Preferred Audio File choice is keyed by Generation (#212), so it moves too. The move dialog's files line comes from the Generation's own `audioFiles.count` (#211, Missing files included) and is absent at zero.
+  **Why:** This deviates from the story's key link ("GenerationMoveService → AudioFileLifecycle"). The database already performs the move in the same statement, so a service call would duplicate it. The API test proves the files, the choice, and the Song-level file's place.
+  **Issue:** #213
+- **Decision:** The story text has `PrepareRestore` null a preference column. That is satisfied by #212's design: separate `generation_/song_preferred_audio_files` tables, removed by `ReleaseAsync` on deletion and never retained. There is no restore code for choices.
+  **Why:** This was the orchestrator's instruction. The preference columns the story assumed do not exist.
+  **Issue:** #213
+- **Decision:** `restore-deleted` (`DeletedItemsService`) adds `AudioFileLifecycle.RestoreNote` under "Left out or changed" when the restore put back a Song or a Generation and the library holds any audio file. The note is general and counts no files. A Version group without Generations, and a library with no local files, get no note.
+  **Why:** The AC says the command's output says so. Printing it on every restore in a library without media would be noise, and existing CLI tests expect no "Left out" section for a plain Song restore.
+  **Issue:** #213
+- **Decision:** After a Song restore, files released with `song_deleted` keep that reason (hand-associated and Song-level ones included). After a Generation restore, an ID-less file loses `generation_deleted` at the next scan, as #206's matcher already does whether or not the Generation is restored. `auto_match_blocked` is never cleared by a delete or a restore (#210).
+  **Why:** This deviates from the discretion line "After a restore, a hand-associated file with no Suno ID is plainly unmatched, with no reason". Associations are not retained (planner), so nothing records which Song released a file. Clearing every `song_deleted` would mislabel files of Songs that are still deleted. A column recording the releasing owner would be a schema change the story does not ask for (Rule 4).
+  **Issue:** #213
+
+Story #218 (built in parallel; merged into the milestone branch):
+
+- **Decision:** Rows learn playability from a new `playback {playable, reason}` on every Generation answer, decided by `PlaybackResolver.PlayabilityOf` over the statuses the list already tallies (`AudioFileTally.Playability`); `reason` is null or `nothing_available`.
+  **Why:** the discretion line asks for flags computed by the resolver on the list responses, not a call per row; the resolver's `ForGeneration` names a file exactly when one file is available, which a unit test pins.
+  **Issue:** #218
+- **Decision:** The Play-disabled reason text is worded on the web from the Generation's tally (no file / Missing / media folder unavailable); the server's code stays `nothing_available` (the resolver's own reason).
+  **Why:** keeps one set of resolver reason codes; the tally already says which case it is. #221 widens `playable` with Suno streaming.
+  **Issue:** #218
+- **Decision:** One `HTMLAudioElement`, made once in `PlayerProvider` (held in a ref, appended to a hidden span) and mounted inside `SignedInShell` around the `AppShell`, so route changes never unmount it; signing out unmounts the shell and stops it. The bar is `AppShell.Footer` (height 168 px narrow, 104 px from `sm`), rendered only once something was played, so Mantine reserves the space and nothing is covered.
+  **Why:** the must-have key link (above the router outlet); a footer reserves space by itself. A ref, not state, because the React Compiler lint forbids mutating a `useState` value.
+  **Issue:** #218
+- **Decision:** The seek bar and volume are native `<input type="range">` with `aria-valuetext`; the seek bar handles Arrow (±5 s), Page Up/Down (±30 s), Home/End and Space itself (preventDefault), the volume keeps the browser's own keys (step 5 %). Mute is a toggle button with a fixed name and `aria-pressed`. No global key handler at all.
+  **Why:** native sliders give names, values, and mouse dragging for free and behave the same in jsdom; handling only keys on the bar's own controls is what keeps the space bar from ever being taken from a text field or the editor.
+  **Issue:** #218
+- **Decision:** On an audio `error` the provider reads the session with `fetchSession` (no interceptor); if it ended, the bar goes to paused at the stored position and an `apiFetch('api/v1/session')` raises the in-place sign-in prompt; Play after signing in reloads the src and seeks back. Otherwise the error state names the file and offers Retry (reload at the stored position) and Close.
+  **Why:** the discretion lines on session end; the audio element's own requests do not pass through the shared 401 interceptor.
+  **Issue:** #218
+- **Decision:** Cross-tab pause over `BroadcastChannel('n8tracks-player')` (a `play` posts, other tabs pause); Media Session gets `MediaMetadata({title})` and play/pause handlers only. Volume and mute in `localStorage` key `n8tracks.player.volume`.
+  **Why:** discretion lines; both are feature-detected so old browsers and jsdom are unaffected.
+  **Issue:** #218
+- **Decision:** Play controls: a first (unlabelled "Play") column in the Versions table's Generation rows, the Audio Files section, and Unmatched Files; beside the shortcode in the Generation panel; beside the file name in the panel's file list. The two Unmatched Files component tests that listed cells/buttons by position were updated.
+  **Why:** AC 1 names every one of these; putting it first keeps it visible without scrolling the wide tables.
+  **Issue:** #218
+
+Story #219 (on the milestone branch):
+
+- **Decision:** The Song's state is one resolver function, `PlaybackResolver.StateOfSong(facts, selected, hasGenerations)` → `SongPlayability(state, reason)`: `ready` (preferred Song-level file available, or the Selected Generation has an available file), `selected-unplayable` (`nothing_available`), `needs-choice` (`no_selected_generation`: no selection, and any Song-level file is available or any Generation is playable by `PlayabilityOf`), else `none` (`no_generations` without Generations, `nothing_available` with them). `ChoiceForSong` builds the playback answer from it and from `ForSong`, and a unit table asserts they agree (ready exactly when `ForSong` names a file).
+  **Why:** the must-have truth "never picks a Generation by itself" and the #212 note "never re-derive": lists and the playback read use the same function. `no_generations` is a new reason code so the disabled reason can say "no Generations and no audio files" (AC 5).
+  **Issue:** #219
+- **Decision:** `GET /songs/{ref}/playback` keeps #212's fields and adds `state`, `candidates` (filled only for `needs-choice`, otherwise `[]`) and `generation.sunoId`. When nothing plays, `reason` is the state's reason (so a Song with no Generations answers `no_generations`, not `no_selected_generation`). Candidates: available Song-level files first (format rank, first seen, path), then Generations that are Active and still listed by Suno, then the rest (Archived, Trashed, Remote Missing), each group in Version tree order then ordinal; each Generation candidate carries `versionNumber`, `rating`, `durationSeconds` (Suno's), `state`, `remoteState`, `playable`, `reason`.
+  **Why:** the discretion lines on ordering and fields. Archived and Trash/Remote Missing are one trailing group, with a badge per state, since the lines put both "after Active ones". Generation playability comes from the Song's files through `PlayabilityOf`, so it matches the Versions table's Play.
+  **Issue:** #219
+- **Decision:** Song answers (list and detail), Album tracks and Playlist songs carry `playback {state, reason}`, from `Infrastructure/Persistence/SongPlaybackRows.StatesAsync`. That is one batched read per list (the Songs' files and status, their Song-level choices, which Songs have Generations, and the mount state), fed to `StateOfSong`. `SongSummary`, `AlbumTrack` and `PlaylistSong` gained an init `Playback` (default none/no_generations). No migration.
+  **Why:** "Song list rows and the Song detail carry playback" (only `none` disables Play), with no per-row request. Album and Playlist rows are Song rows of their own lists, and AC 5 applies there too.
+  **Issue:** #219
+- **Decision:** Web: `player/SongPlayButton.tsx` and `player/ChooseGenerationDialog.tsx`; `PlayerProvider` gains `playSong(song, onChoice)` (GET the Song's playback; `needs-choice` hands the answer to the button, which opens the chooser) and `playChosen(song, candidate, {selected?, notice?})` (a Generation pick goes through `GET /generations/{id}/playback`, the one rule; a file pick plays that file). `NowPlaying` gained `songId` and `via` (`song-preferred` | `selected-generation` | `chosen`), shown in the bar as `player-via` ("The Song's choice: its Song-level file / its Selected Generation", "Chosen for this listen"). The Song's Play pauses and resumes while `songId` matches and `via` is set, and never asks again. After Close, the next Play asks again.
+  **Why:** the key link (a `needs-choice` answer opens the chooser, any other answer goes to the player) and #218's note to add `playSong` beside `playGeneration`. Generation rows mirror through `generationId`.
+  **Issue:** #219
+- **Decision:** Ticking "Make this the Selected Generation" PUTs the #120 selection with the Song's revision: the page's own on the Song page (then `setSong`), or one read just before for Songs-table, Album and Playlist rows, which carry no revision. On success the bar says "its Selected Generation". On a conflict or a failure the pick still plays "for this listen", and the bar's notice says it was not selected.
+  **Why:** the discretion line says the selection is sent with the Song's revision, a conflict is reported, and playback still starts. List rows have no revision to send.
+  **Issue:** #219
+- **Decision:** `selected-unplayable` puts a notice in the bar ("Nothing to play: <title>'s Selected Generation, <shortcode>, has no local audio file that can play.") with an Open in Suno link when the Generation has a Suno ID (new `PlayerState.noticeLink`). What was playing is left alone. `none` from a stale row says why in the bar.
+  **Why:** the discretion line "the bar shows that the Selected Generation has no audio, with the reason and Open in Suno where there is a link".
+  **Issue:** #219
+- **Decision:** Placement: a first, unlabelled "Play" column in the Songs table (like #218's tables); in the Song header after the shortcode badge (a new `play` slot on `SongHeader`); first in the action group of each Album track and Playlist row. The chooser is a Mantine Modal kept mounted (`opened` toggles), so it records the Play control and gives focus back to it.
+  **Why:** AC 1, and Mantine's focus return only records the trigger when `opened` changes, which a Modal mounted already open never does. The Songs-table unit and e2e tests that read cells by position were shifted by one.
+  **Issue:** #219
+- **Decision:** `GET /api/v1/songs/{reference}/playback-sources` (`catalog.read`, reads only, in `PlaybackEndpoints`) answers `{song{id,shortcode,title}, songFiles[{audioFile,isPlaybackFile}], generations[{generation{id,shortcode}, versionNumber, rating, revision, durationSeconds, state, remoteState, files[{audioFile,isPlaybackFile}]}]}`, built by the new `PlaybackResolver.SourcesForSong` through `PlaybackService.SourcesForSongAsync`. Only available files are listed: Missing and also Unavailable ones are left out, and so is a Generation with nothing available. Song-level files list the Song's preferred one first, then the rest in rank order. A Generation lists its `ForGeneration` file first, then its other available files in rank order. Generations of every state are included, in tree order. `SongPlaybackGeneration` gained an init `Revision`. There is no "Version label" beyond the number, so the web shows "Version <number>".
+  **Why:** the key link and the discretion lines ("Missing files are omitted", nested by Generation with rating, revision, duration, Version label and a playback-file marker). Unavailable files cannot be served (#217) either. Putting the preferred Song-level file first mirrors "each Generation's playback file first".
+  **Issue:** #220
+- **Decision:** `PlayerProvider.switchTo(next, {keepTime})` loads the new source and seeks on `loadedmetadata`. It then waits for `seeked`, and only then plays, if the switch should play, and lets the source into the A/B pair. A pending switch (`PendingSwitch {ticket, from, at, play, back}`) is replaced by a later one, which carries the earlier one's `from`, `at` and play state. Pause, Play and the seek bar act on the pending switch. On an error the player goes back once to `from` at `at`, with the notice "<new> could not be played, so the player went back to <old>.". If going back fails too, it is the ordinary error with Retry. Any source that loads any other way also joins the pair, on `loadedmetadata`. `PlayerState.previous` is the other half of the pair (`compare.nextPair`), forgotten when the Song changes or on Close.
+  **Why:** the discretion lines on seek-before-play, last request wins, failed or superseded switches never entering A/B, the pair "however it was reached", and returning to the previous source. The fake audio element now fires `seeked` on every `currentTime` set and has `failNextSeek()`. No existing test relied on its absence.
+  **Issue:** #220
+- **Decision:** The compare controls are a new row of the player bar (`player/CompareMenu.tsx`, shown only while the loaded source has a Song): a Mantine Menu "Compare" (read again on open and when the Song changes; group labels "Version N · shortcode · N stars/not rated"; the playing entry is marked with `aria-current` and "(playing now)"), Previous, Next, A/B, and a compact `StarRating` ("Rating of <shortcode>"). Each control has `aria-keyshortcuts`, and a visually hidden description names its shortcut. The footer height went to base 216 / sm 140. When a Generation has two files of the playing format, the bar adds "File: <name>".
+  **Why:** the ACs and the artifact path. The bar must always name what plays, and the existing detail line does not tell two files of one format apart.
+  **Issue:** #220
+- **Decision:** The shortcuts match `KeyboardEvent.code` (`BracketLeft`, `BracketRight`, `Backslash`) on `document`. A press does nothing with auto-repeat, with any of Ctrl, Alt, Meta or Shift held, when `defaultPrevented`, or when focus is in a text-like input, a textarea, a select, a contenteditable, a `role=textbox` or a `.cm-editor`.
+  **Why:** "ignore modifiers and auto-repeat" was read as: a modified press is not a shortcut. That keeps browser and OS shortcuts like Cmd+[ (Back) working.
+  **Issue:** #220
+- **Decision:** A switch's `via` is `chosen` when what was loaded came from a Song's Play, and null after a Generation's or a file's own Play. A/B going back to a source restores that source's own `NowPlaying`, its `via` included.
+  **Why:** after a switch, "The Song's choice" would no longer be true. #219's note says `via` tells a Song's Play from a Generation's.
+  **Issue:** #220
+- **Decision:** The bar's rating writes `PATCH /generations/{id}` with the revision from the sources answer. A conflict is retried once with the current revision. A failure restores the old value and says so (`player-rating-problem`). A saved rating, from the bar or the Song page (`useRateGeneration`), is announced as the window event `n8tracks:generation-rated` (`generations/ratingEvents.ts`). The Song page's Generations and the bar's copy update from it, but only when the revision is newer.
+  **Why:** rating "usable without stopping playback" while the Song page shows the same Generation. Without the event, either copy would show a stale rating and send a stale revision.
+  **Issue:** #220
+- **Decision:** The server-side Suno host list the story places "beside the image hosts" does not exist: the image hosts are kept only in the extension (`SUNO_IMAGE_HOSTS`). The new `Domain/Suno/SunoAudioHosts` is the first server-side Suno host list, and it holds audio hosts only. No server image list was made, since the server never needs one.
+  **Why:** orchestrator decision ("adjust inline"). The server has no use for image hosts, so creating a list just to sit beside would add dead code.
+  **Issue:** #221
+- **Decision:** `SunoAudioHosts.Hosts` = `d2lwuy8qc234o3.cloudfront.net` only, the playback host seen in the fixtures' `media_urls` and confirmed by TS-004. Two hosts are left out. `studio-api.prod.suno.com` is excluded by the discretion line, and its `audio_url` answers `/api/forbidden`. `suno-data-uploads.s3.amazonaws.com`, which the adapter also lists, is left out because it serves only the signed one-hour `download_url`s that the extension's downloader uses and the server never stores. So the CSP allows exactly the server list, which is a subset of the adapter's `SUNO_AUDIO_HOSTS`, rather than every adapter host. An architecture test checks the subset, and also that the host is named in one source file only.
+  **Why:** the constraint that the allowed hosts be explicit and narrow, with no wildcard. AC 9 ("exactly the Suno audio hosts the adapter lists") is read as the adapter's audio hosts that a Generation's stored address can be on.
+  **Issue:** #221
+- **Decision:** An address counts as a Suno stream only if it is absolute HTTPS on the default port, has no user info, and is on a listed host (case-insensitive). Anything else is no address (`nothing_available`), as the discretion line says. `SunoStream.Of` tests these in this order:
+  1. No Suno ID: none.
+  2. Remote state not `present`: `suno_not_present`.
+  3. Provider status not `complete` (ordinal): `suno_not_complete`.
+  4. Address not playable: none.
+
+  Three reason codes are new: `suno_stream`, `suno_not_complete` and `suno_not_present`. Generation playability is `{playable: true, reason: "suno_stream"}` when it streams.
+  **Why:** "Play is disabled with the reason" needs a reason for each case. A trashed clip names its trash state even when its address is also gone.
+  **Issue:** #221
+- **Decision:** The resolver's Suno branch is optional parameters and init properties, so every existing call and test is unchanged:
+  - `ForGeneration(files, SunoStream?)`, `PlayabilityOf(statuses, SunoStream?)`, `WithStream(local, stream)` and `ForSong(files, selected, SunoStream?)`.
+  - `StateOfSong(..., IReadOnlyDictionary<Guid, SunoStream>?)`: a stream-only Generation with no files counts for needs-choice.
+  - `SongPlaybackGeneration.Stream`, `GenerationPlayback`/`SongPlayback.SunoAudioUrl` and `PlaybackSourceGeneration.SunoAudioUrl`. A stream-only Generation is listed with `files: []`.
+
+  `PlaybackService.ForGenerationAsync` now takes the stream, and the endpoint passes `SunoStream.Of(generation)`. The Generation summaries (`GenerationStore`) and `SongPlaybackRows` read the stored address, status and remote state in the same batched reads.
+  **Why:** the m5-notes for #218, #219 and #220. The one rule keeps a local file first: a Song follows only its Selected Generation to Suno ("Selected one, from Suno").
+  **Issue:** #221
+- **Decision:** The playback answers gained flat `sunoAudioUrl` (non-null only for `source: "suno"`) and `sunoPageUrl` (the clip's `https://suno.com/song/<id>` whenever there is a Suno ID, for Open in Suno on any error). The Song's answer uses its Selected Generation's. The playback sources' Generations gained both fields as well. The web parsers read an absent field as null, so older fakes still parse.
+  **Why:** AC 1 ("source `suno` with the address and the Suno page link") and AC 3/complement: a local file's error offers Open in Suno when there is a page.
+  **Issue:** #221
+- **Decision:** `ClipReader` now stores the first `media_urls` entry by kind, MP3 then M4A (incl. `m4a-opus`) then OGG, each matched by `content_type` containing the kind or by the URL's path (without query) ending in `.kind`. With no match it falls back to `audio_url`. The data-only migration `20261008060000_RederiveGenerationAudioUrls` re-derives `generations.audio_url` from `provider_records.payload` in SQL (JSON1) with the same rule. It has no schema change, its Designer is a copy of the current snapshot, and Down is a no-op. A theory runs the migration's SQL against nine payloads (the fixtures plus edge cases) and checks it against `ClipReader`. Retained (deleted) Generations keep the address they had.
+  **Why:** the discretion lines. Changing an existing row's address needs the raw clip, and an EF migration runs SQL only. The rule is short enough to state in SQL and prove equal. A sync right after the migration proposes nothing Changed, because the audio address is not a compared field (`SunoExportRules.ChangedFields`, tested). Retained documents are a different shape and are restored as they were, and the next sync of the clip refreshes the address.
+  **Issue:** #221
+- **Decision:** On the browser policies:
+  - **CSP:** every response carries `Content-Security-Policy: media-src 'self' https://d2lwuy8qc234o3.cloudfront.net` through `Api/Frontend/BrowserPolicyMiddleware`, right after the request ID. That is the one directive the story asks for.
+  - **Referrer:** the same middleware also sends `Referrer-Policy: strict-origin-when-cross-origin`, the browsers' default made explicit. The audio element sets `referrerpolicy="no-referrer"` and no `crossorigin`. Browsers do not honour `referrerpolicy` on media elements yet, so the header is what guarantees the request to Suno carries no path.
+  **Why:** the CSP is AC 9 and the discretion line ("only a `media-src` directive"). The referrer header is AC 6 ("no referrer path"). The e2e test checks the request's `Referer` path and that it carries no cookie.
+  **Issue:** #221
+- **Decision:** Player (web):
+  - **Stream source:** `NowPlaying` gained optional `source` (`local` when absent) and `sunoPageUrl`, so existing hand-built fixtures stay valid. A stream's `fileId` is `suno:<generationId>`, and its label is the Generation with format `''`. The detail line drops the format, and the new `SourceBadge` (`player-source`, `data-source`) says "Local file · WAV" or "Streaming from Suno".
+  - **Watchdog:** each play request arms a 15 s timer for a `suno` source. `playing` disarms it. A `waiting` after the stream started arms 30 s. Pause, end, close and a new load disarm it. On timeout or element error, a Suno stream goes to the error state at once with no session check, and its `src` is removed so Suno is not asked again. The alert reads "The Suno audio of <shortcode> could not be played. Suno may have moved it: sync with Suno again to refresh its address." There is no Retry. Play in the bar asks again.
+  - **Local errors:** keep Retry, and add Open in Suno only when `sunoPageUrl` is set.
+  - **Sync hint:** the sync suggestion is always shown for a `suno` error, because a Generation Suno reports as trashed never streams (`suno_not_present`).
+  **Why:** the discretion lines: 15 s to the first `playing`, 30 s stall, no retry, no fall-over, and the sync sentence not shown for trashed.
+  **Issue:** #221
+- **Decision:** Compare lists a stream-only Generation as one stop: key `suno:<id>`, named "<shortcode> · Suno stream", `source: 'suno'` and `data-source="suno"` on the menu item. Switching to it plays Suno's address. A Generation that has a file never lists its stream.
+  **Why:** AC 8 and the #220 note. "A local file always wins" applies within each Generation.
+  **Issue:** #221
+- **Decision:** Rule 2: `audiourl` was added to `RedactionPolicy.SensitiveNames`, which also covers `sunoAudioUrl` and `audio_url`.
+  **Why:** invariant 6. Nothing logs the address today, but a Suno audio address can carry a signature, so any future log property under these names is masked by default.
+  **Issue:** #221
+- **Decision:** The Suno audio host list is now a setting, `N8TRACKS_SUNO_AUDIO_HOSTS`, a comma-separated list of bare DNS host names whose default is exactly `d2lwuy8qc234o3.cloudfront.net`. It is read and validated at startup with the other `N8TRACKS_*` variables (`EnvironmentOptionsLoader` into `N8TracksOptions.SunoAudioHosts`). A value with no host, or a name with a scheme, user info, port, path, wildcard, or anything that is not a DNS host name (an IP address included), stops startup with one `Invalid configuration` line naming the variable. `SunoAudioHosts` became an instance (`Default`, `Parse`, `Playable`) registered from the options, and every reader takes the configured one: the CSP `media-src` (`BrowserPolicyMiddleware`), `SunoStream.Of`, and the stores and services that compute playability (`GenerationStore`/`GenerationRows`, `VersionStore`, `SongStore`, `AlbumStore`/`AlbumTrackStore`, `PlaylistStore`, `SongPlaybackRows`, `PlaybackService`, `PlaybackEndpoints`). The architecture test now checks that the *default* is a subset of the adapter's `SUNO_AUDIO_HOSTS`; an operator's list is outside that check. The name follows the project's `N8TRACKS_*` environment-variable pattern rather than a `Suno:AudioHosts` section, since the app reads no other configuration source. Commands run with `LoadDataPathOnly` and similar loaders keep the default list, as they keep every other default.
+  **Why:** owner decision on AC 9 (2026-10-07): "CDN only for now, but make that URL easily configurable in case it changes."
+  **Issue:** #221
+
 ## Ad-hoc — 2026-10-07
 
 - **Change:** Invariant 3 in `CLAUDE.md` amended. Imports still never change existing catalog data without an explicit user choice, but it now names the one exception: Suno's own state may follow Suno without a choice, in two cases. #154 completes a Generation the user just created (an observed Create, never complete, not decided by a reviewed export), in its clip columns and raw clip only. #314 moves a Generation still generating to Suno's final status (complete or error) at a commit whatever its choice, Skip included, in that column only. Portable import has no exception. The guard reference (#140, merged) now names the rules that bound the exceptions: `TakesSunosFinalStatus` and the completion rule `CompletionUnexplained` in `ImportNeverOverwritesGuardTests`.

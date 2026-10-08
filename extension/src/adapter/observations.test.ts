@@ -72,3 +72,64 @@ describe('the observation feed, listening for the page observer', () => {
     expect(feed.listedWorkspaces()).toEqual([]);
   });
 });
+
+describe("the plan's download allowance (#215)", () => {
+  const billing = (body: unknown): ObservedMessage => ({
+    source: OBSERVER_SOURCE,
+    type: 'observed',
+    kind: 'billing',
+    request: { cursor: null, page: null, filters: null, feedId: null },
+    body,
+  });
+
+  it('keeps the latest counts the page read, tells the listener, and queues nothing', async () => {
+    const { feed, message } = page();
+    const heard: unknown[] = [];
+    feed.onDownloadUsage((usage) => heard.push(usage));
+    expect(feed.downloadUsage()).toBeNull();
+
+    message(
+      billing({
+        download_usage: { current_period_downloads_used: 2, current_period_downloads_limit: 60 },
+      }),
+    );
+    // Not counts: kept as before.
+    message(billing({}));
+
+    expect(feed.downloadUsage()).toEqual({ used: 2, limit: 60, additional: 0 });
+    expect(heard).toEqual([{ used: 2, limit: 60, additional: 0 }]);
+    const controller = new AbortController();
+    expect(await feed.next('billing', () => true, 10, controller.signal)).toBeNull();
+  });
+});
+
+describe("a prepared download's answers (#216)", () => {
+  function prepared(
+    body: unknown,
+    download: ObservedMessage['download'] = { clipId: 'c', format: 'wav' },
+  ) {
+    const message: ObservedMessage = {
+      source: OBSERVER_SOURCE,
+      type: 'observed',
+      kind: 'download-clip',
+      request: { cursor: null, page: null, filters: null, feedId: null },
+      body,
+      download,
+    };
+    return message;
+  }
+
+  it('queues only a ready answer with its address; the polls before it are dropped', async () => {
+    const { feed, message } = page();
+    message(prepared({ status: 'processing' }));
+    message(prepared({ status: 'ready' }));
+    message(prepared({ status: 'ready', download_url: 'https://x' }, null));
+    message(prepared({ status: 'ready', download_url: 'https://a' }));
+
+    const found = await feed.next('download-clip', () => true, 1000, new AbortController().signal);
+    expect(found?.body).toEqual({ status: 'ready', download_url: 'https://a' });
+    expect(
+      await feed.next('download-clip', () => true, 1000, new AbortController().signal),
+    ).toBeNull();
+  });
+});

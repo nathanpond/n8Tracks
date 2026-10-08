@@ -41,6 +41,7 @@ import { ArtistFilter } from './ArtistFilter';
 import { NewSongDialog } from './NewSongDialog';
 import { paletteColour } from '../theme/palette';
 import { RelativeTime, StateBadge, TagLabels, TruncatedConcept } from './SongParts';
+import { SongPlayButton } from '../player/SongPlayButton';
 
 /** How many Tags a row of the table shows before "+N". */
 const TAGS_PER_ROW = 3;
@@ -273,6 +274,9 @@ function TitleFilter({ title, onClear }: { title: string; onClear: () => void })
 function SongRow({ song, timeZone, from }: { song: Song; timeZone: string; from: FromSongs }) {
   return (
     <Table.Tr data-song={song.shortcode}>
+      <Table.Td>
+        <SongPlayButton song={song} />
+      </Table.Td>
       <Table.Th scope="row" style={{ whiteSpace: 'nowrap' }}>
         {song.shortcode}
       </Table.Th>
@@ -309,12 +313,16 @@ function SongRow({ song, timeZone, from }: { song: Song; timeZone: string; from:
           <VisuallyHidden>No</VisuallyHidden>
         )}
       </Table.Td>
+      <Table.Td ta="end" data-testid="song-audio-file-count">
+        {song.audioFileCount === undefined || song.audioFileCount === 0 ? '' : song.audioFileCount}
+      </Table.Td>
     </Table.Tr>
   );
 }
 
 /**
- * Songs: every Song in a table, newest first, sortable by title and by last update, filtered by
+ * Songs: every Song in a table, newest first, sortable by title, by last update, and (#211) by
+ * how many local audio files it has (the last column, blank for none), filtered by
  * workflow state, by Genre, by Tag, by Artist (primary or featured), and by title (ignoring case and
  * spacing; set from a Song page and cleared here), fifty to a page. Each row shows its primary
  * Artist, its first three Tags, and "+N" for the rest. The view (sort, direction, states, Genres,
@@ -497,10 +505,13 @@ export function SongsPage() {
       )}
       {page !== undefined && page.items.length > 0 && (
         <>
-          <Table.ScrollContainer minWidth={900}>
+          <Table.ScrollContainer minWidth={1000}>
             <Table withTableBorder aria-label="Songs">
               <Table.Thead>
                 <Table.Tr>
+                  <Table.Th scope="col">
+                    <VisuallyHidden>Play</VisuallyHidden>
+                  </Table.Th>
                   <Table.Th scope="col">Shortcode</Table.Th>
                   <SortHeader label="Title" sort="title" query={query} onSort={sortBy} />
                   <Table.Th scope="col">Artist</Table.Th>
@@ -515,6 +526,7 @@ export function SongsPage() {
                   <Table.Th scope="col" ta="center">
                     Selected
                   </Table.Th>
+                  <SortHeader label="Audio files" sort="audioFiles" query={query} onSort={sortBy} />
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>

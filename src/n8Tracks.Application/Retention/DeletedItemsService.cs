@@ -1,6 +1,7 @@
 using System.Globalization;
 using n8Tracks.Application.Assets;
 using n8Tracks.Application.Auth;
+using n8Tracks.Application.Media;
 using n8Tracks.Application.References;
 using n8Tracks.Domain.Songs;
 
@@ -61,11 +62,14 @@ public abstract record DeletedItemRestoreOutcome
 /// Song's or Version's shortcode or by its group's ID, as the container commands
 /// <c>list-deleted</c> and <c>restore-deleted</c> run them. Every restore goes through
 /// <see cref="RetentionService.RestoreWithinAsync"/>, in one transaction: refused, it changes nothing.
-/// Nothing retained is shown but kinds, labels, shortcodes, times, and counts.
+/// Nothing retained is shown but kinds, labels, shortcodes, times, and counts. Audio file associations
+/// and Preferred Audio File choices are never restored (#213); a restore that puts back a Song or a
+/// Generation says so (<see cref="AudioFileLifecycle.RestoreNote"/>) when the library has local files.
 /// </summary>
 public sealed class DeletedItemsService(
     RetentionService retention,
     ArtworkAttachmentService artwork,
+    AudioFileLifecycle audioFiles,
     IExclusiveTransaction transaction,
     TimeProvider time)
 {
@@ -175,6 +179,14 @@ public sealed class DeletedItemsService(
         if (owner is { } touched)
         {
             await artwork.TouchOwnerAsync(touched.Type, touched.Id, cancellationToken).ConfigureAwait(false);
+        }
+
+        // Audio file associations are not retained (#213): the next scan rebuilds those it can.
+        if (await audioFiles.RestoreNoteAsync(
+                restored.PutBack.Any(static record => record.RecordType is RetainedRecordTypes.Song or RetainedRecordTypes.Generation),
+                cancellationToken).ConfigureAwait(false) is { } audioNote)
+        {
+            notes.Add(audioNote);
         }
 
         return new DeletedItemRestoreOutcome.Restored(item, Counts(restored.PutBack), [.. restored.Notes, .. notes]);

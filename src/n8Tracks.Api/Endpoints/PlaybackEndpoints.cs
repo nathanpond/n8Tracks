@@ -1,0 +1,570 @@
+using System.Globalization;
+using System.Text.Json;
+using Microsoft.AspNetCore.Http.HttpResults;
+using n8Tracks.Api.Auth;
+using n8Tracks.Api.Problems;
+using n8Tracks.Application.Credentials;
+using n8Tracks.Application.Generations;
+using n8Tracks.Application.Media;
+using n8Tracks.Application.References;
+using n8Tracks.Application.Songs;
+using n8Tracks.Domain.Songs;
+using n8Tracks.Domain.Suno;
+
+namespace n8Tracks.Api.Endpoints;
+
+/// <summary>
+/// Preferred audio files and playback (#212). <c>GET .../playback</c> (<c>catalog.read</c>) answers what
+/// plays for a Generation or a Song, by the one rule (<see cref="PlaybackResolver"/>):
+/// <c>{ source: "local" | "suno" | "none", audioFile, sunoAudioUrl, sunoPageUrl, reason }</c>, the
+/// Song's with the <c>generation</c> its file came from. A <c>suno</c> source (#221) answers the
+/// Generation's stored Suno address for the browser to stream: the server never requests it. <c>PUT</c> and <c>DELETE .../preferred-audio-file</c> (<c>songs.write</c>) set
+/// (<c>{ audioFile }</c>, the file's ID) or clear the owner's choice under the owner's revision in
+/// <c>If-Match</c>, answering the owner as it is now (its revision raised when the choice changed),
+/// like the Song's Selected Generation. Files are named by ID, never by a path; nothing in the media
+/// folder changes (invariant 2), and no Version (invariant 1).
+/// </summary>
+internal static class PlaybackEndpoints
+{
+    public const string GenerationPlaybackPath = GenerationsEndpoints.GenerationPath + "/playback";
+    public const string SongPlaybackPath = SongsEndpoints.SongPath + "/playback";
+    public const string SongPlaybackSourcesPath = SongsEndpoints.SongPath + "/playback-sources";
+    public const string GenerationPreferredPath = GenerationsEndpoints.GenerationPath + "/preferred-audio-file";
+    public const string SongPreferredPath = SongsEndpoints.SongPath + "/preferred-audio-file";
+
+    public static IEndpointRouteBuilder MapPlayback(this IEndpointRouteBuilder endpoints)
+    {
+        ArgumentNullException.ThrowIfNull(endpoints);
+
+        endpoints.MapGet(GenerationPlaybackPath, GenerationPlaybackAsync)
+            .WithName("GetGenerationPlayback")
+            .WithSummary("What plays for the Generation (by its ID or shortcode): its preferred audio file while available, otherwise its highest-ranked available file (WAV, M4A, MP3, FLAC, OGG, Opus, AAC); with no file available, its Suno stream address for the browser to play (never requested by the server), or nothing; with the reason and its Suno page.")
+            .RequireScope(CredentialScopes.CatalogRead)
+            .Produces<GenerationPlaybackResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        endpoints.MapGet(SongPlaybackPath, SongPlaybackAsync)
+            .WithName("GetSongPlayback")
+            .WithSummary("What plays for the Song (by its ID or shortcode): its preferred Song-level audio file while available, otherwise its Selected Generation's file or, with none available, that Generation's Suno stream, or nothing; with the reason and the Generation it came from.")
+            .RequireScope(CredentialScopes.CatalogRead)
+            .Produces<SongPlaybackResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        endpoints.MapGet(SongPlaybackSourcesPath, SongPlaybackSourcesAsync)
+            .WithName("GetSongPlaybackSources")
+            .WithSummary("Everything of the Song (by its ID or shortcode) the player can switch to while comparing: its available Song-level files, then its Generations that have an available file (Version tree order, then ordinal), each with its playback file first and its other available files after, or, with no file available, its Suno stream; Missing and Unavailable files are left out.")
+            .RequireScope(CredentialScopes.CatalogRead)
+            .Produces<SongPlaybackSourcesResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        endpoints.MapPut(GenerationPreferredPath, SetForGenerationAsync)
+            .WithName("SetGenerationPreferredAudioFile")
+            .WithSummary("Makes one of the Generation's audio files ({audioFile}: its ID), whatever its status, the Generation's preferred file, given the Generation's revision in If-Match. Raises the Generation's revision when the choice changes; changes nothing else.")
+            .RequireScope(CredentialScopes.SongsWrite)
+            .Produces<GenerationResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        endpoints.MapDelete(GenerationPreferredPath, ClearForGenerationAsync)
+            .WithName("ClearGenerationPreferredAudioFile")
+            .WithSummary("Leaves the Generation with no preferred audio file (the automatic rule decides), given its revision in If-Match. Clearing one with none changes nothing.")
+            .RequireScope(CredentialScopes.SongsWrite)
+            .Produces<GenerationResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        endpoints.MapPut(SongPreferredPath, SetForSongAsync)
+            .WithName("SetSongPreferredAudioFile")
+            .WithSummary("Makes one of the Song's Song-level audio files ({audioFile}: its ID), whatever its status, the Song's preferred file, given the Song's revision in If-Match. Raises the Song's revision when the choice changes; changes nothing else.")
+            .RequireScope(CredentialScopes.SongsWrite)
+            .Produces<SongResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        endpoints.MapDelete(SongPreferredPath, ClearForSongAsync)
+            .WithName("ClearSongPreferredAudioFile")
+            .WithSummary("Leaves the Song with no preferred Song-level audio file (its Selected Generation's file plays), given its revision in If-Match. Clearing one with none changes nothing.")
+            .RequireScope(CredentialScopes.SongsWrite)
+            .Produces<SongResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        return endpoints;
+    }
+
+    /// <summary>200 with what plays; 404 <c>not_found</c> when the reference names no live Generation.</summary>
+    private static async Task<Results<Ok<GenerationPlaybackResponse>, ProblemHttpResult>> GenerationPlaybackAsync(
+        CatalogReference reference,
+        GenerationService generations,
+        PlaybackService playback,
+        SunoAudioHosts hosts,
+        HttpContext context,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        if (await generations.FindAsync(reference, cancellationToken) is not { } generation)
+        {
+            return NoSuchGeneration(context);
+        }
+
+        var resolved = await playback.ForGenerationAsync(generation.Generation.SongId, generation.Generation.Id, SunoStream.Of(hosts, generation.Generation), cancellationToken);
+        return TypedResults.Ok(new GenerationPlaybackResponse(
+            Source(resolved.Played, resolved.SunoAudioUrl),
+            PlaybackFileResponse.From(resolved.Played, context.Request.PathBase),
+            resolved.SunoAudioUrl,
+            PageUrlOf(generation.Generation.SunoId),
+            PlaybackReasons.Text(resolved.Reason)));
+    }
+
+    /// <summary>200 with what plays; 404 (<c>song_deleted</c> when it was deleted) when the reference names no live Song.</summary>
+    private static async Task<Results<Ok<SongPlaybackResponse>, ProblemHttpResult>> SongPlaybackAsync(
+        CatalogReference reference,
+        SongService songs,
+        SongDeletionService deletions,
+        PlaybackService playback,
+        HttpContext context,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        if (await songs.FindAsync(reference.Text, cancellationToken) is not { } song)
+        {
+            return await SongDeletionEndpoints.MissingSongAsync(context, reference, deletions, cancellationToken);
+        }
+
+        var choice = await playback.ChoiceForSongAsync(song.Id, song.SelectedGeneration?.Id, cancellationToken);
+        var resolved = choice.Played;
+        var generation = resolved.GenerationId is { } id && song.SelectedGeneration is { } selected && selected.Id == id
+            ? new SongPlaybackGenerationResponse(selected.Id, selected.Shortcode, choice.Selected?.SunoId)
+            : null;
+        return TypedResults.Ok(new SongPlaybackResponse(
+            Source(resolved.Played, resolved.SunoAudioUrl),
+            PlaybackFileResponse.From(resolved.Played, context.Request.PathBase),
+            resolved.SunoAudioUrl,
+            PageUrlOf(generation?.SunoId),
+            PlaybackReasons.Text(choice.Reason),
+            generation,
+            SongPlaybackStates.Text(choice.Playability.State),
+            [.. choice.Candidates.Select(candidate => SongPlaybackCandidateResponse.From(candidate, context.Request.PathBase))]));
+    }
+
+    /// <summary>200 with the Song's sources in comparison order (#220); 404 (<c>song_deleted</c> when it was deleted) when the reference names no live Song.</summary>
+    private static async Task<Results<Ok<SongPlaybackSourcesResponse>, ProblemHttpResult>> SongPlaybackSourcesAsync(
+        CatalogReference reference,
+        SongService songs,
+        SongDeletionService deletions,
+        PlaybackService playback,
+        HttpContext context,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        if (await songs.FindAsync(reference.Text, cancellationToken) is not { } song)
+        {
+            return await SongDeletionEndpoints.MissingSongAsync(context, reference, deletions, cancellationToken);
+        }
+
+        var sources = await playback.SourcesForSongAsync(song.Id, cancellationToken);
+        return TypedResults.Ok(SongPlaybackSourcesResponse.From(song, sources, context.Request.PathBase));
+    }
+
+    /// <summary>
+    /// 200 with the Generation, its revision as the ETag; 404 <c>not_found</c> when there is no such
+    /// Generation or audio file; 409 <c>revision_conflict</c> with <c>current</c> (the Generation); 422
+    /// <c>audio_file_not_in_generation</c> for a file not associated with it, <c>validation_failed</c>
+    /// when <c>audioFile</c> is not an ID.
+    /// </summary>
+    private static async Task<Results<Ok<GenerationResponse>, ProblemHttpResult>> SetForGenerationAsync(
+        CatalogReference reference,
+        PreferredAudioFileRequest? request,
+        PreferredAudioFileService preferences,
+        HttpContext context,
+        ILoggerFactory loggers,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        var (revision, problem) = Revisions.Read(context);
+        if (problem is not null)
+        {
+            return problem;
+        }
+
+        if (FileOf(request) is not { } file)
+        {
+            return InvalidFile(context);
+        }
+
+        return AnswerGeneration(context, revision!.Value, await preferences.SetForGenerationAsync(reference.Text, file, revision.Value, cancellationToken), loggers);
+    }
+
+    /// <summary>200 with the Generation, its revision as the ETag; 404 <c>not_found</c> when there is no such Generation; 409 <c>revision_conflict</c> with <c>current</c>.</summary>
+    private static async Task<Results<Ok<GenerationResponse>, ProblemHttpResult>> ClearForGenerationAsync(
+        CatalogReference reference,
+        PreferredAudioFileService preferences,
+        HttpContext context,
+        ILoggerFactory loggers,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        var (revision, problem) = Revisions.Read(context);
+        if (problem is not null)
+        {
+            return problem;
+        }
+
+        return AnswerGeneration(context, revision!.Value, await preferences.ClearForGenerationAsync(reference.Text, revision.Value, cancellationToken), loggers);
+    }
+
+    /// <summary>
+    /// 200 with the Song, its revision as the ETag; 404 when there is no such Song (<c>song_deleted</c>
+    /// when it was deleted) or audio file; 409 <c>revision_conflict</c> with <c>current</c> (the Song);
+    /// 422 <c>audio_file_not_in_song</c> for a file not associated with it,
+    /// <c>audio_file_not_song_level</c> for one of its Generations' files, <c>validation_failed</c>
+    /// when <c>audioFile</c> is not an ID.
+    /// </summary>
+    private static async Task<Results<Ok<SongResponse>, ProblemHttpResult>> SetForSongAsync(
+        CatalogReference reference,
+        PreferredAudioFileRequest? request,
+        PreferredAudioFileService preferences,
+        SongDeletionService deletions,
+        HttpContext context,
+        ILoggerFactory loggers,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        var (revision, problem) = Revisions.Read(context);
+        if (problem is not null)
+        {
+            return problem;
+        }
+
+        if (FileOf(request) is not { } file)
+        {
+            return InvalidFile(context);
+        }
+
+        return await AnswerSongAsync(
+            context,
+            reference,
+            revision!.Value,
+            await preferences.SetForSongAsync(reference.Text, file, revision.Value, cancellationToken),
+            deletions,
+            loggers,
+            cancellationToken);
+    }
+
+    /// <summary>200 with the Song, its revision as the ETag; 404 when there is no such Song; 409 <c>revision_conflict</c> with <c>current</c>.</summary>
+    private static async Task<Results<Ok<SongResponse>, ProblemHttpResult>> ClearForSongAsync(
+        CatalogReference reference,
+        PreferredAudioFileService preferences,
+        SongDeletionService deletions,
+        HttpContext context,
+        ILoggerFactory loggers,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        var (revision, problem) = Revisions.Read(context);
+        if (problem is not null)
+        {
+            return problem;
+        }
+
+        return await AnswerSongAsync(
+            context,
+            reference,
+            revision!.Value,
+            await preferences.ClearForSongAsync(reference.Text, revision.Value, cancellationToken),
+            deletions,
+            loggers,
+            cancellationToken);
+    }
+
+    private static Results<Ok<GenerationResponse>, ProblemHttpResult> AnswerGeneration(
+        HttpContext context,
+        int revision,
+        PreferredAudioFileOutcome<GenerationSummary> outcome,
+        ILoggerFactory loggers)
+    {
+        switch (outcome)
+        {
+            case PreferredAudioFileOutcome<GenerationSummary>.Done done:
+                if (done.Owner.Generation.Revision != revision)
+                {
+                    Log(loggers).LogInformation("Preferred audio file of Generation {GenerationId} changed", done.Owner.Generation.Id);
+                }
+
+                Revisions.SetETag(context, done.Owner.Generation.Revision);
+                return TypedResults.Ok(GenerationResponse.From(done.Owner, context.Request.PathBase));
+            case PreferredAudioFileOutcome<GenerationSummary>.Conflict conflict:
+                return Revisions.Conflict(context, GenerationResponse.From(conflict.Current, context.Request.PathBase));
+            case PreferredAudioFileOutcome<GenerationSummary>.OwnerNotFound:
+                return NoSuchGeneration(context);
+            default:
+                return FileProblem(context, outcome);
+        }
+    }
+
+    private static async Task<Results<Ok<SongResponse>, ProblemHttpResult>> AnswerSongAsync(
+        HttpContext context,
+        CatalogReference reference,
+        int revision,
+        PreferredAudioFileOutcome<SongSummary> outcome,
+        SongDeletionService deletions,
+        ILoggerFactory loggers,
+        CancellationToken cancellationToken)
+    {
+        switch (outcome)
+        {
+            case PreferredAudioFileOutcome<SongSummary>.Done done:
+                if (done.Owner.Revision != revision)
+                {
+                    Log(loggers).LogInformation("Preferred audio file of Song {SongId} changed", done.Owner.Id);
+                }
+
+                Revisions.SetETag(context, done.Owner.Revision);
+                return TypedResults.Ok(SongResponse.From(done.Owner, context.Request.PathBase));
+            case PreferredAudioFileOutcome<SongSummary>.Conflict conflict:
+                return Revisions.Conflict(context, SongResponse.From(conflict.Current, context.Request.PathBase));
+            case PreferredAudioFileOutcome<SongSummary>.OwnerNotFound:
+                return await SongDeletionEndpoints.MissingSongAsync(context, reference, deletions, cancellationToken);
+            default:
+                return FileProblem(context, outcome);
+        }
+    }
+
+    /// <summary>The answer to a file that cannot be chosen: 404 when there is none, 422 with its code otherwise.</summary>
+    private static ProblemHttpResult FileProblem<TOwner>(HttpContext context, PreferredAudioFileOutcome<TOwner> outcome) => outcome switch
+    {
+        PreferredAudioFileOutcome<TOwner>.FileNotFound =>
+            ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "There is no such audio file."),
+        PreferredAudioFileOutcome<TOwner>.Refused refused =>
+            ApiProblem.For(context, StatusCodes.Status422UnprocessableEntity, refused.Code, refused.Detail),
+        _ => throw new InvalidOperationException("Unknown preferred audio file outcome."),
+    };
+
+    /// <summary>The file ID sent as <c>audioFile</c>, or null when it is missing or not an ID.</summary>
+    private static Guid? FileOf(PreferredAudioFileRequest? request) =>
+        request?.AudioFile is { ValueKind: JsonValueKind.String } text
+        && Guid.TryParseExact(text.GetString()?.Trim(), "D", out var id)
+            ? id
+            : null;
+
+    private static ProblemHttpResult InvalidFile(HttpContext context) =>
+        ApiProblem.ValidationFailed(
+            context,
+            new Dictionary<string, string[]>(StringComparer.Ordinal)
+            {
+                [PreferredAudioFileService.AudioFileField] = ["Name the audio file by its ID."],
+            });
+
+    private static string Source(ReportedAudioFile? file, string? sunoAudioUrl) => file is not null ? "local" : sunoAudioUrl is not null ? "suno" : "none";
+
+    private static string? PageUrlOf(string? sunoId) => sunoId is null ? null : ClipFields.PageUrlOf(sunoId);
+
+    private static ILogger Log(ILoggerFactory loggers) => loggers.CreateLogger(typeof(PlaybackEndpoints));
+
+    private static ProblemHttpResult NoSuchGeneration(HttpContext context) =>
+        ApiProblem.For(context, StatusCodes.Status404NotFound, ApiProblem.NotFoundCode, "There is no such Generation.");
+}
+
+/// <summary>The file to prefer: <c>audioFile</c>, its ID, read as raw JSON so a wrong type is a field error.</summary>
+internal sealed record PreferredAudioFileRequest(JsonElement AudioFile);
+
+/// <summary>
+/// What plays for a Generation (#212): <c>source</c> (<c>local</c>; <c>suno</c> when no local file is
+/// available and it streams from Suno, #221; or <c>none</c>), the file, <c>sunoAudioUrl</c> (the Suno
+/// address the browser streams, only for <c>suno</c>), <c>sunoPageUrl</c> (the clip's Suno page, null
+/// without Suno data), and <c>reason</c>, a code (<c>generation_preferred</c>, <c>format_order</c>,
+/// <c>preferred_missing_fallback</c>, <c>preferred_unavailable_fallback</c>, <c>suno_stream</c>,
+/// <c>nothing_available</c>, <c>suno_not_complete</c>, <c>suno_not_present</c>).
+/// </summary>
+internal sealed record GenerationPlaybackResponse(string Source, PlaybackFileResponse? AudioFile, string? SunoAudioUrl, string? SunoPageUrl, string Reason);
+
+/// <summary>
+/// What plays for a Song (#212): as for a Generation (the Suno address and page being the Selected
+/// Generation's), with <c>song_preferred</c>,
+/// <c>no_selected_generation</c> and <c>no_generations</c> among the reasons, and <c>generation</c>,
+/// the Selected Generation the file comes from (or that has nothing to play), with its Suno ID for
+/// Open in Suno, or null. <c>state</c> (#219) is what Play does: <c>ready</c>, <c>needs-choice</c>
+/// (with the chooser's <c>candidates</c>; empty in every other state), <c>selected-unplayable</c>, or
+/// <c>none</c>.
+/// </summary>
+internal sealed record SongPlaybackResponse(
+    string Source,
+    PlaybackFileResponse? AudioFile,
+    string? SunoAudioUrl,
+    string? SunoPageUrl,
+    string Reason,
+    SongPlaybackGenerationResponse? Generation,
+    string State,
+    SongPlaybackCandidateResponse[] Candidates);
+
+/// <summary>The Song's Selected Generation in its playback answer: its ID, shortcode, and Suno ID (null without Suno data).</summary>
+internal sealed record SongPlaybackGenerationResponse(Guid Id, string Shortcode, string? SunoId);
+
+/// <summary>
+/// One entry of the chooser (#219): <c>kind</c> <c>generation</c> (with <c>generation</c>
+/// <c>{id, shortcode}</c>, its <c>versionNumber</c>, <c>rating</c>, <c>durationSeconds</c> (Suno's),
+/// <c>state</c> and <c>remoteState</c>) or <c>file</c> (with <c>audioFile</c>, a Song-level file
+/// that plays); <c>playable</c>, and <c>reason</c> (null when a file plays, <c>suno_stream</c> when it
+/// streams from Suno, or why it cannot play).
+/// </summary>
+internal sealed record SongPlaybackCandidateResponse(
+    string Kind,
+    AudioFileLinkResponse? Generation,
+    string? VersionNumber,
+    int? Rating,
+    double? DurationSeconds,
+    string? State,
+    string? RemoteState,
+    PlaybackFileResponse? AudioFile,
+    bool Playable,
+    string? Reason)
+{
+    public static SongPlaybackCandidateResponse From(SongPlaybackCandidate candidate, PathString pathBase)
+    {
+        var reason = candidate.Playability.Reason is { } why ? PlaybackReasons.Text(why) : null;
+        return candidate.Generation is { } generation
+            ? new(
+                "generation",
+                new AudioFileLinkResponse(generation.Id, generation.Shortcode),
+                generation.VersionNumber,
+                generation.Rating,
+                generation.DurationSeconds,
+                GenerationStates.NameOf(generation.State),
+                GenerationStates.NameOf(generation.RemoteState),
+                null,
+                candidate.Playability.Playable,
+                reason)
+            : new("file", null, null, null, null, null, null, PlaybackFileResponse.From(candidate.SongFile, pathBase), candidate.Playability.Playable, reason);
+    }
+}
+
+/// <summary>
+/// Everything of a Song the player can switch to while comparing (#220): the Song (<c>id</c>,
+/// <c>shortcode</c>, <c>title</c>), its available Song-level files (<c>songFiles</c>, the preferred
+/// one first, marked <c>isPlaybackFile</c>), and its Generations with an available file
+/// (<c>generations</c>, Version tree order then ordinal), each with what the bar shows and writes
+/// (<c>versionNumber</c>, <c>rating</c>, <c>revision</c>, Suno's <c>durationSeconds</c>, <c>state</c>,
+/// <c>remoteState</c>) and its <c>files</c>, the playback file first (<c>isPlaybackFile</c>); a
+/// Generation with no file available is listed with no files and its Suno stream (<c>sunoAudioUrl</c>,
+/// #221) when it can stream, with <c>sunoPageUrl</c> on every Generation that has Suno data.
+/// </summary>
+internal sealed record SongPlaybackSourcesResponse(
+    AudioFileSongResponse Song,
+    PlaybackSourceFileResponse[] SongFiles,
+    PlaybackSourceGenerationResponse[] Generations)
+{
+    public static SongPlaybackSourcesResponse From(SongSummary song, SongPlaybackSources sources, PathString pathBase)
+    {
+        ArgumentNullException.ThrowIfNull(song);
+        ArgumentNullException.ThrowIfNull(sources);
+
+        return new(
+            new AudioFileSongResponse(song.Id, song.Shortcode, song.Title),
+            [.. sources.SongFiles.Select(file => PlaybackSourceFileResponse.From(file, pathBase))],
+            [.. sources.Generations.Select(generation => PlaybackSourceGenerationResponse.From(generation, pathBase))]);
+    }
+}
+
+/// <summary>One Generation the player can switch to (#220); see <see cref="SongPlaybackSourcesResponse"/>.</summary>
+internal sealed record PlaybackSourceGenerationResponse(
+    AudioFileLinkResponse Generation,
+    string VersionNumber,
+    int? Rating,
+    int Revision,
+    double? DurationSeconds,
+    string State,
+    string RemoteState,
+    PlaybackSourceFileResponse[] Files,
+    string? SunoAudioUrl,
+    string? SunoPageUrl)
+{
+    public static PlaybackSourceGenerationResponse From(PlaybackSourceGeneration source, PathString pathBase)
+    {
+        var generation = source.Generation;
+        return new(
+            new AudioFileLinkResponse(generation.Id, generation.Shortcode),
+            generation.VersionNumber,
+            generation.Rating,
+            generation.Revision,
+            generation.DurationSeconds,
+            GenerationStates.NameOf(generation.State),
+            GenerationStates.NameOf(generation.RemoteState),
+            [.. source.Files.Select(file => PlaybackSourceFileResponse.From(file, pathBase))],
+            source.SunoAudioUrl,
+            generation.SunoId is { } sunoId ? ClipFields.PageUrlOf(sunoId) : null);
+    }
+}
+
+/// <summary>One file the player can switch to (#220): the file, and whether it is the one its owner plays.</summary>
+internal sealed record PlaybackSourceFileResponse(PlaybackFileResponse AudioFile, bool IsPlaybackFile)
+{
+    public static PlaybackSourceFileResponse From(PlaybackSourceFile source, PathString pathBase) =>
+        new(PlaybackFileResponse.From(source.File, pathBase)!, source.IsPlaybackFile);
+}
+
+/// <summary>The file that plays: its ID, name, format, duration (seconds, or null), and where its content is served, under the page base.</summary>
+internal sealed record PlaybackFileResponse(Guid Id, string FileName, string Format, decimal? DurationSeconds, string ContentUrl)
+{
+    public static PlaybackFileResponse? From(ReportedAudioFile? reported, PathString pathBase)
+    {
+        if (reported is null)
+        {
+            return null;
+        }
+
+        var file = reported.File;
+        return new(
+            file.Id,
+            file.FileName,
+            file.Format,
+            file.Duration is { } duration ? Math.Round((decimal)duration.TotalMilliseconds / 1000m, 3) : null,
+            $"{pathBase}{AudioContentEndpoint.ContentPath.Replace("{id:guid}", file.Id.ToString("D", CultureInfo.InvariantCulture), StringComparison.Ordinal)}");
+    }
+}
+
+/// <summary>
+/// What Play on a Song does (#219), as Song answers, Album tracks and Playlist songs carry it:
+/// <c>state</c> (<c>ready</c>, <c>needs-choice</c>, <c>selected-unplayable</c>, <c>none</c>; only
+/// <c>none</c> disables Play) and <c>reason</c> (null when ready; <c>no_selected_generation</c>,
+/// <c>nothing_available</c>, or <c>no_generations</c>).
+/// </summary>
+internal sealed record SongPlayabilityResponse(string State, string? Reason)
+{
+    public static SongPlayabilityResponse From(SongPlayability playability)
+    {
+        ArgumentNullException.ThrowIfNull(playability);
+
+        return new(SongPlaybackStates.Text(playability.State), playability.Reason is { } reason ? PlaybackReasons.Text(reason) : null);
+    }
+}

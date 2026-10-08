@@ -76,6 +76,14 @@ const RUN_RECIPES: Readonly<Record<string, RunRecipe>> = {
   // The completion watch's refresh prompt (#154): the breadcrumb and the Song's workspace row, which
   // only choose what the library pane shows; nothing else is pressed.
   'refresh-library': { values: { workspaceName: 'My Workspace' } },
+  // Preparing a download (#216): a library row's More options, the menu's Download, then a format
+  // and "Unlock & Download" in the Download dialog, which are the second permitted change and are
+  // pressed only through their own primitive. The menu's Publish and Move to Trash, and the
+  // dialog's "MP4 video asset" and Manage, must never be reached.
+  'open-clip-menu': { values: { sunoId: '00000000-0000-4000-8000-000000000102' } },
+  'choose-download': { values: {} },
+  'choose-download-format': { values: { format: 'wav' }, exceptions: ['download-clip'] },
+  'close-download-dialog': { values: {}, exceptions: ['download-clip'] },
 };
 
 /** A Speech or Sound fill's values, other than the snapshots' own, so every filler acts. */
@@ -476,6 +484,57 @@ describe('the guard bites', () => {
       '\'workspace\' on workspace-selector: click reached button "Create new workspace"',
     );
     expect(await run(byPrimitive, { values: {}, exceptions: ['create-workspace'] })).toEqual([]);
+  });
+
+  it("lets the Download dialog's format and button be pressed only through their primitive, and never its other controls (#216)", async () => {
+    const dialog = { role: 'dialog', name: /^Download\b/, description: 'the dialog' } as const;
+    const control = (name: string): Target => ({
+      role: 'button',
+      name,
+      within: dialog,
+      description: name,
+    });
+    const byPrimitive = (name: string) =>
+      testWorkflow(
+        'download',
+        ['download-dialog'],
+        ({ page }) => {
+          const result = page.find(control(name));
+          if (result.kind === 'found') {
+            page.downloadDialogClick(result.found);
+          }
+        },
+        control(name),
+      );
+    const run = (workflow: Workflow, recipe: RunRecipe) =>
+      exerciseWorkflows([workflow], {
+        recipes: { download: recipe },
+        snapshots: ['download-dialog'],
+      });
+
+    const unlock = control('Unlock & Download');
+    expect(
+      await run(testWorkflow('download', ['download-dialog'], clicking(unlock), unlock), {
+        values: {},
+        exceptions: ['download-clip'],
+      }),
+    ).toContain(
+      "'download' on download-dialog: step 'act' tried a forbidden control (Unlock & Download: it is the named exception 'download-clip', pressed only by its own primitive)",
+    );
+    expect(await run(byPrimitive('Unlock & Download'), { values: {} })).toContain(
+      '\'download\' on download-dialog: click reached button "Unlock & Download"',
+    );
+    expect(
+      await run(byPrimitive('Unlock & Download'), { values: {}, exceptions: ['download-clip'] }),
+    ).toEqual([]);
+    for (const other of ['MP4 video asset', 'Manage']) {
+      expect(
+        await run(byPrimitive(other), { values: {}, exceptions: ['download-clip'] }),
+        other,
+      ).toContain(
+        `'download' on download-dialog: step 'act' tried a forbidden control (${other}: it is in a dialog the adapter does not recognise)`,
+      );
+    }
   });
 
   it('fails a workflow it has not been told how to run, or one that does not finish on its fixture', async () => {

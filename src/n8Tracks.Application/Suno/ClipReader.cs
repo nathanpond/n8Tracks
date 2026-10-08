@@ -90,7 +90,7 @@ public static class ClipReader
                     Number(metadata, "avg_bpm"),
                     Text(metadata, "key"),
                     Time(clip, "created_at"),
-                    Mp3Address(clip) ?? Text(clip, "audio_url"),
+                    PlayableAddress(clip) ?? Text(clip, "audio_url"),
                     Text(clip, "image_url"),
                     Text(Member(clip, "project"), "id"),
                     Integer(clip, "batch_index")),
@@ -103,30 +103,45 @@ public static class ClipReader
         }
     }
 
-    /// <summary>The first <c>media_urls</c> entry that is an MP3 (by content type or address), if any.</summary>
-    private static string? Mp3Address(JsonElement clip)
+    /// <summary>
+    /// The kinds of <c>media_urls</c> entry a browser plays, in the order they are preferred (#221):
+    /// MP3, then M4A (Suno's <c>m4a-opus</c> among them), then OGG. Each matches by the entry's
+    /// <c>content_type</c> holding the name, or by its address's path ending in <c>.name</c>.
+    /// </summary>
+    public static IReadOnlyList<string> PlayableMediaTypes { get; } = ["mp3", "m4a", "ogg"];
+
+    /// <summary>
+    /// The first <c>media_urls</c> entry of the most preferred playable kind (<see cref="PlayableMediaTypes"/>),
+    /// if any: the stream the browser plays when no local file is available (#221).
+    /// </summary>
+    private static string? PlayableAddress(JsonElement clip)
     {
         if (!clip.TryGetProperty("media_urls", out var entries) || entries.ValueKind != JsonValueKind.Array)
         {
             return null;
         }
 
-        foreach (var entry in entries.EnumerateArray())
+        var addresses = entries.EnumerateArray()
+            .Select(static entry => (Url: Text(entry, "url"), Type: Text(entry, "content_type")))
+            .Where(static entry => entry.Url is not null)
+            .ToList();
+        foreach (var kind in PlayableMediaTypes)
         {
-            if (Text(entry, "url") is not { } url)
+            foreach (var (url, type) in addresses)
             {
-                continue;
-            }
-
-            var isMp3 = Text(entry, "content_type") is { } type && type.Contains("mp3", StringComparison.OrdinalIgnoreCase);
-            if (isMp3 || (Uri.TryCreate(url, UriKind.Absolute, out var address) && address.AbsolutePath.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase)))
-            {
-                return url;
+                if (IsOfKind(url!, type, kind))
+                {
+                    return url;
+                }
             }
         }
 
         return null;
     }
+
+    private static bool IsOfKind(string url, string? type, string kind) =>
+        (type is not null && type.Contains(kind, StringComparison.OrdinalIgnoreCase))
+        || (Uri.TryCreate(url, UriKind.Absolute, out var address) && address.AbsolutePath.EndsWith("." + kind, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>An object member, when <paramref name="element"/> is an object that has it as an object.</summary>
     private static JsonElement? Member(JsonElement? element, string name) =>

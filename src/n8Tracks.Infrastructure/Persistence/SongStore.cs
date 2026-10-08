@@ -3,10 +3,11 @@ using n8Tracks.Application.Songs;
 using n8Tracks.Domain.Assets;
 using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
+using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Infrastructure.Persistence;
 
-internal sealed class SongStore(N8TracksDbContext context) : ISongStore
+internal sealed class SongStore(N8TracksDbContext context, SunoAudioHosts hosts) : ISongStore
 {
     public async Task<long> NextShortcodeNumberAsync(CancellationToken cancellationToken)
     {
@@ -148,8 +149,11 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
         var total = await songs.CountAsync(cancellationToken).ConfigureAwait(false);
 
         // Times are fixed-width UTC text, so text order is time order; the shortcode number breaks ties.
+        var audioFiles = context.AudioFiles;
         var ordered = (query.Sort, query.Descending) switch
         {
+            (SongSort.AudioFiles, false) => songs.OrderBy(song => audioFiles.Count(file => file.SongId == song.Id)).ThenBy(static song => song.ShortcodeNumber),
+            (SongSort.AudioFiles, true) => songs.OrderByDescending(song => audioFiles.Count(file => file.SongId == song.Id)).ThenByDescending(static song => song.ShortcodeNumber),
             (SongSort.Title, false) => songs.OrderBy(static song => song.TitleSortKey).ThenBy(static song => song.ShortcodeNumber),
             (SongSort.Title, true) => songs.OrderByDescending(static song => song.TitleSortKey).ThenByDescending(static song => song.ShortcodeNumber),
             (_, false) => songs.OrderBy(static song => song.UpdatedUtc).ThenBy(static song => song.ShortcodeNumber),
@@ -379,6 +383,21 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
                     .Select(static generation => new AttachedArtwork(generation.ImageId, null, generation.Width, generation.Height))
                     .First());
 
+        // Every file associated with the Song counts, at Song level or through a Generation, whatever its status (#211).
+        var audioFileCounts = await context.AudioFiles.AsNoTracking()
+            .Where(file => file.SongId != null && songIds.Contains(file.SongId.Value))
+            .GroupBy(static file => file.SongId!.Value)
+            .Select(static group => new { SongId = group.Key, Count = group.Count() })
+            .ToDictionaryAsync(static group => group.SongId, static group => group.Count, cancellationToken)
+            .ConfigureAwait(false);
+
+        var playback = await SongPlaybackRows.StatesAsync(
+                context,
+                hosts,
+                records.ToDictionary(static song => song.Id, static song => song.SelectedGenerationId),
+                cancellationToken)
+            .ConfigureAwait(false);
+
         var workspaces = await SunoWorkspaceStore.ForIdsAsync(
                 context,
                 [.. records.Select(static song => song.SunoWorkspaceId).OfType<string>().Distinct(StringComparer.Ordinal)],
@@ -446,7 +465,11 @@ internal sealed class SongStore(N8TracksDbContext context) : ISongStore
                     ? new AttachedArtwork(image, null, shown.ImageWidth, shown.ImageHeight)
                     : null,
                 song.SunoWorkspaceId is { } workspaceId ? workspaces[workspaceId] : null,
-                newest.GetValueOrDefault(song.Id));
+                newest.GetValueOrDefault(song.Id))
+            {
+                AudioFileCount = audioFileCounts.GetValueOrDefault(song.Id),
+                Playback = playback[song.Id],
+            };
         })];
     }
 }

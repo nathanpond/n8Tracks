@@ -8,6 +8,7 @@ import {
   type SelectionChoice,
 } from '../api/generations';
 import { useWorkflowStates, type Song } from '../api/songs';
+import { DeletionAudioFiles } from '../media/DeletionAudioFiles';
 import { generationDeletionSummary } from './deletionRules';
 
 const FAILED_MESSAGE =
@@ -183,6 +184,7 @@ function DeleteForm({
           {generationDeletionSummary(found).map((line) => (
             <Text key={line}>{line}</Text>
           ))}
+          <DeletionAudioFiles counts={found.localAudioFiles} owner="generation" />
         </Stack>
       )}
       {(impact.kind === 'gone' || impact.kind === 'failed') && (

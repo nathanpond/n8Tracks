@@ -19,12 +19,20 @@ function containerOf(testInfo: TestInfo): string {
  * With `clip` (the text of one Suno clip object), the Generation keeps that clip: the text is
  * written to a file inside the container first, as the command reads it from a path.
  */
-export async function seedGeneration(
+export function seedGeneration(
   testInfo: TestInfo,
   shortcode: string,
   clip?: string,
 ): Promise<string> {
-  const container = containerOf(testInfo);
+  return seedGenerationIn(containerOf(testInfo), shortcode, clip);
+}
+
+/** As {@link seedGeneration}, in the container named `container` (one a test started itself). */
+export async function seedGenerationIn(
+  container: string,
+  shortcode: string,
+  clip?: string,
+): Promise<string> {
   if (clip === undefined) {
     return docker('exec', container, 'n8tracks', 'seed-generation', shortcode);
   }

@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using n8Tracks.Domain.Catalog;
+using n8Tracks.Domain.Media;
 using n8Tracks.Domain.Songs;
 using n8Tracks.Domain.Suno;
 using n8Tracks.Infrastructure.Retention;
@@ -166,6 +167,14 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
 
     public DbSet<ArtworkAttachmentRecord> ArtworkAttachments => Set<ArtworkAttachmentRecord>();
 
+    public DbSet<AudioFileRecord> AudioFiles => Set<AudioFileRecord>();
+
+    public DbSet<DownloadRecordRecord> DownloadRecords => Set<DownloadRecordRecord>();
+
+    public DbSet<GenerationPreferredAudioFileRecord> GenerationPreferredAudioFiles => Set<GenerationPreferredAudioFileRecord>();
+
+    public DbSet<SongPreferredAudioFileRecord> SongPreferredAudioFiles => Set<SongPreferredAudioFileRecord>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         ArgumentNullException.ThrowIfNull(configurationBuilder);
@@ -238,6 +247,125 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
         OnCatalogCreating(modelBuilder);
         OnRetentionCreating(modelBuilder);
         OnAssetsCreating(modelBuilder);
+        OnMediaCreating(modelBuilder);
+    }
+
+    /// <summary>An audio file's association origin (#206): one of the origins, or none.</summary>
+    internal const string AudioFileAssociationOriginCheck = "association_origin IS NULL OR association_origin IN ('suno-id', 'user')";
+
+    /// <summary>An unmatched reason (#206): one of the codes, or none.</summary>
+    internal const string AudioFileUnmatchedReasonCheck =
+        "unmatched_reason IS NULL OR unmatched_reason IN ('generation_deleted', 'multiple_suno_ids', 'unassociated_by_user', 'song_deleted')";
+
+    /// <summary>
+    /// An audio file's association (#206): an origin exactly when it has a Song; a Generation only with
+    /// a Song (the composite foreign key then makes it that Song's); a <c>suno-id</c> association always
+    /// names a Generation; and a reason only while it has no Song.
+    /// </summary>
+    internal const string AudioFileAssociationCheck =
+        "(song_id IS NULL) = (association_origin IS NULL) "
+        + "AND (generation_id IS NULL OR song_id IS NOT NULL) "
+        + "AND (association_origin IS NOT 'suno-id' OR generation_id IS NOT NULL) "
+        + "AND (unmatched_reason IS NULL OR song_id IS NULL)";
+
+    /// <summary>
+    /// The audio file catalog (#203): one row per distinct path under the media mount, unique by its
+    /// relative path (compared byte for byte, so letter case and Unicode form make distinct rows).
+    /// </summary>
+    private static void OnMediaCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<AudioFileRecord>(file =>
+        {
+            file.ToTable("audio_files", static table =>
+            {
+                table.HasCheckConstraint("ck_audio_files_path", "length(path) > 0 AND substr(path, 1, 1) <> '/'");
+                table.HasCheckConstraint("ck_audio_files_file_name", "length(file_name) > 0");
+                table.HasCheckConstraint(
+                    "ck_audio_files_format",
+                    $"format IN ({string.Join(", ", AudioFormats.All.Select(static format => $"'{format}'"))})");
+                table.HasCheckConstraint("ck_audio_files_size_bytes", "size_bytes >= 0");
+                table.HasCheckConstraint("ck_audio_files_status", $"status IN ('{AudioFileRecord.Available}', '{AudioFileRecord.Missing}')");
+                table.HasCheckConstraint("ck_audio_files_duration_ms", "duration_ms IS NULL OR duration_ms > 0");
+                table.HasCheckConstraint("ck_audio_files_metadata_readable", "metadata_readable = (duration_ms IS NOT NULL)");
+                table.HasCheckConstraint("ck_audio_files_title", $"title IS NULL OR length(title) BETWEEN 1 AND {AudioFormats.MaximumTagLength}");
+                table.HasCheckConstraint("ck_audio_files_artist", $"artist IS NULL OR length(artist) BETWEEN 1 AND {AudioFormats.MaximumTagLength}");
+                table.HasCheckConstraint("ck_audio_files_association_origin", AudioFileAssociationOriginCheck);
+                table.HasCheckConstraint("ck_audio_files_unmatched_reason", AudioFileUnmatchedReasonCheck);
+                table.HasCheckConstraint("ck_audio_files_association", AudioFileAssociationCheck);
+                table.HasCheckConstraint("ck_audio_files_revision", "revision >= 1");
+            });
+            file.HasKey(record => record.Id);
+            file.HasIndex(record => record.Path).IsUnique();
+            file.HasIndex(record => record.Status);
+            file.Property(record => record.Revision).HasDefaultValue(1);
+
+            // Its association (#206). The Song by a plain foreign key; the Generation by a composite one,
+            // (generation_id, song_id) to generations (id, song_id), written by hand in the migration and
+            // not modelled here: EF Core would make (id, song_id) an alternate key of the Generation,
+            // which it then refuses to change, and a move changes a Generation's Song. The composite key
+            // cascades on update, so a moved Generation's files follow it to its new Song. Neither key
+            // cascades on delete: a deletion releases the files first (AudioFileLifecycle).
+            file.HasIndex(record => record.SongId);
+            file.HasIndex(record => new { record.GenerationId, record.SongId });
+
+            // The parent keys of the preferred-file tables' composite foreign keys (#212). The ID alone
+            // is already unique; SQLite wants a unique index over exactly the columns referred to.
+            file.HasIndex(record => new { record.Id, record.GenerationId }).IsUnique();
+            file.HasIndex(record => new { record.Id, record.SongId }).IsUnique();
+            file.HasOne<SongRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.SongId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // Preferred audio files (#212): at most one per Generation and one per Song, each naming a file
+        // that is that owner's. Each owner by a plain RESTRICT key (a deletion clears the choice first,
+        // AudioFileLifecycle); the file by a composite key to audio_files (id, generation_id) or
+        // (id, song_id), written by hand in the migration and not modelled here, as audio_files' own
+        // composite key is not: it refuses a choice of another owner's file, and refuses changing a
+        // chosen file's association before the choice is cleared. A file is chosen by one owner at most.
+        modelBuilder.Entity<GenerationPreferredAudioFileRecord>(preferred =>
+        {
+            preferred.ToTable("generation_preferred_audio_files");
+            preferred.HasKey(record => record.GenerationId);
+            preferred.HasIndex(record => record.AudioFileId).IsUnique();
+            preferred.HasOne<GenerationRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.GenerationId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<SongPreferredAudioFileRecord>(preferred =>
+        {
+            preferred.ToTable("song_preferred_audio_files");
+            preferred.HasKey(record => record.SongId);
+            preferred.HasIndex(record => record.AudioFileId).IsUnique();
+            preferred.HasOne<SongRecord>()
+                .WithMany()
+                .HasForeignKey(record => record.SongId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // Download records (#222): files the extension fetched to the user's computer, by Suno ID with
+        // no foreign key (a record is kept for a clip that is not, or no longer, a Generation). Only
+        // ever inserted; the times compare as text because both are written by UtcText.
+        modelBuilder.Entity<DownloadRecordRecord>(download =>
+        {
+            download.ToTable("download_records", static table =>
+            {
+                table.HasCheckConstraint(
+                    "ck_download_records_format",
+                    $"format IN ({string.Join(", ", DownloadFormats.All.Select(static format => $"'{format}'"))})");
+                table.HasCheckConstraint("ck_download_records_suno_id", "length(suno_id) = 36 AND suno_id = lower(suno_id)");
+                table.HasCheckConstraint(
+                    "ck_download_records_file_name",
+                    $"length(file_name) BETWEEN 1 AND {DownloadFormats.MaximumFileNameLength} AND instr(file_name, '/') = 0 AND instr(file_name, '\\') = 0");
+                table.HasCheckConstraint("ck_download_records_size_bytes", "size_bytes IS NULL OR size_bytes >= 0");
+                table.HasCheckConstraint("ck_download_records_completed_utc", "completed_utc <= received_utc");
+            });
+            download.HasKey(record => record.Id);
+            download.HasIndex(record => record.SunoId);
+        });
     }
 
     /// <summary>
@@ -505,6 +633,11 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
             generation.HasKey(record => record.Id);
             generation.HasIndex(record => new { record.VersionId, record.Ordinal }).IsUnique();
             generation.HasIndex(record => record.SongId);
+
+            // The parent key of an audio file's (generation_id, song_id) foreign key (#206): an index, not
+            // an alternate key, so it is added without rebuilding the table and a move may still change
+            // the Song.
+            generation.HasIndex(record => new { record.Id, record.SongId }).IsUnique();
             generation.Property(record => record.State).HasDefaultValue(GenerationRecord.Active);
             generation.Property(record => record.RemoteState).HasDefaultValue(GenerationRecord.Present);
             generation.Property(record => record.Revision).HasDefaultValue(1);

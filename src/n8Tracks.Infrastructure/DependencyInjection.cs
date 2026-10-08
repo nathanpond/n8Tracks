@@ -11,6 +11,7 @@ using n8Tracks.Application.Credentials;
 using n8Tracks.Application.Health;
 using n8Tracks.Application.Jobs;
 using n8Tracks.Application.Maintenance;
+using n8Tracks.Application.Media;
 using n8Tracks.Application.Persistence;
 using n8Tracks.Application.Retention;
 using n8Tracks.Application.Setup;
@@ -23,6 +24,7 @@ using n8Tracks.Infrastructure.Backups;
 using n8Tracks.Infrastructure.Health;
 using n8Tracks.Infrastructure.Jobs;
 using n8Tracks.Infrastructure.Maintenance;
+using n8Tracks.Infrastructure.Media;
 using n8Tracks.Infrastructure.Persistence;
 using n8Tracks.Infrastructure.Retention;
 using n8Tracks.Infrastructure.Scheduling;
@@ -46,7 +48,6 @@ public static class DependencyInjection
 
         services.AddSingleton<IDatabaseConnectionFactory, SqliteConnectionFactory>();
         services.AddScoped<IDatabaseSchemaCheck, DatabaseSchemaCheck>();
-        services.AddSingleton<IMediaMountProbe, MediaMountProbe>();
         services.AddSingleton<IHealthService, HealthService>();
 
         services.AddScoped<IAdministratorStore, AdministratorStore>();
@@ -81,6 +82,7 @@ public static class DependencyInjection
         services.AddScoped<ISunoModelStore, SunoModelStore>();
         services.AddScoped<ISunoLibraryStore, SunoLibraryStore>();
         services.AddScoped<IProviderTombstoneStore, ProviderTombstoneStore>();
+        services.AddScoped<ISunoClipCatalogLookup, SunoClipCatalogLookup>();
         services.AddScoped<ISunoWorkspaceStore, SunoWorkspaceStore>();
         services.AddScoped<SunoExportStore>();
         services.AddScoped<ISunoExportStore>(static provider => provider.GetRequiredService<SunoExportStore>());
@@ -90,6 +92,17 @@ public static class DependencyInjection
         services.AddScoped<IRemoteStateStore, RemoteStateStore>();
         services.AddScoped<IGenerationRequestStore, SunoGenerationRequestStore>();
         services.AddScoped<IVersionDefaultsStore, VersionDefaultsStore>();
+        services.AddSingleton<IMediaMount, MediaMountReader>();
+        services.AddSingleton<IMediaScanLog, MediaScanLog>();
+        services.AddSingleton<IAudioMetadataReader, AtlAudioMetadataReader>();
+        services.AddScoped<IAudioFileStore, AudioFileStore>();
+        services.AddScoped<IPreferredAudioFileStore, PreferredAudioFileStore>();
+        services.AddScoped<IMatchCandidateStore, MatchCandidateStore>();
+        services.AddScoped<IDownloadRecordStore, DownloadRecordStore>();
+        services.AddScoped<IMediaScanSummaryStore, MediaScanSummaryStore>();
+        services.AddScoped<IMediaScanScheduleStore, MediaScanScheduleStore>();
+        services.AddSingleton<IMediaFolderProbe, MediaFolderProbe>();
+        services.AddScoped<IMediaMountStateStore, MediaMountStateStore>();
         services.AddSingleton<IBackupStorage, BackupFolders>();
         services.AddSingleton<IBackupWriter, BackupWriter>();
         services.AddScoped<IBackupScheduleStore, BackupScheduleStore>();
@@ -131,8 +144,8 @@ public static class DependencyInjection
     }
 
     /// <summary>
-    /// Adds the background worker that runs queued jobs and the daily-task scheduler. Only the server
-    /// adds them: a command run in the container starts nothing on its own.
+    /// Adds the background worker that runs queued jobs, the daily-task scheduler, and the media scan
+    /// scheduler. Only the server adds them: a command run in the container starts nothing on its own.
     /// </summary>
     public static IServiceCollection AddJobWorker(this IServiceCollection services)
     {
@@ -140,6 +153,8 @@ public static class DependencyInjection
 
         services.TryAddSingleton(new JobWorkerOptions());
         services.TryAddSingleton(new DailyTaskSchedulerOptions());
+        services.TryAddSingleton(new MediaScanSchedulerOptions());
+        services.TryAddSingleton(new MediaAvailabilityMonitorOptions());
         services.AddHostedService<BackupStartupCleanup>();
         services.AddHostedService<RestoreHousekeeping>();
 
@@ -147,6 +162,11 @@ public static class DependencyInjection
         services.AddHostedService<ImportCommitRecovery>();
         services.AddHostedService<JobWorker>();
         services.AddHostedService<DailyTaskScheduler>();
+
+        // After the worker, whose start marks a scan left running by the last process failed: a scan
+        // still queued from before counts as the startup scan, one left running does not.
+        services.AddHostedService<MediaScanScheduler>();
+        services.AddHostedService<MediaAvailabilityMonitor>();
 
         return services;
     }

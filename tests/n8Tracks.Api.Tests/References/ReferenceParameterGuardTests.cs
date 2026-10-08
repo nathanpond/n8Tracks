@@ -26,6 +26,11 @@ public sealed class ReferenceParameterGuardTests
     private static readonly HashSet<string> OtherIds = new(StringComparer.Ordinal)
     {
         "GET /api/v1/jobs/{id:guid}: id",
+        "GET /api/v1/audio-files/{id:guid}: id",
+        "GET,HEAD /api/v1/audio-files/{id:guid}/content: id",
+        "PUT /api/v1/audio-files/{id:guid}/association: id",
+        "DELETE /api/v1/audio-files/{id:guid}/association: id",
+        "POST /api/v1/audio-files/{id:guid}/rematch: id",
         "PATCH /api/v1/credentials/{id:guid}: id",
         "POST /api/v1/credentials/{id:guid}/revoke: id",
         "PATCH /api/v1/workflow-states/{id:guid}: id",
@@ -150,6 +155,14 @@ public sealed class ReferenceParameterGuardTests
         ["GET /api/v1/resolve/{reference}"] = static (c, _, version) => c.SendAsync(HttpMethod.Get, $"resolve/{version}"),
         ["GET /api/v1/versions/{reference}/generations"] = static (c, _, version) => c.SendAsync(HttpMethod.Get, $"versions/{version}/generations"),
         ["GET /api/v1/songs/{reference}/generations"] = static (c, song, _) => c.SendAsync(HttpMethod.Get, $"songs/{song}/generations"),
+        ["GET /api/v1/songs/{reference}/audio-files"] = static (c, song, _) => c.SendAsync(HttpMethod.Get, $"songs/{song}/audio-files"),
+        ["GET /api/v1/songs/{reference}/playback"] = static (c, song, _) => c.SendAsync(HttpMethod.Get, $"songs/{song}/playback"),
+        ["GET /api/v1/songs/{reference}/playback-sources"] = static (c, song, _) => c.SendAsync(HttpMethod.Get, $"songs/{song}/playback-sources"),
+
+        // 409 revision_conflict: the Song was found, and a revision it is not at chooses nothing (checked before the file).
+        ["PUT /api/v1/songs/{reference}/preferred-audio-file"] = static (c, song, _) =>
+            c.SendAsync(HttpMethod.Put, $"songs/{song}/preferred-audio-file", $$"""{"audioFile":"{{Guid.CreateVersion7()}}"}""", revision: 999),
+        ["DELETE /api/v1/songs/{reference}/preferred-audio-file"] = static (c, song, _) => c.SendAsync(HttpMethod.Delete, $"songs/{song}/preferred-audio-file", revision: 999),
 
         // A Generation by its ID, or by its shortcode (the Version shortcode's Generation 1).
         ["GET /api/v1/generations/{reference}"] = static (c, _, version) => c.SendAsync(HttpMethod.Get, $"generations/{c.GenerationOf(version)}"),
@@ -161,6 +174,12 @@ public sealed class ReferenceParameterGuardTests
             c.SendAsync(HttpMethod.Post, $"generations/{c.GenerationOf(version)}/move-to-new-song", """{"title":"Moved"}""", revision: 999),
         ["DELETE /api/v1/generations/{reference}"] = static (c, _, version) => c.SendAsync(HttpMethod.Delete, $"generations/{c.GenerationOf(version)}", revision: 999),
         ["GET /api/v1/generations/{reference}/deletion-impact"] = static (c, _, version) => c.SendAsync(HttpMethod.Get, $"generations/{c.GenerationOf(version)}/deletion-impact"),
+        ["GET /api/v1/generations/{reference}/downloads"] = static (c, _, version) => c.SendAsync(HttpMethod.Get, $"generations/{c.GenerationOf(version)}/downloads"),
+        ["GET /api/v1/generations/{reference}/playback"] = static (c, _, version) => c.SendAsync(HttpMethod.Get, $"generations/{c.GenerationOf(version)}/playback"),
+        ["PUT /api/v1/generations/{reference}/preferred-audio-file"] = static (c, _, version) =>
+            c.SendAsync(HttpMethod.Put, $"generations/{c.GenerationOf(version)}/preferred-audio-file", $$"""{"audioFile":"{{Guid.CreateVersion7()}}"}""", revision: 999),
+        ["DELETE /api/v1/generations/{reference}/preferred-audio-file"] = static (c, _, version) =>
+            c.SendAsync(HttpMethod.Delete, $"generations/{c.GenerationOf(version)}/preferred-audio-file", revision: 999),
         ["PATCH /api/v1/generations/{reference}/comments/{commentId:guid}"] = static (c, _, version) =>
             c.SendAsync(HttpMethod.Patch, $"generations/{c.GenerationOf(version)}/comments/{c.CommentId}", """{"text":"Changed"}""", revision: 999),
         ["DELETE /api/v1/generations/{reference}/comments/{commentId:guid}"] = static (c, _, version) =>

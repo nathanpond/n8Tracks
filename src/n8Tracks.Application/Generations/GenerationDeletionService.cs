@@ -1,5 +1,6 @@
 using n8Tracks.Application.Artwork;
 using n8Tracks.Application.Auth;
+using n8Tracks.Application.Media;
 using n8Tracks.Application.References;
 using n8Tracks.Application.Retention;
 using n8Tracks.Application.Songs;
@@ -14,7 +15,12 @@ namespace n8Tracks.Application.Generations;
 /// state), any of which the Song may select instead; empty otherwise, or when it has none.
 /// </param>
 /// <param name="SourceVersionCount">The Versions that use it as a source, which will show it as Deleted.</param>
-public sealed record GenerationDeletionImpact(GenerationSummary Generation, IReadOnlyList<GenerationSummary> Replacements, int SourceVersionCount)
+/// <param name="LocalAudioFiles">Its local audio files, which stay on disk and become unmatched (#213).</param>
+public sealed record GenerationDeletionImpact(
+    GenerationSummary Generation,
+    IReadOnlyList<GenerationSummary> Replacements,
+    int SourceVersionCount,
+    LocalAudioFileCounts LocalAudioFiles)
 {
     /// <summary>Whether it is its Song's Selected Generation, so the user must say what the Song selects instead.</summary>
     public bool IsSelected => Generation.IsSelected;
@@ -99,6 +105,7 @@ public sealed class GenerationDeletionService(
     IGenerationStore generationRows,
     GenerationArtworkService artwork,
     TombstoneService tombstones,
+    AudioFileLifecycle audioFiles,
     RetentionService retention,
     IExclusiveTransaction transaction,
     TimeProvider time)
@@ -123,7 +130,8 @@ public sealed class GenerationDeletionService(
                     ? [.. (await generationRows.ForSongAsync(generation.Generation.SongId, ct).ConfigureAwait(false)).Where(other => other.Generation.Id != generation.Generation.Id)]
                     : [];
                 var sources = await generationRows.SourceVersionCountAsync(generation.Generation.Id, ct).ConfigureAwait(false);
-                return new GenerationDeletionImpactOutcome.Found(new GenerationDeletionImpact(generation, replacements, sources));
+                var localFiles = await audioFiles.CountAsync(generation.Generation.SongId, [generation.Generation.Id], wholeSong: false, ct).ConfigureAwait(false);
+                return new GenerationDeletionImpactOutcome.Found(new GenerationDeletionImpact(generation, replacements, sources, localFiles));
             },
             cancellationToken);
 
@@ -183,6 +191,9 @@ public sealed class GenerationDeletionService(
                 // brings it back unasked (#130).
                 await versions.RewriteSourcesOfDeletedGenerationsAsync(ids, [], now, ct).ConfigureAwait(false);
                 await tombstones.RecordForAsync(ids, now, ct).ConfigureAwait(false);
+
+                // Its audio files stay on disk, unassociated (#206; associations are not retained).
+                await audioFiles.ReleaseAsync(ids, [], ct).ConfigureAwait(false);
                 var group = await retention.RetainWithinAsync(
                     new RetentionRequest(
                         RetainedRecordTypes.Generation,
