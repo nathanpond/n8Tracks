@@ -4481,13 +4481,13 @@ Story #219 (on the milestone branch):
   **Why:** owner decision on AC 9 (2026-10-07): "CDN only for now, but make that URL easily configurable in case it changes."
   **Issue:** #221
 
-## Ad-hoc — 2026-10-07
+## Ad-hoc — 2026-10-07 — reconciled by /n8-replan 2026-10-08
 
 - **Change:** Invariant 3 in `CLAUDE.md` amended. Imports still never change existing catalog data without an explicit user choice, but it now names the one exception: Suno's own state may follow Suno without a choice, in two cases. #154 completes a Generation the user just created (an observed Create, never complete, not decided by a reviewed export), in its clip columns and raw clip only. #314 moves a Generation still generating to Suno's final status (complete or error) at a commit whatever its choice, Skip included, in that column only. Portable import has no exception. The guard reference (#140, merged) now names the rules that bound the exceptions: `TakesSunosFinalStatus` and the completion rule `CompletionUnexplained` in `ImportNeverOverwritesGuardTests`.
   **Why:** Owner decision ("Amend the wording"). Verification of #140 found the invariant's text no longer matched #154 and #314 behaviour: both change existing Generations with no import choice, and the guard already allowed exactly those changes.
   **Affects:** M8 #22 (epic AC: "a guard test proves invariant 3 for this path"), #263 (portable-import guard of invariant 3; its `CLAUDE.md` AC must keep the "Portable import has no exception" wording), #260 (conflict decisions, "never offers to overwrite") — plans may be stale. M6 and M7 open issues have no invariant 3 dependency (the "overwrite" matches in #227 and #243 are about saved views and revision checks).
 
-## Ad-hoc — 2026-10-07
+## Ad-hoc — 2026-10-07 — reconciled by /n8-replan 2026-10-08
 
 - **Change:** Artwork uploads are capped at 100,000,000 pixels (`ArtworkRules.MaximumPixels`, #305). An image over it is refused from its header, before any pixel buffer is allocated, as 422 `artwork_dimensions_exceeded` with the title "The image is W × H pixels; artwork can be at most 100 megapixels (100,000,000 pixels)." and a new `maximumPixels` extension beside `maximumSide`. The 12,000-pixel side limit is kept: it still bounds strips the pixel cap allows (100,000 × 1,000 is 100 MP) and keeps #97 AC's wording true. The 512 MiB decode memory cap and its eighth-step scaled decode are kept as a second bound, though no accepted image reaches them now (100 MP at 4 bytes is 400,000,000 bytes). This narrows #97's decision that every JPEG and WebP within 12,000 a side is accepted by scaled decoding: those over 100 MP are now refused.
   **Why:** Owner decision ("~100 MP") on #305: a 470 KB PNG could decode to ~484 MB, too much for a home-server memory profile.
@@ -4529,7 +4529,7 @@ Story #219 (on the milestone branch):
   **Why:** The issue's AC; the forms the fix closed are listed as covered, not as gaps.
   **Issue:** #387
 
-## Ad-hoc — 2026-10-08
+## Ad-hoc — 2026-10-08 — reconciled by /n8-replan 2026-10-08
 
 - **Change:** M5 fix pass. (1) New table `retention_released_audio_files` (migration `20261008070000_AddRetentionReleasedAudioFiles`, classified catalog), and a new retention port `IRetentionRestoreParticipant` run inside every restore (#388). (2) The container now refuses to start when the media folder overlaps `/data` or `/backup`, and the app refuses a data or backup folder inside the media folder (#387). (3) CLAUDE.md invariant 2's guard text names the strengthened guards (#384, #386, #387); the invariant itself is unchanged.
   **Why:** Fixes of verification bugs #384–#390 on `milestone/m5-fixes`.
@@ -4879,3 +4879,28 @@ Story #230 (built in parallel; merged into the milestone branch):
 - **Decision:** e2e `dashboard-customize.spec.ts` runs on a fresh container (`@root-only`), like `dashboard.spec.ts`, so the saved arrangement is seen by no other spec.
   **Why:** The arrangement is instance-wide state.
   **Issue:** #230
+
+## /n8-replan M7,M8 — 2026-10-08
+
+- **Decision:** Reconciled M7 (epics #20, #21) and M8 (epics #22, #23) with what M2–M6 built and with the three open Ad-hoc entries (2026-10-07 invariant 3 wording, 2026-10-07 artwork decode cap, 2026-10-08 M5 fix pass).
+  **Why:** All M7/M8 stories were planned on 2026-10-04, before M2–M5 merged and M6 began. Evidence was the Ad-hoc ledger, git history to `origin/milestone/m6-search-dashboard` (431f517), code spot-checks, and the CLAUDE.md invariants. No story was invalidated and none was missing; no issue was closed or created.
+  **Issues:** Stale what (AC changed): epic #22 (EPIC-LEVEL AC 4), #239, #240, #241, #244, #245, #251, #253, #254, #255, #258, #259, #263, #264, #265, #266, #268, #269, #270. Stale how only: #242, #243, #247, #248 (capture mechanism replaced: set-based and raw-SQL writes are invisible to EF tracking), #249, #250, #256, #257, #260, #261, #262, #267. Each carries a "Replanned 2026-10-08" comment. Milestone descriptions M7, M8, and M9 Audit edited.
+- **Decision:** Dependencies added (issue body "Blocked by" line and native blocked-by): #240 ← #231; #244 ← #238; #249 ← #230; #254 ← #231; #268 ← #229; #269 ← #228, #229, #232.
+  **Why:** Each story consumes something those M6 stories add (notifications list, correlation ID on the job row, dashboard section keys, scope-strip notification, attention sections, dashboard/notifications/toasts UI).
+  **Issues:** #240, #244, #249, #254, #268, #269
+- **Decision:** B1 = A, "Refuse MCP on media". The API refuses MCP gateway credentials (403 `not_available_to_mcp`) on audio content, the audio-file list and detail, `GET /media/status`, and the three playback reads; answers allowed to MCP omit media-folder paths and Suno stream addresses. Paired with A2: the absolute media folder path on `/media/status` is answered to a session only, for every bearer token. Invariant 7's text is unchanged.
+  **Why:** Owner decision. Since M5 #217 a `catalog.read` (so MCP) token could stream media bytes and read paths and signed stream addresses, contradicting #251 and #254's planned "no file-system paths". A matches #254's existing planner line, breaks no M5 contract for `api`/`extension` tokens, and keeps the rule in the API (invariant 5).
+  **Issues:** #239, #251, #254; M7 milestone E21.4
+- **Decision:** A1 = (a): keep M6's `invalid_request` for bad or repeated list values and add only the new specific codes (`unknown_parameter`, `invalid_sort`, `unknown_field`, `invalid_paging`, `invalid_cursor`); no `invalid_parameter`. A3: operationIds are the 178 existing `.WithName` names. A4: the resolver keeps #68's 200 `status: "deleted"` instead of 410.
+  **Why:** Owner accepted the recommendations: keeps M6 #225's deliberate choice and the shipped names and resolver contract (the web Go-to box treats non-200/404 as failed).
+  **Issues:** #239, #240, #241, #245, #258
+- **Decision:** D-C1 = (a): `docs/portable-catalog-schema.md`'s record-type rows are amended for tables added since planning (Suno personas and playlists, links, shortcode aliases, used Version numbers, dashboard-layout wording, and the "Not in the export" lists); the count stays 23. D-C2 = (a): the Suno ID is the identity of Suno-keyed records (workspaces, Suno personas, Suno playlists, ignore-list entries, tombstones); no migration. D-C3 = (a): pre-#305 artwork over 100 MP is refused and reported on import, and the round-trip AC excepts it.
+  **Why:** Owner accepted the recommendations: the #255 walk forces the placement anyway; Suno IDs are already global identifiers; only images uploaded between M3 and #305 can exceed the cap.
+  **Issues:** epic #22, #255, #259, #261. The `docs/portable-catalog-schema.md` text edit (the replan proposal, part C, "Proposed edits to docs/portable-catalog-schema.md") was applied in c785224.
+- **Decision:** D-1 = A: the seed tool (#267) indexes inline (the #223 triggers and flush); no seam defers indexing; the 60-minute fallback applies. D-2 = A: dashboard attention items, the notifications panel, and toasts join the catalog keyboard walkthrough (#269), with toasts checked for WCAG 4.1.3 and 2.2.1.
+  **Why:** Owner accepted the recommendations: keeps "no entry point for the tool's sake"; the dashboard is the home page and toasts are the main AA risk M6 adds.
+  **Issues:** #267, #269
+- **Decision:** Filed #407 (bug, needs-triage): the Suno export commit's 202 `Location` omits the request path base (`SunoExportsEndpoints.cs` ~625), unlike the scan, backup, and search-rebuild answers.
+  **Why:** Found while checking #244's evidence; it is live now, not only an M7 item.
+  **Issue:** #407
+- **Decision:** Not changed: epics #20, #21, #23; #246, #252. Noted only: M8 session-only routes and `GET /songs.csv` must be classified under #254's MCP default-deny (M8 on M7); Song notes are not indexed (M6 #223), which nothing in M7/M8 assumes.
