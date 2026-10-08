@@ -1,14 +1,21 @@
 import { sunoPage } from '../addresses.ts';
-import type { Page } from '../primitives.ts';
+import type { Page, Target } from '../primitives.ts';
 import {
   actionItem,
+  ADD_VOICE,
   AUDIO_CONDITION,
+  chosenVoice,
+  EXTEND_FROM,
+  extendSeconds,
+  extendTime,
   MORE_OPTIONS,
   OVERWRITE_BUTTON,
   SIMPLE_CHIP_THUMBNAIL,
   sourceShown,
   submenu,
   submenuItem,
+  VOICE_DIALOG,
+  voiceTitle,
   type LoadedSource,
   type SourceRoute,
 } from '../sources.ts';
@@ -48,13 +55,24 @@ function submenuOpen(page: Page, route: SourceRoute): Check {
     : expected('the clip’s Remix or Edit menu, open');
 }
 
+/** The clip's page with its More options button, or its menu already open (Remix or Edit). */
+function clipMenuReachable(page: Page): Check {
+  if (
+    page.find(submenuItem('Remix')).kind === 'found' ||
+    page.find(submenuItem('Edit')).kind === 'found'
+  ) {
+    return OK;
+  }
+  return present(page, MORE_OPTIONS);
+}
+
 /** Opens the source clip's menu and the submenu that holds the action, and checks it is offered. */
 export const openSourceMenu: Workflow<SourceMenuContext> = {
   id: 'open-source-menu',
   title: 'Open the source clip’s menu',
   feature: 'generate',
   startsOn: sunoPage('song'),
-  needs: [{ step: 'clip menu', check: (page) => present(page, MORE_OPTIONS) }],
+  needs: [{ step: 'clip menu', check: clipMenuReachable }],
   steps: [
     {
       name: 'clip menu',
@@ -92,7 +110,7 @@ export const openSourceMenu: Workflow<SourceMenuContext> = {
       verify: () => OK,
     },
   ],
-  fixtures: ['clip-remix-menu'],
+  fixtures: ['clip-page-remix-menu', 'clip-remix-menu'],
 };
 
 /** Chooses the action in the open submenu; Suno then opens the Create form with the source. */
@@ -101,7 +119,7 @@ export const chooseSourceAction: Workflow<SourceMenuContext> = {
   title: 'Choose the Suno action',
   feature: 'generate',
   startsOn: sunoPage('song'),
-  needs: [{ step: 'action', check: (page) => present(page, MORE_OPTIONS) }],
+  needs: [{ step: 'action', check: clipMenuReachable }],
   steps: [
     {
       name: 'action',
@@ -115,12 +133,13 @@ export const chooseSourceAction: Workflow<SourceMenuContext> = {
       verify: () => OK,
     },
   ],
-  fixtures: ['clip-remix-menu'],
+  fixtures: ['clip-page-remix-menu', 'clip-remix-menu'],
 };
 
 /**
- * Suno asks "Overwrite Lyrics & Styles?" when the form already has lyrics and styles: Overwrite,
- * so that the source loads; the Version's own values are filled over it afterwards (TS-003).
+ * Suno asks "Overwrite Lyrics & Styles?" when the form already has lyrics and styles, or
+ * "Overwrite Styles?" for an instrumental source (TS-005): Overwrite, so that the source loads; the
+ * Version's own values are filled over it afterwards (TS-003).
  */
 export const answerOverwrite: Workflow = {
   id: 'answer-overwrite',
@@ -142,7 +161,7 @@ export const answerOverwrite: Workflow = {
       verify: () => OK,
     },
   ],
-  fixtures: ['overwrite-lyrics-styles-dialog'],
+  fixtures: ['overwrite-lyrics-styles-dialog', 'overwrite-styles-dialog'],
 };
 
 /** Verifies the loaded source in Advanced mode: the Audio section's action and thumbnail. */
@@ -181,4 +200,179 @@ export const verifySourceSimple: Workflow<VerifySourceContext> = {
     },
   ],
   fixtures: ['create-source-simple'],
+};
+
+/** Setting an Extend's continue-at time: the seconds the Version continues from. */
+export interface ExtendFromContext extends StepContext {
+  seconds: number;
+}
+
+/** Whether the "Extend from" time shows `seconds` (to the tenth Suno shows). */
+function extendsFrom(page: Page, seconds: number): Check {
+  const box = page.find(EXTEND_FROM);
+  if (box.kind !== 'found') {
+    return expected(EXTEND_FROM.description);
+  }
+  const shown = extendSeconds(page.read(box.found).value ?? '');
+  return shown !== null && Math.abs(shown - seconds) < 0.05
+    ? OK
+    : expected('the “Extend from” time to show where the Version continues from');
+}
+
+/**
+ * Sets where an Extend continues from (#148, TS-005: `page.create-source-extend.html`): the
+ * "Extend from" time is typed as Suno shows it ("00:54.0") and read back within one second.
+ */
+export const setExtendFrom: Workflow<ExtendFromContext> = {
+  id: 'set-extend-from',
+  title: 'Set where the Extend continues from',
+  feature: 'generate',
+  startsOn: sunoPage('create'),
+  after: 'verify-source-advanced',
+  needs: [{ step: 'extend from', check: (page) => present(page, EXTEND_FROM) }],
+  steps: [
+    {
+      name: 'extend from',
+      expect: ({ page }) => present(page, EXTEND_FROM),
+      act: ({ page, seconds }) => {
+        if (extendsFrom(page, seconds).ok) {
+          return;
+        }
+        const box = page.find(EXTEND_FROM);
+        if (box.kind === 'found') {
+          page.typeText(box.found, extendTime(seconds));
+        }
+      },
+      verify: ({ page, seconds }) => extendsFrom(page, seconds),
+      timeoutMs: 1_000,
+    },
+  ],
+  fixtures: ['create-source-extend'],
+};
+
+/** Choosing the Version's voice: its name and its persona's ID. */
+export interface ChooseVoiceContext extends StepContext {
+  voice: { name: string; personaId: string };
+}
+
+const VOICE_CLOSE: Target = {
+  role: 'button',
+  name: 'Close',
+  within: VOICE_DIALOG,
+  description: 'the Voice picker’s Close button',
+};
+
+function voiceChosen(page: Page, personaId: string): boolean {
+  return page.find(chosenVoice(personaId)).kind === 'found';
+}
+
+/**
+ * Chooses the Version's voice (#148, TS-005): "+ Voice" opens the picker, and the voice is chosen by
+ * pressing its title (pressing its image plays a sample), only when exactly one voice in the list has
+ * that name; the form then shows it as a link to `/voice/<persona ID>`, which is how it is verified.
+ * A voice already chosen on the form is left as it is.
+ */
+export const chooseVoice: Workflow<ChooseVoiceContext> = {
+  id: 'choose-voice',
+  title: 'Choose the Voice',
+  feature: 'generate',
+  startsOn: sunoPage('create'),
+  needs: [
+    {
+      step: 'voice picker',
+      check: (page) => (page.find(VOICE_DIALOG).kind === 'found' ? OK : present(page, ADD_VOICE)),
+    },
+  ],
+  steps: [
+    {
+      name: 'voice picker',
+      expect: ({ page, voice }) =>
+        voiceChosen(page, voice.personaId) || page.find(VOICE_DIALOG).kind === 'found'
+          ? OK
+          : present(page, ADD_VOICE),
+      act: ({ page, voice }) => {
+        if (voiceChosen(page, voice.personaId) || page.find(VOICE_DIALOG).kind === 'found') {
+          return;
+        }
+        const button = page.find(ADD_VOICE);
+        if (button.kind === 'found') {
+          page.click(button.found);
+        }
+      },
+      verify: ({ page, voice }) =>
+        voiceChosen(page, voice.personaId) || page.find(VOICE_DIALOG).kind === 'found'
+          ? OK
+          : expected(VOICE_DIALOG.description),
+    },
+    {
+      name: 'voice',
+      expect: ({ page, voice }) =>
+        voiceChosen(page, voice.personaId) ? OK : present(page, voiceTitle(voice.name)),
+      act: ({ page, voice }) => {
+        if (voiceChosen(page, voice.personaId)) {
+          return;
+        }
+        const title = page.find(voiceTitle(voice.name));
+        if (title.kind === 'found') {
+          page.click(title.found);
+        }
+      },
+      verify: ({ page, voice }) =>
+        voiceChosen(page, voice.personaId)
+          ? OK
+          : expected('the form to show the Version’s voice as chosen'),
+    },
+    {
+      // Suno closes the picker on a choice (TS-005); should it stay open, its own Close closes it.
+      name: 'picker closed',
+      expect: () => OK,
+      act: ({ page }) => {
+        if (page.find(VOICE_DIALOG).kind !== 'found') {
+          return;
+        }
+        const close = page.find(VOICE_CLOSE);
+        if (close.kind === 'found') {
+          page.click(close.found);
+        }
+      },
+      verify: ({ page }) =>
+        page.find(VOICE_DIALOG).kind === 'found' ? expected('the Voice picker, closed') : OK,
+    },
+  ],
+  fixtures: ['create-voice-selected'],
+};
+
+/**
+ * Closes the Voice picker by its own Close when a voice could not be chosen in it: while it is open,
+ * Suno hides the rest of the form (`aria-hidden`, TS-005), so nothing else could be filled.
+ */
+export const closeVoicePicker: Workflow = {
+  id: 'close-voice-picker',
+  title: 'Close the Voice picker',
+  feature: 'generate',
+  startsOn: sunoPage('create'),
+  needs: [
+    {
+      step: 'picker closed',
+      check: (page) => (page.find(VOICE_DIALOG).kind === 'found' ? present(page, VOICE_CLOSE) : OK),
+    },
+  ],
+  steps: [
+    {
+      name: 'picker closed',
+      expect: () => OK,
+      act: ({ page }) => {
+        if (page.find(VOICE_DIALOG).kind !== 'found') {
+          return;
+        }
+        const close = page.find(VOICE_CLOSE);
+        if (close.kind === 'found') {
+          page.click(close.found);
+        }
+      },
+      verify: ({ page }) =>
+        page.find(VOICE_DIALOG).kind === 'found' ? expected('the Voice picker, closed') : OK,
+    },
+  ],
+  fixtures: ['create-voice-selected'],
 };

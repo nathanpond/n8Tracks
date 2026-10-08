@@ -2,7 +2,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { ANY_SUNO_PAGE } from '../../src/adapter/addresses.ts';
 import type { FormJob } from '../../src/adapter/fill.ts';
-import { planSources, SOURCE_ROUTES, type LoadedSource } from '../../src/adapter/sources.ts';
+import {
+  INSPIRATION_ROUTE,
+  planSources,
+  SOURCE_ROUTES,
+  type LoadedSource,
+} from '../../src/adapter/sources.ts';
 import type { Page, Target } from '../../src/adapter/primitives.ts';
 import { OK, present, type Step, type Workflow } from '../../src/adapter/workflow.ts';
 import { ADAPTER_WORKFLOWS } from '../../src/adapter/workflows/index.ts';
@@ -75,6 +80,17 @@ const RUN_RECIPES: Readonly<Record<string, RunRecipe>> = {
   'answer-overwrite': { values: {} },
   'verify-source-advanced': { values: { load: coverOf('00000000-0000-4000-8000-000000000104') } },
   'verify-source-simple': { values: { load: coverOf('00000000-0000-4000-8000-000000000109') } },
+  // An Extend's "Extend from" time (TS-005), typed into the Audio section; it presses nothing. The
+  // snapshot's own time is given, so the guard's run (with no editing commands in jsdom) completes.
+  'set-extend-from': { values: { seconds: 54 } },
+  // The Voice (TS-005): "+ Voice", then a voice's title in the picker, and its Close; on the snapshot
+  // of the voice chosen, nothing is pressed. The picker's Play buttons must never be reached.
+  'close-voice-picker': { values: {} },
+  'choose-voice': {
+    values: {
+      voice: { name: '<redacted 13 chars>', personaId: '00000000-0000-4000-8000-000000000203' },
+    },
+  },
   // The completion watch's refresh prompt (#154): the breadcrumb and the Song's workspace row, which
   // only choose what the library pane shows; nothing else is pressed.
   'refresh-library': { values: { workspaceName: 'My Workspace' } },
@@ -184,11 +200,16 @@ describe('invariant 4: the extension never presses a forbidden control on Suno',
     // Each action's route, on the snapshot of the menu it is in: every step must run there.
     const workflows: Workflow[] = [];
     const recipes: Record<string, RunRecipe> = {};
-    for (const [action, route] of Object.entries(SOURCE_ROUTES)) {
-      const fixture = route.menu === 'Remix' ? 'clip-remix-menu' : 'clip-edit-menu';
+    for (const [action, route] of [
+      ...Object.entries(SOURCE_ROUTES),
+      ['inspiration', INSPIRATION_ROUTE] as const,
+    ]) {
+      // The Remix menu on the clip's own page (TS-005) and in a list (TS-003); Edit in a list.
+      const fixtures =
+        route.menu === 'Remix' ? ['clip-page-remix-menu', 'clip-remix-menu'] : ['clip-edit-menu'];
       for (const workflow of [openSourceMenu, chooseSourceAction]) {
         const id = `${workflow.id}-${action}`;
-        workflows.push({ ...(workflow as unknown as Workflow), id, fixtures: [fixture] });
+        workflows.push({ ...(workflow as unknown as Workflow), id, fixtures });
         recipes[id] = { values: { route }, address: () => SONG_PAGE };
       }
     }
@@ -196,7 +217,13 @@ describe('invariant 4: the extension never presses a forbidden control on Suno',
     expect(
       await exerciseWorkflows(workflows, {
         recipes,
-        snapshots: ['clip-remix-menu', 'clip-edit-menu', 'clip-download-menu'],
+        snapshots: [
+          'clip-page',
+          'clip-page-remix-menu',
+          'clip-remix-menu',
+          'clip-edit-menu',
+          'clip-download-menu',
+        ],
       }),
     ).toEqual([]);
   }, 60_000);
@@ -207,13 +234,16 @@ describe('invariant 4: the extension never presses a forbidden control on Suno',
   });
 
   it('spies on the forbidden controls of every snapshot it runs on', () => {
-    // Complement: the spies are really there. Every snapshot but the playlist page (which has no
-    // Create, Publish, Delete, Trash, or Remove control and no dialog) has at least one.
+    // Complement: the spies are really there. Every snapshot but the playlist page and the clip's
+    // page with its menu closed (TS-005), which have no Create, Publish, Delete, Trash, or Remove
+    // control and no dialog, has at least one.
     const spiedOn = SNAPSHOT_NAMES.filter((name) => {
       document.body.innerHTML = snapshotHtml(name);
       return forbiddenControls(document).length > 0;
     });
-    expect(spiedOn).toEqual(SNAPSHOT_NAMES.filter((name) => name !== 'playlist'));
+    expect(spiedOn).toEqual(
+      SNAPSHOT_NAMES.filter((name) => name !== 'playlist' && name !== 'clip-page'),
+    );
   });
 
   it('finds no request to Suno and no way to the page around the primitives', () => {

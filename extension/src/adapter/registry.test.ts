@@ -159,6 +159,7 @@ describe('the self-check of chained workflows', () => {
     'answer-overwrite': 'Choose the Suno action',
     'verify-source-advanced': 'Choose the Suno action',
     'verify-source-simple': 'Choose the Suno action',
+    'set-extend-from': 'Verify the source (Advanced)',
   };
 
   it('Demo step 1: on the intact Create page, every workflow is ready, waiting for an earlier step, or not for this page', () => {
@@ -298,6 +299,9 @@ describe('the registry', () => {
       'answer-overwrite',
       'verify-source-advanced',
       'verify-source-simple',
+      'set-extend-from',
+      'choose-voice',
+      'close-voice-picker',
       'refresh-library',
       'open-clip-menu',
       'choose-download',

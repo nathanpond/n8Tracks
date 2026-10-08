@@ -26,7 +26,10 @@ import { refreshLibrary } from './watchCompletion.ts';
 import {
   answerOverwrite,
   chooseSourceAction,
+  chooseVoice,
+  closeVoicePicker,
   openSourceMenu,
+  setExtendFrom,
   verifySourceAdvanced,
   verifySourceSimple,
 } from './sources.ts';
@@ -59,6 +62,9 @@ export const ADAPTER_WORKFLOWS: readonly Workflow[] = [
   answerOverwrite,
   verifySourceAdvanced,
   verifySourceSimple,
+  setExtendFrom,
+  chooseVoice,
+  closeVoicePicker,
   refreshLibrary,
   openClipMenu,
   chooseDownload,

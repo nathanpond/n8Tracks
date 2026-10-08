@@ -12,8 +12,14 @@ import type { ObservedMessage } from '../adapter/observed.ts';
 import type { Page } from '../adapter/primitives.ts';
 import type { AdapterSession } from '../adapter/registry.ts';
 import {
+  clipPageShows,
+  EXTEND_FROM,
+  extendSeconds,
+  extendTime,
+  INSPIRATION_ROUTE,
   OVERWRITE_DIALOG,
   planSources,
+  SOURCE_ROUTES,
   sourceName,
   sourceShown,
   type LoadedSource,
@@ -25,7 +31,10 @@ import { formWorkflowsFor } from '../adapter/workflows/index.ts';
 import {
   answerOverwrite,
   chooseSourceAction,
+  chooseVoice,
+  closeVoicePicker,
   openSourceMenu,
+  setExtendFrom,
   verifySourceAdvanced,
   verifySourceSimple,
 } from '../adapter/workflows/sources.ts';
@@ -165,6 +174,13 @@ export function loadByHandFirst(name: string, menu: string, item: string): strin
   return `The extension cannot open the source’s page in Suno yet, so load ${name} by hand: open it in Suno, then More options › ${menu} › ${item}. Back on the Create form, press Continue: the extension checks the source before filling anything else.`;
 }
 
+/** What the clip's page showed instead of the clip (#148, TS-005), in plain words. */
+export const CLIP_PAGE_PROBLEMS = {
+  'not found': 'Suno says “Page not found” at its address',
+  'another clip': 'Suno’s page shows another clip',
+  'nothing yet': 'Suno did not show the clip’s page in time',
+} as const;
+
 /** After the action, Suno did not show the Create form (#148). */
 export function noFormAfter(name: string, action: string): string {
   return `Suno did not open the Create form after ${action} on the source ${name}. Start Generate on Suno again from n8Tracks.`;
@@ -172,6 +188,9 @@ export function noFormAfter(name: string, action: string): string {
 
 /** How long Suno may take to ask "Overwrite Lyrics & Styles?" after an action with no source to see. */
 export const OVERWRITE_WAIT_MS = 3_000;
+
+/** How long Suno may take to ask "Overwrite Styles?" after a voice is chosen (TS-005). */
+export const VOICE_QUESTION_WAIT_MS = 1_000;
 
 /** How long Suno may take to show the source, or to ask first, after the action. */
 export const SOURCE_WAIT_MS = 10_000;
@@ -621,7 +640,12 @@ export class SunoGenerate {
       await this.stop(NO_FORM);
       return;
     }
-    const job: FormJob = loaded === null ? form : { ...form, loaded };
+    const voice = await this.chooseVoice(form);
+    const job: FormJob = {
+      ...form,
+      ...(loaded === null ? {} : { loaded }),
+      ...(voice === null ? {} : { voice }),
+    };
     const context: Omit<FillContext, 'page' | 'signal'> = { job, workspace, results: [] };
     const filling = await this.options.session.run(workflows.fill, context, this.runOptions());
     if (!filling.ok) {
@@ -630,6 +654,54 @@ export class SunoGenerate {
     }
     this.filled = { form: job, workspace };
     await this.review(GENERATE_STEPS.review, job, context.results);
+  }
+
+  /**
+   * Chooses the Version's voice in the Advanced form (#148, TS-005), before the rest is filled: by its
+   * title in the Voice picker when exactly one voice has that name, verified by the link the form
+   * then shows (`/voice/<persona ID>`). Null when the Version has no voice, or the mode's picker was
+   * not captured (Simple); otherwise the voice's outcome, `manual` with the voice named when it could
+   * not be chosen.
+   */
+  private async chooseVoice(form: FormJob): Promise<EntryResult | null> {
+    const key = `songs.${form.mode}.voice`;
+    const value = form.entries[key];
+    if (form.kind !== 'song' || form.mode !== 'advanced' || !isRecord(value)) {
+      return null;
+    }
+    const name = typeof value.name === 'string' ? value.name : '';
+    const personaId = typeof value.personaId === 'string' ? value.personaId : '';
+    if (name.trim() === '' || personaId === '') {
+      return null;
+    }
+    const { page, session } = this.options;
+    const chosen = await session.run(
+      chooseVoice,
+      { voice: { name, personaId } },
+      this.runOptions(),
+    );
+    if (chosen.ok) {
+      // Suno may ask about the styles a voice carries; the Version's own are filled afterwards.
+      await page.wait(() => page.find(OVERWRITE_DIALOG).kind === 'found', VOICE_QUESTION_WAIT_MS);
+      if (page.find(OVERWRITE_DIALOG).kind === 'found') {
+        await session.run(answerOverwrite, {}, this.runOptions());
+      }
+      return {
+        key,
+        outcome: 'verified',
+        note: `The voice “${name}” is chosen on the form: its link is the Version’s voice.`,
+        reportNote: 'The voice is chosen on the form: its link is the Version’s voice.',
+      };
+    }
+    // While the picker is open, Suno hides the rest of the form (TS-005): it is closed first.
+    await session.run(closeVoicePicker, {}, this.runOptions());
+    return {
+      key,
+      outcome: 'manual',
+      note: `Choose the voice “${name}” from + Voice by hand: ${failureText(chosen.failure)}.`,
+      reportNote:
+        'Choose the voice the Version names from + Voice by hand: the extension could not choose it (no single voice of that name in the list).',
+    };
   }
 
   /** Records the phase for the next page load, then goes to the source clip's page (#148). */
@@ -690,6 +762,14 @@ export class SunoGenerate {
         return;
       }
       if (songOfAddress(page.address()) === phase.sunoId) {
+        // The page must show the clip itself (its cover holds the ID), not Suno's 404 (TS-005).
+        await page.wait(() => clipPageShows(page, phase.sunoId) !== 'nothing yet', PAGE_WAIT_MS);
+        const shows = clipPageShows(page, phase.sunoId);
+        if (shows !== 'clip') {
+          this.step = GENERATE_STEPS.source;
+          await this.stop(couldNotOpen(name, CLIP_PAGE_PROBLEMS[shows]));
+          return;
+        }
         await this.chooseAction(form, load);
         return;
       }
@@ -783,18 +863,27 @@ export class SunoGenerate {
           return;
         }
       }
+      const several = load.others.length > 0;
       loaded = {
         key: load.source.key,
         outcome: 'verified',
         note:
           form.mode === 'simple'
             ? `${name} is on the form: the source chip’s thumbnail is the source clip’s (Suno’s Simple chip does not name the action).`
-            : `${name} is on the form: the Audio section names ${load.route.label} and its thumbnail is the source clip’s.`,
+            : several
+              ? `${[name, ...load.others.map(sourceName)].join(' and ')} are on the form: the Audio section names ${load.route.label} and shows each one’s thumbnail.`
+              : `${name} is on the form: the Audio section names ${load.route.label} and its thumbnail is the source clip’s.`,
         reportNote:
           form.mode === 'simple'
             ? 'The source is on the form: the source chip’s thumbnail is the source clip’s (Suno’s Simple chip does not name the action).'
-            : `The source is on the form: the Audio section names ${load.route.label} and its thumbnail is the source clip’s.`,
+            : several
+              ? `The sources are on the form: the Audio section names ${load.route.label} and shows each one’s thumbnail.`
+              : `The source is on the form: the Audio section names ${load.route.label} and its thumbnail is the source clip’s.`,
       };
+      const continueAt = load.source.continueAtSeconds;
+      if (load.route === SOURCE_ROUTES.extend && typeof continueAt === 'number') {
+        loaded = await this.extendFrom(loaded, continueAt);
+      }
     }
     if (!(await this.keepSource(null))) {
       return;
@@ -803,11 +892,49 @@ export class SunoGenerate {
   }
 
   /**
+   * Sets where an Extend continues from (TS-005) and reads it back: the verified source's outcome,
+   * or `failed` with what the form shows.
+   */
+  private async extendFrom(loaded: EntryResult, seconds: number): Promise<EntryResult> {
+    const { page, session } = this.options;
+    const set = await session.run(setExtendFrom, { seconds }, this.runOptions());
+    const time = extendTime(seconds);
+    if (set.ok) {
+      return {
+        ...loaded,
+        note: `${loaded.note ?? ''} It continues from ${time}.`.trim(),
+        reportNote:
+          `${loaded.reportNote ?? ''} The Extend continues from the Version’s time.`.trim(),
+      };
+    }
+    const box = page.find(EXTEND_FROM);
+    const shown = box.kind === 'found' ? extendSeconds(page.read(box.found).value ?? '') : null;
+    return {
+      key: loaded.key,
+      outcome: 'failed',
+      expected: seconds,
+      found: shown,
+      note: `The source is on the form, but its “Extend from” time is not ${time}: set it by hand.`,
+      reportNote:
+        'The source is on the form, but its “Extend from” time is not the Version’s: set it by hand.',
+    };
+  }
+
+  /**
    * The source on the form is not the Version's: the panel asks the user to load it by hand, and
-   * the request waits (reported, so n8Tracks shows why). True once the user pressed Continue.
+   * the request waits (reported, so n8Tracks shows why). True once the user pressed Continue. A
+   * Mashup's second song and further Inspiration songs are always added this way (TS-005 did not
+   * capture adding them).
    */
   private async byHand(load: LoadedSource, why: string): Promise<boolean> {
-    const message = `The source on Suno’s form is not the Version’s (${why}). Load ${sourceName(load.source)} with ${load.route.menu} › ${load.route.item}, then press Continue.`;
+    const name = sourceName(load.source);
+    const others = load.others.map(sourceName).join(' and ');
+    const message =
+      load.others.length === 0
+        ? `The source on Suno’s form is not the Version’s (${why}). Load ${name} with ${load.route.menu} › ${load.route.item}, then press Continue.`
+        : load.route === INSPIRATION_ROUTE
+          ? `Suno’s form does not show every Inspiration song of the Version yet (${why}). Add ${others} as Inspiration by hand (on each song’s page, More options › Remix › Use as Inspiration), with ${name}, then press Continue.`
+          : `Suno’s Mashup does not show both of the Version’s songs yet (${why}). Add ${others} with “Add another song to Mashup”, with ${name}, then press Continue.`;
     return (await this.askByHand(message)) && this.begin(GENERATE_STEPS.verifySource, 'filling');
   }
 
