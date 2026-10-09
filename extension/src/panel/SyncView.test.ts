@@ -93,12 +93,21 @@ describe('Sync to n8Tracks in the panel', () => {
     expect(options.preview).toHaveBeenCalledWith({ kind: 'workspaces', ids: ['w2'] });
   });
 
+  it('says where to find the workspaces when Suno has listed none (TS-007: by the tab, not a refresh)', () => {
+    const empty = view();
+    empty.sync.setAvailable(true, null);
+    empty.choose('workspaces');
+    expect(empty.sync.element.textContent).toContain(
+      'No workspaces yet: open Library on Suno, then click the Workspaces tab (refreshing the page does not load the list), then choose again.',
+    );
+  });
+
   it('chooses playlists by name, and says where to find them when Suno has listed none', async () => {
     const empty = view();
     empty.sync.setAvailable(true, null);
     empty.choose('playlists');
     expect(empty.sync.element.textContent).toContain(
-      'No playlists yet: open Library › Playlists on Suno, then choose again.',
+      'No playlists yet: open Library on Suno, then click the Playlists tab (refreshing the page does not load the list), then choose again.',
     );
     await expectNoAxeViolations(document);
     document.body.innerHTML = '';

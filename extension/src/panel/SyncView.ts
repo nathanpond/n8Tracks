@@ -343,9 +343,11 @@ export class SyncView {
         this.make(
           'p',
           { class: 'detail' },
+          // TS-007: Suno asks for these lists only when its tab is clicked inside Library; a
+          // direct load or refresh of /me/workspaces or /me/playlists shows them from its cache.
           kind === 'workspaces'
-            ? 'No workspaces yet: open Library › Workspaces on Suno, then choose again.'
-            : 'No playlists yet: open Library › Playlists on Suno, then choose again.',
+            ? 'No workspaces yet: open Library on Suno, then click the Workspaces tab (refreshing the page does not load the list), then choose again.'
+            : 'No playlists yet: open Library on Suno, then click the Playlists tab (refreshing the page does not load the list), then choose again.',
         ),
       );
       return group;

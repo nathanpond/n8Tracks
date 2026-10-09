@@ -1,5 +1,5 @@
 import { sunoPageOf, sunoPages } from '../addresses.ts';
-import type { Page, Target } from '../primitives.ts';
+import { PrimitiveError, type Page, type Target } from '../primitives.ts';
 import { expected, OK, present, type Check, type Workflow } from '../workflow.ts';
 import { SUNO_NAVIGATION } from './recognise.ts';
 
@@ -37,10 +37,27 @@ export function listOnPage(page: Page): Check {
 }
 
 /**
- * Makes Suno ask for the next page of the list on screen, by scrolling to its end (TS-003: every
- * list the reader reads loads more on scroll). The library reader runs it once per page, and
- * watches Suno's own response to it; it reads and presses nothing.
+ * Asks Suno for the next page of the list on screen, as a user would. Where the list has Suno's
+ * pager (TS-007: Library › Songs now pages, `‹ [n] ›`, instead of loading more on scroll), its
+ * next-page button is pressed, found by structure ({@link Page.pagerNext}): a pager that does not
+ * look as captured stops the step, and nothing else is pressed. Where there is no pager, the list is
+ * scrolled to its end (TS-003: the Trash, the workspace list, and a playlist load more on scroll).
+ * The library reader runs it once per page and watches Suno's own response to it.
  */
+export function askForMore(page: Page): void {
+  const pager = page.pagerNext();
+  switch (pager.kind) {
+    case 'found':
+      page.click(pager.found);
+      return;
+    case 'mismatch':
+      throw new PrimitiveError(pager.expected);
+    case 'none':
+      page.scrollToEnd();
+  }
+}
+
+/** The workflow the library reader runs to ask for the next page: {@link askForMore}. */
 export const loadMore: Workflow = {
   id: 'load-more',
   title: 'Load more of a Suno list',
@@ -52,10 +69,16 @@ export const loadMore: Workflow = {
       name: 'list',
       expect: ({ page }) => listOnPage(page),
       act: ({ page }) => {
-        page.scrollToEnd();
+        askForMore(page);
       },
       verify: () => OK,
     },
   ],
-  fixtures: ['library-list', 'library-trash', 'playlist'],
+  fixtures: [
+    'library-list',
+    'library-trash',
+    'playlist',
+    'library-songs-page-1',
+    'library-songs-page-2',
+  ],
 };

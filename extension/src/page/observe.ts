@@ -48,6 +48,33 @@ function requestOf(input: Parameters<typeof fetch>[0], init: RequestInit | undef
   return { address: input.url, method: init?.method ?? input.method };
 }
 
+/**
+ * The body of a `fetch` call the observer reads, as `fetch` itself would take it: `init.body` when
+ * the call gives one, else the body of a `Request` passed as the first argument (TS-007: Suno's page
+ * now calls `fetch(request, { headers })`, the method and JSON body on the `Request`). A `Request`'s
+ * body can be read only once, so a clone is read, taken before the page's request goes out; a body
+ * already used, or one that cannot be read, is read as none. Never rejects.
+ */
+function bodyOf(
+  input: Parameters<typeof fetch>[0],
+  init: RequestInit | undefined,
+): Promise<unknown> {
+  if (init?.body !== undefined && init.body !== null) {
+    return Promise.resolve(init.body);
+  }
+  if (typeof input === 'string' || 'href' in input || input.bodyUsed) {
+    return Promise.resolve(undefined);
+  }
+  try {
+    return input
+      .clone()
+      .text()
+      .catch(() => undefined);
+  } catch {
+    return Promise.resolve(undefined);
+  }
+}
+
 /** Wraps `view.fetch`; a second call on the same window does nothing. */
 export function installObserver(view: ObservedWindow): void {
   const marked = view as ObservedWindow & { [installed]?: true };
@@ -71,13 +98,14 @@ export function installObserver(view: ObservedWindow): void {
     response: Response,
     kind: NonNullable<ReturnType<typeof observedKindOf>>,
     address: string,
-    body: unknown,
+    sent: Promise<unknown>,
   ) => {
     if (!response.ok) {
       return;
     }
     try {
       const copy: unknown = await response.clone().json();
+      const body = await sent;
       forward({
         source: OBSERVER_SOURCE,
         type: 'observed',
@@ -96,15 +124,25 @@ export function installObserver(view: ObservedWindow): void {
 
   view.fetch = async (...args: Parameters<typeof fetch>) => {
     const [input, init] = args;
-    const response = await original(...args);
+    let seen: { kind: NonNullable<ReturnType<typeof observedKindOf>>; address: string } | null =
+      null;
+    let sent: Promise<unknown> = Promise.resolve(undefined);
     try {
       const { address, method } = requestOf(input, init);
       const kind = observedKindOf(address, method, view.location.href);
       if (kind !== null) {
-        void observe(response, kind, address, init?.body);
+        seen = { kind, address };
+        // Taken before the request goes out: once the page's fetch has read a Request's body, it
+        // cannot be cloned.
+        sent = bodyOf(input, init);
       }
     } catch {
       // Observing never changes what the page gets.
+    }
+    const response = await original(...args);
+    if (seen !== null) {
+      // Never rejects: `observe` catches what it reads, and `sent` never rejects.
+      void observe(response, seen.kind, seen.address, sent);
     }
     return response;
   };

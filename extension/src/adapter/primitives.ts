@@ -995,6 +995,75 @@ function imageAddressOf(element: Element): string | null {
 }
 
 /** One element {@link Page.readAll} read: never the element itself. */
+/** The next-page button of Suno's list pager (TS-007). It has no name: it is found by structure. */
+export const PAGER_NEXT: Target = {
+  role: 'button',
+  description: "the list pager's next-page button (›), beside the Page label and its # box",
+};
+
+/**
+ * Suno's list pager (TS-007, Library › Songs): no pager on the page (`none`), its next-page button
+ * (`found`), or a pager that does not look as captured (`mismatch`, with what was expected).
+ */
+export type PagerResult =
+  { kind: 'none' } | { kind: 'found'; found: Found } | { kind: 'mismatch'; expected: string };
+
+/**
+ * Finds the next-page button of the list pager by its structure, as TS-007 captured it: one
+ * visible `span` whose whole text is "Page", its parent holding exactly, in order, that span, a
+ * button, one `input` with a placeholder (the page number), and a button, then nothing but buttons.
+ * The button after the input is the next page. Every button there must have no name and show only
+ * an icon; anything else is a mismatch, so a button that could be something else is never pressed.
+ */
+function pagerNextOf(root: ParentNode): PagerResult {
+  const labels = elementsUnder(root).filter(
+    (element) =>
+      element.localName === 'span' &&
+      element.children.length === 0 &&
+      collapse(element.textContent) === 'Page' &&
+      !isHidden(element),
+  );
+  if (labels.length === 0) {
+    return { kind: 'none' };
+  }
+  const mismatch = (what: string): PagerResult => ({
+    kind: 'mismatch',
+    expected: `one list pager (Page, ‹, the page number, ›) ${what}`,
+  });
+  const [label] = labels;
+  if (labels.length > 1 || label === undefined) {
+    return mismatch('on the page, not several');
+  }
+  const container = label.parentElement;
+  if (container === null) {
+    return mismatch('with its controls beside the Page label');
+  }
+  const [first, previous, number, next, ...rest] = [...container.children];
+  if (
+    first !== label ||
+    previous?.localName !== 'button' ||
+    number?.localName !== 'input' ||
+    !number.hasAttribute('placeholder') ||
+    next?.localName !== 'button' ||
+    rest.some((element) => element.localName !== 'button')
+  ) {
+    return mismatch('in that order, with nothing else but buttons after');
+  }
+  const buttons = [previous, next, ...rest];
+  if (
+    buttons.some(
+      (button) =>
+        nameOf(button) !== '' ||
+        collapse(button.textContent) !== '' ||
+        button.querySelector('svg') === null ||
+        button.getAttribute('type') !== 'button',
+    )
+  ) {
+    return mismatch('whose buttons have no name and show only an icon');
+  }
+  return { kind: 'found', found: handle(PAGER_NEXT, next) };
+}
+
 export interface ReadAllEntry {
   name: string;
   reading: Reading;
@@ -1271,6 +1340,15 @@ export class Page {
       throw new PrimitiveError(`${found.target.description} to be in Suno's Download dialog`);
     }
     this.press(element, found.target, 'download-clip');
+  }
+
+  /**
+   * The list pager's next-page button, found by structure ({@link pagerNextOf}); reads only. Press
+   * it with {@link click}, which asks the forbidden-control matcher as for any other control.
+   */
+  pagerNext(): PagerResult {
+    this.trail.target = PAGER_NEXT;
+    return pagerNextOf(this.document);
   }
 
   /**

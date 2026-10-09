@@ -165,10 +165,14 @@ describe('the page observer, replaying the TS-003 fixtures', () => {
         '/api/download/authorize': 'download-authorize.response',
       }),
     );
+    // A Request whose body was already read cannot be cloned: nothing of it is read.
+    const used = new Request(`${API}/api/generate/v2-web/`, {
+      method: 'POST',
+      body: '{"token":"T","mv":"unread-model"}',
+    });
+    await used.text();
 
-    await view.fetch(
-      new Request(`${API}/api/generate/v2-web/`, { method: 'POST', body: '{"token":"T"}' }),
-    );
+    await view.fetch(used);
     await view.fetch(`${API}/api/persona/get-personas/?page=1`);
     await view.fetch(`${API}/api/download/authorize`, { method: 'POST', body: '{}' });
     await settled();
@@ -177,6 +181,7 @@ describe('the page observer, replaying the TS-003 fixtures', () => {
     expect(posted[0]?.message.kind).toBe('create');
     expect(posted[0]?.message.submitted).toBeNull();
     expect(JSON.stringify(posted)).not.toContain('"T"');
+    expect(JSON.stringify(posted)).not.toContain('unread-model');
   });
 
   it("forwards only the download counts of the page's own billing answer, and the page gets it whole (#215)", async () => {
@@ -354,5 +359,127 @@ describe('the page observer, replaying the TS-003 fixtures', () => {
 
     expect(pageFetch).toHaveBeenCalledTimes(1);
     expect(posted).toHaveLength(1);
+  });
+});
+
+/** A `fetch(request, { headers })` call, as Suno's page makes them since TS-007. */
+function asSunoCallsIt(address: string, body: unknown): [Request, RequestInit] {
+  return [
+    new Request(address, { method: 'POST', body: JSON.stringify(body) }),
+    { headers: { 'content-type': 'application/json' } },
+  ];
+}
+
+describe('the page observer, given a Request as Suno now sends it (TS-007)', () => {
+  it('reads the paging fields from the body of a Request, not only from init.body', async () => {
+    const libraryRequest = sunoFixture('feed-v3.library-page-1.request') as { filters: unknown };
+    const workspaceRequest = sunoFixture('feed-v3.workspace-create-wid.request') as {
+      filters: unknown;
+    };
+    const { view, posted } = suno(
+      fixtureAnswer({ '/api/feed/v3': 'feed-v3.library-page-1.response' }),
+    );
+
+    await view.fetch(...asSunoCallsIt(`${API}/api/feed/v3`, libraryRequest));
+    await view.fetch(...asSunoCallsIt(`${API}/api/feed/v3`, workspaceRequest));
+    await settled();
+
+    expect(posted.map(({ message }) => message.kind)).toEqual(['library-feed', 'library-feed']);
+    expect(posted[0]?.message.request).toEqual({
+      cursor: '<redacted cursor>',
+      page: null,
+      filters: libraryRequest.filters,
+      feedId: null,
+    });
+    // The workspace feed on /create?wid= (TS-007): its workspace filter, cursor null.
+    expect(posted[1]?.message.request).toEqual({
+      cursor: null,
+      page: null,
+      filters: workspaceRequest.filters,
+      feedId: null,
+    });
+  });
+
+  it('hands the page its own response, unchanged and still readable, and its Request unread', async () => {
+    const { view, pageFetch, posted } = suno(
+      fixtureAnswer({ '/api/feed/v3': 'feed-v3.library-page-2.response' }),
+    );
+    const [request, init] = asSunoCallsIt(
+      `${API}/api/feed/v3`,
+      sunoFixture('feed-v3.library-page-2.request'),
+    );
+    const answer = await view.fetch(request, init);
+    await settled();
+
+    // The page's own fetch got the very Request and init, the Request's body still unread.
+    expect(pageFetch.mock.calls[0]?.[0]).toBe(request);
+    expect(pageFetch.mock.calls[0]?.[1]).toBe(init);
+    expect(request.bodyUsed).toBe(false);
+    expect(await request.json()).toEqual(sunoFixture('feed-v3.library-page-2.request'));
+    // The response is the one Suno sent, and the page can still read it.
+    expect(answer.bodyUsed).toBe(false);
+    expect(await answer.json()).toEqual(sunoFixture('feed-v3.library-page-2.response'));
+    expect(posted).toHaveLength(1);
+  });
+
+  it('still reads a string init.body, which wins over a Request’s own body as fetch’s does', async () => {
+    const { view, posted } = suno(
+      fixtureAnswer({ '/api/feed/v3': 'feed-v3.library-page-1.response' }),
+    );
+    const library = sunoFixture('feed-v3.library-page-1.request') as { filters: unknown };
+
+    await view.fetch(`${API}/api/feed/v3`, { method: 'POST', body: JSON.stringify(library) });
+    await view.fetch(new Request(`${API}/api/feed/v3`, { method: 'POST', body: '{}' }), {
+      method: 'POST',
+      body: JSON.stringify(library),
+    });
+    await settled();
+
+    expect(posted.map(({ message }) => message.request.filters)).toEqual([
+      library.filters,
+      library.filters,
+    ]);
+  });
+
+  it('gives the Create the values it reads from a Request body (#149), never a secret', async () => {
+    const { view, posted } = suno(
+      fixtureAnswer({ '/api/generate/v2-web/': 'generate-v2-web.songs-advanced.response' }),
+    );
+    const create = sunoFixture('generate-v2-web.songs-advanced.request') as Record<string, unknown>;
+
+    await view.fetch(...asSunoCallsIt(`${API}/api/generate/v2-web/`, create));
+    await settled();
+
+    expect(posted.map(({ message }) => message.kind)).toEqual(['create']);
+    const submitted = posted[0]?.message.submitted ?? null;
+    expect(submitted).not.toBeNull();
+    expect(submitted?.mv).toBe(create.mv);
+    const sent = JSON.stringify(posted);
+    for (const secret of SECRETS) {
+      expect(sent).not.toContain(`"${secret}"`);
+    }
+  });
+
+  it('takes the answer to the pager’s /api/feed/v3/offset for no list', async () => {
+    const { view, posted } = suno(
+      fixtureAnswer({
+        '/api/feed/v3/offset': 'feed-v3-offset.response',
+        '/api/feed/v3': 'feed-v3.library-page-2.response',
+      }),
+    );
+
+    await view.fetch(
+      ...asSunoCallsIt(`${API}/api/feed/v3/offset`, {
+        offset: 19,
+        filters: (sunoFixture('feed-v3.library-page-1.request') as { filters: unknown }).filters,
+      }),
+    );
+    await view.fetch(
+      ...asSunoCallsIt(`${API}/api/feed/v3`, sunoFixture('feed-v3.library-page-2.request')),
+    );
+    await settled();
+
+    expect(posted.map(({ message }) => message.kind)).toEqual(['library-feed']);
+    expect(posted[0]?.message.body).toEqual(sunoFixture('feed-v3.library-page-2.response'));
   });
 });

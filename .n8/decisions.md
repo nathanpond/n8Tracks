@@ -4546,3 +4546,18 @@ Story #219 (on the milestone branch):
 - **Decision:** A Version's model outside the captured list (v6, v6-wild, v6-mini) is `failed` with nothing pressed; a listed model the menu does not show is `unavailable` and the menu is closed. The existing `MODEL_BUTTON` and `SOUNDS_MODEL_BUTTON` targets resolve on both TS-006 snapshots and were not changed.
   **Why:** The extension never guesses a model; this follows the Variety and Key fillers, which fail a value Suno's form does not offer. A newer model Suno adds needs a capture and a list update.
   **Issue:** #146, #147
+
+## M4 captures — TS-007 Suno fetch and paging — 2026-10-08
+
+- **Decision:** The page observer reads a request's body from `init.body` when the call gives one, else from a clone of the `Request` passed as the first argument, taken before the page's request goes out; the method is `init.method`, else the `Request`'s. A used or unreadable body is read as none. `ADAPTER_VERSION` 16.
+  **Why:** TS-007 found Suno's page calling `fetch(request, { headers })`, so `init.body` was undefined, no feed page carried its `filters`, and the library reader turned down every page ("expected a page of the library feed within 20 seconds"). The user's Create (#149) goes through the same wrapper and lost its `submitted` values the same way. A `Request` body can be read once and a used one cannot be cloned, hence the clone before the request goes out.
+  **Issue:** #134, #149
+- **Decision:** `load-more` presses the Library pager's › where the page has a pager and scrolls to the end where it has none. The › has no name, so it is found by structure (`Page.pagerNext`): the one visible span reading "Page", its parent holding that span, a button, an input with a placeholder, a button, then only buttons, all unnamed, textless, and icon-only; the button after the input is ›. Any other shape stops the step with nothing pressed, and the press goes through the click primitive and the forbidden-control matcher.
+  **Why:** Library › Songs now pages (`‹ [n] ›`) instead of loading more on scroll (TS-007); the Trash and playlist pages have no pager and still scroll. `/api/feed/v3/offset`, which › sends first, is not taken for a feed page: the observer matches paths exactly.
+  **Issue:** #134
+- **Decision:** A first page that does not come after a direct load keeps the existing reopen path (`ReadStop.reopen`, the page opened again up to `PAGE_RETRIES` times). Going to page 2 and back, and clicking the Library tab, were not taken. The extension still sends Suno no request of its own.
+  **Why:** TS-007 saw a direct load or refresh of `/me` make no feed request twice in three tries. Page 2's response would arrive before page 1's, and whether going back asks for page 1 again was not seen; the adapter reaches pages by address, never by a link. Whether reopening is enough is to be checked live.
+  **Issue:** #134
+- **Decision:** The panel's empty workspace and playlist lists say "open Library on Suno, then click the Workspaces (Playlists) tab (refreshing the page does not load the list)".
+  **Why:** TS-007: `/me/workspaces` loaded directly made no `/api/project/me` request; clicking the tab inside Library did.
+  **Issue:** #134

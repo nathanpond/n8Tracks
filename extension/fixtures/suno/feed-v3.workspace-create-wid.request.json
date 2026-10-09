@@ -1,0 +1,19 @@
+{
+  "cursor": null,
+  "limit": 20,
+  "filters": {
+    "disliked": "False",
+    "trashed": "False",
+    "fromStudioProject": {
+      "presence": "False"
+    },
+    "stem": {
+      "presence": "False"
+    },
+    "stemComplement": "False",
+    "workspace": {
+      "presence": "True",
+      "workspaceId": "00000000-0000-4000-8000-000000000427"
+    }
+  }
+}

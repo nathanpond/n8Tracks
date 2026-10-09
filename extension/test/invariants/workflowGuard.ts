@@ -42,6 +42,8 @@ const PLAYLIST_ADDRESS = 'https://suno.com/playlist/00000000-0000-4000-8000-0000
 export function snapshotAddress(snapshot: string): string {
   switch (snapshot) {
     case 'library-list':
+    case 'library-songs-page-1':
+    case 'library-songs-page-2':
       return 'https://suno.com/me';
     case 'library-trash':
       return 'https://suno.com/me/trash';
