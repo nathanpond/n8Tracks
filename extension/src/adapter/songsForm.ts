@@ -48,8 +48,9 @@ export const ADVANCED_TAB: Target = {
 
 /**
  * The model menu button beside the mode tabs; its name is the chosen model's label ("v6-mini").
- * The snapshots show it closed only, so the model entries are blocked on a capture (#339) and
- * nothing presses it; there is no target for the menu it opens until a snapshot shows it.
+ * TS-006 (`page.create-songs-model-menu.html`, `page.create-sounds-model-menu.html`): the page has
+ * one model button, shared by the Songs and Sounds tabs, three levels out from the mode tabs (and
+ * from the credits button, which is how Sounds finds it).
  */
 export const MODEL_BUTTON: Target = {
   role: 'button',
@@ -57,6 +58,33 @@ export const MODEL_BUTTON: Target = {
   within: { around: MODE_TABS, levels: 3, description: 'the top of the Create form' },
   description: 'the model button beside the Simple and Advanced tabs',
 };
+
+/**
+ * The menu the model button opens (TS-006): `role="menu"` labelled by the button, so its name is
+ * the model the button shows (`shown`). It holds "Create Custom Model" (a `menuitem` that spends
+ * credits, never pressed) and the models, each a `menuitemradio` with `aria-checked`.
+ */
+export function modelMenu(shown: string): Target {
+  return { role: 'menu', name: shown, description: 'Suno’s model menu' };
+}
+
+function escaped(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * A model in the model menu (TS-006). Only a `menuitemradio` matches, so "Create Custom Model" (a
+ * `menuitem`) never can. Its name runs the model's label into its badge and description ("v6 Pro
+ * Powerful. …"), so the label must be the name's first word: "v6" does not match "v6-wild Pro …".
+ */
+export function modelItem(model: string, shown: string): Target {
+  return {
+    role: 'menuitemradio',
+    name: new RegExp(`^${escaped(model)}(?: |$)`, 'i'),
+    within: modelMenu(shown),
+    description: 'the model in Suno’s model menu',
+  };
+}
 
 /** Simple mode's "+" button in the prompt box, which opens the Add menu. */
 export const ADD_BUTTON: Target = {

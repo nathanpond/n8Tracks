@@ -116,7 +116,8 @@ function kindValues(kind: string, mode: string): Record<string, unknown> {
       'speech.advanced.speech_vocal_gender': 'male',
       'speech.advanced.speech_background_music': true,
       'speech.advanced.speech_variety': 'max',
-      'sounds.single.sounds_model': 'v6',
+      // Not a snapshot's own model, so the model menu is opened and a model chosen (TS-006).
+      'sounds.single.sounds_model': 'v6-wild',
       'sounds.single.sound_description': 'rain on a tin roof',
       'sounds.single.sound_type': 'one_shot',
       'sounds.single.sound_bpm': null,
@@ -152,7 +153,9 @@ function fillValues(mode: string): Record<string, unknown> {
     kind: 'song',
     mode,
     entries: {
-      [`${prefix}model`]: 'v6',
+      // The model button and a model (`menuitemradio`) in its menu (TS-006); the menu's "Create
+      // Custom Model" (a `menuitem` that spends credits) must never be reached.
+      [`${prefix}model`]: 'v6-wild',
       [`${prefix}simple_prompt`]: 'a quiet song',
       // Simple's sections (TS-005): the "+" menu, its Lyrics and Styles items, Write new, Close.
       [`${prefix}simple_add_lyrics`]: 'line one\nline two',

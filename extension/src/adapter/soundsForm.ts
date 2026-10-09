@@ -28,8 +28,8 @@ const CREDITS: Target = {
 };
 
 /**
- * The model button beside the credits (Sounds has no mode tabs); its name is the model's label. Not
- * pressed: the model entries are blocked on a capture of the menu it opens (#339).
+ * The model button beside the credits (Sounds has no mode tabs); its name is the model's label. It
+ * is the same button, and opens the same menu, as on the Songs tab (TS-006, `modelMenu`).
  */
 export const SOUNDS_MODEL_BUTTON: Target = {
   role: 'button',

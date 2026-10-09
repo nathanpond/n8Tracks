@@ -19,6 +19,9 @@ import {
   LYRICS_EDITOR,
   MAX_MODE_OFF,
   MAX_MODE_ON,
+  MODEL_BUTTON,
+  modelItem,
+  modelMenu,
   PERSONALIZE_OFF,
   PERSONALIZE_ON,
   SECTION_CHIP_REMOVE,
@@ -45,6 +48,7 @@ import {
   keyChoice,
   scaleTab,
   SOUND_DESCRIPTION,
+  SOUNDS_MODEL_BUTTON,
   TYPE_LOOP,
   TYPE_ONE_SHOT,
 } from './soundsForm.ts';
@@ -152,18 +156,19 @@ export const FILL_LIMIT_MS = 120_000;
 export const WORKSPACE_ENTRY = 'songs.simple.workspace';
 
 /**
- * `fill` entries whose controls no snapshot shows, so the adapter does not set them (decision D9):
- * the model on Songs and Sounds (#339: no snapshot shows the menu the model button opens, so
- * nothing is chosen from it; TS-005 did not capture it either). The summary tells the user to do
- * them by hand until the owner captures that page state. TS-005 (2026-10-08) captured what the
- * other entries once listed here needed: Simple's Lyrics and Styles sections, Duration's Auto and
- * Custom, and the Sounds Key popover.
+ * `fill` entries whose controls no snapshot shows, so the adapter has no filler for them (decision
+ * D9). None is left: TS-005 (2026-10-08) captured Simple's Lyrics and Styles sections, Duration's
+ * Auto and Custom, and the Sounds Key popover, and TS-006 (2026-10-08) the model menu (#339). An
+ * entry listed here again must have no filler (the coverage test checks it).
  */
-export const BLOCKED_ON_CAPTURE: ReadonlySet<string> = new Set([
-  'songs.simple.model',
-  'songs.advanced.model',
-  'sounds.single.sounds_model',
-]);
+export const BLOCKED_ON_CAPTURE: ReadonlySet<string> = new Set<string>();
+
+/**
+ * The models Suno's model menu offered when TS-006 captured it (2026-10-08), as its items name
+ * them. A Version's model outside this list (an older one, such as v4.5) is failed without the
+ * menu being opened: the extension never guesses a model.
+ */
+export const MODEL_LABELS: readonly string[] = ['v6', 'v6-wild', 'v6-mini'];
 
 /** Variety's steps on the slider, 0 to 4 (`docs/suno-import-field-map.json`). */
 export const VARIETY_STEPS: readonly string[] = ['off', 'normal', 'high', 'extra', 'max'];
@@ -846,6 +851,80 @@ const soundScale: Filler = {
     applyKey(page, keyOf(job) ?? null, value === 'minor' ? 'Minor' : 'Major'),
 };
 
+/** The model a Version names, as the menu's items name it; not applicable when it names none. */
+function wantedModel(value: unknown): Wanted {
+  if (value === null || value === undefined) {
+    return { kind: 'not_applicable', note: 'The Version names no model; Suno keeps its own.' };
+  }
+  const model = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return MODEL_LABELS.includes(model)
+    ? { kind: 'value', value: model }
+    : {
+        kind: 'failed',
+        note: 'The Version’s model is not one Suno’s model menu offers; choose a model by hand.',
+      };
+}
+
+/** The model the button shows ("v6"), as compared: lower case. */
+function modelShown(page: Page, button: Target): Shown {
+  return shown(page, button, (found) => page.read(found).text.trim().toLowerCase());
+}
+
+/**
+ * Chooses `model` in the model menu (TS-006): the model button opens it (unless it is open), the
+ * model's `menuitemradio` is pressed unless it is already checked, and the menu is closed: Suno
+ * closes it on a choice, and the button closes it when it is still open. Only a `menuitemradio` is
+ * ever looked for, so "Create Custom Model" (a `menuitem` that spends credits) is never pressed;
+ * the forbidden-control matcher refuses it too (its name starts with Create). The read-back is the
+ * button's own text, which names the chosen model.
+ */
+async function chooseModel(page: Page, button: Target, model: string): Promise<Written> {
+  const opener = locate(page, button);
+  if (typeof opener === 'string') {
+    return { unavailable: 'Suno’s model button is not on the form.' };
+  }
+  const shownAs = page.read(opener).text.trim();
+  if (page.find(modelMenu(shownAs)).kind !== 'found') {
+    page.click(opener);
+    if (!(await shows(page, modelMenu(shownAs)))) {
+      return { unavailable: 'Suno’s model menu did not open.' };
+    }
+  }
+  const item = locate(page, modelItem(model, shownAs));
+  if (typeof item === 'string') {
+    pressIfThere(page, button);
+    return {
+      unavailable:
+        item === 'disabled'
+          ? 'Suno’s model menu shows that model disabled (it may need a paid plan).'
+          : 'Suno’s model menu does not offer that model.',
+    };
+  }
+  if (page.read(item).checked !== true) {
+    page.click(item);
+  }
+  const closed = await page.wait(() => {
+    const now = locate(page, button);
+    return typeof now === 'string' || page.read(now).expanded !== true;
+  }, SHOW_WAIT_MS);
+  if (!closed) {
+    pressIfThere(page, button);
+  }
+  return undefined;
+}
+
+/** The model (Songs' Simple and Advanced, and Sounds), chosen in the model menu (TS-006). */
+function modelChoice(entry: string, button: Target): Filler {
+  return {
+    entry,
+    control: button.description,
+    text: false,
+    wanted: wantedModel,
+    read: (page) => modelShown(page, button),
+    write: (page, value) => chooseModel(page, button, String(value)),
+  };
+}
+
 /** Speech's and Sounds' fillers (#147), by entry. */
 const SPEECH_AND_SOUNDS_FILLERS: readonly Filler[] = [
   textBox('speech.simple.speech_prompt', SPEECH_PROMPT),
@@ -867,6 +946,7 @@ const SPEECH_AND_SOUNDS_FILLERS: readonly Filler[] = [
     'the Background music switch',
   ),
   slider('speech.advanced.speech_variety', SPEECH_VARIETY_SLIDER, wantedVariety),
+  modelChoice('sounds.single.sounds_model', SOUNDS_MODEL_BUTTON),
   textBox('sounds.single.sound_description', SOUND_DESCRIPTION),
   choice(
     'sounds.single.sound_type',
@@ -884,6 +964,8 @@ const SPEECH_AND_SOUNDS_FILLERS: readonly Filler[] = [
 
 /** One filler per `fill` entry of the field map, except those blocked on a capture. */
 export const FILLERS: readonly Filler[] = [
+  modelChoice('songs.simple.model', MODEL_BUTTON),
+  modelChoice('songs.advanced.model', MODEL_BUTTON),
   textBox('songs.simple.simple_prompt', SONG_DESCRIPTION),
   simpleSection('Lyrics'),
   simpleSection('Styles'),
@@ -949,33 +1031,12 @@ function manualResult(key: string, job: FormJob): EntryResult {
       };
 }
 
-/** An entry blocked on a capture (D9, #339): the model, never chosen by the adapter. */
-function blockedResult(key: string, job: FormJob): EntryResult {
-  const value = job.entries[key];
-  if (value === null || value === undefined) {
-    return {
-      key,
-      outcome: 'not_applicable',
-      note: 'The Version names no model; Suno keeps its own.',
-    };
-  }
-  return {
-    key,
-    outcome: 'manual',
-    expected: typeof value === 'string' ? value : null,
-    note: 'Choose the model in Suno’s model menu by hand: the extension cannot use the model menu yet.',
-  };
-}
-
 /** What each entry that is not filled comes to; null for an entry with a filler. */
 export function unfilledResult(key: string, job: FormJob, workspace: string | null): EntryResult {
   if (key === WORKSPACE_ENTRY) {
     return workspace === null
       ? { key, outcome: 'not_applicable' }
       : { key, outcome: 'set', note: 'Selected by the workspace step.' };
-  }
-  if (BLOCKED_ON_CAPTURE.has(key)) {
-    return blockedResult(key, job);
   }
   const how = FIELD_MAP.find((entry) => entry.entry === key)?.how;
   if (how === 'source') {

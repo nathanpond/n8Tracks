@@ -4534,3 +4534,15 @@ Story #219 (on the milestone branch):
 - **Change:** M5 fix pass. (1) New table `retention_released_audio_files` (migration `20261008070000_AddRetentionReleasedAudioFiles`, classified catalog), and a new retention port `IRetentionRestoreParticipant` run inside every restore (#388). (2) The container now refuses to start when the media folder overlaps `/data` or `/backup`, and the app refuses a data or backup folder inside the media folder (#387). (3) CLAUDE.md invariant 2's guard text names the strengthened guards (#384, #386, #387); the invariant itself is unchanged.
   **Why:** Fixes of verification bugs #384–#390 on `milestone/m5-fixes`.
   **Affects:** M8 portable export/import (#22 epic, #263): the table lists they plan over now include `retention_released_audio_files`; #259 (invariant 2 extended to imported audio paths): its guard text should build on the new structural lists in `MediaMountAccessTests` (`MountPathCalls`, `MountHolderMethods`) rather than the name check; any later restore path inherits the participant through `RetentionService`.
+
+## M4 captures — TS-006 model menu — 2026-10-08
+
+- **Decision:** The model entries (`songs.simple.model`, `songs.advanced.model`, `sounds.single.sounds_model`) have fillers and leave `BLOCKED_ON_CAPTURE`, which is now empty; the "Choose the model in Suno's model menu by hand" result is gone. The filler presses the model button (unless the menu is open), presses the model's `menuitemradio` unless it is checked, closes the menu with the button if Suno leaves it open, and reads the model back from the button's text. `ADAPTER_VERSION` 15.
+  **Why:** TS-006 captured the menu (`page.create-songs-model-menu.html`, `page.create-sounds-model-menu.html`). What follows a choice was not captured, so the button's own text, which names the chosen model, is the read-back rather than `aria-checked` in a menu that may have closed.
+  **Issue:** #146, #147, #339
+- **Decision:** A model item is matched by the first word of its accessible name ("v6 Pro Powerful. …"), case-insensitively, among `menuitemradio`s in the menu labelled by the button. "Create Custom Model" (a `menuitem` costing 100 credits) is never looked for; the forbidden-control matcher already refuses it by name, so no new selector or recognised popup was needed (menus are not dialogs, so the fail-closed dialog rule does not apply).
+  **Why:** The item's text runs label, badge, and description together; a first-word match keeps "v6" from matching "v6-wild", and the role keeps the credit-spending item out of reach twice over.
+  **Issue:** #146, #147
+- **Decision:** A Version's model outside the captured list (v6, v6-wild, v6-mini) is `failed` with nothing pressed; a listed model the menu does not show is `unavailable` and the menu is closed. The existing `MODEL_BUTTON` and `SOUNDS_MODEL_BUTTON` targets resolve on both TS-006 snapshots and were not changed.
+  **Why:** The extension never guesses a model; this follows the Variety and Key fillers, which fail a value Suno's form does not offer. A newer model Suno adds needs a capture and a list update.
+  **Issue:** #146, #147

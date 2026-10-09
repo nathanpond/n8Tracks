@@ -14,8 +14,9 @@ import {
   type Filler,
   type FormJob,
   fillEntry,
+  MODEL_LABELS,
 } from './fill.ts';
-import type { Page } from './primitives.ts';
+import { ForbiddenControlError, type Page } from './primitives.ts';
 
 /**
  * The Create form fillers (#146 Songs, #147 Speech and Sounds) against the TS-003 snapshots, with Suno's behaviour stood in
@@ -85,7 +86,7 @@ function job(
 
 /** Values unlike the snapshots' own, so every filler has something to change. */
 const ADVANCED_VALUES: Record<string, unknown> = {
-  model: 'v6-mini',
+  model: 'v6-wild',
   lyrics: '[Verse]\nfirst line\n\nsecond line',
   styles: 'dream pop, shoegaze',
   exclude_styles: 'metal',
@@ -101,7 +102,7 @@ const ADVANCED_VALUES: Record<string, unknown> = {
 };
 
 const SIMPLE_VALUES: Record<string, unknown> = {
-  model: 'v6-mini',
+  model: 'v6-wild',
   simple_prompt: 'a quiet song about trains',
   simple_add_lyrics: '[Verse]\nfirst line\nsecond line',
   simple_add_styles: 'dream pop',
@@ -119,7 +120,7 @@ const SPEECH_ADVANCED_VALUES: Record<string, unknown> = {
 };
 
 const SOUND_VALUES: Record<string, unknown> = {
-  sounds_model: 'v6-mini',
+  sounds_model: 'v6-wild',
   sound_description: 'rain on a tin roof',
   sound_type: 'one_shot',
   sound_bpm: 90,
@@ -244,8 +245,18 @@ function labelledButtons(section: Element, text: string): Element[] {
   return [...(label?.parentElement?.parentElement?.querySelectorAll('button') ?? [])];
 }
 
+/** The model button (TS-006): the one menu button whose text is a model's label. */
+function modelButton(): Element[] {
+  return [...document.querySelectorAll('button[aria-haspopup="menu"]')].filter((button) =>
+    /^v\d/.test(button.textContent.trim()),
+  );
+}
+
 /** The elements of each filler's control in the snapshot. */
 const CONTROLS: Readonly<Record<string, () => Element[]>> = {
+  'songs.simple.model': modelButton,
+  'songs.advanced.model': modelButton,
+  'sounds.single.sounds_model': modelButton,
   'songs.simple.simple_prompt': () => [...document.querySelectorAll('textarea')],
   'songs.simple.simple_add_lyrics': addButton,
   'songs.simple.simple_add_styles': addButton,
@@ -324,6 +335,18 @@ const BREAKERS: Readonly<Record<string, (controls: Element[]) => void>> = {
       { capture: true, signal: documentListeners.signal },
     );
   },
+  // A model in the model menu that does not take when pressed (the menu opens only when pressed).
+  modelItem: () => {
+    document.addEventListener(
+      'click',
+      (event) => {
+        if ((event.target as Element).closest('[role="menuitemradio"]') !== null) {
+          event.stopPropagation();
+        }
+      },
+      { capture: true, signal: documentListeners.signal },
+    );
+  },
   // The Key popover's Apply that does nothing (the popover opens only when pressed).
   apply: () => {
     document.addEventListener(
@@ -339,6 +362,9 @@ const BREAKERS: Readonly<Record<string, (controls: Element[]) => void>> = {
 };
 
 const BREAK: Readonly<Record<string, keyof typeof BREAKERS>> = {
+  'songs.simple.model': 'modelItem',
+  'songs.advanced.model': 'modelItem',
+  'sounds.single.sounds_model': 'modelItem',
   'songs.simple.simple_prompt': 'text',
   'songs.simple.simple_add_lyrics': 'editor',
   'songs.simple.simple_add_styles': 'dialogText',
@@ -372,14 +398,17 @@ const BREAK: Readonly<Record<string, keyof typeof BREAKERS>> = {
  * every tab, has a filler, a success case, and a read-back failure case, except the workspace (the
  * workspace story's) and the entries blocked on a capture (D9), which have none.
  */
-function coverageProblems(fillers: readonly Filler[]): string[] {
+function coverageProblems(
+  fillers: readonly Filler[],
+  blocked: ReadonlySet<string> = BLOCKED_ON_CAPTURE,
+): string[] {
   const problems: string[] = [];
   for (const { entry, how } of FIELD_MAP) {
     if (how !== 'fill' || entry === WORKSPACE_ENTRY) {
       continue;
     }
     const filler = fillers.filter((candidate) => candidate.entry === entry);
-    if (BLOCKED_ON_CAPTURE.has(entry)) {
+    if (blocked.has(entry)) {
       if (filler.length > 0) {
         problems.push(`${entry}: has a filler but is listed as blocked on a capture`);
       }
@@ -557,36 +586,6 @@ describe('the Songs form fillers', () => {
     });
   });
 
-  // #339: no snapshot shows the model menu open, so the model is never chosen from it.
-  it('reports the model as to choose by hand, pressing nothing for it (blocked on a capture)', async () => {
-    load(ADVANCED);
-    const pressed: string[] = [];
-    document.addEventListener(
-      'click',
-      (event) => {
-        pressed.push((event.target as Element).getAttribute('aria-haspopup') ?? '');
-      },
-      { capture: true },
-    );
-
-    const results = byKey(
-      await verifyForm(page, job('advanced', { ...ADVANCED_VALUES, model: 'v6-wild' }), null, true),
-    );
-
-    expect(results.get('songs.advanced.model')).toMatchObject({
-      outcome: 'manual',
-      expected: 'v6-wild',
-      note: 'Choose the model in Suno’s model menu by hand: the extension cannot use the model menu yet.',
-    });
-    expect(pressed).not.toContain('menu');
-    expect(document.querySelector('[role="menu"]')).toBeNull();
-
-    const none = byKey(
-      await verifyForm(page, job('advanced', { ...ADVANCED_VALUES, model: null }), null, false),
-    );
-    expect(none.get('songs.advanced.model')?.outcome).toBe('not_applicable');
-  });
-
   it('never presses Create, and presses nothing outside the form’s own controls', async () => {
     load(ADVANCED);
     const pressed: string[] = [];
@@ -600,7 +599,14 @@ describe('the Songs form fillers', () => {
 
     await verifyForm(page, job('advanced', ADVANCED_VALUES), null, true);
 
-    expect(pressed.sort()).toEqual(['Male', 'Off', 'Off']);
+    // The model button, and the model in its menu (TS-006); never Create Custom Model.
+    expect(pressed.sort()).toEqual([
+      'Male',
+      'Off',
+      'Off',
+      'v6-mini',
+      'v6-wildProBest for experimental ideas.',
+    ]);
   });
 });
 
@@ -625,7 +631,7 @@ describe('the summary’s other entries', () => {
     const results = await verifyForm(page, simple, 'My Workspace', true);
 
     expect(results.map((result) => [result.key, result.outcome])).toEqual([
-      ['songs.simple.model', 'manual'],
+      ['songs.simple.model', 'set'],
       ['songs.simple.simple_prompt', 'set'],
       ['songs.simple.simple_add_lyrics', 'set'],
       ['songs.simple.simple_add_styles', 'set'],
@@ -701,11 +707,15 @@ describe('the coverage of the fill entries on every tab (#146 AC 8, #147 AC 4)',
     expect(coverageProblems(without)).toEqual([`${entry}: has 0 fillers, not one`]);
   });
 
-  it('lists exactly the entries no snapshot shows as blocked on a capture: the model menu (D9, #339)', () => {
-    expect([...BLOCKED_ON_CAPTURE].sort()).toEqual([
-      'songs.advanced.model',
-      'songs.simple.model',
-      'sounds.single.sounds_model',
+  it('lists no entry as blocked on a capture: TS-006 captured the model menu, the last (D9, #339)', () => {
+    expect([...BLOCKED_ON_CAPTURE]).toEqual([]);
+  });
+
+  it('bites: an entry listed as blocked on a capture must have no filler', () => {
+    const blocked = new Set(['songs.advanced.model']);
+
+    expect(coverageProblems(FILLERS, blocked)).toEqual([
+      'songs.advanced.model: has a filler but is listed as blocked on a capture',
     ]);
   });
 });
@@ -754,13 +764,13 @@ describe('the Speech and Sounds summaries (#147)', () => {
     expect(pressed.sort()).toEqual(['Male', 'On']);
   });
 
-  it('lists the six Sounds entries: five set, and the model to do by hand (#339)', async () => {
+  it('lists the six Sounds entries, the model chosen in the model menu (TS-006)', async () => {
     load(SOUNDS);
 
     const results = await verifyForm(page, job('single', SOUND_VALUES, {}, 'sound'), null, true);
 
     expect(results.map((result) => [result.key, result.outcome])).toEqual([
-      ['sounds.single.sounds_model', 'manual'],
+      ['sounds.single.sounds_model', 'set'],
       ['sounds.single.sound_description', 'set'],
       ['sounds.single.sound_type', 'set'],
       ['sounds.single.sound_bpm', 'set'],
@@ -859,24 +869,6 @@ describe('the Speech and Sounds summaries (#147)', () => {
     });
   });
 
-  it('reports the Sound model as to choose by hand (#339: blocked on a capture)', async () => {
-    load(SOUNDS);
-
-    const results = byKey(
-      await verifyForm(
-        page,
-        job('single', { ...SOUND_VALUES, sounds_model: 'v6-wild' }, {}, 'sound'),
-        null,
-        true,
-      ),
-    );
-
-    expect(results.get('sounds.single.sounds_model')).toMatchObject({
-      outcome: 'manual',
-      expected: 'v6-wild',
-    });
-  });
-
   it('deselects the Speech Vocal Gender for None, and reports a Type Suno does not offer as failed', async () => {
     load(SPEECH_ADVANCED);
 
@@ -939,7 +931,10 @@ describe('Simple’s Lyrics and Styles sections (#146, TS-005)', () => {
     document.querySelector('[role="menu"]')?.remove();
     const pressed = recordPresses();
 
-    const results = byKey(await verifyForm(page, job('simple', SIMPLE_VALUES), null, true));
+    // The snapshot's model is v6, so the model button is not pressed.
+    const results = byKey(
+      await verifyForm(page, job('simple', { ...SIMPLE_VALUES, model: 'v6' }), null, true),
+    );
 
     expect(results.get('songs.simple.simple_add_lyrics')).toMatchObject({ outcome: 'set' });
     expect(results.get('songs.simple.simple_add_styles')).toMatchObject({ outcome: 'set' });
@@ -983,7 +978,12 @@ describe('Simple’s Lyrics and Styles sections (#146, TS-005)', () => {
     const results = byKey(
       await verifyForm(
         page,
-        job('simple', { ...SIMPLE_VALUES, simple_add_lyrics: shown, simple_add_styles: null }),
+        job('simple', {
+          ...SIMPLE_VALUES,
+          model: 'v6',
+          simple_add_lyrics: shown,
+          simple_add_styles: null,
+        }),
         null,
         true,
       ),
@@ -1003,6 +1003,7 @@ describe('Simple’s Lyrics and Styles sections (#146, TS-005)', () => {
         page,
         job('simple', {
           ...SIMPLE_VALUES,
+          model: 'v6',
           simple_add_lyrics: null,
           simple_add_styles: 'dream pop',
         }),
@@ -1261,5 +1262,230 @@ describe('the verification report', () => {
       'attach the audio file by hand (the Version’s file note says which)',
     );
     expect(notes.get('songs.simple.voice')).toContain('Choose the voice the Version names');
+  });
+});
+
+describe('the model menu (#146, #147, TS-006)', () => {
+  const SONGS_MENU = 'create-songs-model-menu';
+  const SOUNDS_MENU = 'create-sounds-model-menu';
+
+  /** Each model entry, on the TS-006 snapshot of its tab (the menu open, v6 checked). */
+  const CASES = [
+    [SONGS_MENU, 'songs.advanced.model', 'advanced', 'song'],
+    [SONGS_MENU, 'songs.simple.model', 'simple', 'song'],
+    [SOUNDS_MENU, 'sounds.single.sounds_model', 'single', 'sound'],
+  ] as const;
+
+  function modelFiller(entry: string): Filler {
+    const filler = FILLERS.find((candidate) => candidate.entry === entry);
+    if (filler === undefined) {
+      throw new Error(`no filler for ${entry}`);
+    }
+    return filler;
+  }
+
+  function modelJob(entry: string, mode: string, kind: string, model: unknown): FormJob {
+    return job(mode, { [entry.split('.')[2] ?? '']: model }, {}, kind);
+  }
+
+  function shownModel(): string | undefined {
+    return modelButton()[0]?.textContent.trim();
+  }
+
+  /** The presses that reached "Create Custom Model" (a `menuitem`, which spends credits). */
+  function recordCustomModelPresses(): Element[] {
+    const pressed: Element[] = [];
+    document.addEventListener(
+      'click',
+      (event) => {
+        const item = (event.target as Element).closest('[role="menuitem"]');
+        if (item !== null) {
+          pressed.push(item);
+        }
+      },
+      { capture: true, signal: documentListeners.signal },
+    );
+    return pressed;
+  }
+
+  it.each(CASES)(
+    '%s, %s: chooses the model in the open menu and reads it back from the button',
+    async (snapshot, entry, mode, kind) => {
+      load(snapshot);
+      const pressed = recordPresses();
+
+      const result = await fillEntry(
+        page,
+        modelFiller(entry),
+        modelJob(entry, mode, kind, 'v6-wild'),
+      );
+
+      expect(result).toEqual({ key: entry, outcome: 'set', expected: 'v6-wild' });
+      expect(pressed).toEqual(['v6-wildProBest for experimental ideas.']);
+      expect(shownModel()).toBe('v6-wild');
+      expect(document.querySelector('[role="menu"]')).toBeNull();
+    },
+  );
+
+  it.each(CASES)(
+    '%s, %s: opens the menu with the model button when it is closed, matching the name case-insensitively',
+    async (snapshot, entry, mode, kind) => {
+      load(snapshot);
+      document.querySelector('[role="menu"]')?.closest('[data-base-ui-portal]')?.remove();
+      modelButton()[0]?.setAttribute('aria-expanded', 'false');
+      const pressed = recordPresses();
+
+      const result = await fillEntry(
+        page,
+        modelFiller(entry),
+        modelJob(entry, mode, kind, 'V6-Mini'),
+      );
+
+      expect(result).toMatchObject({ outcome: 'set', expected: 'v6-mini' });
+      expect(pressed).toEqual([
+        'v6',
+        'v6-miniA free, more efficient version of premium v6 models.',
+      ]);
+      expect(shownModel()).toBe('v6-mini');
+      expect(document.querySelector('[role="menu"]')).toBeNull();
+    },
+  );
+
+  it.each(CASES)(
+    '%s, %s: is failed with what the button shows when the choice does not take, and closes the menu',
+    async (snapshot, entry, mode, kind) => {
+      load(snapshot);
+      BREAKERS.modelItem?.([]);
+      const pressed = recordPresses();
+
+      const result = await fillEntry(
+        page,
+        modelFiller(entry),
+        modelJob(entry, mode, kind, 'v6-wild'),
+      );
+
+      expect(result).toMatchObject({ outcome: 'failed', expected: 'v6-wild', found: 'v6' });
+      // The model, then the button to close the menu Suno left open.
+      expect(pressed).toEqual(['v6-wildProBest for experimental ideas.', 'v6']);
+      expect(document.querySelector('[role="menu"]')).toBeNull();
+    },
+  );
+
+  it.each(CASES)(
+    '%s, %s: fails a model the menu does not offer (v4.5) without pressing anything',
+    async (snapshot, entry, mode, kind) => {
+      load(snapshot);
+      const pressed = recordPresses();
+
+      const result = await fillEntry(page, modelFiller(entry), modelJob(entry, mode, kind, 'v4.5'));
+
+      expect(result).toEqual({
+        key: entry,
+        outcome: 'failed',
+        note: 'The Version’s model is not one Suno’s model menu offers; choose a model by hand.',
+      });
+      expect(pressed).toEqual([]);
+      expect(shownModel()).toBe('v6');
+    },
+  );
+
+  it.each(CASES)(
+    '%s, %s: presses nothing when the model is already chosen',
+    async (snapshot, entry, mode, kind) => {
+      load(snapshot);
+      const pressed = recordPresses();
+
+      const result = await fillEntry(page, modelFiller(entry), modelJob(entry, mode, kind, 'v6'));
+
+      expect(result).toEqual({ key: entry, outcome: 'set', expected: 'v6' });
+      expect(pressed).toEqual([]);
+    },
+  );
+
+  it.each(CASES)(
+    '%s, %s: is not applicable when the Version names no model, and presses nothing',
+    async (snapshot, entry, mode, kind) => {
+      load(snapshot);
+      const pressed = recordPresses();
+
+      const result = await fillEntry(page, modelFiller(entry), modelJob(entry, mode, kind, null));
+
+      expect(result).toMatchObject({ outcome: 'not_applicable' });
+      expect(pressed).toEqual([]);
+    },
+  );
+
+  it.each(CASES)(
+    '%s, %s: is unavailable, the menu closed, when the menu has no item for a known model',
+    async (snapshot, entry, mode, kind) => {
+      load(snapshot);
+      for (const item of document.querySelectorAll('[role="menuitemradio"]')) {
+        if (item.textContent.startsWith('v6-wild')) {
+          item.remove();
+        }
+      }
+
+      const result = await fillEntry(
+        page,
+        modelFiller(entry),
+        modelJob(entry, mode, kind, 'v6-wild'),
+      );
+
+      expect(result).toMatchObject({
+        outcome: 'unavailable',
+        note: 'Suno’s model menu does not offer that model.',
+      });
+      expect(document.querySelector('[role="menu"]')).toBeNull();
+    },
+  );
+
+  it.each(CASES)(
+    '%s, %s: never presses Create Custom Model, whichever model is chosen',
+    async (snapshot, entry, mode, kind) => {
+      for (const model of MODEL_LABELS) {
+        load(snapshot);
+        // The menu closed, so the button opens it again for every model.
+        document.querySelector('[role="menu"]')?.closest('[data-base-ui-portal]')?.remove();
+        const customPresses = recordCustomModelPresses();
+
+        await expect(
+          fillEntry(page, modelFiller(entry), modelJob(entry, mode, kind, model)),
+        ).resolves.toMatchObject({ outcome: 'set' });
+
+        expect(customPresses).toEqual([]);
+        standIn.stop();
+        documentListeners.abort();
+        documentListeners = new AbortController();
+      }
+    },
+  );
+
+  it('bites: a filler that pressed Create Custom Model would be refused, and the press recorded', async () => {
+    load(SONGS_MENU);
+    const customPresses = recordCustomModelPresses();
+    const custom: Filler = {
+      ...modelFiller('songs.advanced.model'),
+      write: (shownPage) => {
+        const found = shownPage.find({
+          role: 'menuitem',
+          name: /^Create Custom Model\b/,
+          description: 'Create Custom Model',
+        });
+        if (found.kind === 'found') {
+          shownPage.click(found.found);
+        }
+      },
+    };
+
+    await expect(
+      fillEntry(page, custom, modelJob('songs.advanced.model', 'advanced', 'song', 'v6-wild')),
+    ).rejects.toBeInstanceOf(ForbiddenControlError);
+    expect(customPresses).toEqual([]);
+
+    // Were the matcher not to refuse it, the press would reach the item and be recorded.
+    document
+      .querySelector('[role="menuitem"]')
+      ?.dispatchEvent(new Event('click', { bubbles: true }));
+    expect(customPresses).toHaveLength(1);
   });
 });

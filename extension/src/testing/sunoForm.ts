@@ -22,6 +22,14 @@
  * - the Sounds Key button opens the Key popover; a note or Any becomes the one chosen; Apply closes
  *   it and the button shows the key ("F# min"; a major key as "C maj", which TS-005 did not capture).
  *
+ * And what TS-006 recorded (the menu's markup is taken from its sanitized snapshot; what follows a
+ * choice was not captured, and is done here as Base UI's menus do it):
+ *
+ * - the model button opens the model menu, labelled by the button, the model it shows checked; the
+ *   button pressed again closes it;
+ * - a model (`menuitemradio`) pressed becomes the one checked, the button shows its label, and the
+ *   menu closes. "Create Custom Model" does nothing here: the adapter must never reach it.
+ *
  * Text boxes need no stand-in: the native value setter works in jsdom.
  */
 
@@ -280,12 +288,67 @@ function keyPicker(document: Document, target: Element): boolean {
   return false;
 }
 
+/** A model menu item's label: its first text ("v6" of "v6 Pro Powerful. …"). */
+function modelLabelOf(item: Element): string {
+  return item.querySelector('.truncate')?.textContent.trim() ?? '';
+}
+
+/** Sets the text the model button shows, leaving its icon. */
+function showModel(button: Element, label: string): void {
+  const content = button.querySelector('.hxc-btn-content') ?? button;
+  const text = [...content.childNodes].find((node) => node.nodeType === node.TEXT_NODE);
+  if (text === undefined) {
+    content.prepend(label);
+  } else {
+    text.textContent = label;
+  }
+}
+
+/** The model button and the model menu (TS-006). */
+function modelPicker(document: Document, target: Element): boolean {
+  const button = target.closest('button[aria-haspopup="menu"]');
+  if (button !== null && /^v\d/i.test(button.textContent.trim())) {
+    const id = idOf(button, 'stand-in-model');
+    const open = document.querySelector(`[role="menu"][aria-labelledby="${id}"]`);
+    if (open !== null) {
+      open.closest('[data-base-ui-portal]')?.remove();
+      open.remove();
+      button.setAttribute('aria-expanded', 'false');
+      return true;
+    }
+    const menu = fromSnapshot(document, 'create-songs-model-menu', '[role="menu"]');
+    menu.setAttribute('aria-labelledby', id);
+    const shown = button.textContent.trim().toLowerCase();
+    for (const item of menu.querySelectorAll('[role="menuitemradio"]')) {
+      item.setAttribute('aria-checked', String(modelLabelOf(item).toLowerCase() === shown));
+    }
+    document.body.append(menu);
+    button.setAttribute('aria-expanded', 'true');
+    return true;
+  }
+  const item = target.closest('[role="menuitemradio"]');
+  const menu = item?.closest('[role="menu"]');
+  const opener = document.getElementById(menu?.getAttribute('aria-labelledby') ?? '');
+  if (item === null || menu === null || menu === undefined || opener === null) {
+    return false;
+  }
+  for (const other of menu.querySelectorAll('[role="menuitemradio"]')) {
+    other.setAttribute('aria-checked', String(other === item));
+  }
+  showModel(opener, modelLabelOf(item));
+  opener.setAttribute('aria-expanded', 'false');
+  menu.closest('[data-base-ui-portal]')?.remove();
+  menu.remove();
+  return true;
+}
+
 /** Starts the stand-in on `document`; `stop` removes it (and the editor commands). */
 export function standInForSuno(document: Document): StandIn {
   const commands: string[] = [];
   const onClick = (event: Event) => {
     const target = event.target as Element;
     if (
+      modelPicker(document, target) ||
       simpleSections(document, target) ||
       durationCustom(document, target) ||
       keyPicker(document, target)
