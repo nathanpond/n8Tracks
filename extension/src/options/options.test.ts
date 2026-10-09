@@ -8,7 +8,7 @@ import type { Request, ResponseFor } from '../messages.ts';
 import { expectNoAxeViolations, loadPage } from '../testing/a11y.ts';
 import { fakeBrowser, jsonResponse } from '../testing/fakeBrowser.ts';
 import optionsHtml from './options.html?raw';
-import { PERMISSION_DECLINED_MESSAGE, startOptions } from './options.ts';
+import { NO_CONNECT_ANSWER_MESSAGE, PERMISSION_DECLINED_MESSAGE, startOptions } from './options.ts';
 
 const ID = 'abcdefghijklmnopabcdefghijklmnop';
 const TOKEN = 'n8t_0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefg';
@@ -63,7 +63,8 @@ async function open(options: { grant?: boolean; answer?: () => Promise<Response>
     route(
       connection,
       request,
-      { id: ID, url: `chrome-extension://${ID}/options/options.html` },
+      // The manifest opens the options page in a tab, so Chrome names a tab for it (#128).
+      { id: ID, url: `chrome-extension://${ID}/options/options.html`, tab: { id: 12 } },
       ID,
       diagnostics,
     ) as Promise<ResponseFor[T['type']]>;
@@ -121,6 +122,29 @@ describe('the options page', () => {
       token: TOKEN,
     });
     await expectNoAxeViolations(document);
+  });
+
+  it('says so, rather than showing nothing, when the service worker refuses Connect', async () => {
+    const send = vi.fn((request: Request) =>
+      Promise.resolve(
+        request.type === 'connect'
+          ? { refused: 'connect is only for the extension pages' }
+          : { status: 'not-paired' },
+      ),
+    );
+    await startOptions(document, {
+      manifest: { name: 'n8Tracks', version: '0.1.0' },
+      send: send as unknown as Parameters<typeof startOptions>[1]['send'],
+      requestPermissions: () => Promise.resolve(true),
+    });
+    fill('https://n8tracks.example.com', TOKEN);
+
+    submit();
+
+    await vi.waitFor(() => {
+      expect(text('result')).toBe(NO_CONNECT_ANSWER_MESSAGE);
+    });
+    expect((document.getElementById('connect') as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('stays disconnected, says why, and stores no token when the permission is declined', async () => {

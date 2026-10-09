@@ -42,6 +42,38 @@ describe('the service worker router', () => {
     });
   });
 
+  it('lets the options page connect when it is open in a tab, as the manifest opens it', async () => {
+    const inTab = { ...PAGE, tab: { id: 12 } };
+    const reply = await route(
+      connection(),
+      { type: 'connect', address: 'https://n8tracks.example.com', token: 'n8t_x' },
+      inTab,
+      ID,
+    );
+
+    expect(reply).not.toHaveProperty('refused');
+    expect(await route(connection(), { type: 'disconnect' }, inTab, ID)).toEqual({
+      status: 'not-paired',
+    });
+  });
+
+  it('still refuses connect from a content script whose tab shows an extension-like path', async () => {
+    const lookalike = {
+      id: ID,
+      url: `https://n8tracks.example.com/chrome-extension://${ID}/options`,
+      tab: { id: 4 },
+    };
+
+    expect(
+      await route(
+        connection(),
+        { type: 'connect', address: 'https://n8tracks.example.com', token: 'n8t_x' },
+        lookalike,
+        ID,
+      ),
+    ).toHaveProperty('refused');
+  });
+
   it('refuses another extension and anything that is not a request', async () => {
     expect(
       await route(connection(), { type: 'state' }, { ...PAGE, id: 'other' }, ID),

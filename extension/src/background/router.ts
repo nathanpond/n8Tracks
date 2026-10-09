@@ -31,12 +31,12 @@ export interface Refusal {
 
 /**
  * Whether the sender is one of the extension's own pages (popup, options): its URL is inside the
- * extension and it is not a content script in a tab.
+ * extension. A content script's URL is the web page it runs in, never this origin. The options page
+ * opens in a tab (`open_in_tab`), so a sender's tab says nothing about which kind it is.
  */
 function isExtensionPage(sender: Sender, extensionId: string): boolean {
   return (
     sender.id === extensionId &&
-    sender.tab === undefined &&
     sender.url?.startsWith(`chrome-extension://${extensionId}/`) === true
   );
 }

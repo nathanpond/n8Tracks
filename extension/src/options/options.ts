@@ -36,6 +36,18 @@ export function saveWithLink(page: Document, fileName: string, text: string): vo
 export const PERMISSION_DECLINED_MESSAGE =
   'The browser did not give the extension access to suno.com and your n8Tracks, so it stays disconnected. Choose Connect again and allow access.';
 
+/** Shown when the service worker answers Connect with something that is not a connect result. */
+export const NO_CONNECT_ANSWER_MESSAGE =
+  'The extension could not connect: its background service did not accept the request. Reload the extension and try again; if it keeps happening, download the diagnostic report.';
+
+function isConnectResult(value: unknown): value is ConnectResult {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { ok?: unknown }).ok === 'boolean'
+  );
+}
+
 /** What the user asked to connect to. */
 interface Pending {
   address: N8TracksAddress;
@@ -87,8 +99,13 @@ export async function startOptions(page: Document, options: OptionsPageOptions):
     element(page, 'insecure').hidden = !(parsed.ok && parsed.value.insecure);
   };
 
-  const finish = (outcome: ConnectResult) => {
+  const finish = (outcome: unknown) => {
     connectButton.disabled = false;
+    // A refusal or no answer at all must not leave the result empty (#128).
+    if (!isConnectResult(outcome)) {
+      result.textContent = NO_CONNECT_ANSWER_MESSAGE;
+      return;
+    }
     if (outcome.ok) {
       tokenInput.value = '';
       show(outcome.state);
@@ -109,7 +126,7 @@ export async function startOptions(page: Document, options: OptionsPageOptions):
         tokenInput.focus();
         return;
       default:
-        result.textContent = outcome.message;
+        result.textContent = outcome.message || NO_CONNECT_ANSWER_MESSAGE;
     }
   };
 
