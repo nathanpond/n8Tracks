@@ -8,7 +8,7 @@
 # so a two-platform build needs no emulation for them. Tests are not run here.
 
 # --- Frontend: web/dist --------------------------------------------------------------------------
-FROM --platform=$BUILDPLATFORM node:24-slim AS web
+FROM --platform=$BUILDPLATFORM node:25-slim AS web
 WORKDIR /src/web
 
 # Dependencies first, so this layer is reused until the lock file changes.
