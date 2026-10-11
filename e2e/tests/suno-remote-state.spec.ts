@@ -183,8 +183,11 @@ test.describe('Following Suno', () => {
     try {
       const trashedId = randomUUID();
       const missingId = randomUUID();
-      const trashed = clip(trashedId, `Follow trashed ${stamp}`, workspace.id, stamp, 0);
-      const missing = clip(missingId, `Follow missing ${stamp}`, workspace.id, stamp, 1);
+      // #419: one title (case aside), so the two clips stay one Song.
+      const trashedTitle = `Follow ${stamp}`;
+      const missingTitle = trashedTitle.toUpperCase();
+      const trashed = clip(trashedId, trashedTitle, workspace.id, stamp, 0);
+      const missing = clip(missingId, missingTitle, workspace.id, stamp, 1);
 
       // 1. Two clips imported (a sync that did not read the whole library marks nothing missing).
       const first = await uploadExport(
@@ -201,7 +204,7 @@ test.describe('Following Suno', () => {
       await expect(page.getByTestId('commit-outcomes')).toHaveText('2 records imported.');
       await page
         .getByTestId('commit-songs')
-        .getByRole('link', { name: new RegExp(`Follow trashed ${stamp}`) })
+        .getByRole('link', { name: new RegExp(trashedTitle) })
         .click();
       const song = (await page.getByTestId('shortcode').first().textContent())?.trim() ?? '';
       const trashedGeneration = `${song}-v1-g1`;
@@ -214,10 +217,10 @@ test.describe('Following Suno', () => {
       await expect(changeOf(page, trashedId)).toHaveText('In Suno Trash: will be archived');
       await expect(changeOf(page, missingId)).toHaveText('Remote Missing');
       await expect(
-        page.getByRole('checkbox', { name: `Apply: Follow trashed ${stamp}` }),
+        page.getByRole('checkbox', { name: new RegExp(`Apply: ${trashedTitle}`) }),
       ).toBeChecked();
       await expect(
-        page.getByRole('checkbox', { name: `Apply: Follow missing ${stamp}` }),
+        page.getByRole('checkbox', { name: new RegExp(`Apply: ${missingTitle}`) }),
       ).toBeChecked();
       await expectAccessibleInLightAndDark(page);
       await confirmImport(page);

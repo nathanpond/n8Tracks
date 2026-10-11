@@ -32,7 +32,7 @@ public sealed class ImportCommitTests
         await SunoWorkspaceApi.ReportAsync(client, token, complete: false, SunoWorkspaceApi.Project("studio", "Studio"));
         var at = ProposalApi.At;
         var first = ProposalApi.Clip("pair-1", "studio", at, 0, "Pair words", "Pair title");
-        var second = ProposalApi.Clip("pair-2", "studio", at, 1, "Pair words", "Pair title, take two");
+        var second = ProposalApi.Clip("pair-2", "studio", at, 1, "Pair words", "pair title");
         var (id, records) = await ProposalApi.ExportAsync(client, token, first, second, ProposalApi.Clip("skip-me", null, at.AddHours(1), 0, "Other words"));
         await ImportCommitApi.StageImageAsync(client, token, id, "pair-1");
         await ProposalApi.ChangedAsync(client, id, 1, ProposalApi.Change(new JsonObject { ["action"] = "skip" }, "skip-me"));
@@ -58,7 +58,7 @@ public sealed class ImportCommitTests
         var generations = (await SetupApi.JsonAsync(await client.GetAsync(new Uri($"/api/v1/songs/{shortcode}/generations", UriKind.Relative)))).GetProperty("items").EnumerateArray().ToList();
         Assert.Equal(["pair-1", "pair-2"], generations.Select(static generation => generation.GetProperty("sunoId").GetString()));
         Assert.Equal($"{shortcode}-v1-g1", outcomes["pair-1"].GetProperty("generation").GetProperty("shortcode").GetString());
-        Assert.Equal("Pair title, take two", generations[1].GetProperty("title").GetString());
+        Assert.Equal("pair title", generations[1].GetProperty("title").GetString());
 
         // The staged image went to its Generation; the group became one Generation Event of two.
         Assert.NotEqual(JsonValueKind.Null, generations[0].GetProperty("artwork").ValueKind);
@@ -85,7 +85,7 @@ public sealed class ImportCommitTests
             client,
             token,
             ProposalApi.Clip("cover-1", "studio", at, 0, "Cover words", "Covered"),
-            ProposalApi.Clip("cover-2", "studio", at, 1, "Cover words", "Covered, take two"));
+            ProposalApi.Clip("cover-2", "studio", at, 1, "Cover words", "covered"));
         await ImportCommitApi.StageImageAsync(client, token, id, "cover-1");
 
         var result = await ImportCommitApi.CommitAsync(client, id);

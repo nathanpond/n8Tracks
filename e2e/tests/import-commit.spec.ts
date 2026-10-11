@@ -151,7 +151,8 @@ test.describe('Import commit', () => {
         }),
         clip({
           id: randomUUID(),
-          title: `${title} (2)`,
+          // #419: the same title (case aside), so the two stay one Song.
+          title: title.toUpperCase(),
           workspace: workspace.id,
           createdAt: at,
           batchIndex: 1,
@@ -206,7 +207,10 @@ test.describe('Import commit', () => {
           await page.request.get(new URL(`api/v1/songs/${shortcode}/generations`, base).toString())
         ).json()) as { items: Generation[] }
       ).items;
-      expect(generations.map((generation) => generation.title)).toEqual([title, `${title} (2)`]);
+      expect(generations.map((generation) => generation.title)).toEqual([
+        title,
+        title.toUpperCase(),
+      ]);
       expect(generations.every((generation) => generation.artwork !== null)).toBe(true);
       // With no Generation selected, the Song shows its newest Generation's cover (#318).
       const imported = (await (

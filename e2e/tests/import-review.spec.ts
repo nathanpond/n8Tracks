@@ -144,6 +144,8 @@ test.describe('Import review', () => {
     const workspace = { id: `ws-review-${stamp}`, name: `Review ${stamp}` };
     const morning = `Review morning ${stamp}`;
     const evening = `Review evening ${stamp}`;
+    // #419: a group's clips share a title (case aside) to stay one proposal; the case tells their rows apart.
+    const morningUpper = morning.toUpperCase();
     const base = await appBase(page);
     const credential = await page.request.post(new URL('api/v1/credentials', base).toString(), {
       headers: ANTIFORGERY_HEADERS,
@@ -186,7 +188,7 @@ test.describe('Import review', () => {
           lyrics: `[Verse]\nMorning ${stamp}`,
         }),
         clip({
-          title: `${morning} (2)`,
+          title: morningUpper,
           workspace: workspace.id,
           createdAt: new Date(at).toISOString(),
           batchIndex: 1,
@@ -247,7 +249,7 @@ test.describe('Import review', () => {
       );
 
       // One clip set to Don't copy, without a pointer: the table and the bulk controls take the keyboard.
-      await row(page, `${morning} (2)`).getByRole('checkbox').focus();
+      await row(page, morningUpper).getByRole('checkbox').focus();
       await page.keyboard.press('Space');
       await expect(page.getByTestId('selection')).toHaveText(
         'Selected: 1 record. Records already in n8Tracks are never selected.',
@@ -257,9 +259,7 @@ test.describe('Import review', () => {
       await expect(page.getByRole('radio', { name: 'Don’t copy' })).toBeChecked();
       await page.getByRole('button', { name: 'Apply to 1 record' }).focus();
       await page.keyboard.press('Enter');
-      await expect(row(page, `${morning} (2)`).getByTestId('record-choice')).toHaveText(
-        'Don’t copy',
-      );
+      await expect(row(page, morningUpper).getByTestId('record-choice')).toHaveText('Don’t copy');
 
       // 4. The summary, then the same after a reload; and no new Song in the catalog.
       const expectAsLeft = async () => {
@@ -277,9 +277,7 @@ test.describe('Import review', () => {
         await expect(row(page, morning).getByTestId('record-choice')).toHaveText(
           `New Song “${morning}”`,
         );
-        await expect(row(page, `${morning} (2)`).getByTestId('record-choice')).toHaveText(
-          'Don’t copy',
-        );
+        await expect(row(page, morningUpper).getByTestId('record-choice')).toHaveText('Don’t copy');
         await expect(row(page, evening).getByTestId('record-choice')).toHaveText(
           `New Version 2 of ${existing.shortcode} “Existing ${stamp}”`,
         );
