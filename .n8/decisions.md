@@ -4597,3 +4597,12 @@ Story #219 (on the milestone branch):
 - **Decision:** Rule 2 (the workspace's one live Song) is unchanged by titles: every title of the group, the fallen-through ones included, is proposed for that Song, each set of inputs its own Version.
   **Why:** The workspace association is something the user did on purpose to say "this workspace is this Song", and Suno makes up titles for Simple-mode clips, so a Suno title should not overrule it. Splitting by title there would also leave the question of which title keeps the Song. The user can still pick a new Song in the review.
   **Issue:** #419
+
+## Ad-hoc — 2026-10-11
+
+- **Change:** Added a Suno panel redesign to M4: the owner designs it in Claude Design (#425, owner action), then a story rebuilds the panel to that design (#426, blocked by #425). #423 (workspace list layout) is folded into #426.
+  **Why:** In the M4 walkthrough the owner found the panel "busy, confusing, and almost unusable"; no milestone planned a design pass for it.
+  **Affects:** M4 (new scope; its close now waits on #425/#426), M10 Testing & Bug Fixes and M8's keyboard/browser walkthroughs (#269, #270), which will exercise the new panel.
+- **Change:** Workspace syncs will read each workspace's own feed on `/create?wid=` instead of the whole library (#422), and reach the workspace list by pressing Library's Workspaces tab rather than loading `/me/workspaces` by address (#421), reversing TS-007-3's "pages by address, never by pressing a link".
+  **Why:** Live 2026-10-11: a direct load of `/me/workspaces` makes no `/api/project/me` request, while pressing the Workspaces tab from `/me` does; the workspace feed pages by scroll with a cursor (20, 20, 5 for 45 clips).
+  **Affects:** M4 (#134's sync design, `docs/suno-integration.md`), M5 download (#215 reads the library with the same reader).
