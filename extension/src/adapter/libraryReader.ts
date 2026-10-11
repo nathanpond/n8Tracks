@@ -4,9 +4,10 @@ import type { ObservedKind, ObservedMessage, ObservedRequest } from './observed.
 /**
  * The library reader (#134): reads the lists a sync needs by watching Suno's own responses
  * (`observed.ts`) while the page is operated, and hands the records to n8Tracks in parts. A sync
- * is a list of legs, each read on its own Suno page: the workspace list, then the library or each
- * chosen playlist, then the Trash when the scope reads it. Navigating between them belongs to the content script; this
- * module reads one leg on the page it is given.
+ * is a list of legs, each read on its own Suno page: the workspace list, then the library, each
+ * chosen workspace's own songs (#422), or each chosen playlist, then the Trash when the scope reads
+ * it. Navigating between them belongs to the content script; this module reads one leg on the page
+ * it is given.
  *
  * Paging and end of list are TS-003's. A list counts as read only when its end was seen; a page
  * that does not look as expected, one that comes twice, or one that does not come stops the read
@@ -118,13 +119,22 @@ export function readsTrash(scope: SyncScope): boolean {
   return scope.kind === 'library' || scope.readTrash;
 }
 
-/** The legs a scope is read in. The workspace list is read for every scope, the Trash last when read. */
+/**
+ * The legs a scope is read in. The workspace list is read for every scope, the Trash last when
+ * read. A workspace sync reads each chosen workspace's own feed rather than the whole library
+ * (#422).
+ */
 export function legsFor(scope: SyncScope): SyncLeg[] {
   const trash: SyncLeg[] = readsTrash(scope) ? [{ list: 'trash' }] : [];
   switch (scope.kind) {
     case 'library':
-    case 'workspaces':
       return [{ list: 'workspaces' }, { list: 'library' }, ...trash];
+    case 'workspaces':
+      return [
+        { list: 'workspaces' },
+        ...scope.ids.map((id): SyncLeg => ({ list: 'workspace', id })),
+        ...trash,
+      ];
     case 'playlists':
       return [
         { list: 'workspaces' },
@@ -143,6 +153,10 @@ export function stepOf(leg: SyncLeg, legs: readonly SyncLeg[]): string {
       return 'Read the library';
     case 'trash':
       return 'Read the Trash';
+    case 'workspace': {
+      const workspaces = legs.filter((other) => other.list === 'workspace');
+      return `Read workspace ${String(workspaces.indexOf(leg) + 1)} of ${String(workspaces.length)}`;
+    }
     case 'playlist': {
       const playlists = legs.filter((other) => other.list === 'playlist');
       return `Read playlist ${String(playlists.indexOf(leg) + 1)} of ${String(playlists.length)}`;
@@ -201,6 +215,34 @@ const LIBRARY: ListSpec = {
   },
   ended: (body) => isRecord(body) && body.has_more === false,
 };
+
+/** The workspace a feed request was filtered to (`filters.workspace.workspaceId`), or null. */
+function workspaceFilterOf(filters: unknown): string | null {
+  const workspace = isRecord(filters) ? filters.workspace : undefined;
+  return isRecord(workspace) && typeof workspace.workspaceId === 'string'
+    ? workspace.workspaceId
+    : null;
+}
+
+/**
+ * One workspace's songs on `/create?wid=<id>` (#422): `POST /api/feed/v3` with a `workspace`
+ * filter naming that workspace, and no other. Cursor paging by scroll, 20 a page; the list ends
+ * when `has_more` is false (live, 2026-10-11: pages of 20, 20, and 5 for 45 clips).
+ */
+function workspaceSpec(id: string): ListSpec {
+  return {
+    ...LIBRARY,
+    what: "a page of the workspace's songs",
+    accepts: (message) => workspaceFilterOf(message.request.filters) === id,
+    parse: (body, request) => {
+      if (!isRecord(body) || typeof body.has_more !== 'boolean') {
+        return { problem: "a page of the workspace's songs that says whether there is more" };
+      }
+      const records = recordsOf(body.clips, "a page of the workspace's songs");
+      return 'problem' in records ? records : { key: cursorKey(request), records };
+    },
+  };
+}
 
 /**
  * The Trash: `GET /api/clips/trashed_v2`, cursor in the query; the list ends when no `next_cursor`
@@ -476,13 +518,18 @@ export async function readLeg(
       workspaces = projects;
       break;
     }
-    case 'library': {
-      const chosen = scope.kind === 'workspaces' ? new Set(scope.ids) : null;
+    case 'library':
+    case 'workspace': {
+      // A `library` leg in a workspace sync was begun before #422: it keeps the chosen workspaces'
+      // clips. A `workspace` leg reads that workspace's own feed, which holds only its clips.
+      const chosen =
+        leg.list === 'library' && scope.kind === 'workspaces' ? new Set(scope.ids) : null;
+      const list = leg.list === 'workspace' ? workspaceSpec(leg.id) : LIBRARY;
       let filters: unknown = null;
       const spec: ListSpec = {
-        ...LIBRARY,
+        ...list,
         accepts: (message) => {
-          const accepted = LIBRARY.accepts(message);
+          const accepted = list.accepts(message);
           if (accepted && filters === null) {
             filters = message.request.filters;
           }

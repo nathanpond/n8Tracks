@@ -496,7 +496,7 @@ describe('the forbidden-control check (invariant 4)', () => {
   });
 });
 
-describe('scrollToEnd and go (the library reader, #134)', () => {
+describe('scrollToEnd, scrollListToEnd, and go (the library reader, #134, #422)', () => {
   function byId(id: string): HTMLElement {
     const element = document.getElementById(id);
     if (element === null) {
@@ -532,6 +532,52 @@ describe('scrollToEnd and go (the library reader, #134)', () => {
     expect(clipped.scrollTop).toBe(0);
     expect(panelList.scrollTop).toBe(0);
     expect(events).toEqual([]);
+  });
+
+  it("scrolls one list's own pane to its end, and no other pane (#422)", () => {
+    document.body.innerHTML = `
+      <div id="page">
+        <div id="form"><button aria-label="Create song">Create</button></div>
+        <div id="pane"><div id="inner"><div role="rowgroup"></div></div></div>
+      </div>`;
+    const page = scrolling(byId('page'), 5000);
+    const form = scrolling(byId('form'), 5000);
+    const pane = scrolling(byId('pane'), 5000);
+    const inner = scrolling(byId('inner'), 50);
+    const events = recordEvents('click', 'pointerdown', 'keydown', 'mousedown');
+    const handle = new Page(document);
+    const rows = handle.find({ role: 'rowgroup', description: 'rows' });
+    if (rows.kind !== 'found') {
+      throw new Error('no rows');
+    }
+
+    handle.scrollListToEnd(rows.found);
+
+    expect(pane.scrollTop).toBe(5000);
+    expect(inner.scrollTop).toBe(0);
+    expect(form.scrollTop).toBe(0);
+    expect(page.scrollTop).toBe(0);
+    expect(events).toEqual([]);
+  });
+
+  it('leaves a list in nothing that scrolls as it is, and scrolls nothing once its run has stopped', () => {
+    document.body.innerHTML = '<div id="form"></div><div role="rowgroup"></div>';
+    const form = scrolling(byId('form'), 5000);
+    const controller = new AbortController();
+    const handle = new Page(document);
+    const rows = handle.find({ role: 'rowgroup', description: 'rows' });
+    if (rows.kind !== 'found') {
+      throw new Error('no rows');
+    }
+
+    handle.scrollListToEnd(rows.found);
+    expect(form.scrollTop).toBe(0);
+
+    const stopped = handle.withSignal(controller.signal);
+    controller.abort();
+    expect(() => {
+      stopped.scrollListToEnd(rows.found);
+    }).toThrow(StoppedError);
   });
 
   it('loads a Suno page by address, and nothing else', () => {

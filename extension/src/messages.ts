@@ -193,10 +193,15 @@ export type SyncScope =
   | { kind: 'workspaces'; ids: string[]; readTrash: boolean }
   | { kind: 'playlists'; playlists: { id: string; name: string }[]; readTrash: boolean };
 
-/** One list a sync reads, each on its own Suno page. */
+/**
+ * One list a sync reads, each on its own Suno page. A workspace sync reads each chosen workspace's
+ * own feed (`workspace`, on `/create?wid=<id>`, #422); a `library` leg in a workspace sync's legs
+ * comes from a sync begun before that, and is read as then: the whole library, kept by workspace.
+ */
 export type SyncLeg =
   | { list: 'workspaces' }
   | { list: 'library' }
+  | { list: 'workspace'; id: string }
   | { list: 'playlist'; id: string; name: string }
   | { list: 'trash' };
 

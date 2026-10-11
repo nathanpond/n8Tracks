@@ -1,4 +1,9 @@
-import { sunoListAddress, sunoPageOf } from '../adapter/addresses.ts';
+import {
+  sunoListAddress,
+  sunoPageOf,
+  sunoWorkspaceAddress,
+  workspaceOfAddress,
+} from '../adapter/addresses.ts';
 import { realClock, type Clock } from '../adapter/clock.ts';
 import {
   PAGE_RETRIES,
@@ -28,7 +33,7 @@ import type { SyncViewState } from '../panel/SyncView.ts';
 
 /**
  * The Suno tab's half of a sync (#134). The user starts it from the panel; each leg is read on
- * its own page, reached by address, and the service worker carries the sync from one page load to
+ * its own page, reached by address (a workspace's songs on `/create?wid=<id>`, #422), and the service worker carries the sync from one page load to
  * the next. On every page load the content script asks whether its tab is in a sync, and if so
  * reads the leg the page is for. It never starts a sync by itself. The workspace list is the one
  * leg not reached by address alone (#421): its page is Library (`/me`), and the leg presses
@@ -75,10 +80,12 @@ function reply<T extends object>(answer: unknown): SyncReply<T> {
 
 /**
  * The page a leg is read on. The workspace list is read on Library (`/me`), where its tab is
- * pressed (#421).
+ * pressed (#421); a workspace's songs on the Create page opened for it (`/create?wid=`, #422).
  */
 function addressOf(leg: SyncLeg): URL {
   switch (leg.list) {
+    case 'workspace':
+      return sunoWorkspaceAddress(leg.id);
     case 'playlist':
       return sunoListAddress({ page: 'playlist', id: leg.id });
     case 'workspaces':
@@ -89,8 +96,11 @@ function addressOf(leg: SyncLeg): URL {
   }
 }
 
-/** Whether the tab shows the page a leg is read on. */
+/** Whether the tab shows the page a leg is read on: for a workspace, the Create page opened for it. */
 function onPageOf(leg: SyncLeg, address: URL): boolean {
+  if (leg.list === 'workspace') {
+    return workspaceOfAddress(address) === leg.id;
+  }
   const wanted = addressOf(leg);
   return (
     sunoPageOf(address) === sunoPageOf(wanted) &&

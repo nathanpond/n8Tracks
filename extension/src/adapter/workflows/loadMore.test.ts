@@ -174,3 +174,100 @@ describe('asking for more where Suno shows its pager (TS-007)', () => {
     expect(clicked).toEqual([]);
   });
 });
+
+const WORKSPACE_SONGS = 'https://suno.com/create?wid=00000000-0000-4000-8000-000000000427';
+
+/** Gives an element a scrolling box jsdom does not lay out. */
+function scrolling(element: Element): HTMLElement {
+  const box = element as HTMLElement;
+  Object.defineProperty(box, 'scrollHeight', { value: 5000, configurable: true });
+  Object.defineProperty(box, 'clientHeight', { value: 500, configurable: true });
+  box.style.overflowY = 'auto';
+  return box;
+}
+
+/**
+ * The panes of the `/create?wid=` snapshot that scroll in Suno's page: the song list's own
+ * scroller, and the pane holding Suno's Create form beside it.
+ */
+function createPanes(): { list: HTMLElement; form: HTMLElement } {
+  const rows = document.querySelector('[role="rowgroup"]');
+  const create = document.querySelector('[aria-label="Create song"]');
+  const list = rows?.closest('.clip-browser-list-scroller');
+  // The form's pane: the outermost ancestor of the Create button not holding the song list.
+  let form: Element | null | undefined = create;
+  while (form?.parentElement != null && !form.parentElement.contains(rows ?? null)) {
+    form = form.parentElement;
+  }
+  if (list == null || form == null || rows == null) {
+    throw new Error('the snapshot has no song list or Create form');
+  }
+  return { list: scrolling(list), form: scrolling(form) };
+}
+
+describe("asking for more of a workspace's songs on /create?wid= (#422)", () => {
+  it('finds the song list on the snapshot, and only on a Create page opened for a workspace', () => {
+    const page = loadSnapshot('create-workspace-songs', WORKSPACE_SONGS);
+
+    expect(listOnPage(page)).toEqual({ ok: true });
+    expect(checkWorkflow(loadMore, page).state).toBe('ready');
+    expect(
+      checkWorkflow(loadMore, loadSnapshot('create-workspace-songs', 'https://suno.com/create'))
+        .state,
+    ).toBe('not-checked');
+  });
+
+  it("scrolls the song list's own pane to its end, and neither the Create form's pane nor anything else", () => {
+    const page = loadSnapshot('create-workspace-songs', WORKSPACE_SONGS);
+    const { list, form } = createPanes();
+    const clicked = clicks();
+
+    askForMore(page);
+
+    expect(list.scrollTop).toBe(5000);
+    expect(form.scrollTop).toBe(0);
+    expect(clicked).toEqual([]);
+    expect(page.refusal()).toBeNull();
+  });
+
+  it('never presses a pager there, even one shaped like Library’s: that feed pages by scroll', () => {
+    const page = loadSnapshot('create-workspace-songs', WORKSPACE_SONGS);
+    const { list } = createPanes();
+    // A header control like Library's pager (‹ [n] ›), which the live page's ‹ 1 › is not.
+    const header = document.createElement('div');
+    header.innerHTML =
+      '<span>Page</span><button type="button"><svg></svg></button><input placeholder="#" value="1"><button type="button"><svg></svg></button>';
+    document.querySelector('[role="rowgroup"]')?.closest('[role="table"]')?.before(header);
+    expect(page.pagerNext().kind).toBe('found');
+    const clicked = clicks();
+
+    askForMore(page);
+
+    expect(clicked).toEqual([]);
+    expect(list.scrollTop).toBe(5000);
+  });
+
+  it('runs as the load-more workflow there, pressing nothing', async () => {
+    const page = loadSnapshot('create-workspace-songs', WORKSPACE_SONGS, fakeClock());
+    const { list } = createPanes();
+    const clicked = clicks();
+
+    const result = await runWorkflow(loadMore, page, {}, { clock: fakeClock() });
+
+    expect(result.ok).toBe(true);
+    expect(list.scrollTop).toBe(5000);
+    expect(clicked).toEqual([]);
+  });
+
+  it('stops, scrolling nothing, when the page shows no song list', async () => {
+    const page = loadSnapshot('create-workspace-songs', WORKSPACE_SONGS, fakeClock());
+    const { form } = createPanes();
+    document.querySelector('[role="rowgroup"]')?.remove();
+
+    const result = await runWorkflow(loadMore, page, {}, { clock: fakeClock() });
+
+    expect(result.ok).toBe(false);
+    expect(result.ok ? '' : result.failure.expected).toBe("Suno's list of songs");
+    expect(form.scrollTop).toBe(0);
+  });
+});

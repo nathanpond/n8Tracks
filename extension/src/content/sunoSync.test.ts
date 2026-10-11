@@ -57,6 +57,16 @@ const LIBRARY: SyncScope = { kind: 'library' };
 const LIBRARY_FILTERS = (sunoObject('feed-v3.library-page-1.request') as { filters: unknown })
   .filters;
 
+/** The filters of a workspace's own feed on `/create?wid=` (#422). */
+function workspaceFilters(id: string): unknown {
+  const filters = structuredClone(
+    (sunoObject('feed-v3.workspace-create-wid.request') as { filters: Record<string, unknown> })
+      .filters,
+  );
+  filters.workspace = { presence: 'True', workspaceId: id };
+  return filters;
+}
+
 function observed(kind: ObservedMessage['kind'], body: unknown, filters: unknown = null) {
   const message: ObservedMessage = {
     source: OBSERVER_SOURCE,
@@ -411,6 +421,60 @@ describe('reading a leg after its page loads', () => {
       header: { libraryComplete: true, workspaces: [{ id: 'w1' }] },
     });
     expect(visited).toEqual(['https://suno.com/me/trash']);
+  });
+
+  it("reads a chosen workspace's own feed on /create?wid=, then opens the next workspace's page (#422)", async () => {
+    const scope: SyncScope = { kind: 'workspaces', ids: ['w1', 'w2'], readTrash: false };
+    const page = sunoObject('feed-v3.workspace-create-wid.page-1.response');
+    page.has_more = false;
+    delete page.next_cursor;
+    const sw = worker(
+      sessionAt(1, { scope, legs: legsFor(scope), workspaces: [{ id: 'w1' }, { id: 'w2' }] }),
+    );
+    const { content: started, visited } = start({
+      address: 'https://suno.com/create?wid=w1',
+      snapshot: 'create-workspace-songs',
+      worker: sw,
+      seen: [
+        // The whole library's feed, and another workspace's, are not this leg's.
+        observed('library-feed', { clips: [{ id: 'not-mine' }], has_more: false }, LIBRARY_FILTERS),
+        observed('library-feed', page, workspaceFilters('w1')),
+      ],
+    });
+
+    await started.resumed;
+
+    expect(sw.types().filter(notPanelRefresh)).toEqual([
+      'sync-resume',
+      'sync-create',
+      'sync-part',
+      'sync-save',
+    ]);
+    expect(sw.asked.find((request) => request.type === 'sync-part')).toMatchObject({
+      part: { partNumber: 1, clips: page.clips },
+    });
+    expect(visited).toEqual(['https://suno.com/create?wid=w2']);
+  });
+
+  it("stops as 'Suno tab lost' when the Create page is not the workspace's own (#422)", async () => {
+    const scope: SyncScope = { kind: 'workspaces', ids: ['w1', 'w2'], readTrash: false };
+    for (const address of ['https://suno.com/create?wid=w2', 'https://suno.com/create']) {
+      const sw = worker(sessionAt(1, { scope, legs: legsFor(scope) }));
+      const { content: started, text } = start({
+        address,
+        snapshot: 'create-workspace-songs',
+        worker: sw,
+      });
+
+      await started.resumed;
+
+      expect(sw.types(), address).toContain('sync-discard');
+      expect(text('.sync-stopped'), address).toContain(
+        "step 'Suno tab lost' expected the Suno tab to stay on the page being read (Read workspace 1 of 2)",
+      );
+      content?.stop();
+      content = null;
+    }
   });
 
   it('reads the Trash, completes the export, and says the review is open', async () => {

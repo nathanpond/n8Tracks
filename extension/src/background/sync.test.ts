@@ -214,7 +214,8 @@ describe('carrying a sync between page loads', () => {
     expect(await context.send({ type: 'sync-resume' })).toMatchObject({
       session: {
         scope: { kind: 'workspaces', ids: ['w1'], readTrash: false },
-        legs: [{ list: 'workspaces' }, { list: 'library' }],
+        // Each chosen workspace's own feed, not the whole library (#422).
+        legs: [{ list: 'workspaces' }, { list: 'workspace', id: 'w1' }],
       },
     });
 

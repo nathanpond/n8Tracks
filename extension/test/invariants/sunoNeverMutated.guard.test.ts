@@ -365,6 +365,48 @@ describe('the guard bites', () => {
     }
   });
 
+  it("guards a workspace's songs on /create?wid=, where the Create form sits beside the list (#422)", async () => {
+    const snapshot = 'create-workspace-songs';
+    document.body.innerHTML = snapshotHtml(snapshot);
+    // The page holds the Create button and each row's Publish button: all spied on.
+    expect(forbiddenControls(document).map((control) => control.words)).toEqual(
+      expect.arrayContaining(['button "Create song"', 'button "Publish clip"']),
+    );
+
+    // The reader's scroll for more runs there in full and reaches none of them.
+    const loadMore = ADAPTER_WORKFLOWS.find((workflow) => workflow.id === 'load-more');
+    expect(loadMore?.fixtures).toContain(snapshot);
+    expect(
+      await exerciseWorkflows(loadMore === undefined ? [] : [loadMore], {
+        recipes: { 'load-more': RUN_RECIPES['load-more'] ?? { values: {} } },
+        snapshots: [snapshot],
+      }),
+    ).toEqual([]);
+
+    // A workflow that tried to press Create there is refused, and a click that went around the
+    // primitives to a row's Publish is seen by the spies.
+    const rogue = testWorkflow('press', [], clicking(CREATE_SONG), null);
+    expect(
+      await exerciseWorkflows([rogue], { recipes: recipes('press'), snapshots: [snapshot] }),
+    ).toEqual([
+      `'press' on ${snapshot}: step 'act' tried a forbidden control (the Create button: it is the Create button (Songs and Sounds))`,
+    ]);
+    const bypass = testWorkflow(
+      'bypass',
+      [],
+      () => {
+        // Test-only: reaches the page directly, as the static scan forbids shipped code to.
+        document
+          .querySelector('[aria-label="Publish clip"]')
+          ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      },
+      null,
+    );
+    expect(
+      await exerciseWorkflows([bypass], { recipes: recipes('bypass'), snapshots: [snapshot] }),
+    ).toEqual([`'bypass' on ${snapshot}: click reached button "Publish clip"`]);
+  }, 60_000);
+
   it('fails a workflow that presses Publish or Move to Trash in a clip menu', async () => {
     for (const item of ['Publish', 'Move to Trash']) {
       const target: Target = { role: 'menuitem', name: item, description: `the ${item} item` };

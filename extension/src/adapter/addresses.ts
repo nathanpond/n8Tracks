@@ -123,6 +123,32 @@ export function songOfAddress(address: URL): string | null {
   }
 }
 
+/**
+ * A workspace's songs: the Create page opened for the workspace (`/create?wid=<workspace ID>`),
+ * where opening a workspace from Library › Workspaces leads (TS-007) and a workspace sync reads
+ * the workspace's own feed (#422). A workspace ID is Suno's, so it is encoded as a query value.
+ */
+export function sunoWorkspaceAddress(workspaceId: string): URL {
+  const address = new URL('/create', SUNO_ORIGIN);
+  address.searchParams.set('wid', workspaceId);
+  return address;
+}
+
+/** The workspace a Create page was opened for (its `wid`), or null on any other page. */
+export function workspaceOfAddress(address: URL): string | null {
+  if (sunoPageOf(address) !== 'create') {
+    return null;
+  }
+  const workspaceId = address.searchParams.get('wid');
+  return workspaceId === null || workspaceId === '' ? null : workspaceId;
+}
+
+/** A workspace's songs on the Create page (`/create?wid=<workspace ID>`, #422). */
+export const WORKSPACE_SONGS_PAGE: PagePattern = {
+  description: "a workspace's songs on the Create page",
+  matches: (address) => workspaceOfAddress(address) !== null,
+};
+
 /** The Create page, where Generate on Suno starts (#145). */
 export function sunoCreateAddress(): URL {
   return new URL('/create', SUNO_ORIGIN);

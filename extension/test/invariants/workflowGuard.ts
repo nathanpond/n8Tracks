@@ -37,6 +37,9 @@ export interface RunRecipe {
 }
 
 const PLAYLIST_ADDRESS = 'https://suno.com/playlist/00000000-0000-4000-8000-000000000101';
+/** A workspace's songs (#422): the Create page opened for the workspace of the TS-007 captures. */
+export const WORKSPACE_SONGS_ADDRESS =
+  'https://suno.com/create?wid=00000000-0000-4000-8000-000000000427';
 
 /** Where each snapshot was taken (fixtures README); the Create page for the rest. */
 export function snapshotAddress(snapshot: string): string {
@@ -49,6 +52,8 @@ export function snapshotAddress(snapshot: string): string {
       return 'https://suno.com/me/trash';
     case 'playlist':
       return PLAYLIST_ADDRESS;
+    case 'create-workspace-songs':
+      return WORKSPACE_SONGS_ADDRESS;
     default:
       return 'https://suno.com/create';
   }

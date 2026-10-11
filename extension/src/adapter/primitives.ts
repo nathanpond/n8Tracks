@@ -1373,6 +1373,29 @@ export class Page {
   }
 
   /**
+   * Scrolls one list to its end, and nothing else on the page: the nearest element that scrolls
+   * its own content, from the list outwards (the list itself included), else the page itself when
+   * it scrolls. Where a list sits beside other panes that scroll, such as a workspace's songs on
+   * `/create?wid=` beside Suno's Create form (#422), only the list's own pane moves. Like
+   * {@link scrollToEnd} it presses nothing and sends no event. A list in nothing that scrolls (all
+   * of it on screen, or jsdom, which lays nothing out) is left as it is; the reader, which waits
+   * for Suno's next page after each scroll, says when none came.
+   */
+  scrollListToEnd(found: Found): void {
+    const list = this.reachable(found);
+    for (let current: Element | null = list; current !== null; current = parentOf(current)) {
+      if (scrollsItself(current) && !isHidden(current)) {
+        current.scrollTop = current.scrollHeight;
+        return;
+      }
+    }
+    const root = this.document.scrollingElement as Element | null | undefined;
+    if (root !== null && root !== undefined && root.scrollHeight > root.clientHeight) {
+      root.scrollTop = root.scrollHeight;
+    }
+  }
+
+  /**
    * Loads a Suno page by its address, as typing it would: the adapter reaches pages by address,
    * never by pressing a link or a button (the forbidden-control matcher's own rule), with one
    * exception: the sync's workspace list, which a direct load does not ask Suno for, is reached by

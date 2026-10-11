@@ -10,6 +10,9 @@ import {
   sunoPageOf,
   sunoPages,
   sunoSongAddress,
+  sunoWorkspaceAddress,
+  WORKSPACE_SONGS_PAGE,
+  workspaceOfAddress,
 } from './addresses.ts';
 
 describe('Suno addresses', () => {
@@ -96,5 +99,25 @@ describe("Suno's audio hosts (#216, TS-004)", () => {
     null,
   ])('refuses %s', (address) => {
     expect(audioAddressOf(address)).toBeNull();
+  });
+});
+
+describe("a workspace's songs on the Create page (#422)", () => {
+  it('opens the Create page for the workspace, its ID encoded as the wid query value', () => {
+    expect(sunoWorkspaceAddress('00000000-0000-4000-8000-000000000427').href).toBe(
+      'https://suno.com/create?wid=00000000-0000-4000-8000-000000000427',
+    );
+    expect(sunoWorkspaceAddress('a&b=c').searchParams.get('wid')).toBe('a&b=c');
+  });
+
+  it('reads the workspace back only from a suno.com Create page with a wid', () => {
+    expect(workspaceOfAddress(new URL('https://suno.com/create?wid=w1'))).toBe('w1');
+    expect(workspaceOfAddress(new URL('https://suno.com/create/?wid=w1&x=1'))).toBe('w1');
+    expect(workspaceOfAddress(new URL('https://suno.com/create'))).toBeNull();
+    expect(workspaceOfAddress(new URL('https://suno.com/create?wid='))).toBeNull();
+    expect(workspaceOfAddress(new URL('https://suno.com/me?wid=w1'))).toBeNull();
+    expect(workspaceOfAddress(new URL('https://example.com/create?wid=w1'))).toBeNull();
+    expect(WORKSPACE_SONGS_PAGE.matches(new URL('https://suno.com/create?wid=w1'))).toBe(true);
+    expect(WORKSPACE_SONGS_PAGE.matches(new URL('https://suno.com/create'))).toBe(false);
   });
 });

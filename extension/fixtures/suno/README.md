@@ -1,6 +1,6 @@
 # Suno fixtures
 
-Sanitized examples of Suno's pages and responses for adapter tests, captured in the maintainer's signed-in browser by spikes TS-001 and TS-002 (2026-10-03), TS-003 (#127) and TS-004 (#214) (2026-10-05), TS-005 (2026-10-08, for #146, #147, #148), TS-006 (2026-10-08, the model menu, for #146 and #147), and TS-007 (2026-10-08, Suno's `Request`-object fetches and the Library pager, for #134 and #149). The findings are in `docs/spikes/`.
+Sanitized examples of Suno's pages and responses for adapter tests, captured in the maintainer's signed-in browser by spikes TS-001 and TS-002 (2026-10-03), TS-003 (#127) and TS-004 (#214) (2026-10-05), TS-005 (2026-10-08, for #146, #147, #148), TS-006 (2026-10-08, the model menu, for #146 and #147), and TS-007 (2026-10-08, Suno's `Request`-object fetches and the Library pager, for #134 and #149), with sanitized additions for #422 (2026-10-11, a workspace's songs on `/create?wid=`). The findings are in `docs/spikes/`.
 
 ## Sanitizing
 
@@ -50,6 +50,13 @@ One pair of clips was made in each mode in a new workspace. The modes are `songs
 
 - `feed-v3.workspace-create-wid.request.json`: the body of `POST /api/feed/v3` for a workspace's songs on `/create?wid=<workspace ID>`, where opening a workspace from Library › Workspaces now leads: `{ cursor: null, limit: 20, filters: { workspace: { presence: "True", workspaceId }, disliked, trashed, stem, … } }`. Suno's page sent it as `fetch(request, { headers })`, the body on the `Request`.
 - `feed-v3-offset.response.json`: `POST /api/feed/v3/offset` (`{ offset, filters }`, body not recorded) → `{ offset, clip_id }`, sent by the Library pager's › before the next `POST /api/feed/v3`. Not a page of the list.
+
+### #422: a workspace's songs on `/create?wid=`
+
+Sanitized on 2026-10-11 from the TS-007 captures of `/create?wid=<workspace ID>` (the workspace keeps TS-007's `…427`; the clips of page 1 are the library snapshots' `…401` and `…402`; other identifiers continue from `…428`). Trimmed to two clips a page.
+
+- `feed-v3.workspace-create-wid.page-1.response.json`: the answer to `feed-v3.workspace-create-wid.request.json` (`cursor: null`): `{ clips, next_cursor, has_more: true }`. The clips' `project.id` is the workspace.
+- `feed-v3.workspace-create-wid.page-2.request.json` / `.response.json`: the next page, asked for with page 1's `next_cursor` (redacted), the same `workspace` filter, and `has_more: true`. Seen live on 2026-10-11: scrolling the song list asks for each next page until `has_more: false` (pages of 20, 20, and 5 for 45 clips); the last page is not captured, and the reader's tests set `has_more: false` on a copy.
 
 ## Page snapshots
 
@@ -102,3 +109,4 @@ Each `page.<name>.html` is the HTML of the relevant region, taken in the maintai
 | `page.create-sounds-model-menu.html` | TS-006. Create › Sounds, the same model button pressed: the same menu, v6 checked. |
 | `page.library-songs-page-1.html` | TS-007. Library › Songs (`/me`) on its first page: the list, then the new pager below it, `Page`, ‹ (disabled), a `#` box reading 1, and ›. The two buttons have no name, only a chevron icon. |
 | `page.library-songs-page-2.html` | TS-007. The same after › was pressed once: the box reads 2, ‹ is enabled, a third icon-only button follows ›, and "Showing one page of 20 songs" sits above the pager. |
+| `page.create-workspace-songs.html` | #422. The Create page with its song list (the right-hand pane: one `rowgroup` of `clip-row`s inside `.clip-browser-list-scroller`) beside Suno's Create form (Create song, Publish clip on each row). Sanitized on 2026-10-11 from the TS-006 capture of Create › Songs › Advanced, the whole page body, with the model menu's portal (and the players, frames, and overlays outside the app) removed and the model button shown closed; placeholders from `…301` (TS-006's range, unused by its other snapshots). This is the page a workspace opens on (`/create?wid=<id>`, TS-007); `/create?wid=` itself was not snapshotted, and its header's ‹ 1 › control (seen live on 2026-10-11) is not in this capture. |
