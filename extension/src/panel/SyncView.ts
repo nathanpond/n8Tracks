@@ -51,15 +51,23 @@ export function countsText(counts: SyncCounts): string {
 
 /** What the summary says will be read. */
 export function summaryText(scope: SyncScope): string {
+  const lists =
+    scope.kind === 'library' || scope.readTrash
+      ? 'plus the Trash list and the workspace list.'
+      : 'plus the workspace list (not the Trash).';
   switch (scope.kind) {
     case 'library':
-      return 'Reads your whole Suno library, in every workspace (the number of clips is not known until it has been read), plus the Trash list and the workspace list.';
+      return `Reads your whole Suno library, in every workspace (the number of clips is not known until it has been read), ${lists}`;
     case 'workspaces':
-      return `Reads the clips of ${plural(scope.ids.length, 'workspace', 'workspaces')} from your Suno library, plus the Trash list and the workspace list.`;
+      return `Reads the clips of ${plural(scope.ids.length, 'workspace', 'workspaces')} from your Suno library, ${lists}`;
     case 'playlists':
-      return `Reads ${plural(scope.playlists.length, 'playlist', 'playlists')} with their songs, plus the Trash list and the workspace list.`;
+      return `Reads ${plural(scope.playlists.length, 'playlist', 'playlists')} with their songs, ${lists}`;
   }
 }
+
+/** The hint beside "Also check Suno's Trash" (#420). */
+export const TRASH_HINT =
+  "Songs moved to Suno's Trash are archived in n8Tracks at the next sync that reads the Trash. Reading it takes longer; a whole-library sync always reads it.";
 
 /**
  * What the panel says about a sync's cover images (#152), or null before there is anything to
@@ -104,6 +112,8 @@ export class SyncView {
   private available = false;
   private chosenKind: ScopeKind = 'library';
   private chosenIds = new Set<string>();
+  /** "Also check Suno's Trash", for a workspace or playlist sync (#420): off until the user turns it on. */
+  private readTrash = false;
   private state: SyncViewState = { kind: 'choose' };
   /** The finished state's line about cover images, updated in place so focus stays put. */
   private imagesLine: HTMLElement | null = null;
@@ -197,11 +207,13 @@ export class SyncView {
         return { kind: 'library' };
       case 'workspaces': {
         const ids = workspaces.filter((item) => this.chosenIds.has(item.id)).map((item) => item.id);
-        return ids.length === 0 ? null : { kind: 'workspaces', ids };
+        return ids.length === 0 ? null : { kind: 'workspaces', ids, readTrash: this.readTrash };
       }
       case 'playlists': {
         const chosen = playlists.filter((item) => this.chosenIds.has(item.id));
-        return chosen.length === 0 ? null : { kind: 'playlists', playlists: chosen };
+        return chosen.length === 0
+          ? null
+          : { kind: 'playlists', playlists: chosen, readTrash: this.readTrash };
       }
     }
   }
@@ -307,7 +319,7 @@ export class SyncView {
     this.body.append(scopes);
 
     if (this.chosenKind !== 'library') {
-      this.body.append(this.renderList(this.chosenKind));
+      this.body.append(this.renderList(this.chosenKind), ...this.renderTrashChoice());
     }
 
     const problem = this.make('p', { class: 'warning', id: 'n8-sync-problem' });
@@ -375,6 +387,24 @@ export class SyncView {
       group.append(label);
     }
     return group;
+  }
+
+  /** "Also check Suno's Trash", with its hint: only for a workspace or playlist sync (#420). */
+  private renderTrashChoice(): HTMLElement[] {
+    const label = this.make('label', { class: 'sync-trash' });
+    const box = this.make('input', {
+      type: 'checkbox',
+      name: 'n8-sync-trash',
+      'aria-describedby': 'n8-sync-trash-hint',
+    });
+    box.checked = this.readTrash;
+    box.disabled = !this.available;
+    box.addEventListener('change', () => {
+      this.readTrash = box.checked;
+    });
+    label.append(box, " Also check Suno's Trash");
+    const hint = this.make('p', { class: 'detail', id: 'n8-sync-trash-hint' }, TRASH_HINT);
+    return [label, hint];
   }
 
   private renderSummary(scope: SyncScope, replacesReady: boolean): void {

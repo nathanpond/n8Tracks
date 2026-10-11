@@ -123,6 +123,17 @@ describe('the service worker router', () => {
         sync,
       ),
     ).toHaveProperty('refused');
+    // A workspace or playlist scope says whether it reads the Trash (#420).
+    expect(
+      await route(
+        connection(),
+        { type: 'sync-begin', scope: { kind: 'workspaces', ids: ['w1'] } },
+        suno,
+        ID,
+        undefined,
+        sync,
+      ),
+    ).toHaveProperty('refused');
     expect(handled).toHaveLength(1);
 
     // The cover images of a sync (#152) are asked for the same way, and only that way.

@@ -5,6 +5,7 @@ import { sunoObject } from '../testing/sunoResponses.ts';
 import {
   exportHeader,
   legsFor,
+  readsTrash,
   PART_CLIPS,
   readLeg,
   readLibrary,
@@ -154,13 +155,14 @@ describe('the legs of a sync', () => {
       { list: 'trash' },
     ]);
     // A workspace read filters the library feed by workspace (it has every clip's `project`).
-    expect(legsFor({ kind: 'workspaces', ids: ['w1'] })).toEqual(legsFor(LIBRARY));
+    expect(legsFor({ kind: 'workspaces', ids: ['w1'], readTrash: true })).toEqual(legsFor(LIBRARY));
     const playlists = legsFor({
       kind: 'playlists',
       playlists: [
         { id: 'p1', name: 'One' },
         { id: 'p2', name: 'Two' },
       ],
+      readTrash: true,
     });
     expect(playlists.map((leg) => leg.list)).toEqual([
       'workspaces',
@@ -174,6 +176,29 @@ describe('the legs of a sync', () => {
       'Read playlist 2 of 2',
       'Read the Trash',
     ]);
+  });
+
+  it('skips the Trash on a workspace or playlist sync unless asked; a whole-library sync always reads it (#420)', () => {
+    expect(legsFor({ kind: 'workspaces', ids: ['w1'], readTrash: false })).toEqual([
+      { list: 'workspaces' },
+      { list: 'library' },
+    ]);
+    expect(
+      legsFor({
+        kind: 'playlists',
+        playlists: [{ id: 'p1', name: 'One' }],
+        readTrash: false,
+      }),
+    ).toEqual([{ list: 'workspaces' }, { list: 'playlist', id: 'p1', name: 'One' }]);
+    expect(readsTrash(LIBRARY)).toBe(true);
+    expect(readsTrash({ kind: 'workspaces', ids: ['w1'], readTrash: false })).toBe(false);
+    expect(readsTrash({ kind: 'workspaces', ids: ['w1'], readTrash: true })).toBe(true);
+    expect(
+      readsTrash({ kind: 'playlists', playlists: [{ id: 'p1', name: 'One' }], readTrash: false }),
+    ).toBe(false);
+    expect(
+      readsTrash({ kind: 'playlists', playlists: [{ id: 'p1', name: 'One' }], readTrash: true }),
+    ).toBe(true);
   });
 });
 
@@ -234,6 +259,7 @@ describe('reading the whole library', () => {
     expect(page.headers).toEqual([
       exportHeader(
         LIBRARY,
+        true,
         atLibrary.workspaces,
         LIBRARY_FILTERS,
         { extension: '0.1.0', adapter: 2 },
@@ -409,7 +435,7 @@ describe('reading the whole library', () => {
 
 describe('reading chosen workspaces', () => {
   it('keeps only the clips of the chosen workspaces, and says the library is not complete', async () => {
-    const scope: SyncScope = { kind: 'workspaces', ids: ['w1', 'w3'] };
+    const scope: SyncScope = { kind: 'workspaces', ids: ['w1', 'w3'], readTrash: true };
     const mixed = [...clips(2, 'one', 'w1'), ...clips(2, 'two', 'w2'), ...clips(1, 'three', 'w3')];
     const page = suno([libraryPage(mixed, false, null)]);
 
@@ -428,12 +454,32 @@ describe('reading chosen workspaces', () => {
       workspacesComplete: true,
     });
   });
+
+  it('promises nothing about the Trash, and sends no trashed clips, when the Trash is not read (#420)', async () => {
+    const scope: SyncScope = { kind: 'workspaces', ids: ['w1'], readTrash: false };
+    const legs = legsFor(scope);
+    const page = suno([libraryPage(clips(2, 'one', 'w1'), false, null)]);
+
+    const next = await readLeg(scope, legs, { ...START, leg: 1 }, page.context);
+
+    expect(page.headers).toHaveLength(1);
+    expect(page.headers[0]).toMatchObject({
+      scope: { kind: 'workspaces', ids: ['w1'] },
+      libraryComplete: false,
+      trashedComplete: false,
+      workspacesComplete: true,
+    });
+    expect(page.parts.every((part) => part.trashedClips.length === 0)).toBe(true);
+    // The library was the last leg: the sync is finished.
+    expect(next.leg).toBe(legs.length);
+  });
 });
 
 describe('reading a playlist', () => {
   const scope: SyncScope = {
     kind: 'playlists',
     playlists: [{ id: '00000000-0000-4000-8000-00000000012b', name: 'Morning' }],
+    readTrash: true,
   };
   const legs = legsFor(scope);
 
@@ -478,7 +524,19 @@ describe('reading a playlist', () => {
     expect(page.headers[0]).toMatchObject({
       scope: { kind: 'playlists', ids: ['00000000-0000-4000-8000-00000000012b'] },
       libraryComplete: false,
+      trashedComplete: true,
     });
+  });
+
+  it('says the Trash is not complete when a playlist sync does not read it (#420)', async () => {
+    const unread: SyncScope = { ...scope, readTrash: false };
+    const page = suno([playlistFeed(2)]);
+
+    const next = await readLeg(unread, legsFor(unread), { ...START, leg: 1 }, page.context);
+
+    expect(page.headers[0]).toMatchObject({ libraryComplete: false, trashedComplete: false });
+    expect(page.parts.every((part) => part.trashedClips.length === 0)).toBe(true);
+    expect(next.leg).toBe(legsFor(unread).length);
   });
 
   it('stops, naming the step, when fewer songs come than the playlist has (paging past 50 is unverified)', async () => {
@@ -499,7 +557,7 @@ describe('reading the Trash', () => {
       clips: clips(3, 't'),
     };
     delete last.next_cursor;
-    const scope: SyncScope = { kind: 'workspaces', ids: ['elsewhere'] };
+    const scope: SyncScope = { kind: 'workspaces', ids: ['elsewhere'], readTrash: true };
     const page = suno([observed('trash', first)], [[observed('trash', last, { cursor: 'n1' })]]);
 
     const next = await readLeg(

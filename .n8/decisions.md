@@ -4573,3 +4573,15 @@ Story #219 (on the milestone branch):
 - **Decision:** The extension is unchanged: it still sends a cover image for each trashed clip, and the artwork endpoint answers 404 for a record left out, which the extension already counts as ignored.
   **Why:** Kept to the backend and review; skipping those uploads in the extension is a possible follow-up (it would need the left-out IDs, which the export does not keep).
   **Issue:** #418
+
+## M4 captures — #420 Trash read only when asked on scoped syncs — 2026-10-11
+
+- **Decision:** A workspace or playlist sync no longer has a Trash leg unless the panel's "Also check Suno's Trash" is ticked (off by default, shown only for those scopes, with the hint that trashed songs are archived at the next sync that reads the Trash). A whole-library sync always reads it. The choice is `readTrash` on the workspace and playlist `SyncScope` (required; a `sync-begin` without it is refused), and `legsFor` builds the legs from it, so the service worker carries it across page loads in the session's scope and legs. `ADAPTER_VERSION` 18.
+  **Why:** Owner decision on #420: reading the whole Trash made a workspace sync slow, and it is read only so trashed linked clips can be archived.
+  **Issue:** #420
+- **Decision:** The header's `trashedComplete` follows the legs (`legs.some(list === 'trash')`), not the scope, so a sync begun before the change still reports what it reads. Without the Trash leg it is `false` and no part carries `trashedClips`.
+  **Why:** The legs are what the read does; the scope a pre-#420 session holds has no `readTrash`.
+  **Issue:** #420
+- **Decision:** No server change. `trashedComplete: false` on a workspace or playlist export was already safe: `RemoteStateRules.ChecksMissing` and `SunoIgnoreListRules.IsWholeLibrary` both need scope `library`, so nothing is marked missing and entries the export does not contain keep their status; existing tests (`RemoteStateRulesTests`, `IgnoreListTests`) cover those scopes.
+  **Why:** Verified read-only, per the issue's AC.
+  **Issue:** #420

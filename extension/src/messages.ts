@@ -183,11 +183,15 @@ export function pageRequestOf(message: PageMessage): PageRequest | null {
   }
 }
 
-/** What a sync reads (#134): the whole library, chosen workspaces, or chosen playlists. */
+/**
+ * What a sync reads (#134): the whole library, chosen workspaces, or chosen playlists. A whole-library
+ * sync always reads Suno's Trash; a workspace or playlist sync reads it only when `readTrash` is set
+ * (#420).
+ */
 export type SyncScope =
   | { kind: 'library' }
-  | { kind: 'workspaces'; ids: string[] }
-  | { kind: 'playlists'; playlists: { id: string; name: string }[] };
+  | { kind: 'workspaces'; ids: string[]; readTrash: boolean }
+  | { kind: 'playlists'; playlists: { id: string; name: string }[]; readTrash: boolean };
 
 /** One list a sync reads, each on its own Suno page. */
 export type SyncLeg =
@@ -612,9 +616,10 @@ function isSyncScope(value: unknown): value is SyncScope {
     case 'library':
       return true;
     case 'workspaces':
-      return isTextList(value.ids) && value.ids.length > 0;
+      return isTextList(value.ids) && value.ids.length > 0 && typeof value.readTrash === 'boolean';
     case 'playlists':
       return (
+        typeof value.readTrash === 'boolean' &&
         Array.isArray(value.playlists) &&
         value.playlists.length > 0 &&
         value.playlists.every(

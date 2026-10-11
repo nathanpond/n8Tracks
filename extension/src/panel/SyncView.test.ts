@@ -2,7 +2,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ImageProgress, SyncScope } from '../messages.ts';
 import { expectNoAxeViolations } from '../testing/a11y.ts';
-import { countsText, imagesText, summaryText, SyncView, type SyncViewOptions } from './SyncView.ts';
+import {
+  countsText,
+  imagesText,
+  summaryText,
+  SyncView,
+  TRASH_HINT,
+  type SyncViewOptions,
+} from './SyncView.ts';
 
 const COUNTS = { clips: 140, trashed: 1, workspaces: 12, playlists: 0 };
 
@@ -90,7 +97,11 @@ describe('Sync to n8Tracks in the panel', () => {
     box.checked = true;
     box.dispatchEvent(new Event('change'));
     button('Next')?.click();
-    expect(options.preview).toHaveBeenCalledWith({ kind: 'workspaces', ids: ['w2'] });
+    expect(options.preview).toHaveBeenCalledWith({
+      kind: 'workspaces',
+      ids: ['w2'],
+      readTrash: false,
+    });
   });
 
   it('says where to find the workspaces when Suno has listed none (TS-007: by the tab, not a refresh)', () => {
@@ -129,7 +140,69 @@ describe('Sync to n8Tracks in the panel', () => {
     expect(options.preview).toHaveBeenCalledWith({
       kind: 'playlists',
       playlists: [{ id: 'p1', name: 'Morning' }],
+      readTrash: false,
     });
+  });
+
+  it('offers "Also check Suno\'s Trash", off, only for workspaces and playlists, with its hint (#420)', async () => {
+    const { sync, options, button, input, choose } = view({
+      workspaces: [{ id: 'w1', name: 'Studio' }],
+      playlists: [{ id: 'p1', name: 'Morning' }],
+    });
+    sync.setAvailable(true, null);
+    const trash = () => sync.element.querySelector<HTMLInputElement>('input[name="n8-sync-trash"]');
+
+    // A whole-library sync always reads the Trash: there is nothing to choose.
+    expect(trash()).toBeNull();
+    expect(sync.element.textContent).not.toContain(TRASH_HINT);
+
+    for (const kind of ['workspaces', 'playlists'] as const) {
+      choose(kind);
+      const box = trash();
+      expect(box?.checked).toBe(false);
+      expect(box?.closest('label')?.textContent.trim()).toBe("Also check Suno's Trash");
+      const hint = sync.element.querySelector(`#${box?.getAttribute('aria-describedby') ?? ''}`);
+      expect(hint?.textContent).toBe(TRASH_HINT);
+      expect(TRASH_HINT).toContain('archived in n8Tracks at the next sync that reads the Trash');
+      await expectNoAxeViolations(document);
+    }
+
+    choose('library');
+    expect(trash()).toBeNull();
+
+    // Turned on, it goes into the scope the sync carries.
+    choose('workspaces');
+    const box = trash();
+    if (box === null) {
+      throw new Error('No Trash checkbox');
+    }
+    box.checked = true;
+    box.dispatchEvent(new Event('change'));
+    const workspace = input('w1');
+    if (workspace === null) {
+      throw new Error('No checkbox for w1');
+    }
+    workspace.checked = true;
+    workspace.dispatchEvent(new Event('change'));
+    button('Next')?.click();
+    expect(options.preview).toHaveBeenLastCalledWith({
+      kind: 'workspaces',
+      ids: ['w1'],
+      readTrash: true,
+    });
+  });
+
+  it('says in the summary whether the Trash is read (#420)', () => {
+    expect(summaryText({ kind: 'library' })).toContain('plus the Trash list');
+    expect(summaryText({ kind: 'workspaces', ids: ['w1'], readTrash: true })).toContain(
+      'plus the Trash list',
+    );
+    expect(summaryText({ kind: 'workspaces', ids: ['w1'], readTrash: false })).toContain(
+      'not the Trash',
+    );
+    expect(
+      summaryText({ kind: 'playlists', playlists: [{ id: 'p1', name: 'M' }], readTrash: false }),
+    ).toContain('not the Trash');
   });
 
   it('shows the summary, warns of a replaced export, and starts only on Start sync', async () => {

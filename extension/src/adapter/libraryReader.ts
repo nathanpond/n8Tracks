@@ -5,14 +5,15 @@ import type { ObservedKind, ObservedMessage, ObservedRequest } from './observed.
  * The library reader (#134): reads the lists a sync needs by watching Suno's own responses
  * (`observed.ts`) while the page is operated, and hands the records to n8Tracks in parts. A sync
  * is a list of legs, each read on its own Suno page: the workspace list, then the library or each
- * chosen playlist, then the Trash. Navigating between them belongs to the content script; this
+ * chosen playlist, then the Trash when the scope reads it. Navigating between them belongs to the content script; this
  * module reads one leg on the page it is given.
  *
  * Paging and end of list are TS-003's. A list counts as read only when its end was seen; a page
  * that does not look as expected, one that comes twice, or one that does not come stops the read
  * with the step named, and the content script discards the export. Nothing partial is offered for
  * review, so a completed export's `libraryComplete`, `trashedComplete`, and `workspacesComplete`
- * are what the read set out to read: a whole-library read is the only one with `libraryComplete`.
+ * are what the read set out to read: a whole-library read is the only one with `libraryComplete`,
+ * and `trashedComplete` is set only when a Trash leg was read (#420).
  */
 
 /** How long a page of a list may take to come, after the action that asks for it (20 seconds). */
@@ -101,17 +102,27 @@ function isRaw(value: unknown): value is Raw {
   return isRecord(value) && typeof value.id === 'string' && value.id !== '';
 }
 
-/** The legs a scope is read in. The workspace and Trash lists are read for every scope. */
+/**
+ * Whether a scope reads Suno's Trash: a whole-library sync always does; a workspace or playlist sync
+ * only when the user asked (#420), since reading the whole Trash is slow and serves only to archive
+ * trashed linked clips, which the next sync that reads it does.
+ */
+export function readsTrash(scope: SyncScope): boolean {
+  return scope.kind === 'library' || scope.readTrash;
+}
+
+/** The legs a scope is read in. The workspace list is read for every scope, the Trash last when read. */
 export function legsFor(scope: SyncScope): SyncLeg[] {
+  const trash: SyncLeg[] = readsTrash(scope) ? [{ list: 'trash' }] : [];
   switch (scope.kind) {
     case 'library':
     case 'workspaces':
-      return [{ list: 'workspaces' }, { list: 'library' }, { list: 'trash' }];
+      return [{ list: 'workspaces' }, { list: 'library' }, ...trash];
     case 'playlists':
       return [
         { list: 'workspaces' },
         ...scope.playlists.map((playlist): SyncLeg => ({ list: 'playlist', ...playlist })),
-        { list: 'trash' },
+        ...trash,
       ];
   }
 }
@@ -339,9 +350,14 @@ function workspaceOf(clip: Raw): string | null {
   return isRecord(project) && typeof project.id === 'string' ? project.id : null;
 }
 
-/** The export's header (`docs/suno-integration.md`, Export format), sent before the first part. */
+/**
+ * The export's header (`docs/suno-integration.md`, Export format), sent before the first part.
+ * `trashed` says whether the sync's legs read the Trash: decided by the legs the service worker
+ * holds, not the scope, so a sync begun before #420 still reports what it reads.
+ */
 export function exportHeader(
   scope: SyncScope,
+  trashed: boolean,
   workspaces: readonly unknown[],
   libraryFilters: unknown,
   versions: LegContext['versions'],
@@ -364,7 +380,8 @@ export function exportHeader(
     },
     // Promises: the export is completed only if every list it reads was seen to its end.
     libraryComplete: scope.kind === 'library',
-    trashedComplete: true,
+    // Without a Trash leg nothing is promised about the Trash, and no trashed clips are sent (#420).
+    trashedComplete: trashed,
     workspacesComplete: true,
     workspaces,
     playlists: [],
@@ -399,7 +416,14 @@ export async function readLeg(
   const ensureExport = async (filters: unknown) => {
     if (!created) {
       await context.sink.create(
-        exportHeader(scope, workspaces, filters, context.versions, context.now()),
+        exportHeader(
+          scope,
+          legs.some((other) => other.list === 'trash'),
+          workspaces,
+          filters,
+          context.versions,
+          context.now(),
+        ),
       );
       created = true;
       workspaces = [];

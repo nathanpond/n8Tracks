@@ -204,6 +204,37 @@ describe('starting a sync', () => {
 });
 
 describe('carrying a sync between page loads', () => {
+  it("carries a workspace or playlist sync's Trash choice in its scope and legs (#420)", async () => {
+    const context = await setup();
+
+    await context.send({
+      type: 'sync-begin',
+      scope: { kind: 'workspaces', ids: ['w1'], readTrash: false },
+    });
+    expect(await context.send({ type: 'sync-resume' })).toMatchObject({
+      session: {
+        scope: { kind: 'workspaces', ids: ['w1'], readTrash: false },
+        legs: [{ list: 'workspaces' }, { list: 'library' }],
+      },
+    });
+
+    const playlists = [{ id: 'p1', name: 'Morning' }];
+    await context.send({
+      type: 'sync-begin',
+      scope: { kind: 'playlists', playlists, readTrash: true },
+    });
+    expect(await context.send({ type: 'sync-resume' })).toMatchObject({
+      session: {
+        scope: { kind: 'playlists', playlists, readTrash: true },
+        legs: [
+          { list: 'workspaces' },
+          { list: 'playlist', id: 'p1', name: 'Morning' },
+          { list: 'trash' },
+        ],
+      },
+    });
+  });
+
   it('gives the sync back only to its own tab', async () => {
     const context = await started();
 
