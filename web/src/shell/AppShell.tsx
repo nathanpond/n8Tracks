@@ -1,4 +1,4 @@
-import { AppShell, Container, NavLink, Stack, Text } from '@mantine/core';
+import { AppShell, NavLink, Stack, Text } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { useEffect } from 'react';
 import { Link, Outlet, useLocation } from 'react-router';
@@ -55,7 +55,8 @@ export function SignedInShell() {
  * sidebar, and the current page. The sidebar lists Home (the dashboard, #228), Songs, Artists, Albums, Playlists, Suno import, Ignored Suno items, Library (Media, Unmatched Files), and Settings, and Settings has Account,
  * Credentials, Workflow, Catalog, Genres, Tags, Relationships, Suno, Suno workspaces, Backups, and System; later stories add pages. On a narrow screen the sidebar is hidden until the toggle opens
  * it, and choosing a page closes it again. Once something has been played, the player bar (#218) is
- * the footer of every page, with its own space at the bottom.
+ * the footer of every page, with its own space at the bottom. The page takes the full width of the
+ * pane beside the sidebar (#424).
  */
 function ShellLayout() {
   const [opened, { toggle, close }] = useDisclosure(false);
@@ -138,10 +139,10 @@ function ShellLayout() {
           </div>
         </Stack>
       </AppShell.Navbar>
+      {/* No width cap (#424): a page uses the whole pane, so wide tables and details do not wrap or clip.
+          A form that reads better narrow sets its own limit. */}
       <AppShell.Main>
-        <Container size="md" px={0}>
-          <Outlet />
-        </Container>
+        <Outlet />
       </AppShell.Main>
       {showPlayer && (
         <AppShell.Footer px="md" py="xs" aria-label="Player" style={{ overflowY: 'auto' }}>

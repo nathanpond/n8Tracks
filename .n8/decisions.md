@@ -4904,3 +4904,15 @@ Story #230 (built in parallel; merged into the milestone branch):
   **Why:** Found while checking #244's evidence; it is live now, not only an M7 item.
   **Issue:** #407
 - **Decision:** Not changed: epics #20, #21, #23; #246, #252. Noted only: M8 session-only routes and `GET /songs.csv` must be classified under #254's MCP default-deny (M8 on M7); Song notes are not indexed (M6 #223), which nothing in M7/M8 assumes.
+
+## M6 — #424 content width — 2026-10-11
+
+- **Decision:** Removed the signed-in shell's `<Container size="md" px={0}>` around the router outlet in `web/src/shell/AppShell.tsx`; pages now fill `AppShell.Main`. That container was the only app-wide cap (Mantine `md` = 960px), so the Suno import review, Songs table, and Song page stopped near 1000px on any wider window.
+  **Why:** Owner rule from the M4 walkthrough: the content pane must not cap content width artificially.
+  **Issue:** #424
+- **Decision:** Kept these limits: `PlainPage`'s `Container size="sm"` (sign-in, setup, maintenance: a single short form outside the signed-in pane); the Album and Playlist pages' `maw={720}` stacks, which hold only the artwork, title, and description fields (their track lists sit outside them and now use the full width); and small control widths (`maw` 320 to 520 on filters, selects, and a help paragraph), each sized to its control or text. `Table.ScrollContainer minWidth` values are minimums, not caps, and per-cell `maxWidth` values keep long cells from crowding the others; both left as they are.
+  **Why:** Each is a deliberate readable or form width on one element, not a cap on the page.
+  **Issue:** #424
+- **Decision:** Tested at 2560px by a new e2e spec (`e2e/tests/content-width.spec.ts`: Songs table, Song page, import review table each wider than 2000px) plus a component test that no width-capping container sits between `main` and the page. Against an image built without the fix the spec fails (960px for the review table, about 1260 to 1290px for the Songs table, which overflowed its 960px container).
+  **Why:** jsdom has no layout, so the width itself can only be measured in a browser.
+  **Issue:** #424

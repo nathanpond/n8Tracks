@@ -153,6 +153,22 @@ describe('the signed-in shell', () => {
     expect(await screen.findByRole('heading', { name: 'Songs' })).toBeVisible();
   });
 
+  it('puts the page in the main area with no width-capping container between them (#424)', async () => {
+    stubFetch().mockImplementation(() => Promise.resolve(jsonResponse(200, healthyReport)));
+
+    renderAt('/no/such/page');
+
+    const heading = await screen.findByRole('heading', { name: 'Page not found' });
+    const main = screen.getByRole('main');
+    // jsdom has no layout, so the e2e spec content-width.spec.ts measures the width; this checks the cause.
+    for (let element = heading.parentElement; element && element !== main;) {
+      expect(element.className).not.toMatch(/mantine-Container/);
+      expect(element.style.maxWidth).toBe('');
+      expect(element.style.getPropertyValue('--container-size')).toBe('');
+      element = element.parentElement;
+    }
+  });
+
   it('opens and closes the sidebar with the toggle, which says whether it is open', async () => {
     stubFetch().mockImplementation(() => Promise.resolve(jsonResponse(200, healthyReport)));
     const user = userEvent.setup();
