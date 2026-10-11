@@ -342,10 +342,32 @@ describe('reading the whole library', () => {
     ).toMatchObject({ expected: 'a page of the library feed that says whether there is more' });
   });
 
-  it('stops when Suno sends the same page twice', async () => {
+  it('skips the page Suno fetched ahead when › asks for it again (TS-007-5)', async () => {
+    // Opening Library › Songs: page 1, then page 2 fetched ahead. The first › asks for page 2
+    // again; the next › asks for page 3.
+    const page = suno(
+      [libraryPage(clips(2, 'a'), true, null), libraryPage(clips(2, 'b'), true, 'c1')],
+      [[libraryPage(clips(2, 'b'), true, 'c1')], [libraryPage(clips(2, 'c'), false, 'c2')]],
+    );
+
+    const next = await readLeg(LIBRARY, legsFor(LIBRARY), atLibrary, page.context);
+
+    expect(next.counts.clips).toBe(6);
+    expect(page.parts.flatMap((part) => part.clips.map((clip) => (clip as Clip).id))).toEqual([
+      'a-0',
+      'a-1',
+      'b-0',
+      'b-1',
+      'c-0',
+      'c-1',
+    ]);
+  });
+
+  it('stops when Suno keeps sending a page it sent before', async () => {
+    const again = () => [libraryPage(clips(2, 'b'), true, null)];
     const page = suno(
       [libraryPage(clips(2, 'a'), true, null)],
-      [[libraryPage(clips(2, 'b'), true, null)]],
+      [again(), again(), again(), again()],
     );
 
     expect(await stopOf(readLeg(LIBRARY, legsFor(LIBRARY), atLibrary, page.context))).toMatchObject(

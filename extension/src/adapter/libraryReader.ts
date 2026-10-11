@@ -273,6 +273,7 @@ async function readList(
   const ids = new Set<string>();
   const cancelled = () => context.signal.aborted;
   let first = true;
+  let repeats = 0;
   for (;;) {
     let message = await context.observations.next(
       spec.kind,
@@ -305,9 +306,17 @@ async function readList(
     if ('problem' in page) {
       throw new ReadStop(step, page.problem);
     }
+    // Suno fetches the next page ahead when Library › Songs opens, and pressing › then asks for
+    // that page again (TS-007-5). A page seen before is skipped without asking for more; only a
+    // run of repeats with no new page between them stops the read.
     if (keys.has(page.key)) {
-      throw new ReadStop(step, `each page of the list once (Suno sent ${spec.what} again)`);
+      repeats += 1;
+      if (repeats > PAGE_RETRIES) {
+        throw new ReadStop(step, `each page of the list once (Suno sent ${spec.what} again)`);
+      }
+      continue;
     }
+    repeats = 0;
     keys.add(page.key);
     const fresh = page.records.filter((record) => !ids.has(record.id));
     for (const record of fresh) {
