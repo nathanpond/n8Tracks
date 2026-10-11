@@ -386,10 +386,10 @@ const lyrics: Filler = {
   text: true,
   wanted: wantedText,
   read: (page) => shown(page, LYRICS_EDITOR, (found) => page.read(found).value ?? ''),
-  write: (page, value) => {
+  write: async (page, value) => {
     const found = locate(page, LYRICS_EDITOR);
     if (typeof found !== 'string') {
-      page.typeText(found, String(value ?? ''));
+      await page.typeText(found, String(value ?? ''));
     }
   },
 };
@@ -667,7 +667,7 @@ function simpleSection(section: SimpleSection): Filler {
       const editor = locate(page, sectionEditor(section));
       if (typeof editor !== 'string') {
         if (section === 'Lyrics') {
-          page.typeText(editor, text);
+          await page.typeText(editor, text);
         } else {
           page.set(editor, text);
         }

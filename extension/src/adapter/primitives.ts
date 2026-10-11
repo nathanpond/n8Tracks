@@ -871,6 +871,9 @@ function editableText(root: Element): string {
   return lines.join('\n');
 }
 
+/** How long typing waits for an editor to take its selection, and then the text (TS-007-8). */
+export const TYPE_SETTLE_MS = 50;
+
 /**
  * Pastes `text` into `element` as plain text; whether the page took it (an editor that handles
  * paste cancels the event). A browser without clipboard events (jsdom) has nothing to take it.
@@ -1240,10 +1243,13 @@ export class Page {
    * (TS-007-8: Suno's editor ignores `insertParagraph`, `insertLineBreak`, and a typed newline, and
    * joined every line into one). Empty text is deleted with Backspace. Where nothing takes the
    * paste or the key, the text goes in through the browser's editing commands, one line at a time.
+   * The editor learns its selection from the browser's `selectionchange`, a task after focus, and
+   * drops a paste that comes before it (TS-007-8), so the text waits {@link TYPE_SETTLE_MS} after
+   * focus, and as long again after the paste for the editor to apply it.
    * Nothing is pressed and no Enter key is sent. The step's read-back decides whether it worked.
    */
-  typeText(found: Found, text: string): void {
-    const element = this.changeable(found);
+  async typeText(found: Found, text: string): Promise<void> {
+    let element = this.changeable(found);
     if (element.getAttribute('contenteditable') !== 'true') {
       throw new PrimitiveError(`${found.target.description} to be an editable text region`);
     }
@@ -1251,6 +1257,8 @@ export class Page {
     const view = viewOf(element);
     (element as HTMLElement).focus();
     view.getSelection()?.selectAllChildren(element);
+    await this.clock.sleep(TYPE_SETTLE_MS);
+    element = this.changeable(found);
     const apple = /Mac|iPhone|iPad/.test(view.navigator.platform);
     const key = (init: KeyboardEventInit) =>
       element.dispatchEvent(
@@ -1260,9 +1268,11 @@ export class Page {
     const lines = text.replace(/\r\n?/g, '\n').split('\n');
     if (text === '') {
       if (!key({ key: 'Backspace', code: 'Backspace', keyCode: 8 })) {
+        await this.clock.sleep(TYPE_SETTLE_MS);
         return;
       }
     } else if (pasted(element, lines.join('\n'))) {
+      await this.clock.sleep(TYPE_SETTLE_MS);
       return;
     }
     // execCommand is deprecated, but it is the one way to give an editor the browser's own trusted

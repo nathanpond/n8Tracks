@@ -234,13 +234,13 @@ export const setExtendFrom: Workflow<ExtendFromContext> = {
     {
       name: 'extend from',
       expect: ({ page }) => present(page, EXTEND_FROM),
-      act: ({ page, seconds }) => {
+      act: async ({ page, seconds }) => {
         if (extendsFrom(page, seconds).ok) {
           return;
         }
         const box = page.find(EXTEND_FROM);
         if (box.kind === 'found') {
-          page.typeText(box.found, extendTime(seconds));
+          await page.typeText(box.found, extendTime(seconds));
         }
       },
       verify: ({ page, seconds }) => extendsFrom(page, seconds),

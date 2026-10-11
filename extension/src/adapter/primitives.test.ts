@@ -707,11 +707,15 @@ describe('editable text (#146: the Lexical lyrics editor)', () => {
     expect(page.read(found(page.find(EDITOR))).value).toBe('one\n\ntwo\nthree');
   });
 
-  it('pastes the whole text after the select-all shortcut, keeping every line, blank line, and indent (TS-007-8)', () => {
+  it('pastes the whole text after the select-all shortcut, keeping every line, blank line, and indent (TS-007-8)', async () => {
     const page = loadSnapshot(ADVANCED);
     const editor = found(page.find(EDITOR));
-    const element = document.querySelector<HTMLElement>('[contenteditable="true"]')!;
-    // A stand-in for the browser's clipboard event and for Lexical, which takes paste and Backspace.
+    const element = document.querySelector<HTMLElement>('[contenteditable="true"]');
+    if (element === null) {
+      throw new Error('the snapshot has no editable region');
+    }
+    // Stand-ins for the browser's clipboard event and for Lexical, which takes paste and Backspace
+    // only once it has a selection: a task after focus, as `selectionchange` gives it.
     class StandInData {
       readonly stored = new Map<string, string>();
       setData(type: string, value: string) {
@@ -726,13 +730,22 @@ describe('editable text (#146: the Lexical lyrics editor)', () => {
       }
     }
     Object.assign(window, { DataTransfer: StandInData, ClipboardEvent: StandInClipboardEvent });
+    let selected = false;
+    element.addEventListener('focus', () => {
+      selected = false;
+      setTimeout(() => {
+        selected = true;
+      }, 0);
+    });
     const pastes: (string | undefined)[] = [];
     const keys: string[] = [];
     element.addEventListener('paste', (event) => {
-      pastes.push(
-        (event as unknown as StandInClipboardEvent).clipboardData.stored.get('text/plain'),
-      );
       event.preventDefault();
+      if (selected) {
+        pastes.push(
+          (event as unknown as StandInClipboardEvent).clipboardData.stored.get('text/plain'),
+        );
+      }
     });
     element.addEventListener('keydown', (event) => {
       keys.push(`${event.metaKey || event.ctrlKey ? 'mod+' : ''}${event.key}`);
@@ -746,8 +759,10 @@ describe('editable text (#146: the Lexical lyrics editor)', () => {
       value: (command: string) => commands.push(command),
     });
     try {
-      page.typeText(editor, '[Verse 1]\r\nFirst line\n  indented\n\n[Chorus]');
-      page.typeText(editor, '');
+      element.blur();
+      await page.typeText(editor, '[Verse 1]\r\nFirst line\n  indented\n\n[Chorus]');
+      element.blur();
+      await page.typeText(editor, '');
     } finally {
       Reflect.deleteProperty(window, 'DataTransfer');
       Reflect.deleteProperty(window, 'ClipboardEvent');
@@ -760,7 +775,7 @@ describe('editable text (#146: the Lexical lyrics editor)', () => {
     expect(commands).toEqual([]);
   });
 
-  it('types line by line through the browser’s editing commands where nothing takes the paste', () => {
+  it('types line by line through the browser’s editing commands where nothing takes the paste', async () => {
     const page = loadSnapshot(ADVANCED);
     const calls: string[] = [];
     Object.defineProperty(document, 'execCommand', {
@@ -775,8 +790,8 @@ describe('editable text (#146: the Lexical lyrics editor)', () => {
     });
     const keys = recordEvents('keydown');
     try {
-      page.typeText(found(page.find(EDITOR)), 'one\r\n\r\ntwo');
-      page.typeText(found(page.find(EDITOR)), '');
+      await page.typeText(found(page.find(EDITOR)), 'one\r\n\r\ntwo');
+      await page.typeText(found(page.find(EDITOR)), '');
     } finally {
       Reflect.deleteProperty(document, 'execCommand');
     }
@@ -791,24 +806,24 @@ describe('editable text (#146: the Lexical lyrics editor)', () => {
     expect(keys).toEqual(['keydown', 'keydown', 'keydown']);
   });
 
-  it('refuses where it cannot type: not an editable region, no editing commands, or after the run stopped', () => {
+  it('refuses where it cannot type: not an editable region, no editing commands, or after the run stopped', async () => {
     const page = loadSnapshot(ADVANCED);
     const editor = found(page.find(EDITOR));
 
-    expect(() => {
-      page.typeText(found(page.find(WEIRDNESS)), 'x');
-    }).toThrow('the Weirdness slider to be an editable text region');
-    expect(() => {
-      page.typeText(editor, 'x');
-    }).toThrow('a browser that can type into the Lyrics editor');
+    await expect(page.typeText(found(page.find(WEIRDNESS)), 'x')).rejects.toThrow(
+      'the Weirdness slider to be an editable text region',
+    );
+    await expect(page.typeText(editor, 'x')).rejects.toThrow(
+      'a browser that can type into the Lyrics editor',
+    );
     expect(() => {
       page.set(editor, 'x');
     }).toThrow('the Lyrics editor to take a typed value');
     const controller = new AbortController();
     controller.abort();
-    expect(() => {
-      page.withSignal(controller.signal).typeText(editor, 'x');
-    }).toThrow(StoppedError);
+    await expect(page.withSignal(controller.signal).typeText(editor, 'x')).rejects.toThrow(
+      StoppedError,
+    );
   });
 });
 
