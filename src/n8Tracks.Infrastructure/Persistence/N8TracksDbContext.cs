@@ -762,6 +762,7 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
             export.HasKey(record => record.Id);
             export.HasIndex(record => record.State);
             export.Property(record => record.Revision).HasDefaultValue(1);
+            export.Property(record => record.TrashedNotOffered).HasDefaultValue(0);
         });
 
         modelBuilder.Entity<SunoExportPartRecord>(part =>

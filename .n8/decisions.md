@@ -4561,3 +4561,15 @@ Story #219 (on the milestone branch):
 - **Decision:** The panel's empty workspace and playlist lists say "open Library on Suno, then click the Workspaces (Playlists) tab (refreshing the page does not load the list)".
   **Why:** TS-007: `/me/workspaces` loaded directly made no `/api/project/me` request; clicking the tab inside Library did.
   **Issue:** #134
+
+## M4 captures — #418 trashed clips never imported — 2026-10-11
+
+- **Decision:** A staged record that is trashed and classifies `new` is removed at classification, after the classes are stored and before proposals, with its playlist memberships; `suno_exports.trashed_not_offered` (migration `RecordTrashedClipsNotOffered`) counts it and the export answers it as `trashedNotOffered`. The rule is `SunoExportRules.IsOffered`. The review shows "N clips in Suno's Trash were not offered." above zero.
+  **Why:** Owner decision on #418. Removing the rows, rather than filtering every read (list, counts, facets, choices by filter, summary, commit), keeps one place that decides and leaves nothing a later read or the commit could pick up.
+  **Issue:** #418
+- **Decision:** `ReclassifyAsync` (after an interrupted commit, or when ignore entries are removed) applies the same rule: an ignored trashed record taken off the list leaves the review and is counted, even when it had been chosen for import, instead of becoming `new` there.
+  **Why:** The AC says such a record is not committable; a reclassification is the only way a staged trashed record can become `new` after classification.
+  **Issue:** #418
+- **Decision:** The extension is unchanged: it still sends a cover image for each trashed clip, and the artwork endpoint answers 404 for a record left out, which the extension already counts as ignored.
+  **Why:** Kept to the backend and review; skipping those uploads in the extension is a possible follow-up (it would need the left-out IDs, which the export does not keep).
+  **Issue:** #418

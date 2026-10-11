@@ -30,7 +30,8 @@ public sealed class SunoExportEndpointTests
     /// (linked, even though its image address has a new query and its status moved, and even though it is
     /// also on the ignore list: a live Generation decides first), one whose title Suno changed (changed),
     /// one whose Generation was deleted (deleted, though also ignored: a tombstone comes before the ignore
-    /// list), one on the ignore list (ignored), and unknown ones from the library and the Trash (new).
+    /// list), one on the ignore list (ignored), and an unknown one from the library (new). The unknown ones
+    /// from the Trash are not offered (#418): left out of every class and list, and counted apart.
     /// No record is conflict: each linked clip's Version holds the inputs it maps to (#135).
     /// </summary>
     [Fact]
@@ -72,27 +73,27 @@ public sealed class SunoExportEndpointTests
         Assert.Equal(
             ["new", "linked", "changed", "conflict", "ignored", "deleted", "total"],
             export.GetProperty("counts").EnumerateObject().Select(static count => count.Name));
-        Assert.Equal(3, SunoExportApi.Count(export, "new"));
+        Assert.Equal(1, SunoExportApi.Count(export, "new"));
         Assert.Equal(1, SunoExportApi.Count(export, "linked"));
         Assert.Equal(1, SunoExportApi.Count(export, "changed"));
         Assert.Equal(0, SunoExportApi.Count(export, "conflict"));
         Assert.Equal(1, SunoExportApi.Count(export, "ignored"));
         Assert.Equal(1, SunoExportApi.Count(export, "deleted"));
-        Assert.Equal(7, SunoExportApi.Count(export, "total"));
+        Assert.Equal(5, SunoExportApi.Count(export, "total"));
+        Assert.Equal(2, export.GetProperty("trashedNotOffered").GetInt32());
         var readyAt = DateTime.Parse(export.GetProperty("readyAt").GetString()!, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
         Assert.Equal(readyAt.AddDays(7), DateTime.Parse(export.GetProperty("expiresAt").GetString()!, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind));
         Assert.Equal(export.GetRawText(), (await SunoExportApi.GetAsync(client, token, id)).GetRawText());
 
         var records = await SunoExportApi.RecordsByIdAsync(client, id);
-        Assert.Equal(7, records.Count);
+        Assert.Equal(5, records.Count);
         string ClassOf(JsonNode clip) => records[SunoExportApi.IdOf(clip)].GetProperty("class").GetString()!;
         Assert.Equal("linked", ClassOf(linked));
         Assert.Equal("changed", ClassOf(changed));
         Assert.Equal("deleted", ClassOf(deleted));
         Assert.Equal("ignored", ClassOf(ignored));
         Assert.Equal("new", ClassOf(unknown));
-        Assert.All(trash, clip => Assert.Equal("new", ClassOf(clip)));
-        Assert.All(trash, clip => Assert.True(records[SunoExportApi.IdOf(clip)].GetProperty("trashed").GetBoolean()));
+        Assert.All(trash, clip => Assert.DoesNotContain(SunoExportApi.IdOf(clip), records.Keys));
         Assert.False(records[SunoExportApi.IdOf(linked)].GetProperty("trashed").GetBoolean());
 
         // A changed record says what changed, and both name the Generation that holds the Suno ID.
@@ -169,7 +170,8 @@ public sealed class SunoExportEndpointTests
     /// <summary>
     /// A Suno ID that appears more than once is one record. Within one list the last copy wins; a clip in
     /// both the library and the Trash is treated as trashed whichever part brought which copy; the
-    /// playlists of every copy are merged.
+    /// playlists of every copy are merged. The clip is on the ignore list, so its trashed record is offered
+    /// (#418 leaves out only a trashed clip that classifies new).
     /// </summary>
     [Fact]
     public async Task RepeatedSunoIdsAreOneRecordAndTheTrashCopyWins()
@@ -179,6 +181,7 @@ public sealed class SunoExportEndpointTests
         var token = await SunoWorkspaceApi.ExtensionTokenAsync(factory);
         var clip = SunoExportApi.LibraryClips()[0];
         var id = SunoExportApi.IdOf(clip);
+        SunoExportApi.Ignore(factory, id);
         JsonNode Titled(string title)
         {
             var copy = clip.DeepClone();
@@ -285,6 +288,9 @@ public sealed class SunoExportEndpointTests
         await ImportedVersions.AttachAsync(factory, await SongApi.CreateAsync(client, "Holder"), "2", library[0]);
         var workspace = library[1]["project"]!["id"]!.GetValue<string>();
 
+        // On the ignore list, the Trash clips are offered (#418 leaves out a trashed clip only when it is new).
+        trash.ForEach(clip => SunoExportApi.Ignore(factory, SunoExportApi.IdOf(clip)));
+
         var (id, _) = await SunoExportApi.UploadAsync(
             client,
             token,
@@ -308,7 +314,7 @@ public sealed class SunoExportEndpointTests
         Assert.Empty((await SunoExportApi.RecordsAsync(client, id, "?page=9")).GetProperty("items").EnumerateArray());
 
         Assert.Equal([SunoExportApi.IdOf(library[0])], (await SunoExportApi.RecordsByIdAsync(client, id, "?class=linked")).Keys);
-        Assert.Equal(7, (await SunoExportApi.RecordsAsync(client, id, "?class=new")).GetProperty("total").GetInt32());
+        Assert.Equal(5, (await SunoExportApi.RecordsAsync(client, id, "?class=new")).GetProperty("total").GetInt32());
         Assert.Equal(0, (await SunoExportApi.RecordsAsync(client, id, "?class=deleted")).GetProperty("total").GetInt32());
         Assert.Equal(
             library.Concat(trash).Where(clip => clip["project"]?["id"]?.GetValue<string>() == workspace).Select(SunoExportApi.IdOf).Order(StringComparer.Ordinal),

@@ -64,6 +64,12 @@ public sealed class SunoExportRecord
     public Guid? JobId { get; set; }
 
     public int Revision { get; set; } = 1;
+
+    /// <summary>
+    /// How many staged records classification left out of the review (#418): in Suno's Trash and never
+    /// imported. Their rows are removed; only the count stays.
+    /// </summary>
+    public int TrashedNotOffered { get; set; }
 }
 
 /// <summary>One row of <c>suno_export_parts</c>: a part's body as received, kept until the export is classified or ends.</summary>

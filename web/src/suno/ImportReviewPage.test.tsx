@@ -371,6 +371,22 @@ describe('the import review page', () => {
     );
   });
 
+  it('says how many clips in Suno’s Trash were not offered, and nothing when none was (#418)', async () => {
+    importServer(everyClass(), { trashedNotOffered: 828 });
+    await openReview();
+
+    expect(screen.getByTestId('trashed-not-offered')).toHaveTextContent(
+      '828 clips in Suno’s Trash were not offered.',
+    );
+  });
+
+  it('shows no Trash line when every clip was offered', async () => {
+    importServer(everyClass());
+    await openReview();
+
+    expect(screen.queryByTestId('trashed-not-offered')).not.toBeInTheDocument();
+  });
+
   it('says there is nothing to do when no record is imported or newly ignored', async () => {
     importServer([testRecord('a'), testRecord('kept', { class: 'ignored' })]);
     await openReview();

@@ -17,6 +17,10 @@ namespace n8Tracks.Domain.Suno;
 /// <param name="EndedUtc">When it was committed, discarded, failed, or expired.</param>
 /// <param name="JobId">The classification job, when classification ran in the background.</param>
 /// <param name="Revision">Starts at 1; raised by the review's choice changes (#138).</param>
+/// <param name="TrashedNotOffered">
+/// How many of its clips were left out of the review (#418): in Suno's Trash and never imported
+/// (<see cref="SunoExportRules.IsOffered"/>). They are not listed, counted, proposed, or committed.
+/// </param>
 public sealed record SunoExport(
     Guid Id,
     SunoExportState State,
@@ -27,7 +31,8 @@ public sealed record SunoExport(
     DateTimeOffset? ReadyUtc,
     DateTimeOffset? EndedUtc,
     Guid? JobId,
-    int Revision)
+    int Revision,
+    int TrashedNotOffered = 0)
 {
     /// <summary>When a ready export expires: <see cref="SunoExportRules.ReadyLifetime"/> after it became ready.</summary>
     public DateTimeOffset? ExpiresUtc => State == SunoExportState.Ready && ReadyUtc is { } ready ? ready + SunoExportRules.ReadyLifetime : null;
@@ -241,6 +246,14 @@ public static class SunoExportRules
             : ignored ? SunoRecordClass.Ignored
             : SunoRecordClass.New;
     }
+
+    /// <summary>
+    /// Whether a classified record is offered in the review (#418): every record but one in Suno's Trash
+    /// that n8Tracks never imported (<see cref="SunoRecordClass.New"/>). A sync reads the whole Trash so
+    /// linked clips can be archived, and a trashed clip never imported is not offered as a new Song. One
+    /// that is linked, deleted (tombstoned), or ignored keeps its class and is offered as before.
+    /// </summary>
+    public static bool IsOffered(SunoRecordClass recordClass, bool trashed) => !(trashed && recordClass == SunoRecordClass.New);
 
     /// <summary>
     /// The compared fields (<see cref="ComparedFields"/>) in which <paramref name="incoming"/> differs from

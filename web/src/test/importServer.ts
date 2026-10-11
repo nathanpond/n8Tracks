@@ -96,6 +96,7 @@ export function testImport(change: Partial<SunoImport> = {}): SunoImport {
     counts: {},
     revision: 1,
     libraryExcluded: [],
+    trashedNotOffered: 0,
     ...change,
   };
 }

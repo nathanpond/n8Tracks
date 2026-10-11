@@ -16,6 +16,7 @@ import {
   reasonsText,
   statusResultText,
   targetText,
+  trashedNotOfferedText,
 } from './importReviewRules';
 
 describe('the review rules', () => {
@@ -42,6 +43,14 @@ describe('the review rules', () => {
     expect(
       excludedKindsText(['disliked', 'fromStudioProject', 'stem', 'stemComplement', 'other']),
     ).toEqual(['disliked songs', 'clips made in Studio projects', 'stems', 'other']);
+  });
+
+  it('counts the clips in Suno’s Trash left out of the review, and says nothing when there are none', () => {
+    expect(trashedNotOfferedText(828)).toBe('828 clips in Suno’s Trash were not offered.');
+    expect(trashedNotOfferedText(1)).toBe('1 clip in Suno’s Trash was not offered.');
+    expect(trashedNotOfferedText(1234)).toBe('1,234 clips in Suno’s Trash were not offered.');
+    expect(trashedNotOfferedText(0)).toBeNull();
+    expect(trashedNotOfferedText(undefined)).toBeNull();
   });
 
   it('says what happens to a record by its class and choice', () => {

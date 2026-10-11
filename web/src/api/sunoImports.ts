@@ -56,6 +56,8 @@ export interface SunoImport {
   revision: number;
   /** The kinds of clip Suno's library filters left out, by filter name (`disliked`, `stem`…). */
   libraryExcluded: string[];
+  /** How many clips in Suno's Trash that were never imported were left out of the review (#418). */
+  trashedNotOffered?: number;
   /** The background job last run for it: classifying a large export, or committing it (#140). */
   jobId?: string | null;
 }
@@ -289,7 +291,8 @@ export function isSunoImport(value: unknown): value is SunoImport {
     typeof value.libraryComplete === 'boolean' &&
     isRecord(value.counts) &&
     typeof value.revision === 'number' &&
-    isStringList(value.libraryExcluded)
+    isStringList(value.libraryExcluded) &&
+    (value.trashedNotOffered === undefined || typeof value.trashedNotOffered === 'number')
   );
 }
 

@@ -37,6 +37,19 @@ export function excludedKindsText(kinds: readonly string[]): string[] {
   return [...new Set(kinds.map((kind) => words[kind] ?? kind))];
 }
 
+/**
+ * The line saying how many clips in Suno's Trash were left out of the review because they were never
+ * imported (#418), or null when none was.
+ */
+export function trashedNotOfferedText(count: number | undefined): string | null {
+  if (count === undefined || count <= 0) {
+    return null;
+  }
+  return count === 1
+    ? '1 clip in Suno’s Trash was not offered.'
+    : `${count.toLocaleString('en')} clips in Suno’s Trash were not offered.`;
+}
+
 /** A refusal reason in plain words. */
 export function reasonText(reason: string): string {
   switch (reason) {

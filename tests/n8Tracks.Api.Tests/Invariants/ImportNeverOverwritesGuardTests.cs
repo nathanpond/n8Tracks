@@ -485,9 +485,10 @@ public sealed class ImportNeverOverwritesGuardTests
     /// to apply) and the bystander's clip in neither list (Remote Missing, set to Skip). Suno's status
     /// (#314): three more bystander Generations, left to Skip, whose clips differ only in status: one still
     /// submitted (rated, commented, a change of it declined) that Suno has finished, one complete that Suno
-    /// now says ended in error, and one submitted that Suno is still streaming. The rows are read before the
-    /// export is first uploaded and again once every choice is saved, and must be the same: nothing before
-    /// Confirm changes the catalog.
+    /// now says ended in error, and one submitted that Suno is still streaming. The Trash list also holds a
+    /// clip never imported (#418), which is not offered: it must reach neither the review nor the commit.
+    /// The rows are read before the export is first uploaded and again once every choice is saved, and must
+    /// be the same: nothing before Confirm changes the catalog.
     /// </summary>
     private static async Task<Scenario> ScenarioAsync(N8TracksApiFactory factory, bool everythingSkipped = false)
     {
@@ -552,6 +553,10 @@ public sealed class ImportNeverOverwritesGuardTests
         var ignoredTrashed = ProposalApi.Clip("ignored-trashed", null, at.AddHours(11), 0, "Mutable words", "Trashed and ignored");
         TestDatabase.Execute(factory.DataPath, $"INSERT INTO suno_ignored_items (suno_id, title, ignored_utc, last_status, last_seen_utc) VALUES ('ignored-trashed', 'Trashed and ignored', '2026-09-01T00:00:00.000Z', 'trashed', '{RemoteStateApi.CapturedLater}');");
 
+        // #418: a clip in Suno's Trash that was never imported. Left out at classification, it would
+        // otherwise be proposed, and committed, as a new Song.
+        var trashedNever = ProposalApi.Clip("trashed-never", null, at.AddHours(12), 0, "Thrown away words", "Thrown away");
+
         JsonNode NewSongClip(string id, int batch)
         {
             var clip = ProposalApi.Clip(id, "studio", at.AddHours(3), batch, "New Song words", "Brand new");
@@ -580,7 +585,7 @@ public sealed class ImportNeverOverwritesGuardTests
         // The catalog before the first upload (#337): a write that receiving, classifying, proposing, or a
         // choice made would be in place by the time the choices are saved, and is caught against this.
         var pristine = Rows(factory.DataPath);
-        var (exportId, _) = await SunoExportApi.UploadAsync(client, token, RemoteStateApi.Header(), SunoExportApi.Part(1, clips, trashed: [frozen, ignoredTrashed]));
+        var (exportId, _) = await SunoExportApi.UploadAsync(client, token, RemoteStateApi.Header(), SunoExportApi.Part(1, clips, trashed: [frozen, ignoredTrashed, trashedNever]));
         var records = await SunoExportApi.RecordsByIdAsync(client, exportId);
         Assert.Equal("deleted", records["deleted-1"].GetProperty("class").GetString());
         Assert.All(new[] { "status-1", "status-final", "status-going" }, id => Assert.Equal(("linked", "skip"), (records[id].GetProperty("class").GetString(), records[id].GetProperty("choice").GetProperty("action").GetString())));
@@ -635,6 +640,9 @@ public sealed class ImportNeverOverwritesGuardTests
     {
         var records = ImportCommitApi.Records(result);
         Assert.Equal(["created", "created", "created", "created", "created", "skipped", "ignored", "created", "created"], new[] { "new-a1", "new-a2", "new-v", "same-mutable", "same-frozen", "skipped-1", "ignored-1", "deleted-1", "ignored-trashed" }.Select(id => ImportCommitApi.Outcome(records[id])));
+
+        // #418: the clip in Suno's Trash that was never imported reached no commit.
+        Assert.False(records.ContainsKey("trashed-never"), "A clip in Suno's Trash that was never imported reached the commit.");
 
         string GenerationOf(string sunoId) => Upper(records[sunoId].GetProperty("generation").GetProperty("id").GetGuid());
         string VersionIdOf(string generationId) => after["generations"][generationId]["version_id"]!;

@@ -54,6 +54,7 @@ import {
   reasonsText,
   recordCountText,
   stateText,
+  trashedNotOfferedText,
   UNKNOWN_KIND_FLAG,
 } from './importReviewRules';
 
@@ -377,6 +378,7 @@ function LoadedReview({ id, onEnded }: { id: string; onEnded: () => void }) {
 
   const exported = summary.export;
   const excluded = excludedKindsText(summary.libraryExcluded);
+  const trashedNotOffered = trashedNotOfferedText(exported.trashedNotOffered);
 
   return (
     <Stack gap="lg">
@@ -390,6 +392,11 @@ function LoadedReview({ id, onEnded }: { id: string; onEnded: () => void }) {
         {excluded.length > 0 && (
           <Text size="sm" data-testid="library-excluded">
             Suno’s library filters left out {excluded.join(', ')}: they are not in this import.
+          </Text>
+        )}
+        {trashedNotOffered !== null && (
+          <Text size="sm" data-testid="trashed-not-offered">
+            {trashedNotOffered}
           </Text>
         )}
         <Text size="sm">

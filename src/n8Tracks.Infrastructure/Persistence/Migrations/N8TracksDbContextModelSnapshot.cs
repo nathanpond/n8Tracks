@@ -2201,6 +2201,12 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         .HasColumnType("INTEGER")
                         .HasColumnName("trashed_complete");
 
+                    b.Property<int>("TrashedNotOffered")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(0)
+                        .HasColumnName("trashed_not_offered");
+
                     b.Property<bool>("WorkspacesComplete")
                         .HasColumnType("INTEGER")
                         .HasColumnName("workspaces_complete");

@@ -146,6 +146,13 @@ public interface ISunoExportStore
     /// <summary>Writes each record's class, linked Generation, and changed fields.</summary>
     Task ClassifyAsync(Guid exportId, IReadOnlyList<RecordClassification> classifications, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Removes the staged records that are not offered in the review (<see cref="SunoExportRules.IsOffered"/>,
+    /// #418: in Suno's Trash and classed <c>new</c>) with their playlist memberships, and adds how many to
+    /// the export's <see cref="SunoExport.TrashedNotOffered"/>; returns how many.
+    /// </summary>
+    Task<int> LeaveOutTrashedNewAsync(Guid exportId, CancellationToken cancellationToken);
+
     /// <summary>The export's staged records (only those of <paramref name="sunoIds"/>, when given) with their class, by Suno ID (ordinal).</summary>
     Task<IReadOnlyList<ClassifiedRecord>> ClassifiedRecordsAsync(Guid exportId, IReadOnlyCollection<string>? sunoIds, CancellationToken cancellationToken);
 

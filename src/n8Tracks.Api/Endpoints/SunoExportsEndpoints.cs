@@ -811,6 +811,8 @@ internal static class SunoExportsEndpoints
 /// names the background classification of a large export; <c>expiresAt</c> is set while it is ready.
 /// <c>libraryExcluded</c> names the kinds of clip Suno's library filters left out (#139): the filter
 /// members, such as <c>disliked</c>, <c>stem</c>, <c>stemComplement</c>, and <c>fromStudioProject</c>.
+/// <c>trashedNotOffered</c> is how many clips in Suno's Trash that were never imported classification
+/// left out (#418): they are in no count, no list, and no commit.
 /// </summary>
 internal sealed record SunoExportResponse(
     Guid Id,
@@ -832,7 +834,8 @@ internal sealed record SunoExportResponse(
     IReadOnlyDictionary<string, int> Counts,
     Guid? JobId,
     int Revision,
-    IReadOnlyList<string> LibraryExcluded)
+    IReadOnlyList<string> LibraryExcluded,
+    int TrashedNotOffered)
 {
     public static SunoExportResponse From(ExportView view)
     {
@@ -866,7 +869,8 @@ internal sealed record SunoExportResponse(
             counts,
             export.JobId,
             export.Revision,
-            ExportReader.ExcludedKinds(export.Header.LibraryFiltersJson));
+            ExportReader.ExcludedKinds(export.Header.LibraryFiltersJson),
+            export.TrashedNotOffered);
     }
 }
 

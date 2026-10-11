@@ -449,7 +449,9 @@ public sealed class ExportStagingService(
     /// the parts in number order, then the playlist memberships, then the classes in batches, each step in
     /// its own transaction that first checks the export is still classifying; last, a complete workspace
     /// list is applied and the export becomes ready. A failure leaves it <c>failed</c> with nothing staged.
-    /// After the classes, each record gets its proposal and starting choice (<see cref="ProposalService"/>, #138).
+    /// After the classes, the records in Suno's Trash that classify <c>new</c> are left out, counted on the export
+    /// (#418, <see cref="SunoExportRules.IsOffered"/>), and each record left gets its proposal and starting
+    /// choice (<see cref="ProposalService"/>, #138).
     /// The classifying job, when there is one (<paramref name="jobId"/>), is named on the export as it ends,
     /// in case it ended before the completion named it.
     /// </summary>
@@ -510,6 +512,13 @@ public sealed class ExportStagingService(
                 after = records[^1].SunoId;
             }
 
+            // A clip in Suno's Trash that was never imported is not offered (#418): the sync reads the whole
+            // Trash so linked clips can be archived, not to import what the user threw away. Only the count stays.
+            if (!await StillClassifyingAsync(id, ct => store.LeaveOutTrashedNewAsync(id, ct), cancellationToken).ConfigureAwait(false))
+            {
+                return new ExportClassification.Abandoned();
+            }
+
             // Proposals (#138) need every record classed: a new clip may follow a linked group-mate.
             if (!await StillClassifyingAsync(id, ct => proposals.ProposeWithinAsync(id, ct), cancellationToken).ConfigureAwait(false))
             {
@@ -559,8 +568,10 @@ public sealed class ExportStagingService(
 
     /// <summary>
     /// Classifies a ready export's records again (#140: after an interrupted commit, so what it imported
-    /// is now linked). A record a Generation now holds is proposed Skip, as linked records are, and its
-    /// choice becomes Skip: it cannot be imported again. Every other choice stays as the user left it.
+    /// is now linked; or after ignore-list entries were removed). A record a Generation now holds is
+    /// proposed Skip, as linked records are, and its choice becomes Skip: it cannot be imported again. A
+    /// record in Suno's Trash that is now <c>new</c> (an ignored one taken off the list) leaves the review,
+    /// as at classification (#418). Every other choice stays as the user left it.
     /// </summary>
     internal async Task ReclassifyAsync(Guid id, CancellationToken cancellationToken)
     {
@@ -590,6 +601,8 @@ public sealed class ExportStagingService(
                 cancellationToken).ConfigureAwait(false);
             after = records[^1].SunoId;
         }
+
+        await transaction.RunAsync(ct => store.LeaveOutTrashedNewAsync(id, ct), cancellationToken).ConfigureAwait(false);
     }
 
     private static bool Due(DateTimeOffset? since, TimeSpan lifetime, DateTimeOffset now) => since is { } start && start + lifetime <= now;

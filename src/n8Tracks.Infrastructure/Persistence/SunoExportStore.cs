@@ -232,6 +232,27 @@ internal sealed class SunoExportStore(N8TracksDbContext context) : ISunoExportSt
         }
     }
 
+    public async Task<int> LeaveOutTrashedNewAsync(Guid exportId, CancellationToken cancellationToken)
+    {
+        // SunoExportRules.IsOffered: a record in Suno's Trash that classifies new is not offered (#418).
+        var trashedNew = SunoExportRules.NameOf(SunoRecordClass.New);
+        var leftOut = context.StagedClips.Where(row => row.ExportId == exportId && row.Trashed && row.Class == trashedNew);
+        await context.StagedClipPlaylists
+            .Where(member => member.ExportId == exportId && leftOut.Any(row => row.SunoId == member.SunoId))
+            .ExecuteDeleteAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var removed = await leftOut.ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
+        if (removed > 0)
+        {
+            await context.SunoExports
+                .Where(row => row.Id == exportId)
+                .ExecuteUpdateAsync(setter => setter.SetProperty(static row => row.TrashedNotOffered, row => row.TrashedNotOffered + removed), cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        return removed;
+    }
+
     public async Task<IReadOnlyList<ClassifiedRecord>> ClassifiedRecordsAsync(Guid exportId, IReadOnlyCollection<string>? sunoIds, CancellationToken cancellationToken)
     {
         var rows = context.StagedClips.AsNoTracking().Where(row => row.ExportId == exportId);
@@ -591,7 +612,8 @@ internal sealed class SunoExportStore(N8TracksDbContext context) : ISunoExportSt
             Optional(record.ReadyUtc),
             Optional(record.EndedUtc),
             record.JobId,
-            record.Revision);
+            record.Revision,
+            record.TrashedNotOffered);
 
     private static DateTimeOffset? Optional(string? text) => text is null ? null : UtcText.Parse(text);
 }
