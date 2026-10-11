@@ -707,7 +707,60 @@ describe('editable text (#146: the Lexical lyrics editor)', () => {
     expect(page.read(found(page.find(EDITOR))).value).toBe('one\n\ntwo\nthree');
   });
 
-  it('types line by line through the browser’s editing commands, with everything selected first', () => {
+  it('pastes the whole text after the select-all shortcut, keeping every line, blank line, and indent (TS-007-8)', () => {
+    const page = loadSnapshot(ADVANCED);
+    const editor = found(page.find(EDITOR));
+    const element = document.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    // A stand-in for the browser's clipboard event and for Lexical, which takes paste and Backspace.
+    class StandInData {
+      readonly stored = new Map<string, string>();
+      setData(type: string, value: string) {
+        this.stored.set(type, value);
+      }
+    }
+    class StandInClipboardEvent extends Event {
+      readonly clipboardData: StandInData;
+      constructor(type: string, init: EventInit & { clipboardData: StandInData }) {
+        super(type, init);
+        this.clipboardData = init.clipboardData;
+      }
+    }
+    Object.assign(window, { DataTransfer: StandInData, ClipboardEvent: StandInClipboardEvent });
+    const pastes: (string | undefined)[] = [];
+    const keys: string[] = [];
+    element.addEventListener('paste', (event) => {
+      pastes.push(
+        (event as unknown as StandInClipboardEvent).clipboardData.stored.get('text/plain'),
+      );
+      event.preventDefault();
+    });
+    element.addEventListener('keydown', (event) => {
+      keys.push(`${event.metaKey || event.ctrlKey ? 'mod+' : ''}${event.key}`);
+      if (event.key === 'Backspace') {
+        event.preventDefault();
+      }
+    });
+    const commands: string[] = [];
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: (command: string) => commands.push(command),
+    });
+    try {
+      page.typeText(editor, '[Verse 1]\r\nFirst line\n  indented\n\n[Chorus]');
+      page.typeText(editor, '');
+    } finally {
+      Reflect.deleteProperty(window, 'DataTransfer');
+      Reflect.deleteProperty(window, 'ClipboardEvent');
+      Reflect.deleteProperty(document, 'execCommand');
+    }
+
+    expect(pastes).toEqual(['[Verse 1]\nFirst line\n  indented\n\n[Chorus]']);
+    expect(keys).toEqual(['mod+a', 'mod+a', 'Backspace']);
+    expect(keys).not.toContain('Enter');
+    expect(commands).toEqual([]);
+  });
+
+  it('types line by line through the browser’s editing commands where nothing takes the paste', () => {
     const page = loadSnapshot(ADVANCED);
     const calls: string[] = [];
     Object.defineProperty(document, 'execCommand', {
@@ -735,7 +788,7 @@ describe('editable text (#146: the Lexical lyrics editor)', () => {
       'insertText two',
       'delete',
     ]);
-    expect(keys).toEqual([]);
+    expect(keys).toEqual(['keydown', 'keydown', 'keydown']);
   });
 
   it('refuses where it cannot type: not an editable region, no editing commands, or after the run stopped', () => {

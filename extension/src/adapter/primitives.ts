@@ -871,6 +871,22 @@ function editableText(root: Element): string {
   return lines.join('\n');
 }
 
+/**
+ * Pastes `text` into `element` as plain text; whether the page took it (an editor that handles
+ * paste cancels the event). A browser without clipboard events (jsdom) has nothing to take it.
+ */
+function pasted(element: Element, text: string): boolean {
+  const view = viewOf(element);
+  if (typeof view.ClipboardEvent !== 'function' || typeof view.DataTransfer !== 'function') {
+    return false;
+  }
+  const data = new view.DataTransfer();
+  data.setData('text/plain', text);
+  return !element.dispatchEvent(
+    new view.ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }),
+  );
+}
+
 function valueOf(element: Element): string | null {
   if (['input', 'textarea', 'select'].includes(element.localName)) {
     return (element as HTMLInputElement).value;
@@ -1218,11 +1234,13 @@ export class Page {
 
   /**
    * Replaces the text of an editable region (Suno's Lexical lyrics editor, which `set` refuses) as
-   * typing it would: the region is focused, everything in it is selected, and the text goes in
-   * through the browser's own editing commands, which Lexical takes as the user's typing; one line
-   * at a time, each new line as a new paragraph, as Enter would make it. Empty text deletes what
-   * is there. Nothing is pressed and no Enter key is sent. The step's read-back decides whether it
-   * worked.
+   * a user would: the region is focused, everything in it is selected with the select-all shortcut
+   * (Lexical keeps its own selection, which a DOM selection alone does not move), and the whole
+   * text is pasted, so each line becomes a paragraph with blank lines and leading spaces kept
+   * (TS-007-8: Suno's editor ignores `insertParagraph`, `insertLineBreak`, and a typed newline, and
+   * joined every line into one). Empty text is deleted with Backspace. Where nothing takes the
+   * paste or the key, the text goes in through the browser's editing commands, one line at a time.
+   * Nothing is pressed and no Enter key is sent. The step's read-back decides whether it worked.
    */
   typeText(found: Found, text: string): void {
     const element = this.changeable(found);
@@ -1230,19 +1248,33 @@ export class Page {
       throw new PrimitiveError(`${found.target.description} to be an editable text region`);
     }
     const document = element.ownerDocument;
-    // execCommand is deprecated, but it is the one way to give Lexical the browser's own trusted
+    const view = viewOf(element);
+    (element as HTMLElement).focus();
+    view.getSelection()?.selectAllChildren(element);
+    const apple = /Mac|iPhone|iPad/.test(view.navigator.platform);
+    const key = (init: KeyboardEventInit) =>
+      element.dispatchEvent(
+        new view.KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init }),
+      );
+    key({ key: 'a', code: 'KeyA', keyCode: 65, metaKey: apple, ctrlKey: !apple });
+    const lines = text.replace(/\r\n?/g, '\n').split('\n');
+    if (text === '') {
+      if (!key({ key: 'Backspace', code: 'Backspace', keyCode: 8 })) {
+        return;
+      }
+    } else if (pasted(element, lines.join('\n'))) {
+      return;
+    }
+    // execCommand is deprecated, but it is the one way to give an editor the browser's own trusted
     // input events (a synthetic `beforeinput` is not inserted by the browser). It is read by name
     // so that a browser without it (jsdom) is told apart, not called.
     const execCommand: unknown = Reflect.get(document, 'execCommand');
     if (typeof execCommand !== 'function') {
       throw new PrimitiveError(`a browser that can type into ${found.target.description}`);
     }
-    (element as HTMLElement).focus();
-    viewOf(element).getSelection()?.selectAllChildren(element);
     const edit = (command: string, value?: string) => {
       Reflect.apply(execCommand, document, [command, false, value]);
     };
-    const lines = text.replace(/\r\n?/g, '\n').split('\n');
     if (text === '') {
       edit('delete');
       return;
