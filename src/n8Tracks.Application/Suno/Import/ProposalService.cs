@@ -89,15 +89,17 @@ public sealed record ChoiceValidation(
 /// <para>
 /// Proposing (inside <see cref="ExportStagingService"/>'s classification, after the classes): the
 /// records are grouped by Create request (<see cref="ClipGrouping"/>, TS-001), linked ones included, so
-/// a new clip can follow a group-mate that is already a Generation. A group's new clips are split into
-/// sets with the same inputs (<see cref="ClipInputMapper.SameInputs"/>, lineage included), in
-/// <c>batch_index</c> order, and each set is proposed, first that applies:
+/// a new clip can follow a group-mate that is already a Generation. A group's new clips are split first
+/// by Suno title (#419: trimmed, ignoring case, a blank title counting as "Untitled"), each title on its
+/// own, and then into sets with the same inputs (<see cref="ClipInputMapper.SameInputs"/>, lineage
+/// included), in <c>batch_index</c> order, and each set is proposed, first that applies:
 /// <list type="number">
-/// <item>for a group-mate's Version when it holds the set's inputs, else as a new Version of that mate's Song;</item>
+/// <item>for a group-mate's Version when it holds the set's inputs, else as a new Version of that mate's
+/// Song, counting only group-mates with the set's title;</item>
 /// <item>when the workspace is associated with exactly one live Song: for its Version holding the same
 /// inputs (one with Generations first, then the lowest number), else as a new top-level Version of it,
 /// numbered by #61 (<see cref="VersionNumbering.NextTopLevel"/>), shared by later sets of the same inputs;</item>
-/// <item>otherwise as one new Song per Create request, titled with the first clip's Suno title and
+/// <item>otherwise as one new Song per Create request and title, titled with the first clip's Suno title and
 /// associated with its workspace, whose Version 1 takes the first set and each further set a new
 /// top-level Version.</item>
 /// </list>
@@ -493,14 +495,22 @@ public sealed class ProposalService(
             int? number = members.Count > 1 ? ++groupNumber : null;
             var fresh = members.Where(static member => member.Record.Class == SunoRecordClass.New).ToList();
             var mates = members.Where(static member => member.Record.GenerationId is not null).ToList();
-            string? newSongKey = null;
-            foreach (var set in SameInputSets(fresh))
+
+            // #419: clips Suno titled differently are different songs, even from one Create request. Each
+            // title is proposed on its own, and follows only the group-mates with the same title.
+            foreach (var titled in SameTitleSets(fresh))
             {
-                var (proposal, songKey) = await catalog.ProposeAsync(set, mates, newSongKey, cancellationToken).ConfigureAwait(false);
-                newSongKey = songKey;
-                foreach (var clip in set)
+                var title = TitleKey(titled[0].Title);
+                var titledMates = mates.Where(mate => SameTitle(TitleKey(mate.Title), title)).ToList();
+                string? newSongKey = null;
+                foreach (var set in SameInputSets(titled))
                 {
-                    proposals[clip.Record.SunoId] = proposal with { Group = number };
+                    var (proposal, songKey) = await catalog.ProposeAsync(set, titledMates, newSongKey, cancellationToken).ConfigureAwait(false);
+                    newSongKey = songKey;
+                    foreach (var clip in set)
+                    {
+                        proposals[clip.Record.SunoId] = proposal with { Group = number };
+                    }
                 }
             }
         }
@@ -510,6 +520,42 @@ public sealed class ProposalService(
             [.. proposals.Select(static pair => new RecordProposalRow(pair.Key, ImportChoiceJson.Write(pair.Value), ImportChoiceJson.Write(pair.Value.Choice)))],
             cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// The clips split into sets whose Suno titles are the same (<see cref="TitleKey"/>, ignoring case),
+    /// each set and the sets in the order given (<c>batch_index</c>).
+    /// </summary>
+    private static List<List<StagedClipView>> SameTitleSets(IEnumerable<StagedClipView> clips)
+    {
+        var sets = new List<List<StagedClipView>>();
+        foreach (var clip in clips)
+        {
+            var title = TitleKey(clip.Title);
+            if (sets.FirstOrDefault(set => SameTitle(TitleKey(set[0].Title), title)) is { } set)
+            {
+                set.Add(clip);
+            }
+            else
+            {
+                sets.Add([clip]);
+            }
+        }
+
+        return sets;
+    }
+
+    /// <summary>
+    /// The title a new Song would be proposed with for a clip of this Suno title: trimmed, and
+    /// <see cref="ImportChoiceRules.UntitledTitle"/> when blank. Two clips are titled alike when these
+    /// are equal ignoring case (<see cref="SameTitle"/>), so a blank title and "Untitled" are one title.
+    /// </summary>
+    private static string TitleKey(string? sunoTitle)
+    {
+        var title = ImportChoiceRules.ProposedTitle(sunoTitle, SongRules.TitleMaximumLength);
+        return SongRules.TitleErrors(title).Length > 0 ? ImportChoiceRules.UntitledTitle : title;
+    }
+
+    private static bool SameTitle(string first, string second) => string.Equals(first, second, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>The clips split into sets whose inputs are the same, each set and the sets in the order given (<c>batch_index</c>).</summary>
     private static List<List<StagedClipView>> SameInputSets(IEnumerable<StagedClipView> clips)
@@ -877,8 +923,9 @@ public sealed class ProposalService(
         }
 
         /// <summary>
-        /// The proposal for <paramref name="set"/> (clips with the same inputs, of one group with the
-        /// Generations <paramref name="mates"/>), and the key of the group's new Song once it has one.
+        /// The proposal for <paramref name="set"/> (clips with the same title and inputs, of one group
+        /// with the Generations <paramref name="mates"/> of that title), and the key of the new Song of
+        /// the group's clips with that title once it has one.
         /// </summary>
         public async Task<(ImportProposal Proposal, string? NewSongKey)> ProposeAsync(
             List<StagedClipView> set,
@@ -924,16 +971,10 @@ public sealed class ProposalService(
             if (newSongKey is null)
             {
                 var key = ImportChoiceRules.Key(++keys);
-                var title = ImportChoiceRules.ProposedTitle(set[0].Title, SongRules.TitleMaximumLength);
-                if (SongRules.TitleErrors(title).Length > 0)
-                {
-                    title = ImportChoiceRules.UntitledTitle;
-                }
-
-                return (new ImportProposal(ImportChoice.To(new ImportTarget.NewSong(key, title, set[0].Groupable.WorkspaceId)), ImportChoiceRules.NewSongBasis, null, false), key);
+                return (new ImportProposal(ImportChoice.To(new ImportTarget.NewSong(key, TitleKey(set[0].Title), set[0].Groupable.WorkspaceId)), ImportChoiceRules.NewSongBasis, null, false), key);
             }
 
-            // A further set of the same Create request: a new top-level Version of the new Song.
+            // A further set of the same Create request and title: a new top-level Version of the new Song.
             var number = Next(newSongKey, [VersionNumber.Initial]);
             var versionKey = ImportChoiceRules.Key(++keys);
             newVersionsOf[newSongKey].Add((versionKey, number, inputs));

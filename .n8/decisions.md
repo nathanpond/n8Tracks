@@ -4573,3 +4573,15 @@ Story #219 (on the milestone branch):
 - **Decision:** The extension is unchanged: it still sends a cover image for each trashed clip, and the artwork endpoint answers 404 for a record left out, which the extension already counts as ignored.
   **Why:** Kept to the backend and review; skipping those uploads in the extension is a possible follow-up (it would need the left-out IDs, which the export does not keep).
   **Issue:** #418
+
+## M4 captures — #419 differently titled clips of one Create — 2026-10-11
+
+- **Decision:** Within one Create group, the new clips are split by Suno title before they are split by inputs, and each title is proposed on its own: with nothing else applying, one new Song per distinct title, titled with its clip's title. Titles compare as the new Song's proposed title would be (trimmed, control characters made spaces, cut to the title limit) and ignoring case, so a blank title and "Untitled" are one title. The clips keep one shared `group` number. Same-title clips are proposed as before.
+  **Why:** Owner decision on #419 (a Simple-mode Create made "Rusty Clock Rooster" and "Barnaby, Give It A Rest", and the review proposed Barnaby as Version 2 of the Rooster Song). Reusing the proposed-title rule means two separate new Songs never get the same proposed title. Titles only shape proposals; identity stays by Suno ID.
+  **Issue:** #419
+- **Decision:** Rule 1 counts only imported group-mates whose Suno title (in the export) is the clip's title. A clip whose title differs from every imported mate's falls through to rule 2, then rule 3.
+  **Why:** The AC's expected behaviour. Being in one Create request is only a guess that clips belong together, and a different title is evidence against it.
+  **Issue:** #419
+- **Decision:** Rule 2 (the workspace's one live Song) is unchanged by titles: every title of the group, the fallen-through ones included, is proposed for that Song, each set of inputs its own Version.
+  **Why:** The workspace association is something the user did on purpose to say "this workspace is this Song", and Suno makes up titles for Simple-mode clips, so a Suno title should not overrule it. Splitting by title there would also leave the question of which title keeps the Song. The user can still pick a new Song in the review.
+  **Issue:** #419
