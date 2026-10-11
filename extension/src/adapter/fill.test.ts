@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { fakeClock, loadSnapshot } from '../testing/snapshots.ts';
-import { standInForSuno, type StandIn } from '../testing/sunoForm.ts';
+import { standInForSuno, type StandIn, type StandInOptions } from '../testing/sunoForm.ts';
+import type { Clock } from './clock.ts';
 import { FIELD_MAP } from './fieldMap.ts';
 import {
   BLOCKED_ON_CAPTURE,
@@ -13,6 +14,7 @@ import {
   type EntryResult,
   type Filler,
   type FormJob,
+  checkEntry,
   fillEntry,
   MODEL_LABELS,
 } from './fill.ts';
@@ -44,9 +46,9 @@ let page: Page;
 /** Ends the listeners a test put on the document itself, which outlive its body. */
 let documentListeners = new AbortController();
 
-function load(snapshot: string): Page {
-  page = loadSnapshot(snapshot, 'https://suno.com/create', fakeClock());
-  standIn = standInForSuno(document);
+function load(snapshot: string, options: StandInOptions = {}, clock: Clock = fakeClock()): Page {
+  page = loadSnapshot(snapshot, 'https://suno.com/create', clock);
+  standIn = standInForSuno(document, options);
   return page;
 }
 
@@ -245,11 +247,14 @@ function labelledButtons(section: Element, text: string): Element[] {
   return [...(label?.parentElement?.parentElement?.querySelectorAll('button') ?? [])];
 }
 
-/** The model button (TS-006): the one menu button whose text is a model's label. */
+/**
+ * The model button: the one menu button (TS-006) or dialog button (TS-007-10) whose text is a
+ * model's label.
+ */
 function modelButton(): Element[] {
-  return [...document.querySelectorAll('button[aria-haspopup="menu"]')].filter((button) =>
-    /^v\d/.test(button.textContent.trim()),
-  );
+  return [
+    ...document.querySelectorAll('button[aria-haspopup="menu"], button[aria-haspopup="dialog"]'),
+  ].filter((button) => /^v\d/.test(button.textContent.trim()));
 }
 
 /** The elements of each filler's control in the snapshot. */
@@ -1382,7 +1387,7 @@ describe('the model menu (#146, #147, TS-006)', () => {
       expect(result).toEqual({
         key: entry,
         outcome: 'failed',
-        note: 'The Version’s model is not one Suno’s model menu offers; choose a model by hand.',
+        note: 'The Version’s model is not one Suno’s model picker offers; choose a model by hand.',
       });
       expect(pressed).toEqual([]);
       expect(shownModel()).toBe('v6');
@@ -1488,4 +1493,268 @@ describe('the model menu (#146, #147, TS-006)', () => {
       ?.dispatchEvent(new Event('click', { bubbles: true }));
     expect(customPresses).toHaveLength(1);
   });
+});
+
+describe('the Model dialog (#427, TS-007-10)', () => {
+  const DIALOG = 'create-songs-advanced-model-dialog';
+  const SOUNDS = 'create-sounds-advanced-options';
+
+  function modelFiller(entry: string): Filler {
+    const filler = FILLERS.find((candidate) => candidate.entry === entry);
+    if (filler === undefined) {
+      throw new Error(`no filler for ${entry}`);
+    }
+    return filler;
+  }
+
+  function modelJob(entry: string, mode: string, kind: string, model: unknown): FormJob {
+    return job(mode, { [entry.split('.')[2] ?? '']: model }, {}, kind);
+  }
+
+  function modelDialog(): Element | null {
+    return document.querySelector('[role="dialog"][aria-labelledby]');
+  }
+
+  /** Each model entry on the dialog's snapshot (open, v6 selected), and Sounds with the dialog. */
+  const CASES = [
+    [DIALOG, 'songs.advanced.model', 'advanced', 'song'],
+    [DIALOG, 'songs.simple.model', 'simple', 'song'],
+    [SOUNDS, 'sounds.single.sounds_model', 'single', 'sound'],
+  ] as const;
+
+  /**
+   * Loads a case closed: the dialog's snapshot without its open dialog, and the Sounds snapshot
+   * with its model button opening a dialog (not seen live on Sounds since the change).
+   */
+  function loadClosed(snapshot: string, options: StandInOptions = {}): void {
+    load(snapshot, options);
+    modelDialog()?.closest('[data-base-ui-portal]')?.remove();
+    for (const button of modelButton()) {
+      button.setAttribute('aria-haspopup', 'dialog');
+      button.setAttribute('aria-expanded', 'false');
+    }
+    if (snapshot === SOUNDS) {
+      // The Sounds snapshot shows v6-mini; v6 is what the dialog's snapshot has selected.
+      modelButton()[0]?.querySelector('.hxc-btn-content')?.firstChild?.replaceWith('v6');
+    }
+  }
+
+  /** The rows pressed in the Model dialog, by their first text. */
+  function recordRowPresses(): string[] {
+    const pressed: string[] = [];
+    document.addEventListener(
+      'click',
+      (event) => {
+        const row = (event.target as Element).closest('[role="row"]');
+        if (row !== null) {
+          pressed.push(row.querySelector('span')?.textContent.trim() ?? '');
+        }
+      },
+      { capture: true, signal: documentListeners.signal },
+    );
+    return pressed;
+  }
+
+  it('finds the model button that opens a dialog beside the mode tabs, and reads the model it shows', () => {
+    load(DIALOG);
+
+    const result = checkEntryOf('songs.advanced.model', 'v6');
+
+    expect(result).toEqual({ key: 'songs.advanced.model', outcome: 'set', expected: 'v6' });
+    expect(modelButton()[0]?.getAttribute('aria-haspopup')).toBe('dialog');
+  });
+
+  function checkEntryOf(entry: string, model: string): EntryResult {
+    return checkEntry(page, modelFiller(entry), modelJob(entry, 'advanced', 'song', model));
+  }
+
+  it.each(CASES)(
+    '%s, %s: opens the dialog, presses the model’s row, and reads it back from the button',
+    async (snapshot, entry, mode, kind) => {
+      loadClosed(snapshot);
+      const rows = recordRowPresses();
+      const pressed = recordPresses();
+
+      const result = await fillEntry(
+        page,
+        modelFiller(entry),
+        modelJob(entry, mode, kind, 'V6-Wild'),
+      );
+
+      expect(result).toEqual({ key: entry, outcome: 'set', expected: 'v6-wild' });
+      expect(pressed[0]).toBe('v6');
+      expect(rows).toEqual(['v6-wild']);
+      expect(modelButton()[0]?.textContent.trim()).toBe('v6-wild');
+      expect(modelDialog()).toBeNull();
+    },
+  );
+
+  it('chooses in the dialog already open, and closes it with Escape when Suno leaves it open', async () => {
+    load(DIALOG, { modelDialogStaysOpen: true });
+    const rows = recordRowPresses();
+    const keys: string[] = [];
+    document.addEventListener(
+      'keydown',
+      (event) => {
+        keys.push(event.key);
+      },
+      { capture: true, signal: documentListeners.signal },
+    );
+
+    const result = await fillEntry(
+      page,
+      modelFiller('songs.advanced.model'),
+      modelJob('songs.advanced.model', 'advanced', 'song', 'v6-mini'),
+    );
+
+    expect(result).toMatchObject({ outcome: 'set', expected: 'v6-mini' });
+    expect(rows).toEqual(['v6-mini']);
+    expect(keys).toEqual(['Escape']);
+    expect(modelDialog()).toBeNull();
+  });
+
+  it('presses no row when the model is already selected in the open dialog, and closes it', async () => {
+    load(DIALOG);
+    // The button shows another model than the dialog has selected, so the filler acts.
+    modelButton()[0]?.querySelector('.hxc-btn-content')?.firstChild?.replaceWith('v6-mini');
+    for (const row of document.querySelectorAll('[role="row"][aria-selected]')) {
+      row.setAttribute(
+        'aria-selected',
+        String(row.querySelector('span')?.textContent === 'v6-wild'),
+      );
+    }
+    const rows = recordRowPresses();
+
+    const result = await fillEntry(
+      page,
+      modelFiller('songs.advanced.model'),
+      modelJob('songs.advanced.model', 'advanced', 'song', 'v6-wild'),
+    );
+
+    expect(rows).toEqual([]);
+    expect(modelDialog()).toBeNull();
+    // The stand-in's button still shows v6-mini: the read-back reports what the button shows.
+    expect(result).toMatchObject({ outcome: 'failed', expected: 'v6-wild', found: 'v6-mini' });
+  });
+
+  it('is unavailable when the dialog does not list the model, saying which it lists, and closes it', async () => {
+    load(DIALOG);
+    for (const row of document.querySelectorAll('[role="row"]')) {
+      if (row.querySelector('span')?.textContent === 'v6-wild') {
+        row.remove();
+      }
+    }
+    const rows = recordRowPresses();
+
+    const result = await fillEntry(
+      page,
+      modelFiller('songs.advanced.model'),
+      modelJob('songs.advanced.model', 'advanced', 'song', 'v6-wild'),
+    );
+
+    expect(result).toEqual({
+      key: 'songs.advanced.model',
+      outcome: 'unavailable',
+      expected: 'v6-wild',
+      note: 'Suno’s Model dialog does not list that model. It lists v6, v6-mini.',
+      reportNote: 'Suno’s Model dialog does not list that model.',
+    });
+    expect(rows).toEqual([]);
+    expect(modelDialog()).toBeNull();
+    const report = await verificationReport([result], 'advanced', 21, new Date(0));
+    expect(report.entries[0]?.note).toBe('Suno’s Model dialog does not list that model.');
+  });
+
+  it('is unavailable when the dialog does not open', async () => {
+    loadClosed(DIALOG);
+    standIn.stop();
+
+    const result = await fillEntry(
+      page,
+      modelFiller('songs.advanced.model'),
+      modelJob('songs.advanced.model', 'advanced', 'song', 'v6-wild'),
+    );
+
+    expect(result).toMatchObject({
+      outcome: 'unavailable',
+      note: 'Suno’s Model dialog did not open.',
+    });
+  });
+
+  it('never presses the Create Custom Model row, whichever model is chosen', async () => {
+    for (const model of MODEL_LABELS) {
+      loadClosed(DIALOG);
+      const rows = recordRowPresses();
+
+      await fillEntry(
+        page,
+        modelFiller('songs.advanced.model'),
+        modelJob('songs.advanced.model', 'advanced', 'song', model),
+      );
+
+      expect(rows).not.toContain('Create Custom Model');
+      standIn.stop();
+      documentListeners.abort();
+      documentListeners = new AbortController();
+    }
+  });
+
+  it('bites: a filler that pressed the Create Custom Model row would be refused', async () => {
+    load(DIALOG);
+    const rows = recordRowPresses();
+    const custom: Filler = {
+      ...modelFiller('songs.advanced.model'),
+      write: (shownPage) => {
+        const found = shownPage.find({
+          role: 'row',
+          leadText: 'Create Custom Model',
+          description: 'the Create Custom Model row',
+        });
+        if (found.kind === 'found') {
+          shownPage.click(found.found);
+        }
+      },
+    };
+
+    await expect(
+      fillEntry(page, custom, modelJob('songs.advanced.model', 'advanced', 'song', 'v6-wild')),
+    ).rejects.toBeInstanceOf(ForbiddenControlError);
+    expect(rows).toEqual([]);
+  });
+});
+
+describe('sliders that apply a key a task later (#427, TS-007-9)', () => {
+  /** A clock whose sleep lets the page's tasks run, so the stand-in's deferred keys apply. */
+  function taskClock(): Clock {
+    let now = 0;
+    return {
+      now: () => now,
+      sleep: (ms) =>
+        new Promise((resolve) => {
+          now += ms;
+          setTimeout(resolve, 0);
+        }),
+    };
+  }
+
+  it.each([
+    ['songs.advanced.weirdness', 'Weirdness', 'weirdness', 3],
+    ['songs.advanced.style_influence', 'Style Influence', 'style_influence', 85],
+    ['songs.advanced.variety', 'Variety', 'variety', 'max'],
+  ] as const)(
+    '%s reaches the Version’s value from 50 (or step 0)',
+    async (entry, name, field, value) => {
+      load(ADVANCED, { deferredSliders: true }, taskClock());
+      const element = slider(name)[0];
+      element?.setAttribute('aria-valuenow', name === 'Variety' ? '0' : '50');
+      const filler = FILLERS.find((candidate) => candidate.entry === entry);
+      if (filler === undefined) {
+        throw new Error(`no filler for ${entry}`);
+      }
+
+      const result = await fillEntry(page, filler, job('advanced', { [field]: value }));
+
+      expect(result).toMatchObject({ key: entry, outcome: 'set' });
+    },
+  );
 });

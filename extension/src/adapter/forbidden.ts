@@ -14,6 +14,8 @@
  *   whatever its role or name.
  * - Any control inside a dialog is forbidden unless the dialog is one of the recognised dialogs
  *   below and allows that control by name. An unrecognised dialog fails closed.
+ * - In a dialog whose rows are pressed (Suno's Model dialog, TS-007-10), a row whose name or text
+ *   starts with one of those words is forbidden: "Create Custom Model", which spends credits.
  * - A control that would submit a form is forbidden.
  *
  * False positives are accepted: a refusal stops the workflow, it never presses something else.
@@ -54,10 +56,12 @@ export const FORBIDDEN_SELECTORS: readonly { selector: string; what: string }[] 
   },
 ];
 
-/** Roles that hold controls rather than being one (a tab list, a group). */
+/** Roles that hold controls rather than being one (a tab list, a group, the Model dialog's grid). */
 export const CONTAINER_ROLES: ReadonlySet<string> = new Set([
   'tablist',
   'group',
+  'grid',
+  'rowgroup',
   'presentation',
   'none',
 ]);
@@ -78,7 +82,13 @@ export interface RecognisedDialog {
    * a forbidden word ("Create Voice" is refused), and every element it sits in is still checked.
    */
   pressesText?: boolean;
-  /** The TS-003 or TS-005 snapshot it was recognised from. */
+  /**
+   * Whether a `row` may be pressed (TS-007-10: a model is chosen in Suno's Model dialog by pressing
+   * its row, which has no name of its own). A row whose name or text starts with a forbidden word
+   * is refused: the dialog's "Create Custom Model" row spends credits.
+   */
+  pressesRows?: boolean;
+  /** The TS-003, TS-005, or TS-007 snapshot it was recognised from. */
   snapshot: string;
 }
 
@@ -107,7 +117,9 @@ export const KEY_NOTES: readonly string[] = [
  * only while it holds nothing but its notes, Any, Major, Minor, and Apply. The Inspo picker is not
  * here: its dialog has no title and holds the user's playlists, so it cannot be told from any other
  * untitled dialog. The Download dialog is not here either: its controls are the named exception
- * {@link DOWNLOAD_CLIP}, which only the download primitive presses (#216).
+ * {@link DOWNLOAD_CLIP}, which only the download primitive presses (#216). The Model dialog
+ * (#427, TS-007-10) lists the models as rows: a model's row may be pressed, its "Create Custom
+ * Model" row never (it spends credits), and Close if it has one.
  */
 export const RECOGNISED_DIALOGS: readonly RecognisedDialog[] = [
   {
@@ -132,6 +144,12 @@ export const RECOGNISED_DIALOGS: readonly RecognisedDialog[] = [
     title: '',
     allows: [...KEY_NOTES, 'Any', 'Major', 'Minor', 'Apply'],
     snapshot: 'create-sounds-key-popover-fsharp-minor',
+  },
+  {
+    title: 'Model',
+    allows: ['Close'],
+    pressesRows: true,
+    snapshot: 'create-songs-advanced-model-dialog',
   },
 ];
 
@@ -301,7 +319,11 @@ export function classify(facts: ControlFacts): Verdict {
       facts.role === null &&
       facts.otherNames.length > 0 &&
       !facts.otherNames.some((name) => FORBIDDEN_NAME.test(name.trim()));
-    if (!container && !byText && !dialog.allows.includes(facts.name)) {
+    const row = dialog.pressesRows === true && facts.role === 'row';
+    if (row && [facts.name, ...facts.otherNames].some((name) => FORBIDDEN_NAME.test(name.trim()))) {
+      return forbidden('its name starts with Create, Publish, Delete, Trash, or Remove');
+    }
+    if (!container && !byText && !row && !dialog.allows.includes(facts.name)) {
       return forbidden('the dialog it is in does not allow it');
     }
   }

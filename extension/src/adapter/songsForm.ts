@@ -47,12 +47,24 @@ export const ADVANCED_TAB: Target = {
 };
 
 /**
- * The model menu button beside the mode tabs; its name is the chosen model's label ("v6-mini").
- * TS-006 (`page.create-songs-model-menu.html`, `page.create-sounds-model-menu.html`): the page has
- * one model button, shared by the Songs and Sounds tabs, three levels out from the mode tabs (and
- * from the credits button, which is how Sounds finds it).
+ * The model button beside the mode tabs; its text is the chosen model's label ("v6"). Since
+ * 2026-10-11 it opens a dialog (TS-007-10, #427: `aria-haspopup="dialog"`, four parent levels above
+ * the Advanced tab, `page.create-songs-advanced-model-dialog.html`). It is looked for up to four
+ * levels out from the mode tabs; the nearest level that holds such a button is the one used.
  */
 export const MODEL_BUTTON: Target = {
+  role: 'button',
+  popup: 'dialog',
+  within: { around: MODE_TABS, levels: 4, description: 'the top of the Create form' },
+  description: 'the model button beside the Simple and Advanced tabs',
+};
+
+/**
+ * The model button as TS-006 captured it (2026-10-08): a menu button three levels out from the mode
+ * tabs (`page.create-songs-model-menu.html`). Kept as the second shape the model filler looks for,
+ * in case Suno shows the menu again (TS-007-10).
+ */
+export const MODEL_MENU_BUTTON: Target = {
   role: 'button',
   popup: 'menu',
   within: { around: MODE_TABS, levels: 3, description: 'the top of the Create form' },
@@ -60,7 +72,40 @@ export const MODEL_BUTTON: Target = {
 };
 
 /**
- * The menu the model button opens (TS-006): `role="menu"` labelled by the button, so its name is
+ * The dialog the model button opens (TS-007-10): `role="dialog"` labelled by its heading, "Model".
+ * It holds a grid of rows: "Create Custom Model" (Beta, spends credits, never pressed), an "All
+ * Models" header, and one row per model, its first text the model's name, `aria-selected` on the
+ * chosen one. The rows hold no buttons.
+ */
+export const MODEL_DIALOG: Target = {
+  role: 'dialog',
+  name: 'Model',
+  description: 'Suno’s Model dialog',
+};
+
+/** Every row of the Model dialog, for saying which models it lists. */
+export const MODEL_ROWS: Target = {
+  role: 'row',
+  within: MODEL_DIALOG,
+  description: 'the rows of Suno’s Model dialog',
+};
+
+/**
+ * A model's row in the Model dialog (TS-007-10): the row whose lead text (its first text, the
+ * model's name) is `model`, compared without regard to case. "v6" is not "v6-wild", and the
+ * "Create Custom Model" row's lead text is never a model's.
+ */
+export function modelRow(model: string): Target {
+  return {
+    role: 'row',
+    leadText: model,
+    within: MODEL_DIALOG,
+    description: 'the model’s row in Suno’s Model dialog',
+  };
+}
+
+/**
+ * The menu the TS-006 model button opens: `role="menu"` labelled by the button, so its name is
  * the model the button shows (`shown`). It holds "Create Custom Model" (a `menuitem` that spends
  * credits, never pressed) and the models, each a `menuitemradio` with `aria-checked`.
  */

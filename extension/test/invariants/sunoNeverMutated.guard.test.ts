@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest';
 import { ANY_SUNO_PAGE } from '../../src/adapter/addresses.ts';
-import type { FormJob } from '../../src/adapter/fill.ts';
+import { FILLERS, MODEL_LABELS, type FormJob } from '../../src/adapter/fill.ts';
 import {
   INSPIRATION_ROUTE,
   planSources,
@@ -119,7 +119,7 @@ function kindValues(kind: string, mode: string): Record<string, unknown> {
       'speech.advanced.speech_vocal_gender': 'male',
       'speech.advanced.speech_background_music': true,
       'speech.advanced.speech_variety': 'max',
-      // Not a snapshot's own model, so the model menu is opened and a model chosen (TS-006).
+      // Not a snapshot's own model, so the model picker is opened and a model chosen (TS-006, TS-007-10).
       'sounds.single.sounds_model': 'v6-wild',
       'sounds.single.sound_description': 'rain on a tin roof',
       'sounds.single.sound_type': 'one_shot',
@@ -156,8 +156,8 @@ function fillValues(mode: string): Record<string, unknown> {
     kind: 'song',
     mode,
     entries: {
-      // The model button and a model (`menuitemradio`) in its menu (TS-006); the menu's "Create
-      // Custom Model" (a `menuitem` that spends credits) must never be reached.
+      // The model button and a model in its Model dialog (a row, TS-007-10) or menu (a
+      // `menuitemradio`, TS-006); "Create Custom Model" (which spends credits) must never be reached.
       [`${prefix}model`]: 'v6-wild',
       [`${prefix}simple_prompt`]: 'a quiet song',
       // Simple's sections (TS-005): the "+" menu, its Lyrics and Styles items, Write new, Close.
@@ -405,6 +405,70 @@ describe('the guard bites', () => {
     expect(
       await exerciseWorkflows([bypass], { recipes: recipes('bypass'), snapshots: [snapshot] }),
     ).toEqual([`'bypass' on ${snapshot}: click reached button "Publish clip"`]);
+  }, 60_000);
+
+  it("fails a workflow that presses the Model dialog's Create Custom Model row, and sees a press around the primitives (#427)", async () => {
+    const snapshot = 'create-songs-advanced-model-dialog';
+    document.body.innerHTML = snapshotHtml(snapshot);
+    // The row is spied on; the models' rows are not (they may be pressed).
+    const spied = forbiddenControls(document).map((control) => control.words);
+    expect(spied).toContain('row ""');
+    expect(
+      forbiddenControls(document).filter(
+        (control) => control.element.getAttribute('role') === 'row',
+      ).length,
+    ).toBe(1);
+
+    // Choosing each model through the dialog, as the model filler does, passes the guard: a model's
+    // row, and the grid it sits in, are not spied on.
+    for (const model of MODEL_LABELS) {
+      const choose = testWorkflow(
+        'choose-model',
+        [snapshot],
+        async ({ page }) => {
+          const filler = FILLERS.find((candidate) => candidate.entry === 'songs.advanced.model');
+          if (filler !== undefined) {
+            await filler.write(page, model, fillValues('advanced').job as FormJob);
+          }
+        },
+        null,
+      );
+      expect(
+        await exerciseWorkflows([choose], {
+          recipes: recipes('choose-model'),
+          snapshots: [snapshot],
+        }),
+        model,
+      ).toEqual([]);
+    }
+
+    const target: Target = {
+      role: 'row',
+      leadText: 'Create Custom Model',
+      description: 'the Create Custom Model row',
+    };
+    const rogue = testWorkflow('press', [snapshot], clicking(target), target);
+    expect(
+      await exerciseWorkflows([rogue], { recipes: recipes('press'), snapshots: [snapshot] }),
+    ).toEqual([
+      `'press' on ${snapshot}: step 'act' tried a forbidden control (the Create Custom Model row: its name starts with Create, Publish, Delete, Trash, or Remove)`,
+      `'press' on ${snapshot}: not every step ran on its own fixture (missed 'act')`,
+    ]);
+
+    const bypass = testWorkflow(
+      'bypass',
+      [],
+      () => {
+        // Test-only: reaches the page directly, as the static scan forbids shipped code to.
+        document
+          .querySelector('[role="dialog"] [role="row"]')
+          ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      },
+      null,
+    );
+    expect(
+      await exerciseWorkflows([bypass], { recipes: recipes('bypass'), snapshots: [snapshot] }),
+    ).toEqual([`'bypass' on ${snapshot}: click reached row ""`]);
   }, 60_000);
 
   it('fails a workflow that presses Publish or Move to Trash in a clip menu', async () => {

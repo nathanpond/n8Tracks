@@ -162,7 +162,7 @@ describe('the forbidden-control matcher, on the TS-003 snapshots', () => {
     // 2.5 s here and over 5 s on a GitHub runner, so the limit is three times a CI run's ~10 s.
   }, 30_000);
 
-  it('recognises only the two Overwrite questions, the Voice picker, Simple’s Lyrics and Styles dialogs, and the Key popover', () => {
+  it('recognises only the two Overwrite questions, the Voice picker, Simple’s Lyrics and Styles dialogs, the Key popover, and the Model dialog', () => {
     expect(RECOGNISED_DIALOGS.map((dialog) => [dialog.title, dialog.allows])).toEqual([
       ['Overwrite Lyrics & Styles?', ['Overwrite', 'Keep Current']],
       ['Overwrite Styles?', ['Overwrite', 'Keep Current']],
@@ -190,7 +190,14 @@ describe('the forbidden-control matcher, on the TS-003 snapshots', () => {
           'Apply',
         ],
       ],
+      ['Model', ['Close']],
     ]);
+    // Only the Model dialog's rows may be pressed (TS-007-10).
+    expect(
+      RECOGNISED_DIALOGS.filter((dialog) => dialog.pressesRows === true).map(
+        (dialog) => dialog.title,
+      ),
+    ).toEqual(['Model']);
     // Each was recognised from a snapshot of it.
     for (const dialog of RECOGNISED_DIALOGS) {
       expect(SNAPSHOT_NAMES).toContain(dialog.snapshot);
@@ -277,6 +284,55 @@ describe('the dialogs TS-005 captured (#146, #147, #148)', () => {
         facts({ role: null, name: '', otherNames: ['A voice'], dialog: { title: 'Styles' } }),
       ).kind,
     ).toBe('forbidden');
+  });
+});
+
+describe('the Model dialog (#427, TS-007-10)', () => {
+  /** The Model dialog's rows, by their first text. */
+  function row(lead: string): Element {
+    const found = [...document.querySelectorAll('[role="dialog"] [role="row"]')].find(
+      (element) => element.querySelector('span')?.textContent.trim() === lead,
+    );
+    if (found === undefined) {
+      throw new Error(`no row ${lead}`);
+    }
+    return found;
+  }
+
+  it('lets a model’s row be pressed, and refuses the Create Custom Model row, which spends credits', () => {
+    load('create-songs-advanced-model-dialog');
+
+    for (const model of ['v6', 'v6-wild', 'v6-mini']) {
+      expect(verdictOf(row(model)), model).toEqual({ kind: 'allowed' });
+    }
+    expect(verdictOf(row('Create Custom Model'))).toEqual({
+      kind: 'forbidden',
+      reason: 'its name starts with Create, Publish, Delete, Trash, or Remove',
+    });
+    // Nothing inside it may be pressed either: the click would reach the row.
+    const inside = row('Create Custom Model').querySelector('span');
+    expect(inside && verdictOf(inside).kind).toBe('forbidden');
+  });
+
+  it('refuses a row whose text starts with a forbidden word, in the Model dialog only by that rule', () => {
+    const model = { title: 'Model' };
+    expect(
+      classify(facts({ role: 'row', name: '', otherNames: ['v6-wild Pro'], dialog: model })),
+    ).toEqual({ kind: 'allowed' });
+    for (const text of ['Create Custom Model Beta', 'Delete model', 'Remove v6']) {
+      expect(
+        classify(facts({ role: 'row', name: '', otherNames: [text], dialog: model })).kind,
+        text,
+      ).toBe('forbidden');
+    }
+    // Complement: a row in another recognised dialog is not one of its controls.
+    expect(
+      classify(facts({ role: 'row', name: '', otherNames: ['v6'], dialog: { title: 'Styles' } }))
+        .kind,
+    ).toBe('forbidden');
+    // And the Model dialog allows no other control but Close.
+    expect(classify(facts({ name: 'Share', dialog: model })).kind).toBe('forbidden');
+    expect(classify(facts({ name: 'Close', dialog: model })).kind).toBe('allowed');
   });
 });
 

@@ -39,6 +39,7 @@ export type Role =
   | 'checkbox'
   | 'combobox'
   | 'dialog'
+  | 'grid'
   | 'heading'
   | 'img'
   | 'link'
@@ -52,6 +53,7 @@ export type Role =
   | 'radio'
   | 'radiogroup'
   | 'region'
+  | 'row'
   | 'rowgroup'
   | 'slider'
   | 'spinbutton'
@@ -112,6 +114,12 @@ export interface Target {
   testId?: string;
   /** The kind of popup the element opens (`aria-haspopup`): "menu" for a menu button. */
   popup?: string;
+  /**
+   * The element's lead text: the text of its first `span` that holds text of its own, white space
+   * collapsed, compared without regard to case. A row of Suno's Model dialog has no name of its
+   * own and starts with the model's name ("v6-wild"), then a badge and a description (TS-007-10).
+   */
+  leadText?: string;
   /**
    * For a link: the path of the address it leads to, compared exactly (`/song/<clip ID>`, as the
    * Library's song links address a clip, TS-003). Reads only the link's own `href`.
@@ -430,7 +438,8 @@ function nameMatches(element: Element, name: string | RegExp | undefined): boole
   if (name === undefined) {
     return true;
   }
-  const actual = nameOf(element);
+  // A dialog goes by its title: its name, else its first heading's (as the matcher reads it).
+  const actual = isDialog(element) ? dialogTitleOf(element) : nameOf(element);
   return typeof name === 'string' ? actual === collapse(name) : name.test(actual);
 }
 
@@ -444,6 +453,29 @@ function isTextAnchor(value: Wanted): value is TextAnchor {
 
 function isTarget(value: Wanted): value is Target {
   return 'role' in value;
+}
+
+/**
+ * The text of the element's first `span` (itself included) that holds text of its own, white space
+ * collapsed; null when it has none. Hidden parts are left out.
+ */
+export function leadTextOf(element: Element): string | null {
+  const spans = [element, ...elementsUnder(element)].filter(
+    (inner) =>
+      inner.localName === 'span' &&
+      [...inner.childNodes].some(
+        (child) => child.nodeType === child.TEXT_NODE && (child.textContent ?? '').trim() !== '',
+      ) &&
+      !isHidden(inner),
+  );
+  const [lead] = spans;
+  return lead === undefined ? null : collapse(lead.textContent);
+}
+
+function leadMatches(element: Element, wanted: string | undefined): boolean {
+  return (
+    wanted === undefined || leadTextOf(element)?.toLowerCase() === collapse(wanted).toLowerCase()
+  );
 }
 
 /** The path of the address a link leads to, without its query or fragment; null for no `href`. */
@@ -472,6 +504,7 @@ function matchesTarget(element: Element, target: Target): boolean {
     (target.testId === undefined || element.getAttribute('data-testid') === target.testId) &&
     (target.popup === undefined || element.getAttribute('aria-haspopup') === target.popup) &&
     (target.address === undefined || linkPathOf(element) === target.address) &&
+    leadMatches(element, target.leadText) &&
     nameMatches(element, target.name) &&
     !isHidden(element)
   );
@@ -949,43 +982,31 @@ function rangeInputOf(element: Element): HTMLInputElement | null {
 const MAX_KEY_STEPS = 1000;
 
 /**
- * Moves a slider that has no input by arrow keys until it shows `wanted`, stopping when a key
- * changes nothing or would pass the value. Synthetic keys were unreliable in TS-002, so the
- * step's read-back decides whether this worked. Never sends Enter.
+ * How long a slider is given after each arrow key before it is read again (TS-007-9): Suno's
+ * sliders apply a key a task later, so a key sent before the last one took is lost.
  */
-function stepSlider(element: Element, wanted: number): void {
+export const SLIDER_KEY_SETTLE_MS = 10;
+
+/**
+ * How long a slider may take to show a key at the most: a key that changes nothing in this time
+ * ends the stepping (a slider at its end, or one that ignores keys). TS-007-9 saw a key show about
+ * 300 ms after a burst of keys.
+ */
+export const SLIDER_KEY_WAIT_MS = 400;
+
+/** A slider's `aria-valuenow` as a number; NaN when it has none. */
+function sliderValueOf(element: Element): number {
+  const value = element.getAttribute('aria-valuenow');
+  return value === null || value.trim() === '' ? Number.NaN : Number(value);
+}
+
+/** Sends one arrow key (down and up) to a slider. */
+function sendArrow(element: Element, key: 'ArrowLeft' | 'ArrowRight'): void {
   const view = viewOf(element);
-  const current = () => Number(element.getAttribute('aria-valuenow'));
-  for (let step = 0; step < MAX_KEY_STEPS; step += 1) {
-    const before = current();
-    if (!Number.isFinite(before) || before === wanted) {
-      return;
-    }
-    const key = before < wanted ? 'ArrowRight' : 'ArrowLeft';
-    element.dispatchEvent(
-      new view.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }),
-    );
-    element.dispatchEvent(
-      new view.KeyboardEvent('keyup', { key, bubbles: true, cancelable: true }),
-    );
-    const after = current();
-    if (after === before) {
-      return;
-    }
-    if (before < wanted ? after > wanted : after < wanted) {
-      // Passed it: a slider that moves in steps (Duration, by 5) ends on the nearer step.
-      if (Math.abs(after - wanted) > Math.abs(before - wanted)) {
-        const back = key === 'ArrowRight' ? 'ArrowLeft' : 'ArrowRight';
-        element.dispatchEvent(
-          new view.KeyboardEvent('keydown', { key: back, bubbles: true, cancelable: true }),
-        );
-        element.dispatchEvent(
-          new view.KeyboardEvent('keyup', { key: back, bubbles: true, cancelable: true }),
-        );
-      }
-      return;
-    }
-  }
+  element.dispatchEvent(
+    new view.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }),
+  );
+  element.dispatchEvent(new view.KeyboardEvent('keyup', { key, bubbles: true, cancelable: true }));
 }
 
 function readingOf(element: Element): Reading {
@@ -1087,6 +1108,8 @@ export interface ReadAllEntry {
   name: string;
   reading: Reading;
   image: string | null;
+  /** Its lead text (as {@link Target.leadText} compares it), or null. */
+  lead: string | null;
 }
 
 /**
@@ -1207,25 +1230,20 @@ export class Page {
       name: nameOf(element),
       reading: readingOf(element),
       image: imageAddressOf(element),
+      lead: leadTextOf(element),
     }));
   }
 
   /**
-   * Sets a text box, a number box, or a slider to `value`, as typing would: the native setter and
-   * an `input` event. A slider without an input is moved by arrow keys. Never sends Enter.
+   * Sets a text box or a number box to `value`, as typing would: the native setter and an `input`
+   * event. A slider is moved with {@link slide}. Never sends Enter.
    */
   set(found: Found, value: string | number): void {
     const element = this.changeable(found);
-    const role = roleOf(element);
-    if (role === 'slider') {
-      const input = rangeInputOf(element);
-      if (input === null) {
-        stepSlider(element, Number(value));
-        return;
-      }
-      setNativeValue(input)(String(value));
-      announce(input, 'input', 'change');
-      return;
+    if (roleOf(element) === 'slider') {
+      throw new PrimitiveError(
+        `${found.target.description} to take a typed value (it is a slider)`,
+      );
     }
     if (element.localName === 'input' || element.localName === 'textarea') {
       setNativeValue(element as HTMLInputElement)(String(value));
@@ -1233,6 +1251,75 @@ export class Page {
       return;
     }
     throw new PrimitiveError(`${found.target.description} to take a typed value`);
+  }
+
+  /**
+   * Moves a slider to `value`: through its range input when it has one (the native setter and an
+   * `input` event), else by arrow keys, one at a time. Suno's sliders apply a key a task later and
+   * drop a key sent before the last one took (TS-007-9: five keys sent at once moved 50 to 51), so
+   * after each key the slider is read again, {@link SLIDER_KEY_SETTLE_MS} later and then until it
+   * changes or {@link SLIDER_KEY_WAIT_MS} has passed. The keys stop at the value, when a key
+   * changes nothing in that time, or after a key passes the value (a slider that moves in steps,
+   * Duration by 5, ends on the nearer step); at most {@link MAX_KEY_STEPS} keys. Synthetic keys
+   * were unreliable in TS-002, so the step's read-back decides whether this worked. Never sends
+   * Enter.
+   */
+  async slide(found: Found, value: number): Promise<void> {
+    const element = this.changeable(found);
+    if (roleOf(element) !== 'slider') {
+      throw new PrimitiveError(`${found.target.description} to be a slider`);
+    }
+    const input = rangeInputOf(element);
+    if (input !== null) {
+      setNativeValue(input)(String(value));
+      announce(input, 'input', 'change');
+      return;
+    }
+    const current = () => sliderValueOf(this.changeable(found));
+    const press = (key: 'ArrowLeft' | 'ArrowRight') => {
+      sendArrow(this.changeable(found), key);
+    };
+    for (let step = 0; step < MAX_KEY_STEPS; step += 1) {
+      const before = current();
+      if (!Number.isFinite(before) || before === value) {
+        return;
+      }
+      const key = before < value ? 'ArrowRight' : 'ArrowLeft';
+      press(key);
+      const after = await this.afterKey(current, before);
+      if (after === before) {
+        return;
+      }
+      if (before < value ? after > value : after < value) {
+        // Passed it: a slider that moves in steps (Duration, by 5) ends on the nearer step.
+        if (Math.abs(after - value) > Math.abs(before - value)) {
+          press(key === 'ArrowRight' ? 'ArrowLeft' : 'ArrowRight');
+          await this.afterKey(current, after);
+        }
+        return;
+      }
+    }
+  }
+
+  /**
+   * Sends Escape to an open dialog or menu, as a user closing it does (TS-007-10: Escape closes
+   * Suno's Model dialog). It presses nothing and never sends Enter; whether the dialog closed is
+   * for the caller to read.
+   */
+  dismiss(found: Found): void {
+    const element = this.reachable(found);
+    const view = viewOf(element);
+    for (const type of ['keydown', 'keyup']) {
+      element.dispatchEvent(
+        new view.KeyboardEvent(type, {
+          key: 'Escape',
+          code: 'Escape',
+          keyCode: 27,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    }
   }
 
   /**
@@ -1462,6 +1549,21 @@ export class Page {
   async wait(condition: () => boolean, timeoutMs: number): Promise<boolean> {
     const result = await poll(() => ({ ok: condition() }), timeoutMs, this.clock, POLL_MS);
     return result.ok;
+  }
+
+  /**
+   * A slider's value after a key: read {@link SLIDER_KEY_SETTLE_MS} later, and again until it is
+   * not `before` or {@link SLIDER_KEY_WAIT_MS} has passed; `before` when nothing changed.
+   */
+  private async afterKey(read: () => number, before: number): Promise<number> {
+    const deadline = this.clock.now() + SLIDER_KEY_WAIT_MS;
+    for (;;) {
+      await this.clock.sleep(SLIDER_KEY_SETTLE_MS);
+      const now = read();
+      if (now !== before || this.clock.now() >= deadline) {
+        return now;
+      }
+    }
   }
 
   /** Throws when this handle has stopped: refused a press, or its run is over. */

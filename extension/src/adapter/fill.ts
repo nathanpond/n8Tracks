@@ -20,8 +20,12 @@ import {
   MAX_MODE_OFF,
   MAX_MODE_ON,
   MODEL_BUTTON,
+  MODEL_DIALOG,
+  MODEL_MENU_BUTTON,
+  MODEL_ROWS,
   modelItem,
   modelMenu,
+  modelRow,
   PERSONALIZE_OFF,
   PERSONALIZE_ON,
   SECTION_CHIP_REMOVE,
@@ -49,10 +53,11 @@ import {
   scaleTab,
   SOUND_DESCRIPTION,
   SOUNDS_MODEL_BUTTON,
+  SOUNDS_MODEL_MENU_BUTTON,
   TYPE_LOOP,
   TYPE_ONE_SHOT,
 } from './soundsForm.ts';
-import { KEY_NOTES } from './forbidden.ts';
+import { FORBIDDEN_NAME, KEY_NOTES } from './forbidden.ts';
 import {
   BACKGROUND_MUSIC_OFF,
   BACKGROUND_MUSIC_ON,
@@ -165,8 +170,8 @@ export const BLOCKED_ON_CAPTURE: ReadonlySet<string> = new Set<string>();
 
 /**
  * The models Suno's model menu offered when TS-006 captured it (2026-10-08), as its items name
- * them. A Version's model outside this list (an older one, such as v4.5) is failed without the
- * menu being opened: the extension never guesses a model.
+ * them, and its Model dialog lists since (TS-007-10). A Version's model outside this list (an older
+ * one, such as v4.5) is failed without the picker being opened: the extension never guesses a model.
  */
 export const MODEL_LABELS: readonly string[] = ['v6', 'v6-wild', 'v6-mini'];
 
@@ -188,7 +193,12 @@ type Shown =
   | { kind: 'absent' }
   | { kind: 'disabled' };
 
-type Written = { unavailable: string } | undefined;
+/**
+ * What a write may say instead of setting the control: `unavailable`, the adapter's own words
+ * (stored by n8Tracks), and `shown`, what Suno's form offered, for the panel only (TS-007-10: the
+ * models the Model dialog lists).
+ */
+type Written = { unavailable: string; shown?: string } | undefined;
 
 /** A filler: one `fill` entry, set and read back through the primitives. */
 export interface Filler {
@@ -287,7 +297,7 @@ function textBox(entry: string, target: Target): Filler {
   };
 }
 
-/** A slider moved with arrow keys (TS-003); its `aria-valuenow` is the value. */
+/** A slider moved with arrow keys a task apart (TS-003, TS-007-9); its `aria-valuenow` is the value. */
 function slider(entry: string, target: Target, wanted: Filler['wanted']): Filler {
   return {
     entry,
@@ -299,10 +309,10 @@ function slider(entry: string, target: Target, wanted: Filler['wanted']): Filler
         const value = Number(page.read(found).value);
         return Number.isFinite(value) ? value : null;
       }),
-    write: (page, value) => {
+    write: async (page, value) => {
       const found = locate(page, target);
       if (typeof found !== 'string') {
-        page.set(found, Number(value));
+        await page.slide(found, Number(value));
       }
     },
   };
@@ -851,7 +861,7 @@ const soundScale: Filler = {
     applyKey(page, keyOf(job) ?? null, value === 'minor' ? 'Minor' : 'Major'),
 };
 
-/** The model a Version names, as the menu's items name it; not applicable when it names none. */
+/** The model a Version names, as the picker names it; not applicable when it names none. */
 function wantedModel(value: unknown): Wanted {
   if (value === null || value === undefined) {
     return { kind: 'not_applicable', note: 'The Version names no model; Suno keeps its own.' };
@@ -861,13 +871,53 @@ function wantedModel(value: unknown): Wanted {
     ? { kind: 'value', value: model }
     : {
         kind: 'failed',
-        note: 'The Version’s model is not one Suno’s model menu offers; choose a model by hand.',
+        note: 'The Version’s model is not one Suno’s model picker offers; choose a model by hand.',
       };
 }
 
+/**
+ * One shape of Suno's model picker: its button, and whether it opens the Model dialog (since
+ * 2026-10-11, TS-007-10) or the model menu (TS-006).
+ */
+interface ModelPicker {
+  button: Target;
+  opens: 'dialog' | 'menu';
+}
+
+/** The shapes a form's model picker is looked for in, in order: the dialog first. */
+const SONGS_MODEL_PICKERS: readonly ModelPicker[] = [
+  { button: MODEL_BUTTON, opens: 'dialog' },
+  { button: MODEL_MENU_BUTTON, opens: 'menu' },
+];
+
+const SOUNDS_MODEL_PICKERS: readonly ModelPicker[] = [
+  { button: SOUNDS_MODEL_BUTTON, opens: 'dialog' },
+  { button: SOUNDS_MODEL_MENU_BUTTON, opens: 'menu' },
+];
+
+/** The model button, by the first shape found on the page once; else why there is none. */
+function locateModelButton(
+  page: Page,
+  pickers: readonly ModelPicker[],
+): { found: Found; picker: ModelPicker } | 'absent' | 'disabled' {
+  let disabled = false;
+  for (const picker of pickers) {
+    const found = locate(page, picker.button);
+    if (found === 'disabled') {
+      disabled = true;
+    } else if (found !== 'absent') {
+      return { found, picker };
+    }
+  }
+  return disabled ? 'disabled' : 'absent';
+}
+
 /** The model the button shows ("v6"), as compared: lower case. */
-function modelShown(page: Page, button: Target): Shown {
-  return shown(page, button, (found) => page.read(found).text.trim().toLowerCase());
+function modelShown(page: Page, pickers: readonly ModelPicker[]): Shown {
+  const button = locateModelButton(page, pickers);
+  return typeof button === 'string'
+    ? { kind: button }
+    : { kind: 'value', value: page.read(button.found).text.trim().toLowerCase() };
 }
 
 /**
@@ -878,11 +928,12 @@ function modelShown(page: Page, button: Target): Shown {
  * the forbidden-control matcher refuses it too (its name starts with Create). The read-back is the
  * button's own text, which names the chosen model.
  */
-async function chooseModel(page: Page, button: Target, model: string): Promise<Written> {
-  const opener = locate(page, button);
-  if (typeof opener === 'string') {
-    return { unavailable: 'Suno’s model button is not on the form.' };
-  }
+async function chooseFromMenu(
+  page: Page,
+  button: Target,
+  opener: Found,
+  model: string,
+): Promise<Written> {
   const shownAs = page.read(opener).text.trim();
   if (page.find(modelMenu(shownAs)).kind !== 'found') {
     page.click(opener);
@@ -913,15 +964,95 @@ async function chooseModel(page: Page, button: Target, model: string): Promise<W
   return undefined;
 }
 
-/** The model (Songs' Simple and Advanced, and Sounds), chosen in the model menu (TS-006). */
-function modelChoice(entry: string, button: Target): Filler {
+/** Closes the Model dialog with Escape when it is still open, and waits for it to go. */
+async function closeModelDialog(page: Page): Promise<void> {
+  const dialog = page.find(MODEL_DIALOG);
+  if (dialog.kind !== 'found') {
+    return;
+  }
+  page.dismiss(dialog.found);
+  await page.wait(() => page.find(MODEL_DIALOG).kind !== 'found', SHOW_WAIT_MS);
+}
+
+/** The models the Model dialog lists: its selectable rows' names, without Create Custom Model. */
+function listedModels(page: Page): string[] {
+  return page
+    .readAll(MODEL_ROWS)
+    .filter((row) => row.reading.selected !== null && row.lead !== null)
+    .map((row) => row.lead ?? '')
+    .filter((name) => !FORBIDDEN_NAME.test(name));
+}
+
+/**
+ * Chooses `model` in the Model dialog (TS-007-10): the model button opens it (unless it is open),
+ * the row whose lead text is the model is pressed unless it is already selected, and the dialog is
+ * closed with Escape if Suno left it open. Only a row whose lead text is one of the known models is
+ * ever looked for, so the "Create Custom Model" row (which spends credits) is never pressed; the
+ * forbidden-control matcher refuses it too. A model the dialog does not list is unavailable, with
+ * the models it does list for the panel. The read-back is the button's own text.
+ */
+async function chooseFromDialog(page: Page, opener: Found, model: string): Promise<Written> {
+  if (page.find(MODEL_DIALOG).kind !== 'found') {
+    page.click(opener);
+    if (!(await shows(page, MODEL_DIALOG))) {
+      return { unavailable: 'Suno’s Model dialog did not open.' };
+    }
+  }
+  const row = locate(page, modelRow(model));
+  if (typeof row === 'string') {
+    const listed = listedModels(page);
+    await closeModelDialog(page);
+    return {
+      unavailable:
+        row === 'disabled'
+          ? 'Suno’s Model dialog shows that model disabled (it may need a paid plan).'
+          : 'Suno’s Model dialog does not list that model.',
+      shown: listed.length === 0 ? 'It lists no model.' : `It lists ${listed.join(', ')}.`,
+    };
+  }
+  if (page.read(row).selected !== true) {
+    page.click(row);
+    // Suno may close the dialog on a choice, or only mark the row chosen.
+    await page.wait(() => {
+      if (page.find(MODEL_DIALOG).kind !== 'found') {
+        return true;
+      }
+      const now = locate(page, modelRow(model));
+      return typeof now !== 'string' && page.read(now).selected === true;
+    }, SHOW_WAIT_MS);
+  }
+  await closeModelDialog(page);
+  return undefined;
+}
+
+/** Chooses `model` with whichever model picker the form shows. */
+async function chooseModel(
+  page: Page,
+  pickers: readonly ModelPicker[],
+  model: string,
+): Promise<Written> {
+  const button = locateModelButton(page, pickers);
+  if (typeof button === 'string') {
+    return { unavailable: 'Suno’s model button is not on the form.' };
+  }
+  return button.picker.opens === 'dialog'
+    ? chooseFromDialog(page, button.found, model)
+    : chooseFromMenu(page, button.picker.button, button.found, model);
+}
+
+/**
+ * The model (Songs' Simple and Advanced, and Sounds), chosen in the Model dialog (TS-007-10), or in
+ * the model menu where the form still shows one (TS-006).
+ */
+function modelChoice(entry: string, pickers: readonly ModelPicker[]): Filler {
+  const [first] = pickers;
   return {
     entry,
-    control: button.description,
+    control: first?.button.description ?? 'the model button',
     text: false,
     wanted: wantedModel,
-    read: (page) => modelShown(page, button),
-    write: (page, value) => chooseModel(page, button, String(value)),
+    read: (page) => modelShown(page, pickers),
+    write: (page, value) => chooseModel(page, pickers, String(value)),
   };
 }
 
@@ -946,7 +1077,7 @@ const SPEECH_AND_SOUNDS_FILLERS: readonly Filler[] = [
     'the Background music switch',
   ),
   slider('speech.advanced.speech_variety', SPEECH_VARIETY_SLIDER, wantedVariety),
-  modelChoice('sounds.single.sounds_model', SOUNDS_MODEL_BUTTON),
+  modelChoice('sounds.single.sounds_model', SOUNDS_MODEL_PICKERS),
   textBox('sounds.single.sound_description', SOUND_DESCRIPTION),
   choice(
     'sounds.single.sound_type',
@@ -964,8 +1095,8 @@ const SPEECH_AND_SOUNDS_FILLERS: readonly Filler[] = [
 
 /** One filler per `fill` entry of the field map, except those blocked on a capture. */
 export const FILLERS: readonly Filler[] = [
-  modelChoice('songs.simple.model', MODEL_BUTTON),
-  modelChoice('songs.advanced.model', MODEL_BUTTON),
+  modelChoice('songs.simple.model', SONGS_MODEL_PICKERS),
+  modelChoice('songs.advanced.model', SONGS_MODEL_PICKERS),
   textBox('songs.simple.simple_prompt', SONG_DESCRIPTION),
   simpleSection('Lyrics'),
   simpleSection('Styles'),
@@ -1094,8 +1225,19 @@ function compared(
 function unavailable(
   filler: Filler,
   wanted: FormValue,
-  shownAs: Shown | { unavailable: string },
+  shownAs: Shown | { unavailable: string; shown?: string },
 ): EntryResult {
+  if ('unavailable' in shownAs && shownAs.shown !== undefined) {
+    // The panel says what Suno offered; n8Tracks stores only the adapter's own words.
+    return {
+      key: filler.entry,
+      outcome: 'unavailable',
+      expected: wanted,
+      ...(filler.text ? { text: true } : {}),
+      note: `${shownAs.unavailable} ${shownAs.shown}`,
+      reportNote: shownAs.unavailable,
+    };
+  }
   const note =
     'unavailable' in shownAs
       ? shownAs.unavailable

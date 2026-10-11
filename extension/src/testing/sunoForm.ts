@@ -30,12 +30,29 @@
  * - a model (`menuitemradio`) pressed becomes the one checked, the button shows its label, and the
  *   menu closes. "Create Custom Model" does nothing here: the adapter must never reach it.
  *
+ * And what #427 recorded live (2026-10-11, TS-007-9 and TS-007-10):
+ *
+ * - with `deferredSliders`, a slider applies an arrow key a task after it, from the value it had
+ *   when the key came, so keys sent back to back count once (five keys moved 50 to 51);
+ * - a model button that opens a dialog (`aria-haspopup="dialog"`) opens the Model dialog (markup
+ *   from `page.create-songs-advanced-model-dialog.html`), the model it shows selected; pressed
+ *   again it closes it, as Escape does; a model's row pressed becomes the one selected and the
+ *   button shows its name, and the dialog closes unless `modelDialogStaysOpen` (what follows a
+ *   choice was not seen live). The "Create Custom Model" row does nothing here.
+ *
  * Text boxes need no stand-in: the native value setter works in jsdom.
  */
 
 import { snapshotHtml } from './snapshots.ts';
 
 const STEP: Readonly<Record<string, number>> = { Duration: 5 };
+
+export interface StandInOptions {
+  /** Sliders apply a key a task later, from the value they had when it came (TS-007-9). */
+  deferredSliders?: boolean;
+  /** The Model dialog stays open after a model is chosen, until Escape (TS-007-10). */
+  modelDialogStaysOpen?: boolean;
+}
 
 export interface StandIn {
   /** The commands the editor was given, for tests: `insertText`, `insertParagraph`, `delete`. */
@@ -342,12 +359,74 @@ function modelPicker(document: Document, target: Element): boolean {
   return true;
 }
 
+/** The open Model dialog (TS-007-10), or null. */
+function openModelDialog(document: Document): Element | null {
+  return (
+    [...document.querySelectorAll('[role="dialog"]')].find(
+      (dialog) => dialog.querySelector('h2')?.textContent.trim() === 'Model',
+    ) ?? null
+  );
+}
+
+/** A Model dialog row's name: its first text. */
+function rowNameOf(row: Element): string {
+  return row.querySelector('span')?.textContent.trim() ?? '';
+}
+
+function closeModelDialog(document: Document, dialog: Element): void {
+  document
+    .querySelector(`button[aria-haspopup="dialog"][aria-controls="${dialog.id}"]`)
+    ?.setAttribute('aria-expanded', 'false');
+  (dialog.closest('[data-base-ui-portal]') ?? dialog).remove();
+}
+
+/** The model button that opens a dialog, and the Model dialog (TS-007-10). */
+function modelDialogPicker(document: Document, target: Element, staysOpen: boolean): boolean {
+  const button = target.closest('button[aria-haspopup="dialog"]');
+  if (button !== null && /^v\d/i.test(button.textContent.trim())) {
+    const open = openModelDialog(document);
+    if (open !== null) {
+      closeModelDialog(document, open);
+      return true;
+    }
+    const portal = fromSnapshot(document, 'create-songs-advanced-model-dialog', '#_r_mp_');
+    const dialog = portal.querySelector('[role="dialog"]');
+    const shown = button.textContent.trim().toLowerCase();
+    for (const row of portal.querySelectorAll('[role="row"][aria-selected]')) {
+      row.setAttribute('aria-selected', String(rowNameOf(row).toLowerCase() === shown));
+    }
+    button.setAttribute('aria-controls', dialog?.id ?? '');
+    document.body.append(portal);
+    button.setAttribute('aria-expanded', 'true');
+    return true;
+  }
+  const dialog = openModelDialog(document);
+  const row = target.closest('[role="row"][aria-selected]');
+  if (dialog === null || row === null || !dialog.contains(row)) {
+    return false;
+  }
+  for (const other of dialog.querySelectorAll('[role="row"][aria-selected]')) {
+    other.setAttribute('aria-selected', String(other === row));
+  }
+  const opener = document.querySelector(
+    `button[aria-haspopup="dialog"][aria-controls="${dialog.id}"]`,
+  );
+  if (opener !== null) {
+    showModel(opener, rowNameOf(row));
+  }
+  if (!staysOpen) {
+    closeModelDialog(document, dialog);
+  }
+  return true;
+}
+
 /** Starts the stand-in on `document`; `stop` removes it (and the editor commands). */
-export function standInForSuno(document: Document): StandIn {
+export function standInForSuno(document: Document, options: StandInOptions = {}): StandIn {
   const commands: string[] = [];
   const onClick = (event: Event) => {
     const target = event.target as Element;
     if (
+      modelDialogPicker(document, target, options.modelDialogStaysOpen === true) ||
       modelPicker(document, target) ||
       simpleSections(document, target) ||
       durationCustom(document, target) ||
@@ -374,9 +453,25 @@ export function standInForSuno(document: Document): StandIn {
   };
   const onKey = (event: Event) => {
     const key = (event as KeyboardEvent).key;
+    if (key === 'Escape') {
+      const dialog = openModelDialog(document);
+      if (dialog !== null) {
+        closeModelDialog(document, dialog);
+      }
+      return;
+    }
     const slider = (event.target as Element).closest('[role="slider"]');
     if (slider !== null && (key === 'ArrowRight' || key === 'ArrowLeft')) {
-      moveSlider(slider, key);
+      if (options.deferredSliders === true) {
+        // Suno's sliders apply a key a task later, from the value they had when it came.
+        const from = slider.getAttribute('aria-valuenow');
+        setTimeout(() => {
+          slider.setAttribute('aria-valuenow', from ?? '');
+          moveSlider(slider, key);
+        }, 0);
+      } else {
+        moveSlider(slider, key);
+      }
     }
   };
   document.addEventListener('click', onClick);

@@ -11,8 +11,11 @@ import {
   StoppedError,
   type FindResult,
   type Found,
+  SLIDER_KEY_SETTLE_MS,
+  SLIDER_KEY_WAIT_MS,
   type Target,
 } from './primitives.ts';
+import type { Clock } from './clock.ts';
 
 const ADVANCED = 'create-songs-advanced-more-options';
 
@@ -205,8 +208,9 @@ describe('set', () => {
     expect(events).toEqual(['input', 'change']);
   });
 
-  it('moves a slider without an input by arrow keys, never Enter, until it reads the value', () => {
-    const page = loadSnapshot(ADVANCED);
+  it('moves a slider without an input by arrow keys, never Enter, until it reads the value', async () => {
+    const clock = fakeClock();
+    const page = loadSnapshot(ADVANCED, undefined, clock);
     const element = document.querySelector('[aria-label="Weirdness"]');
     const keys: string[] = [];
     element?.addEventListener('keydown', (event) => {
@@ -217,29 +221,44 @@ describe('set', () => {
     });
     const slider = found(page.find(WEIRDNESS));
 
-    page.set(slider, 73);
+    await page.slide(slider, 73);
 
     expect(page.read(slider).value).toBe('73');
     expect(keys).toEqual(['ArrowRight', 'ArrowRight', 'ArrowRight']);
+    // Each key is read back a settle later (TS-007-9), and a key that took needs no longer wait.
+    expect(clock.slept).toEqual([SLIDER_KEY_SETTLE_MS, SLIDER_KEY_SETTLE_MS, SLIDER_KEY_SETTLE_MS]);
   });
 
-  it('leaves a slider that ignores keys as it was, for the read-back to report', () => {
+  it('leaves a slider that ignores keys as it was, after waiting for the one key, for the read-back to report', async () => {
+    const clock = fakeClock();
+    const page = loadSnapshot(ADVANCED, undefined, clock);
+    const keys = recordEvents('keydown');
+    const slider = found(page.find(WEIRDNESS));
+
+    await page.slide(slider, 40);
+
+    expect(page.read(slider).value).toBe('70');
+    expect(keys).toEqual(['keydown']);
+    expect(clock.slept.reduce((sum, ms) => sum + ms, 0)).toBe(SLIDER_KEY_WAIT_MS);
+  });
+
+  it('refuses to type into a slider: it is moved with slide', () => {
     const page = loadSnapshot(ADVANCED);
     const slider = found(page.find(WEIRDNESS));
 
-    page.set(slider, 40);
-
-    expect(page.read(slider).value).toBe('70');
+    expect(() => {
+      page.set(slider, 40);
+    }).toThrow('the Weirdness slider to take a typed value (it is a slider)');
   });
 
-  it('sets a slider through its range input when it has one', () => {
+  it('sets a slider through its range input when it has one', async () => {
     document.body.innerHTML =
       '<div role="slider" aria-label="Level" aria-valuenow="1"><input type="range" min="0" max="10" value="1" /></div>';
     const page = new Page(document);
     const events = recordEvents('input');
     const slider = found(page.find({ role: 'slider', name: 'Level', description: 'Level' }));
 
-    page.set(slider, 6);
+    await page.slide(slider, 6);
 
     expect(document.querySelector('input')?.value).toBe('6');
     expect(events).toEqual(['input']);
@@ -837,20 +856,152 @@ describe('sliders that move in steps (#146: Duration by 5 seconds)', () => {
       const key = (event as KeyboardEvent).key;
       element.setAttribute('aria-valuenow', String(key === 'ArrowRight' ? now + 5 : now - 5));
     });
-    const page = new Page(document);
+    const page = new Page(document, { clock: fakeClock() });
     return {
       page,
       slider: found(page.find({ role: 'slider', name: 'Duration', description: 'Duration' })),
     };
   }
 
-  it('ends on the nearer step when the value lies between two', () => {
+  it('ends on the nearer step when the value lies between two', async () => {
     const { page, slider } = durationPage();
 
-    page.set(slider, 33);
+    await page.slide(slider, 33);
     expect(page.read(slider).value).toBe('35');
-    page.set(slider, 47);
+    await page.slide(slider, 47);
     expect(page.read(slider).value).toBe('45');
+  });
+});
+
+describe('sliders that apply a key a task later (#427, TS-007-9)', () => {
+  /**
+   * A clock whose sleep lets the page's own tasks run (a timer of 0) and moves its time by what
+   * was asked, so a test is deterministic and quick.
+   */
+  function taskClock(): Clock & { slept: number[] } {
+    let now = 0;
+    const slept: number[] = [];
+    return {
+      slept,
+      now: () => now,
+      sleep: (ms) =>
+        new Promise((resolve) => {
+          slept.push(ms);
+          now += ms;
+          setTimeout(resolve, 0);
+        }),
+    };
+  }
+
+  /**
+   * Suno's Style Influence slider as seen live: a key is applied a task after it, from the value
+   * the slider had when the key came, so keys sent back to back count as one (50 to 51 for five).
+   */
+  function deferredSlider(start: number, step = 1) {
+    document.body.innerHTML = `<div role="slider" aria-label="Style Influence" aria-valuenow="${String(start)}" aria-valuemin="0" aria-valuemax="100"></div>`;
+    const element = document.querySelector('[role="slider"]');
+    const keys: string[] = [];
+    element?.addEventListener('keydown', (event) => {
+      const key = (event as KeyboardEvent).key;
+      keys.push(key);
+      const from = Number(element.getAttribute('aria-valuenow'));
+      setTimeout(() => {
+        const next = key === 'ArrowRight' ? Math.min(100, from + step) : Math.max(0, from - step);
+        element.setAttribute('aria-valuenow', String(next));
+      }, 0);
+    });
+    return { element, keys };
+  }
+
+  const STYLE_INFLUENCE: Target = {
+    role: 'slider',
+    name: 'Style Influence',
+    description: 'the Style Influence slider',
+  };
+
+  it('counts keys sent back to back once, as seen live', async () => {
+    const { element } = deferredSlider(50);
+    for (let key = 0; key < 35; key += 1) {
+      // Test-only: the keys the old stepping sent, one straight after another.
+      element?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(element?.getAttribute('aria-valuenow')).toBe('51');
+  });
+
+  it('reaches 85 from 50, and 12 back down, a task at a time', async () => {
+    const { keys } = deferredSlider(50);
+    const page = new Page(document, { clock: taskClock() });
+    const slider = found(page.find(STYLE_INFLUENCE));
+
+    await page.slide(slider, 85);
+    expect(page.read(slider).value).toBe('85');
+    expect(keys).toHaveLength(35);
+    expect(new Set(keys)).toEqual(new Set(['ArrowRight']));
+
+    await page.slide(slider, 12);
+    expect(page.read(slider).value).toBe('12');
+    expect(keys).toHaveLength(35 + 73);
+  });
+
+  it('keeps stepping a slider that takes longer than a task, and stops at its end', async () => {
+    document.body.innerHTML =
+      '<div role="slider" aria-label="Style Influence" aria-valuenow="98" aria-valuemin="0" aria-valuemax="100"></div>';
+    const element = document.querySelector('[role="slider"]');
+    element?.addEventListener('keydown', () => {
+      const from = Number(element.getAttribute('aria-valuenow'));
+      // Applied 300 ms (of the clock's time) later, as one key was seen live.
+      const due = clock.now() + 300;
+      const apply = () => {
+        if (clock.now() >= due) {
+          element.setAttribute('aria-valuenow', String(Math.min(100, from + 1)));
+        } else {
+          setTimeout(apply, 0);
+        }
+      };
+      setTimeout(apply, 0);
+    });
+    const clock = taskClock();
+    const page = new Page(document, { clock });
+    const slider = found(page.find(STYLE_INFLUENCE));
+
+    await page.slide(slider, 100);
+    expect(page.read(slider).value).toBe('100');
+
+    // At its end a key changes nothing: the stepping stops after one wait, not a thousand keys.
+    const before = clock.now();
+    await page.slide(slider, 100);
+    expect(clock.now()).toBe(before);
+  });
+
+  it('ends a stepped slider on the nearer step when keys apply a task later', async () => {
+    deferredSlider(30, 5);
+    const page = new Page(document, { clock: taskClock() });
+    const slider = found(page.find(STYLE_INFLUENCE));
+
+    await page.slide(slider, 47);
+
+    expect(page.read(slider).value).toBe('45');
+  });
+
+  it('stops when the run stops between keys', async () => {
+    deferredSlider(50);
+    const controller = new AbortController();
+    const base = taskClock();
+    // The run stops while the first key is waited for.
+    const clock: Clock = {
+      now: () => base.now(),
+      sleep: async (ms) => {
+        await base.sleep(ms);
+        controller.abort();
+      },
+    };
+    const page = new Page(document, { clock }).withSignal(controller.signal);
+    const slider = found(page.find(STYLE_INFLUENCE));
+
+    await expect(page.slide(slider, 85)).rejects.toBeInstanceOf(StoppedError);
+    expect(page.read(slider).value).toBe('51');
   });
 });
 

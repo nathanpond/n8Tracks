@@ -28,10 +28,19 @@ const CREDITS: Target = {
 };
 
 /**
- * The model button beside the credits (Sounds has no mode tabs); its name is the model's label. It
- * is the same button, and opens the same menu, as on the Songs tab (TS-006, `modelMenu`).
+ * The model button beside the credits (Sounds has no mode tabs); its text is the model's label. It
+ * is the same button as on the Songs tab (TS-006), so it is taken to open the same Model dialog
+ * now (TS-007-10, `MODEL_DIALOG`). Not seen live on the Sounds tab since the change.
  */
 export const SOUNDS_MODEL_BUTTON: Target = {
+  role: 'button',
+  popup: 'dialog',
+  within: { around: CREDITS, levels: 4, description: 'the top of the Sounds form' },
+  description: 'the model button at the top of the Sounds form',
+};
+
+/** The Sounds model button as TS-006 captured it: a menu button (`modelMenu`), kept as a fallback. */
+export const SOUNDS_MODEL_MENU_BUTTON: Target = {
   role: 'button',
   popup: 'menu',
   within: { around: CREDITS, levels: 3, description: 'the top of the Sounds form' },
