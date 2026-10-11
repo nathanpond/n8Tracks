@@ -11,7 +11,9 @@ import {
 } from '../adapter/libraryReader.ts';
 import type { Page } from '../adapter/primitives.ts';
 import type { AdapterSession } from '../adapter/registry.ts';
+import { openWorkspaceList } from '../adapter/workflows/libraryTabs.ts';
 import { loadMore } from '../adapter/workflows/loadMore.ts';
+import type { Workflow } from '../adapter/workflow.ts';
 import type {
   ImageProgress,
   Request,
@@ -28,7 +30,9 @@ import type { SyncViewState } from '../panel/SyncView.ts';
  * The Suno tab's half of a sync (#134). The user starts it from the panel; each leg is read on
  * its own page, reached by address, and the service worker carries the sync from one page load to
  * the next. On every page load the content script asks whether its tab is in a sync, and if so
- * reads the leg the page is for. It never starts a sync by itself.
+ * reads the leg the page is for. It never starts a sync by itself. The workspace list is the one
+ * leg not reached by address alone (#421): its page is Library (`/me`), and the leg presses
+ * Library's Workspaces tab there, since a direct load of `/me/workspaces` asks Suno for nothing.
  */
 
 export interface SunoSyncOptions {
@@ -69,10 +73,20 @@ function reply<T extends object>(answer: unknown): SyncReply<T> {
   return { ok: false, message: 'The extension did not answer. Reload the Suno page.' };
 }
 
+/**
+ * The page a leg is read on. The workspace list is read on Library (`/me`), where its tab is
+ * pressed (#421).
+ */
 function addressOf(leg: SyncLeg): URL {
-  return leg.list === 'playlist'
-    ? sunoListAddress({ page: 'playlist', id: leg.id })
-    : sunoListAddress({ page: leg.list === 'library' ? 'library' : leg.list });
+  switch (leg.list) {
+    case 'playlist':
+      return sunoListAddress({ page: 'playlist', id: leg.id });
+    case 'workspaces':
+    case 'library':
+      return sunoListAddress({ page: 'library' });
+    case 'trash':
+      return sunoListAddress({ page: 'trash' });
+  }
 }
 
 /** Whether the tab shows the page a leg is read on. */
@@ -206,6 +220,21 @@ export class SunoSync {
     };
   }
 
+  /**
+   * Runs one of the reader's workflows on the page; a run that does not finish stops the leg at
+   * `step`, saying what was expected.
+   */
+  private async runStep(workflow: Workflow, step: string): Promise<void> {
+    const result = await this.options.session.run(
+      workflow,
+      {},
+      this.options.clock === undefined ? {} : { clock: this.options.clock },
+    );
+    if (!result.ok) {
+      throw new ReadStop(step, result.failure.expected);
+    }
+  }
+
   private async readLeg(session: SyncSession): Promise<void> {
     const { page, show } = this.options;
     const leg = session.legs[session.leg];
@@ -226,16 +255,8 @@ export class SunoSync {
     try {
       next = await readLeg(session.scope, session.legs, progressOf(session), {
         observations: this.options.observations,
-        more: async (moreStep) => {
-          const result = await this.options.session.run(
-            loadMore,
-            {},
-            this.options.clock === undefined ? {} : { clock: this.options.clock },
-          );
-          if (!result.ok) {
-            throw new ReadStop(moreStep, result.failure.expected);
-          }
-        },
+        openWorkspaceList: (openStep) => this.runStep(openWorkspaceList, openStep),
+        more: (moreStep) => this.runStep(loadMore, moreStep),
         sink: this.sink(),
         signal: controller.signal,
         progress: (counts) => {

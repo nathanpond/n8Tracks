@@ -82,6 +82,13 @@ export interface ListContext {
 }
 
 export interface LegContext extends ListContext {
+  /**
+   * Makes the page ask Suno for the workspace list: loading `/me/workspaces` does not (#421), so
+   * the leg opens `/me` and this presses Library's Workspaces tab there (the `open-workspace-list`
+   * workflow, TS-007-6). Called once by the workspace-list leg, before its first page is waited
+   * for. Throws a {@link ReadStop}.
+   */
+  openWorkspaceList(step: string): Promise<void>;
   sink: ExportSink;
   /** Counts so far, after each page. */
   progress(counts: SyncCounts): void;
@@ -279,6 +286,7 @@ async function readList(
   step: string,
   context: ListContext,
   take: (records: Raw[]) => Promise<void>,
+  opening = 'opening the page',
 ): Promise<number> {
   const keys = new Set<string>();
   const ids = new Set<string>();
@@ -294,7 +302,7 @@ async function readList(
     );
     for (let retry = 0; message === null && !cancelled(); retry += 1) {
       if (first) {
-        throw new ReadStop(step, `${spec.what} within 20 seconds of opening the page`, true);
+        throw new ReadStop(step, `${spec.what} within 20 seconds of ${opening}`, true);
       }
       if (retry === PAGE_RETRIES) {
         throw new ReadStop(
@@ -451,12 +459,20 @@ export async function readLeg(
   switch (leg.list) {
     case 'workspaces': {
       const projects: Raw[] = [];
-      await readList(WORKSPACES, step, context, (records) => {
-        projects.push(...records);
-        counts.workspaces = projects.length;
-        context.progress({ ...counts });
-        return Promise.resolve();
-      });
+      // A direct load of the list makes no request for it (#421): the tab is pressed first.
+      await context.openWorkspaceList(step);
+      await readList(
+        WORKSPACES,
+        step,
+        context,
+        (records) => {
+          projects.push(...records);
+          counts.workspaces = projects.length;
+          context.progress({ ...counts });
+          return Promise.resolve();
+        },
+        'opening the Workspaces tab',
+      );
       workspaces = projects;
       break;
     }

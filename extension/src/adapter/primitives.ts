@@ -1374,9 +1374,11 @@ export class Page {
 
   /**
    * Loads a Suno page by its address, as typing it would: the adapter reaches pages by address,
-   * never by pressing a link or a button (the forbidden-control matcher's own rule). Only a
-   * suno.com address is accepted. The content script is replaced with the page, so nothing of a
-   * run survives it except what the service worker holds.
+   * never by pressing a link or a button (the forbidden-control matcher's own rule), with one
+   * exception: the sync's workspace list, which a direct load does not ask Suno for, is reached by
+   * pressing Library's Workspaces tab through {@link click} (#421, TS-007-6). Only a suno.com
+   * address is accepted. The content script is replaced with the page, so nothing of a run
+   * survives it except what the service worker holds.
    */
   go(address: URL): void {
     this.ensureRunning();

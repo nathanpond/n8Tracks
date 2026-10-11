@@ -81,9 +81,14 @@ const START: SyncProgress = {
 
 /**
  * A fake Suno page: `onLoad` are the responses of the page's own first requests; each `more()`
- * (the load-more workflow: a scroll) makes Suno answer with the next entry of `onMore`, if any.
+ * (the load-more workflow: a scroll) makes Suno answer with the next entry of `onMore`, if any;
+ * pressing Library's Workspaces tab (`openWorkspaceList`, #421) makes it answer with `onOpen`.
  */
-function suno(onLoad: ObservedMessage[], onMore: ObservedMessage[][] = []) {
+function suno(
+  onLoad: ObservedMessage[],
+  onMore: ObservedMessage[][] = [],
+  onOpen: ObservedMessage[] = [],
+) {
   const clock = fakeClock();
   const feed = new ObservationFeed(
     {
@@ -100,11 +105,19 @@ function suno(onLoad: ObservedMessage[], onMore: ObservedMessage[][] = []) {
   const headers: Record<string, unknown>[] = [];
   const parts: ExportPart[] = [];
   const moreSteps: string[] = [];
+  const openSteps: string[] = [];
   const counts: unknown[] = [];
   const controller = new AbortController();
   let created = false;
   const context: LegContext = {
     observations: feed,
+    openWorkspaceList: (step) => {
+      openSteps.push(step);
+      for (const message of onOpen.splice(0)) {
+        feed.take(message);
+      }
+      return Promise.resolve();
+    },
     more: (step) => {
       moreSteps.push(step);
       for (const message of onMore.shift() ?? []) {
@@ -130,7 +143,7 @@ function suno(onLoad: ObservedMessage[], onMore: ObservedMessage[][] = []) {
     versions: { extension: '0.1.0', adapter: 2 },
     now: () => '2026-10-06T12:00:00.000Z',
   };
-  return { feed, context, headers, parts, moreSteps, counts, controller, clock };
+  return { feed, context, headers, parts, moreSteps, openSteps, counts, controller, clock };
 }
 
 async function stopOf(reading: Promise<unknown>): Promise<ReadStop> {
@@ -226,6 +239,53 @@ describe('reading the workspace list', () => {
     ]);
     expect(page.headers).toEqual([]);
     expect(page.parts).toEqual([]);
+  });
+
+  it('presses the Workspaces tab first: a page load that brings no list request still gets the list (#421)', async () => {
+    const first = sunoObject('project-me.page-1.response');
+    first.num_total_results = 3;
+    // Loading the page asks Suno for nothing (live, 2026-10-11); the tab press does.
+    const page = suno([], [], [observed('workspaces', first, { page: 1 })]);
+
+    const next = await readLeg(LIBRARY, legsFor(LIBRARY), START, page.context);
+
+    expect(page.openSteps).toEqual(['Read the workspace list']);
+    expect(page.moreSteps).toEqual([]);
+    expect(next.leg).toBe(1);
+    expect(next.workspaces).toEqual(first.projects);
+  });
+
+  it('asks for Library to be opened again when the tab press brings no list (#421)', async () => {
+    const page = suno([]);
+
+    const stop = await stopOf(readLeg(LIBRARY, legsFor(LIBRARY), START, page.context));
+
+    expect(page.openSteps).toEqual(['Read the workspace list']);
+    expect(stop.step).toBe('Read the workspace list');
+    expect(stop.expected).toBe(
+      'a page of the workspace list within 20 seconds of opening the Workspaces tab',
+    );
+    expect(stop.reopen).toBe(true);
+  });
+
+  it("stops with the press's own failure when the tab cannot be pressed, waiting for nothing (#421)", async () => {
+    const page = suno([observed('workspaces', sunoObject('project-me.page-1.response'))]);
+    page.context.openWorkspaceList = (step) =>
+      Promise.reject(new ReadStop(step, "the Workspaces tab in Library's tab row"));
+
+    const stop = await stopOf(readLeg(LIBRARY, legsFor(LIBRARY), START, page.context));
+
+    expect(stop.expected).toBe("the Workspaces tab in Library's tab row");
+    expect(stop.reopen).toBe(false);
+    expect(page.clock.slept).toEqual([]);
+  });
+
+  it('presses nothing for any other leg (#421)', async () => {
+    const page = suno([libraryPage([], false, null)]);
+
+    await readLeg(LIBRARY, legsFor(LIBRARY), { ...START, leg: 1 }, page.context);
+
+    expect(page.openSteps).toEqual([]);
   });
 
   it('is not complete while pages are missing: a page that never comes stops the read', async () => {

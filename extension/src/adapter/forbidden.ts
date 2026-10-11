@@ -7,7 +7,9 @@
  *
  * - A button or menu item (`button`, `menuitem`, anything with `role=button`) whose accessible
  *   name, `aria-label`, text, or `title` starts with Create, Publish, Delete, Trash, Move to Trash,
- *   or Remove is forbidden. Links are not matched: the adapter reaches pages by address.
+ *   or Remove is forbidden. Links and tabs are not matched: the adapter reaches pages by address,
+ *   except Library's Workspaces tab, which a sync presses to make Suno send the workspace list
+ *   (#421, TS-007-6).
  * - A control matching one of the selectors known from the TS-003 snapshots is forbidden,
  *   whatever its role or name.
  * - Any control inside a dialog is forbidden unless the dialog is one of the recognised dialogs

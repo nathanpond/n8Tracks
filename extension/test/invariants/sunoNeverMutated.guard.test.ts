@@ -41,6 +41,9 @@ import {
  */
 const RUN_RECIPES: Readonly<Record<string, RunRecipe>> = {
   'recognise-suno': { values: {} },
+  // A sync's workspace list (#421): Library's Workspaces tab, which only changes what Library
+  // shows; the Library snapshots' Publish and Trash controls must never be reached.
+  'open-workspace-list': { values: {} },
   // Scrolls the list on screen; it presses nothing on any snapshot.
   'load-more': { values: {} },
   // Generate on Suno's workspace (#145). Opening the list presses only the breadcrumb (no snapshot

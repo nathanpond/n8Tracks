@@ -240,8 +240,9 @@ describe('starting a sync from the panel', () => {
     await expectNoAxeViolations(document);
 
     button('Start sync')?.click();
+    // The workspace list is reached through Library's Workspaces tab, not by its address (#421).
     await vi.waitFor(() => {
-      expect(visited).toEqual(['https://suno.com/me/workspaces']);
+      expect(visited).toEqual(['https://suno.com/me']);
     });
     expect(sw.asked).toContainEqual({ type: 'sync-begin', scope: LIBRARY });
     expect(text('.sync-progress')).toContain('Reading: Read the workspace list.');
@@ -261,15 +262,43 @@ describe('starting a sync from the panel', () => {
   });
 });
 
+/** Library's Workspaces tab in the loaded snapshot (#421). */
+function workspacesTab(): Element {
+  const tab = [...document.querySelectorAll('[role="tab"]')].find(
+    (element) => element.textContent === 'Workspaces',
+  );
+  if (tab === undefined) {
+    throw new Error('the snapshot has no Workspaces tab');
+  }
+  return tab;
+}
+
+/**
+ * Suno's answer to pressing the Workspaces tab: the page asks for the list only then (#421). The
+ * tab's own navigation is stopped, as jsdom cannot follow it.
+ */
+function answerTabPress(answer: () => void): Element[] {
+  const pressed: Element[] = [];
+  const tab = workspacesTab();
+  tab.addEventListener('click', (event) => {
+    event.preventDefault();
+    pressed.push(tab);
+    answer();
+  });
+  return pressed;
+}
+
 describe('reading a leg after its page loads', () => {
   it('reads the workspace list, keeps it, and opens the library', async () => {
     const projects = sunoObject('project-me.page-1.response');
     projects.num_total_results = 3;
     const sw = worker(sessionAt(0));
     const { content: started, visited } = start({
-      address: 'https://suno.com/me/workspaces',
+      address: 'https://suno.com/me',
       worker: sw,
-      seen: [observed('workspaces', projects)],
+    });
+    answerTabPress(() => {
+      started.observations.take(observed('workspaces', projects));
     });
 
     await started.resumed;
@@ -286,6 +315,77 @@ describe('reading a leg after its page loads', () => {
     });
     expect(visited).toEqual(['https://suno.com/me']);
     expect(started.panel.isOpen).toBe(true);
+  });
+
+  it('gets the workspace list on a page load that brings no list request, by pressing the Workspaces tab (#421)', async () => {
+    const projects = sunoObject('project-me.page-1.response');
+    projects.num_total_results = 3;
+    const sw = worker(sessionAt(0));
+    // Loading Library sends Suno's feed request, never the workspace list's (live, 2026-10-11).
+    const { content: started } = start({
+      address: 'https://suno.com/me',
+      worker: sw,
+      seen: [observed('library-feed', { clips: [], has_more: false }, LIBRARY_FILTERS)],
+    });
+    const pressed = answerTabPress(() => {
+      started.observations.take(observed('workspaces', projects));
+    });
+
+    await started.resumed;
+
+    expect(pressed).toHaveLength(1);
+    expect(sw.asked).toContainEqual(
+      expect.objectContaining({
+        type: 'sync-save',
+        progress: expect.objectContaining({ leg: 1, workspaces: projects.projects }) as unknown,
+      }),
+    );
+  });
+
+  it('opens Library again when the tab press brings no list, and stops after the retries (#421)', async () => {
+    const sw = worker(sessionAt(0));
+    const first = start({ address: 'https://suno.com/me', worker: sw });
+    const pressed = answerTabPress(() => undefined);
+    await first.content.resumed;
+
+    expect(pressed).toHaveLength(1);
+    expect(sw.asked.find((request) => request.type === 'sync-save')).toMatchObject({
+      progress: { leg: 0, attempt: 1 },
+    });
+    expect(first.visited).toEqual(['https://suno.com/me']);
+
+    content?.stop();
+    const again = worker(sessionAt(0, { attempt: 2 }));
+    const last = start({ address: 'https://suno.com/me', worker: again });
+    answerTabPress(() => undefined);
+    await last.content.resumed;
+
+    expect(last.visited).toEqual([]);
+    expect(last.text('.sync-stopped')).toContain(
+      "step 'Read the workspace list' expected a page of the workspace list within 20 seconds of opening the Workspaces tab",
+    );
+  });
+
+  it('stops, pressing nothing, when Library shows no Workspaces tab (#421)', async () => {
+    const sw = worker(sessionAt(0));
+    const {
+      content: started,
+      text,
+      visited,
+    } = start({
+      address: 'https://suno.com/me',
+      snapshot: null,
+      worker: sw,
+    });
+
+    await started.resumed;
+
+    expect(sw.types()).toContain('sync-discard');
+    expect(sw.types()).not.toContain('sync-save');
+    expect(visited).toEqual([]);
+    expect(text('.sync-stopped')).toBe(
+      "Sync stopped: step 'Read the workspace list' expected the Workspaces tab in Library's tab row, leading to /me/workspaces. Nothing was sent for review.",
+    );
   });
 
   it('reads the library into the export, then opens the Trash', async () => {

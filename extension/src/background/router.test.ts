@@ -240,6 +240,7 @@ describe('the service worker router', () => {
       workflows: [
         { id: 'recognise-suno', state: 'ready' },
         { id: 'load-more', state: 'not_checked' },
+        { id: 'open-workspace-list', state: 'not_checked' },
         { id: 'open-workspaces', state: 'not_checked' },
         { id: 'more-workspaces', state: 'not_checked' },
         { id: 'select-workspace', state: 'not_checked' },

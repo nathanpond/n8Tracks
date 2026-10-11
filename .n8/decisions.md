@@ -4606,3 +4606,13 @@ Story #219 (on the milestone branch):
 - **Change:** Workspace syncs will read each workspace's own feed on `/create?wid=` instead of the whole library (#422), and reach the workspace list by pressing Library's Workspaces tab rather than loading `/me/workspaces` by address (#421), reversing TS-007-3's "pages by address, never by pressing a link".
   **Why:** Live 2026-10-11: a direct load of `/me/workspaces` makes no `/api/project/me` request, while pressing the Workspaces tab from `/me` does; the workspace feed pages by scroll with a cursor (20, 20, 5 for 45 clips).
   **Affects:** M4 (#134's sync design, `docs/suno-integration.md`), M5 download (#215 reads the library with the same reader).
+
+## M4 captures — #421/#422 workspace list by its tab, each workspace's own feed — 2026-10-11
+
+- **Decision:** The sync's workspace-list leg is read on Library (`/me`), not on `/me/workspaces`: on that page load the leg runs the new `open-workspace-list` workflow, which presses Library's Workspaces tab, and the reader then waits for `GET /api/project/me` as before. The tab is found by role `tab`, exact name "Workspaces", and its `href` path `/me/workspaces`; none or several stop the step ("expected the Workspaces tab in Library's tab row, leading to /me/workspaces") with nothing pressed. The press goes through the click primitive and the forbidden-control matcher. No list within 20 seconds of the press opens `/me` again (the existing reopen path), and the stop then reads "within 20 seconds of opening the Workspaces tab". Recorded as TS-007-6. `ADAPTER_VERSION` 19 (one raise for #421 and #422).
+  **Why:** Owner decision on #421. Live on 2026-10-11, a direct load of `/me/workspaces` sent no list request (the page shows its cache), while pressing the tab from `/me` did. This reverses TS-007-3's "pages by address, never by pressing a link" for this one case; the tab changes only what Library shows, so invariant 4 is untouched, and the extension still sends no request of its own.
+  **Issue:** #421
+- **Decision:** The press is a workflow of its own (`adapter/workflows/libraryTabs.ts`) with a guard recipe, so the invariant 4 guard runs it on every snapshot; the reader asks for it through a new `LegContext.openWorkspaceList`, called once by the workspace-list leg only. Its `verify` is OK: whether the list came is the reader's to judge, by Suno's answer.
+  **Why:** A tab's state after the press (`aria-selected`, the address) cannot change in a snapshot, and the answer is what the leg needs anyway; keeping the press out of the reader keeps the reader free of the page.
+  **Issue:** #421
+
