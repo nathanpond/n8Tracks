@@ -100,6 +100,11 @@ interface Options {
   completionReply?: (request: Extract<Request, { type: 'generate-completion' }>) => unknown;
   /** What the library pane asks Suno for when a workspace row is pressed. */
   feedOnRow?: (workspaceId: string) => ObservedMessage;
+  /**
+   * A pressed workspace row whose songs Suno already holds: the address names the workspace
+   * (`/create?wid=`) and no feed request is made (TS-007).
+   */
+  cachedRow?: boolean;
   /** The user's response to what the panel shows (#335: selecting a workspace by hand). */
   onShow?: (state: GenerateViewState, feed: ObservationFeed) => void;
   /**
@@ -188,6 +193,10 @@ function start(options: Options = {}) {
       }
       const project = PROJECTS.find((item) => name.startsWith(`${item.name} `));
       if (project !== undefined) {
+        if (options.cachedRow === true) {
+          address = `https://suno.com/create?wid=${project.id}`;
+          return;
+        }
         feed.take((options.feedOnRow ?? feedFor)(project.id));
       }
     },
@@ -307,6 +316,23 @@ describe('Generate on Suno in the Suno tab: the Song’s workspace', () => {
     // Complement: nothing was created, and no choice was asked for or recorded.
     expect(tab.types()).not.toContain('generate-resolve');
     expect(tab.shown.some((state) => state.kind === 'choose')).toBe(false);
+  });
+
+  it('takes the workspace as selected when its row is pressed and Suno shows its songs from what it already holds', async () => {
+    const tab = start({
+      job: job({ workspace: { sunoId: 'default', name: 'My Workspace', state: 'available' } }),
+      cachedRow: true,
+    });
+
+    await tab.generate.resume();
+
+    expect(tab.pressed).toHaveLength(1);
+    expect(tab.pressed[0]).toMatch(/^My Workspace /);
+    expect(tab.steps().slice(-2)).toEqual([
+      'workspace select workspace',
+      'workspace workspace selected',
+    ]);
+    expect(tab.last()).toEqual({ kind: 'selected', name: 'My Workspace' });
   });
 
   it('presses nothing when the page already shows the Song’s workspace', async () => {

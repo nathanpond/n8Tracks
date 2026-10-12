@@ -3,6 +3,7 @@ import {
   sunoCreateAddress,
   sunoPageOf,
   sunoSongAddress,
+  workspaceOfAddress,
 } from '../adapter/addresses.ts';
 import { realClock, type Clock } from '../adapter/clock.ts';
 import { verificationReport, type EntryResult, type FormJob } from '../adapter/fill.ts';
@@ -588,8 +589,13 @@ export class SunoGenerate {
       selectWorkspace,
       {
         workspaceName: workspace.name,
+        // Suno asks for the songs again only when it has none at hand: a workspace pressed while its
+        // songs are already loaded shows them with no request, but the address then names it
+        // (`/create?wid=`, TS-007).
         shown: (): Check =>
-          shown.seen !== null ? OK : expected("Suno's library pane to show the workspace's songs"),
+          shown.seen !== null || workspaceOfAddress(this.options.page.address()) === workspace.id
+            ? OK
+            : expected("Suno's library pane to show the workspace's songs"),
       },
       this.runOptions(),
     );
