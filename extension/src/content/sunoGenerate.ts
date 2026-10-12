@@ -38,7 +38,6 @@ import {
   verifySourceAdvanced,
   verifySourceSimple,
 } from '../adapter/workflows/sources.ts';
-import { refreshLibrary } from '../adapter/workflows/watchCompletion.ts';
 import {
   createWorkspace,
   moreWorkspaces,
@@ -209,12 +208,6 @@ export const AFTER_LAST_CREATE_MS = 30 * 60_000;
 
 /** How long the watch goes on before the first Create (n8Tracks lets a request idle an hour). */
 export const BEFORE_FIRST_CREATE_MS = 60 * 60_000;
-
-/**
- * How long the completion watch waits for a feed answer naming an unfinished clip before it prompts
- * the page to read its library pane again (#154).
- */
-export const COMPLETION_PROMPT_MS = 15_000;
 
 /**
  * The longest the tab watches for clips to finish (#154): the service worker ends each Create's watch
@@ -1127,11 +1120,13 @@ export class SunoGenerate {
 
   /**
    * Watches for the clips `sunoIds` of the user's Creates to finish (#154), alongside any it already
-   * watches: every feed answer the page gets is read for them, and the finished ones go to the service
-   * worker, which sends them to n8Tracks; it answers which clips are still watched. When no feed answer
-   * has named one for 15 seconds, the Create page is prompted to read its library pane again
-   * (`refresh-library`: the Song's workspace row; it changes nothing in Suno). Ends when no clip is
-   * watched any more (all finished, or their ten minutes up), or when n8Tracks cannot be told.
+   * watches. It only listens (#429): every feed answer the page gets on its own, from the user's
+   * browsing or Suno's own reading, is read for them, and the finished ones go to the service worker,
+   * which sends them to n8Tracks and answers which clips are still watched. It never presses,
+   * scrolls, or loads anything to make Suno answer. Ends when no clip is watched any more (all
+   * finished, or their ten minutes up), when n8Tracks cannot be told, or quietly at its own limit
+   * when no feed answer named a watched clip; a completion it misses is brought in by the next sync
+   * (#314).
    */
   private async watchCompletion(sunoIds: readonly string[]): Promise<void> {
     for (const sunoId of sunoIds) {
@@ -1145,20 +1140,24 @@ export class SunoGenerate {
     const signal = new AbortController().signal;
     const started = clock.now();
     try {
-      while (this.watchedClips.size > 0 && clock.now() - started < COMPLETION_LIMIT_MS) {
-        const message = await this.options.observations.next(
-          'library-feed',
-          (seen) => watchedClipsOf(seen.body, this.watchedClips).length > 0,
-          COMPLETION_PROMPT_MS,
-          signal,
-        );
+      while (this.watchedClips.size > 0) {
+        const left = COMPLETION_LIMIT_MS - (clock.now() - started);
+        const message =
+          left <= 0
+            ? null
+            : await this.options.observations.next(
+                'library-feed',
+                (seen) => watchedClipsOf(seen.body, this.watchedClips).length > 0,
+                left,
+                signal,
+              );
         if (message === null) {
-          await this.promptRefresh();
+          // Nothing named a watched clip before the limit: the watch ends, telling no one.
+          return;
         }
-        const clips =
-          message === null
-            ? []
-            : watchedClipsOf(message.body, this.watchedClips).filter((clip) => isFinished(clip));
+        const clips = watchedClipsOf(message.body, this.watchedClips).filter((clip) =>
+          isFinished(clip),
+        );
         const answer = reply<{ watching: string[] }>(
           await this.options.send({ type: 'generate-completion', clips }).catch(() => undefined),
         );
@@ -1170,15 +1169,6 @@ export class SunoGenerate {
     } finally {
       this.completing = false;
     }
-  }
-
-  /** Prompts the Create page to read its library pane again; on any other page, nothing (#154). */
-  private async promptRefresh(): Promise<void> {
-    const workspaceName = this.job?.workspace?.name ?? this.filled?.workspace ?? null;
-    if (workspaceName === null || sunoPageOf(this.options.page.address()) !== 'create') {
-      return;
-    }
-    await this.options.session.run(refreshLibrary, { workspaceName }, this.runOptions());
   }
 
   /** The tab left the Create page after a recorded Create: the request is done. */

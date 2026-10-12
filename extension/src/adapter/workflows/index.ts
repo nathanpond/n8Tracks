@@ -23,7 +23,6 @@ import {
 import { openWorkspaceList } from './libraryTabs.ts';
 import { loadMore } from './loadMore.ts';
 import { recogniseSuno } from './recognise.ts';
-import { refreshLibrary } from './watchCompletion.ts';
 import {
   answerOverwrite,
   chooseSourceAction,
@@ -67,7 +66,6 @@ export const ADAPTER_WORKFLOWS: readonly Workflow[] = [
   setExtendFrom,
   chooseVoice,
   closeVoicePicker,
-  refreshLibrary,
   openClipMenu,
   chooseDownload,
   chooseDownloadFormat,

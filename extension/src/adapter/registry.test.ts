@@ -303,7 +303,6 @@ describe('the registry', () => {
       'set-extend-from',
       'choose-voice',
       'close-voice-picker',
-      'refresh-library',
       'open-clip-menu',
       'choose-download',
       'choose-download-format',

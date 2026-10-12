@@ -24,7 +24,6 @@ import {
   NOT_EXPECTED,
   NOT_SIGNED_IN,
   COMPLETION_LIMIT_MS,
-  COMPLETION_PROMPT_MS,
   loadByHandFirst,
   SAME_NAME,
   SunoGenerate,
@@ -100,6 +99,11 @@ interface Options {
   feedOnRow?: (workspaceId: string) => ObservedMessage;
   /** The user's response to what the panel shows (#335: selecting a workspace by hand). */
   onShow?: (state: GenerateViewState, feed: ObservationFeed) => void;
+  /**
+   * Answers the page gets later on its own, each once the tab's clock reaches `at` (#429: the user's
+   * own browsing bringing a feed page).
+   */
+  later?: { at: number; message: ObservedMessage }[];
 }
 
 // Each test fills or checks Suno's form on a full snapshot, and the adapter's lookups read jsdom's
@@ -119,6 +123,15 @@ afterEach(() => {
 function start(options: Options = {}) {
   document.body.innerHTML = snapshotHtml('workspace-selector');
   const clock = fakeClock();
+  const later = [...(options.later ?? [])];
+  const sleep = clock.sleep.bind(clock);
+  clock.sleep = async (ms) => {
+    await sleep(ms);
+    for (const due of later.filter((item) => item.at <= clock.now())) {
+      later.splice(later.indexOf(due), 1);
+      feed.take(due.message);
+    }
+  };
   const visited: string[] = [];
   let address = options.address ?? 'https://suno.com/create';
   const page = new Page(document, {
@@ -1005,33 +1018,37 @@ describe('Generate on Suno in the Suno tab: the completion watch (#154)', () => 
     expect(tab.pressed.filter((name) => FORBIDDEN_WORDS.test(name))).toEqual([]);
   });
 
-  it('prompts the Create page to read its library pane when no feed answer names the clips for 15 seconds, pressing only the workspace row', async () => {
+  it('reports a finished clip from a feed page the user’s own browsing brings minutes later (#429)', async () => {
     const tab = start({
       job: job({ workspace: ON_MY_WORKSPACE, created: 1 }),
-      watching: ['clip-1'],
-      completionReply: watchingUntilFinished(['clip-1']),
-      // The pane asks Suno for the workspace's songs again: the clip has finished meanwhile.
-      feedOnRow: () => feedOf(finishedClip('clip-1')),
+      watching: ['clip-1', 'clip-2'],
+      completionReply: watchingUntilFinished(['clip-1', 'clip-2']),
+      later: [
+        // The user opens a library page: one clip still generating, nothing to report yet.
+        { at: 2 * 60_000, message: feedOf(finishedClip('clip-1', 'streaming')) },
+        // Later the user browses again: both have finished.
+        { at: 6 * 60_000, message: feedOf(finishedClip('clip-1'), finishedClip('clip-2')) },
+      ],
     });
-    const standIn = standInForSuno(document);
-    try {
-      await tab.generate.resume();
-      await until(() => !tab.generate.watchingCompletion);
-    } finally {
-      standIn.stop();
-    }
 
-    expect(tab.clock.now()).toBeGreaterThanOrEqual(COMPLETION_PROMPT_MS);
-    // The prompt: the Song's workspace row, which only chooses what the pane shows.
-    expect(tab.pressed.length).toBeGreaterThan(0);
-    expect(tab.pressed.every((name) => name.startsWith('My Workspace'))).toBe(true);
-    expect(tab.completions().at(-1)).toEqual([finishedClip('clip-1')]);
+    await tab.generate.resume();
+    await until(() => !tab.generate.watchingCompletion);
+
+    expect(tab.completions()).toEqual([[], [finishedClip('clip-1'), finishedClip('clip-2')]]);
+    // Heard only once the second page came (the watch for further Creates moves the clock on too).
+    expect(tab.clock.now()).toBeGreaterThanOrEqual(6 * 60_000);
+    expect(tab.pressed).toEqual([]);
+    expect(tab.ran).toEqual([]);
   });
 
-  it('carries on after a page load with no request, prompting nothing, and stops at ten minutes', async () => {
+  it('only listens: hearing nothing, it presses, runs, and loads nothing, and ends quietly at its limit (#429)', async () => {
+    const click = vi.spyOn(Page.prototype, 'click');
+    const go = vi.spyOn(Page.prototype, 'go');
+    const scroll = vi.spyOn(Page.prototype, 'scrollToEnd');
+    const scrollList = vi.spyOn(Page.prototype, 'scrollListToEnd');
     const tab = start({
-      job: null,
-      address: 'https://suno.com/me',
+      // On the Create page, with the Song's workspace known: where the old watch prompted (#154).
+      job: job({ workspace: ON_MY_WORKSPACE, created: 1 }),
       watching: ['clip-1'],
       // A service worker that never says the watch is over.
       completionReply: () => ({ ok: true, watching: ['clip-1'] }),
@@ -1040,10 +1057,36 @@ describe('Generate on Suno in the Suno tab: the completion watch (#154)', () => 
     await tab.generate.resume();
     await until(() => !tab.generate.watchingCompletion);
 
+    // The old prompt (the workspace list's breadcrumb and the Song's workspace row) is gone.
+    expect(tab.ran).toEqual([]);
+    expect(tab.pressed).toEqual([]);
     expect(tab.clock.now()).toBeGreaterThanOrEqual(COMPLETION_LIMIT_MS);
-    expect(tab.clock.now()).toBeLessThan(COMPLETION_LIMIT_MS + COMPLETION_PROMPT_MS + 1_000);
-    expect(tab.completions().length).toBe(Math.ceil(COMPLETION_LIMIT_MS / COMPLETION_PROMPT_MS));
-    expect(tab.completions().every((clips) => clips.length === 0)).toBe(true);
+    // Nothing was heard, so nothing was reported: the watch just ended.
+    expect(tab.completions()).toEqual([]);
+    expect(tab.visited).toEqual([]);
+    expect(click).not.toHaveBeenCalled();
+    expect(go).not.toHaveBeenCalled();
+    expect(scroll).not.toHaveBeenCalled();
+    expect(scrollList).not.toHaveBeenCalled();
+    expect(ADAPTER_WORKFLOWS.map((workflow) => workflow.id)).not.toContain('refresh-library');
+  });
+
+  it('carries on after a page load with no request, and stops at ten minutes', async () => {
+    const tab = start({
+      job: null,
+      address: 'https://suno.com/me',
+      watching: ['clip-1'],
+      // A service worker that never says the watch is over.
+      completionReply: () => ({ ok: true, watching: ['clip-1'] }),
+      later: [{ at: 60_000, message: feedOf(finishedClip('clip-1', 'streaming')) }],
+    });
+
+    await tab.generate.resume();
+    await until(() => !tab.generate.watchingCompletion);
+
+    expect(tab.clock.now()).toBeGreaterThanOrEqual(COMPLETION_LIMIT_MS);
+    expect(tab.clock.now()).toBeLessThan(COMPLETION_LIMIT_MS + 1_000);
+    expect(tab.completions()).toEqual([[]]);
     expect(tab.pressed).toEqual([]);
   });
 
@@ -1053,11 +1096,13 @@ describe('Generate on Suno in the Suno tab: the completion watch (#154)', () => 
       watching: ['clip-1'],
       completionReply: () => ({ ok: true, watching: [] }),
     });
+    tab.feed.take(feedOf(finishedClip('clip-1', 'streaming')));
 
     await tab.generate.resume();
     await until(() => !tab.generate.watchingCompletion);
 
     expect(tab.completions()).toEqual([[]]);
+    expect(tab.clock.now()).toBeLessThan(COMPLETION_LIMIT_MS);
   });
 });
 

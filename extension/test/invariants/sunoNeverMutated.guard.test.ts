@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ANY_SUNO_PAGE } from '../../src/adapter/addresses.ts';
 import { FILLERS, MODEL_LABELS, type FormJob } from '../../src/adapter/fill.ts';
 import {
@@ -8,11 +8,15 @@ import {
   SOURCE_ROUTES,
   type LoadedSource,
 } from '../../src/adapter/sources.ts';
-import type { Page, Target } from '../../src/adapter/primitives.ts';
+import { ObservationFeed } from '../../src/adapter/observations.ts';
+import { OBSERVER_SOURCE } from '../../src/adapter/observed.ts';
+import { Page, type Target } from '../../src/adapter/primitives.ts';
+import { AdapterSession, WorkflowRegistry } from '../../src/adapter/registry.ts';
 import { OK, present, type Step, type Workflow } from '../../src/adapter/workflow.ts';
 import { ADAPTER_WORKFLOWS } from '../../src/adapter/workflows/index.ts';
 import { chooseSourceAction, openSourceMenu } from '../../src/adapter/workflows/sources.ts';
-import { SNAPSHOT_NAMES, snapshotHtml } from '../../src/testing/snapshots.ts';
+import { COMPLETION_LIMIT_MS, SunoGenerate } from '../../src/content/sunoGenerate.ts';
+import { fakeClock, SNAPSHOT_NAMES, snapshotHtml } from '../../src/testing/snapshots.ts';
 import { EXTENSION_ROOT, scanExtension } from './sourceScan.ts';
 import {
   exerciseWorkflows,
@@ -94,9 +98,6 @@ const RUN_RECIPES: Readonly<Record<string, RunRecipe>> = {
       voice: { name: '<redacted 13 chars>', personaId: '00000000-0000-4000-8000-000000000203' },
     },
   },
-  // The completion watch's refresh prompt (#154): the breadcrumb and the Song's workspace row, which
-  // only choose what the library pane shows; nothing else is pressed.
-  'refresh-library': { values: { workspaceName: 'My Workspace' } },
   // Preparing a download (#216): a library row's More options, the menu's Download, then a format
   // and "Unlock & Download" in the Download dialog, which are the second permitted change and are
   // pressed only through their own primitive. The menu's Publish and Move to Trash, and the
@@ -290,7 +291,131 @@ describe('invariant 4: the extension never presses a forbidden control on Suno',
     expect(report.pageContext).not.toContain('src/background/apiClient.ts');
     expect(report.pageContext).not.toContain('src/popup/popup.ts');
   });
+
+  it('watches for finished clips by listening only: no press, scroll, workflow, or load (#429)', async () => {
+    const { pressesDuringWatch, completions } = await watchCompletionOn('create-workspace-songs', [
+      // The user's own browsing brings a library page: the clip is still generating.
+      { at: 3 * 60_000, clips: [{ id: 'clip-1', status: 'streaming' }] },
+    ]);
+    expect(pressesDuringWatch).toEqual([]);
+    // The page heard was reported; then the watch ran to its limit hearing nothing more.
+    expect(completions).toEqual([[]]);
+  }, 60_000);
 });
+
+/**
+ * Runs the completion watch (#154) in a Suno tab on `snapshot`, on the Create page with a recorded
+ * Create and the Song's workspace known, while page answers `heard` come on their own. Reports every
+ * press, scroll, workflow, and load that happened during it, and the completion reports sent.
+ */
+async function watchCompletionOn(
+  snapshot: string,
+  heard: { at: number; clips: Record<string, unknown>[] }[],
+): Promise<{ pressesDuringWatch: string[]; completions: unknown[] }> {
+  document.body.innerHTML = snapshotHtml(snapshot);
+  const happened: string[] = [];
+  // The forbidden controls, spied on as the workflow guard does, and any press at all on the page.
+  for (const control of forbiddenControls(document)) {
+    for (const type of ['click', 'pointerdown', 'mousedown', 'keydown', 'submit']) {
+      control.element.addEventListener(type, () => happened.push(`${type} on ${control.words}`), {
+        capture: true,
+      });
+    }
+  }
+  for (const type of ['click', 'pointerdown', 'mousedown', 'keydown', 'submit']) {
+    document.addEventListener(type, () => happened.push(`${type} on the page`), { capture: true });
+  }
+  for (const primitive of [
+    'click',
+    'createWorkspaceClick',
+    'downloadDialogClick',
+    'go',
+    'scrollToEnd',
+    'scrollListToEnd',
+    'set',
+    'slide',
+    'dismiss',
+    'typeText',
+    'choose',
+  ] as const) {
+    vi.spyOn(Page.prototype, primitive).mockImplementation(() => {
+      happened.push(`Page.${primitive}`);
+      return undefined as never;
+    });
+  }
+  vi.spyOn(AdapterSession.prototype, 'run').mockImplementation((workflow) => {
+    happened.push(`workflow ${workflow.id}`);
+    return Promise.resolve({ ok: true } as never);
+  });
+
+  const clock = fakeClock();
+  const page = new Page(document, {
+    address: () => 'https://suno.com/create',
+    navigate: (address) => happened.push(`load ${address}`),
+    clock,
+  });
+  const feed = new ObservationFeed(
+    {
+      origin: 'https://suno.com',
+      postMessage: () => undefined,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    },
+    clock,
+  );
+  const later = [...heard];
+  const sleep = clock.sleep.bind(clock);
+  clock.sleep = async (ms) => {
+    await sleep(ms);
+    for (const due of later.filter((item) => item.at <= clock.now())) {
+      later.splice(later.indexOf(due), 1);
+      feed.take({
+        source: OBSERVER_SOURCE,
+        type: 'observed',
+        kind: 'library-feed',
+        request: { cursor: null, page: null, filters: null, feedId: null },
+        body: { clips: due.clips, has_more: false },
+      });
+    }
+  };
+  const completions: unknown[] = [];
+  const generate = new SunoGenerate({
+    page,
+    session: new AdapterSession(new WorkflowRegistry(ADAPTER_WORKFLOWS), page, () => undefined),
+    observations: feed,
+    send: (request) => {
+      switch (request.type) {
+        case 'generate-resume':
+          return Promise.resolve({
+            job: {
+              requestId: '0199b1a0-7000-7000-9000-0000000000aa',
+              songTitle: 'Night Drive',
+              workspace: { sunoId: 'default', name: 'My Workspace', state: 'available' },
+              loads: 1,
+              form: null,
+              created: 1,
+            },
+            watching: ['clip-1'],
+          });
+        case 'generate-completion':
+          completions.push(request.clips);
+          return Promise.resolve({ ok: true, watching: ['clip-1'] });
+        default:
+          return Promise.resolve({ ok: true });
+      }
+    },
+    show: () => undefined,
+    clock,
+  });
+
+  await generate.resume();
+  for (let tries = 0; tries < 500 && generate.watchingCompletion; tries += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  expect(generate.watchingCompletion).toBe(false);
+  expect(clock.now()).toBeGreaterThanOrEqual(COMPLETION_LIMIT_MS);
+  return { pressesDuringWatch: happened, completions };
+}
 
 const CREATE_SONG: Target = {
   role: 'button',
