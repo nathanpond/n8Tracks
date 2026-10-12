@@ -20,7 +20,7 @@ export interface PanelView {
 
 export interface PanelOptions {
   versions: { extension: string; adapter: number };
-  /** "Check again": re-runs the self-check, which only reads the page. */
+  /** "Check workflows again": re-runs the self-check, which only reads the page. */
   onCheckAgain: () => void;
   /**
    * "Try again" on a workflow whose run stopped (a refused press among them): forgets the stop
@@ -141,7 +141,7 @@ export class Panel {
 
     const workflowsHeading = make('h3', { id: 'n8-workflows' }, 'Workflows');
     this.workflowList = make('div', { class: 'workflows' });
-    const check = make('button', { type: 'button', class: 'check' }, 'Check again');
+    const check = make('button', { type: 'button', class: 'check' }, 'Check workflows again');
     check.addEventListener('click', () => {
       options.onCheckAgain();
     });

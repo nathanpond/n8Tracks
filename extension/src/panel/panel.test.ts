@@ -254,7 +254,7 @@ describe('the panel on Suno', () => {
     expect(buttons.map((button) => button.type)).toEqual(['button', 'button']);
     expect(
       buttons.map((button) => button.getAttribute('aria-label') ?? button.textContent),
-    ).toEqual(['Close the n8Tracks panel', 'Check again']);
+    ).toEqual(['Close the n8Tracks panel', 'Check workflows again']);
 
     root.querySelector<HTMLButtonElement>('.check')?.click();
     expect(onCheckAgain).toHaveBeenCalledTimes(1);
