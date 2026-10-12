@@ -4,6 +4,7 @@ import type { Generation, GenerationComment } from '../api/generations';
 import type { LineageSource, SunoPersona, SunoPlaylist } from '../api/lineage';
 import type { RelationshipType } from '../api/relationships';
 import type { Snapshot } from '../api/snapshots';
+import type { SourceSettingsPlan } from '../api/sourceSettings';
 import type { Song } from '../api/songs';
 import {
   isVersionKind,
@@ -220,6 +221,17 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     },
     versions: versions.map((version) => ({ ...version })),
     writes: [] as ReceivedWrite[],
+    /**
+     * What choosing a Cover or Extend source would do to the Version's settings (#431), by the
+     * sources sent: nothing to fill or ask about unless set. The fake applies it as the API does.
+     */
+    sourceSettings: (() => ({
+      fills: [],
+      conflicts: [],
+      unknown: [],
+    })) as (sources: unknown) => Pick<SourceSettingsPlan, 'fills' | 'conflicts' | 'unknown'>,
+    /** Every source-settings preview received: its sources. */
+    settingsPreviews: [] as unknown[],
     /** Every snapshot stored, oldest first (the API's deduplication applied). */
     snapshots: [] as Snapshot[],
     /** Every snapshot request received, stored or not. */
@@ -835,6 +847,62 @@ export function versionServer(versions: VersionDetail[], song: Song = baseSong) 
     const history = /\/api\/v1\/versions\/([^/]+)\/snapshots(?:\/([^/]+))?(\/restore)?$/.exec(path);
     if (history) {
       return answerHistory(history[1] ?? '', history[2], history[3] !== undefined, method, init);
+    }
+    const settings = /\/api\/v1\/versions\/([^/]+)\/source-settings(\/preview)?$/.exec(path);
+    if (settings && method === 'POST') {
+      const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as Record<
+        string,
+        unknown
+      >;
+      const version = server.versions.find((candidate) => candidate.id === settings[1]);
+      if (!version) {
+        return deletedAnswer(settings[1] ?? '');
+      }
+      const plan = server.sourceSettings(body.sources);
+      if (settings[2] !== undefined) {
+        server.settingsPreviews.push(body.sources);
+        if (version.isFrozen) {
+          return jsonResponse(409, { code: 'version_frozen', versionId: version.id });
+        }
+        return jsonResponse(200, { action: 'cover', revision: version.revision, ...plan });
+      }
+      server.writes.push({
+        method,
+        path,
+        body: { inputs: { sources: body.sources }, take: body.take },
+      });
+      const next = server.next;
+      if (next) {
+        server.next = undefined;
+        return next();
+      }
+      const ifMatch = new Headers(init?.headers).get('If-Match');
+      if (ifMatch !== `"${String(version.revision)}"`) {
+        return jsonResponse(409, { code: 'revision_conflict', current: version });
+      }
+      if (version.isFrozen) {
+        return jsonResponse(409, { code: 'version_frozen', versionId: version.id });
+      }
+      const take = Array.isArray(body.take) ? (body.take as string[]) : [];
+      const taken = [
+        ...plan.fills,
+        ...plan.conflicts.filter((conflict) => take.includes(conflict.key)),
+      ];
+      const values = Object.fromEntries(taken.map((setting) => [setting.key, setting.sourceValue]));
+      const { lyrics, styles, ...options } = values;
+      const changed: VersionDetail = {
+        ...version,
+        ...(typeof lyrics === 'string' ? { lyrics } : {}),
+        ...(typeof styles === 'string' ? { styles } : {}),
+        inputs: {
+          ...version.inputs,
+          ...(options as VersionDetail['inputs']),
+          ...(readLineage({ sources: body.sources }) as VersionDetail['inputs']),
+        },
+        revision: version.revision + 1,
+      };
+      server.versions = server.versions.map((other) => (other.id === version.id ? changed : other));
+      return jsonResponse(200, changed);
     }
     const edited = /\/api\/v1\/versions\/([^/]+)$/.exec(path);
     if (edited && method === 'GET') {

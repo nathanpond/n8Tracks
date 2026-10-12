@@ -16,7 +16,8 @@ namespace n8Tracks.Api.Endpoints;
 /// Versions: the numbers a new Version may take when it branches from one, a Song's Versions as a
 /// flat list, one Version with its lyrics, styles, and Suno options, and its editing history
 /// (<c>catalog.read</c>); creating a Version from another, choosing a Song's current Version, editing
-/// a Version's name, notes, archived flag, lyrics, styles, and options, and taking and restoring snapshots of its lyrics and
+/// a Version's name, notes, archived flag, lyrics, styles, and options, setting its sources with the settings of a Cover,
+/// Extend, or Remix source (#431, previewed first), and taking and restoring snapshots of its lyrics and
 /// styles (<c>versions.write</c>); deleting a snapshot (session only). A Song or a Version is named by its ID or its shortcode
 /// (<see cref="CatalogReference"/>), in the route and in body fields alike; a reference of the other
 /// kind, or a Version of another Song, is not found. Every answer is <c>no-store</c>, and a single
@@ -33,6 +34,8 @@ internal static class VersionsEndpoints
     public const string SnapshotByIdPath = SnapshotsPath + "/{snapshotId:guid}";
     public const string RestorePath = SnapshotByIdPath + "/restore";
     public const string DeletionImpactPath = VersionPath + "/deletion-impact";
+    public const string SourceSettingsPath = VersionPath + "/source-settings";
+    public const string SourceSettingsPreviewPath = SourceSettingsPath + "/preview";
 
     /// <summary>
     /// The Version was deleted (on its own, within its retention period): reads and writes of it say
@@ -115,6 +118,30 @@ internal static class VersionsEndpoints
         endpoints.MapPatch(VersionPath, UpdateAsync)
             .WithName("UpdateVersion")
             .WithSummary("Edits a Version's name, notes, archived flag, lyrics, styles, or Suno options (only the fields sent; inputs merged key by key), given the revision read in If-Match. Lyrics and styles are stored as sent, with line endings as \\n.")
+            .RequireScope(CredentialScopes.VersionsWrite)
+            .Produces<VersionDetailResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        endpoints.MapPost(SourceSettingsPreviewPath, PreviewSourceSettingsAsync)
+            .WithName("PreviewVersionSourceSettings")
+            .WithSummary("What choosing these audio sources (as inputs.sources) would do to a mutable Version's settings when they are a Cover, Extend, or Remix (#431): the empty settings the source fills, the ones that differ, and the ones not known. Changes nothing.")
+            .RequireScope(CredentialScopes.VersionsWrite)
+            .Produces<SourceSettingsPlanResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        endpoints.MapPost(SourceSettingsPath, ApplySourceSettingsAsync)
+            .WithName("ApplyVersionSourceSettings")
+            .WithSummary("Sets a Version's audio sources and, for a Cover, Extend, or Remix, fills its empty settings from the source and takes the differing ones named in take, in one edit, given the revision read in If-Match (#431).")
             .RequireScope(CredentialScopes.VersionsWrite)
             .Produces<VersionDetailResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
@@ -700,6 +727,146 @@ internal static class VersionsEndpoints
         }
     }
 
+    /// <summary>
+    /// 200 with the plan (#431) and the revision it was worked out at (also the <c>ETag</c>); 409
+    /// <c>version_frozen</c> when a Generation is attached; 422 <c>validation_failed</c> when
+    /// <c>sources</c> is missing or not sources; 404 when there is no such Version. Changes nothing.
+    /// </summary>
+    private static async Task<Results<Ok<SourceSettingsPlanResponse>, ProblemHttpResult>> PreviewSourceSettingsAsync(
+        CatalogReference reference,
+        ReferenceResolver references,
+        SourceSettingsRequest? request,
+        SourceSettingsService settings,
+        VersionDeletionService deletions,
+        HttpContext context,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        if (await references.VersionIdAsync(reference, cancellationToken) is not { } id)
+        {
+            return await MissingVersionAsync(context, reference, deletions, cancellationToken);
+        }
+
+        if (SourcesOf(request) is not { } sources)
+        {
+            return ApiProblem.ValidationFailed(context, SourcesMissing());
+        }
+
+        switch (await settings.PreviewAsync(id, sources, cancellationToken))
+        {
+            case SourceSettingsPreviewOutcome.Planned planned:
+                Revisions.SetETag(context, planned.Plan.Revision);
+                return TypedResults.Ok(SourceSettingsPlanResponse.From(planned.Plan));
+            case SourceSettingsPreviewOutcome.Invalid invalid:
+                return ApiProblem.ValidationFailed(context, invalid.Errors, invalid.Rules);
+            case SourceSettingsPreviewOutcome.Frozen frozen:
+                return Frozen(context, frozen.Version);
+            case SourceSettingsPreviewOutcome.NotFound:
+                return await MissingVersionAsync(context, reference, deletions, cancellationToken);
+            default:
+                throw new InvalidOperationException("Unknown preview outcome.");
+        }
+    }
+
+    /// <summary>
+    /// 200 with the Version holding the sources and the settings taken (#431); 409
+    /// <c>revision_conflict</c> with <c>current</c> on a stale revision (the plan must be previewed
+    /// again); 409 <c>version_frozen</c>; 422 <c>validation_failed</c> on wrong sources or a
+    /// <c>take</c> key that is not a setting; 404 when there is no such Version. Nothing is changed
+    /// unless the answer is 200.
+    /// </summary>
+    private static async Task<Results<Ok<VersionDetailResponse>, ProblemHttpResult>> ApplySourceSettingsAsync(
+        CatalogReference reference,
+        ReferenceResolver references,
+        SourceSettingsRequest? request,
+        SourceSettingsService settings,
+        VersionDeletionService deletions,
+        HttpContext context,
+        ILoggerFactory loggers,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        if (await references.VersionIdAsync(reference, cancellationToken) is not { } id)
+        {
+            return await MissingVersionAsync(context, reference, deletions, cancellationToken);
+        }
+
+        var (revision, problem) = Revisions.Read(context);
+        if (problem is not null)
+        {
+            return problem;
+        }
+
+        var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        var sources = SourcesOf(request);
+        if (sources is null)
+        {
+            foreach (var (field, messages) in SourcesMissing())
+            {
+                errors[field] = messages;
+            }
+        }
+
+        var take = TakeOf(request, errors);
+        if (errors.Count > 0)
+        {
+            return ApiProblem.ValidationFailed(context, errors);
+        }
+
+        var source = CredentialPrincipal.IsCredential(context.User) ? VersionEditSource.Credential : VersionEditSource.Session;
+        switch (await settings.ApplyAsync(id, sources!.Value, take, revision!.Value, source, cancellationToken))
+        {
+            case VersionUpdateOutcome.Updated updated:
+                var summary = updated.Version.Summary;
+                loggers.CreateLogger(typeof(VersionsEndpoints)).LogInformation(
+                    "Version source settings applied: {VersionId} at revision {VersionRevision}, {TakenCount} differing settings taken",
+                    summary.Id,
+                    summary.Revision,
+                    take.Count);
+                Revisions.SetETag(context, summary.Revision);
+                return TypedResults.Ok(VersionDetailResponse.From(updated.Version));
+            case VersionUpdateOutcome.Conflict conflict:
+                return Revisions.Conflict(context, VersionDetailResponse.From(conflict.Current));
+            case VersionUpdateOutcome.Invalid invalid:
+                return ApiProblem.ValidationFailed(context, invalid.Errors, invalid.Rules);
+            case VersionUpdateOutcome.NotFound:
+                return await MissingVersionAsync(context, reference, deletions, cancellationToken);
+            case VersionUpdateOutcome.Frozen frozen:
+                return Frozen(context, frozen.Version);
+            default:
+                throw new InvalidOperationException("Unknown edit outcome.");
+        }
+    }
+
+    /// <summary>The sources a source-settings request sends: an array or null; anything else, or none, is missing.</summary>
+    private static JsonElement? SourcesOf(SourceSettingsRequest? request) =>
+        request?.Sources.ValueKind is JsonValueKind.Array or JsonValueKind.Null ? request.Sources : null;
+
+    private static Dictionary<string, string[]> SourcesMissing() => new(StringComparer.Ordinal)
+    {
+        [SourceSettingsService.SourcesField] = ["Send the Version's audio sources as an array, as an edit's inputs.sources."],
+    };
+
+    /// <summary>The settings to take from the source: missing or null is none; otherwise an array of setting keys.</summary>
+    private static List<string> TakeOf(SourceSettingsRequest? request, Dictionary<string, string[]> errors)
+    {
+        var sent = request?.Take ?? default;
+        if (sent.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
+        {
+            return [];
+        }
+
+        if (sent.ValueKind == JsonValueKind.Array && sent.EnumerateArray().All(static item => item.ValueKind == JsonValueKind.String))
+        {
+            return [.. sent.EnumerateArray().Select(static item => item.GetString()!).Distinct(StringComparer.Ordinal)];
+        }
+
+        errors[SourceSettingsService.TakeField] = ["Send an array of the settings to take from the source, by key."];
+        return [];
+    }
+
     /// <summary>409 <c>version_frozen</c>: the Version's inputs cannot change; create a new Version from it.</summary>
     private static ProblemHttpResult Frozen(HttpContext context, VersionDetail version) =>
         ApiProblem.For(
@@ -1053,3 +1220,48 @@ internal sealed record ImportedInputsResponse(IReadOnlyList<string> NotReturned,
     public static ImportedInputsResponse? From(ImportedInputMarks? marks) =>
         marks is null ? null : new(marks.NotReturned, marks.OutOfRange, marks.RawValues);
 }
+
+/// <summary>
+/// A source-settings request (#431): <c>sources</c>, the Version's whole audio sources as an edit's
+/// <c>inputs.sources</c> takes them, and, to apply, <c>take</c>: the keys of the differing settings to
+/// take from the source. Read as raw JSON, so a wrong type is a field error.
+/// </summary>
+internal sealed record SourceSettingsRequest(JsonElement Sources, JsonElement Take);
+
+/// <summary>
+/// What choosing the sources would do to the Version's settings (#431). <c>action</c> is
+/// <c>cover</c>, <c>extend</c>, or <c>remix</c>, or null when the sources are none of them (then
+/// nothing is filled). Settings are keyed as the API spells them (<c>lyrics</c>, <c>styles</c>, an
+/// option of <c>inputs</c>, <c>voice</c>), each value as a Version read shows it. <c>fills</c> are empty on
+/// the Version and filled from the source; <c>conflicts</c> differ, each the user's choice;
+/// <c>unknown</c> are not known for the source, with the reason (<c>not_imported</c>, <c>song_only</c>,
+/// <c>deleted</c>, <c>not_returned</c>, <c>not_valid</c>), and are left as they are.
+/// </summary>
+internal sealed record SourceSettingsPlanResponse(
+    string? Action,
+    int Revision,
+    SourceSettingFillResponse[] Fills,
+    SourceSettingConflictResponse[] Conflicts,
+    SourceSettingUnknownResponse[] Unknown)
+{
+    public static SourceSettingsPlanResponse From(SourceSettingsPlan plan)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+
+        return new(
+            plan.Action,
+            plan.Revision,
+            [.. plan.Fills.Select(static fill => new SourceSettingFillResponse(fill.Key, fill.SourceValue))],
+            [.. plan.Conflicts.Select(static conflict => new SourceSettingConflictResponse(conflict.Key, conflict.VersionValue, conflict.SourceValue))],
+            [.. plan.Unknown.Select(static unknown => new SourceSettingUnknownResponse(unknown.Key, unknown.Reason))]);
+    }
+}
+
+/// <summary>A setting the source fills: its key and the source's value.</summary>
+internal sealed record SourceSettingFillResponse(string Key, JsonNode? SourceValue);
+
+/// <summary>A setting that differs: its key, the Version's value, and the source's.</summary>
+internal sealed record SourceSettingConflictResponse(string Key, JsonNode? VersionValue, JsonNode? SourceValue);
+
+/// <summary>A setting not known for the source, and why.</summary>
+internal sealed record SourceSettingUnknownResponse(string Key, string Reason);

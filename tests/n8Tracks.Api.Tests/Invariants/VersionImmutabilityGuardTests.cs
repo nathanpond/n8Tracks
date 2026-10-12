@@ -660,6 +660,37 @@ public sealed class VersionImmutabilityGuardTests
             var answered = await ProvisionalCompletionApi.CompleteAsync(target.Client, token, id, ProvisionalCompletionApi.Finished($"clips-guard-{stamp}-a"));
             Assert.Equal("completed", answered.GetProperty("outcome").GetString());
         }),
+        ["POST /api/v1/versions/{reference}/source-settings/preview"] = new(async target =>
+        {
+            // Previewing a source's settings (#431) changes nothing; a frozen Version is refused.
+            var sources = await SettingsSourcesAsync(target);
+            foreach (var reference in new[] { target.VersionId.ToString(), target.VersionShortcode })
+            {
+                using var response = await SongApi.SendJsonAsync(target.Client, HttpMethod.Post, new Uri($"/api/v1/versions/{reference}/source-settings/preview", UriKind.Relative), $$"""{"sources":{{sources}}}""");
+                if (target.Frozen)
+                {
+                    await SetupApi.ProblemAsync(response, HttpStatusCode.Conflict, "version_frozen");
+                }
+                else
+                {
+                    Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                }
+            }
+        }),
+        ["POST /api/v1/versions/{reference}/source-settings"] = new(
+            async target =>
+            {
+                // Taking an Extend source with its settings (#431): the sources, every empty setting, and
+                // each one taken, in one edit; by ID and by shortcode.
+                foreach (var reference in new[] { target.VersionId.ToString(), target.VersionShortcode })
+                {
+                    var sources = await SettingsSourcesAsync(target);
+                    var json = $$"""{"sources":{{sources}},"take":{{SettingsTaken}}}""";
+                    using var response = await SendAsync(target.Client, HttpMethod.Post, new Uri($"/api/v1/versions/{reference}/source-settings", UriKind.Relative), await target.IfMatchAsync(), json);
+                    await target.ExpectInputsWriteAsync(response, json);
+                }
+            },
+            ChangesInputs: true),
         ["POST /api/v1/versions/{reference}/snapshots"] = new(async target =>
         {
             using var response = await SongApi.SendJsonAsync(target.Client, HttpMethod.Post, new Uri($"/api/v1/versions/{target.VersionShortcode}/snapshots", UriKind.Relative), await target.InputsJsonAsync("{", "}"));
@@ -1163,6 +1194,25 @@ public sealed class VersionImmutabilityGuardTests
                 foreach (var source in Enum.GetValues<VersionEditSource>())
                 {
                     await EachInputEditAsync(target, (service, id, edit, revision) => service.UpdateAsync(id, edit, revision, source, default));
+                }
+            },
+            ChangesInputs: true),
+        ["SourceSettingsService.PreviewAsync(Guid, JsonElement, CancellationToken)"] = new(async target =>
+        {
+            using var sources = JsonDocument.Parse(await SettingsSourcesAsync(target));
+            var outcome = await InScopeAsync<SourceSettingsService, SourceSettingsPreviewOutcome>(target, service => service.PreviewAsync(target.VersionId, sources.RootElement, default));
+            Assert.IsType(target.Frozen ? typeof(SourceSettingsPreviewOutcome.Frozen) : typeof(SourceSettingsPreviewOutcome.Planned), outcome);
+        }),
+        ["SourceSettingsService.ApplyAsync(Guid, JsonElement, IReadOnlyCollection`1, Int32, VersionEditSource, CancellationToken)"] = new(
+            async target =>
+            {
+                foreach (var source in Enum.GetValues<VersionEditSource>())
+                {
+                    using var sources = JsonDocument.Parse(await SettingsSourcesAsync(target));
+                    var revision = (await target.ReadAsync()).GetProperty("revision").GetInt32();
+                    var taken = JsonSerializer.Deserialize<string[]>(SettingsTaken)!;
+                    var outcome = await InScopeAsync<SourceSettingsService, VersionUpdateOutcome>(target, service => service.ApplyAsync(target.VersionId, sources.RootElement, taken, revision, source, default));
+                    Assert.IsType(target.Frozen ? typeof(VersionUpdateOutcome.Frozen) : typeof(VersionUpdateOutcome.Updated), outcome);
                 }
             },
             ChangesInputs: true),
@@ -1677,6 +1727,38 @@ public sealed class VersionImmutabilityGuardTests
             version.GetProperty("shortcode").GetString()!,
             snapshots,
             frozen);
+    }
+
+    /// <summary>The settings a source-settings exerciser takes from the source (#431): every kind of setting.</summary>
+    private const string SettingsTaken = """["lyrics","styles","excludeStyles","vocalGender","weirdness","voice"]""";
+
+    /// <summary>
+    /// A new Extend source (#431; the target's Inspiration rules out Cover) as an edit's <c>inputs.sources</c>: a Generation of another Song whose
+    /// Version holds other lyrics, styles, options, and Voice than the target's, so taking it changes them.
+    /// </summary>
+    private static async Task<string> SettingsSourcesAsync(Target target)
+    {
+        var song = await SongApi.CreateAsync(target.Client, "Settings source " + Guid.NewGuid().ToString("N"));
+        var id = song.GetProperty("currentVersion").GetProperty("id").GetGuid();
+        var stamp = Guid.NewGuid().ToString("N");
+        using (var written = await SendAsync(target.Client, HttpMethod.Patch, new Uri($"/api/v1/versions/{id}", UriKind.Relative), SongApi.Quoted(1), new JsonObject
+        {
+            ["lyrics"] = $"Source lyrics {stamp}",
+            ["styles"] = $"source styles {stamp}",
+            ["inputs"] = new JsonObject
+            {
+                ["excludeStyles"] = $"source exclude {stamp}",
+                ["vocalGender"] = "female",
+                ["weirdness"] = Random.Shared.Next(0, 101),
+                ["voice"] = new JsonObject { ["personaId"] = $"settings-persona-{stamp}", ["name"] = "Settings voice" },
+            },
+        }.ToJsonString()))
+        {
+            Assert.True(written.StatusCode == HttpStatusCode.OK, await written.Content.ReadAsStringAsync());
+        }
+
+        var generation = await SongApi.AttachGenerationAsync(target.Factory, id.ToString(), Clips.Minimal("settings-" + stamp));
+        return new JsonArray(new JsonObject { ["typeId"] = SystemRelationshipTypes.Extend.Id.ToString(), ["generation"] = generation.Shortcode }).ToJsonString();
     }
 
     /// <summary>Every unsafe <c>/api/v1</c> endpoint, as <c>METHOD pattern</c>.</summary>

@@ -87,6 +87,11 @@ public static class RedactionPolicy
         "verification",
         "verificationjson",
 
+        // A setting a Version would take from its Cover, Extend, or Remix source, and the one it holds
+        // (#431: sourceValue, versionValue): either may be lyrics, styles, or prompt text.
+        "sourcevalue",
+        "versionvalue",
+
         // A job's payload: whatever the code that enqueued it passed, which may be any of the above.
         "payload",
 

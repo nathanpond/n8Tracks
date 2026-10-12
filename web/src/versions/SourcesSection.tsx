@@ -55,6 +55,7 @@ import {
   saveFileNote,
   setContinueAt,
   splitSeconds,
+  takesSourceSettings,
   type AudioType,
   type LineageChange,
 } from './sourcesRules';
@@ -439,7 +440,9 @@ function FileNoteForm({
  * playlist (hidden while Cover is chosen); a Voice; and notes of files to attach by hand in Suno.
  * Each change goes to `onChange` and is saved with the rest of the editor; a change that also
  * removes something is confirmed first. On a frozen Version (`readOnly`) everything is shown and
- * nothing can change: Create New Version From carries it into a new Version.
+ * nothing can change: Create New Version From carries it into a new Version. A source chosen for
+ * Cover or Extend goes to `onSourceWithSettings` instead, when given (#431): the source's settings
+ * come with it, which the page asks about before anything changes; `settingsNote` says what came of it.
  */
 export function SourcesSection({
   lineage,
@@ -447,6 +450,8 @@ export function SourcesSection({
   versionId,
   readOnly,
   onChange,
+  onSourceWithSettings,
+  settingsNote,
 }: {
   lineage: Lineage;
   songMode: 'simple' | 'advanced';
@@ -454,6 +459,10 @@ export function SourcesSection({
   versionId: string;
   readOnly: boolean;
   onChange: (lineage: Lineage) => void;
+  /** Takes a Cover or Extend source with the source's settings: the lineage it would leave. */
+  onSourceWithSettings?: (lineage: Lineage) => void;
+  /** What taking the last source's settings came to, shown below the audio sources. */
+  settingsNote?: ReactNode;
 }) {
   const { state: typesState, reload: reloadTypes } = useRelationshipTypes();
   const types = typesState.phase === 'ready' ? audioTypes(typesState.data) : [];
@@ -625,6 +634,9 @@ export function SourcesSection({
             )}
           </Group>
         )}
+        <div role="status" data-testid="source-settings-note">
+          {settingsNote}
+        </div>
       </Stack>
 
       {/* Inspiration: individual songs or one playlist, never both, and never with Cover. */}
@@ -821,7 +833,12 @@ export function SourcesSection({
           if (picking?.group === 'inspiration') {
             onChange(placeInspirationSource(lineage, picking.index, source));
           } else if (picking !== undefined && type !== undefined) {
-            onChange(placeAudioSource(lineage, type, picking.index, source));
+            const next = placeAudioSource(lineage, type, picking.index, source);
+            if (onSourceWithSettings !== undefined && takesSourceSettings(type.action)) {
+              onSourceWithSettings(next);
+            } else {
+              onChange(next);
+            }
           }
           setPicking(undefined);
         }}
