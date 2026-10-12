@@ -23,8 +23,6 @@ export const PAGE_WAIT_MS = 20_000;
 export const PAGE_RETRIES = 2;
 /** The most clips in one part (`docs/suno-integration.md`, Limits). */
 export const PART_CLIPS = 200;
-/** Workspaces per page of `/api/project/me` (TS-003). */
-export const WORKSPACES_PER_PAGE = 20;
 
 export const EXPORT_FORMAT = 'n8tracks.suno-export';
 export const EXPORT_FORMAT_VERSION = 1;
@@ -264,8 +262,8 @@ const TRASH: ListSpec = {
 };
 
 /**
- * The workspace list: `GET /api/project/me?page=N`, 20 per page; it has ended when the pages seen
- * hold `num_total_results`.
+ * The workspace list: `GET /api/project/me?page=N`; it has ended when the workspaces read number
+ * `num_total_results` (counted, not pages: Suno now sends the whole list on one page, TS-007-14).
  */
 const WORKSPACES: ListSpec = {
   kind: 'workspaces',
@@ -282,10 +280,10 @@ const WORKSPACES: ListSpec = {
     const records = recordsOf(body.projects, 'a page of the workspace list');
     return 'problem' in records ? records : { key: `page:${String(body.current_page)}`, records };
   },
-  ended: (body, _records, pages) =>
+  ended: (body, records) =>
     isRecord(body) &&
     typeof body.num_total_results === 'number' &&
-    pages * WORKSPACES_PER_PAGE >= body.num_total_results,
+    records >= body.num_total_results,
 };
 
 function songCountOf(body: unknown): number | null {

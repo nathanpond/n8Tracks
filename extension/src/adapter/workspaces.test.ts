@@ -36,32 +36,37 @@ function listPage(page: number, total: number, ids: string[]) {
 }
 
 describe('Suno’s workspace list (TS-003)', () => {
-  it('is complete only when pages one to N hold num_total_results', () => {
+  it('is complete only when pages one to N, in a row, hold num_total_results workspaces', () => {
     const list = new WorkspaceList();
-    // The fixtures: pages 1 and 5 of a 96-workspace list.
-    expect(list.add(observed('workspaces', sunoFixture('project-me.page-1.response')))).toBe(true);
+    expect(list.add(listPage(1, 5, ['a', 'b']))).toBe(true);
     expect(list.complete).toBe(false);
+    // Page 3 is here, but page 2 is not: still not complete.
+    list.add(listPage(3, 5, ['e']));
+    expect(list.pagesInOrder).toBe(1);
+    expect(list.complete).toBe(false);
+    list.add(listPage(2, 5, ['c', 'd']));
+    expect(list.complete).toBe(true);
+    expect(list.workspaces().map((workspace) => workspace.id)).toEqual(['a', 'b', 'c', 'd', 'e']);
+  });
+
+  it('is complete on one page that holds the whole list, whatever Suno’s page size (TS-007-14)', () => {
+    const list = new WorkspaceList();
+    const ids = Array.from({ length: 40 }, (_, index) => `w${String(index)}`);
+    list.add(listPage(1, 40, ids));
+
+    expect(list.complete).toBe(true);
+    expect(list.workspaces()).toHaveLength(40);
+  });
+
+  it('reads the TS-003 fixtures, page 1 then the last page', () => {
+    const list = new WorkspaceList();
+    expect(list.add(observed('workspaces', sunoFixture('project-me.page-1.response')))).toBe(true);
     expect(list.add(observed('workspaces', sunoFixture('project-me.last-page.response')))).toBe(
       true,
     );
-    // Page 5 is here, but 2 to 4 are not: still not complete.
+    // The fixtures are pages 1 and 5 of a 96-workspace list: pages 2 to 4 are missing.
     expect(list.pagesInOrder).toBe(1);
     expect(list.complete).toBe(false);
-    for (const page of [2, 3, 4]) {
-      list.add(listPage(page, 96, [`p${String(page)}`]));
-    }
-    expect(list.complete).toBe(true);
-    expect(list.workspaces().map((workspace) => workspace.id)).toEqual([
-      'default',
-      '00000000-0000-4000-8000-000000000105',
-      '00000000-0000-4000-8000-000000000125',
-      'p2',
-      'p3',
-      'p4',
-      '00000000-0000-4000-8000-000000000126',
-      '00000000-0000-4000-8000-000000000127',
-      '00000000-0000-4000-8000-000000000128',
-    ]);
   });
 
   it('takes a page that comes again in place of the first copy, and refuses what is not a page', () => {

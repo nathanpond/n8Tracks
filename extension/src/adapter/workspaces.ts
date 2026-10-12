@@ -9,9 +9,6 @@ import type { Target } from './primitives.ts';
  * one sends `POST /api/project`, whose answer gives the new workspace's ID.
  */
 
-/** Workspaces per page of `/api/project/me` (TS-003). */
-export const WORKSPACES_PER_PAGE = 20;
-
 /** The most pages read before the list is taken as one that does not end. */
 export const MAXIMUM_WORKSPACE_PAGES = 50;
 
@@ -71,13 +68,22 @@ export class WorkspaceList {
     return count;
   }
 
-  /** Whether the whole list is here: every page from the first, holding the total Suno gave. */
+  /**
+   * Whether the whole list is here: pages from the first, in a row, holding as many workspaces as
+   * the total Suno gave. The workspaces are counted, not the pages: Suno's page size changed from 20
+   * (TS-003) to the whole list at once (TS-007-14).
+   */
   get complete(): boolean {
-    return (
-      this.total !== null &&
-      this.pagesInOrder > 0 &&
-      this.pagesInOrder * WORKSPACES_PER_PAGE >= this.total
-    );
+    if (this.total === null || this.pagesInOrder === 0) {
+      return false;
+    }
+    const ids = new Set<string>();
+    for (let number = 1; number <= this.pagesInOrder; number += 1) {
+      for (const workspace of this.pages.get(number) ?? []) {
+        ids.add(workspace.id);
+      }
+    }
+    return ids.size >= this.total;
   }
 
   /** Every workspace read so far, in Suno's order, each once. */

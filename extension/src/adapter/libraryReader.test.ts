@@ -231,9 +231,9 @@ describe('reading the workspace list', () => {
   it('follows the numbered pages until they hold num_total_results, uploading nothing yet', async () => {
     const first = sunoObject('project-me.page-1.response');
     const last = sunoObject('project-me.last-page.response');
-    // The fixtures are trimmed to three workspaces a page: say there are 23, so 2 pages.
-    first.num_total_results = 23;
-    last.num_total_results = 23;
+    // The fixtures hold three workspaces a page: say there are 6, so 2 pages.
+    first.num_total_results = 6;
+    last.num_total_results = 6;
     last.current_page = 2;
     const page = suno(
       [observed('workspaces', first, { page: 1 })],
@@ -251,6 +251,18 @@ describe('reading the workspace list', () => {
     ]);
     expect(page.headers).toEqual([]);
     expect(page.parts).toEqual([]);
+  });
+
+  it('ends on one page that holds the whole list, asking for no more (TS-007-14)', async () => {
+    const first = sunoObject('project-me.page-1.response');
+    first.num_total_results = (first.projects as unknown[]).length;
+    const page = suno([observed('workspaces', first, { page: 1 })]);
+
+    const next = await readLeg(LIBRARY, legsFor(LIBRARY), START, page.context);
+
+    expect(page.moreSteps).toEqual([]);
+    expect(next.leg).toBe(1);
+    expect(next.counts.workspaces).toBe((first.projects as unknown[]).length);
   });
 
   it('presses the Workspaces tab first: a page load that brings no list request still gets the list (#421)', async () => {
