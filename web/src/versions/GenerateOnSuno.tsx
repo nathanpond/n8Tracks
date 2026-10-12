@@ -2,7 +2,12 @@ import { Anchor, Button, Group, List, Loader, Paper, Stack, Text } from '@mantin
 import { Link } from 'react-router';
 import type { ObservedCreate, Verification } from '../api/generationRequests';
 import { formatDateTime, useConfiguredTimeZone } from '../api/timeZone';
-import { unavailableSourceText, requestStateLabel } from './generateRules';
+import {
+  recordedCountText,
+  recordedCreates,
+  requestStateLabel,
+  unavailableSourceText,
+} from './generateRules';
 import { observedText, optionList, skipReasonText } from './observedRules';
 import {
   countsText,
@@ -39,6 +44,8 @@ export function GenerateOnSunoStatus({ controller }: { controller: GenerateOnSun
   if (problem === null && request === null) {
     return <span id={`generate-on-suno-${controller.versionId}`} hidden />;
   }
+  // Once a Create is recorded the request waits for the user (#430): no spinner, and Done beside Cancel.
+  const recorded = request === null ? 0 : recordedCreates(request);
   return (
     <Paper
       withBorder
@@ -59,7 +66,9 @@ export function GenerateOnSunoStatus({ controller }: { controller: GenerateOnSun
         {request !== null && (
           <Stack gap={4} data-testid="generation-request">
             <Group gap="sm" wrap="wrap">
-              {request.active && <Loader size="xs" aria-hidden="true" />}
+              {request.active && recorded === 0 && (
+                <Loader size="xs" aria-hidden="true" data-testid="generation-request-loader" />
+              )}
               <Text
                 role="status"
                 fw={600}
@@ -68,6 +77,11 @@ export function GenerateOnSunoStatus({ controller }: { controller: GenerateOnSun
               >
                 Generate on Suno: {requestStateLabel(request)}
               </Text>
+              {recorded > 0 && (
+                <Button size="compact-sm" disabled={controller.busy} onClick={controller.finish}>
+                  Done
+                </Button>
+              )}
               {request.active && (
                 <Button
                   size="compact-sm"
@@ -79,6 +93,12 @@ export function GenerateOnSunoStatus({ controller }: { controller: GenerateOnSun
                 </Button>
               )}
             </Group>
+            {recorded > 0 && (
+              <Text size="sm" data-testid="generation-request-recorded">
+                {recordedCountText(recorded)} Press Done when you have finished in Suno; leaving
+                Suno’s Create page finishes it too.
+              </Text>
+            )}
             {request.message !== null && (
               <Text size="sm" data-testid="generation-request-message">
                 {request.message}

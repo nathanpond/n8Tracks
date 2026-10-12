@@ -50,11 +50,13 @@ function serve(options: {
   current?: GenerationRequest | null;
   create?: () => Response;
   cancel?: () => Response;
+  finish?: () => Response;
 }) {
   const server = {
     current: options.current ?? null,
     creates: 0,
     cancels: [] as string[],
+    finishes: [] as string[],
     reads: 0,
   };
   const mock = stubFetch();
@@ -85,6 +87,22 @@ function serve(options: {
         endedAt: '2026-10-07T09:01:00Z',
       });
       return Promise.resolve(options.cancel?.() ?? jsonResponse(200, server.current));
+    }
+    if (method === 'POST' && path.endsWith(`/generation-requests/${REQUEST_ID}/finish`)) {
+      server.finishes.push(REQUEST_ID);
+      const refused = options.finish?.();
+      if (refused !== undefined) {
+        return Promise.resolve(refused);
+      }
+      server.current = testRequest({
+        ...server.current,
+        state: 'done',
+        active: false,
+        step: 'finished',
+        message: 'You finished it. 2 Creates recorded, with 3 Generations.',
+        endedAt: '2026-10-07T09:06:00Z',
+      });
+      return Promise.resolve(jsonResponse(200, server.current));
     }
     return Promise.resolve(jsonResponse(404, { code: 'not_found' }));
   });
@@ -465,6 +483,120 @@ describe('Generate on Suno', () => {
       'You cancelled it.',
     );
     expect(screen.getByTestId('generation-request-state')).toHaveTextContent('Cancelled');
+  });
+});
+
+describe('Generate on Suno once a Create is recorded (#430)', () => {
+  const observed = (count: number): NonNullable<GenerationRequest['observed']> =>
+    Array.from({ length: count }, (_, index) => ({
+      observedAt: `2026-10-07T09:0${String(index + 3)}:00Z`,
+      outcome: 'attached' as const,
+      version: { id: VERSION_ID, number: '1', shortcode: 'n8-1-v1' },
+      differing: [],
+      assumed: [],
+      requestRead: true,
+      generations: [
+        { id: `g-${String(index)}`, shortcode: 'n8-1-v1-g1', sunoId: `clip-${String(index)}` },
+      ],
+      skipped: [],
+    }));
+  const recorded = (count: number) =>
+    testRequest({
+      state: 'waiting',
+      claimed: true,
+      step: 'Create recorded',
+      message: '1 Generation recorded on n8-1-v1.',
+      observed: observed(count),
+    });
+
+  it('shows no spinner, says the Create was recorded with the count, and offers Done beside Cancel', async () => {
+    serve({ current: recorded(2) });
+    renderAction(fakeBridge({ kind: 'ready', extensionVersion: '0.1.0' }).bridge);
+
+    expect(await screen.findByTestId('generation-request-state')).toHaveTextContent(
+      'Generate on Suno: Create recorded: still watching the Suno tab for more Creates.',
+    );
+    expect(screen.getByTestId('generation-request-recorded')).toHaveTextContent(
+      '2 Creates recorded so far.',
+    );
+    expect(screen.queryByTestId('generation-request-loader')).toBeNull();
+    const buttons = within(screen.getByTestId('generation-request')).getAllByRole('button');
+    expect(buttons.map((button) => button.textContent)).toEqual(['Done', 'Cancel the request']);
+    expect(screen.getByRole('button', { name: 'Generate on Suno' })).toBeDisabled();
+  });
+
+  it('says one Create in the singular', async () => {
+    serve({ current: recorded(1) });
+    renderAction(fakeBridge({ kind: 'ready', extensionVersion: '0.1.0' }).bridge);
+
+    expect(await screen.findByTestId('generation-request-recorded')).toHaveTextContent(
+      '1 Create recorded so far.',
+    );
+  });
+
+  it('keeps the spinner and offers no Done while waiting for the first Create', async () => {
+    serve({ current: testRequest({ state: 'waiting', claimed: true }) });
+    renderAction(fakeBridge({ kind: 'ready', extensionVersion: '0.1.0' }).bridge);
+
+    expect(await screen.findByTestId('generation-request-state')).toHaveTextContent(
+      'Generate on Suno: Waiting for you to click Create in Suno',
+    );
+    expect(screen.getByTestId('generation-request-loader')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Done' })).toBeNull();
+    expect(screen.queryByTestId('generation-request-recorded')).toBeNull();
+  });
+
+  it('Done finishes the request as done, not cancelled, and keeps what the Creates came to', async () => {
+    const server = serve({ current: recorded(2) });
+    renderAction(fakeBridge({ kind: 'ready', extensionVersion: '0.1.0' }).bridge);
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: 'Done' }));
+
+    expect(server.finishes).toEqual([REQUEST_ID]);
+    expect(server.cancels).toEqual([]);
+    expect(await screen.findByTestId('generation-request-message')).toHaveTextContent(
+      'You finished it. 2 Creates recorded, with 3 Generations.',
+    );
+    expect(screen.getByTestId('generation-request-state')).toHaveTextContent(
+      'Generate on Suno: Done',
+    );
+    expect(screen.getAllByTestId('observed-create')).toHaveLength(2);
+    expect(screen.queryByRole('button', { name: 'Done' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Cancel the request' })).toBeNull();
+    expect(screen.queryByTestId('generation-request-recorded')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Generate on Suno' })).toBeEnabled();
+  });
+
+  it('reads the request again when Done is refused because it has ended', async () => {
+    const ended = testRequest({
+      state: 'done',
+      active: false,
+      claimed: true,
+      step: 'left the Create page',
+      message: '1 Create recorded, with 1 Generation.',
+      observed: observed(1),
+    });
+    const server = serve({
+      current: recorded(1),
+      finish: () => {
+        // The tab left Create meanwhile: the request ended before Done reached n8Tracks.
+        server.current = ended;
+        return jsonResponse(409, { code: 'request_ended' });
+      },
+    });
+    renderAction(fakeBridge({ kind: 'ready', extensionVersion: '0.1.0' }).bridge);
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: 'Done' }));
+
+    expect(await screen.findByTestId('generation-request-message')).toHaveTextContent(
+      '1 Create recorded, with 1 Generation.',
+    );
+    expect(screen.getByTestId('generation-request-state')).toHaveTextContent(
+      'Generate on Suno: Done',
+    );
+    expect(screen.queryByTestId('generate-failed')).toBeNull();
   });
 });
 

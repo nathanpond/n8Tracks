@@ -337,6 +337,8 @@ export class GenerateCoordinator {
         return this.observed(tab, request.response, request.submitted);
       case 'generate-source':
         return this.source(tab, request.source);
+      case 'generate-finish':
+        return this.finish(tab);
     }
   }
 
@@ -589,6 +591,50 @@ export class GenerateCoordinator {
       }
     }
     return answer;
+  }
+
+  /**
+   * Done in the panel (#430): n8Tracks ends the request as finished, which it allows once a Create is
+   * recorded, and the tab is forgotten. A request that has ended already (or is another credential's,
+   * or gone) is forgotten too, saying what n8Tracks says about it; any other refusal leaves it as it
+   * is. Never fails.
+   */
+  private async finish(tab: GenerationTab): Promise<GenerateReply> {
+    try {
+      const response = await this.connection.call(
+        `${GENERATION_REQUESTS_PATH}/${encodeURIComponent(tab.requestId)}/finish`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: '{}',
+        },
+      );
+      if (response.ok) {
+        await this.forget();
+        return { ok: true };
+      }
+      if (response.status >= 500) {
+        return { ok: false, ended: false, message: UNREACHABLE };
+      }
+      const body = await bodyOf(response);
+      const code = isRecord(body) && typeof body.code === 'string' ? body.code : '';
+      const ended =
+        code === 'request_ended' || code === 'request_claimed' || response.status === 404;
+      if (ended) {
+        await this.forget();
+      }
+      const current = isRecord(body) && isRecord(body.current) ? body.current : {};
+      return {
+        ok: false,
+        ended,
+        message:
+          code === 'request_ended' && typeof current.message === 'string'
+            ? current.message
+            : await refusalOf(response, 'Done', body),
+      };
+    } catch (error) {
+      return { ok: false, ended: false, message: callFailure(error) };
+    }
   }
 
   /** Sends a progress report; never fails. */

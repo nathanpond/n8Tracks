@@ -10,6 +10,7 @@ using n8Tracks.Api.Tests.Songs;
 using n8Tracks.Application.Credentials;
 using n8Tracks.Application.Suno.Generate;
 using n8Tracks.Application.Suno.Import;
+using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Api.Tests.Suno;
 
@@ -372,6 +373,125 @@ public sealed class ObservedCreateTests
         Assert.Equal(HttpStatusCode.OK, left.StatusCode);
         Assert.Equal("done", (await CurrentAsync(client, VersionId(next))).GetProperty("state").GetString());
     }
+
+    [Fact]
+    public async Task DoneEndsARequestWithARecordedCreateAsDoneAndLeavesItsGenerationsAsTheyWere()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var song = await SongApi.CreateAsync(client, "Observed finished");
+        var versionId = VersionId(song);
+        var response = ObservedCreateApi.Response(Mode, "finished-request", ["finished-clip-1", "finished-clip-2"]);
+        var request = ObservedCreateApi.Request(Mode);
+        await EditAsync(client, versionId, ObservedCreateApi.MatchingEdit(response, request));
+        var (id, token) = await ObservedCreateApi.WaitingRequestAsync(factory, client, versionId);
+        var recorded = await ObservedCreateApi.RecordAsync(client, token, id, response, request);
+        var generationsBefore = (await GenerationsAsync(client, song)).Select(static item => item.GetRawText()).ToList();
+        var observedBefore = recorded.GetProperty("observed").GetRawText();
+
+        using (var finished = await ObservedCreateApi.SendAsync(client, HttpMethod.Post, FinishPath(id), token: null, "{}"))
+        {
+            Assert.True(finished.StatusCode == HttpStatusCode.OK, await finished.Content.ReadAsStringAsync());
+            var body = await SetupApi.JsonAsync(finished);
+            Assert.Equal("done", body.GetProperty("state").GetString());
+            Assert.False(body.GetProperty("active").GetBoolean());
+            Assert.Equal(GenerationRequestRules.FinishedStep, body.GetProperty("step").GetString());
+            Assert.Equal("You finished it. 1 Create recorded, with 2 Generations.", body.GetProperty("message").GetString());
+            Assert.Equal(JsonValueKind.String, body.GetProperty("endedAt").ValueKind);
+            Assert.Equal(observedBefore, body.GetProperty("observed").GetRawText());
+        }
+
+        // Finished, not cancelled: the Version page shows it done, and the Generations are as they were.
+        var current = await CurrentAsync(client, versionId);
+        Assert.Equal("done", current.GetProperty("state").GetString());
+        Assert.Equal(generationsBefore, (await GenerationsAsync(client, song)).Select(static item => item.GetRawText()).ToList());
+        Assert.True((await VersionAsync(client, versionId)).GetProperty("isFrozen").GetBoolean());
+
+        // The extension sees it at its next check: not active, and nothing more is recorded or reported.
+        using (var read = await CredentialApi.SendAsync(client, HttpMethod.Get, new Uri($"/api/v1/suno/generation-requests/{id}", UriKind.Relative), token))
+        {
+            Assert.False((await SetupApi.JsonAsync(read)).GetProperty("active").GetBoolean());
+        }
+
+        var more = ObservedCreateApi.Response(Mode, "after-finish", ["after-finish-clip"]);
+        await ExpectAsync(await ObservedCreateApi.PostAsync(client, token, id, more, request), HttpStatusCode.Conflict, "request_ended");
+        await ExpectAsync(
+            await ObservedCreateApi.SendAsync(client, HttpMethod.Patch, new Uri($"/api/v1/suno/generation-requests/{id}", UriKind.Relative), token, """{"state":"done","step":"left the Create page"}"""),
+            HttpStatusCode.Conflict,
+            "request_ended");
+        Assert.Equal(2, (await GenerationsAsync(client, song)).Count);
+
+        // Done again, or Cancel, finds it ended.
+        await ExpectAsync(await ObservedCreateApi.SendAsync(client, HttpMethod.Post, FinishPath(id), token: null, "{}"), HttpStatusCode.Conflict, "request_ended");
+        await ExpectAsync(
+            await ObservedCreateApi.SendAsync(client, HttpMethod.Post, new Uri($"/api/v1/suno/generation-requests/{id}/cancel", UriKind.Relative), token: null, "{}"),
+            HttpStatusCode.Conflict,
+            "request_ended");
+        Assert.Equal("done", (await CurrentAsync(client, versionId)).GetProperty("state").GetString());
+    }
+
+    [Fact]
+    public async Task DoneIsRefusedBeforeACreateIsRecordedAndForAnotherCredentialAndTheClaimingExtensionMayFinishItsOwn()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var song = await SongApi.CreateAsync(client, "Observed finish refusals");
+        var versionId = VersionId(song);
+        var response = ObservedCreateApi.Response(Mode, "refusals-request", ["refusals-clip"]);
+        var request = ObservedCreateApi.Request(Mode);
+        await EditAsync(client, versionId, ObservedCreateApi.MatchingEdit(response, request));
+        var (id, token) = await ObservedCreateApi.WaitingRequestAsync(factory, client, versionId);
+
+        // No such request.
+        await ExpectAsync(await ObservedCreateApi.SendAsync(client, HttpMethod.Post, FinishPath(Guid.CreateVersion7()), token: null, "{}"), HttpStatusCode.NotFound, "not_found");
+
+        // Nothing recorded yet: refused, and the request goes on waiting as it was.
+        using (var early = await ObservedCreateApi.SendAsync(client, HttpMethod.Post, FinishPath(id), token: null, "{}"))
+        {
+            var body = await early.Content.ReadAsStringAsync();
+            Assert.True(early.StatusCode == HttpStatusCode.Conflict, body);
+            var problem = JsonDocument.Parse(body).RootElement;
+            Assert.Equal("nothing_recorded", problem.GetProperty("code").GetString());
+            Assert.Equal("waiting", problem.GetProperty("current").GetProperty("state").GetString());
+        }
+
+        await ExpectAsync(await ObservedCreateApi.SendAsync(client, HttpMethod.Post, FinishPath(id), token, "{}"), HttpStatusCode.Conflict, "nothing_recorded");
+        var waiting = await CurrentAsync(client, versionId);
+        Assert.Equal("waiting", waiting.GetProperty("state").GetString());
+        Assert.Equal("review and create", waiting.GetProperty("step").GetString());
+
+        await ObservedCreateApi.RecordAsync(client, token, id, response, request);
+
+        // Another extension's credential may not finish this one; a credential with neither scope may not either.
+        var other = await CredentialApi.CreateTokenAsync(factory, CredentialScopes.SunoGenerate);
+        await ExpectAsync(await ObservedCreateApi.SendAsync(client, HttpMethod.Post, FinishPath(id), other, "{}"), HttpStatusCode.Forbidden, "request_claimed");
+        var sync = await CredentialApi.CreateTokenAsync(factory, CredentialScopes.SunoSync, CredentialScopes.CatalogRead);
+        await ExpectAsync(await ObservedCreateApi.SendAsync(client, HttpMethod.Post, FinishPath(id), sync, "{}"), HttpStatusCode.Forbidden, "insufficient_scope");
+        Assert.Equal("waiting", (await CurrentAsync(client, versionId)).GetProperty("state").GetString());
+
+        // The claiming extension finishes its own, from its panel.
+        using (var finished = await ObservedCreateApi.SendAsync(client, HttpMethod.Post, FinishPath(id), token, "{}"))
+        {
+            Assert.True(finished.StatusCode == HttpStatusCode.OK, await finished.Content.ReadAsStringAsync());
+            Assert.Equal("done", (await SetupApi.JsonAsync(finished)).GetProperty("state").GetString());
+        }
+
+        // versions.write may finish a request another credential claimed, as the Version page does.
+        var next = await SongApi.CreateAsync(client, "Observed finish by versions.write");
+        var nextVersion = VersionId(next);
+        var nextResponse = ObservedCreateApi.Response(Mode, "versions-write-request", ["versions-write-clip"]);
+        await EditAsync(client, nextVersion, ObservedCreateApi.MatchingEdit(nextResponse, request));
+        var (nextId, nextToken) = await ObservedCreateApi.WaitingRequestAsync(factory, client, nextVersion);
+        await ObservedCreateApi.RecordAsync(client, nextToken, nextId, nextResponse, request);
+        var writer = await CredentialApi.CreateTokenAsync(factory, CredentialScopes.VersionsWrite);
+        using (var byWriter = await ObservedCreateApi.SendAsync(client, HttpMethod.Post, FinishPath(nextId), writer, "{}"))
+        {
+            Assert.True(byWriter.StatusCode == HttpStatusCode.OK, await byWriter.Content.ReadAsStringAsync());
+            Assert.Equal("done", (await SetupApi.JsonAsync(byWriter)).GetProperty("state").GetString());
+        }
+    }
+
+    private static Uri FinishPath(Guid id) => new($"/api/v1/suno/generation-requests/{id}/finish", UriKind.Relative);
 
     private static Guid VersionId(JsonElement song) => song.GetProperty("currentVersion").GetProperty("id").GetGuid();
 

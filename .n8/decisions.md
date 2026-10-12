@@ -4652,3 +4652,15 @@ Story #219 (on the milestone branch):
 - **Decision:** The AC's follow-up capture (the request Suno uses to poll generating clips, then listening to it) is left unchecked on #429.
   **Why:** It needs the owner's next real generation; nothing in this change depends on it.
   **Issue:** #429
+
+## M4 captures — #430 Create recorded, and Done to finish the request — 2026-10-11
+
+- **Decision:** Done is `POST /api/v1/suno/generation-requests/{id}/finish` through `GenerationRequestService.FinishAsync` (invariant 5). It ends an active request as `done` (not `cancelled`), step `finished`, message "You finished it. " plus the 30-minute rule's own "N Creates recorded, with M Generations.". The observed list and every Generation stay as they are. It is allowed only for an active request with at least one recorded Create; otherwise 409 `nothing_recorded` (with `current`, nothing changed), since Cancel already ends a request that made nothing. 409 `request_ended` once ended, 404 for no such request.
+  **Why:** The owner kept the open-until-the-tab-leaves behaviour (2026-10-11) and asked for an explicit finish; a request with no Create has nothing to finish, and saying `done` for it would claim a Create that never happened.
+  **Issue:** #430
+- **Decision:** The endpoint takes `versions.write` or `suno.generate` (`RequireAnyScope`). A caller holding `versions.write` (a session always does) may finish any request; a `suno.generate`-only credential only the request it claimed (403 `request_claimed` otherwise, as a report is refused). The extension's panel Done goes through the service worker (new message `generate-finish`) with the extension's own token.
+  **Why:** The extension's token holds `suno.generate`, not `versions.write`, and its panel needs its own Done; binding that to the claim keeps one extension from ending another's request. The verb path (`/finish`) follows `/claim` and `/cancel`.
+  **Issue:** #430
+- **Decision:** The Version page shows, for an active request with at least one observed Create, no spinner, "Create recorded: still watching the Suno tab for more Creates.", "N Create(s) recorded so far.", and Done beside Cancel. In the panel the `recorded` state offers Done unless it carries `ended` (set after Done, or after the tab left Create); after Done the tab stops its watch for Creates (a `finished` flag read after each wait) and does not report leaving. A Done pressed on the Version page is seen by the tab at its next check (its next observed Create is refused `request_ended`); no new polling of the request was added. No adapter workflow changed, so `ADAPTER_VERSION` stays 21.
+  **Why:** The AC asks for the tab to see Done "at its next check"; polling n8Tracks every second from the Create watch would add a request per second for a case the existing refusal already ends. The completion watch (#154) is untouched and goes on after Done, as it does after leaving Create.
+  **Issue:** #430

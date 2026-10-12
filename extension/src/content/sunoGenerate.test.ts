@@ -17,6 +17,7 @@ import {
   actionUnavailable,
   CLIP_PAGE_PROBLEMS,
   couldNotOpen,
+  FINISHED_CREATES,
   FORM_GONE,
   LIST_NOT_READ,
   NO_CREATE_PAGE,
@@ -91,6 +92,8 @@ interface Options {
   selectsCreated?: boolean;
   /** The service worker's answer to an observed Create (#149). */
   observedReply?: (request: Extract<Request, { type: 'generate-observed' }>) => unknown;
+  /** The service worker's answer to Done in the panel (#430). */
+  finishReply?: () => GenerateReply;
   /** The clips the service worker says the tab still watches for completion, on resume (#154). */
   watching?: string[];
   /** The service worker's answer to a completion report (#154). */
@@ -210,6 +213,8 @@ function start(options: Options = {}) {
       case 'generate-resolve':
       case 'generate-source':
         return Promise.resolve({ ok: true });
+      case 'generate-finish':
+        return Promise.resolve(options.finishReply?.() ?? { ok: true });
       case 'generate-observed':
         return Promise.resolve(
           options.observedReply?.(request) ?? {
@@ -934,7 +939,8 @@ describe('Generate on Suno in the Suno tab: the user’s Create (#149)', () => {
 
     expect(tab.steps()).toEqual(['done left the Create page']);
     expect(tab.visited).toEqual([]);
-    expect(tab.last()).toMatchObject({ kind: 'recorded', recorded: true });
+    // The request is done: the panel offers no Done (#430).
+    expect(tab.last()).toMatchObject({ kind: 'recorded', recorded: true, ended: true });
 
     // On the Create page, the tab only watches; leaving it then ends the request.
     const again = start({ job: job({ created: 1, form: advancedForm() }) });
@@ -966,6 +972,83 @@ describe('Generate on Suno in the Suno tab: the user’s Create (#149)', () => {
     await ended.generate.resume();
     await until(() => ended.last()?.kind === 'stopped');
     expect(ended.types().filter((type) => type === 'generate-observed')).toHaveLength(1);
+  });
+});
+
+/** Lets the tab run a while: long enough for the watch for Creates to take what the feed holds. */
+async function settle(): Promise<void> {
+  for (let tries = 0; tries < 50; tries += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
+describe('Generate on Suno in the Suno tab: Done in the panel (#430)', () => {
+  it('finishes the request and stops watching for Creates: a later Create or leaving sends nothing', async () => {
+    const tab = start({ job: job({ created: 1 }) });
+    await tab.generate.resume();
+    expect(tab.last()).toEqual({
+      kind: 'recorded',
+      recorded: true,
+      message: 'Your Create was recorded in n8Tracks.',
+    });
+
+    await tab.generate.finish();
+
+    expect(tab.types().filter((type) => type === 'generate-finish')).toHaveLength(1);
+    expect(tab.last()).toEqual({
+      kind: 'recorded',
+      recorded: true,
+      ended: true,
+      message: `Your Create was recorded in n8Tracks. ${FINISHED_CREATES}`,
+    });
+    tab.feed.take(createAnswer('after-done', ['clip-9']));
+    await settle();
+    tab.goTo('https://suno.com/me');
+    await settle();
+    expect(tab.types()).not.toContain('generate-observed');
+    expect(tab.steps()).toEqual([]);
+  });
+
+  it('keeps Done on offer and goes on watching when n8Tracks cannot be reached', async () => {
+    const tab = start({
+      job: job({ created: 2 }),
+      finishReply: () => ({ ok: false, ended: false, message: 'Cannot reach n8Tracks.' }),
+    });
+    await tab.generate.resume();
+
+    await tab.generate.finish();
+
+    expect(tab.last()).toEqual({
+      kind: 'recorded',
+      recorded: true,
+      message: 'Your 2 Creates were recorded in n8Tracks. Cannot reach n8Tracks.',
+    });
+    tab.feed.take(createAnswer('still-watched', ['clip-3']));
+    await until(() => tab.types().includes('generate-observed'));
+  });
+
+  it('says what n8Tracks says when the request had ended already, and stops watching', async () => {
+    const tab = start({
+      job: job({ created: 1 }),
+      finishReply: () => ({
+        ok: false,
+        ended: true,
+        message: '1 Create recorded, with 2 Generations.',
+      }),
+    });
+    await tab.generate.resume();
+
+    await tab.generate.finish();
+
+    expect(tab.last()).toEqual({
+      kind: 'recorded',
+      recorded: true,
+      ended: true,
+      message: '1 Create recorded, with 2 Generations.',
+    });
+    tab.feed.take(createAnswer('after-ended', ['clip-4']));
+    await settle();
+    expect(tab.types()).not.toContain('generate-observed');
   });
 });
 

@@ -54,6 +54,7 @@ public sealed class ReferenceParameterGuardTests
         "POST /api/v1/suno/generation-requests/{id:guid}/claim: id",
         "PATCH /api/v1/suno/generation-requests/{id:guid}: id",
         "POST /api/v1/suno/generation-requests/{id:guid}/cancel: id",
+        "POST /api/v1/suno/generation-requests/{id:guid}/finish: id",
         "POST /api/v1/suno/generation-requests/{id:guid}/observed-create: id",
         "POST /api/v1/suno/generation-requests/{id:guid}/clips: id",
         "PATCH /api/v1/genres/{id:guid}: id",

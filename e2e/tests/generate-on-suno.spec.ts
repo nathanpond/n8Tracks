@@ -500,6 +500,34 @@ test.describe('Generate on Suno', () => {
       await expect(
         page.locator('tr[data-version-row="1.1"]').getByTestId('generation-count'),
       ).toHaveText('2');
+      // The request goes on watching for more Creates: no spinner, the count, and Done beside Cancel (#430).
+      await expect(page.getByTestId('generation-request-state')).toHaveText(
+        'Generate on Suno: Create recorded: still watching the Suno tab for more Creates.',
+      );
+      await expect(page.getByTestId('generation-request-recorded')).toContainText(
+        '2 Creates recorded so far.',
+      );
+      await expect(page.getByTestId('generation-request-loader')).toHaveCount(0);
+      await expect(page.getByRole('button', { name: 'Cancel the request' })).toBeVisible();
+      await expectAccessibleInLightAndDark(page);
+
+      // 3. Done: the request ends as done, not cancelled; the extension's next report finds it ended.
+      await page.getByRole('button', { name: 'Done' }).click();
+      await expect(page.getByTestId('generation-request-state')).toHaveText(
+        'Generate on Suno: Done',
+      );
+      await expect(page.getByTestId('generation-request-message')).toHaveText(
+        'You finished it. 2 Creates recorded, with 4 Generations.',
+      );
+      await expect(page.getByRole('button', { name: 'Done' })).toHaveCount(0);
+      await expect(observed).toHaveCount(2);
+      const after = await extension.patch(request, {
+        headers,
+        data: { state: 'done', step: 'left the Create page' },
+      });
+      expect(after.status()).toBe(409);
+      expect(((await after.json()) as { code: string }).code).toBe('request_ended');
+      await expect(row.getByTestId('generation-count')).toHaveText('2');
       await expectAccessibleInLightAndDark(page);
 
       await branched.getByRole('link', { name: 'Open Version 1.1' }).click();

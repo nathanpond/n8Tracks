@@ -24,7 +24,7 @@ public enum GenerationRequestState
     /// <summary>The form is filled: waiting for the user to click Create (and between Creates).</summary>
     Waiting,
 
-    /// <summary>At least one Create was observed and observation has ended.</summary>
+    /// <summary>At least one Create was observed and observation has ended (the tab left Create, 30 minutes passed, or the user pressed Done, #430).</summary>
     Done,
 
     /// <summary>Stopped at a named step, with the reason.</summary>
@@ -101,6 +101,12 @@ public static class GenerationRequestRules
     public const string SupersededMessage = "A newer request for this Version replaced it.";
     public const string CancelledMessage = "You cancelled it.";
     public const string VersionGoneMessage = "The Version is no longer there.";
+
+    /// <summary>What a request the user finished with Done says (#430), before what its Creates came to.</summary>
+    public const string FinishedMessage = "You finished it.";
+
+    /// <summary>The step a request the user finished with Done is left at (#430).</summary>
+    public const string FinishedStep = "finished";
 
     /// <summary>How long after the last observed Create a request still waiting is done (#149).</summary>
     public static readonly TimeSpan AfterLastCreate = TimeSpan.FromMinutes(30);
