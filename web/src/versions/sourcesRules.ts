@@ -325,3 +325,11 @@ export function formatPosition(total: number): string {
     hundredths === 0 ? '' : `.${String(hundredths).padStart(2, '0')}`
   }`;
 }
+
+/**
+ * Whether choosing a source for `action` brings the source's settings with it (#431): Cover and
+ * Extend (a general Remix is never chosen by hand). The API works out what is filled and asked.
+ */
+export function takesSourceSettings(action: string | undefined): boolean {
+  return action === 'cover' || action === 'extend';
+}

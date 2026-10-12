@@ -153,7 +153,7 @@ async function closed() {
 
 describe('the Sources section of a Version (#125)', () => {
   it.each(['Cover', 'Sample This Song', 'Reuse Prompt'])(
-    '%s takes one source: a Song searched for, then one of its Generations, saved by autosave',
+    '%s takes one source: a Song searched for, then one of its Generations, saved (Cover with its settings, #431)',
     async (action) => {
       const { server } = serve();
       const user = await openVersion();
@@ -162,7 +162,7 @@ describe('the Sources section of a Version (#125)', () => {
       await user.click(screen.getByRole('button', { name: `Choose the ${action} source` }));
       await pick(user, 'Song B', 'n8-8-v1-g1');
 
-      const sources = within(section()).getByRole('list', { name: 'Audio sources' });
+      const sources = await within(section()).findByRole('list', { name: 'Audio sources' });
       expect(within(sources).getByTestId('source-title')).toHaveTextContent('Song B take 1');
       expect(within(sources).getByTestId('source-shortcode')).toHaveTextContent('n8-8-v1-g1');
       expect(
@@ -179,6 +179,8 @@ describe('the Sources section of a Version (#125)', () => {
             },
           ],
         },
+        // A Cover source is set with its settings, none of which differ here, so nothing is asked.
+        ...(action === 'Cover' ? { take: [] } : {}),
       });
     },
   );
@@ -569,7 +571,9 @@ describe('the Sources section of a Version (#125)', () => {
     await user.type(pasted, 'https://suno.com/song/abcdef12-3456-7890-abcd-ef1234567890');
     await user.click(within(dialog).getByRole('button', { name: 'Use this clip' }));
 
-    expect(within(section()).getByTestId('source-title')).toHaveTextContent('Suno clip abcdef12');
+    expect(await within(section()).findByTestId('source-title')).toHaveTextContent(
+      'Suno clip abcdef12',
+    );
     expect(within(section()).getByTestId('source-availability')).toHaveTextContent('Not imported');
     expect(await lastWrite(server.writes, 1)).toMatchObject({
       inputs: { sources: [{ external: { sunoId: 'abcdef12-3456-7890-abcd-ef1234567890' } }] },

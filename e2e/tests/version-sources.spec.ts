@@ -259,3 +259,116 @@ test.describe('Choose a Version’s sources', () => {
     await expectAccessibleInLightAndDark(page);
   });
 });
+
+/** Edits a Version through the API at its current revision, as the editor would have saved it. */
+async function editVersion(
+  page: Page,
+  api: (path: string) => string,
+  versionId: string,
+  data: Record<string, unknown>,
+): Promise<void> {
+  const version = (await (await page.request.get(api(`versions/${versionId}`))).json()) as {
+    revision: number;
+  };
+  const saved = await page.request.patch(api(`versions/${versionId}`), {
+    headers: { ...ANTIFORGERY_HEADERS, 'If-Match': `"${String(version.revision)}"` },
+    data,
+  });
+  expect(saved.status(), await saved.text()).toBe(200);
+}
+
+/**
+ * #431's Demo on the built image: a Cover source brings the settings that produced it. The source's
+ * Version holds long lyrics, styles, Exclude Styles, and Weirdness 70; the Version taking it holds
+ * its own styles. Choosing the source asks once, with the keyboard only, about the two settings
+ * that differ (styles and Weirdness), the lyrics shown whole in a box that scrolls; cancelling
+ * changes nothing; choosing it again and ticking Weirdness sets the source, fills the empty lyrics
+ * and Exclude Styles, takes Weirdness, and keeps the Version's styles. The prompt is scanned with
+ * the accessibility helper, in light and in dark.
+ */
+test.describe('A Cover source brings its settings', () => {
+  test('fills the empty settings and asks about the differing ones', async ({ page }, testInfo) => {
+    const api = await apiBase(page);
+    const stamp = `${String(Date.now())} ${String(testInfo.retry)}`;
+    const originalTitle = `Settings original ${stamp}`;
+    const original = await createSong(page, api, originalTitle);
+    const lyrics = Array.from({ length: 30 }, (_, line) => `Source line ${String(line + 1)}`).join(
+      '\n',
+    );
+    await editVersion(page, api, original.currentVersion.id, {
+      lyrics,
+      styles: 'source styles',
+      inputs: { excludeStyles: 'no drums', weirdness: 70 },
+    });
+    const generation = await seedGeneration(
+      testInfo,
+      original.currentVersion.shortcode,
+      clip('Settings take'),
+    );
+    const derived = await createSong(page, api, `Settings cover ${stamp}`);
+    await editVersion(page, api, derived.currentVersion.id, { styles: 'my own styles' });
+    const read = async () =>
+      (await (await page.request.get(api(`versions/${derived.currentVersion.id}`))).json()) as {
+        revision: number;
+        lyrics: string;
+        styles: string;
+        inputs: { sources: unknown[]; weirdness: number; excludeStyles: string };
+      };
+    const before = await read();
+
+    const action = await openDerived(page, {
+      api,
+      originalTitle,
+      first: generation,
+      second: '',
+      derived,
+    });
+    await action.selectOption({ label: 'Cover' });
+    await sources(page).getByRole('button', { name: 'Choose the Cover source' }).click();
+    await pickWithKeyboard(page, originalTitle, generation);
+
+    const prompt = page.getByRole('dialog', { name: 'Settings from the source' });
+    await expect(prompt).toBeVisible();
+    await expect(prompt.getByRole('group', { name: 'Styles' })).toContainText('my own styles');
+    await expect(prompt.getByRole('group', { name: 'Styles' })).toContainText('source styles');
+    await expect(prompt.getByRole('group', { name: 'Weirdness' })).toContainText('70');
+    await expect(prompt.getByTestId('source-settings-intro')).toContainText(
+      'Its empty settings are filled from the source: Lyrics, Exclude styles.',
+    );
+    await expectModalAccessibleInBothSchemes(page);
+
+    // Cancelling changes nothing: no source, and the Version as it was.
+    await prompt.getByRole('button', { name: 'Cancel' }).focus();
+    await page.keyboard.press('Enter');
+    await expect(prompt).toBeHidden();
+    await expect(sources(page).getByRole('list', { name: 'Audio sources' })).toBeHidden();
+    expect((await read()).revision).toBe(before.revision);
+
+    // Chosen again, Weirdness is ticked from the keyboard and the choice confirmed.
+    await sources(page).getByRole('button', { name: 'Choose the Cover source' }).click();
+    await pickWithKeyboard(page, originalTitle, generation);
+    await expect(prompt).toBeVisible();
+    await prompt.getByRole('checkbox', { name: 'Use the source’s Weirdness' }).focus();
+    await page.keyboard.press('Space');
+    await expect(
+      prompt.getByRole('checkbox', { name: 'Use the source’s Weirdness' }),
+    ).toBeChecked();
+    await prompt.getByRole('button', { name: 'Confirm' }).focus();
+    await page.keyboard.press('Enter');
+    await expect(prompt).toBeHidden();
+
+    const audio = sources(page).getByRole('list', { name: 'Audio sources' });
+    await expect(audio.getByTestId('source-shortcode')).toHaveText(generation);
+    await expect(sources(page).getByTestId('source-settings-note')).toContainText(
+      'Filled from the source: Lyrics, Exclude styles.',
+    );
+    const after = await read();
+    expect(after.revision).toBe(before.revision + 1);
+    expect(after.lyrics).toBe(lyrics);
+    expect(after.styles).toBe('my own styles');
+    expect(after.inputs.excludeStyles).toBe('no drums');
+    expect(after.inputs.weirdness).toBe(70);
+    expect(after.inputs.sources).toHaveLength(1);
+    await expectAccessibleInLightAndDark(page);
+  });
+});

@@ -22,6 +22,11 @@ import {
   type Lineage,
 } from '../api/lineage';
 import type { FailureReason, FieldValue } from '../api/saves';
+import {
+  applySourceSettings,
+  previewSourceSettings,
+  type SourceSettingsPlan,
+} from '../api/sourceSettings';
 import { restoreSnapshot, type Snapshot } from '../api/snapshots';
 import { useConfiguredTimeZone } from '../api/timeZone';
 import {
@@ -59,6 +64,8 @@ import { VersionInputs } from '../editor/VersionInputs';
 import { GenerateOnSunoButton, GenerateOnSunoStatus } from '../versions/GenerateOnSuno';
 import { useGenerateOnSuno, type GenerateOnSunoController } from '../versions/useGenerateOnSuno';
 import { SourcesSection } from '../versions/SourcesSection';
+import { SourceSettingsDialog } from '../versions/SourceSettingsDialog';
+import { appliedNote, choicesOf, filledLabels, unknownNote } from '../versions/sourceSettingsRules';
 import { OptionsPanel } from './inputs/OptionsPanel';
 import { choiceLabel } from './inputs/optionFormat';
 import { RelativeTime } from './SongParts';
@@ -805,6 +812,104 @@ function LoadedVersionDetails({
     [changed, setDrafts],
   );
 
+  // A Cover or Extend source brings its settings (#431). Whatever is on screen is saved first, so the
+  // API compares the source with what the user sees; it then fills the empty settings, and asks here
+  // (one prompt) about the ones that differ. Nothing changes until it is confirmed: cancelling
+  // leaves the sources and the settings as they were.
+  const [settingsPrompt, setSettingsPrompt] = useState<
+    { plan: SourceSettingsPlan; sources: OptionValue } | undefined
+  >();
+  const [settingsBusy, setSettingsBusy] = useState(false);
+  const [settingsError, setSettingsError] = useState<string | undefined>();
+  const [settingsNote, setSettingsNote] = useState<string | undefined>();
+
+  const applySettings = useCallback(
+    async (plan: SourceSettingsPlan, sources: OptionValue, take: string[]) => {
+      setSettingsBusy(true);
+      const result = await applySourceSettings(
+        { id: latest.current.id, revision: plan.revision },
+        sources,
+        take,
+      );
+      setSettingsBusy(false);
+      if (result.kind === 'saved') {
+        const applied = result.record;
+        const now = latestDrafts.current;
+        if (textDiffers(now, applied)) {
+          // The text being replaced goes into History first, as when the current Version is taken.
+          capture();
+        }
+        onRecord(applied);
+        setDrafts({
+          ...latestDrafts.current,
+          lyrics: applied.lyrics,
+          styles: applied.styles,
+          inputs: applied.inputs,
+        });
+        rebase({ lyrics: applied.lyrics, styles: applied.styles }, true);
+        setSettingsPrompt(undefined);
+        setSettingsError(undefined);
+        setSettingsNote(appliedNote(plan, createFields.fields));
+        return;
+      }
+      setSettingsPrompt(undefined);
+      setSettingsError(undefined);
+      if (result.kind === 'conflict') {
+        onRecord(result.current);
+        setDrafts(draftsOf(result.current));
+        setSettingsNote(
+          'This Version changed meanwhile, so the source was not set. Choose it again.',
+        );
+      } else if (result.kind === 'failed' && result.reason === 'frozen') {
+        markFrozen();
+      } else {
+        setSettingsNote(
+          result.kind === 'invalid'
+            ? `The source was not set: ${Object.values(result.errors).flat().join(' ')}`
+            : 'The source could not be set. Try again.',
+        );
+      }
+    },
+    [capture, createFields.fields, markFrozen, onRecord, rebase, setDrafts],
+  );
+
+  const takeSourceWithSettings = useCallback(
+    async (lineage: Lineage) => {
+      setSettingsNote(undefined);
+      setSettingsBusy(true);
+      // Sent as an edit writes them (what a read adds left out).
+      const sources = JSON.parse(
+        lineageText('sources', lineageValue(lineage, 'sources')),
+      ) as OptionValue;
+      if (!(await flush())) {
+        setSettingsBusy(false);
+        setSettingsNote(
+          'This Version’s changes are not saved yet, so the source was not set. Choose it again once they are.',
+        );
+        return;
+      }
+      const preview = await previewSourceSettings(latest.current.id, sources);
+      setSettingsBusy(false);
+      if (preview.kind === 'planned') {
+        if (preview.plan.conflicts.length === 0) {
+          await applySettings(preview.plan, sources, []);
+        } else {
+          setSettingsError(undefined);
+          setSettingsPrompt({ plan: preview.plan, sources });
+        }
+      } else if (preview.kind === 'failed' && preview.reason === 'frozen') {
+        markFrozen();
+      } else {
+        setSettingsNote(
+          preview.kind === 'invalid'
+            ? `The source was not set: ${Object.values(preview.errors).flat().join(' ')}`
+            : 'The source’s settings could not be read, so the source was not set. Try again.',
+        );
+      }
+    },
+    [applySettings, flush, markFrozen],
+  );
+
   const restore = useCallback(
     async (snapshot: Snapshot): Promise<RestoreResult> => {
       const result = await restoreSnapshot(latest.current, snapshot.id);
@@ -940,6 +1045,18 @@ function LoadedVersionDetails({
             versionId={record.id}
             readOnly={frozen}
             onChange={changeLineage}
+            onSourceWithSettings={(lineage) => {
+              if (!settingsBusy) {
+                void takeSourceWithSettings(lineage);
+              }
+            }}
+            settingsNote={
+              settingsBusy && settingsPrompt === undefined ? (
+                <Text size="sm">Reading the source’s settings…</Text>
+              ) : settingsNote !== undefined ? (
+                <Text size="sm">{settingsNote}</Text>
+              ) : undefined
+            }
           />
         )}
         {isSong && <Divider />}
@@ -965,6 +1082,32 @@ function LoadedVersionDetails({
         )}
       </Stack>
       {dialog}
+      <SourceSettingsDialog
+        choices={
+          settingsPrompt === undefined
+            ? undefined
+            : choicesOf(settingsPrompt.plan, createFields.fields)
+        }
+        filled={
+          settingsPrompt === undefined ? [] : filledLabels(settingsPrompt.plan, createFields.fields)
+        }
+        unknownNote={
+          settingsPrompt === undefined
+            ? undefined
+            : unknownNote(settingsPrompt.plan, createFields.fields)
+        }
+        busy={settingsBusy}
+        error={settingsError}
+        onConfirm={(take) => {
+          if (settingsPrompt !== undefined) {
+            void applySettings(settingsPrompt.plan, settingsPrompt.sources, take);
+          }
+        }}
+        onCancel={() => {
+          setSettingsPrompt(undefined);
+          setSettingsError(undefined);
+        }}
+      />
       <LeaveGuard status={autosave.status} flush={flush} onPageHide={onPageHide} />
     </Paper>
   );
