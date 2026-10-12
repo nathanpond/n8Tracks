@@ -4664,3 +4664,9 @@ Story #219 (on the milestone branch):
 - **Decision:** The Version page shows, for an active request with at least one observed Create, no spinner, "Create recorded: still watching the Suno tab for more Creates.", "N Create(s) recorded so far.", and Done beside Cancel. In the panel the `recorded` state offers Done unless it carries `ended` (set after Done, or after the tab left Create); after Done the tab stops its watch for Creates (a `finished` flag read after each wait) and does not report leaving. A Done pressed on the Version page is seen by the tab at its next check (its next observed Create is refused `request_ended`); no new polling of the request was added. No adapter workflow changed, so `ADAPTER_VERSION` stays 21.
   **Why:** The AC asks for the tab to see Done "at its next check"; polling n8Tracks every second from the Create watch would add a request per second for a case the existing refusal already ends. The completion watch (#154) is untouched and goes on after Done, as it does after leaving Create.
   **Issue:** #430
+
+## Ad-hoc — 2026-10-12
+
+- **Change:** Added #431 to M4: choosing a Cover, Extend or Remix source pre-fills the Version's creation settings from the source. Empty fields fill without a prompt, and one prompt asks per field before overwriting.
+  **Why:** Owner request in the #148 walkthrough. Suno fills the Create form from a Cover's source itself, so a Version with empty settings made the extension clear them.
+  **Affects:** M4 (#137 lineage, #148 sources: new behaviour when a source is chosen), M7 (API and MCP: new endpoints for the preview and the apply, and the MCP plan if it covers lineage), M8 (#255 portable format, if it records the pre-fill choices; probably not).
