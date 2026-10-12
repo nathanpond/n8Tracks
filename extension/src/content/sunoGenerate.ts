@@ -435,6 +435,13 @@ export class SunoGenerate {
     }
     const list = await this.readList();
     if (list === null) {
+      // Suno keeps a list it loaded before and opens it again without asking (TS-007-13): a load of
+      // the page clears that, and this request's loads bound how often it is tried.
+      if (job.loads <= MAXIMUM_LOADS) {
+        this.options.show({ kind: 'working', step: STEP_TEXT[GENERATE_STEPS.list] });
+        this.options.page.go(this.options.page.address());
+        return;
+      }
       await this.stop(LIST_NOT_READ);
       return;
     }

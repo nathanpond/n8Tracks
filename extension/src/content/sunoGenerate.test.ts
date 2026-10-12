@@ -20,6 +20,7 @@ import {
   FINISHED_CREATES,
   FORM_GONE,
   LIST_NOT_READ,
+  MAXIMUM_LOADS,
   NO_CREATE_PAGE,
   NO_FORM,
   NOT_EXPECTED,
@@ -572,11 +573,28 @@ describe('Generate on Suno in the Suno tab: stopping', () => {
     expect(tab.pressed).toEqual([]);
   });
 
-  it('stops without marking anything when the workspace list does not load completely', async () => {
-    const tab = start({ pages: [{ num_total_results: 45, current_page: 1, projects: PROJECTS }] });
+  it('loads the page again when the workspace list does not load completely, marking nothing (TS-007-13)', async () => {
+    const tab = start({
+      address: 'https://suno.com/create?wid=default',
+      pages: [{ num_total_results: 45, current_page: 1, projects: PROJECTS }],
+    });
 
     await tab.generate.resume();
 
+    expect(tab.visited).toEqual(['https://suno.com/create?wid=default']);
+    expect(tab.shown.some((state) => state.kind === 'stopped')).toBe(false);
+    expect(tab.types()).not.toContain('generate-workspaces');
+  });
+
+  it('stops without marking anything when the workspace list still does not load after the page loads again', async () => {
+    const tab = start({
+      job: job({ loads: MAXIMUM_LOADS + 1 }),
+      pages: [{ num_total_results: 45, current_page: 1, projects: PROJECTS }],
+    });
+
+    await tab.generate.resume();
+
+    expect(tab.visited).toEqual([]);
     expect(tab.last()).toEqual({ kind: 'stopped', message: LIST_NOT_READ });
     expect(tab.types()).not.toContain('generate-workspaces');
   });
