@@ -39,9 +39,10 @@ export type GenerateViewState =
     }
   /**
    * The user's Create (#149): what n8Tracks recorded (`recorded`), or why its clips were not recorded.
-   * The request goes on waiting for further Creates.
+   * The request goes on waiting for further Creates, and once one is recorded the panel offers Done
+   * (#430), unless the request has `ended` (the tab left Create, or the user pressed Done).
    */
-  | { kind: 'recorded'; recorded: boolean; message: string }
+  | { kind: 'recorded'; recorded: boolean; message: string; ended?: boolean }
   /**
    * The source on Suno's form is not the Version's (#148): nothing else is filled until the user
    * loads it by hand and presses Continue, which checks it again.
@@ -58,6 +59,8 @@ export interface GenerateViewOptions {
   checkAgain?(): void;
   /** "Continue" once the user loaded the source by hand (#148). */
   continueSource?(): void;
+  /** "Done" once a Create is recorded (#430): the request ends as finished. */
+  finish?(): void;
 }
 
 function nameOrUnnamed(name: string): string {
@@ -180,22 +183,38 @@ export class GenerateView {
           ),
         );
         return;
-      case 'recorded':
+      case 'recorded': {
+        const open = this.state.recorded && this.state.ended !== true;
         this.body.append(
           this.make(
             'p',
             this.state.recorded
-              ? { role: 'status', class: 'generate-recorded' }
+              ? { role: 'status', class: 'generate-recorded', id: 'n8-generate-recorded' }
               : { role: 'alert', class: 'generate-not-recorded' },
             this.state.message,
           ),
+        );
+        if (this.state.ended === true) {
+          return;
+        }
+        this.body.append(
           this.make(
             'p',
             { class: 'detail' },
-            'Each further Create on this form is recorded too. The extension never clicks Create.',
+            open
+              ? 'Each further Create on this form is recorded too; press Done when you have finished. The extension never clicks Create.'
+              : 'Each further Create on this form is recorded too. The extension never clicks Create.',
           ),
         );
+        if (open && this.options.finish !== undefined) {
+          const done = this.button('Done', () => {
+            this.options.finish?.();
+          });
+          done.setAttribute('aria-describedby', 'n8-generate-recorded');
+          this.body.append(done);
+        }
         return;
+      }
       case 'stopped':
         this.body.append(
           this.make(

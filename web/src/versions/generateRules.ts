@@ -81,8 +81,27 @@ const STATE_LABELS: Readonly<Record<string, string>> = {
  */
 export const CHOOSE_WORKSPACE_STEP = 'choose workspace';
 
+/** What the page says while a request that has recorded a Create goes on watching the Suno tab (#430). */
+export const RECORDED_LABEL = 'Create recorded: still watching the Suno tab for more Creates.';
+
+/**
+ * How many Creates an active request has recorded (#430): once there is one, the request waits for
+ * the user, who may click Create again in Suno or finish it with Done. 0 for an ended request.
+ */
+export function recordedCreates(request: GenerationRequest): number {
+  return request.active ? (request.observed?.length ?? 0) : 0;
+}
+
+/** "1 Create recorded so far." / "2 Creates recorded so far." */
+export function recordedCountText(count: number): string {
+  return `${String(count)} ${count === 1 ? 'Create' : 'Creates'} recorded so far.`;
+}
+
 /** The request's state as the page shows it. */
 export function requestStateLabel(request: GenerationRequest): string {
+  if (recordedCreates(request) > 0) {
+    return RECORDED_LABEL;
+  }
   if (request.state === 'workspace' && request.step === CHOOSE_WORKSPACE_STEP) {
     return 'Waiting for you in Suno: choose the Song’s workspace in the extension’s panel';
   }

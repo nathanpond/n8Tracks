@@ -146,6 +146,8 @@ export const NOT_EXPECTED =
   'Suno’s answer to Create was not as expected, so its clips were not recorded in n8Tracks; a sync will bring them in.';
 export const LEFT_CREATE =
   'You left Suno’s Create page, so the extension stopped watching for Creates.';
+/** What the panel adds once the user pressed Done (#430). */
+export const FINISHED_CREATES = 'You pressed Done, so the extension stopped watching for Creates.';
 export const SAME_NAME =
   "Suno has more than one workspace with the name of the Song's workspace, so the extension cannot tell which row is the Song's, and Suno did not show the Song's workspace in time. Select it in Suno's workspace list or rename one of them in Suno, then try again.";
 
@@ -286,6 +288,8 @@ export class SunoGenerate {
   private watching = false;
   /** How many Creates n8Tracks has recorded for the request. */
   private created = 0;
+  /** The user pressed Done and n8Tracks finished the request (#430): no more Creates are watched for. */
+  private finished = false;
   /** Waiting for the user to load the source by hand and press Continue (#148). */
   private waitingSource: (() => void) | null = null;
   /** Whether the completion watch is running (#154), and the Suno IDs it watches. */
@@ -326,6 +330,41 @@ export class SunoGenerate {
     const waiting = this.waitingSource;
     this.waitingSource = null;
     waiting?.();
+  }
+
+  /**
+   * "Done" in the panel (#430): n8Tracks ends the request as finished, and the tab stops watching for
+   * Creates. When n8Tracks cannot be reached, Done stays on offer; when the request has ended already,
+   * the panel says what n8Tracks says about it.
+   */
+  async finish(): Promise<void> {
+    const answer = reply(
+      await this.options.send({ type: 'generate-finish' }).catch(() => undefined),
+    );
+    if (answer.ok || answer.ended) {
+      this.finished = true;
+    }
+    this.options.show(
+      answer.ok
+        ? {
+            kind: 'recorded',
+            recorded: true,
+            ended: true,
+            message: `${this.createdText()} ${FINISHED_CREATES}`,
+          }
+        : answer.ended
+          ? { kind: 'recorded', recorded: true, ended: true, message: answer.message }
+          : {
+              kind: 'recorded',
+              recorded: true,
+              message: `${this.createdText()} ${answer.message}`,
+            },
+    );
+  }
+
+  /** Whether Done ended the request (#430); read afresh after each wait. */
+  private hasFinished(): boolean {
+    return this.finished;
   }
 
   private answer(choice: Choice): void {
@@ -1045,7 +1084,7 @@ export class SunoGenerate {
     try {
       for (;;) {
         const limit = this.created > 0 ? AFTER_LAST_CREATE_MS : BEFORE_FIRST_CREATE_MS;
-        if (clock.now() - since >= limit) {
+        if (this.hasFinished() || clock.now() - since >= limit) {
           return;
         }
         if (sunoPageOf(this.options.page.address()) !== 'create') {
@@ -1058,7 +1097,7 @@ export class SunoGenerate {
           CREATE_POLL_MS,
           signal,
         );
-        if (message === null) {
+        if (message === null || this.hasFinished()) {
           continue;
         }
         if (!(await this.record(message))) {
@@ -1183,14 +1222,16 @@ export class SunoGenerate {
 
   /** The tab left the Create page after a recorded Create: the request is done. */
   private async leave(): Promise<void> {
-    if (this.created === 0) {
+    if (this.created === 0 || this.finished) {
       // Nothing recorded: the request goes on waiting (a load of the Create page fills the form again).
+      // Done ended it already (#430).
       return;
     }
     this.step = GENERATE_STEPS.left;
     this.options.show({
       kind: 'recorded',
       recorded: true,
+      ended: true,
       message: `${this.createdText()} ${LEFT_CREATE}`,
     });
     await this.options

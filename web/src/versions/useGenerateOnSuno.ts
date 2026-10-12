@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import {
   cancelGenerationRequest,
   createGenerationRequest,
+  finishGenerationRequest,
   useGenerationRequest,
   type GenerationRequest,
   type UnavailableSource,
@@ -25,6 +26,8 @@ export interface GenerateOnSunoController {
   problem: Problem | null;
   start: () => void;
   cancel: () => void;
+  /** Done (#430): ends a request that has recorded a Create as done. */
+  finish: () => void;
   openOptions: () => void;
 }
 
@@ -126,9 +129,35 @@ export function useGenerateOnSuno(versionId: string): GenerateOnSunoController {
     void run();
   }, [request, show, reload]);
 
+  const finish = useCallback(() => {
+    if (request === null) {
+      return;
+    }
+    const run = async () => {
+      setBusy(true);
+      try {
+        const finished = await finishGenerationRequest(request.id);
+        if (finished.kind === 'finished') {
+          show(finished.request);
+        } else {
+          if (finished.kind === 'failed') {
+            setProblem({
+              kind: 'failed',
+              message: 'The request could not be finished. Try again.',
+            });
+          }
+          reload();
+        }
+      } finally {
+        setBusy(false);
+      }
+    };
+    void run();
+  }, [request, show, reload]);
+
   const openOptions = useCallback(() => {
     void bridge.send({ type: 'open-options' });
   }, [bridge]);
 
-  return { versionId, busy, request, problem, start, cancel, openOptions };
+  return { versionId, busy, request, problem, start, cancel, finish, openOptions };
 }

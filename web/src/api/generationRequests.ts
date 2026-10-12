@@ -85,6 +85,13 @@ export type CreateRequestResult =
 export type CancelRequestResult =
   { kind: 'cancelled'; request: GenerationRequest } | { kind: 'ended' } | { kind: 'failed' };
 
+/**
+ * What Done came to (#430): finished, or it had ended already or recorded no Create yet (409:
+ * `request_ended`, `nothing_recorded`; the page reads it again), or failed otherwise.
+ */
+export type FinishRequestResult =
+  { kind: 'finished'; request: GenerationRequest } | { kind: 'refused' } | { kind: 'failed' };
+
 function nullableText(value: unknown): value is string | null {
   return value === null || typeof value === 'string';
 }
@@ -218,6 +225,27 @@ export async function createGenerationRequest(versionId: string): Promise<Create
       };
     }
     return { kind: 'failed' };
+  } catch {
+    return { kind: 'failed' };
+  }
+}
+
+/**
+ * Done (#430): ends an active request that has recorded a Create as done, not cancelled. The
+ * Generations its Creates recorded are unchanged.
+ */
+export async function finishGenerationRequest(id: string): Promise<FinishRequestResult> {
+  try {
+    const response = await apiFetch(`${requestPath(id)}/finish`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    const answer = await body(response);
+    if (response.ok && isGenerationRequest(answer)) {
+      return { kind: 'finished', request: answer };
+    }
+    return response.status === 409 ? { kind: 'refused' } : { kind: 'failed' };
   } catch {
     return { kind: 'failed' };
   }

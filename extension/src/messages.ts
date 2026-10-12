@@ -351,6 +351,11 @@ export type Request =
    */
   | { type: 'generate-completion'; clips: Record<string, unknown>[] }
   /**
+   * Done in the panel (#430): once a Create is recorded, the user ends the request as finished
+   * (not cancelled); the tab stops watching for Creates.
+   */
+  | { type: 'generate-finish' }
+  /**
    * Load library or Refresh in the Download view (#215): the library page is opened again and read
    * on its next load, carrying the selection. Refused while a sync or Generate on Suno runs.
    */
@@ -434,6 +439,7 @@ export interface ResponseFor {
   'generate-observed': GenerateReply<{ recorded: ObservedSummary }>;
   'generate-source': GenerateReply;
   'generate-completion': GenerateReply<{ watching: string[] }>;
+  'generate-finish': GenerateReply;
   'download-begin': DownloadReply;
   'download-resume': { load: DownloadLoad | null };
   'download-lookup': ClipLookupReply;
@@ -511,6 +517,7 @@ export const GENERATE_TYPES = [
   'generate-observed',
   'generate-source',
   'generate-completion',
+  'generate-finish',
 ] as const satisfies readonly Request['type'][];
 
 export type GenerateRequest = Extract<Request, { type: (typeof GENERATE_TYPES)[number] }>;
@@ -711,6 +718,7 @@ export function isRequest(value: unknown): value is Request {
       );
     case 'diagnostic-report':
     case 'generate-resume':
+    case 'generate-finish':
       return true;
     case 'generate-progress':
       return (

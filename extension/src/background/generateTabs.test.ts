@@ -65,6 +65,8 @@ async function setup(tabs: GenerateTab[] = []) {
       message: '2 Generations recorded on n8-1-v1.',
       observed: [{ outcome: 'attached' }],
     });
+  let finish = (): Response =>
+    jsonResponse(200, { id: REQUEST, state: 'done', active: false, step: 'finished' });
   let discovered = (): Response =>
     jsonResponse(200, {
       items: [
@@ -104,6 +106,9 @@ async function setup(tabs: GenerateTab[] = []) {
     }
     if (path === `${REQUEST_PATH}/observed-create` && method === 'POST') {
       return Promise.resolve(observedCreate());
+    }
+    if (path === `${REQUEST_PATH}/finish` && method === 'POST') {
+      return Promise.resolve(finish());
     }
     if (path === `${REQUEST_PATH}/clips` && method === 'POST') {
       return Promise.resolve(jsonResponse(200, { outcome: 'completed' }));
@@ -175,6 +180,9 @@ async function setup(tabs: GenerateTab[] = []) {
     },
     answerObserved: (answer: () => Response) => {
       observedCreate = answer;
+    },
+    answerFinish: (answer: () => Response) => {
+      finish = answer;
     },
   };
 }
@@ -536,6 +544,56 @@ describe('Generate on Suno: the Suno tab', () => {
     expect(words).toContain('were not recorded');
     expect(words).toContain('request_ended');
     expect(calls.filter((call) => call.path.endsWith('/observed-create'))).toHaveLength(4);
+    expect(stored.get(GENERATION_TAB_KEY) ?? null).toBeNull();
+  });
+
+  it('finishes the request with Done from the panel and forgets the tab (#430)', async () => {
+    const { handOff, generate, calls, stored } = await setup();
+    await handOff();
+
+    // Only the generation's own tab may.
+    expect(await generate.handleTab({ type: 'generate-finish' }, 7)).toMatchObject({
+      ok: false,
+      ended: true,
+    });
+    expect(calls.filter((call) => call.path.endsWith('/finish'))).toEqual([]);
+
+    expect(await generate.handleTab({ type: 'generate-finish' }, 42)).toEqual({ ok: true });
+    expect(calls.filter((call) => call.path.endsWith('/finish'))).toEqual([
+      { method: 'POST', path: `${REQUEST_PATH}/finish`, body: {} },
+    ]);
+    expect(stored.get(GENERATION_TAB_KEY) ?? null).toBeNull();
+    expect(await generate.handleTab({ type: 'generate-resume' }, 42)).toEqual({ job: null });
+  });
+
+  it('says what n8Tracks says when Done finds the request ended, and keeps the tab when n8Tracks cannot answer (#430)', async () => {
+    const { handOff, generate, stored, answerFinish } = await setup();
+    await handOff();
+
+    answerFinish(() => jsonResponse(503, {}));
+    expect(await generate.handleTab({ type: 'generate-finish' }, 42)).toMatchObject({
+      ok: false,
+      ended: false,
+    });
+    expect(stored.get(GENERATION_TAB_KEY)).toMatchObject({ requestId: REQUEST });
+
+    answerFinish(() => jsonResponse(409, { code: 'nothing_recorded' }));
+    const early = await generate.handleTab({ type: 'generate-finish' }, 42);
+    expect(early).toMatchObject({ ok: false, ended: false });
+    expect(JSON.stringify(early)).toContain('nothing_recorded');
+    expect(stored.get(GENERATION_TAB_KEY)).toMatchObject({ requestId: REQUEST });
+
+    answerFinish(() =>
+      jsonResponse(409, {
+        code: 'request_ended',
+        current: { state: 'done', message: '1 Create recorded, with 2 Generations.' },
+      }),
+    );
+    expect(await generate.handleTab({ type: 'generate-finish' }, 42)).toEqual({
+      ok: false,
+      ended: true,
+      message: '1 Create recorded, with 2 Generations.',
+    });
     expect(stored.get(GENERATION_TAB_KEY) ?? null).toBeNull();
   });
 

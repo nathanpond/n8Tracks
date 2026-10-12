@@ -111,10 +111,16 @@ public abstract record GenerationRequestChangeOutcome
     /// <paramref name="Reason"/> says why in plain words. A sync brings the clips in.
     /// </summary>
     public sealed record NotRecorded(string Reason) : GenerationRequestChangeOutcome;
+
+    /// <summary>
+    /// Done on an active request that has recorded no Create yet (#430): nothing changed. Cancel ends
+    /// a request that made nothing.
+    /// </summary>
+    public sealed record NothingRecorded(GenerationRequest Request) : GenerationRequestChangeOutcome;
 }
 
 /// <summary>
-/// Generate on Suno requests (#144): create, read, claim, report progress, cancel, and expire. A
+/// Generate on Suno requests (#144): create, read, claim, report progress, cancel, finish (#430), and expire. A
 /// request is a snapshot of what a Version is to be generated with, handed to the extension; it is not
 /// a Generation, and nothing here attaches one, freezes a Version, or changes any other catalog row.
 /// One request per Version is active at a time: a new one cancels the one before. A request is settled
@@ -374,6 +380,50 @@ public sealed class GenerationRequestService(
         return await store.TryMoveAsync(cancelled, request.State, request.UpdatedUtc, cancellationToken).ConfigureAwait(false)
             ? new GenerationRequestChangeOutcome.Changed(cancelled)
             : await CancelAsync(id, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The user finishes the request (#430, Done on the Version page or in the extension's panel): it
+    /// ends as done, as it would when the Suno tab leaves Create, saying what its Creates came to. The
+    /// Generations its Creates recorded are not touched. Only an active request with at least one
+    /// recorded Create may be finished (<c>NothingRecorded</c> otherwise; Cancel ends one that made
+    /// nothing). <paramref name="credentialId"/> is the calling credential when only the claim lets it
+    /// act (the extension's <c>suno.generate</c> token): another credential's request is refused
+    /// (<c>ClaimedByAnother</c>). Null for a caller that may change any request (a session, or
+    /// <c>versions.write</c>). The extension reads the request before each step and stops when it is no
+    /// longer active.
+    /// </summary>
+    public async Task<GenerationRequestChangeOutcome> FinishAsync(Guid id, Guid? credentialId, CancellationToken cancellationToken)
+    {
+        if (await FindAsync(id, cancellationToken).ConfigureAwait(false) is not { } request)
+        {
+            return new GenerationRequestChangeOutcome.NotFound();
+        }
+
+        if (!GenerationRequestRules.IsActive(request.State))
+        {
+            return new GenerationRequestChangeOutcome.Ended(request);
+        }
+
+        if (credentialId is not null && request.CredentialId != credentialId)
+        {
+            return new GenerationRequestChangeOutcome.ClaimedByAnother(request);
+        }
+
+        if (ObservedCreates.Read(request.ObservedJson) is not { Count: > 0 } observed)
+        {
+            return new GenerationRequestChangeOutcome.NothingRecorded(request);
+        }
+
+        var finished = GenerationRequestRules.Moved(
+            request,
+            GenerationRequestState.Done,
+            GenerationRequestRules.FinishedStep,
+            $"{GenerationRequestRules.FinishedMessage} {DoneMessage(observed)}",
+            time.GetUtcNow());
+        return await store.TryMoveAsync(finished, request.State, request.UpdatedUtc, cancellationToken).ConfigureAwait(false)
+            ? new GenerationRequestChangeOutcome.Changed(finished)
+            : await FinishAsync(id, credentialId, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>The errors of a report, keyed by field; empty when it is valid.</summary>

@@ -195,6 +195,9 @@ export function startSunoContent(options: SunoContentOptions): SunoContent {
     continueSource: () => {
       generate?.continueSource();
     },
+    finish: () => {
+      void generate?.finish();
+    },
   });
 
   // Set below, like the sync: the view's buttons call the controller.

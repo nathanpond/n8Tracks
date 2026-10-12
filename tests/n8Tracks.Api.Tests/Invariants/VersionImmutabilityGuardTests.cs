@@ -1093,6 +1093,7 @@ public sealed class VersionImmutabilityGuardTests
         ["POST /api/v1/suno/generation-requests/{id:guid}/claim"] = "binds a generation request (suno_generation_requests, #144) to the extension's credential; the Version is only read",
         ["PATCH /api/v1/suno/generation-requests/{id:guid}"] = "records the extension's progress on a generation request (suno_generation_requests, #144); the Version is only read",
         ["POST /api/v1/suno/generation-requests/{id:guid}/cancel"] = "cancels a generation request (suno_generation_requests, #144); the Version is only read",
+        ["POST /api/v1/suno/generation-requests/{id:guid}/finish"] = "ends a generation request as done (suno_generation_requests, #430); the Version and the Generations its Creates recorded are only read",
     };
 
     /// <summary>How each public method of a catalog service is called, each creation input touched in turn.</summary>
@@ -1137,6 +1138,15 @@ public sealed class VersionImmutabilityGuardTests
         }),
         ["GenerationRequestService.CancelAsync(Guid, CancellationToken)"] = Service<GenerationRequestService>(static async (service, target) =>
             await service.CancelAsync(await GenerationRequestOfAsync(service, target), default)),
+        ["GenerationRequestService.FinishAsync(Guid, Nullable`1, CancellationToken)"] = new(async target =>
+        {
+            // Done (#430) after a recorded Create: the request ends; no Version changes.
+            var (id, token) = await ObservedCreateApi.WaitingRequestAsync(target.Factory, target.Client, target.VersionId);
+            var stamp = Guid.NewGuid().ToString("N");
+            await ObservedCreateApi.RecordAsync(target.Client, token, id, ObservedCreateApi.Response("songs-advanced", $"service-finish-{stamp}", [$"service-finish-{stamp}-a"]), ObservedCreateApi.Request("songs-advanced"));
+            var outcome = await InScopeAsync<GenerationRequestService, GenerationRequestChangeOutcome>(target, service => service.FinishAsync(id, null, default));
+            Assert.IsType<GenerationRequestChangeOutcome.Changed>(outcome);
+        }),
         ["VersionService.SetCurrentAsync(String, String, CancellationToken)"] = Service<VersionService>(static (service, target) => service.SetCurrentAsync(target.SongShortcode, target.VersionShortcode, default)),
         ["VersionService.CreateFromAsync(Guid, VersionCreateRequest, CancellationToken)"] = Service<VersionService>(static async (service, target) =>
         {

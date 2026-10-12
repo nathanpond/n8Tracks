@@ -17,7 +17,9 @@ namespace n8Tracks.Api.Endpoints;
 /// <summary>
 /// Generate on Suno requests (#144). The web app makes a request from a Version (<c>versions.write</c>)
 /// and hands its ID to the extension, which claims it with its own token and reports each step
-/// (<c>suno.generate</c>); the Version page follows it and may cancel it (<c>versions.write</c>). A
+/// (<c>suno.generate</c>); the Version page follows it and may cancel it (<c>versions.write</c>), and,
+/// once a Create is recorded, finish it with Done (#430: <c>versions.write</c>, or the claiming
+/// extension's <c>suno.generate</c> from its panel). A
 /// request is not a Generation: only the extension's reports of the user's own Create (#149) attach
 /// Generations, and of their finished clips (#154) fill them in once.
 /// The snapshot (lyrics, styles, prompts) is answered only to <c>suno.generate</c> and never logged
@@ -31,6 +33,7 @@ internal static class SunoGenerationRequestsEndpoints
     public const string RequestPath = RequestsPath + "/{id:guid}";
     public const string ClaimPath = RequestPath + "/claim";
     public const string CancelPath = RequestPath + "/cancel";
+    public const string FinishPath = RequestPath + "/finish";
     public const string ObservedCreatePath = RequestPath + "/observed-create";
     public const string ClipsPath = RequestPath + "/clips";
 
@@ -43,6 +46,7 @@ internal static class SunoGenerationRequestsEndpoints
     public const string CreateNotRecordedCode = "create_not_recorded";
     public const string AlreadyCompleteCode = "already_complete";
     public const string NotProvisionalCode = "not_provisional";
+    public const string NothingRecordedCode = "nothing_recorded";
 
     public static IEndpointRouteBuilder MapSunoGenerationRequests(this IEndpointRouteBuilder endpoints)
     {
@@ -126,6 +130,16 @@ internal static class SunoGenerationRequestsEndpoints
             .WithName("CancelGenerationRequest")
             .WithSummary("Cancels an active request: the extension stops before its next step and leaves the Suno tab as it is. 409 request_ended once it has ended.")
             .RequireScope(CredentialScopes.VersionsWrite)
+            .Produces<GenerationRequestResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict);
+
+        endpoints.MapPost(FinishPath, FinishAsync)
+            .WithName("FinishGenerationRequest")
+            .WithSummary("Done (#430): ends an active request that has recorded at least one Create as done (not cancelled), as leaving Suno's Create page does; its message says what the Creates came to. The Generations they recorded are unchanged. The extension stops watching for Creates at its next check. A session or versions.write may finish any request; a suno.generate credential only the one it claimed (403 request_claimed otherwise). 409 nothing_recorded while no Create is recorded (nothing changes; cancel it instead); 409 request_ended once it has ended.")
+            .RequireAnyScope(CredentialScopes.VersionsWrite, CredentialScopes.SunoGenerate)
             .Produces<GenerationRequestResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
@@ -418,6 +432,28 @@ internal static class SunoGenerationRequestsEndpoints
         return Refusal(context, outcome);
     }
 
+    /// <summary>200 with the finished request; 403, 404, or 409 otherwise.</summary>
+    private static async Task<Results<Ok<GenerationRequestResponse>, ProblemHttpResult>> FinishAsync(
+        Guid id,
+        GenerationRequestService requests,
+        HttpContext context,
+        ILoggerFactory loggers,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        // versions.write (a session holds it) may finish any request; suno.generate only its own claim.
+        var credentialId = ScopeMiddleware.Holds(context, CredentialScopes.VersionsWrite) ? null : CredentialOf(context.User);
+        var outcome = await requests.FinishAsync(id, credentialId, cancellationToken);
+        if (outcome is GenerationRequestChangeOutcome.Changed changed)
+        {
+            Log(loggers).LogInformation("Generation request finished: {GenerationRequestId}", id);
+            return TypedResults.Ok(GenerationRequestResponse.From(changed.Request, withSnapshot: false));
+        }
+
+        return Refusal(context, outcome);
+    }
+
     private static ProblemHttpResult Refusal(HttpContext context, GenerationRequestChangeOutcome outcome) => outcome switch
     {
         GenerationRequestChangeOutcome.NotFound => NoSuchRequest(context),
@@ -429,7 +465,9 @@ internal static class SunoGenerationRequestsEndpoints
             [new("current", GenerationRequestResponse.From(ended.Request, withSnapshot: false))]),
         GenerationRequestChangeOutcome.ClaimedByAnother => ApiProblem.For(
             context,
-            context.Request.Method == HttpMethods.Patch || context.Request.Path.Value?.EndsWith("/observed-create", StringComparison.Ordinal) == true
+            context.Request.Method == HttpMethods.Patch
+                || context.Request.Path.Value?.EndsWith("/observed-create", StringComparison.Ordinal) == true
+                || context.Request.Path.Value?.EndsWith("/finish", StringComparison.Ordinal) == true
                 ? StatusCodes.Status403Forbidden
                 : StatusCodes.Status409Conflict,
             RequestClaimedCode,
@@ -440,6 +478,12 @@ internal static class SunoGenerationRequestsEndpoints
             RequestNotClaimedCode,
             "Claim this generation request before reporting on it."),
         GenerationRequestChangeOutcome.Invalid invalid => ApiProblem.ValidationFailed(context, invalid.Errors),
+        GenerationRequestChangeOutcome.NothingRecorded nothing => ApiProblem.For(
+            context,
+            StatusCodes.Status409Conflict,
+            NothingRecordedCode,
+            "No Create has been recorded on this generation request yet; click Create in Suno, or cancel the request.",
+            [new("current", GenerationRequestResponse.From(nothing.Request, withSnapshot: false))]),
         GenerationRequestChangeOutcome.NotRecorded notRecorded => ApiProblem.For(
             context,
             StatusCodes.Status409Conflict,

@@ -15,6 +15,7 @@ function view() {
     create: vi.fn<() => void>(),
     pick: vi.fn<(option: WorkspaceOption) => void>(),
     continueSource: vi.fn<() => void>(),
+    finish: vi.fn<() => void>(),
   };
   const generate = new GenerateView(document, options);
   const main = document.createElement('main');
@@ -127,7 +128,7 @@ describe('Generate on Suno in the panel', () => {
       '2 Generations recorded on n8-1-v1.',
     );
     expect(generate.element.textContent).toContain('The extension never clicks Create.');
-    expect(buttons()).toEqual([]);
+    expect(buttons().map((button) => button.textContent)).toEqual(['Done']);
     await expectNoAxeViolations(document);
 
     generate.show({
@@ -139,6 +140,52 @@ describe('Generate on Suno in the panel', () => {
       'Not recorded; a sync will bring them in.',
     );
     await expectNoAxeViolations(document);
+  });
+
+  it('offers Done once a Create is recorded, and Done asks for the request to be finished (#430)', async () => {
+    const { generate, options, button, buttons } = view();
+
+    generate.show({
+      kind: 'recorded',
+      recorded: true,
+      message: 'Your Create was recorded in n8Tracks.',
+    });
+    const done = button('Done');
+    expect(done?.getAttribute('aria-describedby')).toBe('n8-generate-recorded');
+    expect(generate.element.textContent).toContain('press Done when you have finished');
+    await expectNoAxeViolations(document);
+
+    done?.click();
+    expect(options.finish).toHaveBeenCalledTimes(1);
+    expect(done?.disabled).toBe(true);
+
+    // Once the request has ended (Done, or the tab left Create), nothing is offered.
+    generate.show({
+      kind: 'recorded',
+      recorded: true,
+      ended: true,
+      message:
+        'Your Create was recorded in n8Tracks. You pressed Done, so the extension stopped watching for Creates.',
+    });
+    expect(buttons()).toEqual([]);
+    expect(generate.element.querySelector('[role="status"]')?.textContent).toContain(
+      'You pressed Done',
+    );
+    expect(generate.element.textContent).not.toContain('Each further Create');
+    await expectNoAxeViolations(document);
+
+    // A Create whose clips were not recorded offers no Done of its own.
+    generate.show({ kind: 'recorded', recorded: false, message: 'Not recorded.' });
+    expect(buttons()).toEqual([]);
+  });
+
+  it('offers no Done when the panel was given no way to finish', () => {
+    const generate = new GenerateView(document, { create: vi.fn(), pick: vi.fn() });
+    document.body.append(generate.element);
+
+    generate.show({ kind: 'recorded', recorded: true, message: 'Recorded.' });
+
+    expect(generate.element.querySelectorAll('button')).toHaveLength(0);
   });
 
   it('asks the user to load the source by hand, and Continue asks for it to be checked again (#148)', async () => {
