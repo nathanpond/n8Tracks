@@ -58,6 +58,10 @@ Sanitized on 2026-10-11 from the TS-007 captures of `/create?wid=<workspace ID>`
 - `feed-v3.workspace-create-wid.page-1.response.json`: the answer to `feed-v3.workspace-create-wid.request.json` (`cursor: null`): `{ clips, next_cursor, has_more: true }`. The clips' `project.id` is the workspace.
 - `feed-v3.workspace-create-wid.page-2.request.json` / `.response.json`: the next page, asked for with page 1's `next_cursor` (redacted), the same `workspace` filter, and `has_more: true`. Seen live on 2026-10-11: scrolling the song list asks for each next page until `has_more: false` (pages of 20, 20, and 5 for 45 clips); the last page is not captured, and the reader's tests set `has_more: false` on a copy.
 
+### TS-007-15 / #434: the workspace list's search box (constructed, not captured)
+
+- `project-me.search.response.json`: **constructed, not a capture.** What Generate on Suno takes after typing a name into the workspace list's search box (`input[aria-label="Search workspaces"]`, already in `page.workspace-selector.html`). It is shaped as a `GET /api/project/me` page (`num_total_results`, `current_page`, `projects`), on the assumption that Suno searches on the server; that, the query parameter it sends, and whether it filters the rows it holds instead, need live confirmation. Two workspaces of the same redacted name, as a search by name would find, and made-up IDs. The extension takes any workspace-list answer that follows the typing, so a different shape of answer only finds fewer workspaces.
+
 ## Page snapshots
 
 Each `page.<name>.html` is the HTML of the relevant region, taken in the maintainer's browser on suno.com.

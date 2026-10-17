@@ -1,16 +1,14 @@
 import type { ObservedMessage } from './observed.ts';
-import type { Target } from './primitives.ts';
 
 /**
- * Suno's workspaces as Generate on Suno reads them (#145, TS-003). The workspace list is
- * `GET /api/project/me?page=N`, 20 per page, and is complete when the pages seen hold its
- * `num_total_results`. Suno's rows carry no ID, so a workspace is matched to its row by the name
- * Suno's own list gives for its ID; two rows that would match are never chosen between. Creating
- * one sends `POST /api/project`, whose answer gives the new workspace's ID.
+ * Suno's workspaces as Generate on Suno reads them (#145, TS-003, TS-007-15). The workspace list
+ * is `GET /api/project/me?page=N`, 20 per page, and Suno loads a further page only on a trusted
+ * scroll by the user (TS-007-15): the extension cannot page through it, so Generate never needs the
+ * whole list. It takes the workspaces of every list answer the page gets (the pages Suno loaded,
+ * and the answers to a search typed into the list's search box), each once by ID. A workspace is
+ * opened by its address (`/create?wid=<id>`), never by its row, whose name may be another's.
+ * Creating one sends `POST /api/project`, whose answer gives the new workspace's ID.
  */
-
-/** The most pages read before the list is taken as one that does not end. */
-export const MAXIMUM_WORKSPACE_PAGES = 50;
 
 /** A workspace as Suno lists it: its ID, its name, and the raw project, for n8Tracks' record. */
 export interface ListedWorkspace {
@@ -31,70 +29,35 @@ function workspaceOf(project: unknown): ListedWorkspace | null {
 }
 
 /**
- * Suno's workspace list as it pages in. A page that comes again (the page asks for its first page
- * whenever the list opens) replaces the one before; the list is complete once pages 1 to N are all
- * here and hold `num_total_results`.
+ * The workspaces Suno has shown the page so far: every project of every list answer taken, in the
+ * order first seen, each once by ID (a later answer's copy replaces the earlier, so a rename
+ * follows). Never complete: what Suno did not load is not here (TS-007-15).
  */
-export class WorkspaceList {
-  private readonly pages = new Map<number, ListedWorkspace[]>();
-  private total: number | null = null;
+export class KnownWorkspaces {
+  private readonly byId = new Map<string, ListedWorkspace>();
 
-  /** Takes a response of the list; false when it is not one (no page number or total). */
+  /** Takes a list answer (a page or a search's); false when it is not one (no list of projects). */
   add(message: ObservedMessage): boolean {
     const body = message.body;
-    if (
-      message.kind !== 'workspaces' ||
-      !isRecord(body) ||
-      typeof body.current_page !== 'number' ||
-      typeof body.num_total_results !== 'number' ||
-      !Array.isArray(body.projects)
-    ) {
+    if (message.kind !== 'workspaces' || !isRecord(body) || !Array.isArray(body.projects)) {
       return false;
     }
-    this.pages.set(
-      body.current_page,
-      body.projects.map(workspaceOf).filter((item): item is ListedWorkspace => item !== null),
-    );
-    this.total = body.num_total_results;
+    for (const workspace of body.projects.map(workspaceOf)) {
+      if (workspace !== null) {
+        this.byId.set(workspace.id, workspace);
+      }
+    }
     return true;
   }
 
-  /** How many pages in a row, from the first, are here. */
-  get pagesInOrder(): number {
-    let count = 0;
-    while (this.pages.has(count + 1)) {
-      count += 1;
-    }
-    return count;
-  }
-
-  /**
-   * Whether the whole list is here: pages from the first, in a row, holding as many workspaces as
-   * the total Suno gave. The workspaces are counted, not the pages: Suno's page size changed from 20
-   * (TS-003) to the whole list at once (TS-007-14).
-   */
-  get complete(): boolean {
-    if (this.total === null || this.pagesInOrder === 0) {
-      return false;
-    }
-    const ids = new Set<string>();
-    for (let number = 1; number <= this.pagesInOrder; number += 1) {
-      for (const workspace of this.pages.get(number) ?? []) {
-        ids.add(workspace.id);
-      }
-    }
-    return ids.size >= this.total;
-  }
-
-  /** Every workspace read so far, in Suno's order, each once. */
+  /** Every workspace known, in the order first seen. */
   workspaces(): ListedWorkspace[] {
-    const seen = new Map<string, ListedWorkspace>();
-    for (const number of [...this.pages.keys()].toSorted((a, b) => a - b)) {
-      for (const workspace of this.pages.get(number) ?? []) {
-        seen.set(workspace.id, workspace);
-      }
-    }
-    return [...seen.values()];
+    return [...this.byId.values()];
+  }
+
+  /** The workspace with this ID, if known. */
+  get(id: string): ListedWorkspace | undefined {
+    return this.byId.get(id);
   }
 }
 
@@ -116,33 +79,18 @@ function collapse(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
 }
 
-/** `text` as a regular expression that matches it literally. */
-function literally(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/**
- * The row of the workspace named `name` in Suno's list (TS-003: `page.workspace-selector.html`):
- * a `role=button` whose name is the workspace's name, then its song count and age. Null for a
- * blank name, which no row can be found by. A longer name that starts with this one matches too,
- * so `find` then reports two and nothing is chosen. The name is never part of the description,
- * which reaches the diagnostic report.
- */
-export function workspaceRow(name: string): Target | null {
-  const wanted = collapse(name);
-  return wanted === ''
-    ? null
-    : {
-        role: 'button',
-        name: new RegExp(`^${literally(wanted)}(?: |$)`),
-        description: "the workspace's row in Suno's workspace list",
-      };
-}
-
 /** The workspaces in `list` with the name `name`, compared as Suno shows it. */
 export function namedLike(list: readonly ListedWorkspace[], name: string): ListedWorkspace[] {
   const wanted = collapse(name);
   return list.filter((workspace) => collapse(workspace.name) === wanted);
+}
+
+/**
+ * Whether `name` holds `query`, compared without regard to case or runs of spaces: how the panel
+ * narrows the workspaces it offers to a search. A blank query holds every name.
+ */
+export function nameHolds(name: string, query: string): boolean {
+  return collapse(name).toLocaleLowerCase().includes(collapse(query).toLocaleLowerCase());
 }
 
 /**

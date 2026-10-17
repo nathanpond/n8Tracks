@@ -12,9 +12,12 @@ import type { ObservedKind, ObservedMessage, ObservedRequest } from './observed.
  * Paging and end of list are TS-003's. A list counts as read only when its end was seen; a page
  * that does not look as expected, one that comes twice, or one that does not come stops the read
  * with the step named, and the content script discards the export. Nothing partial is offered for
- * review, so a completed export's `libraryComplete`, `trashedComplete`, and `workspacesComplete`
- * are what the read set out to read: a whole-library read is the only one with `libraryComplete`,
- * and `trashedComplete` is set only when a Trash leg was read (#420).
+ * review, so a completed export's `libraryComplete` and `trashedComplete` are what the read set out
+ * to read: a whole-library read is the only one with `libraryComplete`, and `trashedComplete` is set
+ * only when a Trash leg was read (#420). The one exception is the workspace list: Suno loads its
+ * next page only on the user's own scroll (TS-007-15), so when no next page comes after a scroll
+ * the sync goes on with what it read, and the header says `workspacesComplete: false` (#434). The
+ * server then marks no workspace Unavailable.
  */
 
 /** How long a page of a list may take to come, after the action that asks for it (20 seconds). */
@@ -178,6 +181,18 @@ interface ListSpec {
   parse: (body: unknown, request: ObservedRequest) => ListPage | { problem: string };
   /** Whether the list has ended, after this page was taken. */
   ended: (body: unknown, seenRecords: number, seenPages: number) => boolean;
+  /**
+   * Whether the read goes on with what it has, as an incomplete list, when no next page comes after
+   * the scroll that asked for it, instead of stopping (the workspace list, TS-007-15). It then asks
+   * once, not {@link PAGE_RETRIES} times more: a scripted scroll never brings Suno's next page.
+   */
+  goesOnShort?: boolean;
+}
+
+/** What reading one list came to: the records read, and whether its end was seen. */
+interface ListRead {
+  count: number;
+  complete: boolean;
 }
 
 function hasFilter(filters: unknown, name: string): boolean {
@@ -262,8 +277,9 @@ const TRASH: ListSpec = {
 };
 
 /**
- * The workspace list: `GET /api/project/me?page=N`; it has ended when the workspaces read number
- * `num_total_results` (counted, not pages: Suno now sends the whole list on one page, TS-007-14).
+ * The workspace list: `GET /api/project/me?page=N`, 20 a page; it has ended when the workspaces read
+ * number `num_total_results` (counted, not pages, TS-007-14). Suno loads a next page only on the
+ * user's own scroll (TS-007-15), so the read goes on short when none comes.
  */
 const WORKSPACES: ListSpec = {
   kind: 'workspaces',
@@ -284,6 +300,7 @@ const WORKSPACES: ListSpec = {
     isRecord(body) &&
     typeof body.num_total_results === 'number' &&
     records >= body.num_total_results,
+  goesOnShort: true,
 };
 
 function songCountOf(body: unknown): number | null {
@@ -318,7 +335,8 @@ function playlistSpec(id: string): ListSpec {
 
 /**
  * Reads one list to its end: takes each page Suno sends, asks for the next by `more`, and hands
- * the new records of each page to `take`. Throws {@link ReadStop} with `step` named, or
+ * the new records of each page to `take`. A list that {@link ListSpec.goesOnShort} ends short,
+ * incomplete, when no next page comes. Throws {@link ReadStop} with `step` named, or
  * {@link ReadCancelled}.
  */
 async function readList(
@@ -327,7 +345,7 @@ async function readList(
   context: ListContext,
   take: (records: Raw[]) => Promise<void>,
   opening = 'opening the page',
-): Promise<number> {
+): Promise<ListRead> {
   const keys = new Set<string>();
   const ids = new Set<string>();
   const cancelled = () => context.signal.aborted;
@@ -343,6 +361,10 @@ async function readList(
     for (let retry = 0; message === null && !cancelled(); retry += 1) {
       if (first) {
         throw new ReadStop(step, `${spec.what} within 20 seconds of ${opening}`, true);
+      }
+      if (spec.goesOnShort === true) {
+        // No next page came after the scroll: the list goes on as read so far (TS-007-15).
+        return { count: ids.size, complete: false };
       }
       if (retry === PAGE_RETRIES) {
         throw new ReadStop(
@@ -383,7 +405,7 @@ async function readList(
     }
     await take(fresh);
     if (spec.ended(message.body, ids.size, keys.size)) {
-      return ids.size;
+      return { count: ids.size, complete: true };
     }
     first = false;
     if (cancelled()) {
@@ -410,6 +432,7 @@ export function exportHeader(
   libraryFilters: unknown,
   versions: LegContext['versions'],
   capturedAt: string,
+  workspacesComplete = true,
 ): Record<string, unknown> {
   return {
     format: EXPORT_FORMAT,
@@ -430,7 +453,9 @@ export function exportHeader(
     libraryComplete: scope.kind === 'library',
     // Without a Trash leg nothing is promised about the Trash, and no trashed clips are sent (#420).
     trashedComplete: trashed,
-    workspacesComplete: true,
+    // False when Suno sent no further page of the workspace list (TS-007-15, #434): the server then
+    // changes no workspace's availability.
+    workspacesComplete,
     workspaces,
     playlists: [],
     // The library filters Suno applied (TS-003: by default no disliked clips, stems, or Studio
@@ -458,6 +483,7 @@ export async function readLeg(
   const counts = { ...start.counts };
   let partNumber = start.partNumber;
   let workspaces = start.workspaces;
+  let workspacesComplete = start.workspacesComplete ?? true;
   const buffer: Raw[] = [];
   let created = false;
 
@@ -471,6 +497,7 @@ export async function readLeg(
           filters,
           context.versions,
           context.now(),
+          workspacesComplete,
         ),
       );
       created = true;
@@ -501,7 +528,7 @@ export async function readLeg(
       const projects: Raw[] = [];
       // A direct load of the list makes no request for it (#421): the tab is pressed first.
       await context.openWorkspaceList(step);
-      await readList(
+      const read = await readList(
         WORKSPACES,
         step,
         context,
@@ -514,6 +541,7 @@ export async function readLeg(
         'opening the Workspaces tab',
       );
       workspaces = projects;
+      workspacesComplete = read.complete;
       break;
     }
     case 'library':
@@ -585,7 +613,7 @@ export async function readLeg(
       break;
     }
   }
-  return { leg: start.leg + 1, attempt: 0, partNumber, counts, workspaces };
+  return { leg: start.leg + 1, attempt: 0, partNumber, counts, workspaces, workspacesComplete };
 }
 
 /** The step the Download view (#215) names when reading the library stops. */
@@ -601,8 +629,9 @@ export async function readLibrary(
   context: ListContext,
   take: (records: readonly Record<string, unknown>[]) => void,
 ): Promise<number> {
-  return readList(LIBRARY, LIBRARY_STEP, context, (records) => {
+  const read = await readList(LIBRARY, LIBRARY_STEP, context, (records) => {
     take(records);
     return Promise.resolve();
   });
+  return read.count;
 }

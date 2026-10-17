@@ -3,14 +3,15 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { fakeClock, loadSnapshot } from '../../testing/snapshots.ts';
 import { nameOf } from '../primitives.ts';
 import { checkWorkflow } from '../registry.ts';
-import { expected, OK, runWorkflow, type Check } from '../workflow.ts';
+import { expected, OK, runWorkflow } from '../workflow.ts';
 import {
   createWorkspace,
   listOrBreadcrumb,
-  moreWorkspaces,
   openWorkspaces,
   PROFILE_MENU,
-  selectWorkspace,
+  searchWorkspaces,
+  signedIn,
+  WORKSPACE_SEARCH,
 } from './workspace.ts';
 
 afterEach(() => {
@@ -78,68 +79,67 @@ describe('opening the workspace list (TS-003: page.workspace-selector.html)', ()
     expect(listOrBreadcrumb(create)).toEqual(
       expected('Suno\'s workspace list, or the "Workspaces" breadcrumb that opens it'),
     );
-    expect(checkWorkflow(moreWorkspaces, create).state).toBe('not-working');
+    expect(checkWorkflow(searchWorkspaces, create).state).toBe('not-working');
   });
 });
 
-describe('selecting the Song’s workspace', () => {
-  it('presses the row with the name Suno lists for its ID, and waits for the page to show it', async () => {
-    let shownAfter = 0;
-    let presses = 0;
-    const shown = (): Check => (presses > 0 && (shownAfter += 1) > 1 ? OK : expected('shown'));
-    const { result, pressed } = run(selectWorkspace, 'workspace-selector', {
-      workspaceName: 'My Workspace',
-      shown,
+describe('checking sign-in, on Create and on a workspace’s songs (TS-007-15)', () => {
+  it('reads the profile menu and presses nothing, on /create and on /create?wid=', async () => {
+    for (const [snapshot, address] of [
+      ['workspace-selector', 'https://suno.com/create'],
+      ['create-workspace-songs', 'https://suno.com/create?wid=w-1'],
+    ] as const) {
+      const clock = fakeClock();
+      const page = loadSnapshot(snapshot, address, clock);
+      const pressed = clicks();
+      expect((await runWorkflow(signedIn, page, {}, { clock })).ok).toBe(true);
+      expect(pressed).toEqual([]);
+      document.body.innerHTML = '';
+    }
+  });
+
+  it('stops at "signed in" without the profile menu', async () => {
+    const clock = fakeClock();
+    const page = loadSnapshot('workspace-selector', 'https://suno.com/create', clock);
+    document.querySelector('[data-testid="profile-menu-button"]')?.remove();
+
+    const result = await runWorkflow(signedIn, page, {}, { clock });
+
+    expect(!result.ok && result.failure.step).toBe('signed in');
+  });
+});
+
+describe('searching the workspace list (TS-007-15: its search box, in page.workspace-selector.html)', () => {
+  it('types the name into the search box as typing would, and presses nothing', async () => {
+    const { result, pressed } = run(searchWorkspaces, 'workspace-selector', {
+      query: 'Night Drive',
     });
-    document.addEventListener('click', () => (presses += 1), { capture: true });
 
     expect((await result).ok).toBe(true);
-    expect(pressed).toHaveLength(1);
-    expect(pressed[0]).toMatch(/^My Workspace /);
-  });
-
-  it('never chooses between two rows of the same name: it stops at the step, pressing nothing', async () => {
-    const { result, pressed } = run(selectWorkspace, 'workspace-selector', {
-      workspaceName: '<redacted 13 chars>',
-      shown: () => OK,
-    });
-
-    const ended = await result;
-    expect(ended.ok).toBe(false);
-    expect(!ended.ok && ended.failure).toMatchObject({
-      step: 'select workspace',
-      phase: 'expect',
-      expected: "the workspace's row in Suno's workspace list (found 2, so none was chosen)",
-    });
+    expect(
+      document.querySelector<HTMLInputElement>('input[aria-label="Search workspaces"]')?.value,
+    ).toBe('Night Drive');
     expect(pressed).toEqual([]);
+    // A blank query clears it again.
+    const clock = fakeClock();
+    const page = loadSnapshot('workspace-selector', 'https://suno.com/create', clock);
+    const box = document.querySelector<HTMLInputElement>('input[aria-label="Search workspaces"]');
+    if (box !== null) {
+      box.value = 'Night Drive';
+    }
+    expect((await runWorkflow(searchWorkspaces, page, { query: '' }, { clock })).ok).toBe(true);
+    expect(box?.value).toBe('');
   });
 
-  it('stops naming the step when the list lacks the workspace', async () => {
-    const { result, pressed } = run(selectWorkspace, 'workspace-selector', {
-      workspaceName: 'Not in this list',
-      shown: () => OK,
-    });
+  it('is not working where the list is closed, and stops at the search box', async () => {
+    const clock = fakeClock();
+    const page = loadSnapshot('create-songs-simple', 'https://suno.com/create', clock);
 
-    const ended = await result;
-    expect(!ended.ok && ended.failure).toMatchObject({
-      step: 'select workspace',
-      expected: "the workspace's row in Suno's workspace list",
-    });
-    expect(pressed).toEqual([]);
-  });
+    const result = await runWorkflow(searchWorkspaces, page, { query: 'x' }, { clock });
 
-  it('stops when the page does not show the workspace after the press', async () => {
-    const { result } = run(selectWorkspace, 'workspace-selector', {
-      workspaceName: 'My Workspace',
-      shown: () => expected("Suno's library pane to show the workspace's songs"),
-    });
-
-    const ended = await result;
-    expect(!ended.ok && ended.failure).toMatchObject({
-      step: 'select workspace',
-      phase: 'verify',
-      expected: "Suno's library pane to show the workspace's songs",
-      pageMayBeChanged: true,
+    expect(!result.ok && result.failure).toMatchObject({
+      step: 'search box',
+      expected: WORKSPACE_SEARCH.description,
     });
   });
 });

@@ -19,7 +19,7 @@ import {
   couldNotOpen,
   FINISHED_CREATES,
   FORM_GONE,
-  LIST_NOT_READ,
+  LIST_WAIT_MS,
   MAXIMUM_LOADS,
   NO_CREATE_PAGE,
   NO_FORM,
@@ -27,13 +27,12 @@ import {
   NOT_SIGNED_IN,
   COMPLETION_LIMIT_MS,
   loadByHandFirst,
-  SAME_NAME,
   SunoGenerate,
 } from './sunoGenerate.ts';
 
 /**
- * The workspaces Suno lists in these tests. The rows of `page.workspace-selector.html` are named
- * "My Workspace" and redacted names, two of them "<redacted 13 chars>".
+ * The workspaces Suno has loaded in these tests (the page's first list answer), out of a longer
+ * list Suno pages in only on the user's own scroll (TS-007-15).
  */
 const PROJECTS = [
   { id: 'default', name: 'My Workspace', clip_count: 81 },
@@ -71,6 +70,8 @@ function feedFor(id: string) {
   );
 }
 
+const ON_MY_WORKSPACE = { sunoId: 'default', name: 'My Workspace', state: 'available' } as const;
+
 function job(change: Partial<GenerateJob> = {}): GenerateJob {
   return {
     requestId: '0199b1a0-7000-7000-9000-0000000000aa',
@@ -87,6 +88,11 @@ interface Options {
   address?: string;
   /** The workspace-list pages already seen when the tab starts. */
   pages?: unknown[];
+  /**
+   * Suno's answer to a name typed into the list's search box (TS-007-15), or null for none (it
+   * filters the rows it holds, or does not answer).
+   */
+  searchAnswer?: (query: string) => unknown;
   /** The service worker's answer to a step. */
   progress?: (request: Extract<Request, { type: 'generate-progress' }>) => GenerateReply;
   /** Whether Suno selects a workspace it just created by itself. */
@@ -99,14 +105,7 @@ interface Options {
   watching?: string[];
   /** The service worker's answer to a completion report (#154). */
   completionReply?: (request: Extract<Request, { type: 'generate-completion' }>) => unknown;
-  /** What the library pane asks Suno for when a workspace row is pressed. */
-  feedOnRow?: (workspaceId: string) => ObservedMessage;
-  /**
-   * A pressed workspace row whose songs Suno already holds: the address names the workspace
-   * (`/create?wid=`) and no feed request is made (TS-007).
-   */
-  cachedRow?: boolean;
-  /** The user's response to what the panel shows (#335: selecting a workspace by hand). */
+  /** The user's response to what the panel shows. */
   onShow?: (state: GenerateViewState, feed: ObservationFeed) => void;
   /**
    * Answers the page gets later on its own, each once the tab's clock reaches `at` (#429: the user's
@@ -158,10 +157,27 @@ function start(options: Options = {}) {
     clock,
   );
   for (const body of options.pages ?? [
-    { num_total_results: PROJECTS.length, current_page: 1, projects: PROJECTS },
+    { num_total_results: PROJECTS.length + 81, current_page: 1, projects: PROJECTS },
   ]) {
     feed.take(observed('workspaces', body));
   }
+  // What is typed into the list's search box, and Suno's answer to it.
+  const searched: string[] = [];
+  document.addEventListener(
+    'input',
+    (event) => {
+      const box = event.target as HTMLInputElement;
+      if (box.getAttribute('aria-label') !== 'Search workspaces') {
+        return;
+      }
+      searched.push(box.value);
+      const answer = options.searchAnswer?.(box.value) ?? null;
+      if (answer !== null) {
+        feed.take(observed('workspaces', answer));
+      }
+    },
+    { capture: true },
+  );
   const pressed: string[] = [];
   document.addEventListener(
     'click',
@@ -190,15 +206,6 @@ function start(options: Options = {}) {
         if (options.selectsCreated === true) {
           feed.take(feedFor('w-new'));
         }
-        return;
-      }
-      const project = PROJECTS.find((item) => name.startsWith(`${item.name} `));
-      if (project !== undefined) {
-        if (options.cachedRow === true) {
-          address = `https://suno.com/create?wid=${project.id}`;
-          return;
-        }
-        feed.take((options.feedOnRow ?? feedFor)(project.id));
       }
     },
     { capture: true },
@@ -261,6 +268,15 @@ function start(options: Options = {}) {
     shown,
     pressed,
     visited,
+    /** What was typed into Suno's workspace search box, in order. */
+    searched,
+    /** The workspaces reported to n8Tracks, by ID, report by report. */
+    reported: () =>
+      asked.flatMap((request) =>
+        request.type === 'generate-workspaces'
+          ? [request.workspaces.map((item) => (item as { id: string }).id)]
+          : [],
+      ),
     steps: () =>
       asked.flatMap((request) =>
         request.type === 'generate-progress' ? [`${request.state} ${request.step}`] : [],
@@ -293,139 +309,169 @@ async function untilChoosing(generate: SunoGenerate): Promise<void> {
   expect(generate.choosing).toBe(true);
 }
 
-describe('Generate on Suno in the Suno tab: the Song’s workspace', () => {
-  it('selects the Song’s workspace by the name Suno lists for its ID, after reporting the complete list', async () => {
-    const tab = start({
-      job: job({ workspace: { sunoId: 'default', name: 'Old name', state: 'available' } }),
-    });
+const GONE = { sunoId: 'w-gone', name: 'Gone', state: 'available' } as const;
+
+/** The workspace offered with the ID given, from the choice the panel shows last. */
+function offered(state: GenerateViewState | undefined, id: string) {
+  const option =
+    state?.kind === 'choose' ? state.options.find((item) => item.id === id) : undefined;
+  if (option === undefined) {
+    throw new Error(`${id} was not offered.`);
+  }
+  return option;
+}
+
+describe('Generate on Suno in the Suno tab: the Song’s workspace, by its address (TS-007-15)', () => {
+  it('opens the Song’s workspace by its address, reading no list and pressing nothing', async () => {
+    const tab = start({ job: job({ workspace: ON_MY_WORKSPACE }) });
 
     await tab.generate.resume();
 
+    expect(tab.visited).toEqual(['https://suno.com/create?wid=default']);
     expect(tab.steps()).toEqual([
       'workspace check sign-in',
-      'workspace read workspace list',
       'workspace select workspace',
-      'workspace workspace selected',
+      'workspace open workspace by address',
     ]);
-    expect(tab.asked.find((request) => request.type === 'generate-workspaces')).toEqual({
-      type: 'generate-workspaces',
-      workspaces: PROJECTS,
-    });
-    expect(tab.pressed).toHaveLength(1);
-    expect(tab.pressed[0]).toMatch(/^My Workspace /);
-    expect(tab.last()).toEqual({ kind: 'selected', name: 'My Workspace' });
-    // Complement: nothing was created, and no choice was asked for or recorded.
-    expect(tab.types()).not.toContain('generate-resolve');
-    expect(tab.shown.some((state) => state.kind === 'choose')).toBe(false);
+    expect(tab.pressed).toEqual([]);
+    expect(tab.searched).toEqual([]);
+    expect(tab.types()).not.toContain('generate-workspaces');
+    expect(tab.ran).not.toContain('open-workspaces');
   });
 
-  it('takes the workspace as selected when its row is pressed and Suno shows its songs from what it already holds', async () => {
+  it('takes it as selected on the load whose address names it, whatever list Suno holds', async () => {
+    // Suno holds only part of a 101-workspace list, and not the Song's workspace in it.
     const tab = start({
-      job: job({ workspace: { sunoId: 'default', name: 'My Workspace', state: 'available' } }),
-      cachedRow: true,
+      job: job({ workspace: ON_MY_WORKSPACE, loads: 2 }),
+      address: 'https://suno.com/create?wid=default',
+      pages: [{ num_total_results: 101, current_page: 1, projects: PROJECTS.slice(1) }],
     });
 
     await tab.generate.resume();
 
-    expect(tab.pressed).toHaveLength(1);
-    expect(tab.pressed[0]).toMatch(/^My Workspace /);
-    expect(tab.steps().slice(-2)).toEqual([
+    expect(tab.visited).toEqual([]);
+    expect(tab.pressed).toEqual([]);
+    expect(tab.steps()).toEqual([
+      'workspace check sign-in',
       'workspace select workspace',
       'workspace workspace selected',
     ]);
     expect(tab.last()).toEqual({ kind: 'selected', name: 'My Workspace' });
+    expect(tab.types()).not.toContain('generate-workspaces');
   });
 
-  it('presses nothing when the page already shows the Song’s workspace', async () => {
-    const tab = start({
-      job: job({ workspace: { sunoId: 'default', name: 'My Workspace', state: 'available' } }),
-    });
+  it('takes it as selected, with no load, when the library pane already shows it', async () => {
+    const tab = start({ job: job({ workspace: ON_MY_WORKSPACE }) });
     tab.feed.take(feedFor('default'));
 
     await tab.generate.resume();
 
+    expect(tab.visited).toEqual([]);
     expect(tab.pressed).toEqual([]);
     expect(tab.last()).toEqual({ kind: 'selected', name: 'My Workspace' });
   });
 
-  it('never selects a workspace of the same name and another ID: it waits for the user, then stops and says why', async () => {
-    const tab = start({
-      job: job({ workspace: { sunoId: 'w-13a', name: 'x', state: 'available' } }),
-      // The user selects the other workspace of that name: not the Song's, by ID.
-      onShow: (state, feed) => {
-        if (state.kind === 'select') {
-          feed.take(feedFor('w-13b'));
-        }
-      },
-    });
-
-    await tab.generate.resume();
-
-    expect(tab.pressed).toEqual([]);
-    expect(tab.shown).toContainEqual({ kind: 'select', name: '<redacted 13 chars>' });
-    expect(tab.last()).toEqual({ kind: 'stopped', message: SAME_NAME });
-    expect(tab.asked.at(-1)).toEqual({
-      type: 'generate-progress',
-      state: 'stopped',
-      step: 'select workspace',
-      message: SAME_NAME,
-    });
-  });
-
   // #335 P2: a later generation of a Song whose workspace shares its name with another.
-  it('presses nothing when the page already shows the Song’s workspace by ID, even when another has its name', async () => {
+  it('opens the Song’s workspace by ID even when another has its name', async () => {
     const tab = start({
       job: job({ workspace: { sunoId: 'w-new', name: 'Night Drive', state: 'available' } }),
-      pages: [
-        {
-          num_total_results: PROJECTS.length + 1,
-          current_page: 1,
-          projects: [...PROJECTS, { id: 'w-new', name: 'Night Drive' }],
-        },
-      ],
+      address: 'https://suno.com/create?wid=w-new',
     });
-    tab.feed.take(feedFor('w-new'));
 
     await tab.generate.resume();
 
     expect(tab.pressed).toEqual([]);
-    expect(tab.shown.some((state) => state.kind === 'select')).toBe(false);
-    expect(tab.steps().at(-1)).toBe('workspace workspace selected');
     expect(tab.last()).toEqual({ kind: 'selected', name: 'Night Drive' });
   });
 
-  it('takes the Song’s workspace by ID once the user selects it by hand, when another has its name', async () => {
-    const tab = start({
-      job: job({ workspace: { sunoId: 'w-13b', name: 'x', state: 'available' } }),
-      onShow: (state, feed) => {
-        if (state.kind === 'select') {
-          feed.take(feedFor('w-13b'));
-        }
-      },
-    });
+  it('goes from another Suno page straight to the workspace’s address', async () => {
+    const tab = start({ job: job({ workspace: ON_MY_WORKSPACE }), address: 'https://suno.com/me' });
 
     await tab.generate.resume();
 
-    expect(tab.pressed).toEqual([]);
-    expect(tab.last()).toEqual({ kind: 'selected', name: '<redacted 13 chars>' });
+    expect(tab.visited).toEqual(['https://suno.com/create?wid=default']);
+    expect(tab.steps()).toEqual([]);
   });
-});
 
-describe('Generate on Suno in the Suno tab: the choice', () => {
-  it('offers the choice when the Song has none, same-name workspaces with no Song first, and creates nothing until the user chooses', async () => {
-    const tab = start();
+  it('offers the choice, with search, when Suno does not show the workspace by its address within the loads', async () => {
+    // Suno dropped the address for a workspace it no longer has (the request's loads used up).
+    const tab = start({ job: job({ workspace: GONE, loads: MAXIMUM_LOADS + 1 }) });
 
     const running = tab.generate.resume();
     await untilChoosing(tab.generate);
 
-    expect(tab.last()).toMatchObject({ kind: 'choose', title: 'Night Drive', reason: 'none' });
-    const offered = tab.last();
-    expect(offered?.kind === 'choose' && offered.options.map((option) => option.id)).toEqual([
+    expect(tab.visited).toEqual([]);
+    expect(tab.last()).toMatchObject({ kind: 'choose', reason: 'unopened', query: '' });
+    // The Song's own workspace is not offered back.
+    const state = tab.last();
+    expect(state?.kind === 'choose' && state.options.map((option) => option.id)).not.toContain(
+      'w-gone',
+    );
+    expect(tab.reported()).toEqual([PROJECTS.map((project) => project.id)]);
+
+    tab.generate.pick(offered(tab.last(), 'default'));
+    await running;
+
+    expect(tab.asked.find((request) => request.type === 'generate-resolve')).toEqual({
+      type: 'generate-resolve',
+      workspace: { sunoId: 'default', name: 'My Workspace', how: 'picked', replaces: 'w-gone' },
+    });
+    expect(tab.visited).toEqual(['https://suno.com/create?wid=default']);
+    expect(tab.pressed).toEqual([]);
+  });
+
+  it('offers the choice at once when n8Tracks holds the Song’s workspace Unavailable', async () => {
+    const tab = start({ job: job({ workspace: { ...GONE, state: 'unavailable' } }) });
+
+    const running = tab.generate.resume();
+    await untilChoosing(tab.generate);
+
+    expect(tab.visited).toEqual([]);
+    expect(tab.last()).toMatchObject({ kind: 'choose', reason: 'unavailable' });
+    tab.generate.pick(offered(tab.last(), 'w-13a'));
+    await running;
+    // n8Tracks takes a choice for an Unavailable workspace without being told what it replaces.
+    expect(tab.asked.find((request) => request.type === 'generate-resolve')).toEqual({
+      type: 'generate-resolve',
+      workspace: { sunoId: 'w-13a', name: '<redacted 13 chars>', how: 'picked' },
+    });
+  });
+});
+
+describe('Generate on Suno in the Suno tab: the choice', () => {
+  it('searches the Song’s title first, offers same-name workspaces with no Song first, and creates nothing until the user chooses (#335)', async () => {
+    const tab = start({
+      // Suno's search finds a workspace of the Song's name on a page it had not loaded.
+      searchAnswer: (query) =>
+        query === 'Night Drive'
+          ? {
+              num_total_results: 1,
+              current_page: 1,
+              projects: [{ id: 'w-far', name: 'Night Drive' }],
+            }
+          : null,
+    });
+
+    const running = tab.generate.resume();
+    await untilChoosing(tab.generate);
+
+    // The title, then the box cleared, so the list shows as Suno had it.
+    expect(tab.searched).toEqual(['Night Drive', '']);
+    expect(tab.last()).toMatchObject({
+      kind: 'choose',
+      title: 'Night Drive',
+      reason: 'none',
+      sameName: true,
+    });
+    const state = tab.last();
+    expect(state?.kind === 'choose' && state.options.map((option) => option.id)).toEqual([
+      'w-far',
       'w-same',
       'w-13a',
       'w-13b',
       'default',
     ]);
+    expect(tab.reported()).toEqual([[...PROJECTS.map((project) => project.id), 'w-far']]);
     expect(tab.steps().at(-1)).toBe('workspace choose workspace');
     // Waiting: nothing pressed, nothing recorded.
     expect(tab.pressed).toEqual([]);
@@ -439,46 +485,17 @@ describe('Generate on Suno in the Suno tab: the choice', () => {
       type: 'generate-resolve',
       workspace: { sunoId: 'w-new', name: 'Night Drive', how: 'created' },
     });
+    // Suno did not select the new workspace by itself: it is opened by its ID, so the other
+    // workspaces named "Night Drive" cannot be taken for it (#335 P1).
     expect(tab.steps()).toEqual([
       'workspace check sign-in',
       'workspace read workspace list',
       'workspace choose workspace',
       'workspace create workspace',
       'workspace select workspace',
-      'stopped select workspace',
+      'workspace open workspace by address',
     ]);
-    // Suno already lists "Night Drive" (w-same), so the new workspace's row cannot be told from it:
-    // neither is pressed. Suno did not select the new one by itself and the user did not select it
-    // by hand here, so the tab stops with SAME_NAME (#335; the next test has the user select it).
-    expect(tab.shown).toContainEqual({ kind: 'select', name: 'Night Drive' });
-    expect(tab.last()).toEqual({ kind: 'stopped', message: SAME_NAME });
-  });
-
-  // #335 P1: created while another workspace has the Song's name, and not selected by Suno itself.
-  it('after creating a workspace whose name Suno already has, accepts it by ID once the user selects it', async () => {
-    const tab = start({
-      onShow: (state, feed) => {
-        if (state.kind === 'select') {
-          feed.take(feedFor('w-new'));
-        }
-      },
-    });
-
-    const running = tab.generate.resume();
-    await untilChoosing(tab.generate);
-    tab.generate.create();
-    await running;
-
-    expect(tab.pressed).toEqual(['Create new workspace', 'Confirm']);
-    expect(tab.asked.find((request) => request.type === 'generate-resolve')).toEqual({
-      type: 'generate-resolve',
-      workspace: { sunoId: 'w-new', name: 'Night Drive', how: 'created' },
-    });
-    expect(tab.steps().slice(-2)).toEqual([
-      'workspace select workspace',
-      'workspace workspace selected',
-    ]);
-    expect(tab.last()).toEqual({ kind: 'selected', name: 'Night Drive' });
+    expect(tab.visited).toEqual(['https://suno.com/create?wid=w-new']);
   });
 
   it('takes the new workspace as selected when Suno selects it by itself', async () => {
@@ -490,22 +507,18 @@ describe('Generate on Suno in the Suno tab: the choice', () => {
     await running;
 
     expect(tab.pressed).toEqual(['Create new workspace', 'Confirm']);
+    expect(tab.visited).toEqual([]);
     expect(tab.steps().at(-1)).toBe('workspace workspace selected');
     expect(tab.last()).toEqual({ kind: 'selected', name: 'Night Drive' });
   });
 
-  it('records a workspace the user picks, then selects it', async () => {
+  it('records a workspace the user picks, then opens it by its address, pressing no row', async () => {
     const tab = start();
 
     const running = tab.generate.resume();
     await untilChoosing(tab.generate);
-    const offered = tab.last();
-    const mine =
-      offered?.kind === 'choose' ? offered.options.find((o) => o.id === 'default') : undefined;
+    const mine = offered(tab.last(), 'default');
     expect(mine).toMatchObject({ songCount: 2, sameName: false });
-    if (mine === undefined) {
-      throw new Error('My Workspace was not offered.');
-    }
     tab.generate.pick(mine);
     await running;
 
@@ -513,34 +526,58 @@ describe('Generate on Suno in the Suno tab: the choice', () => {
       type: 'generate-resolve',
       workspace: { sunoId: 'default', name: 'My Workspace', how: 'picked' },
     });
-    expect(tab.pressed).toHaveLength(1);
-    expect(tab.pressed[0]).toMatch(/^My Workspace /);
-    expect(tab.last()).toEqual({ kind: 'selected', name: 'My Workspace' });
+    expect(tab.pressed).toEqual([]);
+    expect(tab.visited).toEqual(['https://suno.com/create?wid=default']);
   });
 
-  it('offers a replacement when Suno’s complete list lacks the Song’s workspace, after reporting the list', async () => {
+  it('searches Suno’s own search box for the name the user types in the panel, and offers what it finds', async () => {
+    const studio = { id: 'w-studio', name: 'Studio One' };
     const tab = start({
-      job: job({ workspace: { sunoId: 'w-gone', name: 'Gone', state: 'available' } }),
+      searchAnswer: (query) =>
+        query === 'studio' ? { num_total_results: 1, current_page: 1, projects: [studio] } : null,
     });
 
     const running = tab.generate.resume();
     await untilChoosing(tab.generate);
+    tab.generate.search('studio');
+    await untilChoosing(tab.generate);
+    for (let tries = 0; tries < 200 && tab.searched.length < 3; tries += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    await untilChoosing(tab.generate);
 
-    expect(tab.last()).toMatchObject({ kind: 'choose', reason: 'unavailable' });
-    // The report of the complete list is what makes n8Tracks mark it Unavailable.
-    expect(tab.types().indexOf('generate-workspaces')).toBeLessThan(
-      tab.asked.findIndex(
-        (request) => request.type === 'generate-progress' && request.step === 'choose workspace',
-      ),
-    );
+    expect(tab.searched).toEqual(['Night Drive', '', 'studio']);
+    expect(tab.last()).toMatchObject({ kind: 'choose', query: 'studio' });
+    const state = tab.last();
+    expect(state?.kind === 'choose' && state.options.map((option) => option.id)).toEqual([
+      'w-studio',
+    ]);
+    // What the search found goes to n8Tracks too, for its record and Song counts.
+    expect(tab.reported().at(-1)).toContain('w-studio');
     expect(tab.pressed).toEqual([]);
+
+    tab.generate.pick(offered(tab.last(), 'w-studio'));
+    await running;
+    expect(tab.visited).toEqual(['https://suno.com/create?wid=w-studio']);
+  });
+
+  it('offers the choice from search alone when Suno shows a list it held without asking again (TS-007-13), loading nothing', async () => {
+    const tab = start({ pages: [] });
+
+    const running = tab.generate.resume();
+    await untilChoosing(tab.generate);
+
+    expect(tab.clock.now()).toBeGreaterThanOrEqual(LIST_WAIT_MS);
+    expect(tab.visited).toEqual([]);
+    expect(tab.last()).toMatchObject({ kind: 'choose', options: [] });
+    expect(tab.shown.some((state) => state.kind === 'stopped')).toBe(false);
     void running;
   });
 });
 
 describe('Generate on Suno in the Suno tab: stopping', () => {
   it('stops and says so when the user is not signed in to Suno', async () => {
-    const tab = start();
+    const tab = start({ job: job({ workspace: ON_MY_WORKSPACE }) });
     document.querySelector('[data-testid="profile-menu-button"]')?.remove();
 
     await tab.generate.resume();
@@ -552,6 +589,7 @@ describe('Generate on Suno in the Suno tab: stopping', () => {
       step: 'check sign-in',
       message: NOT_SIGNED_IN,
     });
+    expect(tab.visited).toEqual([]);
     expect(tab.types()).not.toContain('generate-workspaces');
   });
 
@@ -573,33 +611,7 @@ describe('Generate on Suno in the Suno tab: stopping', () => {
     expect(tab.pressed).toEqual([]);
   });
 
-  it('loads the page again when the workspace list does not load completely, marking nothing (TS-007-13)', async () => {
-    const tab = start({
-      address: 'https://suno.com/create?wid=default',
-      pages: [{ num_total_results: 45, current_page: 1, projects: PROJECTS }],
-    });
-
-    await tab.generate.resume();
-
-    expect(tab.visited).toEqual(['https://suno.com/create?wid=default']);
-    expect(tab.shown.some((state) => state.kind === 'stopped')).toBe(false);
-    expect(tab.types()).not.toContain('generate-workspaces');
-  });
-
-  it('stops without marking anything when the workspace list still does not load after the page loads again', async () => {
-    const tab = start({
-      job: job({ loads: MAXIMUM_LOADS + 1 }),
-      pages: [{ num_total_results: 45, current_page: 1, projects: PROJECTS }],
-    });
-
-    await tab.generate.resume();
-
-    expect(tab.visited).toEqual([]);
-    expect(tab.last()).toEqual({ kind: 'stopped', message: LIST_NOT_READ });
-    expect(tab.types()).not.toContain('generate-workspaces');
-  });
-
-  it('opens Create from another Suno page, and stops if Create does not come', async () => {
+  it('opens Create from another Suno page for a Song with no workspace, and stops if Create does not come', async () => {
     const away = start({ address: 'https://suno.com/me', job: job({ loads: 1 }) });
     await away.generate.resume();
     expect(away.visited).toEqual(['https://suno.com/create']);
@@ -650,8 +662,6 @@ function advancedForm(change: Partial<FormJob> = {}): FormJob {
   };
 }
 
-const ON_MY_WORKSPACE = { sunoId: 'default', name: 'My Workspace', state: 'available' } as const;
-
 describe('Generate on Suno in the Suno tab: filling the form (#146)', () => {
   it('fills the Songs form once the workspace is selected, shows and reports the summary, and waits for the user’s Create', async () => {
     const tab = start({ job: job({ workspace: ON_MY_WORKSPACE, form: advancedForm() }) });
@@ -666,7 +676,6 @@ describe('Generate on Suno in the Suno tab: filling the form (#146)', () => {
 
     expect(tab.steps()).toEqual([
       'workspace check sign-in',
-      'workspace read workspace list',
       'workspace select workspace',
       'workspace workspace selected',
       'filling open Songs form',
@@ -801,7 +810,6 @@ describe('Generate on Suno in the Suno tab: Speech and Sounds (#147)', () => {
 
     expect(tab.steps()).toEqual([
       'workspace check sign-in',
-      'workspace read workspace list',
       'workspace select workspace',
       'workspace workspace selected',
       'filling choose form',

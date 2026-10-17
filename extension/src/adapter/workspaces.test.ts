@@ -3,12 +3,12 @@ import { sunoFixture, sunoObject } from '../testing/sunoResponses.ts';
 import { OBSERVER_SOURCE, observedKindOf, type ObservedMessage } from './observed.ts';
 import {
   createdWorkspaceOf,
+  KnownWorkspaces,
+  nameHolds,
   namedLike,
   workspaceNameFor,
   workspaceOfFeed,
   workspaceOptions,
-  WorkspaceList,
-  workspaceRow,
   type ListedWorkspace,
 } from './workspaces.ts';
 
@@ -35,53 +35,35 @@ function listPage(page: number, total: number, ids: string[]) {
   });
 }
 
-describe('Suno’s workspace list (TS-003)', () => {
-  it('is complete only when pages one to N, in a row, hold num_total_results workspaces', () => {
-    const list = new WorkspaceList();
-    expect(list.add(listPage(1, 5, ['a', 'b']))).toBe(true);
-    expect(list.complete).toBe(false);
-    // Page 3 is here, but page 2 is not: still not complete.
-    list.add(listPage(3, 5, ['e']));
-    expect(list.pagesInOrder).toBe(1);
-    expect(list.complete).toBe(false);
-    list.add(listPage(2, 5, ['c', 'd']));
-    expect(list.complete).toBe(true);
-    expect(list.workspaces().map((workspace) => workspace.id)).toEqual(['a', 'b', 'c', 'd', 'e']);
+describe('Suno’s workspaces as Generate sees them (TS-003, TS-007-15)', () => {
+  it('takes every list answer, each workspace once by ID, never asking for the whole list', () => {
+    const known = new KnownWorkspaces();
+    // Pages 1 and 2 of 101: what Suno loaded; page 3 never comes (only a trusted scroll asks for it).
+    expect(known.add(listPage(1, 101, ['a', 'b']))).toBe(true);
+    expect(known.add(listPage(2, 101, ['c']))).toBe(true);
+    // A search's answer, which may repeat a workspace and bring one from a page not loaded.
+    known.add(listPage(1, 2, ['b', 'z']));
+
+    expect(known.workspaces().map((workspace) => workspace.id)).toEqual(['a', 'b', 'c', 'z']);
+    expect(known.get('z')?.name).toBe('Name z');
+    expect(known.get('missing')).toBeUndefined();
   });
 
-  it('is complete on one page that holds the whole list, whatever Suno’s page size (TS-007-14)', () => {
-    const list = new WorkspaceList();
-    const ids = Array.from({ length: 40 }, (_, index) => `w${String(index)}`);
-    list.add(listPage(1, 40, ids));
+  it('follows a rename in a later answer, and refuses what is not a list answer', () => {
+    const known = new KnownWorkspaces();
+    known.add(observed('workspaces', { projects: [{ id: 'a', name: 'Old' }] }));
+    known.add(observed('workspaces', { projects: [{ id: 'a', name: 'New' }, { name: 'no id' }] }));
 
-    expect(list.complete).toBe(true);
-    expect(list.workspaces()).toHaveLength(40);
+    expect(known.workspaces().map((workspace) => workspace.name)).toEqual(['New']);
+    expect(known.add(observed('workspaces', { current_page: 1 }))).toBe(false);
+    expect(known.add(observed('playlists', { projects: [] }))).toBe(false);
   });
 
-  it('reads the TS-003 fixtures, page 1 then the last page', () => {
-    const list = new WorkspaceList();
-    expect(list.add(observed('workspaces', sunoFixture('project-me.page-1.response')))).toBe(true);
-    expect(list.add(observed('workspaces', sunoFixture('project-me.last-page.response')))).toBe(
-      true,
-    );
-    // The fixtures are pages 1 and 5 of a 96-workspace list: pages 2 to 4 are missing.
-    expect(list.pagesInOrder).toBe(1);
-    expect(list.complete).toBe(false);
-  });
-
-  it('takes a page that comes again in place of the first copy, and refuses what is not a page', () => {
-    const list = new WorkspaceList();
-    list.add(listPage(1, 2, ['a']));
-    list.add(listPage(1, 2, ['a', 'b']));
-
-    expect(list.complete).toBe(true);
-    expect(list.workspaces().map((workspace) => workspace.id)).toEqual(['a', 'b']);
-    expect(list.add(observed('workspaces', { projects: [] }))).toBe(false);
-    expect(list.add(observed('playlists', { current_page: 1, num_total_results: 0 }))).toBe(false);
-    // Complement: an empty list of none is complete at its first page.
-    const empty = new WorkspaceList();
-    empty.add(listPage(1, 0, []));
-    expect(empty.complete).toBe(true);
+  it('reads the TS-003 fixtures and the constructed search answer', () => {
+    const known = new KnownWorkspaces();
+    expect(known.add(observed('workspaces', sunoFixture('project-me.page-1.response')))).toBe(true);
+    expect(known.add(observed('workspaces', sunoFixture('project-me.search.response')))).toBe(true);
+    expect(known.workspaces().length).toBeGreaterThan(3);
   });
 
   it('reads the new workspace from Suno’s answer to creating it, which the observer forwards', () => {
@@ -125,18 +107,11 @@ describe('Suno’s workspace list (TS-003)', () => {
   });
 });
 
-describe('a workspace’s row and the choice offered', () => {
-  it('finds the row by the whole name, written literally, and never by a blank one', () => {
-    const row = workspaceRow('  Night   (Drive) ');
-    expect(row?.name).toBeInstanceOf(RegExp);
-    const name = row?.name as RegExp;
-    expect(name.test('Night (Drive) 3 songs · 2d ago')).toBe(true);
-    expect(name.test('Night (Drive)')).toBe(true);
-    expect(name.test('Night Drive 3 songs')).toBe(false);
-    expect(name.test('Night (Drive)s 3 songs')).toBe(false);
-    expect(name.test('A Night (Drive) 3 songs')).toBe(false);
-    expect(row?.description).toBe("the workspace's row in Suno's workspace list");
-    expect(workspaceRow('   ')).toBeNull();
+describe('the choice offered', () => {
+  it('narrows the offer to a search by name, without regard to case or spaces', () => {
+    expect(nameHolds('Night Drive', ' night  dr')).toBe(true);
+    expect(nameHolds('Night Drive', '')).toBe(true);
+    expect(nameHolds('Night Drive', 'day')).toBe(false);
   });
 
   it('offers same-name workspaces with no Song first, then the others by name with their counts', () => {

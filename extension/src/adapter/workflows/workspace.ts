@@ -1,12 +1,14 @@
 import { sunoPage } from '../addresses.ts';
 import type { Page, Target } from '../primitives.ts';
 import { expected, OK, present, type Check, type StepContext, type Workflow } from '../workflow.ts';
-import { workspaceRow } from '../workspaces.ts';
 
 /**
  * The Song's workspace on Suno's Create page (#145, TS-003: `page.workspace-selector.html` and
- * `page.create-workspace-dialog.html`): open the workspace list, scroll it for more, select a
- * workspace by its row, and create one named after the Song. Creating a workspace is invariant 4's
+ * `page.create-workspace-dialog.html`): check the user is signed in, open the workspace list, type
+ * a name into its search box, and create a workspace named after the Song. A workspace is opened
+ * by its address (`/create?wid=<id>`, TS-007-15), by the content script, never by its row: Suno
+ * loads more of the list only on the user's own scroll, and a row carries a name, not an ID. The
+ * list is not scrolled. Creating a workspace is invariant 4's
  * one permitted change to Suno: its two controls are pressed only here, and only through
  * `Page.createWorkspaceClick`. The content script (`content/sunoGenerate.ts`) decides which of
  * these run, from the request and the user's choice in the panel; nothing is created unless the
@@ -34,11 +36,16 @@ export const WORKSPACES_BREADCRUMB: Target = {
   description: 'the "Workspaces" breadcrumb above the library pane',
 };
 
-/** The open workspace list, known by its search box. */
-export const WORKSPACE_LIST: Target = {
+/**
+ * The open workspace list's search box (TS-003: an `input` labelled "Search workspaces" above the
+ * list's rows, in `page.workspace-selector.html`), by which the list is also known to be open.
+ * What Suno does with the text typed in it (a `GET /api/project/me` with the text, or filtering the
+ * rows it holds) was not captured (TS-007-15): the extension takes any list answer that follows.
+ */
+export const WORKSPACE_SEARCH: Target = {
   role: 'textbox',
   name: 'Search workspaces',
-  description: "Suno's workspace list, with its search box",
+  description: "the search box of Suno's workspace list",
 };
 
 /** The list's first row, which opens an inline row for a new workspace (the named exception). */
@@ -64,19 +71,17 @@ export const CONFIRM_NEW_WORKSPACE: Target = {
 
 /** The workspace list is open, or the breadcrumb that opens it is there. */
 export function listOrBreadcrumb(page: Page): Check {
-  if (page.find(WORKSPACE_LIST).kind === 'found') {
-    return present(page, WORKSPACE_LIST);
+  if (page.find(WORKSPACE_SEARCH).kind === 'found') {
+    return present(page, WORKSPACE_SEARCH);
   }
   return page.find(WORKSPACES_BREADCRUMB).kind === 'found'
     ? present(page, WORKSPACES_BREADCRUMB)
     : expected('Suno\'s workspace list, or the "Workspaces" breadcrumb that opens it');
 }
 
-/** Selecting a workspace: its name as Suno lists it, and how the page shows it was selected. */
-export interface SelectWorkspaceContext extends StepContext {
-  workspaceName: string;
-  /** Whether the page now shows the workspace: its library pane asked Suno for its songs. */
-  shown: () => Check;
+/** Searching the workspace list: the text typed into its search box. */
+export interface SearchWorkspacesContext extends StepContext {
+  query: string;
 }
 
 /** Creating a workspace: the name it is given, and whether Suno answered with its ID. */
@@ -85,6 +90,24 @@ export interface CreateWorkspaceContext extends StepContext {
   /** Whether Suno answered the creation with the new workspace (`POST /api/project`). */
   created: () => Check;
 }
+
+/** Signed in to Suno: its profile menu is on the page. Reads only. */
+export const signedIn: Workflow = {
+  id: 'signed-in',
+  title: 'Check that you are signed in to Suno',
+  feature: 'generate',
+  startsOn: sunoPage('create'),
+  needs: [{ step: 'signed in', check: (page) => present(page, PROFILE_MENU) }],
+  steps: [
+    {
+      name: 'signed in',
+      expect: ({ page }) => present(page, PROFILE_MENU),
+      act: () => undefined,
+      verify: () => OK,
+    },
+  ],
+  fixtures: ['workspace-selector', 'create-workspace-songs'],
+};
 
 /** Signed in, and the workspace list open. Reads, and presses only the breadcrumb. */
 export const openWorkspaces: Workflow = {
@@ -107,7 +130,7 @@ export const openWorkspaces: Workflow = {
       name: 'workspace list',
       expect: ({ page }) => listOrBreadcrumb(page),
       act: ({ page }) => {
-        if (page.find(WORKSPACE_LIST).kind === 'found') {
+        if (page.find(WORKSPACE_SEARCH).kind === 'found') {
           return;
         }
         const breadcrumb = page.find(WORKSPACES_BREADCRUMB);
@@ -115,60 +138,38 @@ export const openWorkspaces: Workflow = {
           page.click(breadcrumb.found);
         }
       },
-      verify: ({ page }) => present(page, WORKSPACE_LIST),
-    },
-  ],
-  fixtures: ['workspace-selector'],
-};
-
-/** Scrolls the open workspace list to its end, so that Suno asks for its next page. */
-export const moreWorkspaces: Workflow = {
-  id: 'more-workspaces',
-  title: 'Load more of the workspace list',
-  feature: 'generate',
-  startsOn: sunoPage('create'),
-  needs: [{ step: 'workspace list', check: listOrBreadcrumb }],
-  steps: [
-    {
-      name: 'workspace list',
-      expect: ({ page }) => present(page, WORKSPACE_LIST),
-      act: ({ page }) => {
-        page.scrollToEnd();
-      },
-      verify: () => OK,
+      verify: ({ page }) => present(page, WORKSPACE_SEARCH),
     },
   ],
   fixtures: ['workspace-selector'],
 };
 
 /**
- * Selects the workspace by its row in the open list, found by the name Suno lists for its ID. Two
- * rows that match (two workspaces of that name) are never chosen between: the step stops.
+ * Types `query` into the open workspace list's search box, as typing would (the native setter and
+ * an `input` event; never Enter), and reads it back. Presses nothing. A blank query clears it.
  */
-export const selectWorkspace: Workflow<SelectWorkspaceContext> = {
-  id: 'select-workspace',
-  title: 'Select the Song’s workspace',
+export const searchWorkspaces: Workflow<SearchWorkspacesContext> = {
+  id: 'search-workspaces',
+  title: 'Search the workspace list',
   feature: 'generate',
   startsOn: sunoPage('create'),
-  needs: [{ step: 'select workspace', check: listOrBreadcrumb }],
+  needs: [{ step: 'search box', check: (page) => present(page, WORKSPACE_SEARCH) }],
   steps: [
     {
-      name: 'select workspace',
-      expect: ({ page, workspaceName }) => {
-        const row = workspaceRow(workspaceName);
-        return row === null
-          ? expected('a workspace with a name to select it by')
-          : present(page, row);
-      },
-      act: ({ page, workspaceName }) => {
-        const row = workspaceRow(workspaceName);
-        const result = row === null ? null : page.find(row);
-        if (result?.kind === 'found') {
-          page.click(result.found);
+      name: 'search box',
+      expect: ({ page }) => present(page, WORKSPACE_SEARCH),
+      act: ({ page, query }) => {
+        const box = page.find(WORKSPACE_SEARCH);
+        if (box.kind === 'found' && page.read(box.found).value !== query) {
+          page.set(box.found, query);
         }
       },
-      verify: ({ shown }) => shown(),
-      timeoutMs: 15_000,
+      verify: ({ page, query }): Check => {
+        const box = page.find(WORKSPACE_SEARCH);
+        return box.kind === 'found' && page.read(box.found).value === query
+          ? OK
+          : expected(`${WORKSPACE_SEARCH.description} to hold the name searched for`);
+      },
     },
   ],
   fixtures: ['workspace-selector'],

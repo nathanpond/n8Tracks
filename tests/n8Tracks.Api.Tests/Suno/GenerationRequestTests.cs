@@ -515,6 +515,46 @@ public sealed class GenerationRequestTests
     }
 
     [Fact]
+    public async Task AnAvailableWorkspaceSunoDidNotShowIsReplacedOnlyWhenTheChoiceNamesIt()
+    {
+        // #434 (TS-007-15): Generate cannot read Suno's whole list, so a workspace Suno did not open by
+        // its address stays Available; the user's choice names it as the one it replaces.
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var song = await SongApi.CreateAsync(client, "Not shown");
+        var shortcode = song.GetProperty("shortcode").GetString()!;
+        var sync = await SunoWorkspaceApi.ExtensionTokenAsync(factory);
+        var extension = await CredentialApi.CreateTokenAsync(factory, CredentialScopes.SunoGenerate);
+        await SunoWorkspaceApi.ReportAsync(client, sync, complete: true, SunoWorkspaceApi.Project("w-1", "Home"), SunoWorkspaceApi.Project("w-2", "Other"), SunoWorkspaceApi.Project("w-3", "Third"));
+        await SunoWorkspaceApi.AssociatedAsync(client, shortcode, "w-1");
+        var id = (await CreateAsync(client, VersionId(song))).GetProperty("id").GetGuid();
+        await ClaimAsync(client, extension, id, HttpStatusCode.OK);
+
+        // Naming another workspace than the Song's as replaced is refused, and so is a blank one.
+        using (var wrong = await ReportAsync(client, extension, id, """{"state":"workspace","resolvedWorkspace":{"sunoId":"w-2","name":"Other","how":"picked","replaces":"w-3"}}"""))
+        {
+            await ExpectProblemAsync(wrong, HttpStatusCode.Conflict, "workspace_already_set");
+        }
+
+        using (var blank = await ReportAsync(client, extension, id, """{"state":"workspace","resolvedWorkspace":{"sunoId":"w-2","name":"Other","how":"picked","replaces":""}}"""))
+        {
+            await ExpectProblemAsync(blank, HttpStatusCode.UnprocessableEntity, "validation_failed");
+        }
+
+        Assert.Equal("w-1", (await SetupApi.JsonAsync(await client.GetAsync(SongApi.Song(shortcode)))).GetProperty("sunoWorkspace").GetProperty("id").GetString());
+
+        using (var replaced = await ReportAsync(client, extension, id, """{"state":"workspace","step":"workspace chosen","resolvedWorkspace":{"sunoId":"w-2","name":"Other","how":"picked","replaces":"w-1"}}"""))
+        {
+            Assert.Equal(HttpStatusCode.OK, replaced.StatusCode);
+        }
+
+        var details = await SetupApi.JsonAsync(await client.GetAsync(SongApi.Song(shortcode)));
+        Assert.Equal("w-2", details.GetProperty("sunoWorkspace").GetProperty("id").GetString());
+        // The replaced workspace is not marked: one address that did not show it proves nothing.
+        Assert.Equal("available", (await SunoWorkspaceApi.OneAsync(client, "w-1")).GetProperty("state").GetString());
+    }
+
+    [Fact]
     public async Task AnUnavailableWorkspaceIsReplacedByTheOneTheUserPicks()
     {
         using var factory = SongApi.Host();

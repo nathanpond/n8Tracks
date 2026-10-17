@@ -116,6 +116,9 @@ function progressOf(session: SyncSession): SyncProgress {
     partNumber: session.partNumber,
     counts: session.counts,
     workspaces: session.workspaces,
+    ...(session.workspacesComplete === undefined
+      ? {}
+      : { workspacesComplete: session.workspacesComplete }),
   };
 }
 

@@ -92,7 +92,7 @@ internal static class SunoGenerationRequestsEndpoints
 
         endpoints.MapPatch(RequestPath, ReportAsync)
             .WithName("ReportGenerationRequest")
-            .WithSummary("The claiming extension reports progress: { state: opening | workspace | filling | waiting | done | stopped, step, message } (a stop says why), and optionally resolvedWorkspace: { sunoId, name, how: created | picked }, the Suno workspace the user chose for the Song in the extension's panel, which becomes the Song's workspace only when the Song has none or an unavailable one (409 workspace_already_set otherwise; resending the Song's own workspace changes nothing), and optionally verification: { adapterVersion, mode, checkedAt, entries: [{ key, outcome: set | verified | failed | unavailable | manual | not_applicable | unsupported, expected, found, note }] }, the summary of the filled Create form (#146), text values only as { length, sha256 }, which replaces the last summary. No If-Match. The hour before the request expires starts again. 403 request_claimed for another credential; 409 request_not_claimed before a claim; 409 request_ended once it has ended; 422 validation_failed.")
+            .WithSummary("The claiming extension reports progress: { state: opening | workspace | filling | waiting | done | stopped, step, message } (a stop says why), and optionally resolvedWorkspace: { sunoId, name, how: created | picked, replaces? }, the Suno workspace the user chose for the Song in the extension's panel, which becomes the Song's workspace only when the Song has none or an unavailable one, or when its optional replaces names the Song's own workspace (Suno did not show it by its address; its availability is left as it is) (409 workspace_already_set otherwise; resending the Song's own workspace changes nothing), and optionally verification: { adapterVersion, mode, checkedAt, entries: [{ key, outcome: set | verified | failed | unavailable | manual | not_applicable | unsupported, expected, found, note }] }, the summary of the filled Create form (#146), text values only as { length, sha256 }, which replaces the last summary. No If-Match. The hour before the request expires starts again. 403 request_claimed for another credential; 409 request_not_claimed before a claim; 409 request_ended once it has ended; 422 validation_failed.")
             .RequireScope(CredentialScopes.SunoGenerate)
             .Produces<GenerationRequestResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
@@ -503,8 +503,8 @@ internal static class SunoGenerationRequestsEndpoints
 
     /// <summary>
     /// <c>resolvedWorkspace</c> as sent: missing or null is none; otherwise <c>{ sunoId, name, how }</c>
-    /// with text Suno ID and name and <c>how</c> <c>created</c> or <c>picked</c>, else a field error.
-    /// The lengths are the service's to check.
+    /// with text Suno ID and name and <c>how</c> <c>created</c> or <c>picked</c>, and optionally
+    /// <c>replaces</c>, a text Suno ID (#434), else a field error. The lengths are the service's to check.
     /// </summary>
     private static ResolvedWorkspace? Workspace(JsonElement value, Dictionary<string, string[]> errors)
     {
@@ -521,15 +521,24 @@ internal static class SunoGenerationRequestsEndpoints
                 _ => (WorkspaceResolution?)null,
             }
             : null;
+        var replaces = value.ValueKind == JsonValueKind.Object && value.TryGetProperty("replaces", out var replaced)
+            ? replaced
+            : default;
         if (how is null
             || !value.TryGetProperty("sunoId", out var sunoId) || sunoId.ValueKind != JsonValueKind.String
-            || !value.TryGetProperty("name", out var name) || name.ValueKind != JsonValueKind.String)
+            || !value.TryGetProperty("name", out var name) || name.ValueKind != JsonValueKind.String
+            || replaces.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null or JsonValueKind.String)
+            || (replaces.ValueKind == JsonValueKind.String && string.IsNullOrEmpty(replaces.GetString())))
         {
-            errors[GenerationRequestService.ResolvedWorkspaceField] = ["Send { sunoId, name, how: created or picked }, or leave it out."];
+            errors[GenerationRequestService.ResolvedWorkspaceField] = ["Send { sunoId, name, how: created or picked, replaces (optional): the Song's workspace's Suno ID }, or leave it out."];
             return null;
         }
 
-        return new ResolvedWorkspace(sunoId.GetString()!, name.GetString()!, how.Value);
+        return new ResolvedWorkspace(
+            sunoId.GetString()!,
+            name.GetString()!,
+            how.Value,
+            replaces.ValueKind == JsonValueKind.String ? replaces.GetString() : null);
     }
 
     /// <summary>A text field as sent: missing or null is none; anything but text is an error.</summary>

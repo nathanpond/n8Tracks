@@ -90,9 +90,13 @@ describe('Generate on Suno in the panel', () => {
 
     generate.show({ kind: 'choose', title: 'Night Drive', reason: 'unavailable', options: [] });
     expect(generate.element.querySelector('.generate-choice-reason')?.textContent).toContain(
-      'marked it Unavailable',
+      'Unavailable in n8Tracks',
     );
-    expect(generate.element.textContent).toContain('Suno listed no other workspace.');
+    expect(generate.element.textContent).toContain('Suno showed no other workspace.');
+    generate.show({ kind: 'choose', title: 'Night Drive', reason: 'unopened', options: [] });
+    expect(generate.element.querySelector('.generate-choice-reason')?.textContent).toContain(
+      'Suno did not open the Song’s workspace by its address',
+    );
     button('Create a workspace named “Night Drive”')?.click();
     expect(options.create).toHaveBeenCalledOnce();
 
@@ -103,17 +107,49 @@ describe('Generate on Suno in the panel', () => {
     await expectNoAxeViolations(document);
   });
 
-  it('asks the user to select the Song’s workspace when Suno has two of its name, offering no button (#335)', async () => {
-    const { generate, buttons } = view();
+  it('searches Suno’s workspaces by name from the panel, and says when Suno already has the Song’s name (TS-007-15, #335)', async () => {
+    const search = vi.fn<(query: string) => void>();
+    const generate = new GenerateView(document, {
+      create: vi.fn<() => void>(),
+      pick: vi.fn<(option: WorkspaceOption) => void>(),
+      search,
+    });
+    const main = document.createElement('main');
+    main.append(generate.element);
+    document.body.append(main);
 
-    generate.show({ kind: 'select', name: 'Night Drive' });
-
-    expect(generate.element.querySelector('[role="alert"]')?.textContent).toBe(
-      'Suno has more than one workspace named “Night Drive”. Select the Song’s one in Suno’s workspace list.',
-    );
-    expect(generate.element.textContent).toContain('which it checks by ID');
-    expect(buttons()).toEqual([]);
+    generate.show({
+      kind: 'choose',
+      title: 'Night Drive',
+      reason: 'none',
+      sameName: true,
+      options: OPTIONS,
+    });
+    expect(generate.element.textContent).toContain('Suno already has a workspace with this name');
+    const box = generate.element.querySelector<HTMLInputElement>('input[type="search"]');
+    expect(box?.labels?.[0]?.textContent).toBe('Find a workspace by name');
+    expect(generate.element.querySelector('form')).toBeNull();
+    if (box !== null) {
+      box.value = 'Stu';
+    }
+    [...generate.element.querySelectorAll('button')]
+      .find((button) => button.textContent === 'Search')
+      ?.click();
+    expect(search).toHaveBeenCalledExactlyOnceWith('Stu');
     await expectNoAxeViolations(document);
+
+    // The search shown again with what it found, or saying it found nothing.
+    generate.show({
+      kind: 'choose',
+      title: 'Night Drive',
+      reason: 'none',
+      query: 'zz',
+      options: [],
+    });
+    expect(generate.element.querySelector<HTMLInputElement>('input[type="search"]')?.value).toBe(
+      'zz',
+    );
+    expect(generate.element.textContent).toContain('Suno found no workspace named like “zz”.');
   });
 
   it('says what the user’s Create came to, or that its clips were not recorded (#149)', async () => {

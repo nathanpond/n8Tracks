@@ -3,12 +3,13 @@ import {
   sunoCreateAddress,
   sunoPageOf,
   sunoSongAddress,
+  sunoWorkspaceAddress,
   workspaceOfAddress,
 } from '../adapter/addresses.ts';
 import { realClock, type Clock } from '../adapter/clock.ts';
 import { verificationReport, type EntryResult, type FormJob } from '../adapter/fill.ts';
 import { isFinished, watchedClipsOf } from '../adapter/finished.ts';
-import { PAGE_RETRIES, PAGE_WAIT_MS, type Observations } from '../adapter/libraryReader.ts';
+import { PAGE_WAIT_MS, type Observations } from '../adapter/libraryReader.ts';
 import type { ObservedMessage } from '../adapter/observed.ts';
 import type { Page } from '../adapter/primitives.ts';
 import type { AdapterSession } from '../adapter/registry.ts';
@@ -26,7 +27,7 @@ import {
   type LoadedSource,
 } from '../adapter/sources.ts';
 import { ADAPTER_VERSION } from '../adapter/version.ts';
-import { expected, failureText, OK, type Check, type RunResult } from '../adapter/workflow.ts';
+import { expected, failureText, OK } from '../adapter/workflow.ts';
 import type { FillContext } from '../adapter/workflows/fillSongs.ts';
 import { formWorkflowsFor } from '../adapter/workflows/index.ts';
 import {
@@ -41,24 +42,24 @@ import {
 } from '../adapter/workflows/sources.ts';
 import {
   createWorkspace,
-  moreWorkspaces,
   openWorkspaces,
-  selectWorkspace,
+  searchWorkspaces,
+  signedIn,
 } from '../adapter/workflows/workspace.ts';
 import {
   createdWorkspaceOf,
-  MAXIMUM_WORKSPACE_PAGES,
+  KnownWorkspaces,
+  nameHolds,
   namedLike,
   workspaceNameFor,
   workspaceOfFeed,
   workspaceOptions,
-  WorkspaceList,
-  type ListedWorkspace,
   type WorkspaceOption,
 } from '../adapter/workspaces.ts';
 import type {
   ChosenWorkspace,
   GenerateJob,
+  RequestWorkspace,
   SourcePhase,
   GenerateReply,
   GenerateState,
@@ -73,11 +74,17 @@ import type { GenerateViewState } from '../panel/GenerateView.ts';
  * Before each step the service worker reads the request and reports the step; a request that is no
  * longer active stops the tab where it is. It never starts anything by itself.
  *
- * - The Song has a workspace that Suno's complete list holds: it is selected by its row, found by
- *   the name Suno lists for its ID, and the page must then load that workspace's songs.
- * - The Song has none, or Suno's complete list does not hold it (which, reported, makes n8Tracks
- *   mark it Unavailable): the panel offers to create a workspace named after the Song or to use one
- *   Suno has. Nothing is created until the user chooses; waiting counts towards the request's hour.
+ * - The Song has a workspace n8Tracks holds Available: the tab opens it by its address
+ *   (`/create?wid=<id>`, a page load the request resumes on) and takes it as selected once the page
+ *   shows it, by that address or by the library pane asking for its songs (TS-007-12). Suno's list
+ *   is not read (TS-007-15: Suno loads more of it only on the user's own scroll).
+ * - The Song has none, n8Tracks holds it Unavailable, or Suno did not show it by its address within
+ *   the request's loads: the list is opened and the panel offers to create a workspace named after
+ *   the Song or to use one Suno has, from the pages Suno loaded and what its search box finds by
+ *   name (the user can search from the panel; the Song's title is searched first, so a workspace
+ *   with its name is offered first, #335). Nothing is created until the user chooses; waiting counts
+ *   towards the request's hour. The choice is then opened by its address too, unless Suno shows it
+ *   already, so a workspace is never told from another of the same name by its row.
  * - Not signed in to Suno (no profile menu, or no Create page after loading it twice): it stops
  *   and says so.
  *
@@ -114,6 +121,7 @@ export const GENERATE_STEPS = {
   signIn: 'check sign-in',
   list: 'read workspace list',
   select: 'select workspace',
+  address: 'open workspace by address',
   choose: 'choose workspace',
   create: 'create workspace',
   selected: 'workspace selected',
@@ -136,8 +144,6 @@ export const NOT_SIGNED_IN =
   'You are not signed in to Suno. Sign in, then start Generate on Suno again from n8Tracks.';
 export const NO_CREATE_PAGE =
   'Suno did not show its Create page. If you are not signed in to Suno, sign in, then start Generate on Suno again from n8Tracks.';
-export const LIST_NOT_READ =
-  "Suno's workspace list did not load completely, so nothing was chosen or marked. Try again.";
 export const NO_FORM =
   'The extension cannot fill the Create form for this kind of Version. Fill it by hand in Suno, then click Create.';
 export const FORM_GONE =
@@ -148,15 +154,16 @@ export const LEFT_CREATE =
   'You left Suno’s Create page, so the extension stopped watching for Creates.';
 /** What the panel adds once the user pressed Done (#430). */
 export const FINISHED_CREATES = 'You pressed Done, so the extension stopped watching for Creates.';
-export const SAME_NAME =
-  "Suno has more than one workspace with the name of the Song's workspace, so the extension cannot tell which row is the Song's, and Suno did not show the Song's workspace in time. Select it in Suno's workspace list or rename one of them in Suno, then try again.";
 
 /**
- * How long the tab waits for the user to select the Song's workspace by hand when Suno lists
- * another of the same name (#335): the rows carry no ID, so neither is pressed, and the selection is
- * accepted by the ID the library pane then asks for.
+ * How long the tab waits for a first page of the workspace list once it is open, when the page has
+ * none yet. Suno may show a list it holds without asking again (TS-007-13), so none may come: the
+ * choice then goes on with what search finds.
  */
-export const SAME_NAME_WAIT_MS = 120_000;
+export const LIST_WAIT_MS = 5_000;
+
+/** How long the tab waits for Suno's answers after typing into the list's search box. */
+export const SEARCH_WAIT_MS = 3_000;
 
 /** The source's page in Suno did not show the clip's menu (#148). */
 export function couldNotOpen(name: string, problem: string): string {
@@ -197,10 +204,13 @@ export const VOICE_QUESTION_WAIT_MS = 1_000;
 /** How long Suno may take to show the source, or to ask first, after the action. */
 export const SOURCE_WAIT_MS = 10_000;
 
-/** How many loads of the tab may go to reaching the Create page. */
+/**
+ * How many loads of the tab may go to reaching the Create page, or the Song's workspace on it by
+ * its address; past them the workspace counts as not shown, and the choice is offered.
+ */
 export const MAXIMUM_LOADS = 2;
 
-/** How long a new workspace may take to show as selected by itself before its row is pressed. */
+/** How long a new workspace may take to show as selected by itself before it is opened by address. */
 export const SELECTED_BY_ITSELF_MS = 5_000;
 
 /** How often the watch for the user's Create looks at the page's address again (#149). */
@@ -224,6 +234,7 @@ const STEP_TEXT: Readonly<Record<GenerateStep, string>> = {
   'check sign-in': 'Checking that you are signed in to Suno',
   'read workspace list': 'Reading Suno’s workspace list',
   'select workspace': 'Selecting the Song’s workspace',
+  'open workspace by address': 'Opening the Song’s workspace in Suno',
   'choose workspace': 'Waiting for your choice',
   'create workspace': 'Creating the Song’s workspace',
   'workspace selected': 'The Song’s workspace is selected',
@@ -252,7 +263,13 @@ export interface SunoGenerateOptions {
   now?: () => Date;
 }
 
-type Choice = { kind: 'create' } | { kind: 'pick'; option: WorkspaceOption };
+type Choice =
+  | { kind: 'create' }
+  | { kind: 'pick'; option: WorkspaceOption }
+  | { kind: 'search'; query: string };
+
+/** Why the panel offers the choice: no workspace, one n8Tracks holds Unavailable, or one not shown. */
+type ChoiceReason = 'none' | 'unavailable' | 'unopened';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -268,6 +285,11 @@ function reply<T extends object>(answer: unknown): GenerateReply<T> {
     ended: false,
     message: 'The extension did not answer. Reload the Suno page.',
   };
+}
+
+/** The Song's workspace when n8Tracks holds it Available: the one to open by its address. */
+function usableWorkspace(job: GenerateJob): RequestWorkspace | null {
+  return job.workspace !== null && job.workspace.state === 'available' ? job.workspace : null;
 }
 
 export class SunoGenerate {
@@ -307,6 +329,11 @@ export class SunoGenerate {
   /** "Use …" in the panel. */
   pick(option: WorkspaceOption): void {
     this.answer({ kind: 'pick', option });
+  }
+
+  /** "Search" in the panel: `query` is typed into Suno's own search box, and the choice offered again. */
+  search(query: string): void {
+    this.answer({ kind: 'search', query });
   }
 
   /** Whether the completion watch is running (#154). */
@@ -408,8 +435,10 @@ export class SunoGenerate {
     }
     if (sunoPageOf(page.address()) !== 'create') {
       if (job.loads <= MAXIMUM_LOADS) {
+        // Straight to the Song's workspace when it has one (TS-007-15); Create otherwise.
+        const usable = usableWorkspace(job);
         this.options.show({ kind: 'working', step: STEP_TEXT[GENERATE_STEPS.open] });
-        page.go(sunoCreateAddress());
+        page.go(usable === null ? sunoCreateAddress() : sunoWorkspaceAddress(usable.sunoId));
         return;
       }
       await this.stop(NO_CREATE_PAGE);
@@ -422,6 +451,45 @@ export class SunoGenerate {
     if (!(await this.begin(GENERATE_STEPS.signIn))) {
       return;
     }
+    const signed = await this.options.session.run(signedIn, {}, this.runOptions());
+    if (!signed.ok) {
+      await this.stop(NOT_SIGNED_IN);
+      return;
+    }
+
+    const own = job.workspace;
+    const usable = usableWorkspace(job);
+    if (usable !== null) {
+      if (!(await this.begin(GENERATE_STEPS.select))) {
+        return;
+      }
+      // Selected already: the address names it, or the library pane asked for its songs.
+      if (await this.shows(usable.sunoId)) {
+        await this.selected(usable.name);
+        return;
+      }
+      // Opened by its address, a page load the request resumes on (TS-007-15); the loads bound it.
+      if (job.loads <= MAXIMUM_LOADS) {
+        await this.openByAddress(usable.sunoId);
+        return;
+      }
+    }
+    await this.choose(
+      job,
+      own === null ? 'none' : own.state === 'unavailable' ? 'unavailable' : 'unopened',
+    );
+  }
+
+  /**
+   * No usable workspace: the list is opened, what Suno loaded is read (no more is asked for: Suno
+   * pages it only on the user's own scroll, TS-007-15), the Song's title is searched for, what was
+   * found goes to n8Tracks (never as a complete list, so nothing becomes Unavailable), and the
+   * panel offers the choice.
+   */
+  private async choose(job: GenerateJob, reason: ChoiceReason): Promise<void> {
+    if (!(await this.begin(GENERATE_STEPS.list))) {
+      return;
+    }
     const opened = await this.options.session.run(openWorkspaces, {}, this.runOptions());
     if (!opened.ok) {
       await this.stop(
@@ -429,90 +497,83 @@ export class SunoGenerate {
       );
       return;
     }
-
-    if (!(await this.begin(GENERATE_STEPS.list))) {
+    const known = new KnownWorkspaces();
+    if (!(await this.take(known, 0))) {
+      await this.take(known, LIST_WAIT_MS);
+    }
+    // A workspace with the Song's name, wherever it is in the list, is offered first (#335).
+    await this.lookUp(workspaceNameFor(job.songTitle), known);
+    await this.lookUp('', known);
+    const counts = await this.report(known);
+    if (counts === null) {
       return;
     }
-    const list = await this.readList();
-    if (list === null) {
-      // Suno keeps a list it loaded before and opens it again without asking (TS-007-13): a load of
-      // the page clears that, and this request's loads bound how often it is tried.
-      if (job.loads <= MAXIMUM_LOADS) {
-        this.options.show({ kind: 'working', step: STEP_TEXT[GENERATE_STEPS.list] });
-        this.options.page.go(this.options.page.address());
-        return;
-      }
-      await this.stop(LIST_NOT_READ);
-      return;
-    }
-    const listed = list.workspaces();
-    // Suno's complete list goes to n8Tracks: renames follow, and a workspace it no longer lists
-    // (the Song's among them) becomes Unavailable there.
-    const reported = reply<{ songCounts: Record<string, number> }>(
-      await this.options
-        .send({ type: 'generate-workspaces', workspaces: listed.map((item) => item.raw) })
-        .catch(() => undefined),
-    );
-    if (!reported.ok) {
-      await this.stop(reported.message);
-      return;
-    }
-
-    const own = job.workspace;
-    const found = own === null ? undefined : listed.find((item) => item.id === own.sunoId);
-    if (found !== undefined) {
-      await this.select(found, listed);
-      return;
-    }
-    const counts = new Map(Object.entries(reported.songCounts));
-    await this.offer(
-      job,
-      listed,
-      counts,
-      own === null ? 'none' : 'unavailable',
-      own?.sunoId ?? null,
-    );
+    await this.offer(job, known, counts, reason);
   }
 
-  /** The panel offers the choice, and the request waits for it. */
+  /**
+   * The panel offers the choice, and the request waits for it. A search from the panel is typed
+   * into Suno's search box; what it finds is added, and the choice offered again.
+   */
   private async offer(
     job: GenerateJob,
-    listed: readonly ListedWorkspace[],
-    counts: ReadonlyMap<string, number>,
-    reason: 'none' | 'unavailable',
-    exclude: string | null,
+    known: KnownWorkspaces,
+    reported: ReadonlyMap<string, number>,
+    reason: ChoiceReason,
   ): Promise<void> {
     if (!(await this.begin(GENERATE_STEPS.choose))) {
       return;
     }
-    const choice = await new Promise<Choice>((resolve) => {
-      this.waiting = resolve;
-      this.options.show({
-        kind: 'choose',
-        title: job.songTitle,
-        reason,
-        options: workspaceOptions(listed, job.songTitle, counts, exclude),
+    const own = job.workspace?.sunoId ?? null;
+    // The Song's own workspace is replaced by the choice when n8Tracks still holds it Available.
+    const replaces = reason === 'unopened' && own !== null ? { replaces: own } : {};
+    let counts = reported;
+    let query = '';
+    for (;;) {
+      const choice = await new Promise<Choice>((resolve) => {
+        this.waiting = resolve;
+        const listed = known.workspaces().filter((item) => nameHolds(item.name, query));
+        this.options.show({
+          kind: 'choose',
+          title: job.songTitle,
+          reason,
+          query,
+          sameName: namedLike(known.workspaces(), workspaceNameFor(job.songTitle)).length > 0,
+          options: workspaceOptions(listed, job.songTitle, counts, own),
+        });
       });
-    });
-    if (choice.kind === 'pick') {
-      const picked = listed.find((item) => item.id === choice.option.id);
-      if (picked === undefined) {
+      if (choice.kind === 'search') {
+        query = choice.query;
+        this.options.show({ kind: 'working', step: 'Searching Suno’s workspaces' });
+        await this.lookUp(query, known);
+        counts = (await this.report(known)) ?? counts;
+        continue;
+      }
+      if (choice.kind === 'pick') {
+        const picked = known.get(choice.option.id);
+        if (picked === undefined) {
+          return;
+        }
+        if (
+          !(await this.save({ sunoId: picked.id, name: picked.name, how: 'picked', ...replaces }))
+        ) {
+          return;
+        }
+        await this.open(picked.id, picked.name);
         return;
       }
-      if (!(await this.save({ sunoId: picked.id, name: picked.name, how: 'picked' }))) {
-        return;
-      }
-      await this.select(picked, listed);
+      await this.createFor(job, replaces);
       return;
     }
-    await this.createFor(job, listed);
   }
 
-  /** Creates a workspace named after the Song through Suno's own row, then records and selects it. */
-  private async createFor(job: GenerateJob, listed: readonly ListedWorkspace[]): Promise<void> {
+  /** Creates a workspace named after the Song through Suno's own row, then records and opens it. */
+  private async createFor(job: GenerateJob, replaces: { replaces?: string }): Promise<void> {
     if (!(await this.begin(GENERATE_STEPS.create))) {
       return;
     }
+    // The list as Suno shows it unsearched, with its "Create new workspace" row.
+    await this.options.session.run(searchWorkspaces, { query: '' }, this.runOptions());
     const name = workspaceNameFor(job.songTitle);
     const watching = this.watch('workspace-created', () => true, 30_000);
     const result = await this.options.session.run(
@@ -534,90 +595,65 @@ export class SunoGenerate {
       );
       return;
     }
-    const workspace: ListedWorkspace = {
-      ...created,
-      name: created.name === '' ? name : created.name,
-    };
+    const workspaceName = created.name === '' ? name : created.name;
     // Created once; only the report is sent again if it fails on the way.
-    if (!(await this.save({ sunoId: workspace.id, name: workspace.name, how: 'created' }))) {
+    if (
+      !(await this.save({ sunoId: created.id, name: workspaceName, how: 'created', ...replaces }))
+    ) {
       return;
     }
-    // Suno may select the new workspace by itself; if not, its row is pressed.
+    // Suno may select the new workspace by itself; if not, it is opened by its address.
     const shown = this.watch(
       'library-feed',
-      (message) => workspaceOfFeed(message) === workspace.id,
+      (message) => workspaceOfFeed(message) === created.id,
       SELECTED_BY_ITSELF_MS,
     );
     await shown.done;
-    if (shown.seen !== null) {
-      await this.selected(workspace);
+    if (shown.seen !== null || workspaceOfAddress(this.options.page.address()) === created.id) {
+      await this.selected(workspaceName);
       return;
     }
-    await this.select(workspace, [...listed, workspace]);
+    await this.open(created.id, workspaceName);
   }
 
-  /** Selects `workspace` by its row in the open list; the page must then show its songs. */
-  private async select(
-    workspace: ListedWorkspace,
-    listed: readonly ListedWorkspace[],
-  ): Promise<void> {
+  /** The chosen workspace: selected when the page shows it already, else opened by its address. */
+  private async open(sunoId: string, name: string): Promise<void> {
     if (!(await this.begin(GENERATE_STEPS.select))) {
       return;
     }
-    // The library pane already shows it (the page loaded with it selected): nothing to press. This
-    // is by ID, so it holds even when another workspace has the same name (#335).
-    if ((await this.shownWorkspace()) === workspace.id) {
-      await this.selected(workspace);
+    if (await this.shows(sunoId)) {
+      await this.selected(name);
       return;
     }
-    // A workspace of the same name and another ID is never selected in its place: neither row is
-    // pressed. The user selects the Song's own in Suno, and it is accepted by its ID.
-    if (namedLike(listed, workspace.name).length > 1) {
-      this.options.show({ kind: 'select', name: workspace.name });
-      const byHand = this.watch(
-        'library-feed',
-        (message) => workspaceOfFeed(message) === workspace.id,
-        SAME_NAME_WAIT_MS,
-      );
-      await byHand.done;
-      if (byHand.seen === null) {
-        await this.stop(SAME_NAME);
-        return;
-      }
-      await this.selected(workspace);
-      return;
-    }
-    const shown = this.watch(
-      'library-feed',
-      (message) => workspaceOfFeed(message) === workspace.id,
-      20_000,
-    );
-    const result: RunResult = await this.options.session.run(
-      selectWorkspace,
-      {
-        workspaceName: workspace.name,
-        // Suno asks for the songs again only when it has none at hand: a workspace pressed while its
-        // songs are already loaded shows them with no request, but the address then names it
-        // (`/create?wid=`, TS-007).
-        shown: (): Check =>
-          shown.seen !== null || workspaceOfAddress(this.options.page.address()) === workspace.id
-            ? OK
-            : expected("Suno's library pane to show the workspace's songs"),
-      },
-      this.runOptions(),
-    );
-    shown.stop();
-    if (!result.ok) {
-      await this.stop(failureText(result.failure));
-      return;
-    }
-    await this.selected(workspace);
+    await this.openByAddress(sunoId);
   }
 
-  private async selected(workspace: ListedWorkspace): Promise<void> {
+  /**
+   * Loads the Create page opened for the workspace (`/create?wid=<id>`, TS-007-15): the request
+   * resumes on that load, which takes the workspace as selected when the page shows it.
+   */
+  private async openByAddress(sunoId: string): Promise<void> {
+    if (!(await this.begin(GENERATE_STEPS.address))) {
+      return;
+    }
+    this.options.page.go(sunoWorkspaceAddress(sunoId));
+  }
+
+  /**
+   * Whether the page shows the workspace as selected: the address names it (TS-007-12: Suno shows
+   * the songs it holds without asking again), or the library pane asked for its songs last.
+   */
+  private async shows(sunoId: string): Promise<boolean> {
+    return (
+      workspaceOfAddress(this.options.page.address()) === sunoId ||
+      (await this.shownWorkspace()) === sunoId
+    );
+  }
+
+  private async selected(name: string): Promise<void> {
     if (await this.begin(GENERATE_STEPS.selected)) {
-      this.options.show({ kind: 'selected', name: workspace.name });
-      await this.fill(workspace.name);
+      this.options.show({ kind: 'selected', name });
+      await this.fill(name);
     }
   }
 
@@ -1265,40 +1301,57 @@ export class SunoGenerate {
   }
 
   /**
-   * Reads Suno's whole workspace list as the page loads it: pages already seen are taken, then the
-   * list is scrolled for each next page. Null when a page does not come.
+   * Takes every workspace-list answer the page got (each is given once), waiting up to `timeoutMs`
+   * for the first when there is none yet. True when one came.
    */
-  private async readList(): Promise<WorkspaceList | null> {
-    const { observations } = this.options;
-    const list = new WorkspaceList();
+  private async take(known: KnownWorkspaces, timeoutMs: number): Promise<boolean> {
     const signal = new AbortController().signal;
-    const take = async (timeoutMs: number) => {
-      const message = await observations.next('workspaces', () => true, timeoutMs, signal);
-      return message !== null && list.add(message);
-    };
-    while (await take(0)) {
-      // Every page the page already asked for.
+    let took = false;
+    for (let wait = timeoutMs; ; wait = 0) {
+      const message = await this.options.observations.next('workspaces', () => true, wait, signal);
+      if (message === null) {
+        return took;
+      }
+      took = known.add(message) || took;
     }
-    for (let pages = 0; !list.complete; pages += 1) {
-      if (pages > MAXIMUM_WORKSPACE_PAGES) {
-        return null;
-      }
-      let arrived = list.pagesInOrder === 0 ? await take(PAGE_WAIT_MS) : false;
-      for (let attempt = 0; !arrived && attempt <= PAGE_RETRIES; attempt += 1) {
-        const scrolled = await this.options.session.run(moreWorkspaces, {}, this.runOptions());
-        if (!scrolled.ok) {
-          return null;
-        }
-        arrived = await take(PAGE_WAIT_MS);
-      }
-      if (!arrived) {
-        return null;
-      }
-      while (await take(0)) {
-        // Any further page that came with it.
-      }
+  }
+
+  /**
+   * Types `query` into the list's search box (opening the list first if it closed) and takes what
+   * Suno answers within {@link SEARCH_WAIT_MS}. Presses nothing but the breadcrumb that opens the
+   * list. When the box cannot be used, what is known stays as it is.
+   */
+  private async lookUp(query: string, known: KnownWorkspaces): Promise<void> {
+    const { session } = this.options;
+    const opened = await session.run(openWorkspaces, {}, this.runOptions());
+    if (!opened.ok) {
+      return;
     }
-    return list;
+    await this.take(known, 0);
+    const typed = await session.run(searchWorkspaces, { query }, this.runOptions());
+    if (typed.ok) {
+      await this.take(known, SEARCH_WAIT_MS);
+    }
+  }
+
+  /**
+   * Reports the workspaces seen to n8Tracks, never as Suno's complete list (TS-007-15), and answers
+   * the n8Tracks Songs in each; null (and stopped) when n8Tracks did not take it.
+   */
+  private async report(known: KnownWorkspaces): Promise<Map<string, number> | null> {
+    const reported = reply<{ songCounts: Record<string, number> }>(
+      await this.options
+        .send({
+          type: 'generate-workspaces',
+          workspaces: known.workspaces().map((item) => item.raw),
+        })
+        .catch(() => undefined),
+    );
+    if (!reported.ok) {
+      await this.stop(reported.message, reported.ended);
+      return null;
+    }
+    return new Map(Object.entries(reported.songCounts));
   }
 
   /**

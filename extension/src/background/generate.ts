@@ -465,7 +465,11 @@ export class GenerateCoordinator {
     return answer;
   }
 
-  /** Suno's complete workspace list, reported so n8Tracks' record follows it. */
+  /**
+   * The workspaces the tab saw, reported so n8Tracks' record follows their names. Always as an
+   * incomplete list (`complete: false`, TS-007-15): Suno shows Generate only some of a long list,
+   * so nothing becomes Unavailable from it. Only a sync that read the list to its end can do that.
+   */
   private async workspaces(
     workspaces: unknown[],
   ): Promise<GenerateReply<{ songCounts: Record<string, number> }>> {
@@ -473,7 +477,7 @@ export class GenerateCoordinator {
       const response = await this.connection.call(DISCOVERED_WORKSPACES_PATH, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ complete: true, workspaces }),
+        body: JSON.stringify({ complete: false, workspaces }),
       });
       const body = await bodyOf(response);
       if (!response.ok || !isRecord(body) || !Array.isArray(body.items)) {
@@ -518,9 +522,11 @@ export class GenerateCoordinator {
       }
     }
     if (answer.ok) {
+      // The tab opens the choice by its address (TS-007-15): its loads count again from here.
       await this.browser.session.set({
         [GENERATION_TAB_KEY]: {
           ...tab,
+          loads: 0,
           chosen: { sunoId: chosen.sunoId, name: chosen.name, state: 'available' },
         },
       });

@@ -51,9 +51,11 @@ public enum WorkspaceResolution
 
 /// <summary>
 /// The Suno workspace the user chose for the Song in the extension's panel (#145): Suno's ID for it,
-/// its name as Suno shows it, and whether it was created or picked.
+/// its name as Suno shows it, and whether it was created or picked. <paramref name="Replaces"/> is the
+/// Song's own workspace that Suno did not show by its address (TS-007-15, #434), which the choice
+/// replaces although n8Tracks still holds it Available; null otherwise.
 /// </summary>
-public sealed record ResolvedWorkspace(string SunoId, string Name, WorkspaceResolution How);
+public sealed record ResolvedWorkspace(string SunoId, string Name, WorkspaceResolution How, string? Replaces = null);
 
 /// <summary>What creating a request came to.</summary>
 public abstract record GenerationRequestCreateOutcome
@@ -294,8 +296,10 @@ public sealed class GenerationRequestService(
     /// <summary>
     /// Moves <paramref name="request"/> on to <paramref name="reported"/> and, in the same transaction,
     /// makes <paramref name="resolved"/> the Song's workspace (#145). That is allowed only when the Song
-    /// has no workspace or its workspace is Unavailable: it is the user's explicit choice in the panel,
-    /// which <c>suno.generate</c> carries. Otherwise nothing changes (<c>WorkspaceAlreadySet</c>); resending
+    /// has no workspace, its workspace is Unavailable, or the choice names the Song's workspace as the
+    /// one it replaces (<c>replaces</c>: Suno did not show it by its address, TS-007-15, #434; the
+    /// replaced workspace's availability is left as it is): it is the user's explicit choice in the
+    /// panel, which <c>suno.generate</c> carries. Otherwise nothing changes (<c>WorkspaceAlreadySet</c>); resending
     /// the workspace the Song already has is accepted and changes no Song, so a report that is sent
     /// again after a lost answer does no harm. A workspace n8Tracks has not seen yet (one just created)
     /// is recorded as Available; an Unavailable one cannot be chosen. Null when the request moved on
@@ -326,7 +330,9 @@ public sealed class GenerationRequestService(
                     ? await workspaces.FindAsync(currentId, ct).ConfigureAwait(false)
                     : null;
                 var same = string.Equals(song.SunoWorkspaceId, resolved.SunoId, StringComparison.Ordinal);
-                if (current is { State: SunoWorkspaceState.Available } && !same)
+                var replacesCurrent = resolved.Replaces is not null
+                    && string.Equals(song.SunoWorkspaceId, resolved.Replaces, StringComparison.Ordinal);
+                if (current is { State: SunoWorkspaceState.Available } && !same && !replacesCurrent)
                 {
                     return new GenerationRequestChangeOutcome.WorkspaceAlreadySet(request, current);
                 }

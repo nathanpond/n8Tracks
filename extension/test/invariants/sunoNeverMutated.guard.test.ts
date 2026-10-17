@@ -23,6 +23,7 @@ import {
   forbiddenControls,
   registryProblems,
   type RunRecipe,
+  WORKSPACE_SONGS_ADDRESS,
 } from './workflowGuard.ts';
 
 /**
@@ -50,12 +51,12 @@ const RUN_RECIPES: Readonly<Record<string, RunRecipe>> = {
   'open-workspace-list': { values: {} },
   // Scrolls the list on screen; it presses nothing on any snapshot.
   'load-more': { values: {} },
-  // Generate on Suno's workspace (#145). Opening the list presses only the breadcrumb (no snapshot
-  // shows it), scrolling presses nothing, and selecting presses a workspace row; the page's own
-  // answer that each waits for stands in as already come.
+  // Generate on Suno's workspace (#145, TS-007-15). Checking sign-in reads only; opening the list
+  // presses only the breadcrumb (no snapshot shows it); searching types into the list's search box
+  // and presses nothing. A workspace is opened by its address, never by its row.
+  'signed-in': { values: {} },
   'open-workspaces': { values: {} },
-  'more-workspaces': { values: {} },
-  'select-workspace': { values: { workspaceName: 'My Workspace', shown: () => OK } },
+  'search-workspaces': { values: { query: 'Night Drive' } },
   // The one permitted change to Suno: its two controls, through their own primitive only.
   'create-workspace': {
     values: { workspaceName: 'A new Song', created: () => OK },
@@ -301,7 +302,146 @@ describe('invariant 4: the extension never presses a forbidden control on Suno',
     // The page heard was reported; then the watch ran to its limit hearing nothing more.
     expect(completions).toEqual([[]]);
   }, 60_000);
+
+  it('opens the Song’s workspace by its address and types into the list’s search box, pressing no control (TS-007-15, #434)', async () => {
+    // A Song with a workspace, on Create: one load, by address, and nothing else.
+    const byAddress = await generateOn('workspace-selector', 'https://suno.com/create', {
+      sunoId: 'default',
+      name: 'My Workspace',
+      state: 'available',
+    });
+    expect(byAddress.happened).toEqual(['load https://suno.com/create?wid=default']);
+    document.body.innerHTML = '';
+
+    // That load: the page holds the Create button and each song's Publish; the workspace is taken
+    // as selected by the address, and nothing is pressed.
+    const arrived = await generateOn(
+      'create-workspace-songs',
+      WORKSPACE_SONGS_ADDRESS,
+      {
+        sunoId: WORKSPACE_SONGS_ADDRESS.split('wid=')[1] ?? '',
+        name: 'Country Farming',
+        state: 'available',
+      },
+      2,
+    );
+    expect(arrived.forbidden).toEqual(
+      expect.arrayContaining(['button "Create song"', 'button "Publish clip"']),
+    );
+    expect(arrived.happened).toEqual([]);
+    expect(arrived.shown.at(-1)).toEqual({ kind: 'selected', name: 'Country Farming' });
+    document.body.innerHTML = '';
+
+    // No workspace: the list's search box is typed into (the Song's title, then cleared), and the
+    // choice waits for the user. No press, no key, no load.
+    const searching = await generateOn('workspace-selector', 'https://suno.com/create', null);
+    expect(searching.happened).toEqual([
+      'typed "Night Drive" into Search workspaces',
+      'typed "" into Search workspaces',
+    ]);
+    expect(searching.shown.at(-1)).toMatchObject({ kind: 'choose' });
+  }, 60_000);
 });
+
+/**
+ * Runs Generate on Suno in a Suno tab on `snapshot` at `address`, for a Song whose workspace is
+ * `workspace`, until it selects the workspace, loads a page, or waits for the user's choice. Reports
+ * every press, key, form submission, and load, and what was typed where; the forbidden controls on
+ * the page are spied on as the workflow guard does.
+ */
+async function generateOn(
+  snapshot: string,
+  address: string,
+  workspace: { sunoId: string; name: string; state: 'available' | 'unavailable' } | null,
+  loads = 1,
+): Promise<{ happened: string[]; forbidden: string[]; shown: unknown[] }> {
+  document.body.innerHTML = snapshotHtml(snapshot);
+  const happened: string[] = [];
+  const controls = forbiddenControls(document);
+  for (const control of controls) {
+    for (const type of ['click', 'pointerdown', 'mousedown', 'keydown', 'submit']) {
+      control.element.addEventListener(type, () => happened.push(`${type} on ${control.words}`), {
+        capture: true,
+      });
+    }
+  }
+  for (const type of ['click', 'pointerdown', 'mousedown', 'keydown', 'submit']) {
+    document.addEventListener(type, () => happened.push(`${type} on the page`), { capture: true });
+  }
+  document.addEventListener(
+    'input',
+    (event) => {
+      const box = event.target as HTMLInputElement;
+      happened.push(`typed "${box.value}" into ${box.getAttribute('aria-label') ?? box.localName}`);
+    },
+    { capture: true },
+  );
+  const clock = fakeClock();
+  const page = new Page(document, {
+    address: () => address,
+    navigate: (to) => happened.push(`load ${to}`),
+    clock,
+  });
+  const feed = new ObservationFeed(
+    {
+      origin: 'https://suno.com',
+      postMessage: () => undefined,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    },
+    clock,
+  );
+  feed.take({
+    source: OBSERVER_SOURCE,
+    type: 'observed',
+    kind: 'workspaces',
+    request: { cursor: null, page: 1, filters: null, feedId: null },
+    body: { num_total_results: 101, current_page: 1, projects: [{ id: 'default', name: 'Mine' }] },
+  });
+  const shown: unknown[] = [];
+  const generate = new SunoGenerate({
+    page,
+    session: new AdapterSession(new WorkflowRegistry(ADAPTER_WORKFLOWS), page, () => undefined),
+    observations: feed,
+    send: (request) => {
+      switch (request.type) {
+        case 'generate-resume':
+          return Promise.resolve({
+            job: {
+              requestId: '0199b1a0-7000-7000-9000-0000000000aa',
+              songTitle: 'Night Drive',
+              workspace,
+              loads,
+              form: null,
+            },
+          });
+        case 'generate-workspaces':
+          return Promise.resolve({ ok: true, songCounts: {} });
+        default:
+          return Promise.resolve({ ok: true });
+      }
+    },
+    show: (state) => {
+      shown.push(state);
+    },
+    clock,
+  });
+  const running = generate.resume();
+  for (let tries = 0; tries < 500 && !generate.choosing; tries += 1) {
+    const settled = await Promise.race([
+      running.then(() => true),
+      new Promise((resolve) => {
+        setTimeout(() => {
+          resolve(false);
+        }, 0);
+      }),
+    ]);
+    if (settled === true) {
+      break;
+    }
+  }
+  return { happened, forbidden: controls.map((control) => control.words), shown };
+}
 
 /**
  * Runs the completion watch (#154) in a Suno tab on `snapshot`, on the Create page with a recorded

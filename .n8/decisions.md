@@ -4704,3 +4704,24 @@ Story #219 (on the milestone branch):
   **Why:** A value added after the import marks were applied must still come out in setting order.
   **Issue:** #431
 
+
+## M4 captures — #434 the Song's workspace by address, and no need for Suno's whole workspace list — 2026-10-17
+
+- **Decision:** Generate on Suno opens a Song's Available workspace by its address (`/create?wid=<id>`), from Create or straight from any other Suno page, as a page load bounded by `MAXIMUM_LOADS`, and takes it as selected when the address names it or the library pane asks for its songs (TS-007-12). The list is not read.
+  **Why:** TS-007-15 (live, 2026-10-17): Suno loads more of the workspace list only on a trusted scroll, so for the owner's 101 workspaces no scripted read can reach the whole list, and Generate stopped at "read workspace list".
+  **Issue:** #434
+- **Decision:** With no usable workspace (none, Unavailable, or not shown by its address within the loads), the tab reads the pages Suno loaded (no scrolling, a 5-second wait for a first one), types the Song's title into Suno's list search box, and offers the choice. The panel gains its own search box, which types into Suno's. A picked or created workspace is then opened by its address, not by its row. The row press (`select-workspace`), the scroll (`more-workspaces`), the SAME_NAME stop and its wait, `WorkspaceList`'s completeness, and TS-007-13's reload on an incomplete list are removed. New workflows: `signed-in` and `search-workspaces`.
+  **Why:** The ID is known once a workspace is chosen or created, so opening it by address cannot confuse two workspaces of one name (#335). The direction said the SAME_NAME rule "checks by search before creating or selecting by name". No selecting by name is left. The search still runs before the choice, so a same-name workspace is offered first and the panel says one exists.
+  **Issue:** #434, #335
+- **Decision:** `generate-workspaces` now reports `complete: false` (the server already accepted it). Nothing becomes Unavailable from Generate, and the Song counts still come back.
+  **Why:** Generate cannot know the whole list.
+  **Issue:** #434
+- **Decision (server):** `resolvedWorkspace` gains an optional `replaces`, the Song's own workspace's Suno ID. A choice that names it is taken although that workspace is still Available, and its availability is left alone. Another ID is still 409 `workspace_already_set`, and a blank one is 422. The service worker sends what the tab sets, and counts the tab's loads afresh after a choice.
+  **Why:** Generate no longer marks a missing workspace Unavailable, because it reports no complete list. Without `replaces`, a replacement for a workspace Suno did not show would always be refused.
+  **Issue:** #434
+- **Decision:** The sync's workspace-list leg goes on with what it read when no next page comes within 20 seconds of one scroll. It no longer stops after three asks, and `workspacesComplete: false` goes in the export header, carried in `SyncProgress.workspacesComplete`. An absent value is a sync begun before #434 and counts as complete.
+  **Why:** Owner-approved direction in #434. The server already changes no availability for an incomplete list.
+  **Issue:** #434
+- **Decision:** `project-me.search.response.json` is a constructed fixture: Suno's answer to the search box was not captured. What Suno sends for a search, and what `/create?wid=` does for a deleted workspace, need live confirmation. `ADAPTER_VERSION` 26.
+  **Why:** No capture yet. The extension takes any list answer after typing, so a different shape only finds fewer.
+  **Issue:** #434

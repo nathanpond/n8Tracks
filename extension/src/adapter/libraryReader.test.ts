@@ -6,6 +6,7 @@ import {
   exportHeader,
   legsFor,
   readsTrash,
+  PAGE_WAIT_MS,
   PART_CLIPS,
   readLeg,
   readLibrary,
@@ -312,15 +313,60 @@ describe('reading the workspace list', () => {
     expect(page.openSteps).toEqual([]);
   });
 
-  it('is not complete while pages are missing: a page that never comes stops the read', async () => {
-    const first = sunoObject('project-me.page-1.response');
-    const page = suno([observed('workspaces', first, { page: 1 })]);
+  it('goes on with the pages Suno gave when no next page comes after a scroll, as an incomplete list (TS-007-15, #434)', async () => {
+    // The owner's list: 101 workspaces, 20 a page; Suno loads pages 1 and 2, and a scripted scroll
+    // never brings page 3 (only a trusted scroll does).
+    const pageOf = (number: number) =>
+      observed(
+        'workspaces',
+        {
+          num_total_results: 101,
+          current_page: number,
+          projects: Array.from({ length: 20 }, (_, index) => ({
+            id: `w-${String(number)}-${String(index)}`,
+            name: `Workspace ${String(index)}`,
+          })),
+        },
+        { page: number },
+      );
+    const page = suno([pageOf(1), pageOf(2)]);
 
-    const stop = await stopOf(readLeg(LIBRARY, legsFor(LIBRARY), START, page.context));
+    const next = await readLeg(LIBRARY, legsFor(LIBRARY), START, page.context);
 
-    expect(stop.step).toBe('Read the workspace list');
-    expect(stop.expected).toBe('a page of the workspace list within 20 seconds (asked 3 times)');
-    expect(page.moreSteps).toHaveLength(3);
+    // One scroll asked for page 3, and one wait of 20 seconds for it: then the leg goes on.
+    expect(page.moreSteps).toEqual(['Read the workspace list', 'Read the workspace list']);
+    expect(page.clock.slept.reduce((total, ms) => total + ms, 0)).toBeLessThanOrEqual(
+      PAGE_WAIT_MS + 1_000,
+    );
+    expect(next.leg).toBe(1);
+    expect(next.counts.workspaces).toBe(40);
+    expect(next.workspaces).toHaveLength(40);
+    expect(next.workspacesComplete).toBe(false);
+  });
+
+  it('says the workspace list is not complete in the header the next leg creates (#434)', async () => {
+    const short: SyncProgress = {
+      ...START,
+      leg: 1,
+      workspaces: sunoObject('project-me.page-1.response').projects as unknown[],
+      workspacesComplete: false,
+    };
+    const page = suno([libraryPage([], false, null)]);
+
+    const next = await readLeg(LIBRARY, legsFor(LIBRARY), short, page.context);
+
+    expect(page.headers[0]).toMatchObject({ workspacesComplete: false, libraryComplete: true });
+    expect(page.headers[0]?.workspaces).toEqual(short.workspaces);
+    expect(next.workspacesComplete).toBe(false);
+    // Complement: a list read to its end, or a sync begun before #434, is complete.
+    const whole = suno([libraryPage([], false, null)]);
+    await readLeg(
+      LIBRARY,
+      legsFor(LIBRARY),
+      { ...short, workspacesComplete: undefined },
+      whole.context,
+    );
+    expect(whole.headers[0]).toMatchObject({ workspacesComplete: true });
   });
 });
 
@@ -369,6 +415,7 @@ describe('reading the whole library', () => {
       partNumber: 1,
       counts: { clips: 4, trashed: 0, workspaces: 3, playlists: 0 },
       workspaces: [],
+      workspacesComplete: true,
     });
   });
 

@@ -189,6 +189,9 @@ export function startSunoContent(options: SunoContentOptions): SunoContent {
     pick: (option) => {
       generate?.pick(option);
     },
+    search: (query) => {
+      generate?.search(query);
+    },
     checkAgain: () => {
       void generate?.checkAgain();
     },

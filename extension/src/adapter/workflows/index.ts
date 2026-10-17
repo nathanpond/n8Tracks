@@ -33,7 +33,7 @@ import {
   verifySourceAdvanced,
   verifySourceSimple,
 } from './sources.ts';
-import { createWorkspace, moreWorkspaces, openWorkspaces, selectWorkspace } from './workspace.ts';
+import { createWorkspace, openWorkspaces, searchWorkspaces, signedIn } from './workspace.ts';
 
 /**
  * Every workflow the adapter ships, in the order the panel lists them. A story that adds a
@@ -43,9 +43,9 @@ export const ADAPTER_WORKFLOWS: readonly Workflow[] = [
   recogniseSuno,
   loadMore,
   openWorkspaceList,
+  signedIn,
   openWorkspaces,
-  moreWorkspaces,
-  selectWorkspace,
+  searchWorkspaces,
   createWorkspace,
   switchForm,
   fillSongsSimple,

@@ -299,6 +299,36 @@ function answerTabPress(answer: () => void): Element[] {
 }
 
 describe('reading a leg after its page loads', () => {
+  it('goes on with a workspace list Suno stops short, keeping it as not complete (TS-007-15, #434)', async () => {
+    // 101 workspaces, of which Suno answers one page; a scroll brings no next one.
+    const projects = sunoObject('project-me.page-1.response');
+    projects.num_total_results = 101;
+    const sw = worker(sessionAt(0));
+    const { content: started, visited } = start({
+      address: 'https://suno.com/me',
+      worker: sw,
+    });
+    answerTabPress(() => {
+      started.observations.take(observed('workspaces', projects));
+    });
+
+    await started.resumed;
+
+    expect(sw.asked).toContainEqual({
+      type: 'sync-save',
+      progress: {
+        leg: 1,
+        attempt: 0,
+        partNumber: 0,
+        counts: { clips: 0, trashed: 0, workspaces: 3, playlists: 0 },
+        workspaces: projects.projects,
+        workspacesComplete: false,
+      },
+    });
+    expect(sw.asked.some((request) => request.type === 'sync-discard')).toBe(false);
+    expect(visited).toEqual(['https://suno.com/me']);
+  });
+
   it('reads the workspace list, keeps it, and opens the library', async () => {
     const projects = sunoObject('project-me.page-1.response');
     projects.num_total_results = 3;
@@ -321,6 +351,7 @@ describe('reading a leg after its page loads', () => {
         partNumber: 0,
         counts: { clips: 0, trashed: 0, workspaces: 3, playlists: 0 },
         workspaces: projects.projects,
+        workspacesComplete: true,
       },
     });
     expect(visited).toEqual(['https://suno.com/me']);

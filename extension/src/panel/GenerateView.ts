@@ -4,9 +4,10 @@ import { verificationSummary } from './VerificationSummary.ts';
 
 /**
  * Generate on Suno, in the panel on Suno (#145): what the extension is doing for the request
- * n8Tracks handed it, and, when the Song has no workspace (or its workspace is gone from Suno), the
- * user's choice: create a workspace named after the Song, or use one Suno already has. Nothing is
- * created until the user presses one. Plain DOM in the panel's shadow root, every control labelled
+ * n8Tracks handed it, and, when the Song has no usable workspace (none, Unavailable, or not shown
+ * by its address), the user's choice: create a workspace named after the Song, or use one Suno
+ * already has, found among what Suno loaded or by a search typed into Suno's own search box
+ * (TS-007-15). Nothing is created until the user presses one. Plain DOM in the panel's shadow root, every control labelled
  * and reachable by keyboard. Hidden until a request reaches this tab.
  */
 
@@ -16,16 +17,18 @@ export type GenerateViewState =
   | {
       kind: 'choose';
       title: string;
-      /** The Song has no workspace, or the one it had is no longer in Suno's list. */
-      reason: 'none' | 'unavailable';
+      /**
+       * The Song has no workspace, n8Tracks holds its one Unavailable, or Suno did not show it by
+       * its address (`unopened`).
+       */
+      reason: 'none' | 'unavailable' | 'unopened';
+      /** The search the options are narrowed to; blank for none. */
+      query?: string;
+      /** Suno has a workspace with the Song's title already (#335): the new one has its name too. */
+      sameName?: boolean;
       options: readonly WorkspaceOption[];
     }
   | { kind: 'selected'; name: string }
-  /**
-   * Suno lists another workspace with the Song's workspace's name (#335): the extension presses
-   * neither row and waits for the user to select the Song's one, which it recognises by ID.
-   */
-  | { kind: 'select'; name: string }
   /**
    * The form is filled (#146): the summary, and the user reviews the form and clicks Create.
    * `form` is the Version's kind (#147: `song`, `speech`, or `sound`); a Song's when absent.
@@ -55,6 +58,8 @@ export interface GenerateViewOptions {
   create(): void;
   /** "Use": the user chose an existing workspace. */
   pick(option: WorkspaceOption): void;
+  /** "Search": the user looks for a workspace by name in Suno's own search box. */
+  search?(query: string): void;
   /** "Check again" in the verification summary (#146). */
   checkAgain?(): void;
   /** "Continue" once the user loaded the source by hand (#148). */
@@ -169,20 +174,6 @@ export class GenerateView {
           ),
         );
         return;
-      case 'select':
-        this.body.append(
-          this.make(
-            'p',
-            { role: 'alert', class: 'generate-select' },
-            `Suno has more than one workspace named “${nameOrUnnamed(this.state.name)}”. Select the Song’s one in Suno’s workspace list.`,
-          ),
-          this.make(
-            'p',
-            { class: 'detail' },
-            'The extension presses neither and goes on when Suno shows the Song’s workspace, which it checks by ID. It waits two minutes.',
-          ),
-        );
-        return;
       case 'recorded': {
         const open = this.state.recorded && this.state.ended !== true;
         this.body.append(
@@ -251,7 +242,7 @@ export class GenerateView {
         return;
       }
       case 'choose':
-        this.renderChoice(this.state.title, this.state.reason, this.state.options);
+        this.renderChoice(this.state);
         return;
       case 'verification': {
         const summary = verificationSummary(
@@ -273,17 +264,17 @@ export class GenerateView {
     }
   }
 
-  private renderChoice(
-    title: string,
-    reason: 'none' | 'unavailable',
-    options: readonly WorkspaceOption[],
-  ): void {
+  private renderChoice(state: Extract<GenerateViewState, { kind: 'choose' }>): void {
+    const { title, reason, options } = state;
+    const query = state.query ?? '';
     const why = this.make(
       'p',
       { class: 'generate-choice-reason', id: 'n8-generate-reason' },
       reason === 'none'
         ? `The Song “${nameOrUnnamed(title)}” has no Suno workspace yet. Choose where its Generations go; the extension uses it for every later Generation of the Song.`
-        : `The Song’s workspace was not found in Suno’s list, so n8Tracks marked it Unavailable. Choose a replacement for the Song “${nameOrUnnamed(title)}”.`,
+        : reason === 'unavailable'
+          ? `The Song’s workspace is Unavailable in n8Tracks (Suno no longer listed it). Choose a replacement for the Song “${nameOrUnnamed(title)}”.`
+          : `Suno did not open the Song’s workspace by its address: it may have been deleted in Suno. Choose a replacement for the Song “${nameOrUnnamed(title)}”.`,
     );
     const create = this.button(`Create a workspace named “${nameOrUnnamed(title)}”`, () => {
       this.options.create();
@@ -291,6 +282,15 @@ export class GenerateView {
     create.setAttribute('aria-describedby', 'n8-generate-reason');
     this.firstControl = create;
     this.body.append(why, create);
+    if (state.sameName === true) {
+      this.body.append(
+        this.make(
+          'p',
+          { class: 'detail' },
+          'Suno already has a workspace with this name. A new one gets the same name; the extension tells them apart by their IDs.',
+        ),
+      );
+    }
 
     const existing = this.make('section', {
       class: 'generate-existing',
@@ -299,8 +299,19 @@ export class GenerateView {
     existing.append(
       this.make('h4', { id: 'n8-generate-existing' }, 'Or use a workspace Suno already has'),
     );
+    if (this.options.search !== undefined) {
+      existing.append(this.searchForm(query));
+    }
     if (options.length === 0) {
-      existing.append(this.make('p', { class: 'detail' }, 'Suno listed no other workspace.'));
+      existing.append(
+        this.make(
+          'p',
+          { class: 'detail' },
+          query.trim() === ''
+            ? 'Suno showed no other workspace. Search for one by name.'
+            : `Suno found no workspace named like “${query}”.`,
+        ),
+      );
     } else {
       const list = this.make('ul', { class: 'generate-options' });
       options.forEach((option, index) => {
@@ -320,5 +331,22 @@ export class GenerateView {
       existing.append(list);
     }
     this.body.append(existing);
+  }
+
+  /**
+   * The search: a labelled text box and its button. Suno lists only some of a long workspace list
+   * (TS-007-15), so a workspace is found by name in Suno's own search box.
+   */
+  private searchForm(query: string): HTMLElement {
+    const search = this.make('div', { class: 'generate-search', role: 'search' });
+    const label = this.make('label', { for: 'n8-generate-search' }, 'Find a workspace by name');
+    const box = this.make('input', { id: 'n8-generate-search', type: 'search' });
+    box.value = query;
+    // A plain button, not a form's submit: nothing in the panel submits a form on Suno's page.
+    const go = this.button('Search', () => {
+      this.options.search?.(box.value);
+    });
+    search.append(label, ' ', box, ' ', go);
+    return search;
   }
 }

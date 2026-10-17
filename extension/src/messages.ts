@@ -157,6 +157,11 @@ export interface ChosenWorkspace {
   sunoId: string;
   name: string;
   how: 'created' | 'picked';
+  /**
+   * The Song's own workspace, which n8Tracks holds Available but Suno did not show by its address
+   * (TS-007-15): the choice replaces it. Absent when the Song had none or an Unavailable one.
+   */
+  replaces?: string;
 }
 
 /**
@@ -229,6 +234,12 @@ export interface SyncProgress {
   counts: SyncCounts;
   /** The workspace list as Suno returned it, until the export is created. */
   workspaces: unknown[];
+  /**
+   * Whether the workspace list was read to its end (#434): false when Suno sent no further page
+   * after a scroll, which the header then says (`workspacesComplete`). Absent in a sync begun before
+   * #434, which read it to its end or stopped.
+   */
+  workspacesComplete?: boolean;
 }
 
 export interface SyncSession extends SyncProgress {
@@ -330,7 +341,10 @@ export type Request =
       /** The verification summary of the filled form (#146), which replaces the last one. */
       verification?: VerificationReport;
     }
-  /** Suno's complete workspace list, for n8Tracks' record (#145). */
+  /**
+   * The workspaces Suno showed the tab, for n8Tracks' record (#145); never the complete list, which
+   * Generate cannot know (TS-007-15).
+   */
   | { type: 'generate-workspaces'; workspaces: unknown[] }
   /** The workspace the user chose in the panel, for the Song (#145). */
   | { type: 'generate-resolve'; workspace: ChosenWorkspace }
@@ -570,7 +584,8 @@ function isChosenWorkspace(value: unknown): value is ChosenWorkspace {
     typeof value.sunoId === 'string' &&
     value.sunoId !== '' &&
     typeof value.name === 'string' &&
-    (value.how === 'created' || value.how === 'picked')
+    (value.how === 'created' || value.how === 'picked') &&
+    (value.replaces === undefined || (typeof value.replaces === 'string' && value.replaces !== ''))
   );
 }
 
@@ -657,7 +672,8 @@ function isSyncProgress(value: unknown): value is SyncProgress {
     ['clips', 'trashed', 'workspaces', 'playlists'].every((key) =>
       isCount((value.counts as Record<string, unknown>)[key]),
     ) &&
-    Array.isArray(value.workspaces)
+    Array.isArray(value.workspaces) &&
+    (value.workspacesComplete === undefined || typeof value.workspacesComplete === 'boolean')
   );
 }
 

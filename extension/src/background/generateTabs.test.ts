@@ -340,7 +340,7 @@ describe('Generate on Suno: the Suno tab', () => {
     expect(calls.length).toBe(before);
   });
 
-  it('reports Suno’s workspace list as complete and answers n8Tracks’ Song counts', async () => {
+  it('reports the workspaces Suno showed, never as the complete list, and answers n8Tracks’ Song counts (TS-007-15)', async () => {
     const { handOff, generate, calls, answerDiscovered } = await setup();
     await handOff();
     const workspaces = [{ id: 'w-1', name: 'Night Drive' }, { id: 'w-2' }];
@@ -352,7 +352,8 @@ describe('Generate on Suno: the Suno tab', () => {
     expect(calls.at(-1)).toEqual({
       method: 'PUT',
       path: 'api/v1/suno/workspaces/discovered',
-      body: { complete: true, workspaces },
+      // Generate sees only what Suno loaded or searched: nothing may become Unavailable from it.
+      body: { complete: false, workspaces },
     });
 
     answerDiscovered(() => jsonResponse(403, { code: 'insufficient_scope' }));
@@ -384,8 +385,22 @@ describe('Generate on Suno: the Suno tab', () => {
       message: null,
       resolvedWorkspace: chosen,
     });
+    // The next load opens the choice by its address, its loads counted afresh (TS-007-15).
     expect(await generate.handleTab({ type: 'generate-resume' }, 42)).toMatchObject({
-      job: { workspace: { sunoId: 'w-9', name: 'Night Drive', state: 'available' } },
+      job: { loads: 1, workspace: { sunoId: 'w-9', name: 'Night Drive', state: 'available' } },
+    });
+  });
+
+  it('sends the Song’s workspace the choice replaces, when Suno did not show it by its address (TS-007-15)', async () => {
+    const { handOff, generate, calls } = await setup();
+    await handOff();
+    const chosen = { sunoId: 'w-9', name: 'Night Drive', how: 'picked', replaces: 'w-1' } as const;
+
+    expect(await generate.handleTab({ type: 'generate-resolve', workspace: chosen }, 42)).toEqual({
+      ok: true,
+    });
+    expect(calls.filter((call) => call.method === 'PATCH').at(-1)?.body).toMatchObject({
+      resolvedWorkspace: chosen,
     });
   });
 
