@@ -5,8 +5,9 @@ using n8Tracks.Domain.Suno;
 namespace n8Tracks.Application.Generations;
 
 /// <summary>
-/// The latest raw clip Suno reported for a Generation, as received (never re-serialised). Read only by
-/// the session-only provider-record endpoint, and never logged.
+/// The latest raw clip Suno reported for a Generation, as received (never re-serialised). Read whole
+/// only by the session-only provider-record endpoint; the source pre-fill (#431) reads a source song's
+/// lyrics and styles from it. Never logged.
 /// </summary>
 /// <param name="GenerationId">Its Generation.</param>
 /// <param name="SunoId">The clip's Suno ID.</param>

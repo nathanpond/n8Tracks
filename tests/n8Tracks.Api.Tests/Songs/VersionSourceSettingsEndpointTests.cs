@@ -232,6 +232,147 @@ public sealed class VersionSourceSettingsEndpointTests
         Assert.Equal(revision, (await GetAsync(client, target)).GetProperty("revision").GetInt32());
     }
 
+    [Fact]
+    public async Task ASimpleSourceGivesAnAdvancedVersionTheSongsLyricsAndStylesFromItsClip()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var generation = await SimpleSourceAsync(factory, client, "Simple original", SungClip("simple-original"));
+        var target = await TargetAsync(client, "Advanced cover");
+
+        var plan = await PreviewAsync(client, target, CoverOf(generation));
+
+        // The lyrics are empty on the Version, so they are filled (as is the Song description, as before); its own styles differ, so they are asked about.
+        var fills = Keyed(plan, "fills");
+        Assert.Equal(["lyrics", "simplePrompt", "voice"], fills.Keys);
+        Assert.Equal(ClipLyrics, fills["lyrics"].GetProperty("sourceValue").GetString());
+        var conflicts = Keyed(plan, "conflicts");
+        Assert.Equal(["styles"], conflicts.Keys);
+        Assert.Equal("my own styles", conflicts["styles"].GetProperty("versionValue").GetString());
+        Assert.Equal(ClipStyles, conflicts["styles"].GetProperty("sourceValue").GetString());
+        Assert.Empty(plan.GetProperty("unknown").EnumerateArray());
+
+        // The Simple form's section switches are part of the lyrics and styles, never asked about alone.
+        Assert.DoesNotContain("simpleLyricsAdded", fills.Keys.Concat(conflicts.Keys));
+        Assert.DoesNotContain("simpleStylesAdded", fills.Keys.Concat(conflicts.Keys));
+
+        using var response = await ApplyAsync(client, target, plan.GetProperty("revision").GetInt32(), CoverOf(generation), """["styles"]""");
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        var applied = await SetupApi.JsonAsync(response);
+        Assert.Equal(ClipLyrics, applied.GetProperty("lyrics").GetString());
+        Assert.Equal(ClipStyles, applied.GetProperty("styles").GetString());
+        Assert.Equal("advanced", applied.GetProperty("inputs").GetProperty("songMode").GetString());
+
+        // Complement: a Version already holding the same lyrics is not asked about them.
+        var same = await TargetAsync(client, "Advanced cover with the lyrics", lyrics: ClipLyrics);
+        var samePlan = await PreviewAsync(client, same, CoverOf(generation));
+        Assert.DoesNotContain("lyrics", Keyed(samePlan, "fills").Keys.Concat(Keyed(samePlan, "conflicts").Keys));
+    }
+
+    [Fact]
+    public async Task ASimpleSourceGivesASimpleVersionTheSongsLyricsAndStylesInItsSections()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var generation = await SimpleSourceAsync(factory, client, "Simple to simple", SungClip("simple-to-simple"));
+        var target = await SimpleTargetAsync(client, "Simple cover", """{"songMode":"simple"}""");
+
+        var plan = await PreviewAsync(client, target, CoverOf(generation));
+
+        var fills = Keyed(plan, "fills");
+        Assert.Equal(["lyrics", "styles", "simplePrompt", "voice"], fills.Keys);
+        Assert.Equal(ClipLyrics, fills["lyrics"].GetProperty("sourceValue").GetString());
+        Assert.Equal(ClipStyles, fills["styles"].GetProperty("sourceValue").GetString());
+        Assert.Empty(plan.GetProperty("conflicts").EnumerateArray());
+
+        using var response = await ApplyAsync(client, target, plan.GetProperty("revision").GetInt32(), CoverOf(generation), "[]");
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        var applied = await SetupApi.JsonAsync(response);
+        var inputs = applied.GetProperty("inputs");
+        Assert.Equal("simple", inputs.GetProperty("songMode").GetString());
+        Assert.True(inputs.GetProperty("simpleLyricsAdded").GetBoolean());
+        Assert.True(inputs.GetProperty("simpleStylesAdded").GetBoolean());
+        Assert.Equal(ClipLyrics, applied.GetProperty("lyrics").GetString());
+        Assert.Equal(ClipStyles, applied.GetProperty("styles").GetString());
+
+        // A Simple Version whose Add: Styles section holds its own text is asked, and keeps it unless it takes the source's.
+        var own = await SimpleTargetAsync(client, "Simple cover with styles", """{"songMode":"simple","simpleStylesAdded":true}""", styles: "my simple styles");
+        var ownPlan = await PreviewAsync(client, own, CoverOf(generation));
+        var conflict = Assert.Single(ownPlan.GetProperty("conflicts").EnumerateArray());
+        Assert.Equal("styles", conflict.GetProperty("key").GetString());
+        Assert.Equal("my simple styles", conflict.GetProperty("versionValue").GetString());
+        Assert.Equal(ClipStyles, conflict.GetProperty("sourceValue").GetString());
+        using var keeping = await ApplyAsync(client, own, ownPlan.GetProperty("revision").GetInt32(), CoverOf(generation), "[]");
+        var kept = await SetupApi.JsonAsync(keeping);
+        Assert.Equal("my simple styles", kept.GetProperty("styles").GetString());
+        Assert.Equal(ClipLyrics, kept.GetProperty("lyrics").GetString());
+        Assert.True(kept.GetProperty("inputs").GetProperty("simpleLyricsAdded").GetBoolean());
+    }
+
+    [Fact]
+    public async Task ASimpleSourceWhoseClipLacksThemTooReportsTheLyricsAndStylesUnknown()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var generation = await SimpleSourceAsync(factory, client, "Simple bare", Clips.Minimal("simple-bare"));
+        var target = await TargetAsync(client, "Bare cover");
+
+        var plan = await PreviewAsync(client, target, CoverOf(generation));
+
+        var unknown = plan.GetProperty("unknown").EnumerateArray().ToDictionary(static item => item.GetProperty("key").GetString()!, static item => item.GetProperty("reason").GetString());
+        Assert.Equal(new Dictionary<string, string?> { ["lyrics"] = "not_returned", ["styles"] = "not_returned" }, unknown);
+        var offered = Keyed(plan, "fills").Keys.Concat(Keyed(plan, "conflicts").Keys).ToList();
+        Assert.DoesNotContain("lyrics", offered);
+        Assert.DoesNotContain("styles", offered);
+    }
+
+    private const string ClipLyrics = "[Verse]\nWritten by Suno\n[Chorus]\nSung back";
+    private const string ClipStyles = "dreamy synth-pop with airy female vocals and a slow build";
+
+    /// <summary>A clip whose song has lyrics and styles, as Suno returns a Simple-mode clip: Suno wrote them.</summary>
+    private static string SungClip(string sunoId) => new JsonObject
+    {
+        ["id"] = sunoId,
+        ["status"] = "complete",
+        ["title"] = "Sung clip",
+        ["metadata"] = new JsonObject
+        {
+            ["prompt"] = ClipLyrics,
+            ["tags"] = ClipStyles,
+            ["gpt_description_prompt"] = "a dreamy song",
+            ["task"] = "agentic_thinking",
+        },
+    }.ToJsonString();
+
+    /// <summary>
+    /// A Song whose Version was made in Simple mode: a Song description and a Voice, no sections added,
+    /// no lyrics or styles of its own, frozen by a Generation with <paramref name="clip"/>. The Generation's shortcode.
+    /// </summary>
+    private static async Task<string> SimpleSourceAsync(N8TracksApiFactory factory, HttpClient client, string title, string clip)
+    {
+        var song = await SongApi.CreateAsync(client, title);
+        var id = song.GetProperty("currentVersion").GetProperty("id").GetGuid();
+        using (var edited = await SendAsync(client, HttpMethod.Patch, new Uri($"/api/v1/versions/{id}", UriKind.Relative), SongApi.Quoted(1), """
+            {"inputs":{"songMode":"simple","simplePrompt":"a dreamy song","voice":{"personaId":"persona-1","name":"Smoky"}}}
+            """))
+        {
+            Assert.True(edited.StatusCode == HttpStatusCode.OK, await edited.Content.ReadAsStringAsync());
+        }
+
+        return (await SongApi.AttachGenerationAsync(factory, id.ToString(), clip)).Shortcode;
+    }
+
+    /// <summary>A Song whose Version holds the Simple-mode <paramref name="inputs"/> and <paramref name="styles"/>: the Version taking the source. Its ID.</summary>
+    private static async Task<Guid> SimpleTargetAsync(HttpClient client, string title, string inputs, string styles = "")
+    {
+        var song = await SongApi.CreateAsync(client, title);
+        var id = song.GetProperty("currentVersion").GetProperty("id").GetGuid();
+        var body = new JsonObject { ["styles"] = styles, ["inputs"] = JsonNode.Parse(inputs) }.ToJsonString();
+        using var edited = await SendAsync(client, HttpMethod.Patch, new Uri($"/api/v1/versions/{id}", UriKind.Relative), SongApi.Quoted(1), body);
+        Assert.True(edited.StatusCode == HttpStatusCode.OK, await edited.Content.ReadAsStringAsync());
+        return id;
+    }
+
     private static string CoverOf(string generation) => $$$"""[{"typeId":"{{{Cover}}}","generation":"{{{generation}}}"}]""";
 
     /// <summary>
@@ -261,11 +402,12 @@ public sealed class VersionSourceSettingsEndpointTests
     }
 
     /// <summary>A Song whose Version holds its own styles and title and nothing else: the Version taking the source. Its ID.</summary>
-    private static async Task<Guid> TargetAsync(HttpClient client, string title)
+    private static async Task<Guid> TargetAsync(HttpClient client, string title, string lyrics = "")
     {
         var song = await SongApi.CreateAsync(client, title);
         var id = song.GetProperty("currentVersion").GetProperty("id").GetGuid();
-        using var edited = await SendAsync(client, HttpMethod.Patch, new Uri($"/api/v1/versions/{id}", UriKind.Relative), SongApi.Quoted(1), """{"styles":"my own styles","inputs":{"title":"My cover title"}}""");
+        var body = new JsonObject { ["lyrics"] = lyrics, ["styles"] = "my own styles", ["inputs"] = new JsonObject { ["title"] = "My cover title" } }.ToJsonString();
+        using var edited = await SendAsync(client, HttpMethod.Patch, new Uri($"/api/v1/versions/{id}", UriKind.Relative), SongApi.Quoted(1), body);
         Assert.True(edited.StatusCode == HttpStatusCode.OK, await edited.Content.ReadAsStringAsync());
         return id;
     }

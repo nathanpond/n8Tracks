@@ -1,8 +1,10 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using n8Tracks.Application.Catalog;
+using n8Tracks.Application.Generations;
 using n8Tracks.Application.References;
 using n8Tracks.Application.Suno;
+using n8Tracks.Application.Suno.Import;
 using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
 
@@ -24,7 +26,11 @@ public sealed record SourceSettingsPlan(
     int Revision,
     IReadOnlyList<SourceSettingFill> Fills,
     IReadOnlyList<SourceSettingConflict> Conflicts,
-    IReadOnlyList<SourceSettingUnknown> Unknown);
+    IReadOnlyList<SourceSettingUnknown> Unknown)
+{
+    /// <summary>Whether the Version taking the source is a Song in Simple mode, whose lyrics and styles are its Add: Lyrics and Add: Styles sections.</summary>
+    internal bool TargetIsSimpleSong { get; init; }
+}
 
 /// <summary>A setting the source fills because the Version's is empty: its key, as the API spells it, and the source's value.</summary>
 public sealed record SourceSettingFill(string Key, JsonNode? SourceValue);
@@ -69,6 +75,14 @@ public abstract record SourceSettingsPreviewOutcome
 /// <item><see cref="NotReturnedReason"/>: an imported source whose clip Suno did not return it for;</item>
 /// <item><see cref="NotValidReason"/>: a value n8Tracks would refuse (outside its limits, or a model no longer listed).</item>
 /// </list>
+/// A Song taking a Song's source gets the source song's actual lyrics and styles, as Suno loads them
+/// for a Cover or Extend, when the source Version's settings give none (blank, or not applying, as in
+/// Simple mode with the section not added, where Suno wrote them; or not returned by an import): they
+/// are read from the source Generation's clip record, the lyrics from <c>metadata.prompt</c> (the import
+/// field map's path) and the styles from <c>metadata.tags</c> (Suno's rewrite of what was sent, which is
+/// what the song is). In Simple mode the lyrics and styles are the Add: Lyrics and Add: Styles sections:
+/// a Version's are its own text whether the section is added or not, the switches are never settings of
+/// their own, and taking text that is not blank into a Simple Version adds its section.
 /// Previewing changes nothing. Applying takes the sources, every fill, and the conflicts the user
 /// chose in one edit of the Version (<see cref="VersionService.UpdateAsync(Guid, VersionEdit, int, VersionEditSource, CancellationToken)"/>),
 /// so they are written together or not at all, and a frozen Version is refused as any edit is.
@@ -77,6 +91,7 @@ public sealed class SourceSettingsService(
     VersionService service,
     IVersionStore versions,
     IRelationshipStore relationships,
+    IGenerationStore generations,
     ISunoModelList models)
 {
     /// <summary>The field the sources are sent in, as an edit's <c>inputs.sources</c>.</summary>
@@ -100,6 +115,14 @@ public sealed class SourceSettingsService(
     private const string StylesKey = VersionInputRules.StylesField;
     private const string VoiceKey = VersionLineageInputs.VoiceKey;
 
+    /// <summary>The Simple form's switches adding the lyrics and styles sections: part of those two settings, never their own.</summary>
+    private static readonly string LyricsAddedKey = JsonNamingPolicy.CamelCase.ConvertName(nameof(VersionInputs.SimpleLyricsAdded));
+    private static readonly string StylesAddedKey = JsonNamingPolicy.CamelCase.ConvertName(nameof(VersionInputs.SimpleStylesAdded));
+
+    /// <summary>Where a clip holds the song's lyrics, as the import field map gives it.</summary>
+    private static readonly string ClipLyricsPath = ImportFieldMap.Embedded.Find(LyricsKey)?.FeedPath
+        ?? throw new InvalidOperationException("The import field map gives no feed path for the lyrics.");
+
     /// <summary>The options that choose the form or name the result, never copied from a source.</summary>
     private static readonly HashSet<string> NeverCopied = new(StringComparer.Ordinal)
     {
@@ -107,6 +130,8 @@ public sealed class SourceSettingsService(
         VersionInputRules.SongModeKey,
         VersionInputRules.SpeechModeKey,
         "title",
+        LyricsAddedKey,
+        StylesAddedKey,
     };
 
     /// <summary>Every setting a source can fill, as the API spells it: the lyrics, the styles, each copied option, and the Voice.</summary>
@@ -194,9 +219,11 @@ public sealed class SourceSettingsService(
             {
                 case LyricsKey:
                     lyrics = SongEditField.Of((string?)value ?? string.Empty);
+                    AddSection(plan, LyricsAddedKey, (string?)value, inputs);
                     break;
                 case StylesKey:
                     styles = SongEditField.Of((string?)value ?? string.Empty);
+                    AddSection(plan, StylesAddedKey, (string?)value, inputs);
                     break;
                 default:
                     inputs[key] = JsonSerializer.SerializeToElement(value);
@@ -217,11 +244,21 @@ public sealed class SourceSettingsService(
         return await service.UpdateAsync(id, edit, plan.Revision, source, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>A Simple Version taking text that is not blank for its lyrics or styles has that section added (<paramref name="section"/>).</summary>
+    private static void AddSection(SourceSettingsPlan plan, string section, string? text, Dictionary<string, JsonElement> inputs)
+    {
+        if (plan.TargetIsSimpleSong && !string.IsNullOrWhiteSpace(text))
+        {
+            inputs[section] = JsonSerializer.SerializeToElement(true);
+        }
+    }
+
     /// <summary>The plan for <paramref name="version"/> taking <paramref name="sources"/> as its audio sources.</summary>
     private async Task<SourceSettingsPlan> PlanAsync(VersionDetail version, IReadOnlyList<SourceRequest> sources, CancellationToken cancellationToken)
     {
         var revision = version.Summary.Revision;
-        var none = new SourceSettingsPlan(null, revision, [], [], []);
+        var simple = IsSimpleSong(version);
+        var none = new SourceSettingsPlan(null, revision, [], [], []) { TargetIsSimpleSong = simple };
         if (sources.Count == 0 || sources[0].TypeId is not { } typeId
             || await relationships.FindTypeAsync(typeId, cancellationToken).ConfigureAwait(false) is not { } usage)
         {
@@ -237,8 +274,8 @@ public sealed class SourceSettingsService(
             return none;
         }
 
-        var current = Settings(version);
-        var (sourceVersion, reason) = await SourceVersionAsync(sources[0], version.Summary.Id, cancellationToken).ConfigureAwait(false);
+        var current = Settings(version, asTarget: true);
+        var (sourceVersion, generationId, reason) = await SourceVersionAsync(sources[0], version.Summary.Id, cancellationToken).ConfigureAwait(false);
         if (sourceVersion is null)
         {
             if (reason is null)
@@ -247,10 +284,10 @@ public sealed class SourceSettingsService(
             }
 
             // Nothing is known of the source: every setting the Version has is left as it is.
-            return new SourceSettingsPlan(action, revision, [], [], [.. current.Keys.Select(key => new SourceSettingUnknown(key, reason))]);
+            return new SourceSettingsPlan(action, revision, [], [], [.. current.Keys.Select(key => new SourceSettingUnknown(key, reason))]) { TargetIsSimpleSong = simple };
         }
 
-        var offered = Settings(sourceVersion);
+        var offered = Settings(sourceVersion, asTarget: false);
         var unknown = new List<SourceSettingUnknown>();
         if (sourceVersion.Imported is { } marks)
         {
@@ -267,6 +304,11 @@ public sealed class SourceSettingsService(
                     unknown.Add(new(key, NotValidReason));
                 }
             }
+        }
+
+        if (version.Inputs.Kind == VersionKind.Song && sourceVersion.Inputs.Kind == VersionKind.Song)
+        {
+            await TakeSongTextAsync(generationId!.Value, offered, unknown, cancellationToken).ConfigureAwait(false);
         }
 
         var listed = await models.ListAsync(cancellationToken).ConfigureAwait(false);
@@ -296,15 +338,74 @@ public sealed class SourceSettingsService(
             }
         }
 
-        return new SourceSettingsPlan(action, revision, fills, conflicts, [.. unknown.OrderBy(static item => IndexOf(item.Key))]);
+        return new SourceSettingsPlan(
+            action,
+            revision,
+            [.. fills.OrderBy(static item => IndexOf(item.Key))],
+            [.. conflicts.OrderBy(static item => IndexOf(item.Key))],
+            [.. unknown.OrderBy(static item => IndexOf(item.Key))])
+        {
+            TargetIsSimpleSong = simple,
+        };
     }
+
+    /// <summary>
+    /// The source song's actual lyrics and styles, for each of the two its Version's settings give no
+    /// text for (absent or blank): read from the source Generation's clip record, the lyrics at the
+    /// import field map's path (<c>metadata.prompt</c>) and the styles from <c>metadata.tags</c>, which
+    /// in Simple mode Suno wrote and otherwise is Suno's rewrite of what was sent: what the song is, as
+    /// Suno loads it for a Cover or Extend. Text the clip lacks or leaves blank is not taken: a setting
+    /// the source gave as blank is still offered as blank, and one it gave not at all is reported as not
+    /// returned. Neither text is ever logged (invariant 6).
+    /// </summary>
+    private async Task TakeSongTextAsync(Guid generationId, Dictionary<string, JsonNode?> offered, List<SourceSettingUnknown> unknown, CancellationToken cancellationToken)
+    {
+        var missing = new[] { LyricsKey, StylesKey }.Where(key => IsEmpty(offered.GetValueOrDefault(key))).ToList();
+        if (missing.Count == 0)
+        {
+            return;
+        }
+
+        var (clipLyrics, clipStyles) = await ClipTextAsync(generationId, cancellationToken).ConfigureAwait(false);
+        foreach (var key in missing)
+        {
+            var text = key == LyricsKey ? clipLyrics : clipStyles;
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                offered[key] = VersionRules.NormaliseInput(text);
+                unknown.RemoveAll(item => string.Equals(item.Key, key, StringComparison.Ordinal));
+            }
+            else if (!offered.ContainsKey(key) && !unknown.Exists(item => string.Equals(item.Key, key, StringComparison.Ordinal)))
+            {
+                unknown.Add(new(key, NotReturnedReason));
+            }
+        }
+    }
+
+    /// <summary>The lyrics and styles the clip record of the Generation with <paramref name="generationId"/> holds; null for each it does not.</summary>
+    private async Task<(string? Lyrics, string? Styles)> ClipTextAsync(Guid generationId, CancellationToken cancellationToken)
+    {
+        if (await generations.FindProviderRecordAsync(generationId, cancellationToken).ConfigureAwait(false) is not { Kind: ProviderRecord.ClipKind } record
+            || ClipReader.Read(record.Payload) is not ClipReading.Read read)
+        {
+            return (null, null);
+        }
+
+        using var clip = JsonDocument.Parse(read.Raw);
+        var lyrics = ImportFieldMap.Read(clip.RootElement, ClipLyricsPath) is { ValueKind: JsonValueKind.String } prompt ? prompt.GetString() : null;
+        return (lyrics, read.Fields.StyleTags);
+    }
+
+    /// <summary>Whether <paramref name="version"/> is a Song in Simple mode.</summary>
+    private static bool IsSimpleSong(VersionDetail version) =>
+        version.Inputs.Kind == VersionKind.Song && version.Inputs.SongMode == CreationMode.Simple;
 
     /// <summary>
     /// The Version whose settings produced the source <paramref name="request"/> names, or, when there is
     /// none, why its settings are not known (null when the source cannot be one at all: the Version's
     /// own Generation, which the edit refuses).
     /// </summary>
-    private async Task<(VersionDetail? Version, string? Reason)> SourceVersionAsync(SourceRequest request, Guid versionId, CancellationToken cancellationToken)
+    private async Task<(VersionDetail? Version, Guid? GenerationId, string? Reason)> SourceVersionAsync(SourceRequest request, Guid versionId, CancellationToken cancellationToken)
     {
         SourceGenerationFacts? facts;
         if (request.Generation is { } generationReference)
@@ -324,12 +425,12 @@ public sealed class SourceSettingsService(
             facts = generationId is { } found ? await versions.FindSourceGenerationAsync(found, cancellationToken).ConfigureAwait(false) : null;
             if (facts is null)
             {
-                return (null, DeletedReason);
+                return (null, null, DeletedReason);
             }
         }
         else if (request.Song is not null)
         {
-            return (null, SongOnlyReason);
+            return (null, null, SongOnlyReason);
         }
         else
         {
@@ -338,26 +439,34 @@ public sealed class SourceSettingsService(
                 : null;
             if (facts is null)
             {
-                return (null, NotImportedReason);
+                return (null, null, NotImportedReason);
             }
         }
 
         if (facts.VersionId == versionId)
         {
-            return (null, null);
+            return (null, null, null);
         }
 
         var detail = await versions.FindDetailAsync(facts.VersionId, cancellationToken).ConfigureAwait(false);
-        return detail is null ? (null, DeletedReason) : (detail, null);
+        return detail is null ? (null, null, DeletedReason) : (detail, facts.Id, null);
     }
 
     /// <summary>
     /// A Version's settings a source can fill, by key in <see cref="SettingKeys"/> order: the ones
-    /// that apply to its kind and mode (what Suno was sent), and its Voice when it has one.
+    /// that apply to its kind and mode (what Suno was sent), and its Voice when it has one. As the
+    /// Version taking the source (<paramref name="asTarget"/>), a Simple Song's lyrics and styles are
+    /// its own text whether their section is added or not, so text it holds is never filled over.
     /// </summary>
-    private static Dictionary<string, JsonNode?> Settings(VersionDetail version)
+    private static Dictionary<string, JsonNode?> Settings(VersionDetail version, bool asTarget)
     {
         var effective = VersionInputRules.Effective(CreateFieldInventory.Embedded, version.Inputs, version.Lyrics, version.Styles);
+        if (asTarget && IsSimpleSong(version))
+        {
+            effective[LyricsKey] = version.Lyrics;
+            effective[StylesKey] = version.Styles;
+        }
+
         var settings = new Dictionary<string, JsonNode?>(StringComparer.Ordinal);
         foreach (var key in SettingKeys)
         {

@@ -4688,3 +4688,19 @@ Story #219 (on the milestone branch):
 - **Decision:** `sourcevalue` and `versionvalue` are added to the redaction list.
   **Why:** Invariant 6: those fields of the preview carry lyrics, styles, and prompts.
   **Issue:** #431
+
+## M4 captures — #431 follow-up: a Simple-mode source's lyrics and styles — 2026-10-17
+
+- **Decision:** When a Song source's Version gives no lyrics or no styles as settings (absent from its `effectiveInputs`, blank, or in its import marks), `SourceSettingsService` takes them from the source Generation's clip record (`IGenerationStore.FindProviderRecordAsync`, read with `ClipReader`): the lyrics from the import field map's lyrics path (`metadata.prompt`), the styles from `ClipFields.StyleTags` (`metadata.tags`). Clip text is normalised as an input and validated as any source value (`not_valid` if over the limits). Only when the clip lacks it (or is blank) is the setting reported `not_returned`; a source that gave it as blank text still offers blank, as before.
+  **Why:** The owner's live test (#431 comment, 2026-10-17): a Cover of a Simple-mode Generation filled only the Song description. In Simple mode Suno wrote the lyrics and styles; the owner expects the song's actual ones, as Suno loads them. The feed's `metadata.tags` is Suno's rewrite of the submitted styles (why import leaves `styles` empty), but here the rewrite is what is wanted: it is the song's style as Suno shows and reloads it. The same fallback covers an imported Advanced source, whose styles are always `not_returned`.
+  **Issue:** #431
+- **Decision:** Only a Song taking a Song's source gets the clip's text. A Speech target's Script and Tone and a Sound's description are different fields with other meanings, and Cover and Extend are Songs-tab actions, so nothing is mapped there.
+  **Why:** No equivalent field: a song's lyrics are not a speech script.
+  **Issue:** #431
+- **Decision:** In Simple mode the lyrics and styles settings are the Add: Lyrics and Add: Styles sections. As the Version taking the source, a Simple Song's lyrics and styles are its stored text whether or not the section is added (so hidden text is a conflict, never filled over); applying text that is not blank adds that section (`simpleLyricsAdded` / `simpleStylesAdded` true) in the same edit. The two switches are no longer settings of their own (previously a Simple source's switches were filled or reported `not_returned` alone, which is what the owner saw as "Add: Lyrics / Add: Styles not returned").
+  **Why:** One question per field the user sees; a switch filled or asked apart from its text could leave taken lyrics hidden.
+  **Issue:** #431
+- **Decision:** Fills and conflicts are now ordered by setting (lyrics, styles, options, Voice) explicitly rather than by dictionary order. The web is unchanged: the keys are still `lyrics` and `styles`, labelled Lyrics and Styles.
+  **Why:** A value added after the import marks were applied must still come out in setting order.
+  **Issue:** #431
+
