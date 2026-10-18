@@ -4743,3 +4743,9 @@ Story #219 (on the milestone branch):
 - **Decision:** `page.create-songs-advanced-save-to-picker.html` is constructed from the owner's screenshot (untitled `role="dialog"`, `button` rows, an icon-only "+"). The rows are looked for as options first, then as buttons. The picker's real roles and markup, whether Suno filters as one types, and whether a choice closes it need live confirmation. `ADAPTER_VERSION` 27.
   **Why:** There is no capture. If the live markup differs, the workflow stops at its step and Save to is left to the user. Nothing else is pressed.
   **Issue:** #435
+
+## Ad-hoc — 2026-10-18 (import review)
+
+- **Change:** Added 437 to M7: the Suno import review shows records with changes apart from records with none. It is a placeholder for the owner to flesh out.
+  **Why:** In the M4 walkthrough a sync with a single state change showed the whole song list, hiding the change.
+  **Affects:** M7 (new story, to be planned at `/n8-replan`), and M4's import review (#138/#139/#141) as delivered.
