@@ -399,6 +399,17 @@ export const STYLE_INFLUENCE_SLIDER: Target = {
   description: 'the Style Influence slider in More Options',
 };
 
+/**
+ * Audio Influence (#436): in More Options beside Variety, shown only once a song's audio is loaded
+ * as a source (Cover, Mashup, Sample, or Inspiration; the source-loaded snapshots show it at 25%).
+ */
+export const AUDIO_INFLUENCE_SLIDER: Target = {
+  role: 'slider',
+  name: 'Audio Influence',
+  within: MORE_OPTIONS,
+  description: 'the Audio Influence slider in More Options',
+};
+
 export const VARIETY_SLIDER: Target = {
   role: 'slider',
   name: 'Variety',

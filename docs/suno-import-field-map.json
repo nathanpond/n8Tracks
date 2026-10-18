@@ -140,6 +140,14 @@
       "scale": 0.01,
       "example": 0.3
     },
+    "audio_influence": {
+      "paths": { "feed": "metadata.control_sliders.audio_weight", "create": "metadata.control_sliders.audio_weight", "createRequest": "metadata.control_sliders.audio_weight" },
+      "encoding": "percent",
+      "scale": 0.01,
+      "example": 0.85,
+      "absentInClip": "notReturned",
+      "notes": "Seen 2026-10-18 on an imported Cover clip in the owner's catalog (0.85 for 85), beside style_weight (#436). Suno shows the slider only for a song built on another song's audio, so a clip without it did not return it: it is marked not returned, never read as the default. The Create response and request paths mirror style_weight's and are unverified: no Create with an audio source was captured."
+    },
     "variety": {
       "paths": { "feed": "metadata.control_sliders.aug_creativity", "create": "metadata.control_sliders.aug_creativity", "createRequest": "metadata.control_sliders.aug_creativity" },
       "encoding": "enum",

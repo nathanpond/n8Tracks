@@ -211,8 +211,9 @@ public static class ClipInputMapper
                 : throw new InvalidOperationException($"The import field map neither maps '{entry.Key}' nor says Suno does not return it.");
         }
 
-        return new FieldValue(true, ImportFieldMap.Read(clip, entry.FeedPath)
-            ?? entry.FeedFallbacks.Select(path => ImportFieldMap.Read(clip, path)).FirstOrDefault(static found => found is not null), null);
+        var value = ImportFieldMap.Read(clip, entry.FeedPath)
+            ?? entry.FeedFallbacks.Select(path => ImportFieldMap.Read(clip, path)).FirstOrDefault(static found => found is not null);
+        return value is null && entry.AbsentInClipIsNotReturned ? FieldValue.NotRead : new FieldValue(true, value, null);
     };
 
     /// <summary>Where an option's value is read from an observed Create: the response clip, else the request, else nowhere.</summary>
@@ -223,9 +224,10 @@ public static class ClipInputMapper
             return FieldValue.NotRead;
         }
 
-        if (entry.CreatePath is { } path)
+        if (entry.CreatePath is { } path && ImportFieldMap.Read(clip, path) is var echoed && (echoed is not null || !entry.AbsentInClipIsNotReturned))
         {
-            return new FieldValue(true, ImportFieldMap.Read(clip, path), null);
+            // An option Suno sends only when it applies (absentInClip) is looked for in the request when the response lacks it.
+            return new FieldValue(true, echoed, null);
         }
 
         if (request is not { ValueKind: JsonValueKind.Object } sent || entry.CreateRequestPath is not { } requestPath)

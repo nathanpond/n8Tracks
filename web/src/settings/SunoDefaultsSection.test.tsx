@@ -18,6 +18,7 @@ const KEYS = [
   'maxMode',
   'weirdness',
   'styleInfluence',
+  'audioInfluence',
   'variety',
   'personalize',
   'speechVocalGender',

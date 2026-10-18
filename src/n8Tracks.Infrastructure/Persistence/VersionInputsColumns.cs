@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using n8Tracks.Application.Songs;
+using n8Tracks.Application.Suno;
 using n8Tracks.Domain.Songs;
 
 namespace n8Tracks.Infrastructure.Persistence;
@@ -34,13 +35,43 @@ internal static class VersionInputsColumns
         _ => throw new JsonException($"A Version's kind '{kind}' is not one n8Tracks knows."),
     };
 
-    /// <summary>The options the three column values hold. Throws <see cref="JsonException"/> on a document that lacks an option.</summary>
+    /// <summary>
+    /// The options added after Versions were first stored, each with the inventory field whose default a
+    /// document written before it reads as: Audio Influence (#436). No stored row is rewritten for them,
+    /// so a frozen Version's inputs stay byte for byte as they were (invariant 1); a mutable Version gains
+    /// the option the next time it is saved.
+    /// </summary>
+    private static readonly Dictionary<string, string> LaterOptions = new(StringComparer.Ordinal)
+    {
+        [JsonNamingPolicy.CamelCase.ConvertName(nameof(VersionInputs.AudioInfluence))] = VersionInputRules.AudioInfluenceKey,
+    };
+
+    /// <summary>
+    /// The options the three column values hold; an option added later (<see cref="LaterOptions"/>) that
+    /// the document lacks is read at the inventory's default. Throws <see cref="JsonException"/> on a
+    /// document that lacks any other option.
+    /// </summary>
     public static VersionInputs Read(string kind, string? model, string inputs)
     {
         var json = JsonNode.Parse(inputs)?.AsObject() ?? throw new JsonException("A Version's options are null.");
         json[VersionInputRules.KindKey] = kind;
         json[ModelKey] = model;
+        foreach (var (option, field) in LaterOptions)
+        {
+            if (!json.ContainsKey(option))
+            {
+                json[option] = JsonSerializer.SerializeToNode(CreateFieldInventory.Embedded.Get(field).Default);
+            }
+        }
+
         return VersionInputRules.FromJson(json);
+    }
+
+    /// <summary>The options added later (<see cref="LaterOptions"/>) that the stored document <paramref name="inputs"/> lacks.</summary>
+    private static IEnumerable<string> Missing(string inputs)
+    {
+        var json = JsonNode.Parse(inputs)?.AsObject();
+        return json is null ? [] : LaterOptions.Keys.Where(option => !json.ContainsKey(option));
     }
 
     /// <summary>The <c>imported_inputs</c> column's value for <paramref name="marks"/>: null for a Version not made by import.</summary>
@@ -53,6 +84,19 @@ internal static class VersionInputsColumns
                 [OutOfRangeKey] = new JsonArray([.. marks.OutOfRange.Select(static key => (JsonNode?)key)]),
                 [RawValuesKey] = new JsonObject(marks.RawValues.Select(static pair => KeyValuePair.Create(pair.Key, (JsonNode?)pair.Value))),
             }.ToJsonString();
+
+    /// <summary>
+    /// The marks the <c>imported_inputs</c> column holds, or null when it holds none. An option added
+    /// later that the Version's stored <paramref name="inputs"/> lack was not read by its import, so it
+    /// is read as not returned: never compared with a clip, never offered as a source's setting.
+    /// </summary>
+    public static ImportedInputMarks? ReadImported(string? json, string inputs)
+    {
+        var marks = ReadImported(json);
+        return marks is null || Missing(inputs).Where(option => !marks.NotReturned.Contains(option, StringComparer.Ordinal)).ToList() is not { Count: > 0 } missing
+            ? marks
+            : marks with { NotReturned = [.. marks.NotReturned, .. missing] };
+    }
 
     /// <summary>The marks the <c>imported_inputs</c> column holds, or null when it holds none.</summary>
     public static ImportedInputMarks? ReadImported(string? json)

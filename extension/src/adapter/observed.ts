@@ -119,6 +119,7 @@ export const CREATE_REQUEST_PATHS: readonly string[] = [
   'duration',
   'gpt_description_prompt',
   'metadata.backing_music',
+  'metadata.control_sliders.audio_weight',
   'metadata.control_sliders.aug_creativity',
   'metadata.control_sliders.style_weight',
   'metadata.control_sliders.weirdness_constraint',

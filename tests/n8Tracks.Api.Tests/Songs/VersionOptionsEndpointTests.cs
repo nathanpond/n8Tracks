@@ -37,7 +37,7 @@ public sealed class VersionOptionsEndpointTests
         var inputs = version.GetProperty("inputs");
 
         Assert.Equal(
-            """{"kind":"song","songMode":"advanced","speechMode":"advanced","model":"v6","simplePrompt":"","simpleLyricsAdded":false,"simpleStylesAdded":false,"excludeStyles":"","vocalGender":null,"durationMode":"auto","durationSeconds":180,"maxMode":false,"weirdness":50,"styleInfluence":50,"variety":"normal","personalize":false,"title":"TITLE","speechPrompt":"","speechScript":"","speechTone":"","speechVocalGender":null,"speechBackgroundMusic":true,"speechVariety":"normal","soundsModel":"v6","soundDescription":"","soundType":"one_shot","soundBpm":null,"soundKey":"any","soundScale":null,"sources":[],"inspiration":null,"voice":null,"fileInputs":[]}"""
+            """{"kind":"song","songMode":"advanced","speechMode":"advanced","model":"v6","simplePrompt":"","simpleLyricsAdded":false,"simpleStylesAdded":false,"excludeStyles":"","vocalGender":null,"durationMode":"auto","durationSeconds":180,"maxMode":false,"weirdness":50,"styleInfluence":50,"audioInfluence":25,"variety":"normal","personalize":false,"title":"TITLE","speechPrompt":"","speechScript":"","speechTone":"","speechVocalGender":null,"speechBackgroundMusic":true,"speechVariety":"normal","soundsModel":"v6","soundDescription":"","soundType":"one_shot","soundBpm":null,"soundKey":"any","soundScale":null,"sources":[],"inspiration":null,"voice":null,"fileInputs":[]}"""
                 .Replace("TITLE", title[..100], StringComparison.Ordinal),
             inputs.GetRawText());
         Assert.Equal(100, inputs.GetProperty("title").GetString()!.Length);
@@ -117,7 +117,7 @@ public sealed class VersionOptionsEndpointTests
         // Back to an Advanced Song: nothing was cleared by switching.
         var back = await EditAsync(client, id, """{"inputs":{"kind":"song","songMode":"advanced"}}""");
         Assert.Equal(
-            """{"kind":"song","songMode":"advanced","speechMode":"simple","model":"v6-mini","simplePrompt":"A fast song\nabout running","simpleLyricsAdded":true,"simpleStylesAdded":true,"excludeStyles":"","vocalGender":"female","durationMode":"custom","durationSeconds":120,"maxMode":false,"weirdness":80,"styleInfluence":50,"variety":"high","personalize":false,"title":"Switching","speechPrompt":"","speechScript":"","speechTone":"","speechVocalGender":null,"speechBackgroundMusic":true,"speechVariety":"normal","soundsModel":"v6","soundDescription":"","soundType":"one_shot","soundBpm":null,"soundKey":"any","soundScale":null,"sources":[],"inspiration":null,"voice":null,"fileInputs":[]}""",
+            """{"kind":"song","songMode":"advanced","speechMode":"simple","model":"v6-mini","simplePrompt":"A fast song\nabout running","simpleLyricsAdded":true,"simpleStylesAdded":true,"excludeStyles":"","vocalGender":"female","durationMode":"custom","durationSeconds":120,"maxMode":false,"weirdness":80,"styleInfluence":50,"audioInfluence":25,"variety":"high","personalize":false,"title":"Switching","speechPrompt":"","speechScript":"","speechTone":"","speechVocalGender":null,"speechBackgroundMusic":true,"speechVariety":"normal","soundsModel":"v6","soundDescription":"","soundType":"one_shot","soundBpm":null,"soundKey":"any","soundScale":null,"sources":[],"inspiration":null,"voice":null,"fileInputs":[]}""",
             back.GetProperty("inputs").GetRawText());
         Assert.Equal("[Verse]\nRun", back.GetProperty("lyrics").GetString());
 

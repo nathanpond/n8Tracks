@@ -1,6 +1,7 @@
 import { Button, Group, Stack, Text } from '@mantine/core';
 import { useId, useState, type ReactNode } from 'react';
 import type { CreateField } from '../../api/createFields';
+import { audioInfluenceApplies, lineageOf } from '../../api/lineage';
 import { SONG_MODE_OPTION } from '../../api/versions';
 import { ChoiceControl, RangeControl } from './OptionControls';
 import { optionParts, type KindOptionsProps } from './optionParts';
@@ -29,8 +30,10 @@ const MODE_FIELD: CreateField = {
  * the model.
  *
  * Advanced: the lyrics and styles (`text`), then More Options, collapsed as Suno has it (Exclude
- * styles, Vocal Gender, Duration, Max Mode, Weirdness, Style Influence, Variety, Personalize), and
- * Suno's title outside it. Simple: one prompt, and the lyrics and styles each only when their
+ * styles, Vocal Gender, Duration, Max Mode, Weirdness, Style Influence, Audio Influence, Variety,
+ * Personalize), and Suno's title outside it. Audio Influence shows only while the sources build the
+ * Song on another song's audio (#436: a Cover, Mashup, Sample This Song, or Inspiration), as Suno
+ * shows it; otherwise its value is kept, hidden, and not sent. Simple: one prompt, and the lyrics and styles each only when their
  * section is added; removing a section hides it and keeps its text, which is the same text Advanced
  * shows. Switching the form hides what does not apply and keeps every value, so switching back
  * shows them again. Every limit, list, and explanation is the inventory's (`fields`). `readOnly`
@@ -76,6 +79,7 @@ export function SongOptions(
   );
 
   const simple = mode === 'simple';
+  const audioInfluence = audioInfluenceApplies(lineageOf(props.options), mode);
   const lyricsAdded = read.flag('simpleLyricsAdded');
   const stylesAdded = read.flag('simpleStylesAdded');
 
@@ -150,6 +154,7 @@ export function SongOptions(
               {toggleOption('maxMode')}
               {rangeOption('weirdness')}
               {rangeOption('styleInfluence')}
+              {audioInfluence && rangeOption('audioInfluence')}
               {variety && parts.steps('variety')}
               {toggleOption('personalize')}
             </Stack>

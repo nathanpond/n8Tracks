@@ -524,9 +524,24 @@ public sealed class ImportNeverOverwritesGuardTests
         conflictNow["metadata"]!["prompt"] = "Other conflict words";
 
         // #141: a Generation whose clip Suno retitled, every field declined (Changed), and one whose clip
-        // has other lyrics and a new title, kept where it is with the title declined (Conflict).
+        // has other lyrics and a new title, kept where it is with the title declined (Conflict). The kept
+        // one is a clip built on another song's audio whose Audio Influence (#436) Suno now reports as
+        // another value: an input, and so part of the conflict the user keeps, never written.
+        static void AudioWeight(JsonNode clip, double weight)
+        {
+            var metadata = clip["metadata"]!.AsObject();
+            if (metadata["control_sliders"] is not JsonObject sliders)
+            {
+                sliders = [];
+                metadata["control_sliders"] = sliders;
+            }
+
+            sliders["audio_weight"] = weight;
+        }
+
         var declinedClip = ProposalApi.Clip("declined-1", null, at.AddHours(12), 0, "Declined words", "Declined before");
         var keptClip = ProposalApi.Clip("kept-1", null, at.AddHours(13), 0, "Kept words", "Kept before");
+        AudioWeight(keptClip, 0.85);
         await ImportedVersions.AttachAsync(factory, bystanderSong, "4", declinedClip);
         await ImportedVersions.AttachAsync(factory, bystanderSong, "5", keptClip);
         var declinedNow = declinedClip.DeepClone();
@@ -534,6 +549,7 @@ public sealed class ImportNeverOverwritesGuardTests
         var keptNow = keptClip.DeepClone();
         keptNow["title"] = "Kept after";
         keptNow["metadata"]!["prompt"] = "Other kept words";
+        AudioWeight(keptNow, 0.4);
 
         // #314: clips whose only change in Suno is their status: finished, final already, and still going.
         JsonNode StatusClip(string id, int hour, string status)
@@ -590,6 +606,12 @@ public sealed class ImportNeverOverwritesGuardTests
         Assert.Equal("deleted", records["deleted-1"].GetProperty("class").GetString());
         Assert.All(new[] { "status-1", "status-final", "status-going" }, id => Assert.Equal(("linked", "skip"), (records[id].GetProperty("class").GetString(), records[id].GetProperty("choice").GetProperty("action").GetString())));
         Assert.Equal(("changed", "conflict", "ignored"), (records["declined-1"].GetProperty("class").GetString(), records["kept-1"].GetProperty("class").GetString(), records["ignored-trashed"].GetProperty("class").GetString()));
+        using (var diff = await client.GetAsync(SunoExportApi.Export(exportId, "/records/kept-1/diff")))
+        {
+            Assert.Equal(System.Net.HttpStatusCode.OK, diff.StatusCode);
+            var inputs = (await Setup.SetupApi.JsonAsync(diff)).GetProperty("inputs").EnumerateArray().Select(static input => input.GetProperty("field").GetString());
+            Assert.Contains("audioInfluence", inputs);
+        }
         await ImportCommitApi.StageImageAsync(client, token, exportId, "new-a1");
 
         var revision = 1;

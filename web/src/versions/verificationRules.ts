@@ -33,6 +33,7 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   max_mode: 'Max Mode',
   weirdness: 'Weirdness',
   style_influence: 'Style Influence',
+  audio_influence: 'Audio Influence',
   variety: 'Variety',
   personalize: 'Personalize',
   title: 'Song Title',

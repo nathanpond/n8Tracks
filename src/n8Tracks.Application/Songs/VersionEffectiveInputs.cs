@@ -23,7 +23,7 @@ public static class VersionEffectiveInputs
     {
         ArgumentNullException.ThrowIfNull(version);
 
-        var effective = VersionInputRules.Effective(CreateFieldInventory.Embedded, version.Inputs, version.Lyrics, version.Styles);
+        var effective = VersionInputRules.Effective(CreateFieldInventory.Embedded, version.Inputs, version.Lyrics, version.Styles, version.Lineage.Lineage);
         var lineage = VersionLineageInputs.Effective(version.Lineage, version.Inputs);
         foreach (var (key, value) in lineage.ToList())
         {

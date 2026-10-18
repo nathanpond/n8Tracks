@@ -1,12 +1,27 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
+import type { VersionOptions } from '../../api/versions';
 import { DEFAULT_INPUTS } from '../../test/createFieldsFixture';
 import { renderApp } from '../../test/helpers';
 import { testVersion, versionServer } from '../../test/versionServer';
 
 const TEXT = { lyrics: '[Verse]\nRun with me\n', styles: 'punk, fast' };
 const ONE = testVersion('1', { current: true, ...TEXT });
+
+/** A Song's options at the defaults with `extra`, lineage keys (#122) among them, as the API reads them. */
+function withLineage(extra: Record<string, unknown>): VersionOptions {
+  return { ...DEFAULT_INPUTS, ...extra } as unknown as VersionOptions;
+}
+
+/** An audio source of `sunoAction` on a Suno clip known only by ID. */
+function audioSource(sunoAction: string) {
+  return {
+    typeId: `type-${sunoAction}`,
+    sunoAction,
+    external: { sunoId: 'source-clip', title: null, address: null },
+  };
+}
 
 async function openVersion() {
   const user = userEvent.setup();
@@ -70,6 +85,73 @@ describe('a Song’s options', () => {
     // The model and Suno's title are outside it.
     expect(section).not.toContainElement(screen.getByRole('textbox', { name: 'Song Title' }));
     expect(section).not.toContainElement(screen.getByRole('combobox', { name: 'Model version' }));
+  });
+
+  it('show Audio Influence beside Style Influence only for a Song built on another song’s audio', async () => {
+    const { server } = versionServer([
+      testVersion('1', {
+        current: true,
+        ...TEXT,
+        inputs: withLineage({ audioInfluence: 85, sources: [audioSource('cover')] }),
+      }),
+    ]);
+    const user = await openVersion();
+    await user.click(screen.getByRole('button', { name: 'More Options' }));
+
+    const section = screen.getByTestId('more-options');
+    const order = [...section.querySelectorAll('[data-option]')].map((element) =>
+      element.getAttribute('data-option'),
+    );
+    expect(
+      order.slice(order.indexOf('styleInfluence'), order.indexOf('styleInfluence') + 3),
+    ).toEqual(['styleInfluence', 'audioInfluence', 'variety']);
+    const slider = within(section).getByRole('slider', { name: 'Audio Influence' });
+    expect(slider).toHaveAttribute('aria-valuenow', '85');
+
+    slider.focus();
+    await user.keyboard('{ArrowRight}{ArrowRight}');
+    await writesReach(server.writes, 1);
+    expect(server.writes[0]?.body).toEqual({ inputs: { audioInfluence: 87 } });
+  });
+
+  it.each([
+    ['an Extend', { sources: [audioSource('extend')] }],
+    ['a Reuse Prompt', { sources: [audioSource('reuse_prompt')] }],
+    ['no source', {}],
+  ])('hide Audio Influence, keeping its value, for %s', async (_name, lineage) => {
+    versionServer([
+      testVersion('1', {
+        current: true,
+        ...TEXT,
+        inputs: withLineage({ audioInfluence: 85, ...lineage }),
+      }),
+    ]);
+    const user = await openVersion();
+    await user.click(screen.getByRole('button', { name: 'More Options' }));
+
+    expect(screen.getByRole('slider', { name: 'Style Influence' })).toBeInTheDocument();
+    expect(screen.queryByRole('slider', { name: 'Audio Influence' })).not.toBeInTheDocument();
+  });
+
+  it('show Audio Influence for Inspiration in Advanced mode only', async () => {
+    versionServer([
+      testVersion('1', {
+        current: true,
+        ...TEXT,
+        inputs: withLineage({
+          inspiration: { playlist: { sunoPlaylistId: 'p-1', name: 'Mix', clipIds: ['a'] } },
+        }),
+      }),
+    ]);
+    const user = await openVersion();
+    await user.click(screen.getByRole('button', { name: 'More Options' }));
+    expect(screen.getByRole('slider', { name: 'Audio Influence' })).toHaveAttribute(
+      'aria-valuenow',
+      '25',
+    );
+
+    await user.click(screen.getByRole('radio', { name: 'Simple' }));
+    expect(screen.queryByRole('slider', { name: 'Audio Influence' })).not.toBeInTheDocument();
   });
 
   it('save each change through the autosave as the options it changes', async () => {

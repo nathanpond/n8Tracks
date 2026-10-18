@@ -24,6 +24,11 @@ namespace n8Tracks.Domain.Songs;
 /// <param name="MaxMode">Whether Max Mode is on.</param>
 /// <param name="Weirdness">A percentage.</param>
 /// <param name="StyleInfluence">A percentage.</param>
+/// <param name="AudioInfluence">
+/// A percentage, applicable only to an Advanced Song built on another song's audio
+/// (<see cref="VersionLineageRules.AudioInfluenceApplies(VersionLineage, VersionKind, CreationMode)"/>);
+/// kept, and not sent, otherwise.
+/// </param>
 /// <param name="Variety">A step of the inventory's list.</param>
 /// <param name="Personalize">Whether Variety follows the user's taste.</param>
 /// <param name="Title">The title Suno gives what it creates; independent of the Song's title once set.</param>
@@ -54,6 +59,7 @@ public sealed record VersionInputs(
     [property: SunoField("max_mode")] bool MaxMode,
     [property: SunoField("weirdness")] int Weirdness,
     [property: SunoField("style_influence")] int StyleInfluence,
+    [property: SunoField("audio_influence")] int AudioInfluence,
     [property: SunoField("variety")] string Variety,
     [property: SunoField("personalize")] bool Personalize,
     [property: SunoField("title")] string Title,

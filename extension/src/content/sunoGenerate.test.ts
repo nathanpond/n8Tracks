@@ -1501,6 +1501,39 @@ describe('Generate on Suno in the Suno tab: starting from a source (#148)', () =
     expect(tab.pressed).not.toContain('More options');
   });
 
+  it('sets Audio Influence once the Cover is loaded, the slider Suno shows only then (#436)', async () => {
+    const tab = sourceTab({
+      job: job({
+        workspace: ON_MY_WORKSPACE,
+        form: advancedForm({
+          sources: [coverSource()],
+          entries: { ...advancedForm().entries, 'songs.advanced.audio_influence': 60 },
+        }),
+        source: { phase: 'byHand', sunoId: SOURCE_CLIP },
+      }),
+      address: 'https://suno.com/create',
+      html: snapshotHtml('create-source-advanced'),
+    });
+    const standIn = standInForSuno(document);
+    try {
+      await tab.generate.resume();
+    } finally {
+      standIn.stop();
+    }
+
+    const shown = tab.last();
+    const audioInfluence =
+      shown?.kind === 'verification'
+        ? shown.results.find((result) => result.key === 'songs.advanced.audio_influence')
+        : undefined;
+    expect(audioInfluence).toMatchObject({ outcome: 'set', expected: 60 });
+    expect(
+      document
+        .querySelector('[role="slider"][aria-label="Audio Influence"]')
+        ?.getAttribute('aria-valuenow'),
+    ).toBe('60');
+  });
+
   it('on the clip’s page while the user loads the source by hand, waits, pressing and reporting nothing (#341)', async () => {
     const tab = sourceTab({
       job: job({
