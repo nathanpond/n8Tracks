@@ -75,6 +75,13 @@ public abstract record GenerationRequestCreateOutcome
     /// as of <paramref name="LastSyncUtc"/>, the last confirmed sync (null when there has been none).
     /// </summary>
     public sealed record SourcesUnavailable(IReadOnlyList<UnavailableSource> Sources, DateTimeOffset? LastSyncUtc) : GenerationRequestCreateOutcome;
+
+    /// <summary>
+    /// The Version's audio action is Mashup but it names only one song (#438); nothing was made.
+    /// Checked before <see cref="SourcesUnavailable"/>: the Version itself is incomplete, whatever
+    /// Suno holds, and the user finishes it in the editor.
+    /// </summary>
+    public sealed record MashupNeedsTwoSongs : GenerationRequestCreateOutcome;
 }
 
 /// <summary>What a claim, a report, or a cancel came to.</summary>
@@ -146,17 +153,27 @@ public sealed class GenerationRequestService(
     public const string ResolvedWorkspaceField = "resolvedWorkspace";
     public const string VerificationField = "verification";
 
+    /// <summary>What the user is told when a Mashup names one song (#438); the extension says the same.</summary>
+    public const string MashupNeedsTwoSongsMessage = "A Mashup needs a second song.";
+
     /// <summary>
     /// Makes a request from the Version <paramref name="versionId"/> as it is now, for a mutable or a
-    /// frozen Version alike. Refused, with nothing made, when a source the Version needs is deleted, in
-    /// Suno's Trash, or no longer listed by Suno; a clip never imported does not block. An active
-    /// request of the Version is cancelled as replaced.
+    /// frozen Version alike. Refused, with nothing made, when its audio action is Mashup and it names
+    /// only one song (#438), and then when a source the Version needs is deleted, in Suno's Trash, or
+    /// no longer listed by Suno; a clip never imported does not block. An active request of the
+    /// Version is cancelled as replaced.
     /// </summary>
     public async Task<GenerationRequestCreateOutcome> CreateAsync(Guid versionId, CancellationToken cancellationToken)
     {
         if (await SnapshotAsync(versionId, cancellationToken).ConfigureAwait(false) is not { } snapshot)
         {
             return new GenerationRequestCreateOutcome.NotFound();
+        }
+
+        // The Version's own completeness first (#438): no sync changes it, and the fix is in the editor.
+        if (GenerationSnapshot.MashupNeedsSecondSong(snapshot))
+        {
+            return new GenerationRequestCreateOutcome.MashupNeedsTwoSongs();
         }
 
         if (GenerationSnapshot.Unavailable(snapshot) is { Count: > 0 } unavailable)

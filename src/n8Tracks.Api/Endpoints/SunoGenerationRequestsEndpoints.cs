@@ -38,6 +38,7 @@ internal static class SunoGenerationRequestsEndpoints
     public const string ClipsPath = RequestPath + "/clips";
 
     public const string SourcesUnavailableCode = "sources_unavailable";
+    public const string MashupNeedsTwoSongsCode = "mashup_needs_two_songs";
     public const string RequestEndedCode = "request_ended";
     public const string RequestClaimedCode = "request_claimed";
     public const string RequestNotClaimedCode = "request_not_claimed";
@@ -54,7 +55,7 @@ internal static class SunoGenerationRequestsEndpoints
 
         endpoints.MapPost(VersionRequestsPath, CreateAsync)
             .WithName("CreateGenerationRequest")
-            .WithSummary("Starts Generate on Suno from a Version, mutable or frozen: a request holding a snapshot of the Version's effective inputs, sources, file-input notes, and the Song's workspace, for the extension to claim within 15 seconds. Any active request of the Version is cancelled as replaced. Nothing is generated, attached, or frozen. 422 sources_unavailable, with sources [{ group, position, title, shortcode, availability }] and lastSyncAt, when a source the Version needs is deleted, in Suno's Trash, or no longer listed (as of the last confirmed sync); a clip never imported does not block.")
+            .WithSummary("Starts Generate on Suno from a Version, mutable or frozen: a request holding a snapshot of the Version's effective inputs, sources, file-input notes, and the Song's workspace, for the extension to claim within 15 seconds. Any active request of the Version is cancelled as replaced. Nothing is generated, attached, or frozen. 422 mashup_needs_two_songs when the Version's audio action is Mashup and it names only one song (checked first). 422 sources_unavailable, with sources [{ group, position, title, shortcode, availability }] and lastSyncAt, when a source the Version needs is deleted, in Suno's Trash, or no longer listed (as of the last confirmed sync); a clip never imported does not block.")
             .RequireScope(CredentialScopes.VersionsWrite)
             .Produces<GenerationRequestResponse>(StatusCodes.Status201Created)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
@@ -149,7 +150,7 @@ internal static class SunoGenerationRequestsEndpoints
         return endpoints;
     }
 
-    /// <summary>201 with the request; 404 for no such Version; 422 <c>sources_unavailable</c>.</summary>
+    /// <summary>201 with the request; 404 for no such Version; 422 <c>mashup_needs_two_songs</c>, then <c>sources_unavailable</c>.</summary>
     private static async Task<Results<Created<GenerationRequestResponse>, ProblemHttpResult>> CreateAsync(
         CatalogReference reference,
         ReferenceResolver references,
@@ -176,6 +177,13 @@ internal static class SunoGenerationRequestsEndpoints
 
             case GenerationRequestCreateOutcome.NotFound:
                 return await VersionsEndpoints.MissingVersionAsync(context, reference, deletions, cancellationToken);
+
+            case GenerationRequestCreateOutcome.MashupNeedsTwoSongs:
+                return ApiProblem.For(
+                    context,
+                    StatusCodes.Status422UnprocessableEntity,
+                    MashupNeedsTwoSongsCode,
+                    GenerationRequestService.MashupNeedsTwoSongsMessage);
 
             case GenerationRequestCreateOutcome.SourcesUnavailable unavailable:
                 return ApiProblem.For(

@@ -215,7 +215,7 @@ describe('the Sources section of a Version (#125)', () => {
     await user.click(screen.getByRole('button', { name: 'Choose the Blend of source' }));
     await pick(user, 'Song B', 'n8-8-v1-g1');
     expect(screen.getByTestId('mashup-needs-second')).toHaveTextContent(
-      'A Mashup needs a second source.',
+      'A Mashup needs a second song. Generate on Suno will not start until it has one.',
     );
     await lastWrite(server.writes, 1);
 
@@ -283,7 +283,13 @@ describe('the Sources section of a Version (#125)', () => {
     await user.click(screen.getByRole('button', { name: 'Choose the Mashup source' }));
     await pick(user, 'Song B', 'n8-8-v1-g1');
     expect(screen.getByTestId('mashup-needs-second')).toHaveTextContent(
-      'A Mashup needs a second source.',
+      'A Mashup needs a second song. Generate on Suno will not start until it has one.',
+    );
+    // The note describes the button that adds the second song (#438).
+    expect(
+      screen.getByRole('button', { name: 'Add the second source' }),
+    ).toHaveAccessibleDescription(
+      'A Mashup needs a second song. Generate on Suno will not start until it has one.',
     );
     await user.click(screen.getByRole('button', { name: 'Add the second source' }));
     // The first source cannot be added twice.

@@ -13,7 +13,7 @@ import {
   Textarea,
   Title,
 } from '@mantine/core';
-import { useState, type ReactNode } from 'react';
+import { useId, useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import {
   availabilityLabel,
@@ -29,6 +29,7 @@ import {
   type Lineage,
   type LineageSource,
 } from '../api/lineage';
+import { MASHUP_NEEDS_TWO_SONGS } from '../api/generationRequests';
 import { useRelationshipTypes } from '../api/relationships';
 import { ignoreSource } from '../api/sunoIgnored';
 import { SourcePicker } from './SourcePicker';
@@ -489,6 +490,8 @@ export function SourcesSection({
         }
       : undefined);
   const action = type?.action;
+  const mashupShort = action === 'mashup' && lineage.sources.length === 1;
+  const mashupNoteId = useId();
 
   const chooseType = (id: string) => {
     const next = types.find((candidate) => candidate.id === id);
@@ -619,6 +622,7 @@ export function SourcesSection({
           <Group gap="sm">
             <Button
               variant="default"
+              aria-describedby={mashupShort ? mashupNoteId : undefined}
               onClick={() => {
                 setPicking({ group: 'audio', index: lineage.sources.length });
               }}
@@ -627,9 +631,10 @@ export function SourcesSection({
                 ? `Choose the ${type.name} source`
                 : 'Add the second source'}
             </Button>
-            {action === 'mashup' && lineage.sources.length === 1 && (
-              <Text size="sm" data-testid="mashup-needs-second">
-                A Mashup needs a second source.
+            {mashupShort && (
+              // Generate on Suno refuses a one-song Mashup (#438): said here, beside the sources.
+              <Text size="sm" fw={500} id={mashupNoteId} data-testid="mashup-needs-second">
+                {MASHUP_NEEDS_TWO_SONGS} Generate on Suno will not start until it has one.
               </Text>
             )}
           </Group>

@@ -4782,3 +4782,18 @@ Story #219 (on the milestone branch):
 - **Decision:** No e2e change: the Generate on Suno spec sets Style Influence through the API for a Version with no source, which Audio Influence does not touch. The portable schema lists "every Suno option" without naming them, so it needs no change.
   **Why:** The task's rule for e2e and the portable format.
   **Issue:** #436
+
+## M4 captures — #438 (part 1) a Mashup needs two songs — 2026-10-18
+
+- **Decision:** `POST /api/v1/versions/{reference}/generation-requests` refuses a Version whose snapshot's audio action is Mashup with fewer than two audio songs: 422 `mashup_needs_two_songs`, title "A Mashup needs a second song.", nothing made and no active request cancelled. The rule is `GenerationSnapshot.MashupNeedsSecondSong`, called by `GenerationRequestService.CreateAsync` (the application-service layer, invariant 5). It reads the snapshot's effective sources, so audio left out for the kind or mode does not count. The problem carries no other members.
+  **Why:** Owner decision (#438, 2026-10-18): Suno cannot make a Mashup from one song, and the refusal must come before Suno is opened.
+  **Issue:** #438
+- **Decision:** The Mashup check runs before `sources_unavailable`. A one-song Mashup whose one song is also trashed answers `mashup_needs_two_songs`.
+  **Why:** It is the Version's own incompleteness, which no sync changes and which the user must fix in the editor anyway; the availability check then runs on the complete set.
+  **Issue:** #438
+- **Decision:** The web shows the refusal as a Mantine `Alert` (`role="alert"`, red, title "Generate on Suno did not start") first in the Generate on Suno panel, and the panel is scrolled into view (`block: 'nearest'`) whenever a problem appears, for every problem kind. The Sources section's existing note now reads "A Mashup needs a second song. Generate on Suno will not start until it has one." and is the accessible description of "Add the second source".
+  **Why:** The owner missed the existing blocked message below the button; the Version header and panel can be out of sight on a long page.
+  **Issue:** #438
+- **Decision:** The extension's `planSources` stops a one-song Mashup first, with "A Mashup needs a second song. Nothing on Suno’s form was changed. …". Before, it loaded the one song and waited for the user to add the second. `ADAPTER_VERSION` 28. Part 2 (adding the second song through "Add another song to Mashup") waits on the owner's capture of the picker.
+  **Why:** n8Tracks no longer makes such a request, so the extension receiving one is defensive; the adapter's behaviour changed, so the version is raised.
+  **Issue:** #438

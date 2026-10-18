@@ -183,12 +183,26 @@ function inspirationSources(job: FormJob): FormSource[] {
 }
 
 /**
- * The plan for `job`: a stop when any source is one n8Tracks knows cannot be used (each named with
- * its problem, before anything on the form changes) or when the request holds more Inspiration
- * songs than Suno takes; else the source to load, if one can be. Order (Discretion): the audio
- * source first, then Inspiration, then Voice; only the audio source is ever loaded.
+ * What n8Tracks says when a Mashup names one song (#438: 422 `mashup_needs_two_songs`). n8Tracks
+ * refuses such a request before Suno is opened; the extension stops on one all the same.
+ */
+export const MASHUP_NEEDS_TWO_SONGS = 'A Mashup needs a second song.';
+
+/**
+ * The plan for `job`: a stop when its audio action is Mashup with one song (#438, checked first as
+ * n8Tracks does), when any source is one n8Tracks knows cannot be used (each named with its
+ * problem, before anything on the form changes), or when the request holds more Inspiration songs
+ * than Suno takes; else the source to load, if one can be. Order (Discretion): the audio source
+ * first, then Inspiration, then Voice; only the audio source is ever loaded.
  */
 export function planSources(job: FormJob): SourcePlan {
+  const audio = audioSources(job);
+  if (audio.some((source) => source.sunoAction === 'mashup') && audio.length < 2) {
+    return {
+      stop: `${MASHUP_NEEDS_TWO_SONGS} Nothing on Suno’s form was changed. Add the second song to the Version’s sources in n8Tracks, then start again.`,
+      load: null,
+    };
+  }
   const unusable = job.sources
     .filter((source) => source.availability !== undefined && source.availability !== null)
     .filter((source) => UNUSABLE[source.availability ?? ''] !== undefined)
@@ -205,7 +219,6 @@ export function planSources(job: FormJob): SourcePlan {
       load: null,
     };
   }
-  const audio = audioSources(job);
   const inspiration = inspirationSources(job);
   const [first, ...rest] = audio.length > 0 ? audio : inspiration;
   if (first === undefined) {
