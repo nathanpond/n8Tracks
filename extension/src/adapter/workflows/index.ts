@@ -33,6 +33,7 @@ import {
   verifySourceAdvanced,
   verifySourceSimple,
 } from './sources.ts';
+import { chooseSaveTo, closeSaveTo } from './saveTo.ts';
 import { createWorkspace, openWorkspaces, searchWorkspaces, signedIn } from './workspace.ts';
 
 /**
@@ -66,6 +67,8 @@ export const ADAPTER_WORKFLOWS: readonly Workflow[] = [
   setExtendFrom,
   chooseVoice,
   closeVoicePicker,
+  chooseSaveTo,
+  closeSaveTo,
   openClipMenu,
   chooseDownload,
   chooseDownloadFormat,

@@ -99,6 +99,12 @@ const RUN_RECIPES: Readonly<Record<string, RunRecipe>> = {
       voice: { name: '<redacted 13 chars>', personaId: '00000000-0000-4000-8000-000000000203' },
     },
   },
+  // Create's Save to (#435): the Save to button, the workspace's name typed into "Search or
+  // create..." (never Enter), its one row, and Escape. The picker's "+", which may create a
+  // workspace, must never be reached; on the snapshot of the picker open, nothing but the row is
+  // pressed. Closing it sends Escape only.
+  'choose-save-to': { values: { workspaceName: 'My Workspace' } },
+  'close-save-to': { values: {} },
   // Preparing a download (#216): a library row's More options, the menu's Download, then a format
   // and "Unlock & Download" in the Download dialog, which are the second permitted change and are
   // pressed only through their own primitive. The menu's Publish and Move to Trash, and the
@@ -734,6 +740,99 @@ describe('the guard bites', () => {
     expect(
       await exerciseWorkflows([bypass], { recipes: recipes('bypass'), snapshots: [snapshot] }),
     ).toEqual([`'bypass' on ${snapshot}: click reached row ""`]);
+  }, 60_000);
+
+  it('refuses the Save to picker’s “+” and a “Create …” row, as a dialog or not, and sees a press around the primitives (#435)', async () => {
+    const snapshot = 'create-songs-advanced-save-to-picker';
+    document.body.innerHTML = snapshotHtml(snapshot);
+    // "+" (an icon with no name) is spied on; the workspaces' rows, and the box, are not.
+    const spied = forbiddenControls(document).filter((control) =>
+      control.element.closest('[role="dialog"]'),
+    );
+    expect(spied.map((control) => control.words)).toEqual(['button ""']);
+
+    // Setting Save to, as the content script does, passes the guard: the row only.
+    const saveTo = ADAPTER_WORKFLOWS.find((workflow) => workflow.id === 'choose-save-to');
+    expect(saveTo?.fixtures).toEqual([snapshot]);
+    expect(
+      await exerciseWorkflows(saveTo === undefined ? [] : [saveTo], {
+        recipes: { 'choose-save-to': RUN_RECIPES['choose-save-to'] ?? { values: {} } },
+        snapshots: [snapshot],
+      }),
+    ).toEqual([]);
+
+    const box: Target = {
+      role: 'textbox',
+      name: 'Search or create...',
+      description: 'the Save to box',
+    };
+    const plus: Target = {
+      role: 'button',
+      name: '',
+      within: { around: box, levels: 1, description: 'the box’s row' },
+      description: 'the Save to picker’s “+”',
+    };
+    const refusedPlus = `'press' on ${snapshot}: step 'act' tried a forbidden control (the Save to picker’s “+”: the Save to picker allows only a workspace’s row: its “+” may create a workspace)`;
+    const rogue = testWorkflow('press', [], clicking(plus), null);
+    expect(
+      await exerciseWorkflows([rogue], { recipes: recipes('press'), snapshots: [snapshot] }),
+    ).toEqual([refusedPlus]);
+
+    // The same picker without a dialog's role: known by the box beside "+".
+    const inline = testWorkflow(
+      'press',
+      [],
+      (context) => {
+        // Test-only: reshapes the page, as the static scan forbids shipped code to.
+        document.querySelector('#_r_sv_')?.removeAttribute('role');
+        return clicking(plus)(context);
+      },
+      null,
+    );
+    expect(
+      await exerciseWorkflows([inline], { recipes: recipes('press'), snapshots: [snapshot] }),
+    ).toEqual([refusedPlus]);
+
+    // A "Create …" row, as Suno may offer for a name it does not have, is refused too.
+    const createRow: Target = {
+      role: 'button',
+      name: /^Create /,
+      within: { around: box, levels: 2, description: 'the Save to picker' },
+      description: 'a “Create …” row of the Save to picker',
+    };
+    const creating = testWorkflow(
+      'press',
+      [],
+      (context) => {
+        // Test-only: adds the row Suno may show, as the static scan forbids shipped code to.
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.innerHTML = '<span>Create “Night Drive”</span>';
+        document.querySelector('#_r_sv_ .overflow-y-auto')?.append(row);
+        return clicking(createRow)(context);
+      },
+      null,
+    );
+    expect(
+      await exerciseWorkflows([creating], { recipes: recipes('press'), snapshots: [snapshot] }),
+    ).toEqual([
+      `'press' on ${snapshot}: step 'act' tried a forbidden control (a “Create …” row of the Save to picker: its name starts with Create, Publish, Delete, Trash, or Remove)`,
+    ]);
+
+    const bypass = testWorkflow(
+      'bypass',
+      [],
+      () => {
+        // Test-only: reaches the page directly, as the static scan forbids shipped code to.
+        document
+          .querySelector('#_r_sv_ input + button')
+          ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      },
+      null,
+    );
+    expect(
+      await exerciseWorkflows([bypass], { recipes: recipes('bypass'), snapshots: [snapshot] }),
+    ).toEqual([`'bypass' on ${snapshot}: click reached button ""`]);
   }, 60_000);
 
   it('fails a workflow that presses Publish or Move to Trash in a clip menu', async () => {

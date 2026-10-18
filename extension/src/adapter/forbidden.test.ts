@@ -7,6 +7,7 @@ import {
   DOWNLOAD_CLIP,
   EXCEPTIONS,
   RECOGNISED_DIALOGS,
+  SAVE_TO_PICKER,
   type ControlFacts,
   type Verdict,
 } from './forbidden.ts';
@@ -39,6 +40,7 @@ function facts(change: Partial<ControlFacts>): ControlFacts {
     matches: () => false,
     dialog: null,
     inlineField: () => null,
+    fieldOnPage: () => false,
     submitsForm: false,
     ...change,
   };
@@ -417,5 +419,61 @@ describe('the facts the primitives gather', () => {
     const plain = document.getElementById('plain');
     expect(submit && verdictOf(submit).kind).toBe('forbidden');
     expect(plain && verdictOf(plain).kind).toBe('allowed');
+  });
+});
+
+describe('the Save to picker (#435)', () => {
+  const field = SAVE_TO_PICKER.field;
+  const picker = { title: '', controls: [field, '', 'My Workspace (81 clips)'] };
+
+  it('allows a workspace’s row and its box, and refuses “+”, a “Create …” row, and anything else, in a dialog', () => {
+    expect(classify(facts({ name: 'My Workspace (81 clips)', dialog: picker }))).toEqual({
+      kind: 'allowed',
+    });
+    expect(
+      classify(facts({ role: 'option', name: 'Sound test (1 clip)', dialog: picker })).kind,
+    ).toBe('allowed');
+    expect(classify(facts({ role: 'textbox', name: field, dialog: picker })).kind).toBe('allowed');
+    expect(classify(facts({ name: '', dialog: picker }))).toEqual({
+      kind: 'forbidden',
+      reason: 'the Save to picker allows only a workspace’s row: its “+” may create a workspace',
+    });
+    expect(classify(facts({ name: '+', otherNames: ['+'], dialog: picker })).kind).toBe(
+      'forbidden',
+    );
+    expect(classify(facts({ name: 'Create “Night Drive”', dialog: picker }))).toEqual({
+      kind: 'forbidden',
+      reason: 'its name starts with Create, Publish, Delete, Trash, or Remove',
+    });
+    // A workspace's name is not enough: its count of clips is part of a row's name.
+    expect(classify(facts({ name: 'My Workspace', dialog: picker })).kind).toBe('forbidden');
+  });
+
+  it('knows the picker outside a dialog by its box beside the control, and keeps the workspace exception out of it', () => {
+    const beside = { fieldOnPage: () => true, inlineField: () => field };
+    expect(classify(facts({ name: '', ...beside })).kind).toBe('forbidden');
+    expect(classify(facts({ name: 'Country Farming (137 clips)', ...beside })).kind).toBe(
+      'allowed',
+    );
+    expect(classify(facts({ name: 'Create new workspace', ...beside })).kind).toBe('forbidden');
+    // Elsewhere, the list's own entry is still the exception, and a plain button allowed.
+    expect(classify(facts({ name: 'Create new workspace' }))).toEqual({
+      kind: 'exception',
+      exception: 'create-workspace',
+    });
+    expect(classify(facts({ name: '', fieldOnPage: () => true })).kind).toBe('allowed');
+  });
+
+  it('on its snapshot, refuses “+” and allows each row', () => {
+    load(SAVE_TO_PICKER.snapshot);
+    const dialog = document.querySelector('[role="dialog"]');
+    const buttons = [...(dialog?.querySelectorAll('button') ?? [])];
+    expect(buttons.map((button) => [nameOf(button), verdictOf(button).kind])).toEqual([
+      ['', 'forbidden'],
+      ['My Workspace (81 clips)', 'allowed'],
+      ['Generated Song Playground (18 clips)', 'allowed'],
+      ['Country Farming (137 clips)', 'allowed'],
+      ['Sound test (2 clips)', 'allowed'],
+    ]);
   });
 });

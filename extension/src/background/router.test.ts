@@ -264,6 +264,8 @@ describe('the service worker router', () => {
         { id: 'set-extend-from', state: 'not_checked' },
         { id: 'choose-voice', state: 'not_checked' },
         { id: 'close-voice-picker', state: 'not_checked' },
+        { id: 'choose-save-to', state: 'not_checked' },
+        { id: 'close-save-to', state: 'not_checked' },
         { id: 'open-clip-menu', state: 'not_checked' },
         { id: 'choose-download', state: 'not_checked' },
         { id: 'choose-download-format', state: 'not_checked' },

@@ -17,6 +17,9 @@
  * - In a dialog whose rows are pressed (Suno's Model dialog, TS-007-10), a row whose name or text
  *   starts with one of those words is forbidden: "Create Custom Model", which spends credits.
  * - A control that would submit a form is forbidden.
+ * - In Create's Save to picker (#435, {@link SAVE_TO_PICKER}), a dialog or not, only a workspace's
+ *   row "<name> (<N> clips)" may be pressed, and none whose name starts with one of those words:
+ *   its "+" button and a "Create …" row may create a workspace, and are refused.
  *
  * False positives are accepted: a refusal stops the workflow, it never presses something else.
  *
@@ -27,6 +30,9 @@
  *
  * Not covered: a forbidden control Suno adds under a new name is caught only when the snapshots
  * and this matcher are updated. The live-site smoke checks in the generate stories supplement it.
+ * The Save to picker outside a dialog is known only while its box is an `input` or `textarea` in
+ * the light DOM named by `aria-label`, `aria-labelledby`, `placeholder`, or `title` (not by a
+ * `<label>`); its markup was not seen live (#435).
  */
 
 /** The words a forbidden control's name starts with, compared case-insensitively. */
@@ -165,6 +171,63 @@ export function recognisedDialog(dialog: DialogFacts): RecognisedDialog | undefi
   );
 }
 
+/**
+ * Create's Save to picker (#435), opened by the Save to button at the foot of the form: a text box
+ * "Search or create...", a "+" button, and a scrolling list of rows "<name> (<N> clips)" (the
+ * owner's screenshot of 2026-10-17; its roles and markup were not seen live, so
+ * `page.create-songs-advanced-save-to-picker.html` is constructed). It is known by its text box:
+ * in a dialog, by the box among the dialog's controls (it may have no title); outside one, by the
+ * box being the nearest text field around the control. In it, only a row may be pressed (an
+ * `option` or a `button` whose whole name is a workspace's name and its count of clips), and the
+ * box typed into; "+" and anything else, such as a "Create …" row, may create a workspace.
+ */
+export const SAVE_TO_PICKER: {
+  field: string;
+  row: RegExp;
+  rowRoles: readonly ('option' | 'button')[];
+  snapshot: string;
+} = {
+  field: 'Search or create...',
+  row: /^.+ \(\d[\d,]* clips?\)$/,
+  rowRoles: ['option', 'button'],
+  snapshot: 'create-songs-advanced-save-to-picker',
+};
+
+/** Whether the control is in the Save to picker: its dialog holds the box, or the box is beside it. */
+function inSaveToPicker(facts: ControlFacts): boolean {
+  if (facts.dialog !== null) {
+    return isSaveToPicker(facts.dialog);
+  }
+  // Only a control is asked about the text field beside it, which walks the page around it, and
+  // only while the picker's box is on the page.
+  return (
+    facts.role !== null &&
+    !CONTAINER_ROLES.has(facts.role) &&
+    facts.fieldOnPage(SAVE_TO_PICKER.field) &&
+    facts.inlineField() === SAVE_TO_PICKER.field
+  );
+}
+
+/** Whether a dialog is the Save to picker, by its text box. */
+export function isSaveToPicker(dialog: DialogFacts): boolean {
+  return (dialog.controls ?? []).includes(SAVE_TO_PICKER.field);
+}
+
+/** The matcher's verdict on a control in the Save to picker, or null when it is pressable there. */
+function saveToPickerRefusal(facts: ControlFacts): Verdict | null {
+  if ([facts.name, ...facts.otherNames].some((name) => FORBIDDEN_NAME.test(name.trim()))) {
+    return forbidden('its name starts with Create, Publish, Delete, Trash, or Remove');
+  }
+  const field = facts.role === 'textbox' && facts.name === SAVE_TO_PICKER.field;
+  const row =
+    facts.role !== null &&
+    (SAVE_TO_PICKER.rowRoles as readonly string[]).includes(facts.role) &&
+    SAVE_TO_PICKER.row.test(facts.name);
+  return field || row
+    ? null
+    : forbidden('the Save to picker allows only a workspace’s row: its “+” may create a workspace');
+}
+
 /** The names of the permitted changes to Suno. */
 export type ExceptionName = 'create-workspace' | 'download-clip';
 
@@ -192,7 +255,9 @@ export const CREATE_WORKSPACE: Exception = {
   matches: (facts) =>
     facts.dialog === null &&
     facts.role === 'button' &&
-    (facts.name === 'Create new workspace' ||
+    ((facts.name === 'Create new workspace' &&
+      // Never in the Save to picker (#435), whose "+" and "Create …" rows are refused.
+      !(facts.fieldOnPage(SAVE_TO_PICKER.field) && facts.inlineField() === SAVE_TO_PICKER.field)) ||
       (facts.name === 'Confirm' && facts.inlineField() === 'New workspace name')),
 };
 
@@ -235,11 +300,16 @@ export const DOWNLOAD_CLIP: Exception = {
 export const EXCEPTIONS: readonly Exception[] = [CREATE_WORKSPACE, DOWNLOAD_CLIP];
 
 /**
- * Whether a dialog has controls the adapter may press: a recognised dialog, or the Download
- * dialog, whose controls are the named exception. Every other dialog fails closed.
+ * Whether a dialog has controls the adapter may press: a recognised dialog, the Download dialog,
+ * whose controls are the named exception, or the Save to picker, whose rows only may be pressed
+ * (#435). Every other dialog fails closed.
  */
 export function pressableDialog(dialog: DialogFacts): boolean {
-  return recognisedDialog(dialog) !== undefined || DOWNLOAD_DIALOG.title.test(dialog.title);
+  return (
+    recognisedDialog(dialog) !== undefined ||
+    DOWNLOAD_DIALOG.title.test(dialog.title) ||
+    isSaveToPicker(dialog)
+  );
 }
 
 /** A dialog as the matcher knows it. */
@@ -266,6 +336,11 @@ export interface ControlFacts {
   dialog: DialogFacts | null;
   /** Outside a dialog: the label of the text field in the nearest container that has one. */
   inlineField(): string | null;
+  /**
+   * Whether a text field of that name is anywhere on the page: a quick look the matcher takes
+   * before {@link inlineField}, which walks the page around the control.
+   */
+  fieldOnPage(name: string): boolean;
   /** Pressing it would submit a form. */
   submitsForm: boolean;
 }
@@ -306,7 +381,12 @@ export function classify(facts: ControlFacts): Verdict {
   if (exception !== undefined) {
     return { kind: 'exception', exception: exception.name };
   }
-  if (facts.dialog !== null) {
+  if (inSaveToPicker(facts)) {
+    const refusal = saveToPickerRefusal(facts);
+    if (refusal !== null) {
+      return refusal;
+    }
+  } else if (facts.dialog !== null) {
     const dialog = recognisedDialog(facts.dialog);
     if (dialog === undefined) {
       return forbidden('it is in a dialog the adapter does not recognise');

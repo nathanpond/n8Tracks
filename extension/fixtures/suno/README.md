@@ -62,6 +62,10 @@ Sanitized on 2026-10-11 from the TS-007 captures of `/create?wid=<workspace ID>`
 
 - `project-me.search.response.json`: **constructed, not a capture.** What Generate on Suno takes after typing a name into the workspace list's search box (`input[aria-label="Search workspaces"]`, already in `page.workspace-selector.html`). It is shaped as a `GET /api/project/me` page (`num_total_results`, `current_page`, `projects`), on the assumption that Suno searches on the server; that, the query parameter it sends, and whether it filters the rows it holds instead, need live confirmation. Two workspaces of the same redacted name, as a search by name would find, and made-up IDs. The extension takes any workspace-list answer that follows the typing, so a different shape of answer only finds fewer workspaces.
 
+### TS-007-16 / #435: Create's Save to picker (constructed, not captured)
+
+- `page.create-songs-advanced-save-to-picker.html`: **constructed, not a capture.** `page.create-source-advanced.html` (a Cover on the Advanced form) with its Save to button showing "My Workspace" and open (`aria-expanded`, `aria-controls`), and a Save to picker added at the end of the body as Base UI renders a popover: a portal holding an untitled `role="dialog"` with an `input` whose placeholder is "Search or create...", an icon-only "+" `button` with no name, and a list of `button` rows, each a name `span` and a count `span` ("My Workspace (81 clips)", "Generated Song Playground (18 clips)", "Country Farming (137 clips)", "Sound test (2 clips)"). Built from the owner's screenshot of 2026-10-17; the names are generic and no identifier was added. The picker's roles, the rows' role, how "+" is named, and what follows a choice need live confirmation.
+
 ## Page snapshots
 
 Each `page.<name>.html` is the HTML of the relevant region, taken in the maintainer's browser on suno.com.
@@ -80,6 +84,7 @@ Each `page.<name>.html` is the HTML of the relevant region, taken in the maintai
 | `page.clip-download-menu.html` | A clip's "More options" with Download hovered: Download has no submenu. |
 | `page.download-dialog.html` | "More options" › Download: the format dialog with "Unlock & Download" and the plan's download allowance. |
 | `page.create-source-advanced.html` | Songs › Advanced, then a clip's Remix › Cover, then "Overwrite": the Audio section with the source. |
+| `page.create-songs-advanced-save-to-picker.html` | Constructed (#435): `page.create-source-advanced.html` with the Save to picker open (see above). |
 | `page.overwrite-lyrics-styles-dialog.html` | The dialog shown by Remix › Cover when the form already has lyrics and styles. |
 | `page.create-source-simple.html` | Songs › Simple, then a clip's Remix › Cover: the source chip above the prompt. |
 | `page.voice-picker.html` | Songs › Advanced › "+ Voice": My Voices list. |

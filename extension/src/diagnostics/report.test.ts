@@ -330,6 +330,8 @@ describe('the diagnostic report', () => {
       { id: 'set-extend-from', state: 'not_checked', step: null },
       { id: 'choose-voice', state: 'not_checked', step: null },
       { id: 'close-voice-picker', state: 'not_checked', step: null },
+      { id: 'choose-save-to', state: 'not_checked', step: null },
+      { id: 'close-save-to', state: 'not_checked', step: null },
       { id: 'open-clip-menu', state: 'not_checked', step: null },
       { id: 'choose-download', state: 'not_checked', step: null },
       { id: 'choose-download-format', state: 'not_checked', step: null },

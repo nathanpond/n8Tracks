@@ -1,4 +1,5 @@
-import type { Region, Target, TextAnchor } from './primitives.ts';
+import { SAVE_TO_PICKER } from './forbidden.ts';
+import type { Page, Region, Target, TextAnchor } from './primitives.ts';
 
 /**
  * Suno's Create form for Songs, as the TS-003 page snapshots show it
@@ -457,3 +458,83 @@ export const SONG_TITLE_BOXES: readonly Target[] = [
     description: 'the Song Title box beside "Save to..."',
   },
 ];
+
+/** The "Save to..." label at the foot of the Advanced form, beside the workspace the Song goes to. */
+const SAVE_TO_LABEL: TextAnchor = { text: 'Save to...', description: 'the "Save to..." label' };
+
+/**
+ * The Save to button (TS-003, `page.create-source-advanced.html`): beside "Save to...", it shows
+ * the workspace the clips are saved to and opens the Save to picker (`aria-haspopup="dialog"`).
+ * Loading a source may change it to the source's workspace (#435, the owner's check of
+ * 2026-10-17); the Simple form's snapshots show no Save to.
+ */
+export const SAVE_TO_BUTTON: Target = {
+  role: 'button',
+  popup: 'dialog',
+  within: { around: SAVE_TO_LABEL, levels: 2, description: 'the "Save to..." row' },
+  description: 'the Save to button beside "Save to..."',
+};
+
+/**
+ * The Save to picker's text box, "Search or create..." (#435), by which the picker is known to be
+ * open. What it holds is typed only, never sent with Enter, which may create a workspace.
+ */
+export const SAVE_TO_SEARCH: Target = {
+  role: 'textbox',
+  name: SAVE_TO_PICKER.field,
+  description: 'the "Search or create..." box of the Save to picker',
+};
+
+/** Where the picker's rows are looked for: outwards from its text box, within the picker. */
+const SAVE_TO_ROWS: Region = {
+  around: SAVE_TO_SEARCH,
+  levels: 6,
+  description: 'the Save to picker',
+};
+
+/**
+ * A workspace's row in the Save to picker, "<name> (<N> clips)" (#435): the row whose name, less
+ * that count, is `workspace` exactly, white space collapsed and case kept, since Suno's names may
+ * differ by case alone. The row's role was not seen live; it is looked for as an option first,
+ * then as a button ({@link SAVE_TO_PICKER}).
+ */
+export function saveToRow(workspace: string, role: 'option' | 'button'): Target {
+  return {
+    role,
+    name: new RegExp(`^${escaped(collapsed(workspace))} \\(\\d[\\d,]* clips?\\)$`),
+    within: SAVE_TO_ROWS,
+    description: 'the Song’s workspace’s row in the Save to picker',
+  };
+}
+
+function collapsed(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+/** What the Save to button shows, white space collapsed; null when the form shows no Save to. */
+export function saveToShown(page: Page): string | null {
+  const button = page.find(SAVE_TO_BUTTON);
+  return button.kind === 'found' ? page.read(button.found).text : null;
+}
+
+/** Whether the Save to button shows `workspace` (white space collapsed, case kept). */
+export function saveToShows(page: Page, workspace: string): boolean {
+  return saveToShown(page) === collapsed(workspace);
+}
+
+/**
+ * The picker's rows named exactly `workspace`, and the role they have: options when there are any
+ * (a row that is an option holding a button counts once), else buttons.
+ */
+export function saveToRows(
+  page: Page,
+  workspace: string,
+): { role: 'option' | 'button'; count: number } {
+  for (const role of SAVE_TO_PICKER.rowRoles) {
+    const count = page.readAll(saveToRow(workspace, role)).length;
+    if (count > 0) {
+      return { role, count };
+    }
+  }
+  return { role: 'button', count: 0 };
+}

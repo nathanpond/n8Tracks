@@ -23,7 +23,7 @@ This is the list the roadmap claim "Populate every supported generation property
 | `songs.simple.simple_add_video` | `simple_add_video` | manual | File input. |
 | `songs.simple.audio` | `audio` | source | A source that is an existing Suno clip. An uploaded or recorded file is `manual`. |
 | `songs.simple.voice` | `voice` | source | `manual`: TS-005 did not capture Simple's Voice picker. |
-| `songs.simple.workspace` | `workspace` | fill | Chosen with Suno's workspace selector before any field is filled. |
+| `songs.simple.workspace` | `workspace` | fill | Chosen with Suno's workspace selector before any field is filled; the form's Save to is set back to it after a source loads, and read back for the summary (#435). |
 
 ## Songs, Advanced mode (16)
 

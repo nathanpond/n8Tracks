@@ -630,6 +630,7 @@ function ownFacts(element: Element, dialog: ControlFacts['dialog'] = null): Cont
     matches: (selector) => element.matches(selector),
     dialog,
     inlineField: () => (dialog === null ? inlineFieldOf(element) : null),
+    fieldOnPage: (field) => fieldOnPage(element.ownerDocument, field),
     submitsForm: submitsForm(element),
   };
 }
@@ -687,6 +688,37 @@ function dialogOf(element: Element): ControlFacts['dialog'] {
     }
   }
   return null;
+}
+
+/**
+ * Whether an `input` or `textarea` named `field` is in the document (the light DOM only), shown or
+ * not, by its `aria-label`, `aria-labelledby`, `placeholder`, or `title`. A quick look the matcher
+ * takes for every control, so it reads the document's live lists of those elements, no styles, and
+ * no `<label>` (whose lookup walks the document); {@link inlineFieldOf} then reads the visible field
+ * beside the control by its accessible name.
+ */
+function fieldOnPage(document: Document, field: string): boolean {
+  const wanted = collapse(field);
+  const says = (text: string | null) => text !== null && collapse(text) === wanted;
+  const named = (inner: Element) => {
+    const labelledBy = inner.getAttribute('aria-labelledby');
+    return (
+      says(inner.getAttribute('aria-label')) ||
+      says(inner.getAttribute('placeholder')) ||
+      says(inner.getAttribute('title')) ||
+      (labelledBy !== null &&
+        says(
+          labelledBy
+            .split(/\s+/)
+            .map((id) => document.getElementById(id)?.textContent ?? '')
+            .join(' '),
+        ))
+    );
+  };
+  return (
+    [...document.getElementsByTagName('input')].some(named) ||
+    [...document.getElementsByTagName('textarea')].some(named)
+  );
 }
 
 /** The label of the text field in the nearest container of `element` that has one. */

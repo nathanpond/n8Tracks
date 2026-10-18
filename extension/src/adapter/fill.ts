@@ -35,6 +35,8 @@ import {
   SIMPLE_TAB,
   type SimpleSection,
   SONG_DESCRIPTION,
+  saveToShown,
+  saveToShows,
   SONG_TITLE_BOXES,
   STYLE_INFLUENCE_SLIDER,
   STYLES_BOX,
@@ -148,7 +150,15 @@ export interface FormJob {
   loaded?: EntryResult | null;
   /** The Voice's outcome (#148), once the extension chose it, or found it chosen, on the form. */
   voice?: EntryResult | null;
+  /**
+   * Why Save to was not set to the Song's workspace (#435), when the extension tried and left it to
+   * the user: no row of exactly its name, several, or the picker not as expected.
+   */
+  saveTo?: SaveToProblem | null;
 }
+
+/** Why the Save to picker's choice was left to the user (#435). */
+export type SaveToProblem = 'no row' | 'several rows' | 'not chosen';
 
 /** How long a set value may take to show (TS-003 read-back: 300 ms, three times). */
 export const READ_BACK_MS = 300;
@@ -159,6 +169,59 @@ export const FILL_LIMIT_MS = 120_000;
 
 /** The workspace entry: chosen by the workspace step (#145), listed under Simple for both modes. */
 export const WORKSPACE_ENTRY = 'songs.simple.workspace';
+
+/** Why Save to was left to the user, in the panel's words (#435). */
+function saveToWhy(problem: SaveToProblem | null | undefined, workspace: string): string {
+  switch (problem) {
+    case 'no row':
+      return ` The Save to list shows no workspace named exactly “${workspace}”.`;
+    case 'several rows':
+      return ` The Save to list shows more than one workspace named “${workspace}”, so the extension chose none.`;
+    case 'not chosen':
+      return ' The extension could not choose it in the Save to list.';
+    default:
+      return '';
+  }
+}
+
+/**
+ * The workspace entry (#145, #435), read from the form: what the Save to button shows, against the
+ * Song's workspace (white space collapsed, case kept). Set when it shows it; to do by hand, naming
+ * the workspace, when it shows another. A form with no Save to (Simple's snapshots show none) keeps
+ * the workspace step's word for it. Reads only.
+ */
+export function workspaceResult(page: Page, job: FormJob, workspace: string | null): EntryResult {
+  const key = WORKSPACE_ENTRY;
+  if (workspace === null) {
+    return { key, outcome: 'not_applicable' };
+  }
+  const shown = saveToShown(page);
+  if (shown === null) {
+    return { key, outcome: 'set', note: 'Selected by the workspace step.' };
+  }
+  if (saveToShows(page, workspace)) {
+    return {
+      key,
+      outcome: 'set',
+      note: `Save to shows the Song’s workspace “${workspace}”.`,
+      reportNote: 'Save to shows the Song’s workspace.',
+    };
+  }
+  const problem = job.saveTo ?? null;
+  return {
+    key,
+    outcome: 'manual',
+    note: `Save to shows “${shown}”: choose the Song’s workspace “${workspace}” in Save to by hand.${saveToWhy(problem, workspace)}`,
+    reportNote:
+      problem === 'no row'
+        ? 'Save to shows another workspace: choose the Song’s workspace in Save to by hand. The Save to list shows no workspace of exactly its name.'
+        : problem === 'several rows'
+          ? 'Save to shows another workspace: choose the Song’s workspace in Save to by hand. The Save to list shows more than one workspace of its name, so the extension chose none.'
+          : problem === 'not chosen'
+            ? 'Save to shows another workspace: choose the Song’s workspace in Save to by hand. The extension could not choose it in the Save to list.'
+            : 'Save to shows another workspace: choose the Song’s workspace in Save to by hand.',
+  };
+}
 
 /**
  * `fill` entries whose controls no snapshot shows, so the adapter has no filler for them (decision
@@ -1321,6 +1384,10 @@ export async function verifyForm(
   const results: EntryResult[] = [];
   for (const key of summaryEntries(job.mode, job.kind)) {
     const filler = fillers.find((candidate) => candidate.entry === key);
+    if (key === WORKSPACE_ENTRY) {
+      results.push(workspaceResult(page, job, workspace));
+      continue;
+    }
     if (filler === undefined) {
       results.push(unfilledResult(key, job, workspace));
       continue;

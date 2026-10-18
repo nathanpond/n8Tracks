@@ -10,7 +10,7 @@ import { ADAPTER_WORKFLOWS } from '../adapter/workflows/index.ts';
 import type { GenerateJob, GenerateReply, Request } from '../messages.ts';
 import type { GenerateViewState } from '../panel/GenerateView.ts';
 import { fakeClock, snapshotHtml } from '../testing/snapshots.ts';
-import { standInForSuno } from '../testing/sunoForm.ts';
+import { standInForSuno, type StandInOptions } from '../testing/sunoForm.ts';
 import type { FormJob, FormSource } from '../adapter/fill.ts';
 import { sunoObject } from '../testing/sunoResponses.ts';
 import {
@@ -749,7 +749,11 @@ describe('Generate on Suno in the Suno tab: filling the form (#146)', () => {
     const stopped = tab.last();
     expect(stopped?.kind).toBe('stopped');
     expect(stopped?.kind === 'stopped' ? stopped.message : '').toContain("step 'More Options'");
-    expect(tab.pressed.filter((name) => !name.startsWith('More Options'))).toEqual([]);
+    // Besides More Options, only the Save to button, which shows another workspace (#435); no
+    // picker opens without a stand-in, so nothing in it is pressed.
+    expect(tab.pressed.filter((name) => !name.startsWith('More Options'))).toEqual([
+      '<redacted 22 chars>',
+    ]);
     expect(
       tab.asked.some(
         (request) => request.type === 'generate-progress' && 'verification' in request,
@@ -1973,7 +1977,13 @@ describe('Generate on Suno in the Suno tab: the clip’s page and the actions TS
       outcome: 'verified',
       note: `The voice “${VOICE_NAME}” is chosen on the form: its link is the Version’s voice.`,
     });
-    expect(tab.pressed.slice(0, 2)).toEqual(['Add Voice', 'Voice']);
+    // Save to first (#435: the snapshot's shows another workspace), then the voice.
+    expect(tab.pressed.slice(0, 4)).toEqual([
+      '<redacted 24 chars>',
+      'My Workspace (81 clips)',
+      'Add Voice',
+      'Voice',
+    ]);
     expect(tab.pressed.filter((name) => FORBIDDEN_WORDS.test(name))).toEqual([]);
     // n8Tracks gets the adapter's words only, not the voice's name (#340).
     expect(JSON.stringify(tab.asked.at(-1))).not.toContain(VOICE_NAME);
@@ -2020,7 +2030,194 @@ describe('Generate on Suno in the Suno tab: the clip’s page and the actions TS
     expect(voice?.outcome).toBe('manual');
     expect(voice?.note).toMatch(/^Choose the voice “Nobody Here” from \+ Voice by hand/);
     // Nothing in the picker but its Close was pressed, and the form was filled after it.
-    expect(tab.pressed.slice(0, 2)).toEqual(['Add Voice', 'Close']);
+    expect(tab.pressed.slice(0, 4)).toEqual([
+      '<redacted 24 chars>',
+      'My Workspace (81 clips)',
+      'Add Voice',
+      'Close',
+    ]);
     expect(tab.steps().at(-1)).toBe('waiting review and create');
+  });
+});
+
+// ---- Save to after the source (#435).
+
+/** The Save to button's text on the page (the source snapshots' button). */
+function saveToText(): string {
+  return document.querySelector('#base-ui-_r_qq_')?.textContent.trim() ?? '';
+}
+
+/**
+ * A Cover of the Song's source just loaded on Create (the form shows Save to as the source's
+ * workspace, `<redacted 14 chars>` in the snapshot), for a Song whose workspace is `name`, with the
+ * stand-in for Suno's Save to picker. What was pressed, typed into "Search or create...", and every
+ * key sent are kept.
+ */
+async function afterCover(name: string, standIn: StandInOptions = {}) {
+  const tab = sourceTab({
+    job: job({
+      workspace: { sunoId: 'w-song', name, state: 'available' },
+      form: advancedForm({ sources: [coverSource()] }),
+      source: { phase: 'chosen', sunoId: SOURCE_CLIP },
+    }),
+    address: 'https://suno.com/create',
+    html: snapshotHtml('create-source-advanced'),
+  });
+  const keys: string[] = [];
+  const typed: string[] = [];
+  const onKey = (event: Event) => {
+    keys.push((event as KeyboardEvent).key);
+  };
+  const onInput = (event: Event) => {
+    const box = event.target as HTMLInputElement;
+    if (box.getAttribute('placeholder') === 'Search or create...') {
+      typed.push(box.value);
+    }
+  };
+  document.addEventListener('keydown', onKey, { capture: true });
+  document.addEventListener('input', onInput, { capture: true });
+  const suno = standInForSuno(document, standIn);
+  try {
+    await tab.generate.resume();
+  } finally {
+    suno.stop();
+    document.removeEventListener('keydown', onKey, { capture: true });
+    document.removeEventListener('input', onInput, { capture: true });
+  }
+  const workspace = results(tab.last()).find((result) => result.key === 'songs.simple.workspace');
+  const reported = tab.asked.at(-1);
+  const entries =
+    reported?.type === 'generate-progress' ? (reported.verification?.entries ?? []) : [];
+  return {
+    tab,
+    keys,
+    typed,
+    workspace,
+    reportedWorkspace: entries.find((entry) => entry.key === 'songs.simple.workspace'),
+    pickerOpen: document.querySelector('input[placeholder="Search or create..."]') !== null,
+  };
+}
+
+describe('Generate on Suno in the Suno tab: Save to after the source (#435)', () => {
+  it('sets Save to back to the Song’s workspace after the Cover, typing its name and pressing its one row, and reports it set', async () => {
+    const run = await afterCover('Generated Song Playground');
+
+    expect(run.tab.steps()).toEqual([
+      'filling verify source',
+      'filling fill form',
+      'waiting review and create',
+    ]);
+    expect(run.typed).toEqual(['Generated Song Playground']);
+    // The Save to button, then the workspace's row; never "+" (no name), never a Create.
+    expect(run.tab.pressed.slice(0, 2)).toEqual([
+      '<redacted 14 chars>',
+      'Generated Song Playground (18 clips)',
+    ]);
+    expect(run.tab.pressed).not.toContain('');
+    expect(run.tab.pressed.filter((name) => FORBIDDEN_WORDS.test(name))).toEqual([]);
+    expect(run.keys).not.toContain('Enter');
+    expect(saveToText()).toBe('Generated Song Playground');
+    expect(run.pickerOpen).toBe(false);
+    expect(run.workspace).toEqual({
+      key: 'songs.simple.workspace',
+      outcome: 'set',
+      note: 'Save to shows the Song’s workspace “Generated Song Playground”.',
+      reportNote: 'Save to shows the Song’s workspace.',
+    });
+    // n8Tracks gets the adapter's words, not the workspace's name.
+    expect(run.reportedWorkspace).toEqual({
+      key: 'songs.simple.workspace',
+      outcome: 'set',
+      note: 'Save to shows the Song’s workspace.',
+    });
+    expect(JSON.stringify(run.tab.asked.at(-1))).not.toContain('Generated Song Playground');
+  });
+
+  it('chooses the row of the name exactly, case kept, among rows Suno shows for it', async () => {
+    const run = await afterCover('Sound Test', {
+      saveToRows: [
+        { name: 'Sound test', clips: 2 },
+        { name: 'Sound Test', clips: 5 },
+        { name: 'Sound Test Two', clips: 1 },
+      ],
+    });
+
+    expect(run.tab.pressed.slice(0, 2)).toEqual(['<redacted 14 chars>', 'Sound Test (5 clips)']);
+    expect(saveToText()).toBe('Sound Test');
+    expect(run.workspace?.outcome).toBe('set');
+  });
+
+  it('closes the picker and leaves Save to to the user, naming the workspace, when no row has its name exactly', async () => {
+    // "Country Farming" holds the name, but is not it.
+    const run = await afterCover('Country');
+
+    expect(run.typed).toEqual(['Country']);
+    expect(run.tab.pressed.slice(0, 1)).toEqual(['<redacted 14 chars>']);
+    expect(run.tab.pressed.some((name) => name.endsWith('clips)'))).toBe(false);
+    expect(run.keys).toContain('Escape');
+    expect(run.keys).not.toContain('Enter');
+    expect(run.pickerOpen).toBe(false);
+    expect(saveToText()).toBe('<redacted 14 chars>');
+    expect(run.workspace).toEqual({
+      key: 'songs.simple.workspace',
+      outcome: 'manual',
+      note: 'Save to shows “<redacted 14 chars>”: choose the Song’s workspace “Country” in Save to by hand. The Save to list shows no workspace named exactly “Country”.',
+      reportNote:
+        'Save to shows another workspace: choose the Song’s workspace in Save to by hand. The Save to list shows no workspace of exactly its name.',
+    });
+    // The rest of the form is still filled, and the request waits for the user.
+    expect(run.tab.steps().at(-1)).toBe('waiting review and create');
+  });
+
+  it('chooses none of two rows of the workspace’s name (#335), leaving it to the user', async () => {
+    const run = await afterCover('Country Farming', {
+      saveToRows: [
+        { name: 'Country Farming', clips: 137 },
+        { name: 'Country Farming', clips: 4 },
+      ],
+    });
+
+    expect(run.tab.pressed.some((name) => name.endsWith('clips)'))).toBe(false);
+    expect(run.pickerOpen).toBe(false);
+    expect(run.workspace).toMatchObject({
+      outcome: 'manual',
+      note: 'Save to shows “<redacted 14 chars>”: choose the Song’s workspace “Country Farming” in Save to by hand. The Save to list shows more than one workspace named “Country Farming”, so the extension chose none.',
+    });
+  });
+
+  it('presses nothing for Save to when it shows the Song’s workspace already', async () => {
+    const run = await afterCover('<redacted 14 chars>');
+
+    expect(run.typed).toEqual([]);
+    expect(run.tab.pressed).not.toContain('<redacted 14 chars>');
+    expect(run.keys).not.toContain('Escape');
+    expect(run.workspace).toMatchObject({ outcome: 'set' });
+  });
+
+  it('closes the picker with Escape when Suno leaves it open after the row', async () => {
+    const run = await afterCover('Sound test', { saveToStaysOpen: true });
+
+    expect(run.keys).toContain('Escape');
+    expect(run.keys).not.toContain('Enter');
+    expect(run.pickerOpen).toBe(false);
+    expect(saveToText()).toBe('Sound test');
+    expect(run.workspace?.outcome).toBe('set');
+  });
+
+  it('reads Save to again on Check again', async () => {
+    const run = await afterCover('Generated Song Playground');
+    const button = document.querySelector('#base-ui-_r_qq_ .hxc-btn-content');
+    if (button !== null) {
+      // The user chose another workspace after the fill.
+      button.textContent = 'Sound test';
+    }
+
+    await run.tab.generate.checkAgain();
+
+    const workspace = results(run.tab.last()).find(
+      (result) => result.key === 'songs.simple.workspace',
+    );
+    expect(workspace?.outcome).toBe('manual');
+    expect(workspace?.note).toContain('choose the Song’s workspace “Generated Song Playground”');
   });
 });

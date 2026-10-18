@@ -4725,3 +4725,21 @@ Story #219 (on the milestone branch):
 - **Decision:** `project-me.search.response.json` is a constructed fixture: Suno's answer to the search box was not captured. What Suno sends for a search, and what `/create?wid=` does for a deleted workspace, need live confirmation. `ADAPTER_VERSION` 26.
   **Why:** No capture yet. The extension takes any list answer after typing, so a different shape only finds fewer.
   **Issue:** #434
+
+## M4 captures — #435 Create's Save to set back to the Song's workspace after loading a source — 2026-10-17
+
+- **Decision:** After the source is loaded and verified, and before the rest of the form is filled, the Suno tab reads Create's Save to. When it shows another workspace than the Song's, a new `choose-save-to` workflow opens the picker, types the workspace's name into "Search or create..." (native setter and `input` event, as `search-workspaces`; never Enter, never "+"), presses the one row whose name less " (N clips)" equals the workspace's, closes the picker with Escape if it stays open, and reads Save to back. It runs on every Song path, since it presses nothing when Save to is already right or absent. No new reported step: it runs inside `fill form`, so the server's fixed step list is unchanged.
+  **Why:** The owner's check (2026-10-17): a loaded Cover leaves Save to on another workspace, and changing it afterwards keeps the Cover.
+  **Issue:** #435
+- **Decision:** The row's name is compared exactly, white space collapsed and case kept (case-sensitive).
+  **Why:** Suno's workspace names may differ by case alone, so a case-insensitive match could choose another workspace.
+  **Issue:** #435
+- **Decision:** With no exact row, or more than one (#335), `close-save-to` sends Escape and Save to is left to the user. The Workspace entry is then `manual`, naming the workspace and why (the report note uses the adapter's words only). The entry now reads Save to back on every fill and on Check again: `set` when it shows the workspace, `manual` when it shows another, and the old "Selected by the workspace step." only on a form with no Save to (the Simple snapshots have none).
+  **Why:** The issue asks that the extension never guess between workspaces, and that the summary say what the form really shows.
+  **Issue:** #435
+- **Decision (invariant 4):** The forbidden-control matcher knows the Save to picker by its text box, whether among a dialog's controls or as the nearest text field beside a control outside one. A cheap look at the page's `input` and `textarea` attributes comes first, so the guard stays as fast. In the picker only a row "<name> (<N> clips)" (`option` or `button`) may be pressed. "+", anything else, and any row starting with Create are refused, and the create-workspace exception never applies there. Guard tests cover the picker as a dialog and not, a "Create …" row, and a click around the primitives.
+  **Why:** "+" and a "Create …" row may create a workspace. Only the named exception's own row may do that, and only when the user chose to create.
+  **Issue:** #435
+- **Decision:** `page.create-songs-advanced-save-to-picker.html` is constructed from the owner's screenshot (untitled `role="dialog"`, `button` rows, an icon-only "+"). The rows are looked for as options first, then as buttons. The picker's real roles and markup, whether Suno filters as one types, and whether a choice closes it need live confirmation. `ADAPTER_VERSION` 27.
+  **Why:** There is no capture. If the live markup differs, the workflow stops at its step and Save to is left to the user. Nothing else is pressed.
+  **Issue:** #435

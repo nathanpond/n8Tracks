@@ -40,6 +40,15 @@
  *   button shows its name, and the dialog closes unless `modelDialogStaysOpen` (what follows a
  *   choice was not seen live). The "Create Custom Model" row does nothing here.
  *
+ * And what the owner saw of Create's Save to picker (#435, 2026-10-17; its markup is the constructed
+ * `page.create-songs-advanced-save-to-picker.html`, and what follows a choice was not seen live):
+ *
+ * - the Save to button (`aria-haspopup="dialog"` beside "Save to...") opens the picker, its rows
+ *   `saveToRows` when given; pressed again, or on Escape, the picker closes;
+ * - typing into "Search or create..." shows only the rows whose name holds the text, case aside;
+ * - a row pressed sets the button to its name, and the picker closes unless `saveToStaysOpen`.
+ *   Its "+" does nothing here: the adapter must never reach it.
+ *
  * Text boxes need no stand-in: the native value setter works in jsdom.
  */
 
@@ -52,6 +61,10 @@ export interface StandInOptions {
   deferredSliders?: boolean;
   /** The Model dialog stays open after a model is chosen, until Escape (TS-007-10). */
   modelDialogStaysOpen?: boolean;
+  /** The Save to picker's rows (#435), as "<name> (<N> clips)"; the snapshot's unless given. */
+  saveToRows?: readonly { name: string; clips: number }[];
+  /** The Save to picker stays open after a row is chosen, until Escape. */
+  saveToStaysOpen?: boolean;
 }
 
 export interface StandIn {
@@ -420,12 +433,114 @@ function modelDialogPicker(document: Document, target: Element, staysOpen: boole
   return true;
 }
 
+/** The open Save to picker (#435), or null. */
+function openSaveToPicker(document: Document): Element | null {
+  return (
+    document
+      .querySelector('input[placeholder="Search or create..."]')
+      ?.closest('[role="dialog"]') ?? null
+  );
+}
+
+/** The Save to button: the one beside the "Save to..." label. */
+function saveToButtonOf(target: Element): Element | null {
+  const button = target.closest('button[aria-haspopup="dialog"]');
+  const label = button?.parentElement?.querySelector('span');
+  return button !== null && label?.textContent.trim() === 'Save to...' ? button : null;
+}
+
+function closeSaveToPicker(document: Document, picker: Element): void {
+  document
+    .querySelector(`button[aria-haspopup="dialog"][aria-controls="${picker.id}"]`)
+    ?.setAttribute('aria-expanded', 'false');
+  (picker.closest('[data-base-ui-portal]') ?? picker).remove();
+}
+
+/** A Save to row's workspace name: its first text. */
+function saveToRowName(row: Element): string {
+  return row.querySelector('span')?.textContent.trim() ?? '';
+}
+
+/** The Save to button and its picker (#435). */
+function saveToPicker(document: Document, target: Element, options: StandInOptions): boolean {
+  const button = saveToButtonOf(target);
+  if (button !== null) {
+    const open = openSaveToPicker(document);
+    if (open !== null) {
+      closeSaveToPicker(document, open);
+      return true;
+    }
+    const portal = fromSnapshot(
+      document,
+      'create-songs-advanced-save-to-picker',
+      '[data-base-ui-portal]',
+    );
+    const list = portal.querySelector('.overflow-y-auto');
+    const template = list?.querySelector('button');
+    if (
+      options.saveToRows !== undefined &&
+      list !== null &&
+      template !== null &&
+      template !== undefined
+    ) {
+      const rows = options.saveToRows.map(({ name, clips }) => {
+        const row = template.cloneNode(true) as Element;
+        const [nameSpan, countSpan] = row.querySelectorAll('span');
+        if (nameSpan !== undefined && countSpan !== undefined) {
+          nameSpan.textContent = name;
+          countSpan.textContent = `(${String(clips)} clips)`;
+        }
+        return row;
+      });
+      list.replaceChildren(...rows);
+    }
+    const picker = portal.querySelector('[role="dialog"]');
+    button.setAttribute('aria-controls', picker?.id ?? '');
+    button.setAttribute('aria-expanded', 'true');
+    document.body.append(portal);
+    return true;
+  }
+  const picker = openSaveToPicker(document);
+  const row = target.closest('button');
+  if (picker === null || row === null || !picker.contains(row) || saveToRowName(row) === '') {
+    return false;
+  }
+  const opener = document.querySelector(
+    `button[aria-haspopup="dialog"][aria-controls="${picker.id}"]`,
+  );
+  if (opener !== null) {
+    showModel(opener, saveToRowName(row));
+  }
+  if (options.saveToStaysOpen !== true) {
+    closeSaveToPicker(document, picker);
+  }
+  return true;
+}
+
+/** Typing into the Save to picker's box shows only the rows whose name holds the text. */
+function filterSaveTo(event: Event): void {
+  const box = event.target as Element;
+  if (box.getAttribute('placeholder') !== 'Search or create...') {
+    return;
+  }
+  const typed = (box as HTMLInputElement).value.trim().toLowerCase();
+  for (const row of box.closest('[role="dialog"]')?.querySelectorAll('.overflow-y-auto > button') ??
+    []) {
+    if (saveToRowName(row).toLowerCase().includes(typed)) {
+      row.removeAttribute('hidden');
+    } else {
+      row.setAttribute('hidden', '');
+    }
+  }
+}
+
 /** Starts the stand-in on `document`; `stop` removes it (and the editor commands). */
 export function standInForSuno(document: Document, options: StandInOptions = {}): StandIn {
   const commands: string[] = [];
   const onClick = (event: Event) => {
     const target = event.target as Element;
     if (
+      saveToPicker(document, target, options) ||
       modelDialogPicker(document, target, options.modelDialogStaysOpen === true) ||
       modelPicker(document, target) ||
       simpleSections(document, target) ||
@@ -458,6 +573,10 @@ export function standInForSuno(document: Document, options: StandInOptions = {})
       if (dialog !== null) {
         closeModelDialog(document, dialog);
       }
+      const picker = openSaveToPicker(document);
+      if (picker !== null) {
+        closeSaveToPicker(document, picker);
+      }
       return;
     }
     const slider = (event.target as Element).closest('[role="slider"]');
@@ -474,8 +593,12 @@ export function standInForSuno(document: Document, options: StandInOptions = {})
       }
     }
   };
+  const onInput = (event: Event) => {
+    filterSaveTo(event);
+  };
   document.addEventListener('click', onClick);
   document.addEventListener('keydown', onKey);
+  document.addEventListener('input', onInput);
   Object.defineProperty(document, 'execCommand', {
     configurable: true,
     value: (command: string, _ui: boolean, value?: string) => {
@@ -488,6 +611,7 @@ export function standInForSuno(document: Document, options: StandInOptions = {})
     stop: () => {
       document.removeEventListener('click', onClick);
       document.removeEventListener('keydown', onKey);
+      document.removeEventListener('input', onInput);
       Reflect.deleteProperty(document, 'execCommand');
     },
   };

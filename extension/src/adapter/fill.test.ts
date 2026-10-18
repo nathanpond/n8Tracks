@@ -677,17 +677,85 @@ describe('the summary’s other entries', () => {
     });
   });
 
-  it('lists the workspace in Advanced mode too, and Duration’s mode as read from the form', async () => {
+  it('lists the workspace in Advanced mode too, read from Save to, and Duration’s mode as read from the form', async () => {
     load(ADVANCED);
 
     const results = byKey(await verifyForm(page, job('advanced', ADVANCED_VALUES), 'Studio', true));
 
-    expect(results.get(WORKSPACE_ENTRY)?.outcome).toBe('set');
+    // The snapshot's Save to shows another workspace than the Song's (#435): to do by hand.
+    expect(results.get(WORKSPACE_ENTRY)).toEqual({
+      key: WORKSPACE_ENTRY,
+      outcome: 'manual',
+      note: 'Save to shows “<redacted 14 chars>”: choose the Song’s workspace “Studio” in Save to by hand.',
+      reportNote:
+        'Save to shows another workspace: choose the Song’s workspace in Save to by hand.',
+    });
     // The TS-003 snapshot shows the Duration slider, which is Custom (TS-005).
     expect(results.get('songs.advanced.duration_mode')).toMatchObject({
       outcome: 'set',
       expected: 'custom',
     });
+  });
+});
+
+describe('the workspace entry, read from Save to (#435)', () => {
+  it('is set when Save to shows the Song’s workspace, white space aside, case kept', async () => {
+    load('create-songs-advanced-save-to-picker');
+
+    const shown = byKey(await verifyForm(page, job('advanced', {}), ' My  Workspace ', false));
+    const otherCase = byKey(await verifyForm(page, job('advanced', {}), 'my workspace', false));
+
+    expect(shown.get(WORKSPACE_ENTRY)).toEqual({
+      key: WORKSPACE_ENTRY,
+      outcome: 'set',
+      note: 'Save to shows the Song’s workspace “ My  Workspace ”.',
+      reportNote: 'Save to shows the Song’s workspace.',
+    });
+    // Suno's names may differ by case alone: another case is another workspace.
+    expect(otherCase.get(WORKSPACE_ENTRY)?.outcome).toBe('manual');
+  });
+
+  it.each([
+    [
+      'no row',
+      ' The Save to list shows no workspace named exactly “Studio”.',
+      'Save to shows another workspace: choose the Song’s workspace in Save to by hand. The Save to list shows no workspace of exactly its name.',
+    ],
+    [
+      'several rows',
+      ' The Save to list shows more than one workspace named “Studio”, so the extension chose none.',
+      'Save to shows another workspace: choose the Song’s workspace in Save to by hand. The Save to list shows more than one workspace of its name, so the extension chose none.',
+    ],
+  ] as const)(
+    'names the workspace to choose by hand, and why (%s)',
+    async (problem, why, report) => {
+      load(ADVANCED);
+
+      const results = byKey(
+        await verifyForm(page, job('advanced', {}, { saveTo: problem }), 'Studio', false),
+      );
+
+      expect(results.get(WORKSPACE_ENTRY)).toEqual({
+        key: WORKSPACE_ENTRY,
+        outcome: 'manual',
+        note: `Save to shows “<redacted 14 chars>”: choose the Song’s workspace “Studio” in Save to by hand.${why}`,
+        reportNote: report,
+      });
+    },
+  );
+
+  it('keeps the workspace step’s word on a form with no Save to (Simple’s snapshots), and is not applicable with no workspace', async () => {
+    load(SIMPLE);
+
+    const results = byKey(await verifyForm(page, job('simple', {}), 'Studio', false));
+    const none = byKey(await verifyForm(page, job('simple', {}), null, false));
+
+    expect(results.get(WORKSPACE_ENTRY)).toEqual({
+      key: WORKSPACE_ENTRY,
+      outcome: 'set',
+      note: 'Selected by the workspace step.',
+    });
+    expect(none.get(WORKSPACE_ENTRY)).toEqual({ key: WORKSPACE_ENTRY, outcome: 'not_applicable' });
   });
 });
 

@@ -7,7 +7,12 @@ import {
   workspaceOfAddress,
 } from '../adapter/addresses.ts';
 import { realClock, type Clock } from '../adapter/clock.ts';
-import { verificationReport, type EntryResult, type FormJob } from '../adapter/fill.ts';
+import {
+  verificationReport,
+  type EntryResult,
+  type FormJob,
+  type SaveToProblem,
+} from '../adapter/fill.ts';
 import { isFinished, watchedClipsOf } from '../adapter/finished.ts';
 import { PAGE_WAIT_MS, type Observations } from '../adapter/libraryReader.ts';
 import type { ObservedMessage } from '../adapter/observed.ts';
@@ -26,10 +31,12 @@ import {
   sourceShown,
   type LoadedSource,
 } from '../adapter/sources.ts';
+import { saveToRows, saveToShown, saveToShows } from '../adapter/songsForm.ts';
 import { ADAPTER_VERSION } from '../adapter/version.ts';
 import { expected, failureText, OK } from '../adapter/workflow.ts';
 import type { FillContext } from '../adapter/workflows/fillSongs.ts';
 import { formWorkflowsFor } from '../adapter/workflows/index.ts';
+import { chooseSaveTo, closeSaveTo } from '../adapter/workflows/saveTo.ts';
 import {
   answerOverwrite,
   chooseSourceAction,
@@ -113,6 +120,11 @@ import type { GenerateViewState } from '../panel/GenerateView.ts';
  * source is verified before anything else is filled. When it is not the Version's, the panel asks
  * the user to load it by hand and press Continue, which verifies it again, as often as needed. A
  * source n8Tracks knows is unusable stops the request before the form changes, naming it.
+ *
+ * Loading a source may set the form's Save to to the source's workspace (#435, TS-007-16). Before
+ * the rest of a Song's form is filled, Save to is read; when it shows another workspace, its picker
+ * is opened, the Song's workspace typed (never Enter, never "+"), and the one row of exactly that
+ * name chosen. With none, or several, the summary's Workspace entry leaves it to the user.
  */
 
 /** The steps reported to n8Tracks, a fixed list (the Version page shows them). */
@@ -721,11 +733,15 @@ export class SunoGenerate {
       await this.stop(NO_FORM);
       return;
     }
+    // Save to first (#435): loading a source may have set it to the source's workspace.
+    const saveTo =
+      form.kind === 'song' && workspace !== null ? await this.setSaveTo(workspace) : null;
     const voice = await this.chooseVoice(form);
     const job: FormJob = {
       ...form,
       ...(loaded === null ? {} : { loaded }),
       ...(voice === null ? {} : { voice }),
+      ...(saveTo === null ? {} : { saveTo }),
     };
     const context: Omit<FillContext, 'page' | 'signal'> = { job, workspace, results: [] };
     const filling = await this.options.session.run(workflows.fill, context, this.runOptions());
@@ -735,6 +751,31 @@ export class SunoGenerate {
     }
     this.filled = { form: job, workspace };
     await this.review(GENERATE_STEPS.review, job, context.results);
+  }
+
+  /**
+   * Sets Create's Save to back to the Song's workspace (#435), before the rest is filled: loading a
+   * source may set it to the source's workspace, and the clips would go there. When the form shows
+   * no Save to, or it shows the workspace already, nothing is pressed. Otherwise the picker is
+   * opened, the name typed (never Enter, never "+"), and the one row of exactly that name chosen;
+   * the summary's Workspace entry reads Save to back (`workspaceResult`). Null when Save to shows
+   * the workspace or there is none; else why it was left to the user (the picker is closed).
+   */
+  private async setSaveTo(workspace: string): Promise<SaveToProblem | null> {
+    const { page, session } = this.options;
+    if (saveToShown(page) === null || saveToShows(page, workspace)) {
+      return null;
+    }
+    const chosen = await session.run(chooseSaveTo, { workspaceName: workspace }, this.runOptions());
+    if (chosen.ok) {
+      return null;
+    }
+    const rows = saveToRows(page, workspace).count;
+    await session.run(closeSaveTo, {}, this.runOptions());
+    if (chosen.failure.step !== 'workspace row') {
+      return 'not chosen';
+    }
+    return rows === 0 ? 'no row' : rows > 1 ? 'several rows' : 'not chosen';
   }
 
   /**
