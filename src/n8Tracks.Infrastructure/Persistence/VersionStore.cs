@@ -53,7 +53,7 @@ internal sealed class VersionStore(N8TracksDbContext context, TimeProvider time,
                 await VersionLineageRows.ReadAsync(context, id, cancellationToken).ConfigureAwait(false),
                 record.IsFrozen,
                 record.LastGenerationOrdinal,
-                VersionInputsColumns.ReadImported(record.ImportedInputs));
+                VersionInputsColumns.ReadImported(record.ImportedInputs, record.Inputs));
     }
 
     public async Task<Guid?> FindIdByShortcodeAsync(long songShortcodeNumber, string number, CancellationToken cancellationToken) =>
@@ -113,7 +113,7 @@ internal sealed class VersionStore(N8TracksDbContext context, TimeProvider time,
             VersionInputsColumns.Read(inputs.Kind, inputs.Model, inputs.Inputs),
             await VersionLineageRows.ViewAsync(context, lineage, cancellationToken).ConfigureAwait(false),
             workspace,
-            VersionInputsColumns.ReadImported(inputs.ImportedInputs));
+            VersionInputsColumns.ReadImported(inputs.ImportedInputs, inputs.Inputs));
     }
 
     public async Task<IReadOnlyList<VersionSummary>> ListAsync(Guid songId, CancellationToken cancellationToken)

@@ -125,6 +125,40 @@ public sealed class VersionSourceSettingsEndpointTests
         Assert.Equal(50, applied.GetProperty("inputs").GetProperty("weirdness").GetInt32());
     }
 
+    /// <summary>
+    /// Audio Influence (#436) is copied like the other sliders where Suno shows it: from a source whose
+    /// own Version was built on another song's audio, into a Version taking it as a Cover. A source
+    /// without such audio has none to offer, and an Extend, which Suno shows no Audio Influence for,
+    /// never fills or asks about it.
+    /// </summary>
+    [Fact]
+    public async Task AudioInfluenceIsCopiedOnlyWhereSunoShowsIt()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var covered = await SourceAsync(factory, client, "Audio original", async (_, id) =>
+        {
+            using var edited = await SendAsync(client, HttpMethod.Patch, new Uri($"/api/v1/versions/{id}", UriKind.Relative), SongApi.Quoted(2), $$$"""
+                {"inputs":{"audioInfluence":85,"sources":[{"typeId":"{{{Cover}}}","external":{"sunoId":"older-song"}}]}}
+                """);
+            Assert.True(edited.StatusCode == HttpStatusCode.OK, await edited.Content.ReadAsStringAsync());
+        });
+
+        var cover = await TargetAsync(client, "Audio cover");
+        var conflicts = Keyed(await PreviewAsync(client, cover, CoverOf(covered)), "conflicts");
+        Assert.Equal(25, conflicts["audioInfluence"].GetProperty("versionValue").GetInt32());
+        Assert.Equal(85, conflicts["audioInfluence"].GetProperty("sourceValue").GetInt32());
+
+        var extended = await TargetAsync(client, "Audio extend");
+        var extendPlan = await PreviewAsync(client, extended, $$$"""[{"typeId":"{{{Extend}}}","generation":"{{{covered}}}","continueAtSeconds":12.5}]""");
+        Assert.DoesNotContain("audioInfluence", Keyed(extendPlan, "fills").Keys.Concat(Keyed(extendPlan, "conflicts").Keys));
+
+        // The usual source, a Song with no audio source, has no Audio Influence to offer.
+        var plain = await SourceAsync(factory, client, "Plain original");
+        var plainPlan = await PreviewAsync(client, await TargetAsync(client, "Plain cover"), CoverOf(plain));
+        Assert.DoesNotContain("audioInfluence", Keyed(plainPlan, "fills").Keys.Concat(Keyed(plainPlan, "conflicts").Keys));
+    }
+
     [Fact]
     public async Task ASourceWithNoVersionBehindItFillsNothingAndSaysWhy()
     {

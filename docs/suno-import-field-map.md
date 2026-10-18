@@ -4,7 +4,7 @@ Where each option of the Create screen (`docs/suno-create-field-inventory.json`)
 
 Evidence: spike TS-003 (`docs/spikes/TS-003.md`), run 2026-10-05 with one finished clip pair in each of Songs Simple, Songs Advanced (every More Options control off its default, Max Mode on), Speech Simple, Speech Advanced, and Sounds (Loop, 120 BPM, A minor). Fixtures are in `extension/fixtures/suno/`.
 
-The observed Create (#149) takes an option from the response where Suno echoes it, else from the request. In the request, an absent key says nothing (the option is taken from the Version) unless the entry has `absentInCreateRequest: "default"` (Vocal Gender none, Duration Auto); `presentInCreateRequest` names the choice a key's presence makes (Duration Custom). The model is never read from a Create.
+The observed Create (#149) takes an option from the response where Suno echoes it, else from the request. An entry with `absentInClip: "notReturned"` (Audio Influence, which Suno sends only for a song built on another song's audio, #436) is not returned when a clip lacks it, rather than read as its default, and an observed Create then looks for it in the request. In the request, an absent key says nothing (the option is taken from the Version) unless the entry has `absentInCreateRequest: "default"` (Vocal Gender none, Duration Auto); `presentInCreateRequest` names the choice a key's presence makes (Duration Custom). The model is never read from a Create.
 
 Paths are dot paths with `[n]` for arrays. **Feed** is one clip in `clips[]` of `POST /api/feed/v3`. **Create** is one clip in `clips[]` of `POST /api/generate/v2-web/`. **Request** is that call's JSON body. `—` means not present.
 
@@ -47,6 +47,7 @@ These values are sent at Create time and never come back in the feed. Import mar
 | `max_mode` | `metadata.is_max_mode` | same | `metadata.is_max_mode` | bool | `true` |
 | `weirdness` | `metadata.control_sliders.weirdness_constraint` | same | same | percent, scale 0.01 | `0.7` for 70 |
 | `style_influence` | `metadata.control_sliders.style_weight` | same | same | percent, scale 0.01 | `0.3` for 30 |
+| `audio_influence` | `metadata.control_sliders.audio_weight` | same (unverified) | same (unverified) | percent, scale 0.01 | `0.85` for 85; absent (no audio source) is not returned (`absentInClip`) |
 | `variety` | `metadata.control_sliders.aug_creativity` | same | same | enum 0–4 | `2` High, `4` Max (0 Off, 1 Normal, 3 Extra unverified) |
 | `personalize` | not returned | — | `use_personalization` | bool | `true` |
 | `title` | `title` | `title` | `title` | text | a blank title is replaced by Suno's own |

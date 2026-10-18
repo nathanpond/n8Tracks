@@ -115,6 +115,9 @@ public sealed class SourceSettingsService(
     private const string StylesKey = VersionInputRules.StylesField;
     private const string VoiceKey = VersionLineageInputs.VoiceKey;
 
+    /// <summary>Audio Influence (#436), a setting only where Suno shows it: see <see cref="Settings"/>.</summary>
+    private static readonly string AudioInfluenceKey = JsonNamingPolicy.CamelCase.ConvertName(nameof(VersionInputs.AudioInfluence));
+
     /// <summary>The Simple form's switches adding the lyrics and styles sections: part of those two settings, never their own.</summary>
     private static readonly string LyricsAddedKey = JsonNamingPolicy.CamelCase.ConvertName(nameof(VersionInputs.SimpleLyricsAdded));
     private static readonly string StylesAddedKey = JsonNamingPolicy.CamelCase.ConvertName(nameof(VersionInputs.SimpleStylesAdded));
@@ -274,7 +277,7 @@ public sealed class SourceSettingsService(
             return none;
         }
 
-        var current = Settings(version, asTarget: true);
+        var current = Settings(version, takingAction: action);
         var (sourceVersion, generationId, reason) = await SourceVersionAsync(sources[0], version.Summary.Id, cancellationToken).ConfigureAwait(false);
         if (sourceVersion is null)
         {
@@ -287,7 +290,7 @@ public sealed class SourceSettingsService(
             return new SourceSettingsPlan(action, revision, [], [], [.. current.Keys.Select(key => new SourceSettingUnknown(key, reason))]) { TargetIsSimpleSong = simple };
         }
 
-        var offered = Settings(sourceVersion, asTarget: false);
+        var offered = Settings(sourceVersion);
         var unknown = new List<SourceSettingUnknown>();
         if (sourceVersion.Imported is { } marks)
         {
@@ -319,6 +322,12 @@ public sealed class SourceSettingsService(
             if (!IsValid(key, value, listed))
             {
                 unknown.Add(new(key, NotValidReason));
+                continue;
+            }
+
+            if (key == AudioInfluenceKey && !current.ContainsKey(key))
+            {
+                // Suno will not show it for the action taken: a hidden value is never filled.
                 continue;
             }
 
@@ -455,16 +464,36 @@ public sealed class SourceSettingsService(
     /// <summary>
     /// A Version's settings a source can fill, by key in <see cref="SettingKeys"/> order: the ones
     /// that apply to its kind and mode (what Suno was sent), and its Voice when it has one. As the
-    /// Version taking the source (<paramref name="asTarget"/>), a Simple Song's lyrics and styles are
-    /// its own text whether their section is added or not, so text it holds is never filled over.
+    /// Version taking the source (<paramref name="takingAction"/> not null), a Simple Song's lyrics and
+    /// styles are its own text whether their section is added or not, so text it holds is never filled
+    /// over; and Audio Influence (#436) is one of its settings when it will apply once the source of
+    /// that action is taken (a Cover; or Inspiration it keeps), whatever its sources are now.
     /// </summary>
-    private static Dictionary<string, JsonNode?> Settings(VersionDetail version, bool asTarget)
+    private static Dictionary<string, JsonNode?> Settings(VersionDetail version, string? takingAction = null)
     {
-        var effective = VersionInputRules.Effective(CreateFieldInventory.Embedded, version.Inputs, version.Lyrics, version.Styles);
-        if (asTarget && IsSimpleSong(version))
+        var lineage = version.Lineage.Lineage;
+        var effective = VersionInputRules.Effective(CreateFieldInventory.Embedded, version.Inputs, version.Lyrics, version.Styles, lineage);
+        if (takingAction is not null && IsSimpleSong(version))
         {
             effective[LyricsKey] = version.Lyrics;
             effective[StylesKey] = version.Styles;
+        }
+
+        if (takingAction is not null)
+        {
+            var applies = VersionLineageRules.AudioInfluenceApplies(
+                takingAction,
+                takingAction != CoverAction && (lineage.InspirationSources.Count > 0 || lineage.Playlist is not null),
+                version.Inputs.Kind,
+                version.Inputs.SongMode);
+            if (applies)
+            {
+                effective[AudioInfluenceKey] = version.Inputs.AudioInfluence;
+            }
+            else
+            {
+                effective.Remove(AudioInfluenceKey);
+            }
         }
 
         var settings = new Dictionary<string, JsonNode?>(StringComparer.Ordinal);

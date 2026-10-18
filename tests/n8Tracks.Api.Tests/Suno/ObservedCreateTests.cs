@@ -76,6 +76,38 @@ public sealed class ObservedCreateTests
         Assert.DoesNotContain("vocalGender", maleMapped.Compared.Keys);
     }
 
+    /// <summary>
+    /// Audio Influence (#436) is compared like Style Influence: from the response's
+    /// <c>control_sliders.audio_weight</c>, else the request's; a Create with neither (no audio source)
+    /// leaves it assumed from the Version and compared on nothing. The paths mirror Style Influence's
+    /// and are unverified: no Create with an audio source was captured.
+    /// </summary>
+    [Fact]
+    public void AudioInfluenceIsTakenFromTheResponseElseTheRequestAndIsAssumedWhenNeitherHasIt()
+    {
+        var response = ObservedCreateApi.Response(Mode, "suno-request", ["clip-a"]);
+        var echoed = response["clips"]![0]!.DeepClone();
+        echoed["metadata"]!["control_sliders"]!["audio_weight"] = 0.6;
+        var request = ObservedCreateApi.Request(Mode);
+        using var plainClip = JsonDocument.Parse(response["clips"]![0]!.ToJsonString());
+        using var echoedClip = JsonDocument.Parse(echoed.ToJsonString());
+        using var plainRequest = JsonDocument.Parse(request.ToJsonString());
+        request["metadata"]!["control_sliders"]!["audio_weight"] = 0.35;
+        using var sentRequest = JsonDocument.Parse(request.ToJsonString());
+
+        var fromResponse = ClipInputMapper.MapCreate(echoedClip.RootElement, sentRequest.RootElement, []);
+        Assert.Equal(60, fromResponse.Inputs.AudioInfluence);
+        Assert.Contains("audioInfluence", fromResponse.Compared.Keys);
+
+        var fromRequest = ClipInputMapper.MapCreate(plainClip.RootElement, sentRequest.RootElement, []);
+        Assert.Equal(35, fromRequest.Inputs.AudioInfluence);
+        Assert.Contains("audioInfluence", fromRequest.Compared.Keys);
+
+        var neither = ClipInputMapper.MapCreate(plainClip.RootElement, plainRequest.RootElement, []);
+        Assert.Contains("audioInfluence", neither.Marks.NotReturned);
+        Assert.DoesNotContain("audioInfluence", neither.Compared.Keys);
+    }
+
     [Theory]
     [InlineData("songs-simple")]
     [InlineData("songs-advanced")]

@@ -47,7 +47,7 @@ public sealed class ClipImportEndpointTests
         Assert.Equal(["lyrics", "variety"], Strings(marks.GetProperty("outOfRange")));
         Assert.Equal("7", marks.GetProperty("rawValues").GetProperty("variety").GetString());
         Assert.Equal(
-            ["simpleLyricsAdded", "simpleStylesAdded", "styles", "vocalGender", "durationMode", "durationSeconds", "personalize"],
+            ["simpleLyricsAdded", "simpleStylesAdded", "styles", "vocalGender", "durationMode", "durationSeconds", "audioInfluence", "personalize"],
             Strings(marks.GetProperty("notReturned")));
         Assert.Equal(JsonValueKind.Null, (await GetAsync(client, "n8-1-v1")).GetProperty("imported").ValueKind);
 

@@ -10,7 +10,7 @@ The Create screen has three tabs. Songs and Speech each have a Simple and an Adv
 
 ## Songs
 
-23 fields.
+24 fields.
 
 | Key | Label | Modes | Type | Values or range | Default | Condition | Notes |
 |---|---|---|---|---|---|---|---|
@@ -33,6 +33,7 @@ The Create screen has three tabs. Songs and Speech each have a Simple and an Adv
 | `max_mode` | Max Mode | advanced | toggle | — | off | Inside More Options | Tooltip: 'Uses more compute to maximize consistency throughout the song. Costs 2x credits per song.' |
 | `weirdness` | Weirdness | advanced | range | 0 to 100 percent | 50 | Inside More Options | Tooltip: 'Turn it up for wild, unexpected results'. |
 | `style_influence` | Style Influence | advanced | range | 0 to 100 percent | 50 | Inside More Options | Tooltip: 'Turn it up to match your style description'. |
+| `audio_influence` | Audio Influence | advanced | range | 0 to 100 percent | 25 | Inside More Options, beside Variety, only once an audio source is loaded: Cover, Mashup, Sample, or Inspiration (not Extend or Reuse Prompt) | Added 2026-10-18 (#436). Every source-loaded snapshot shows it at 25%, taken as Suno's default. Imported from `metadata.control_sliders.audio_weight`. |
 | `variety` | Variety | advanced | choice | off, normal, high, extra, max | normal | Inside More Options | A five-step slider (0 to 4). Tooltip at Max: 'Clips may differ significantly from your style input.' Default taken from the untouched Speech form; the Songs form remembers the last value. |
 | `personalize` | Personalize (My Taste) | advanced | toggle | — | off | Inside More Options | Tooltip: 'Make Variety match your taste'. |
 | `title` | Song Title | advanced | text | up to 100 characters | empty | — | Optional. Suno enforces no limit in the form; n8Tracks uses 100 characters for now (maintainer's decision). |

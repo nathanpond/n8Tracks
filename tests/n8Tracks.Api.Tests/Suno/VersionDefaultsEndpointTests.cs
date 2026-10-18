@@ -43,7 +43,7 @@ public sealed class VersionDefaultsEndpointTests
         Assert.Equal(
             [
                 "kind", "songMode", "speechMode", "model", "vocalGender", "durationMode", "durationSeconds", "maxMode", "weirdness",
-                "styleInfluence", "variety", "personalize", "speechVocalGender", "speechBackgroundMusic", "speechVariety", "soundsModel",
+                "styleInfluence", "audioInfluence", "variety", "personalize", "speechVocalGender", "speechBackgroundMusic", "speechVariety", "soundsModel",
                 "soundType", "soundBpm", "soundKey", "soundScale",
             ],
             read.GetProperty("keys").EnumerateArray().Select(static key => key.GetString()));

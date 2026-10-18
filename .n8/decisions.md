@@ -4749,3 +4749,36 @@ Story #219 (on the milestone branch):
 - **Change:** Added 437 to M7: the Suno import review shows records with changes apart from records with none. It is a placeholder for the owner to flesh out.
   **Why:** In the M4 walkthrough a sync with a single state change showed the whole song list, hiding the change.
   **Affects:** M7 (new story, to be planned at `/n8-replan`), and M4's import review (#138/#139/#141) as delivered.
+
+## Ad-hoc — 2026-10-18
+
+- **Change:** Added Audio Influence as a Version setting (436), for Songs whose audio source is a Cover, Mashup, Sample or Inspiration. It is imported from `metadata.control_sliders.audio_weight`, filled and verified by the extension, and copied by the source pre-fill (#431).
+  **Why:** Owner request in the #148 walkthrough. Suno shows the slider for these sources, and n8Tracks could not hold or set it.
+  **Affects:** M4 (#135 import field map, #146/#148 fill, #149 observed Create, #431 pre-fill), M7 (the API/MCP Version shape), M8 (#255 portable format, if it lists Version settings).
+
+## M4 captures — #436 Audio Influence for Songs built on another song's audio — 2026-10-18
+
+- **Decision:** Audio Influence is a Version input (`audioInfluence`, inventory key `audio_influence`, Songs, Advanced, range 0 to 100 percent, default 25), placed after Style Influence in the inventory and on More Options, as Suno lays it out beside Variety. The default is the value every source-loaded snapshot (`page.create-source-*.html`) shows.
+  **Why:** The owner's request in the #148 walkthrough. Suno's own default is not recorded anywhere else; every capture shows 25%.
+  **Issue:** #436
+- **Decision:** It applies (is in `effectiveInputs`, the generation request, and the editor) only for an Advanced-mode Song whose audio action is Cover, Mashup, or Sample This Song, or that has Inspiration (individual sources or a playlist): `VersionLineageRules.AudioInfluenceApplies`, mirrored by the web's `audioInfluenceApplies`. Extend, Reuse Prompt, the general Remix type, Simple mode, Speech, and Sound do not get it; the value is kept, hidden, and not sent. `VersionInputRules.Effective` takes the lineage for this.
+  **Why:** The owner: Suno shows it for Cover, Mashup, Sample, and Inspo, not for Extend or Reuse Prompt. Note: `page.create-source-extend.html` does show the slider (25%); it is taken as captured with another source loaded earlier, and the owner's rule is followed. A playlist used as Inspiration is taken to show it like a song used as Inspiration; both need live confirmation.
+  **Issue:** #436
+- **Decision (invariant 1):** No migration rewrites stored inputs. A Version stored before #436 has no `audioInfluence` in its `inputs` document. `VersionInputsColumns.Read` reads the missing key at the inventory's default, and the row is never rewritten: a frozen Version stays byte for byte, and its trigger is never dropped. A mutable Version gains the key on its next save. For an imported Version without the key, `ReadImported` adds `audioInfluence` to the not-returned marks, so the clips imported before #436 are not compared on it and do not turn into conflicts on the next sync, and a source pre-fill does not offer it.
+  **Why:** The issue says frozen Versions do not change. The earlier precedent (`AddSpeechAndSoundInputs`) dropped the freeze trigger to add keys; here the option may have applied to frozen Covers, so writing a value into them would invent an input.
+  **Issue:** #436
+- **Decision (invariant 3):** Import maps `metadata.control_sliders.audio_weight` (percent, scale 0.01). A new import-map flag, `absentInClip: "notReturned"`, makes a clip without the value mark it not returned (never the default), so it is compared only when Suno sent it. The observed Create reads the response, else the request, at the same path. The guard scenario's kept conflict now also differs in Audio Influence, and the diff names it.
+  **Why:** "Absent stays absent/not returned"; a Version with a hidden value would otherwise conflict with every plain clip.
+  **Issue:** #436
+- **Decision:** The Create response and request paths (`metadata.control_sliders.audio_weight`, also added to the extension's `CREATE_REQUEST_PATHS`) mirror `style_weight`'s and are unverified: no Create with an audio source was captured.
+  **Why:** The issue's live data is a feed clip only.
+  **Issue:** #436
+- **Decision:** The source pre-fill (#431) copies Audio Influence like the other sliders where Suno shows it on both sides: offered by a source Version it applied to, and taken only by a Version for which it will apply once the source is taken (a Cover; an Extend only when the Version keeps Inspiration). Otherwise it is neither filled nor asked about.
+  **Why:** A hidden value is never filled.
+  **Issue:** #436
+- **Decision:** The extension has a filler `songs.advanced.audio_influence` for the "Audio Influence" slider in More Options, stepped with the async `Page.slide` (TS-007-9). It runs in the normal fill, which starts only once the source is loaded and verified (`fillRest`), so the slider exists by then. A request without the entry (no such source) reports it `not_applicable`. The summary names it "Audio Influence". `ADAPTER_VERSION` 28. The fill tests use `create-source-advanced` for it; the source-loaded fixtures already held the slider.
+  **Why:** The slider is present only after a source loads.
+  **Issue:** #436
+- **Decision:** No e2e change: the Generate on Suno spec sets Style Influence through the API for a Version with no source, which Audio Influence does not touch. The portable schema lists "every Suno option" without naming them, so it needs no change.
+  **Why:** The task's rule for e2e and the portable format.
+  **Issue:** #436

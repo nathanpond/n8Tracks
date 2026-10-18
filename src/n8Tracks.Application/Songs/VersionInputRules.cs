@@ -39,6 +39,9 @@ public static class VersionInputRules
     private const string SoundScaleKey = "sound_scale";
     private const string AnyKey = "any";
 
+    /// <summary>The inventory key of Audio Influence, which applies only with a source of the right action (#436).</summary>
+    public const string AudioInfluenceKey = "audio_influence";
+
     /// <summary>The fields naming a Suno model (a Song's and a Sound's, kept apart), each checked against the model list.</summary>
     private static readonly HashSet<string> ModelKeys = new(StringComparer.Ordinal) { ModelKey, "sounds_model" };
     private const string TitleKey = "title";
@@ -218,9 +221,12 @@ public static class VersionInputRules
     /// the kind's mode (a Sound has none), and, in the inventory's order, each stored option on the
     /// kind's tab and in its mode whose condition is met. Lyrics and styles are included in Advanced
     /// mode, and in Simple mode only when their section is added; the custom duration only when the
-    /// duration is custom; a Sound's scale only when its key is not Any.
+    /// duration is custom; a Sound's scale only when its key is not Any; Audio Influence only when
+    /// <paramref name="lineage"/> builds the Song on another song's audio
+    /// (<see cref="VersionLineageRules.AudioInfluenceApplies(VersionLineage, VersionKind, CreationMode)"/>), so never
+    /// when no lineage is given.
     /// </summary>
-    public static JsonObject Effective(CreateFieldInventory inventory, VersionInputs inputs, string lyrics, string styles)
+    public static JsonObject Effective(CreateFieldInventory inventory, VersionInputs inputs, string lyrics, string styles, VersionLineage? lineage = null)
     {
         ArgumentNullException.ThrowIfNull(inventory);
         ArgumentNullException.ThrowIfNull(inputs);
@@ -269,6 +275,12 @@ public static class VersionInputRules
 
             if (field.Key == SoundScaleKey
                 && (!BySunoKey.TryGetValue(SoundKeyKey, out var key) || (string?)all[key.Name] == AnyKey))
+            {
+                continue;
+            }
+
+            if (field.Key == AudioInfluenceKey
+                && (lineage is null || !VersionLineageRules.AudioInfluenceApplies(lineage, inputs.Kind, inputs.SongMode)))
             {
                 continue;
             }

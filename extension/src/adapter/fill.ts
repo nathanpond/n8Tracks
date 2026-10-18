@@ -39,6 +39,7 @@ import {
   saveToShows,
   SONG_TITLE_BOXES,
   STYLE_INFLUENCE_SLIDER,
+  AUDIO_INFLUENCE_SLIDER,
   STYLES_BOX,
   VARIETY_SLIDER,
   VOCAL_FEMALE,
@@ -1176,6 +1177,16 @@ export const FILLERS: readonly Filler[] = [
   onOff('songs.advanced.max_mode', MAX_MODE_OFF, MAX_MODE_ON, 'the Max Mode switch'),
   slider('songs.advanced.weirdness', WEIRDNESS_SLIDER, wantedNumber(0, 100)),
   slider('songs.advanced.style_influence', STYLE_INFLUENCE_SLIDER, wantedNumber(0, 100)),
+  // Present only once the source is loaded, which the fill waits for (#436): n8Tracks sends the
+  // value only for a Version whose source makes Suno show the slider, so no value is not applicable.
+  slider('songs.advanced.audio_influence', AUDIO_INFLUENCE_SLIDER, (value) =>
+    value === undefined || value === null
+      ? {
+          kind: 'not_applicable',
+          note: 'The Version has no Cover, Mashup, Sample, or Inspiration source, so Suno shows no Audio Influence.',
+        }
+      : wantedNumber(0, 100)(value),
+  ),
   slider('songs.advanced.variety', VARIETY_SLIDER, wantedVariety),
   onOff('songs.advanced.personalize', PERSONALIZE_OFF, PERSONALIZE_ON, 'the Personalize switch'),
   title,

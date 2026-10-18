@@ -8,7 +8,7 @@ This is the list the roadmap claim "Populate every supported generation property
 - `source`: set by opening a source clip or playlist and choosing a Suno action (see `docs/spikes/TS-002.md`), then verified by the source shown on the Create form.
 - `manual`: the adapter does not set it. The verification summary tells the user to do it by hand before clicking Create.
 
-38 entries.
+39 entries.
 
 ## Songs, Simple mode (10)
 
@@ -25,7 +25,7 @@ This is the list the roadmap claim "Populate every supported generation property
 | `songs.simple.voice` | `voice` | source | `manual`: TS-005 did not capture Simple's Voice picker. |
 | `songs.simple.workspace` | `workspace` | fill | Chosen with Suno's workspace selector before any field is filled; the form's Save to is set back to it after a source loads, and read back for the summary (#435). |
 
-## Songs, Advanced mode (16)
+## Songs, Advanced mode (17)
 
 | Entry | Field | How | Notes |
 |---|---|---|---|
@@ -42,6 +42,7 @@ This is the list the roadmap claim "Populate every supported generation property
 | `songs.advanced.max_mode` | `max_mode` | fill | — |
 | `songs.advanced.weirdness` | `weirdness` | fill | — |
 | `songs.advanced.style_influence` | `style_influence` | fill | — |
+| `songs.advanced.audio_influence` | `audio_influence` | fill | Only for a Version with a Cover, Mashup, Sample This Song, or Inspiration source (#436): Suno shows the slider, beside Variety, once the source is loaded, so it is set after the source; otherwise not applicable. |
 | `songs.advanced.variety` | `variety` | fill | — |
 | `songs.advanced.personalize` | `personalize` | fill | — |
 | `songs.advanced.title` | `title` | fill | — |

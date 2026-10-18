@@ -272,6 +272,21 @@
       "notes": "Tooltip: 'Turn it up to match your style description'."
     },
     {
+      "key": "audio_influence",
+      "label": "Audio Influence",
+      "tab": "songs",
+      "modes": [
+        "advanced"
+      ],
+      "type": "range",
+      "min": 0,
+      "max": 100,
+      "unit": "percent",
+      "default": 25,
+      "condition": "Inside More Options, beside Variety, only once an audio source is loaded: Cover, Mashup, Sample, or Inspiration (not Extend or Reuse Prompt)",
+      "notes": "Added 2026-10-18 (#436). Every source-loaded snapshot (page.create-source-*.html) shows it at 25%, which is taken as Suno's default. Imported from metadata.control_sliders.audio_weight."
+    },
+    {
       "key": "variety",
       "label": "Variety",
       "tab": "songs",

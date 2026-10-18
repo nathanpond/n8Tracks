@@ -22,6 +22,25 @@ export function isAudioAction(value: unknown): value is AudioAction {
   return typeof value === 'string' && (AUDIO_ACTIONS as readonly string[]).includes(value);
 }
 
+/** The audio actions whose source makes Suno show Audio Influence (#436). Extend and Reuse Prompt do not. */
+const AUDIO_INFLUENCE_ACTIONS: readonly AudioAction[] = ['cover', 'mashup', 'sample'];
+
+/**
+ * Whether Audio Influence applies (#436), as the API works it out: Suno shows it in More Options of
+ * an Advanced Song built on another song's audio, a Cover, Mashup, or Sample This Song source, or
+ * Inspiration (sources or a playlist). Elsewhere it is kept but hidden, and not sent.
+ */
+export function audioInfluenceApplies(lineage: Lineage, songMode: string): boolean {
+  if (songMode !== 'advanced') {
+    return false;
+  }
+  const action = lineage.sources.map((source) => source.sunoAction).find(isAudioAction);
+  return (
+    (action !== undefined && AUDIO_INFLUENCE_ACTIONS.includes(action)) ||
+    lineage.inspiration !== null
+  );
+}
+
 /** How many sources an audio action takes: two for Mashup, one for the rest. */
 export function sourcesFor(action: AudioAction): number {
   return action === 'mashup' ? 2 : 1;

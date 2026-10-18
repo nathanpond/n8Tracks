@@ -56,7 +56,7 @@ describe('the adapter field map', () => {
 
   it('matches docs/suno-adapter-field-map.md entry for entry', () => {
     expect(differences(markdown, FIELD_MAP)).toEqual([]);
-    expect(FIELD_MAP).toHaveLength(38);
+    expect(FIELD_MAP).toHaveLength(39);
     expect(markdown).toContain(`${String(FIELD_MAP.length)} entries.`);
   });
 

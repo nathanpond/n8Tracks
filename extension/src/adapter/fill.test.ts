@@ -37,6 +37,8 @@ const DURATION_CUSTOM = 'create-songs-advanced-duration-custom';
 const KEY_ANY = 'create-sounds-key-any';
 const KEY_APPLIED = 'create-sounds-key-applied-fsharp-minor';
 const WITH_LYRICS = 'create-songs-simple-with-lyrics';
+/** The Advanced form with a Cover loaded: the one form with Audio Influence beside Variety (#436). */
+const SOURCE_ADVANCED = 'create-source-advanced';
 
 /** The field map's tab of each kind. */
 const TAB: Readonly<Record<string, string>> = { song: 'songs', speech: 'speech', sound: 'sounds' };
@@ -133,6 +135,7 @@ const SOUND_VALUES: Record<string, unknown> = {
 /** Entries tested on a TS-005 snapshot that shows their control's starting state. */
 const OWN_SNAPSHOT: Readonly<Record<string, string>> = {
   'songs.advanced.duration_mode': DURATION_AUTO,
+  'songs.advanced.audio_influence': SOURCE_ADVANCED,
   'sounds.single.sound_key': KEY_ANY,
   'sounds.single.sound_scale': KEY_ANY,
 };
@@ -151,8 +154,20 @@ const DEPENDS_ON: Readonly<Record<string, readonly string[]>> = {
 /** The snapshot and values each filler is tested with. */
 function caseOf(filler: Filler): { snapshot: string; job: FormJob } {
   const own = caseOfMode(filler);
-  return { ...own, snapshot: OWN_SNAPSHOT[filler.entry] ?? own.snapshot };
+  const values = OWN_VALUES[filler.entry];
+  return {
+    snapshot: OWN_SNAPSHOT[filler.entry] ?? own.snapshot,
+    job: values === undefined ? own.job : job(own.job.mode, { ...ADVANCED_VALUES, ...values }),
+  };
 }
+
+/**
+ * Values only some Versions send, added to the mode's for the filler's own case: Audio Influence
+ * (#436), sent only for a Version built on another song's audio. Unlike the snapshot's 25%.
+ */
+const OWN_VALUES: Readonly<Record<string, Record<string, unknown>>> = {
+  'songs.advanced.audio_influence': { audio_influence: 60 },
+};
 
 function caseOfMode(filler: Filler): { snapshot: string; job: FormJob } {
   const [tab, mode] = filler.entry.split('.');
@@ -281,6 +296,7 @@ const CONTROLS: Readonly<Record<string, () => Element[]>> = {
   'songs.advanced.max_mode': () => labelled('Max Mode'),
   'songs.advanced.weirdness': () => slider('Weirdness'),
   'songs.advanced.style_influence': () => slider('Style Influence'),
+  'songs.advanced.audio_influence': () => slider('Audio Influence'),
   'songs.advanced.variety': () => slider('Variety'),
   'songs.advanced.personalize': () => labelled('Personalize'),
   'songs.advanced.title': () => [
@@ -384,6 +400,7 @@ const BREAK: Readonly<Record<string, keyof typeof BREAKERS>> = {
   'songs.advanced.max_mode': 'click',
   'songs.advanced.weirdness': 'keys',
   'songs.advanced.style_influence': 'keys',
+  'songs.advanced.audio_influence': 'keys',
   'songs.advanced.variety': 'keys',
   'songs.advanced.personalize': 'click',
   'songs.advanced.title': 'text',
@@ -462,7 +479,8 @@ describe('the Songs form fillers', () => {
         (other) =>
           other.entry !== filler.entry &&
           !(DEPENDS_ON[filler.entry] ?? []).includes(other.entry) &&
-          other.entry.startsWith(filler.entry.split('.', 2).join('.')),
+          other.entry.startsWith(filler.entry.split('.', 2).join('.')) &&
+          other.entry in tested.job.entries,
       );
       for (const other of others) {
         expect(byKey(results).get(other.entry)?.outcome, other.entry).toBe('set');
@@ -507,9 +525,13 @@ describe('the Songs form fillers', () => {
 
     const results = byKey(await verifyForm(page, defaults, 'My Workspace', true));
 
-    for (const filler of FILLERS.filter((item) => item.entry.startsWith('songs.advanced.'))) {
+    for (const filler of FILLERS.filter(
+      (item) => item.entry.startsWith('songs.advanced.') && item.entry in defaults.entries,
+    )) {
       expect(results.get(filler.entry)?.outcome, filler.entry).toBe('set');
     }
+    // A Version with no audio source sends no Audio Influence (#436).
+    expect(results.get('songs.advanced.audio_influence')?.outcome).toBe('not_applicable');
     expect(results.get('songs.advanced.vocal_gender')).toMatchObject({ expected: null });
     expect(standIn.commands).toEqual(['delete']);
     // Read again without changing anything, the form now says the same.
@@ -1808,11 +1830,12 @@ describe('sliders that apply a key a task later (#427, TS-007-9)', () => {
   it.each([
     ['songs.advanced.weirdness', 'Weirdness', 'weirdness', 3],
     ['songs.advanced.style_influence', 'Style Influence', 'style_influence', 85],
+    ['songs.advanced.audio_influence', 'Audio Influence', 'audio_influence', 85],
     ['songs.advanced.variety', 'Variety', 'variety', 'max'],
   ] as const)(
     '%s reaches the Version’s value from 50 (or step 0)',
     async (entry, name, field, value) => {
-      load(ADVANCED, { deferredSliders: true }, taskClock());
+      load(OWN_SNAPSHOT[entry] ?? ADVANCED, { deferredSliders: true }, taskClock());
       const element = slider(name)[0];
       element?.setAttribute('aria-valuenow', name === 'Variety' ? '0' : '50');
       const filler = FILLERS.find((candidate) => candidate.entry === entry);

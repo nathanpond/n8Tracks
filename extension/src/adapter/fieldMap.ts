@@ -41,6 +41,7 @@ export const FIELD_MAP: readonly FieldMapEntry[] = [
   { entry: 'songs.advanced.max_mode', field: 'max_mode', how: 'fill' },
   { entry: 'songs.advanced.weirdness', field: 'weirdness', how: 'fill' },
   { entry: 'songs.advanced.style_influence', field: 'style_influence', how: 'fill' },
+  { entry: 'songs.advanced.audio_influence', field: 'audio_influence', how: 'fill' },
   { entry: 'songs.advanced.variety', field: 'variety', how: 'fill' },
   { entry: 'songs.advanced.personalize', field: 'personalize', how: 'fill' },
   { entry: 'songs.advanced.title', field: 'title', how: 'fill' },

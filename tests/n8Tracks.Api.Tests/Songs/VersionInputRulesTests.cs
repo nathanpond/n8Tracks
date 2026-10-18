@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using n8Tracks.Application.Songs;
 using n8Tracks.Application.Suno;
+using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
 
 namespace n8Tracks.Api.Tests.Songs;
@@ -22,7 +23,7 @@ public sealed class VersionInputRulesTests
         var committed = File.ReadAllText(Path.Combine(RepositoryRoot(), "docs", "suno-create-field-inventory.json"));
 
         Assert.Equal(committed, Inventory.Json);
-        Assert.Equal(35, Inventory.Fields.Count);
+        Assert.Equal(36, Inventory.Fields.Count);
         Assert.Equal(1000, Inventory.Get("speech_prompt").MaxLength);
         Assert.Equal(100, Inventory.Get("weirdness").Max);
         Assert.True(Inventory.Get("vocal_gender").DefaultsToNull);
@@ -37,7 +38,7 @@ public sealed class VersionInputRulesTests
 
         Assert.Equal(
             new VersionInputs(
-                VersionKind.Song, CreationMode.Advanced, CreationMode.Advanced, null, "", false, false, "", null, "auto", 180, false, 50, 50, "normal", false, "Pack",
+                VersionKind.Song, CreationMode.Advanced, CreationMode.Advanced, null, "", false, false, "", null, "auto", 180, false, 50, 50, 25, "normal", false, "Pack",
                 "", "", "", null, true, "normal", null, "", "one_shot", null, "any", null),
             defaults);
 
@@ -122,6 +123,41 @@ public sealed class VersionInputRulesTests
         Assert.Equal(
             """{"kind":"sound","soundsModel":null,"soundDescription":"","soundType":"one_shot","soundBpm":null,"soundKey":"any"}""",
             VersionInputRules.Effective(Inventory, advanced with { Kind = VersionKind.Sound }, "words", "punk").ToJsonString());
+    }
+
+    /// <summary>
+    /// Audio Influence (#436) applies only to an Advanced Song built on another song's audio: a Cover,
+    /// Mashup, or Sample This Song source, or Inspiration (sources or a playlist). Extend, Reuse Prompt,
+    /// and the general Remix type do not show it, nor Simple mode, nor a Speech; with no lineage given it
+    /// never applies. Where it does not, it is kept but left out of what is sent.
+    /// </summary>
+    [Fact]
+    public void AudioInfluenceAppliesOnlyToAnAdvancedSongBuiltOnAnotherSongsAudio()
+    {
+        var inputs = VersionInputRules.Defaults(Inventory, "Pack") with { AudioInfluence = 85 };
+        var target = VersionSourceTarget.OfExternal("source-clip");
+        VersionLineage Audio(RelationshipType type) => new([new VersionSource(type.Id, type.SunoAction, target)], [], null, null, []);
+        int? Sent(VersionInputs options, VersionLineage? lineage) =>
+            VersionInputRules.Effective(Inventory, options, "", "", lineage).TryGetPropertyValue("audioInfluence", out var value) ? value!.GetValue<int>() : null;
+
+        Assert.Equal(85, Sent(inputs, Audio(SystemRelationshipTypes.Cover)));
+        Assert.Equal(85, Sent(inputs, Audio(SystemRelationshipTypes.Mashup)));
+        Assert.Equal(85, Sent(inputs, Audio(SystemRelationshipTypes.SampleThisSong)));
+        Assert.Equal(85, Sent(inputs, new VersionLineage([], [new VersionSource(SystemRelationshipTypes.UseAsInspiration.Id, null, target)], null, null, [])));
+        Assert.Equal(85, Sent(inputs, new VersionLineage([], [], new InspirationPlaylist("playlist-1", "Mix", ["a"]), null, [])));
+
+        Assert.Null(Sent(inputs, Audio(SystemRelationshipTypes.Extend)));
+        Assert.Null(Sent(inputs, Audio(SystemRelationshipTypes.ReusePrompt)));
+        Assert.Null(Sent(inputs, Audio(SystemRelationshipTypes.Remix)));
+        Assert.Null(Sent(inputs, VersionLineage.None));
+        Assert.Null(Sent(inputs, null));
+        Assert.Null(Sent(inputs with { SongMode = CreationMode.Simple }, Audio(SystemRelationshipTypes.Cover)));
+        Assert.Null(Sent(inputs with { Kind = VersionKind.Speech }, Audio(SystemRelationshipTypes.Cover)));
+
+        // It is sent beside Style Influence, in the inventory's order, and kept where it is not.
+        var keys = VersionInputRules.Effective(Inventory, inputs, "", "", Audio(SystemRelationshipTypes.Cover)).Select(static option => option.Key).ToList();
+        Assert.Equal(keys.IndexOf("styleInfluence") + 1, keys.IndexOf("audioInfluence"));
+        Assert.Equal(85, VersionInputRules.ToJson(inputs)["audioInfluence"]!.GetValue<int>());
     }
 
     [Fact]

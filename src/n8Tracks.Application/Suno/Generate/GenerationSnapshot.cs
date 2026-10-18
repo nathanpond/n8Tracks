@@ -40,6 +40,7 @@ public static class AdapterFieldMap
         "songs.advanced.max_mode",
         "songs.advanced.weirdness",
         "songs.advanced.style_influence",
+        "songs.advanced.audio_influence",
         "songs.advanced.variety",
         "songs.advanced.personalize",
         "songs.advanced.title",

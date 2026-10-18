@@ -168,6 +168,11 @@ public sealed class ImportFieldMap
                 ? true
                 : throw new JsonException($"The import field map's '{key}' has an absentInCreateRequest other than \"default\".")
             : false;
+        var absentNotReturned = field.TryGetProperty("absentInClip", out var absentClipValue) && absentClipValue.ValueKind == JsonValueKind.String
+            ? absentClipValue.GetString() == "notReturned"
+                ? true
+                : throw new JsonException($"The import field map's '{key}' has an absentInClip other than \"notReturned\".")
+            : false;
         var presentMeans = field.TryGetProperty("presentInCreateRequest", out var presentValue) && presentValue.ValueKind == JsonValueKind.String ? presentValue.GetString() : null;
         double? scale = field.TryGetProperty("scale", out var scaleValue) && scaleValue.ValueKind == JsonValueKind.Number ? scaleValue.GetDouble() : null;
         var values = field.TryGetProperty("values", out var valuesValue) && valuesValue.ValueKind == JsonValueKind.Object
@@ -196,6 +201,7 @@ public sealed class ImportFieldMap
             CreatePath = create,
             CreateRequestPath = createRequest,
             AbsentInCreateRequestIsDefault = absentIsDefault,
+            AbsentInClipIsNotReturned = absentNotReturned,
             PresentInCreateRequest = presentMeans,
         };
     }
@@ -316,6 +322,13 @@ public sealed record ImportFieldEntry(
     /// is taken from the Version (#149).
     /// </summary>
     public bool AbsentInCreateRequestIsDefault { get; init; }
+
+    /// <summary>
+    /// Whether a clip (a feed clip, or a Create response clip) without the value means Suno did not
+    /// return it (<c>absentInClip: "notReturned"</c>): Audio Influence (#436), which Suno sends only for
+    /// a song built on another song's audio. Otherwise an absent value is read as the option's default.
+    /// </summary>
+    public bool AbsentInClipIsNotReturned { get; init; }
 
     /// <summary>
     /// The choice the key's presence in the Create request means, whatever its value

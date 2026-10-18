@@ -449,7 +449,7 @@ internal sealed class SunoExportStore(N8TracksDbContext context) : ISunoExportSt
                     version.Lyrics,
                     version.Styles,
                     VersionInputsColumns.Read(version.Kind, version.Model, version.Inputs),
-                    VersionInputsColumns.ReadImported(version.ImportedInputs)),
+                    VersionInputsColumns.ReadImported(version.ImportedInputs, version.Inputs)),
                 cancellationToken)
             .ConfigureAwait(false);
         return rows.ToDictionary(

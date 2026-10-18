@@ -957,7 +957,7 @@ public sealed class AdapterFieldMapTests
             .Select(static match => match.Groups[1].Value)
             .ToList();
 
-        Assert.Equal(38, entries.Count);
+        Assert.Equal(39, entries.Count);
         Assert.Equal(entries, AdapterFieldMap.Entries);
     }
 

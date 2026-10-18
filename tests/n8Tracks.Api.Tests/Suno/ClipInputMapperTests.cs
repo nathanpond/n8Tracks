@@ -38,7 +38,7 @@ public sealed class ClipInputMapperTests
     private static readonly string[] SongsOptions =
     [
         "model", "simple_prompt", "simple_add_lyrics", "simple_add_styles", "lyrics", "styles", "exclude_styles",
-        "vocal_gender", "duration_mode", "duration_seconds", "max_mode", "weirdness", "style_influence", "variety",
+        "vocal_gender", "duration_mode", "duration_seconds", "max_mode", "weirdness", "style_influence", "audio_influence", "variety",
         "personalize", "title",
     ];
 
@@ -81,7 +81,7 @@ public sealed class ClipInputMapperTests
         Assert.NotEqual(defaults.Title, inputs.Title);
 
         Assert.Equal(
-            ["simpleLyricsAdded", "simpleStylesAdded", "styles", "vocalGender", "durationMode", "durationSeconds", "personalize"],
+            ["simpleLyricsAdded", "simpleStylesAdded", "styles", "vocalGender", "durationMode", "durationSeconds", "audioInfluence", "personalize"],
             mapped.Marks.NotReturned);
         Assert.Equal(defaults.VocalGender, inputs.VocalGender);
         Assert.Equal(defaults.DurationMode, inputs.DurationMode);
@@ -201,6 +201,34 @@ public sealed class ClipInputMapperTests
     }
 
     /// <summary>
+    /// Audio Influence (#436): a clip built on another song's audio carries <c>audio_weight</c>, read as
+    /// a percentage at scale 0.01 and compared; a clip without it (no such source) did not return it, so
+    /// it is marked not returned, left at the default, and takes no part in a comparison.
+    /// </summary>
+    [Fact]
+    public void AudioInfluenceIsReadFromAudioWeightAndAnAbsentOneIsNotReturned()
+    {
+        var cover = FixtureClip(Advanced);
+        cover["metadata"]!["control_sliders"]!["audio_weight"] = 0.85;
+
+        var mapped = Map(cover);
+
+        Assert.Equal(85, mapped.Inputs.AudioInfluence);
+        Assert.Equal("85", mapped.Compared["audioInfluence"]);
+        Assert.DoesNotContain("audioInfluence", mapped.Marks.NotReturned);
+
+        var plain = Map(FixtureClip(Advanced));
+        Assert.Equal(25, plain.Inputs.AudioInfluence);
+        Assert.Contains("audioInfluence", plain.Marks.NotReturned);
+        Assert.DoesNotContain("audioInfluence", plain.Compared.Keys);
+
+        // A Version holding another Audio Influence differs from the cover clip, and not from the plain one.
+        var held = mapped.Inputs with { AudioInfluence = 40 };
+        Assert.Equal(["audioInfluence"], ClipInputMapper.DifferingInputs(mapped, mapped.Lyrics, mapped.Styles, held, null).Select(static item => item.Key));
+        Assert.False(ClipInputMapper.Differs(plain, plain.Lyrics, plain.Styles, plain.Inputs with { AudioInfluence = 40 }, null));
+    }
+
+    /// <summary>
     /// A value outside n8Tracks' limits is kept as Suno returned it and marked, never cut or refused: a
     /// 6,000-character lyric whole, an out-of-range percentage as it is, an unknown choice raw with the
     /// option at its default, a fractional percentage raw.
@@ -302,8 +330,8 @@ public sealed class ClipInputMapperTests
         Assert.Equal(["songs", "speech", "sounds"], inventory.Fields.Select(static field => field.Tab).Distinct());
         Assert.Empty(ClipInputMapper.CoverageGaps(ImportFieldMap.Embedded, inventory, ClipInputMapper.ReadKeys));
 
-        Assert.Equal(35, inventory.Fields.Count);
-        Assert.Equal(28, ClipInputMapper.ReadKeys.Count);
+        Assert.Equal(36, inventory.Fields.Count);
+        Assert.Equal(29, ClipInputMapper.ReadKeys.Count);
         Assert.Equal(
             inventory.Fields.Select(static field => field.Key).Order(StringComparer.Ordinal),
             ClipInputMapper.ReadKeys.Concat(ClipInputMapper.ReadElsewhere).Order(StringComparer.Ordinal));

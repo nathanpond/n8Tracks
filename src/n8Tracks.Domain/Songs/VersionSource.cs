@@ -251,6 +251,33 @@ public static class VersionLineageRules
     public static bool Applies(VersionSourceGroup group, VersionKind kind, CreationMode songMode) =>
         kind == VersionKind.Song && (group == VersionSourceGroup.Audio || songMode == CreationMode.Advanced);
 
+    /// <summary>The audio actions whose source makes Suno show Audio Influence (#436): Cover, Mashup, and Sample This Song.</summary>
+    public static IReadOnlySet<string> AudioInfluenceActions { get; } = new HashSet<string>(StringComparer.Ordinal)
+    {
+        SunoActions.Cover,
+        SunoActions.Mashup,
+        SunoActions.Sample,
+    };
+
+    /// <summary>
+    /// Whether Audio Influence applies (#436): Suno shows it in More Options, so to an Advanced-mode
+    /// Song only, and only once a song's audio is loaded as a source: an audio action of Cover, Mashup,
+    /// or Sample This Song (<paramref name="audioAction"/>), or Inspiration (individual sources or a
+    /// playlist, <paramref name="hasInspiration"/>). Extend and Reuse Prompt do not show it, and neither
+    /// does a source of the general Remix type, whose action is not known.
+    /// </summary>
+    public static bool AudioInfluenceApplies(string? audioAction, bool hasInspiration, VersionKind kind, CreationMode songMode) =>
+        kind == VersionKind.Song
+        && songMode == CreationMode.Advanced
+        && ((audioAction is not null && AudioInfluenceActions.Contains(audioAction)) || hasInspiration);
+
+    /// <summary>Whether Audio Influence applies to a Version with <paramref name="lineage"/> (<see cref="AudioInfluenceApplies(string?, bool, VersionKind, CreationMode)"/>).</summary>
+    public static bool AudioInfluenceApplies(VersionLineage lineage, VersionKind kind, CreationMode songMode)
+    {
+        ArgumentNullException.ThrowIfNull(lineage);
+        return AudioInfluenceApplies(lineage.AudioAction, lineage.InspirationSources.Count > 0 || lineage.Playlist is not null, kind, songMode);
+    }
+
     /// <summary>Whether a playlist used as Inspiration, or a Voice, applies: to a Song in either mode.</summary>
     public static bool AppliesToSong(VersionKind kind) => kind == VersionKind.Song;
 
