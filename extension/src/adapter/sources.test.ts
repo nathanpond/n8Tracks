@@ -12,6 +12,9 @@ import {
   extendTime,
   holdsClip,
   INSPIRATION_ROUTE,
+  mashupChoice,
+  mashupClipsOf,
+  mashupShowsFirstOnly,
   MASHUP_NEEDS_TWO_SONGS,
   planSources,
   SOURCE_ROUTES,
@@ -23,9 +26,12 @@ import {
 import { runWorkflow, type RunResult } from './workflow.ts';
 import {
   answerOverwrite,
+  chooseMashupSong,
   chooseSourceAction,
   chooseVoice,
+  closeMashupDialog,
   openSourceMenu,
+  searchMashupSong,
   setExtendFrom,
   verifySourceAdvanced,
   verifySourceSimple,
@@ -860,5 +866,158 @@ describe('the coverage of the source entries (AC 9)', () => {
         .filter(([, route]) => !route.captured)
         .map(([action]) => action),
     ).toEqual([]);
+  });
+});
+
+describe('adding a Mashup’s second song (#438, the “Add a song to mashup” dialog)', () => {
+  const ID = (n: number) => `00000000-0000-4000-8000-0000000004${String(n).padStart(2, '0')}`;
+  const SECOND = { title: 'The Long Thaw', sunoId: ID(5) };
+  /** Suno's answer to the search, as the searched snapshot's rows show it. */
+  const ANSWER = [
+    { id: ID(1), title: 'Paper Lanterns x The Long Thaw (Mashup)' },
+    { id: ID(4), title: 'The Long Thaw' },
+    { id: ID(5), title: 'The Long Thaw' },
+  ];
+
+  /** The thumbnail of the row whose Select was pressed, which holds its clip's ID. */
+  function pressedRows(): string[] {
+    const pressed: string[] = [];
+    document.addEventListener(
+      'click',
+      (event) => {
+        const row = (event.target as Element).closest('.overflow-y-auto > div');
+        pressed.push(row?.querySelector('img')?.getAttribute('src') ?? '');
+      },
+      { capture: true },
+    );
+    return pressed;
+  }
+
+  it('tells the song by its Suno ID when Suno’s answer matches the rows, though two rows share its title', async () => {
+    const page = loadSnapshot('create-source-mashup-add-song-search');
+    const pressed = pressedRows();
+
+    expect(mashupChoice(page, SECOND, ANSWER)).toMatchObject({ kind: 'row', by: 'id' });
+    const chosen = { by: null };
+    const result = await run(page, chooseMashupSong, { song: SECOND, clips: ANSWER, chosen });
+
+    expect(result.ok).toBe(true);
+    expect(chosen).toEqual({ by: 'id' });
+    expect(pressed).toEqual([`https://cdn2.suno.ai/image_${ID(5)}.jpeg`]);
+    // The other clip of that title is the row before it.
+    expect(mashupChoice(page, { ...SECOND, sunoId: ID(4) }, ANSWER)).toMatchObject({ by: 'id' });
+  });
+
+  it('chooses none of two rows of the title when no answer came, or the answer does not match the rows', () => {
+    const page = loadSnapshot('create-source-mashup-add-song-search');
+
+    expect(mashupChoice(page, SECOND, null)).toEqual({ kind: 'several' });
+    // One clip fewer than the rows, or a title the rows do not show as often: not one for one.
+    expect(mashupChoice(page, SECOND, ANSWER.slice(1))).toEqual({ kind: 'several' });
+    expect(
+      mashupChoice(page, SECOND, [{ id: ID(9), title: 'Harbor Lights' }, ...ANSWER.slice(1)]),
+    ).toEqual({ kind: 'several' });
+  });
+
+  it('chooses the one row of exactly the title otherwise, and no row for a title shown only within another', async () => {
+    const page = loadSnapshot('create-source-mashup-add-song-dialog');
+    const pressed = pressedRows();
+
+    // An answer of other rows (the unsearched list is four) is no help: by the title.
+    expect(mashupChoice(page, SECOND, ANSWER)).toMatchObject({ kind: 'row', by: 'title' });
+    const chosen = { by: null };
+    expect((await run(page, chooseMashupSong, { song: SECOND, clips: null, chosen })).ok).toBe(
+      true,
+    );
+    expect(chosen).toEqual({ by: 'title' });
+    expect(pressed).toEqual([`https://cdn2.suno.ai/image_${ID(4)}.jpeg`]);
+
+    for (const title of ['Long Thaw', 'the long thaw', 'Paper Lanterns', '']) {
+      expect(mashupChoice(page, { ...SECOND, title }, null), title).toEqual({ kind: 'none' });
+    }
+    const none = await run(page, chooseMashupSong, {
+      song: { ...SECOND, title: 'Long Thaw' },
+      clips: null,
+      chosen: { by: null },
+    });
+    expect(none.ok ? null : none.failure).toMatchObject({
+      step: 'song row',
+      expected: 'a song in the Mashup dialog’s list named exactly as the Version’s second song',
+    });
+  });
+
+  it('reads an answer only when it lists the song, every clip with an ID and a title', () => {
+    expect(mashupClipsOf({ clips: ANSWER }, ID(5))).toEqual(ANSWER);
+    expect(mashupClipsOf({ clips: ANSWER }, ID(9))).toBeNull();
+    expect(mashupClipsOf({ clips: [...ANSWER, { id: ID(6) }] }, ID(5))).toBeNull();
+    expect(mashupClipsOf({ clips: 'none' }, ID(5))).toBeNull();
+    expect(mashupClipsOf(null, ID(5))).toBeNull();
+  });
+
+  it('opens the dialog from the one-song Mashup and types the title, never Enter and never a tab', async () => {
+    const page = loadSnapshot('create-source-mashup-one-song');
+    const load = loaded(
+      form({
+        sources: [
+          source({ sunoAction: 'mashup', sunoId: LOADED_SOURCE }),
+          source({ sunoAction: 'mashup', sunoId: SECOND.sunoId, position: 2, title: SECOND.title }),
+        ],
+      }),
+    );
+    expect(mashupShowsFirstOnly(page, load)).toBe(true);
+    const keys: string[] = [];
+    document.addEventListener('keydown', (event) => keys.push(event.key), { capture: true });
+    const pressed: string[] = [];
+    document.addEventListener('click', (event) => pressed.push(nameOf(event.target as Element)), {
+      capture: true,
+    });
+    const standIn = standInForSuno(document);
+    try {
+      expect((await run(page, searchMashupSong, { song: SECOND })).ok).toBe(true);
+    } finally {
+      standIn.stop();
+    }
+
+    expect(pressed).toEqual(['Add another song to mashup']);
+    expect(keys).toEqual([]);
+    const box = document.querySelector<HTMLInputElement>(
+      'input[placeholder="Search for a song in your library…"]',
+    );
+    expect(box?.value).toBe(SECOND.title);
+    expect(
+      document.querySelector('[role="dialog"] [role="tab"][aria-selected="true"]')?.textContent,
+    ).toBe('My Library');
+  });
+
+  it('stops before typing when the dialog shows another tab than My Library', async () => {
+    const page = loadSnapshot('create-source-mashup-add-song-dialog');
+    for (const tab of document.querySelectorAll('[role="dialog"] [role="tab"]')) {
+      tab.setAttribute('aria-selected', String(tab.textContent === 'Everything'));
+    }
+
+    const result = await run(page, searchMashupSong, { song: SECOND });
+
+    expect(result.ok ? null : result.failure).toMatchObject({
+      step: 'song title',
+      expected: 'the Mashup dialog to show My Library (the extension never presses its tabs)',
+    });
+  });
+
+  it('closes the dialog by its Close, and does nothing when it is closed', async () => {
+    const page = loadSnapshot('create-source-mashup-add-song-dialog');
+    const pressed: string[] = [];
+    document.addEventListener('click', (event) => pressed.push(nameOf(event.target as Element)), {
+      capture: true,
+    });
+    const standIn = standInForSuno(document);
+    try {
+      expect((await run(page, closeMashupDialog, {})).ok).toBe(true);
+      expect((await run(page, closeMashupDialog, {})).ok).toBe(true);
+    } finally {
+      standIn.stop();
+    }
+
+    expect(pressed).toEqual(['Close']);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
   });
 });

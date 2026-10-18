@@ -24,12 +24,17 @@ import {
   extendSeconds,
   extendTime,
   INSPIRATION_ROUTE,
+  MASHUP_DIALOG,
+  mashupChoice,
+  mashupClipsOf,
+  mashupShowsFirstOnly,
   OVERWRITE_DIALOG,
   planSources,
   SOURCE_ROUTES,
   sourceName,
   sourceShown,
   type LoadedSource,
+  type MashupClip,
 } from '../adapter/sources.ts';
 import { saveToRows, saveToShown, saveToShows } from '../adapter/songsForm.ts';
 import { ADAPTER_VERSION } from '../adapter/version.ts';
@@ -39,10 +44,13 @@ import { formWorkflowsFor } from '../adapter/workflows/index.ts';
 import { chooseSaveTo, closeSaveTo } from '../adapter/workflows/saveTo.ts';
 import {
   answerOverwrite,
+  chooseMashupSong,
   chooseSourceAction,
   chooseVoice,
+  closeMashupDialog,
   closeVoicePicker,
   openSourceMenu,
+  searchMashupSong,
   setExtendFrom,
   verifySourceAdvanced,
   verifySourceSimple,
@@ -120,6 +128,13 @@ import type { GenerateViewState } from '../panel/GenerateView.ts';
  * source is verified before anything else is filled. When it is not the Version's, the panel asks
  * the user to load it by hand and press Continue, which verifies it again, as often as needed. A
  * source n8Tracks knows is unusable stops the request before the form changes, naming it.
+ *
+ * A Mashup's second song (#438): once the Mashup shows its first song, "Add another song to
+ * Mashup" opens Suno's "Add a song to mashup" dialog, the second song's title is typed into its
+ * search box (never Enter, never a tab), and its row is chosen by its Suno ID when Suno's answer to
+ * the search matches the rows one for one, else as the one row of exactly its title; its Select is
+ * pressed and nothing else. With no such row, or several, the dialog is closed and the user adds
+ * the song by hand and presses Continue. Both songs are verified as before.
  *
  * Loading a source may set the form's Save to to the source's workspace (#435, TS-007-16). Before
  * the rest of a Song's form is filled, Save to is read; when it shows another workspace, its picker
@@ -217,6 +232,22 @@ export const VOICE_QUESTION_WAIT_MS = 1_000;
 export const SOURCE_WAIT_MS = 10_000;
 
 /**
+ * How long the tab waits for Suno's answer to the Mashup dialog's search (#438) before choosing
+ * the song by its title alone: Suno may filter the rows it holds and send nothing.
+ */
+export const MASHUP_SEARCH_WAIT_MS = 3_000;
+
+/** How long Suno may take to close the Mashup dialog once a song's Select is pressed. */
+export const MASHUP_CLOSE_WAIT_MS = 3_000;
+
+/** Why the extension could not add a Mashup's second song itself (#438), as the panel says it. */
+export const MASHUP_NOT_ADDED = {
+  none: 'no song in Suno’s “Add a song to mashup” list is named exactly as the second song',
+  several:
+    'more than one song in Suno’s “Add a song to mashup” list is named as the second song, so the extension chose none',
+} as const;
+
+/**
  * How many loads of the tab may go to reaching the Create page, or the Song's workspace on it by
  * its address; past them the workspace counts as not shown, and the choice is offered.
  */
@@ -297,6 +328,21 @@ function reply<T extends object>(answer: unknown): GenerateReply<T> {
     ended: false,
     message: 'The extension did not answer. Reload the Suno page.',
   };
+}
+
+/**
+ * Whether the extension adds the Mashup's second song itself (#438): an Advanced Mashup of two
+ * Suno clips, the second with a title to search for.
+ */
+function addsMashupSong(form: FormJob, load: LoadedSource): boolean {
+  const [second, ...more] = load.others;
+  return (
+    form.mode === 'advanced' &&
+    load.route === SOURCE_ROUTES.mashup &&
+    second !== undefined &&
+    more.length === 0 &&
+    (second.title ?? '').trim() !== ''
+  );
 }
 
 /** The Song's workspace when n8Tracks holds it Available: the one to open by its address. */
@@ -952,8 +998,11 @@ export class SunoGenerate {
     const { page, session } = this.options;
     const seen = () => load.route.label !== null && sourceShown(page, form.mode, load).ok;
     const asked = () => page.find(OVERWRITE_DIALOG).kind === 'found';
+    // A Mashup the extension completes itself (#438) shows its first song only, until then.
+    const adds = addsMashupSong(form, load);
+    const firstOnly = () => adds && mashupShowsFirstOnly(page, load);
     await page.wait(
-      () => asked() || seen(),
+      () => asked() || seen() || firstOnly(),
       load.route.label === null ? OVERWRITE_WAIT_MS : SOURCE_WAIT_MS,
     );
     if (asked()) {
@@ -976,14 +1025,20 @@ export class SunoGenerate {
       };
     } else {
       const verify = form.mode === 'simple' ? verifySourceSimple : verifySourceAdvanced;
+      // The Mashup's second song (#438): added through Suno's dialog when it can be found there.
+      if (adds && !seen()) {
+        await page.wait(() => seen() || firstOnly(), SOURCE_WAIT_MS);
+      }
+      let why = firstOnly() ? await this.addMashupSong(load) : null;
       for (;;) {
         const verified = await session.run(verify, { load }, this.runOptions());
         if (verified.ok) {
           break;
         }
-        if (!(await this.byHand(load, failureText(verified.failure)))) {
+        if (!(await this.byHand(load, why ?? failureText(verified.failure)))) {
           return;
         }
+        why = null;
       }
       const several = load.others.length > 0;
       loaded = {
@@ -1011,6 +1066,75 @@ export class SunoGenerate {
       return;
     }
     await this.fillRest(form, this.job?.workspace?.name ?? null, loaded);
+  }
+
+  /**
+   * Adds a Mashup's second song through Suno's "Add a song to mashup" dialog (#438): the dialog is
+   * opened and the song's title typed into its search box; Suno's answer to the search, when the
+   * page gets one within {@link MASHUP_SEARCH_WAIT_MS}, lets the song's row be told by its Suno ID,
+   * else it is the one row of exactly its title; that row's Select is pressed, and the dialog is
+   * waited on to close. Null once a Select was pressed and the dialog closed: the form is verified
+   * next, as for every source. Otherwise the dialog is closed (its ×, else Escape) and why the song
+   * was not added is answered, for the by-hand message; nothing else is pressed.
+   */
+  private async addMashupSong(load: LoadedSource): Promise<string | null> {
+    const [second] = load.others;
+    const title = second?.title ?? '';
+    if (second === undefined || title.trim() === '') {
+      return null;
+    }
+    const { page, session } = this.options;
+    const song = { title, sunoId: second.sunoId };
+    const lists = (message: ObservedMessage) => mashupClipsOf(message.body, song.sunoId) !== null;
+    // A list the page got before the search is not its answer.
+    await this.latest('library-feed', lists, 0);
+    const searched = await session.run(searchMashupSong, { song }, this.runOptions());
+    let failure = searched.ok ? null : failureText(searched.failure);
+    if (searched.ok) {
+      const answer = await this.latest('library-feed', lists, MASHUP_SEARCH_WAIT_MS);
+      const clips: MashupClip[] | null =
+        answer === null ? null : mashupClipsOf(answer.body, song.sunoId);
+      const chosen: { by: 'id' | 'title' | null } = { by: null };
+      const choosing = await session.run(
+        chooseMashupSong,
+        { song, clips, chosen },
+        this.runOptions(),
+      );
+      if (choosing.ok && chosen.by !== null) {
+        await page.wait(() => page.find(MASHUP_DIALOG).kind !== 'found', MASHUP_CLOSE_WAIT_MS);
+      }
+      const choice = mashupChoice(page, song, clips).kind;
+      failure = !choosing.ok
+        ? choosing.failure.step === 'song row' && choice !== 'row'
+          ? MASHUP_NOT_ADDED[choice]
+          : failureText(choosing.failure)
+        : null;
+    }
+    if (page.find(MASHUP_DIALOG).kind === 'found') {
+      // While it is open the form may be hidden behind it, so nothing else could be read.
+      await session.run(closeMashupDialog, {}, this.runOptions());
+    }
+    return failure;
+  }
+
+  /**
+   * Takes every response of `kind` that `accept` takes, waiting up to `timeoutMs` for the first
+   * when there is none yet; the last of them, or null.
+   */
+  private async latest(
+    kind: ObservedMessage['kind'],
+    accept: (message: ObservedMessage) => boolean,
+    timeoutMs: number,
+  ): Promise<ObservedMessage | null> {
+    const signal = new AbortController().signal;
+    let last: ObservedMessage | null = null;
+    for (let wait = timeoutMs; ; wait = 0) {
+      const message = await this.options.observations.next(kind, accept, wait, signal);
+      if (message === null) {
+        return last;
+      }
+      last = message;
+    }
   }
 
   /**
@@ -1044,9 +1168,9 @@ export class SunoGenerate {
 
   /**
    * The source on the form is not the Version's: the panel asks the user to load it by hand, and
-   * the request waits (reported, so n8Tracks shows why). True once the user pressed Continue. A
-   * Mashup's second song and further Inspiration songs are always added this way (TS-005 did not
-   * capture adding them).
+   * the request waits (reported, so n8Tracks shows why). True once the user pressed Continue.
+   * Further Inspiration songs are always added this way (TS-005 did not capture adding them), and a
+   * Mashup's second song when the extension could not add it through Suno's dialog (#438).
    */
   private async byHand(load: LoadedSource, why: string): Promise<boolean> {
     const name = sourceName(load.source);

@@ -6,6 +6,7 @@ import {
   CREATE_WORKSPACE,
   DOWNLOAD_CLIP,
   EXCEPTIONS,
+  MASHUP_PICKER,
   RECOGNISED_DIALOGS,
   SAVE_TO_PICKER,
   type ControlFacts,
@@ -164,7 +165,7 @@ describe('the forbidden-control matcher, on the TS-003 snapshots', () => {
     // 2.5 s here and over 5 s on a GitHub runner, so the limit is three times a CI run's ~10 s.
   }, 30_000);
 
-  it('recognises only the two Overwrite questions, the Voice picker, Simple’s Lyrics and Styles dialogs, the Key popover, and the Model dialog', () => {
+  it('recognises only the two Overwrite questions, the Voice picker, Simple’s Lyrics and Styles dialogs, the Key popover, the Model dialog, and the Mashup dialog', () => {
     expect(RECOGNISED_DIALOGS.map((dialog) => [dialog.title, dialog.allows])).toEqual([
       ['Overwrite Lyrics & Styles?', ['Overwrite', 'Keep Current']],
       ['Overwrite Styles?', ['Overwrite', 'Keep Current']],
@@ -193,6 +194,7 @@ describe('the forbidden-control matcher, on the TS-003 snapshots', () => {
         ],
       ],
       ['Model', ['Close']],
+      ['Add a song to mashup', ['Select', 'Close', 'Search for a song in your library…']],
     ]);
     // Only the Model dialog's rows may be pressed (TS-007-10).
     expect(
@@ -475,5 +477,77 @@ describe('the Save to picker (#435)', () => {
       ['Country Farming (137 clips)', 'allowed'],
       ['Sound test (2 clips)', 'allowed'],
     ]);
+  });
+});
+
+describe('the “Add a song to mashup” dialog (#438)', () => {
+  const dialog = { title: MASHUP_PICKER.title };
+
+  it('allows a song’s Select, its search box, and Close, and refuses its tabs, filter, sort, play, and like', () => {
+    expect(classify(facts({ name: 'Select', dialog })).kind).toBe('allowed');
+    expect(classify(facts({ name: 'Close', dialog })).kind).toBe('allowed');
+    expect(classify(facts({ role: 'textbox', name: MASHUP_PICKER.field, dialog })).kind).toBe(
+      'allowed',
+    );
+    for (const [role, name] of [
+      ['tab', 'My Library'],
+      ['tab', 'Everything'],
+      ['button', '(3)'],
+      ['button', 'New'],
+      ['button', ''],
+      ['button', 'Play'],
+      ['button', 'Like'],
+      ['button', 'Create'],
+      ['button', 'Delete'],
+      ['button', 'Publish'],
+    ] as const) {
+      expect(classify(facts({ role, name, dialog })), `${role} "${name}"`).toEqual({
+        kind: 'forbidden',
+        reason: 'the dialog it is in does not allow it',
+      });
+    }
+  });
+
+  it('on its snapshots, allows only Select, Close, and the search box', () => {
+    for (const snapshot of [MASHUP_PICKER.snapshot, 'create-source-mashup-add-song-search']) {
+      load(snapshot);
+      const open = document.querySelector('[role="dialog"]');
+      const inDialog = [...(open?.querySelectorAll('*') ?? [])].filter(
+        (element) => roleOf(element) !== null,
+      );
+      const allowed = [
+        ...new Set(
+          inDialog
+            .filter((element) => verdictOf(element).kind === 'allowed')
+            .map((element) => `${roleOf(element) ?? ''} "${nameOf(element)}"`),
+        ),
+      ];
+      const refused = [
+        ...new Set(
+          inDialog
+            .filter((element) => verdictOf(element).kind === 'forbidden')
+            .map((element) => `${roleOf(element) ?? ''} "${nameOf(element)}"`),
+        ),
+      ];
+      // The tab list holds the tabs rather than being one; its tabs are refused.
+      expect(allowed.toSorted()).toEqual([
+        'button "Close"',
+        'button "Select"',
+        'tablist ""',
+        'textbox "Search for a song in your library…"',
+      ]);
+      expect(refused.toSorted()).toEqual([
+        'button ""',
+        'button "(3)"',
+        'button "Like"',
+        'button "New"',
+        'button "Play"',
+        // Not controls, but nothing in the dialog may be pressed unless it allows it.
+        'heading "Add a song to mashup"',
+        'img ""',
+        'tab "Everything"',
+        'tab "My Library"',
+      ]);
+    }
   });
 });
