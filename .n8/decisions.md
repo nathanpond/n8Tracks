@@ -4743,3 +4743,9 @@ Story #219 (on the milestone branch):
 - **Decision:** `page.create-songs-advanced-save-to-picker.html` is constructed from the owner's screenshot (untitled `role="dialog"`, `button` rows, an icon-only "+"). The rows are looked for as options first, then as buttons. The picker's real roles and markup, whether Suno filters as one types, and whether a choice closes it need live confirmation. `ADAPTER_VERSION` 27.
   **Why:** There is no capture. If the live markup differs, the workflow stops at its step and Save to is left to the user. Nothing else is pressed.
   **Issue:** #435
+
+## Ad-hoc — 2026-10-18
+
+- **Change:** Added Audio Influence as a Version setting (436), for Songs whose audio source is a Cover, Mashup, Sample or Inspiration. It is imported from `metadata.control_sliders.audio_weight`, filled and verified by the extension, and copied by the source pre-fill (#431).
+  **Why:** Owner request in the #148 walkthrough. Suno shows the slider for these sources, and n8Tracks could not hold or set it.
+  **Affects:** M4 (#135 import field map, #146/#148 fill, #149 observed Create, #431 pre-fill), M7 (the API/MCP Version shape), M8 (#255 portable format, if it lists Version settings).
