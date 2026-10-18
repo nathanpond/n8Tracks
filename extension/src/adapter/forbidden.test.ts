@@ -473,7 +473,7 @@ describe('the Save to picker (#435)', () => {
     expect(buttons.map((button) => [nameOf(button), verdictOf(button).kind])).toEqual([
       ['', 'forbidden'],
       ['My Workspace (81 clips)', 'allowed'],
-      ['Generated Song Playground (18 clips)', 'allowed'],
+      ['Practice Room Sketches (18 clips)', 'allowed'],
       ['Country Farming (137 clips)', 'allowed'],
       ['Sound test (2 clips)', 'allowed'],
     ]);

@@ -4589,7 +4589,7 @@ Story #219 (on the milestone branch):
 ## M4 captures — #419 differently titled clips of one Create — 2026-10-11
 
 - **Decision:** Within one Create group, the new clips are split by Suno title before they are split by inputs, and each title is proposed on its own: with nothing else applying, one new Song per distinct title, titled with its clip's title. Titles compare as the new Song's proposed title would be (trimmed, control characters made spaces, cut to the title limit) and ignoring case, so a blank title and "Untitled" are one title. The clips keep one shared `group` number. Same-title clips are proposed as before.
-  **Why:** Owner decision on #419 (a Simple-mode Create made "Rusty Clock Rooster" and "Barnaby, Give It A Rest", and the review proposed Barnaby as Version 2 of the Rooster Song). Reusing the proposed-title rule means two separate new Songs never get the same proposed title. Titles only shape proposals; identity stays by Suno ID.
+  **Why:** Owner decision on #419 (a Simple-mode Create made "Paper Boat Morning" and "Lantern, Keep It Low", and the review proposed Barnaby as Version 2 of the Rooster Song). Reusing the proposed-title rule means two separate new Songs never get the same proposed title. Titles only shape proposals; identity stays by Suno ID.
   **Issue:** #419
 - **Decision:** Rule 1 counts only imported group-mates whose Suno title (in the export) is the clip's title. A clip whose title differs from every imported mate's falls through to rule 2, then rule 3.
   **Why:** The AC's expected behaviour. Being in one Create request is only a guess that clips belong together, and a different title is evidence against it.

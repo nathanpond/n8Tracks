@@ -2280,28 +2280,28 @@ async function afterCover(name: string, standIn: StandInOptions = {}) {
 
 describe('Generate on Suno in the Suno tab: Save to after the source (#435)', () => {
   it('sets Save to back to the Song’s workspace after the Cover, typing its name and pressing its one row, and reports it set', async () => {
-    const run = await afterCover('Generated Song Playground');
+    const run = await afterCover('Practice Room Sketches');
 
     expect(run.tab.steps()).toEqual([
       'filling verify source',
       'filling fill form',
       'waiting review and create',
     ]);
-    expect(run.typed).toEqual(['Generated Song Playground']);
+    expect(run.typed).toEqual(['Practice Room Sketches']);
     // The Save to button, then the workspace's row; never "+" (no name), never a Create.
     expect(run.tab.pressed.slice(0, 2)).toEqual([
       '<redacted 14 chars>',
-      'Generated Song Playground (18 clips)',
+      'Practice Room Sketches (18 clips)',
     ]);
     expect(run.tab.pressed).not.toContain('');
     expect(run.tab.pressed.filter((name) => FORBIDDEN_WORDS.test(name))).toEqual([]);
     expect(run.keys).not.toContain('Enter');
-    expect(saveToText()).toBe('Generated Song Playground');
+    expect(saveToText()).toBe('Practice Room Sketches');
     expect(run.pickerOpen).toBe(false);
     expect(run.workspace).toEqual({
       key: 'songs.simple.workspace',
       outcome: 'set',
-      note: 'Save to shows the Song’s workspace “Generated Song Playground”.',
+      note: 'Save to shows the Song’s workspace “Practice Room Sketches”.',
       reportNote: 'Save to shows the Song’s workspace.',
     });
     // n8Tracks gets the adapter's words, not the workspace's name.
@@ -2310,7 +2310,7 @@ describe('Generate on Suno in the Suno tab: Save to after the source (#435)', ()
       outcome: 'set',
       note: 'Save to shows the Song’s workspace.',
     });
-    expect(JSON.stringify(run.tab.asked.at(-1))).not.toContain('Generated Song Playground');
+    expect(JSON.stringify(run.tab.asked.at(-1))).not.toContain('Practice Room Sketches');
   });
 
   it('chooses the row of the name exactly, case kept, among rows Suno shows for it', async () => {
@@ -2385,7 +2385,7 @@ describe('Generate on Suno in the Suno tab: Save to after the source (#435)', ()
   });
 
   it('reads Save to again on Check again', async () => {
-    const run = await afterCover('Generated Song Playground');
+    const run = await afterCover('Practice Room Sketches');
     const button = document.querySelector('#base-ui-_r_qq_ .hxc-btn-content');
     if (button !== null) {
       // The user chose another workspace after the fill.
@@ -2398,6 +2398,6 @@ describe('Generate on Suno in the Suno tab: Save to after the source (#435)', ()
       (result) => result.key === 'songs.simple.workspace',
     );
     expect(workspace?.outcome).toBe('manual');
-    expect(workspace?.note).toContain('choose the Song’s workspace “Generated Song Playground”');
+    expect(workspace?.note).toContain('choose the Song’s workspace “Practice Room Sketches”');
   });
 });

@@ -234,15 +234,15 @@ public sealed class ImportProposalTests
         var (_, records) = await ExportAsync(
             client,
             token,
-            Clip("rooster", "studio", At, 0, lyrics: "[Verse]\nOne", title: "Rusty Clock Rooster"),
-            Clip("barnaby", "studio", At.AddMilliseconds(1), 1, lyrics: "[Verse]\nTwo", title: "Barnaby, Give It A Rest"),
-            Clip("barnaby-same", "studio", At.AddMilliseconds(2), 2, lyrics: "[Verse]\nTwo", title: "Barnaby, Give It A Rest"));
+            Clip("rooster", "studio", At, 0, lyrics: "[Verse]\nOne", title: "Paper Boat Morning"),
+            Clip("barnaby", "studio", At.AddMilliseconds(1), 1, lyrics: "[Verse]\nTwo", title: "Lantern, Keep It Low"),
+            Clip("barnaby-same", "studio", At.AddMilliseconds(2), 2, lyrics: "[Verse]\nTwo", title: "Lantern, Keep It Low"));
 
         var (rooster, barnaby) = (Target(records["rooster"]), Target(records["barnaby"]));
         Assert.Equal("newSong", Text(rooster, "kind"));
-        Assert.Equal("Rusty Clock Rooster", Text(rooster, "title"));
+        Assert.Equal("Paper Boat Morning", Text(rooster, "title"));
         Assert.Equal("newSong", Text(barnaby, "kind"));
-        Assert.Equal("Barnaby, Give It A Rest", Text(barnaby, "title"));
+        Assert.Equal("Lantern, Keep It Low", Text(barnaby, "title"));
         Assert.Equal("studio", Text(barnaby, "workspaceId"));
         Assert.NotEqual(Text(rooster, "key"), Text(barnaby, "key"));
         Assert.Equal("newSong", Text(records["barnaby"].GetProperty("proposal"), "basis"));
@@ -265,15 +265,15 @@ public sealed class ImportProposalTests
         var (_, records) = await ExportAsync(
             client,
             token,
-            Clip("a", "studio", At, 0, lyrics: "[Verse]\nOne", title: "Rusty Clock Rooster"),
-            Clip("b", "studio", At.AddMilliseconds(1), 1, lyrics: "[Verse]\nTwo", title: "  rusty clock ROOSTER "),
+            Clip("a", "studio", At, 0, lyrics: "[Verse]\nOne", title: "Paper Boat Morning"),
+            Clip("b", "studio", At.AddMilliseconds(1), 1, lyrics: "[Verse]\nTwo", title: "  paper boat MORNING "),
             Clip("blank", "studio", At.AddSeconds(17), 0, lyrics: "[Verse]\nOne", title: "  "),
             Clip("untitled", "studio", At.AddSeconds(17).AddMilliseconds(1), 1, lyrics: "[Verse]\nTwo", title: "untitled"),
             Clip("empty", "studio", At.AddSeconds(17).AddMilliseconds(2), 2, lyrics: "[Verse]\nThree", title: string.Empty));
 
         var (a, b) = (Target(records["a"]), Target(records["b"]));
         Assert.Equal("newSong", Text(a, "kind"));
-        Assert.Equal("Rusty Clock Rooster", Text(a, "title"));
+        Assert.Equal("Paper Boat Morning", Text(a, "title"));
         Assert.Equal("newVersion", Text(b, "kind"));
         Assert.Equal(Text(a, "key"), Text(b, "song"));
         Assert.Equal("2", Text(b, "number"));
@@ -301,16 +301,16 @@ public sealed class ImportProposalTests
         using var factory = SongApi.Host();
         using var client = await SessionApi.SignedInClientAsync(factory);
         var token = await SunoWorkspaceApi.ExtensionTokenAsync(factory);
-        var song = await SongApi.CreateAsync(client, "Rusty Clock Rooster");
-        var mate = Clip("mate", "studio", At, 0, title: "Rusty Clock Rooster");
+        var song = await SongApi.CreateAsync(client, "Paper Boat Morning");
+        var mate = Clip("mate", "studio", At, 0, title: "Paper Boat Morning");
         await ImportedVersions.AttachAsync(factory, song, "2", mate);
 
         var (_, records) = await ExportAsync(
             client,
             token,
             mate,
-            Clip("same-title", "studio", At.AddMilliseconds(1), 1, lyrics: "[Verse]\nTwo", title: "RUSTY CLOCK ROOSTER"),
-            Clip("other-title", "studio", At.AddMilliseconds(2), 2, lyrics: "[Verse]\nThree", title: "Barnaby, Give It A Rest"));
+            Clip("same-title", "studio", At.AddMilliseconds(1), 1, lyrics: "[Verse]\nTwo", title: "PAPER BOAT MORNING"),
+            Clip("other-title", "studio", At.AddMilliseconds(2), 2, lyrics: "[Verse]\nThree", title: "Lantern, Keep It Low"));
 
         var sameTitle = Target(records["same-title"]);
         Assert.Equal("newVersion", Text(sameTitle, "kind"));
@@ -319,7 +319,7 @@ public sealed class ImportProposalTests
 
         var otherTitle = Target(records["other-title"]);
         Assert.Equal("newSong", Text(otherTitle, "kind"));
-        Assert.Equal("Barnaby, Give It A Rest", Text(otherTitle, "title"));
+        Assert.Equal("Lantern, Keep It Low", Text(otherTitle, "title"));
         Assert.Equal("newSong", Text(records["other-title"].GetProperty("proposal"), "basis"));
     }
 
@@ -338,15 +338,15 @@ public sealed class ImportProposalTests
         await SunoWorkspaceApi.ReportAsync(client, token, complete: false, SunoWorkspaceApi.Project("studio", "Studio"));
         var workspaceSong = await SongApi.CreateAsync(client, "Studio song");
         await SunoWorkspaceApi.AssociatedAsync(client, "n8-1", "studio");
-        var mateSong = await SongApi.CreateAsync(client, "Rusty Clock Rooster");
-        var mate = Clip("mate", "studio", At, 0, title: "Rusty Clock Rooster");
+        var mateSong = await SongApi.CreateAsync(client, "Paper Boat Morning");
+        var mate = Clip("mate", "studio", At, 0, title: "Paper Boat Morning");
         await ImportedVersions.AttachAsync(factory, mateSong, "2", mate);
 
         var (_, records) = await ExportAsync(
             client,
             token,
             mate,
-            Clip("other-title", "studio", At.AddMilliseconds(1), 1, lyrics: "[Verse]\nTwo", title: "Barnaby, Give It A Rest"),
+            Clip("other-title", "studio", At.AddMilliseconds(1), 1, lyrics: "[Verse]\nTwo", title: "Lantern, Keep It Low"),
             Clip("first", "studio", At.AddSeconds(17), 0, lyrics: "[Verse]\nThree", title: "First"),
             Clip("second", "studio", At.AddSeconds(17).AddMilliseconds(1), 1, lyrics: "[Verse]\nFour", title: "Second"));
 
