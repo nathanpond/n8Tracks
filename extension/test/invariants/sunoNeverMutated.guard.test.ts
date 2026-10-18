@@ -40,6 +40,14 @@ import {
  * `sourceScan.ts` lists what the static scan does not see.
  */
 
+/** The Mashup's second song in the "Add a song to mashup" snapshots (#438), and Suno's answer. */
+const MASHUP_SECOND = { title: 'The Long Thaw', sunoId: '00000000-0000-4000-8000-000000000405' };
+const MASHUP_ANSWER = [
+  { id: '00000000-0000-4000-8000-000000000401', title: 'Paper Lanterns x The Long Thaw (Mashup)' },
+  { id: '00000000-0000-4000-8000-000000000404', title: 'The Long Thaw' },
+  { id: '00000000-0000-4000-8000-000000000405', title: 'The Long Thaw' },
+];
+
 /**
  * How the guard runs each registered workflow. A story that adds a workflow adds its recipe
  * here: a workflow without one fails the guard.
@@ -105,6 +113,16 @@ const RUN_RECIPES: Readonly<Record<string, RunRecipe>> = {
   // pressed. Closing it sends Escape only.
   'choose-save-to': { values: { workspaceName: 'My Workspace' } },
   'close-save-to': { values: {} },
+  // A Mashup's second song (#438): "Add another song to Mashup", the song's title typed into the
+  // "Add a song to mashup" dialog's search box (never Enter), and one row's Select: by its Suno ID
+  // on the searched snapshot, whose answer lists two clips of the same title, and by its title on
+  // the unsearched one, where the answer does not match the rows. The dialog's tabs, filter, sort,
+  // play, and like buttons must never be reached. Closing it presses its Close only.
+  'search-mashup-song': { values: { song: MASHUP_SECOND } },
+  'choose-mashup-song': {
+    values: { song: MASHUP_SECOND, clips: MASHUP_ANSWER, chosen: { by: null } },
+  },
+  'close-mashup-dialog': { values: {} },
   // Preparing a download (#216): a library row's More options, the menu's Download, then a format
   // and "Unlock & Download" in the Download dialog, which are the second permitted change and are
   // pressed only through their own primitive. The menu's Publish and Move to Trash, and the
@@ -833,6 +851,107 @@ describe('the guard bites', () => {
     expect(
       await exerciseWorkflows([bypass], { recipes: recipes('bypass'), snapshots: [snapshot] }),
     ).toEqual([`'bypass' on ${snapshot}: click reached button ""`]);
+  }, 60_000);
+
+  it('refuses the Mashup dialog’s tabs, filter, sort, play, and like, and sees a press around the primitives (#438)', async () => {
+    const snapshot = 'create-source-mashup-add-song-search';
+    document.body.innerHTML = snapshotHtml(snapshot);
+    // Everything pressable in the dialog but Select, Close, and the search box is spied on.
+    const spied = forbiddenControls(document).filter((control) =>
+      control.element.closest('[role="dialog"]'),
+    );
+    expect([...new Set(spied.map((control) => control.words))].toSorted()).toEqual([
+      'button ""',
+      'button "(3)"',
+      'button "Like"',
+      'button "New"',
+      'button "Play"',
+      'heading "Add a song to mashup"',
+      'img ""',
+      'tab "Everything"',
+      'tab "My Library"',
+    ]);
+
+    // Adding the song, as the content script does, passes the guard: the search box and one Select.
+    for (const id of ['search-mashup-song', 'choose-mashup-song']) {
+      const workflow = ADAPTER_WORKFLOWS.find((each) => each.id === id);
+      expect(workflow?.fixtures).toEqual([
+        'create-source-mashup-add-song-dialog',
+        'create-source-mashup-add-song-search',
+      ]);
+      expect(
+        await exerciseWorkflows(workflow === undefined ? [] : [workflow], {
+          recipes: { [id]: RUN_RECIPES[id] ?? { values: {} } },
+          snapshots: [
+            'create-source-mashup-one-song',
+            'create-source-mashup-add-song-dialog',
+            snapshot,
+          ],
+        }),
+      ).toEqual([]);
+    }
+
+    const dialog: Target = {
+      role: 'dialog',
+      name: 'Add a song to mashup',
+      description: 'the Mashup dialog',
+    };
+    const refusals: [Target, string][] = [
+      [{ role: 'tab', name: 'Everything', within: dialog, description: 'the Everything tab' }, ''],
+      [{ role: 'tab', name: 'My Library', within: dialog, description: 'the My Library tab' }, ''],
+      [{ role: 'button', name: '(3)', within: dialog, description: 'the filter button' }, ''],
+      [{ role: 'button', name: 'New', within: dialog, description: 'the sort button' }, ''],
+      [{ role: 'button', name: 'Play', within: dialog, nth: 0, description: 'a play button' }, ''],
+      [{ role: 'button', name: 'Like', within: dialog, nth: 0, description: 'a like button' }, ''],
+      [{ role: 'button', name: '', within: dialog, description: 'the liked-songs button' }, ''],
+    ];
+    for (const [target] of refusals) {
+      const rogue = testWorkflow('press', [], clicking(target), null);
+      expect(
+        await exerciseWorkflows([rogue], { recipes: recipes('press'), snapshots: [snapshot] }),
+        target.description,
+      ).toEqual([
+        `'press' on ${snapshot}: step 'act' tried a forbidden control (${target.description}: the dialog it is in does not allow it)`,
+      ]);
+    }
+
+    // A Create, Publish, or Delete Suno may add to the dialog is refused too.
+    for (const word of ['Create', 'Publish', 'Delete']) {
+      const target: Target = { role: 'button', name: word, within: dialog, description: word };
+      const adding = testWorkflow(
+        'press',
+        [],
+        (context) => {
+          // Test-only: adds the button Suno may show, as the static scan forbids shipped code to.
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.textContent = word;
+          document.querySelector('#_r_mx_')?.append(button);
+          return clicking(target)(context);
+        },
+        null,
+      );
+      expect(
+        await exerciseWorkflows([adding], { recipes: recipes('press'), snapshots: [snapshot] }),
+      ).toEqual([
+        `'press' on ${snapshot}: step 'act' tried a forbidden control (${word}: the dialog it is in does not allow it)`,
+      ]);
+    }
+
+    const bypass = testWorkflow(
+      'bypass',
+      [],
+      () => {
+        // Test-only: reaches the page directly, as the static scan forbids shipped code to.
+        document
+          .querySelector('#_r_mx_ [aria-label="Like"]')
+          ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      },
+      null,
+    );
+    expect(
+      await exerciseWorkflows([bypass], { recipes: recipes('bypass'), snapshots: [snapshot] }),
+    ).toEqual([`'bypass' on ${snapshot}: click reached button "Like"`]);
   }, 60_000);
 
   it('fails a workflow that presses Publish or Move to Trash in a clip menu', async () => {

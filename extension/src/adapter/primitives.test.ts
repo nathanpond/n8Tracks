@@ -160,6 +160,24 @@ describe('find', () => {
 
     expect(after.kind).toBe(before.kind);
   });
+
+  it('finds the match at a named place among several only when the target names it (#438)', () => {
+    document.body.innerHTML =
+      '<button type="button">Select</button><button type="button" id="b">Select</button>';
+    const page = new Page(document);
+    const select: Target = { role: 'button', name: 'Select', description: 'a Select' };
+
+    const pressed: string[] = [];
+    document.addEventListener('click', (event) => pressed.push((event.target as Element).id));
+
+    expect(page.find(select)).toMatchObject({ kind: 'ambiguous', count: 2 });
+    page.click(found(page.find({ ...select, nth: 1 })));
+    expect(pressed).toEqual(['b']);
+    expect(page.find({ ...select, nth: 2 })).toEqual({
+      kind: 'not_found',
+      missing: { ...select, nth: 2 },
+    });
+  });
 });
 
 describe('accessible names', () => {

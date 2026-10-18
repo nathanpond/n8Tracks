@@ -1,4 +1,5 @@
 import type { EntryResult, FormJob, FormSource } from './fill.ts';
+import { MASHUP_PICKER } from './forbidden.ts';
 import type { Page, Region, Target } from './primitives.ts';
 import { expected, OK, type Check } from './workflow.ts';
 
@@ -17,9 +18,11 @@ import { expected, OK, type Check } from './workflow.ts';
  * options", its cover image holding the clip's ID), Suno's 404 for a clip that does not exist, and
  * the Advanced form after Extend, Mashup (one song), Sample this song, and Use as Inspiration (one
  * song), so those routes are taken by the extension in Advanced mode. In Simple mode only Cover's
- * chip is captured; the other actions there are loaded by hand. A Mashup's second song, and
- * Inspiration songs after the first, are added by hand (the form's "Add another song" and the
- * Inspo area were not captured in use), and all are verified before anything else is filled. A
+ * chip is captured; the other actions there are loaded by hand. A Mashup's second song is added
+ * through the form's "Add another song to Mashup" and its "Add a song to mashup" dialog (#438, the
+ * owner's capture of 2026-10-18), found by its Suno ID or its exact title, and otherwise by hand;
+ * Inspiration songs after the first are added by hand (the Inspo area was not captured in use).
+ * All are verified before anything else is filled. A
  * playlist used as Inspiration stays by hand: the Inspo picker's dialog has no title, so the
  * forbidden-control matcher keeps refusing it (#133).
  */
@@ -145,9 +148,9 @@ export function sourceName(source: FormSource): string {
 
 /**
  * The source the extension loads: the first audio source (or, with none, the first Inspiration
- * song), when its action's result is captured. `others` are the sources of the same entry the
- * user adds by hand on the form (a Mashup's second song, more Inspiration songs); all of them are
- * verified with it before anything else is filled.
+ * song), when its action's result is captured. `others` are the sources of the same entry added
+ * on the form afterwards (a Mashup's second song, by the extension when it can find it, #438; more
+ * Inspiration songs, by the user); all of them are verified with it before anything else is filled.
  */
 export interface LoadedSource {
   source: FormSource;
@@ -515,6 +518,171 @@ export const MASHUP_PLAYER: Target = {
   within: MASHUP_SONGS,
   description: 'a Mashup song’s player',
 };
+
+// ---- Adding a Mashup's second song (#438: the owner's capture of "Add a song to mashup").
+
+/** The form's "+ Add another song to Mashup", below the Mashup's first song (TS-005). */
+export const ADD_MASHUP_SONG: Target = {
+  role: 'button',
+  name: /^Add another song to mashup$/i,
+  description: 'the “Add another song to Mashup” button',
+};
+
+/** The dialog it opens (#438), by its title. */
+export const MASHUP_DIALOG: Target = {
+  role: 'dialog',
+  name: MASHUP_PICKER.title,
+  description: 'Suno’s “Add a song to mashup” dialog',
+};
+
+/** Its search box ("Search for a song in your library…"; "..." or "…" alike). */
+export const MASHUP_SEARCH: Target = {
+  role: 'textbox',
+  name: /^Search for a song in your library(…|\.\.\.)?$/,
+  within: MASHUP_DIALOG,
+  description: 'the “Search for a song in your library…” box of the Mashup dialog',
+};
+
+/** Its My Library tab, which is read only: the extension never presses a tab of it. */
+export const MASHUP_LIBRARY_TAB: Target = {
+  role: 'tab',
+  name: 'My Library',
+  within: MASHUP_DIALOG,
+  description: 'the Mashup dialog’s My Library tab',
+};
+
+/** Its Close (×). */
+export const MASHUP_CLOSE: Target = {
+  role: 'button',
+  name: MASHUP_PICKER.close,
+  within: MASHUP_DIALOG,
+  description: 'the Mashup dialog’s Close (×)',
+};
+
+/** Every song's Select in the dialog, one per row. */
+export const MASHUP_SELECTS: Target = {
+  role: 'button',
+  name: MASHUP_PICKER.select,
+  within: MASHUP_DIALOG,
+  description: 'a song’s Select in the Mashup dialog',
+};
+
+/**
+ * A song's title in the dialog's list: the element whose whole text is the title (the text, not
+ * the cut the row shows with "…"); `nth` is its place among the rows of that title.
+ */
+export function mashupSongTitle(title: string, nth?: number): Target {
+  return {
+    role: 'text',
+    name: title,
+    within: MASHUP_DIALOG,
+    ...(nth === undefined ? {} : { nth }),
+    description: 'the song’s title in the Mashup dialog',
+  };
+}
+
+/** How far out from a song's title its row may reach to hold the row's Select. */
+const MASHUP_ROW_LEVELS = 6;
+
+/**
+ * The Select of the row holding that title: the nearest part of the list around the title that
+ * holds a Select, which is the title's own row; two Selects there are never chosen between.
+ */
+export function mashupSongSelect(title: string, nth?: number): Target {
+  return {
+    role: 'button',
+    name: MASHUP_PICKER.select,
+    within: {
+      around: mashupSongTitle(title, nth),
+      levels: MASHUP_ROW_LEVELS,
+      description: 'the song’s row in the Mashup dialog',
+    },
+    description: 'the song’s Select in the Mashup dialog',
+  };
+}
+
+/** A clip of Suno's answer to the dialog's search: its ID and title. */
+export interface MashupClip {
+  id: string;
+  title: string;
+}
+
+/**
+ * The clips of a feed answer, in order, when it lists `sunoId` (the song looked for); null
+ * otherwise, so another list the page asked for is not taken for the search's.
+ */
+export function mashupClipsOf(body: unknown, sunoId: string): MashupClip[] | null {
+  const clips =
+    typeof body === 'object' && body !== null && 'clips' in body && Array.isArray(body.clips)
+      ? (body.clips as unknown[])
+      : [];
+  const read = clips.flatMap((clip) =>
+    typeof clip === 'object' &&
+    clip !== null &&
+    'id' in clip &&
+    typeof clip.id === 'string' &&
+    'title' in clip &&
+    typeof clip.title === 'string'
+      ? [{ id: clip.id, title: clip.title }]
+      : [],
+  );
+  return read.length === clips.length && read.some((clip) => clip.id === sunoId) ? read : null;
+}
+
+/** The second song's row in the dialog, and how it was told: by its Suno ID, or by its title. */
+export type MashupChoice =
+  { kind: 'row'; by: 'id' | 'title'; select: Target } | { kind: 'none' } | { kind: 'several' };
+
+/**
+ * Which row of the dialog is `song` (#438). Read only. By its Suno ID when Suno's answer to the
+ * search (`clips`, in order) matches the rows one for one: as many rows as clips, and for each
+ * title as many rows as clips of it, so the clip's place among the clips of its title is its row's
+ * among the rows of that title. Otherwise by the one row whose whole title is the song's exactly;
+ * none, or several, is no choice.
+ */
+export function mashupChoice(
+  page: Page,
+  song: { title: string; sunoId: string },
+  clips: readonly MashupClip[] | null,
+): MashupChoice {
+  const rows = page.readAll(MASHUP_SELECTS).length;
+  const index = clips === null ? -1 : clips.findIndex((clip) => clip.id === song.sunoId);
+  const clip = clips?.[index];
+  if (clips !== null && clip !== undefined && rows === clips.length) {
+    const titles = new Set(clips.map((each) => each.title));
+    const matched = [...titles].every(
+      (title) =>
+        title.trim() !== '' &&
+        page.readAll(mashupSongTitle(title)).length ===
+          clips.filter((each) => each.title === title).length,
+    );
+    if (matched) {
+      const nth = clips.slice(0, index).filter((each) => each.title === clip.title).length;
+      return { kind: 'row', by: 'id', select: mashupSongSelect(clip.title, nth) };
+    }
+  }
+  const named = song.title.trim() === '' ? 0 : page.readAll(mashupSongTitle(song.title)).length;
+  if (named === 1) {
+    return { kind: 'row', by: 'title', select: mashupSongSelect(song.title) };
+  }
+  return named === 0 ? { kind: 'none' } : { kind: 'several' };
+}
+
+/**
+ * Whether the Mashup shows its first song only: the Audio section names Mashup and its one player's
+ * thumbnail is the first song's. Read only; then its second song may be added (#438).
+ */
+export function mashupShowsFirstOnly(page: Page, load: LoadedSource): boolean {
+  if (load.route !== SOURCE_ROUTES.mashup) {
+    return false;
+  }
+  const condition = page.find(AUDIO_CONDITION);
+  if (condition.kind !== 'found' || page.read(condition.found).text !== load.route.label) {
+    return false;
+  }
+  const shown = page.readAll(MASHUP_PLAYER);
+  return shown.length === 1 && holdsClip(shown[0]?.image ?? null, load.sunoId);
+}
 
 /** The Extend's continue-at time ("Extend from 00:54.0"): the one editable text in the section. */
 export const EXTEND_FROM: Target = {

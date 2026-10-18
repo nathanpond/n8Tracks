@@ -20,6 +20,8 @@
  * - In Create's Save to picker (#435, {@link SAVE_TO_PICKER}), a dialog or not, only a workspace's
  *   row "<name> (<N> clips)" may be pressed, and none whose name starts with one of those words:
  *   its "+" button and a "Create …" row may create a workspace, and are refused.
+ * - In Suno's "Add a song to mashup" dialog (#438, {@link MASHUP_PICKER}), only a song's Select,
+ *   the search box, and Close: its tabs, filter, sort, play, and like buttons are refused.
  *
  * False positives are accepted: a refusal stops the workflow, it never presses something else.
  *
@@ -115,6 +117,24 @@ export const KEY_NOTES: readonly string[] = [
 ];
 
 /**
+ * Suno's "Add a song to mashup" dialog (#438), opened by the form's "Add another song to Mashup"
+ * once a Mashup holds its first song (the owner's capture of 2026-10-18; its markup and roles were
+ * not seen live, so `page.create-source-mashup-add-song-dialog.html` is constructed). It holds the
+ * tabs My Library and Everything, a search box, a filter, a sort, and a liked-songs button, and a
+ * list of the user's songs, each with a play button on its thumbnail, a like button, and Select.
+ * Only the search box (typed into, never pressed), a row's Select, and the dialog's Close (×) may
+ * be pressed: the tabs, the filter and sort, play, and like are refused, so the list stays the
+ * user's library as it is and no song is liked or played.
+ */
+export const MASHUP_PICKER = {
+  title: 'Add a song to mashup',
+  field: 'Search for a song in your library…',
+  select: 'Select',
+  close: 'Close',
+  snapshot: 'create-source-mashup-add-song-dialog',
+} as const;
+
+/**
  * Dialogs whose controls may be pressed (TS-003, TS-005). Loading a source onto a filled form asks
  * whether to overwrite the lyrics and styles, or only the styles (an instrumental source, TS-005);
  * either answer only changes the form. The Voice picker ("+ Voice") may be closed and its two lists switched, and a voice chosen
@@ -125,7 +145,8 @@ export const KEY_NOTES: readonly string[] = [
  * untitled dialog. The Download dialog is not here either: its controls are the named exception
  * {@link DOWNLOAD_CLIP}, which only the download primitive presses (#216). The Model dialog
  * (#427, TS-007-10) lists the models as rows: a model's row may be pressed, its "Create Custom
- * Model" row never (it spends credits), and Close if it has one.
+ * Model" row never (it spends credits), and Close if it has one. In Suno's "Add a song to mashup"
+ * dialog (#438, {@link MASHUP_PICKER}) only a song's Select, the search box, and Close.
  */
 export const RECOGNISED_DIALOGS: readonly RecognisedDialog[] = [
   {
@@ -156,6 +177,11 @@ export const RECOGNISED_DIALOGS: readonly RecognisedDialog[] = [
     allows: ['Close'],
     pressesRows: true,
     snapshot: 'create-songs-advanced-model-dialog',
+  },
+  {
+    title: MASHUP_PICKER.title,
+    allows: [MASHUP_PICKER.select, MASHUP_PICKER.close, MASHUP_PICKER.field],
+    snapshot: MASHUP_PICKER.snapshot,
   },
 ];
 

@@ -25,10 +25,13 @@ import { loadMore } from './loadMore.ts';
 import { recogniseSuno } from './recognise.ts';
 import {
   answerOverwrite,
+  chooseMashupSong,
   chooseSourceAction,
   chooseVoice,
+  closeMashupDialog,
   closeVoicePicker,
   openSourceMenu,
+  searchMashupSong,
   setExtendFrom,
   verifySourceAdvanced,
   verifySourceSimple,
@@ -64,6 +67,9 @@ export const ADAPTER_WORKFLOWS: readonly Workflow[] = [
   answerOverwrite,
   verifySourceAdvanced,
   verifySourceSimple,
+  searchMashupSong,
+  chooseMashupSong,
+  closeMashupDialog,
   setExtendFrom,
   chooseVoice,
   closeVoicePicker,

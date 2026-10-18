@@ -4782,3 +4782,27 @@ Story #219 (on the milestone branch):
 - **Decision:** No e2e change: the Generate on Suno spec sets Style Influence through the API for a Version with no source, which Audio Influence does not touch. The portable schema lists "every Suno option" without naming them, so it needs no change.
   **Why:** The task's rule for e2e and the portable format.
   **Issue:** #436
+
+## M4 captures — #438 (part 2) a Mashup's second song through Suno's "Add a song to mashup" dialog — 2026-10-18
+
+- **Decision:** Once the Mashup shows its first song only, an Advanced Mashup of two Suno clips whose second has a title gets the second song added by the extension: `search-mashup-song` presses "Add another song to Mashup", checks the dialog's My Library tab is selected (never pressing a tab), and types the title into "Search for a song in your library…" (native setter and `input` event; never Enter); `choose-mashup-song` presses one row's Select; the tab waits up to 3 s for the dialog to close, and the existing verification of both songs runs. No new reported step: it runs inside `verify source`, so the server's fixed step list is unchanged.
+  **Why:** The owner's capture and design of 2026-10-18 (#438 comment).
+  **Issue:** #438
+- **Decision:** The row is told by its Suno ID when a `POST /api/feed/v3` answer (already observed as `library-feed`; no new observed kind) that lists the second song arrives within 3 s of the typing and matches the rows one for one: as many rows as clips, and for each title as many rows as clips of it. The clip's place among the clips of its title is then its row's place among the rows of that title. Otherwise it is the one row whose title element's whole text equals the title exactly (case and spaces as written). Answers the page had before the typing are set aside, and the last answer within the wait is taken.
+  **Why:** Suno makes two clips per Create with one title, so the title alone is often ambiguous. Requiring the counts to match keeps an unrelated list (the library pane's, or the unsearched list) from being mapped onto the rows. The source's title may be n8Tracks' Song title rather than Suno's, so the exact-title path may miss; it then falls back.
+  **Issue:** #438
+- **Decision:** A new primitive option, `Target.nth`, finds the match at a named place among several (document order). It is used only for the rows told apart by Suno's answer. Otherwise `find` still never chooses between two matches.
+  **Why:** Two rows of one title look the same on the page; only the answer's order tells them apart, and the row's Select is found from its title.
+  **Issue:** #438
+- **Decision:** With no row of exactly the title, several and no matching answer, or a dialog not as expected, `close-mashup-dialog` presses the dialog's Close (else sends Escape), and the existing by-hand Continue path asks for the song with the reason. A wrong song would fail the thumbnail verification and fall back the same way.
+  **Why:** The issue keeps the by-hand path as the fallback. Closing first matters because the form may be hidden while the dialog is open.
+  **Issue:** #438
+- **Decision (invariant 4):** "Add a song to mashup" is a recognised dialog by its title, allowing only `Select`, `Close`, and the search box. Its tabs, filter "(3)", sort "New", the liked-songs filter, each row's play and like, and any Create, Publish, or Delete Suno may add are refused. Guard recipes for the three new workflows, matcher tests on both snapshots, and bite tests (each refused control, added Create/Publish/Delete buttons, a click around the primitives) were added.
+  **Why:** The design: never press like, play, the tabs, the filters, or the sort.
+  **Issue:** #438
+- **Decision:** `page.create-source-mashup-add-song-dialog.html` and `page.create-source-mashup-add-song-search.html` are constructed from the owner's screenshots on `page.create-source-mashup-one-song.html`. The titles are generic, not the screenshot's: the owner's titles are listed in the local redaction terms. IDs are placeholders. The markup, roles, and names, whether the search goes to the server, the answer's order, and whether Select closes the dialog need live confirmation. `ADAPTER_VERSION` 29.
+  **Why:** There is no HTML capture. If the live markup differs, a workflow stops at its step and the song is left to the user. Nothing else is pressed.
+  **Issue:** #438
+- **Decision:** Inspiration is unchanged. Its one-song snapshot has no "Add another song" button and the Inspo area was not captured in use, so the code path is not shared.
+  **Why:** Out of scope unless trivially shared.
+  **Issue:** #438

@@ -27,6 +27,7 @@ import {
   NOT_SIGNED_IN,
   COMPLETION_LIMIT_MS,
   loadByHandFirst,
+  MASHUP_NOT_ADDED,
   SunoGenerate,
 } from './sunoGenerate.ts';
 
@@ -1333,6 +1334,7 @@ function sourceTab(options: SourceTabOptions) {
   });
   return {
     generate,
+    feed,
     asked,
     shown,
     pressed,
@@ -1964,6 +1966,151 @@ describe('Generate on Suno in the Suno tab: the clip’s page and the actions TS
       note: '“Origin” and “Second” are on the form: the Audio section names Mashup and shows each one’s thumbnail.',
     });
     expect(tab.steps().at(-1)).toBe('waiting review and create');
+  });
+
+  describe('adding a Mashup’s second song through Suno’s “Add a song to mashup” dialog (#438)', () => {
+    const ID = (n: number) => `00000000-0000-4000-8000-0000000004${String(n).padStart(2, '0')}`;
+    const ROWS = [
+      { title: 'Paper Lanterns x The Long Thaw (Mashup)', sunoId: ID(1) },
+      { title: 'Harbor Lights', sunoId: ID(2) },
+      { title: 'Morning Rain', sunoId: ID(3) },
+      { title: 'The Long Thaw', sunoId: ID(4) },
+      { title: 'The Long Thaw', sunoId: ID(5) },
+    ];
+    /** The dialog's controls the extension must never press, and Suno's own forbidden words. */
+    const NEVER = /^(like|play$|my library|everything|\(3\)|new$|create|publish|delete)/i;
+
+    function mashupTab(secondId: string) {
+      const second = coverSource({
+        sunoAction: 'mashup',
+        sunoId: secondId,
+        position: 2,
+        title: 'The Long Thaw',
+      });
+      const tab = sourceTab({
+        job: job({
+          workspace: ON_MY_WORKSPACE,
+          form: advancedForm({
+            sources: [coverSource({ sunoAction: 'mashup', sunoId: LOADED_CLIP }), second],
+          }),
+          source: { phase: 'chosen', sunoId: LOADED_CLIP },
+        }),
+        address: 'https://suno.com/create',
+        html: snapshotHtml('create-source-mashup-one-song'),
+      });
+      const keys: string[] = [];
+      document.addEventListener('keydown', (event) => keys.push(event.key), { capture: true });
+      return { tab, keys };
+    }
+
+    /** Suno answering the dialog's search with the rows it shows, as `POST /api/feed/v3` would. */
+    function answering(tab: ReturnType<typeof sourceTab>): StandInOptions['onMashupSearch'] {
+      return (_query, shown) => {
+        tab.feed.take(
+          observed('library-feed', {
+            clips: shown.map((row) => ({ id: row.sunoId, title: row.title })),
+            has_more: false,
+          }),
+        );
+      };
+    }
+
+    const BOTH =
+      '“Origin” and “The Long Thaw” are on the form: the Audio section names Mashup and shows each one’s thumbnail.';
+
+    it('adds it by its one row of exactly its title when Suno sends no answer, pressing only Select', async () => {
+      const { tab, keys } = mashupTab(ID(4));
+      const standIn = standInForSuno(document, { mashupRows: ROWS.slice(0, 4) });
+      try {
+        await tab.generate.resume();
+      } finally {
+        standIn.stop();
+      }
+
+      expect(audioResult(tab.last())).toMatchObject({ outcome: 'verified', note: BOTH });
+      expect(tab.shown.some((state) => state.kind === 'source')).toBe(false);
+      expect(tab.steps()).not.toContain('filling load source by hand');
+      expect(tab.pressed.slice(0, 2)).toEqual(['Add another song to mashup', 'Select']);
+      expect(tab.pressed.filter((name) => name === 'Select')).toHaveLength(1);
+      expect(tab.pressed.filter((name) => NEVER.test(name))).toEqual([]);
+      expect(keys).not.toContain('Enter');
+      expect(tab.steps().at(-1)).toBe('waiting review and create');
+    });
+
+    it.each([4, 5])(
+      'adds it by its Suno ID when Suno answers the search, of two rows with its title (the clip …40%i)',
+      async (n) => {
+        const { tab, keys } = mashupTab(ID(n));
+        const standIn = standInForSuno(document, {
+          mashupRows: ROWS,
+          onMashupSearch: answering(tab),
+        });
+        try {
+          await tab.generate.resume();
+        } finally {
+          standIn.stop();
+        }
+
+        // Verified by both thumbnails: the row pressed was the clip's own.
+        expect(audioResult(tab.last())).toMatchObject({ outcome: 'verified', note: BOTH });
+        expect(tab.shown.some((state) => state.kind === 'source')).toBe(false);
+        expect(tab.pressed.filter((name) => name === 'Select')).toHaveLength(1);
+        expect(tab.pressed.filter((name) => NEVER.test(name))).toEqual([]);
+        expect(keys).not.toContain('Enter');
+      },
+    );
+
+    it.each([
+      ['two rows of its title, and no answer', 'several', ROWS, false],
+      ['two rows of its title, and an answer that does not match the rows', 'several', ROWS, true],
+      ['no row of exactly its title', 'none', ROWS.slice(0, 3), false],
+    ] as const)(
+      'closes the dialog and asks for the song by hand: %s',
+      async (_case, problem, rows, mismatched) => {
+        const { tab, keys } = mashupTab(ID(5));
+        const standIn = standInForSuno(document, {
+          mashupRows: rows,
+          // An answer that lists the song but not as the rows show: one clip short.
+          ...(mismatched
+            ? {
+                onMashupSearch: (
+                  query: string,
+                  shown: readonly { title: string; sunoId: string }[],
+                ) => {
+                  answering(tab)?.(query, shown.slice(1));
+                },
+              }
+            : {}),
+        });
+        try {
+          const running = tab.generate.resume();
+          await untilWaitingForSource(tab.generate);
+          expect(tab.steps()).not.toContain('filling fill form');
+          const waiting = tab.last();
+          const message = waiting?.kind === 'source' ? waiting.message : '';
+          expect(message).toContain(`(${MASHUP_NOT_ADDED[problem]})`);
+          expect(message).toContain('Add “The Long Thaw” with “Add another song to Mashup”');
+          // Closed by its ×, no Select pressed, nothing else of the dialog either.
+          expect(document.querySelector('[role="dialog"]')).toBeNull();
+          expect(tab.pressed).toEqual(['Add another song to mashup', 'Close']);
+          expect(keys).not.toContain('Enter');
+
+          // The user adds the song by hand, and presses Continue.
+          const region = document.querySelector('[role="region"]');
+          const player = region?.querySelector('[role="button"]')?.cloneNode(true) as Element;
+          player
+            .querySelector('img')
+            ?.setAttribute('src', `https://cdn2.suno.ai/image_${ID(5)}.jpeg`);
+          region?.append(player);
+          tab.generate.continueSource();
+          await running;
+        } finally {
+          standIn.stop();
+        }
+
+        expect(audioResult(tab.last())).toMatchObject({ outcome: 'verified', note: BOTH });
+      },
+    );
   });
 
   it('chooses the Version’s voice before filling, and reports it verified by its link', async () => {

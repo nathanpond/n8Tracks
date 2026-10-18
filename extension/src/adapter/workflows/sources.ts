@@ -2,12 +2,19 @@ import { sunoPage } from '../addresses.ts';
 import type { Page, Target } from '../primitives.ts';
 import {
   actionItem,
+  ADD_MASHUP_SONG,
   ADD_VOICE,
   AUDIO_CONDITION,
   chosenVoice,
   EXTEND_FROM,
   extendSeconds,
   extendTime,
+  MASHUP_CLOSE,
+  MASHUP_DIALOG,
+  MASHUP_LIBRARY_TAB,
+  MASHUP_SEARCH,
+  MASHUP_SELECTS,
+  mashupChoice,
   MORE_OPTIONS,
   OVERWRITE_BUTTON,
   SIMPLE_CHIP_THUMBNAIL,
@@ -17,6 +24,7 @@ import {
   VOICE_DIALOG,
   voiceTitle,
   type LoadedSource,
+  type MashupClip,
   type SourceRoute,
 } from '../sources.ts';
 import { expected, OK, present, type Check, type StepContext, type Workflow } from '../workflow.ts';
@@ -375,4 +383,168 @@ export const closeVoicePicker: Workflow = {
     },
   ],
   fixtures: ['create-voice-selected'],
+};
+
+/** How long the Mashup dialog's list may take to show the song once its title is typed. */
+export const MASHUP_ROW_WAIT_MS = 3_000;
+
+/** Searching for a Mashup's second song (#438): its Suno title and ID. */
+export interface SearchMashupSongContext extends StepContext {
+  song: { title: string; sunoId: string };
+}
+
+/** Choosing it: the song, and the clips of Suno's answer to the search, in order, if one came. */
+export interface ChooseMashupSongContext extends SearchMashupSongContext {
+  clips: readonly MashupClip[] | null;
+  /** How the row was told, once its Select was pressed: by the song's Suno ID, or by its title. */
+  chosen: { by: 'id' | 'title' | null };
+}
+
+function mashupDialogOpen(page: Page): boolean {
+  return page.find(MASHUP_DIALOG).kind === 'found';
+}
+
+/** The dialog's list is the user's library: its My Library tab, when it shows one, is selected. */
+function onMyLibrary(page: Page): Check {
+  const tab = page.find(MASHUP_LIBRARY_TAB);
+  return tab.kind === 'found' && page.read(tab.found).selected === false
+    ? expected('the Mashup dialog to show My Library (the extension never presses its tabs)')
+    : OK;
+}
+
+/**
+ * Searches for a Mashup's second song (#438, the owner's capture of 2026-10-18): "Add another song
+ * to Mashup" opens Suno's "Add a song to mashup" dialog, and on its My Library list (never another
+ * tab) the song's Suno title is typed into "Search for a song in your library…" (the native setter
+ * and an `input` event, as `search-workspaces` types, #434; never Enter). It presses nothing else.
+ */
+export const searchMashupSong: Workflow<SearchMashupSongContext> = {
+  id: 'search-mashup-song',
+  title: 'Search for the Mashup’s second song',
+  feature: 'generate',
+  startsOn: sunoPage('create'),
+  after: 'choose-source-action',
+  needs: [
+    {
+      step: 'mashup dialog',
+      check: (page) => (mashupDialogOpen(page) ? OK : present(page, ADD_MASHUP_SONG)),
+    },
+  ],
+  steps: [
+    {
+      name: 'mashup dialog',
+      expect: ({ page }) => (mashupDialogOpen(page) ? OK : present(page, ADD_MASHUP_SONG)),
+      act: ({ page }) => {
+        if (mashupDialogOpen(page)) {
+          return;
+        }
+        const button = page.find(ADD_MASHUP_SONG);
+        if (button.kind === 'found') {
+          page.click(button.found);
+        }
+      },
+      verify: ({ page }) => present(page, MASHUP_SEARCH),
+    },
+    {
+      name: 'song title',
+      expect: ({ page }) => {
+        const library = onMyLibrary(page);
+        return library.ok ? present(page, MASHUP_SEARCH) : library;
+      },
+      act: ({ page, song }) => {
+        const box = page.find(MASHUP_SEARCH);
+        if (box.kind === 'found' && page.read(box.found).value !== song.title) {
+          page.set(box.found, song.title);
+        }
+      },
+      verify: ({ page, song }) => {
+        const box = page.find(MASHUP_SEARCH);
+        return box.kind === 'found' && page.read(box.found).value === song.title
+          ? OK
+          : expected(`${MASHUP_SEARCH.description} to hold the song’s title`);
+      },
+    },
+  ],
+  fixtures: ['create-source-mashup-add-song-dialog', 'create-source-mashup-add-song-search'],
+};
+
+/**
+ * Chooses the searched song in the "Add a song to mashup" dialog (#438): its row is told by its
+ * Suno ID when Suno's answer to the search matches the rows one for one, else by the one row whose
+ * whole title is the song's (`mashupChoice`), and its Select is pressed. Nothing else is pressed:
+ * the matcher refuses the dialog's tabs, filter, sort, play, and like buttons. With no such row,
+ * or more than one, the step stops, and the content script closes the dialog and leaves the song
+ * to the user. Suno closing the dialog on a choice, and the form showing the song, are read by the
+ * content script afterwards (neither was seen live).
+ */
+export const chooseMashupSong: Workflow<ChooseMashupSongContext> = {
+  id: 'choose-mashup-song',
+  title: 'Choose the Mashup’s second song',
+  feature: 'generate',
+  startsOn: sunoPage('create'),
+  after: 'search-mashup-song',
+  needs: [{ step: 'song row', check: (page) => present(page, MASHUP_SELECTS) }],
+  steps: [
+    {
+      name: 'song row',
+      expect: ({ page, song, clips }) => {
+        const choice = mashupChoice(page, song, clips);
+        return choice.kind === 'row'
+          ? OK
+          : expected(
+              choice.kind === 'none'
+                ? 'a song in the Mashup dialog’s list named exactly as the Version’s second song'
+                : 'one song in the Mashup dialog’s list named as the Version’s second song (found more than one, so none was chosen)',
+            );
+      },
+      act: ({ page, song, clips, chosen }) => {
+        const choice = mashupChoice(page, song, clips);
+        if (choice.kind !== 'row') {
+          return;
+        }
+        const select = page.find(choice.select);
+        if (select.kind === 'found') {
+          page.click(select.found);
+          chosen.by = choice.by;
+        }
+      },
+      // What follows a choice is read by the content script: the dialog closing, and the form.
+      verify: () => OK,
+      timeoutMs: MASHUP_ROW_WAIT_MS,
+    },
+  ],
+  fixtures: ['create-source-mashup-add-song-dialog', 'create-source-mashup-add-song-search'],
+};
+
+/**
+ * Closes the "Add a song to mashup" dialog when the song could not be chosen in it, by its Close
+ * (×), else with Escape: while it is open, the form may be hidden behind it.
+ */
+export const closeMashupDialog: Workflow = {
+  id: 'close-mashup-dialog',
+  title: 'Close the Mashup dialog',
+  feature: 'generate',
+  startsOn: sunoPage('create'),
+  needs: [{ step: 'dialog closed', check: () => OK }],
+  steps: [
+    {
+      name: 'dialog closed',
+      expect: () => OK,
+      act: ({ page }) => {
+        const dialog = page.find(MASHUP_DIALOG);
+        if (dialog.kind !== 'found') {
+          return;
+        }
+        const close = page.find(MASHUP_CLOSE);
+        if (close.kind === 'found') {
+          page.click(close.found);
+        } else {
+          page.dismiss(dialog.found);
+        }
+      },
+      verify: ({ page }) => (mashupDialogOpen(page) ? expected('the Mashup dialog, closed') : OK),
+      timeoutMs: MASHUP_ROW_WAIT_MS,
+    },
+  ],
+  fixtures: ['create-source-mashup-one-song'],
 };
