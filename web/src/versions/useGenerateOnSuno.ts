@@ -15,6 +15,7 @@ import { extensionProblem, type ExtensionProblem } from './generateRules';
 export type Problem =
   | { kind: 'extension'; problem: ExtensionProblem }
   | { kind: 'blocked'; sources: UnavailableSource[]; lastSyncAt: string | null }
+  | { kind: 'mashup'; message: string }
   | { kind: 'handoff'; message: string }
   | { kind: 'failed'; message: string };
 
@@ -71,6 +72,9 @@ export function useGenerateOnSuno(versionId: string): GenerateOnSunoController {
               sources: created.sources,
               lastSyncAt: created.lastSyncAt,
             });
+            return;
+          case 'mashup-incomplete':
+            setProblem({ kind: 'mashup', message: created.message });
             return;
           case 'gone':
             setProblem({ kind: 'failed', message: 'This Version is no longer there.' });

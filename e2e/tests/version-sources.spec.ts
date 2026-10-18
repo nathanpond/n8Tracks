@@ -200,7 +200,7 @@ test.describe('Choose a Version’s sources', () => {
     // 2. Mashup asks for a second source; one is added.
     await action.selectOption({ label: 'Mashup' });
     await expect(sources(page).getByTestId('mashup-needs-second')).toHaveText(
-      'A Mashup needs a second source.',
+      'A Mashup needs a second song. Generate on Suno will not start until it has one.',
     );
     await expect(audio.getByTestId('source-shortcode')).toHaveText(fixture.first);
     await sources(page).getByRole('button', { name: 'Add the second source' }).click();

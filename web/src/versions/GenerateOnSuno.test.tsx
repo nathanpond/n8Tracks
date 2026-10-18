@@ -239,6 +239,37 @@ describe('Generate on Suno', () => {
     expect(screen.queryByTestId('generation-request')).toBeNull();
   });
 
+  it('says a one-song Mashup needs a second song in an alert first in the panel, brought into view, and makes nothing', async () => {
+    const scrolled = vi.spyOn(Element.prototype, 'scrollIntoView');
+    serve({
+      create: () =>
+        jsonResponse(422, {
+          code: 'mashup_needs_two_songs',
+          title: 'A Mashup needs a second song.',
+        }),
+    });
+    const { bridge, sent } = fakeBridge({ kind: 'ready', extensionVersion: '0.1.0' });
+    renderAction(bridge);
+
+    await choose();
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toBe(screen.getByTestId('mashup-needs-two-songs'));
+    expect(alert).toHaveTextContent('Generate on Suno did not start');
+    expect(alert).toHaveTextContent('A Mashup needs a second song.');
+    expect(alert).toHaveTextContent('Add the second song under Sources');
+    expect(alert).toHaveTextContent('no request was made');
+    const panel = screen.getByRole('region', { name: 'Generate on Suno' });
+    expect(panel.querySelector('[role="alert"]')).toBe(alert);
+    expect(scrolled.mock.contexts).toContain(panel);
+    expect(screen.getByRole('button', { name: 'Generate on Suno' })).toHaveAccessibleDescription(
+      /A Mashup needs a second song\./,
+    );
+    expect(sent).toEqual([]);
+    expect(screen.queryByTestId('generation-request')).toBeNull();
+    scrolled.mockRestore();
+  });
+
   it('cancels a request the extension did not take, and says why', async () => {
     const server = serve({});
     const { bridge } = fakeBridge(

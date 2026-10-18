@@ -76,9 +76,13 @@ export interface UnavailableSource {
   availability: 'deleted' | 'trashed' | 'missing';
 }
 
+/** What n8Tracks says when a Mashup names one song (#438): 422 `mashup_needs_two_songs`. */
+export const MASHUP_NEEDS_TWO_SONGS = 'A Mashup needs a second song.';
+
 export type CreateRequestResult =
   | { kind: 'created'; request: GenerationRequest }
   | { kind: 'blocked'; sources: UnavailableSource[]; lastSyncAt: string | null }
+  | { kind: 'mashup-incomplete'; message: string }
   | { kind: 'gone' }
   | { kind: 'failed' };
 
@@ -193,7 +197,11 @@ function isUnavailableSource(value: unknown): value is UnavailableSource {
 const versionPath = (versionId: string) => `api/v1/versions/${encodeURIComponent(versionId)}`;
 const requestPath = (id: string) => `api/v1/suno/generation-requests/${encodeURIComponent(id)}`;
 
-/** Makes a request from the Version, as it is now. */
+/**
+ * Makes a request from the Version, as it is now. Refused with nothing made (422) when the Version's
+ * Mashup names one song (`mashup_needs_two_songs`, checked first) or a source it needs cannot be
+ * used (`sources_unavailable`).
+ */
 export async function createGenerationRequest(versionId: string): Promise<CreateRequestResult> {
   try {
     const response = await apiFetch(`${versionPath(versionId)}/generation-requests`, {
@@ -209,6 +217,15 @@ export async function createGenerationRequest(versionId: string): Promise<Create
     }
     if (response.status === 404) {
       return { kind: 'gone' };
+    }
+    if (response.status === 422 && isRecord(answer) && answer.code === 'mashup_needs_two_songs') {
+      return {
+        kind: 'mashup-incomplete',
+        message:
+          typeof answer.title === 'string' && answer.title !== ''
+            ? answer.title
+            : MASHUP_NEEDS_TWO_SONGS,
+      };
     }
     if (
       response.status === 422 &&

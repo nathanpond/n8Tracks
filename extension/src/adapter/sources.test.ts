@@ -12,6 +12,7 @@ import {
   extendTime,
   holdsClip,
   INSPIRATION_ROUTE,
+  MASHUP_NEEDS_TWO_SONGS,
   planSources,
   SOURCE_ROUTES,
   sourceEntryResult,
@@ -157,6 +158,20 @@ describe('the source plan (#148)', () => {
     expect(plan.stop).toBe(
       'The Version’s source “Night Drive (demo)” is in Suno’s Trash; “Gone” is no longer in Suno’s library, so nothing on Suno’s form was changed. Restore it in Suno and sync, or change the Version’s sources, then start again.',
     );
+  });
+
+  it('stops on a Mashup with one song, as n8Tracks refuses it, before anything else (#438)', () => {
+    const plan = planSources(
+      form({ sources: [source({ sunoAction: 'mashup', availability: 'trashed' })] }),
+    );
+
+    expect(plan.load).toBeNull();
+    expect(plan.stop).toBe(
+      'A Mashup needs a second song. Nothing on Suno’s form was changed. Add the second song to the Version’s sources in n8Tracks, then start again.',
+    );
+    expect(plan.stop?.startsWith(MASHUP_NEEDS_TWO_SONGS)).toBe(true);
+    // Another action with its one song is not stopped.
+    expect(planSources(form({ sources: [source({ sunoAction: 'cover' })] })).stop).toBeNull();
   });
 
   it('refuses more than four Inspiration songs, which Suno does not take', () => {
@@ -473,6 +488,15 @@ describe('the clip’s own page (#148, TS-005)', () => {
 
 describe('the Advanced form after Extend, Sample, Mashup, and Inspiration (#148, TS-005)', () => {
   const advanced = (sources: FormSource[]): LoadedSource => loaded(form({ sources }));
+  // The plan stops on a one-song Mashup (#438); the workflow is still checked against the
+  // one-song snapshot with the load it would be given.
+  const loadOf = (one: FormSource): LoadedSource => {
+    const route = SOURCE_ROUTES.mashup;
+    if (one.sunoAction !== 'mashup' || route === undefined) {
+      return advanced([one]);
+    }
+    return { source: one, sunoId: one.sunoId ?? '', route, others: [] };
+  };
   const inspiration = (sunoId: string, position = 1): FormSource =>
     source({
       key: 'songs.advanced.inspiration',
@@ -492,10 +516,10 @@ describe('the Advanced form after Extend, Sample, Mashup, and Inspiration (#148,
       const page = loadSnapshot(snapshot);
 
       const right = await run(page, verifySourceAdvanced, {
-        load: advanced([source({ sunoAction: action, sunoId: LOADED_SOURCE })]),
+        load: loadOf(source({ sunoAction: action, sunoId: LOADED_SOURCE })),
       });
       const wrong = await run(page, verifySourceAdvanced, {
-        load: advanced([source({ sunoAction: action, sunoId: OTHER_CLIP })]),
+        load: loadOf(source({ sunoAction: action, sunoId: OTHER_CLIP })),
       });
       const otherAction = await run(page, verifySourceAdvanced, {
         load: advanced([source({ sunoAction: 'cover', sunoId: LOADED_SOURCE })]),

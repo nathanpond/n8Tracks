@@ -421,6 +421,47 @@ public sealed class GenerationRequestTests
     }
 
     [Fact]
+    public async Task AOneSongMashupIsRefusedBeforeItsSourcesAreCheckedAndTwoSongsOrAnotherActionAreNot()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var original = await SongApi.CreateAsync(client, "Mashup original");
+        var first = await SongApi.AttachGenerationAsync(factory, VersionId(original).ToString(), Clips.Minimal("mashup-first"));
+        var second = await SongApi.AttachGenerationAsync(factory, VersionId(original).ToString(), Clips.Minimal("mashup-second"));
+        var versionId = VersionId(await SongApi.CreateAsync(client, "Half a mashup"));
+
+        // One song of a Mashup (partial work the editor keeps): refused, and nothing is made.
+        await EditAsync(client, versionId, $$$"""{"inputs":{"sources":[{"typeId":"{{{Mashup}}}","generation":"{{{first.Shortcode}}}"}]}}""");
+        using (var refused = await SongApi.SendJsonAsync(client, HttpMethod.Post, Requests(versionId), "{}"))
+        {
+            var problem = await ExpectProblemAsync(refused, HttpStatusCode.UnprocessableEntity, "mashup_needs_two_songs");
+            Assert.Equal("A Mashup needs a second song.", problem.GetProperty("title").GetString());
+        }
+
+        Assert.Equal(JsonValueKind.Null, (await CurrentAsync(client, versionId)).ValueKind);
+
+        // Its one song in Suno's Trash as well: the Mashup's own shortfall is what is said first.
+        TestDatabase.Execute(factory.DataPath, $"UPDATE generations SET remote_state = 'trashed' WHERE id = '{first.Generation.Id.ToString().ToUpperInvariant()}';");
+        using (var refused = await SongApi.SendJsonAsync(client, HttpMethod.Post, Requests(versionId), "{}"))
+        {
+            await ExpectProblemAsync(refused, HttpStatusCode.UnprocessableEntity, "mashup_needs_two_songs");
+        }
+
+        TestDatabase.Execute(factory.DataPath, $"UPDATE generations SET remote_state = 'present' WHERE id = '{first.Generation.Id.ToString().ToUpperInvariant()}';");
+
+        // Both songs: made, carrying both in order.
+        await EditAsync(client, versionId, $$$"""{"inputs":{"sources":[{"typeId":"{{{Mashup}}}","generation":"{{{first.Shortcode}}}"},{"typeId":"{{{Mashup}}}","generation":"{{{second.Shortcode}}}"}]}}""");
+        var token = await CredentialApi.CreateTokenAsync(factory, CredentialScopes.SunoGenerate);
+        var made = await ReadAsync(client, token, (await CreateAsync(client, versionId)).GetProperty("id").GetGuid());
+        Assert.Equal(["mashup:1", "mashup:2"], made.GetProperty("snapshot").GetProperty("sources").EnumerateArray().Select(static source =>
+            $"{source.GetProperty("sunoAction").GetString()}:{source.GetProperty("position").GetInt32()}"));
+
+        // Another audio action with its one song is not touched by the rule.
+        await EditAsync(client, versionId, $$$"""{"inputs":{"sources":[{"typeId":"{{{Cover}}}","generation":"{{{first.Shortcode}}}"}]}}""");
+        await CreateAsync(client, versionId);
+    }
+
+    [Fact]
     public async Task TheSnapshotCarriesTheSongsWorkspaceWithItsState()
     {
         using var factory = SongApi.Host();

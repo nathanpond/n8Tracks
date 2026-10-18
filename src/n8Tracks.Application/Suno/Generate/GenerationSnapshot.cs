@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
 using n8Tracks.Application.Songs;
+using n8Tracks.Domain.Catalog;
 using n8Tracks.Domain.Songs;
 
 namespace n8Tracks.Application.Suno.Generate;
@@ -255,6 +256,22 @@ public static class GenerationSnapshot
                 (string?)source["title"],
                 (string?)source["shortcode"],
                 (string)source["availability"]!))];
+    }
+
+    /// <summary>
+    /// Whether <paramref name="snapshot"/>'s audio action is Mashup with fewer than its two songs
+    /// (#438): the editor may hold a Mashup's first song as partial work, but Suno cannot make a
+    /// Mashup from one. A Version without the Mashup action, or with audio left out of what is sent
+    /// (its kind or mode takes none), is not short.
+    /// </summary>
+    public static bool MashupNeedsSecondSong(JsonObject snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+
+        var audio = (snapshot["sources"] as JsonArray ?? []).OfType<JsonObject>()
+            .Where(static source => (string?)source["group"] == "audio")
+            .ToList();
+        return audio.Any(static source => (string?)source["sunoAction"] == SunoActions.Mashup) && audio.Count < 2;
     }
 
     private static string TabOf(VersionKind kind) => kind switch

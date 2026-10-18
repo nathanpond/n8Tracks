@@ -1,4 +1,5 @@
-import { Anchor, Button, Group, List, Loader, Paper, Stack, Text } from '@mantine/core';
+import { Alert, Anchor, Button, Group, List, Loader, Paper, Stack, Text } from '@mantine/core';
+import { useEffect, useRef } from 'react';
 import { Link } from 'react-router';
 import type { ObservedCreate, Verification } from '../api/generationRequests';
 import { formatDateTime, useConfiguredTimeZone } from '../api/timeZone';
@@ -41,6 +42,13 @@ export function GenerateOnSunoButton({ controller }: { controller: GenerateOnSun
 export function GenerateOnSunoStatus({ controller }: { controller: GenerateOnSunoController }) {
   const timeZone = useConfiguredTimeZone();
   const { problem, request } = controller;
+  const panel = useRef<HTMLElement>(null);
+  // A refusal is said below the header, out of sight on a long page: bring it into view (#438).
+  useEffect(() => {
+    if (problem !== null) {
+      panel.current?.scrollIntoView({ block: 'nearest' });
+    }
+  }, [problem]);
   if (problem === null && request === null) {
     return <span id={`generate-on-suno-${controller.versionId}`} hidden />;
   }
@@ -48,6 +56,7 @@ export function GenerateOnSunoStatus({ controller }: { controller: GenerateOnSun
   const recorded = request === null ? 0 : recordedCreates(request);
   return (
     <Paper
+      ref={panel}
       withBorder
       p="sm"
       id={`generate-on-suno-${controller.versionId}`}
@@ -290,6 +299,27 @@ function ProblemView({
               : `Suno’s Trash and missing clips are as of the last confirmed sync, ${formatDateTime(problem.lastSyncAt, timeZone)}.`}
           </Text>
         </Stack>
+      );
+    case 'mashup':
+      // An alert, first in the panel, so it is not missed as the blocked message below it was (#438).
+      return (
+        <Alert
+          role="alert"
+          color="red"
+          variant="light"
+          title="Generate on Suno did not start"
+          data-testid="mashup-needs-two-songs"
+        >
+          <Stack gap={4}>
+            <Text size="sm" fw={600}>
+              {problem.message}
+            </Text>
+            <Text size="sm">
+              Add the second song under Sources in this Version, then choose Generate on Suno again.
+            </Text>
+            <Text size="xs">Nothing was sent to Suno and no request was made.</Text>
+          </Stack>
+        </Alert>
       );
     case 'handoff':
       return (
