@@ -23,6 +23,8 @@
  * - In Suno's "Add a song to mashup" dialog (#438, {@link MASHUP_PICKER}), only a song's
  *   "Add <title> to mashup" button (its Select), the "Search clips" box, and Close: its tabs,
  *   filter, sort, liked filter, rows, play, like, and Edit title buttons are refused.
+ * - In Suno's "Replace Lyrics?" question after a Mashup's second song (#438, {@link REPLACE_LYRICS}),
+ *   only Keep Current Lyrics and Close: "Mashup Lyrics" and "Use Lyrics from …" are refused.
  *
  * False positives are accepted: a refusal stops the workflow, it never presses something else.
  *
@@ -145,6 +147,23 @@ export const MASHUP_PICKER = {
 } as const;
 
 /**
+ * Suno's "Replace Lyrics?" question (#438, TS-007-19), asked once a Mashup's second song is added
+ * to a form that has lyrics: "You've already got lyrics. Do you want to swap, keep, or combine
+ * them?", with "Use Lyrics from "<the second song's title>"", "Keep Current Lyrics", "Mashup
+ * Lyrics", and a Close (×). Only Keep Current Lyrics (it changes nothing; the Version's own lyrics
+ * are filled afterwards) and Close may be pressed. "Mashup Lyrics" may generate lyrics and "Use
+ * Lyrics from …" replaces them with the song's, so both are refused. The owner saw it live on
+ * 2026-10-19 (screenshot); its markup is assumed to be the Overwrite question's (a Base UI
+ * `role=dialog` labelled by its title), not captured, so its fixture is constructed.
+ */
+export const REPLACE_LYRICS = {
+  title: 'Replace Lyrics?',
+  keep: 'Keep Current Lyrics',
+  close: 'Close',
+  snapshot: 'create-source-mashup-replace-lyrics-dialog',
+} as const;
+
+/**
  * Dialogs whose controls may be pressed (TS-003, TS-005). Loading a source onto a filled form asks
  * whether to overwrite the lyrics and styles, or only the styles (an instrumental source, TS-005);
  * either answer only changes the form. The Voice picker ("+ Voice") may be closed and its two lists switched, and a voice chosen
@@ -156,7 +175,9 @@ export const MASHUP_PICKER = {
  * {@link DOWNLOAD_CLIP}, which only the download primitive presses (#216). The Model dialog
  * (#427, TS-007-10) lists the models as rows: a model's row may be pressed, its "Create Custom
  * Model" row never (it spends credits), and Close if it has one. In Suno's "Add a song to mashup"
- * dialog (#438, {@link MASHUP_PICKER}) only a song's "Add … to mashup", the search box, and Close.
+ * dialog (#438, {@link MASHUP_PICKER}) only a song's "Add … to mashup", the search box, and Close;
+ * in the "Replace Lyrics?" question that follows it ({@link REPLACE_LYRICS}), Keep Current Lyrics
+ * and Close.
  */
 export const RECOGNISED_DIALOGS: readonly RecognisedDialog[] = [
   {
@@ -193,6 +214,11 @@ export const RECOGNISED_DIALOGS: readonly RecognisedDialog[] = [
     allows: [MASHUP_PICKER.close, MASHUP_PICKER.field],
     allowsButtons: MASHUP_PICKER.add,
     snapshot: MASHUP_PICKER.snapshot,
+  },
+  {
+    title: REPLACE_LYRICS.title,
+    allows: [REPLACE_LYRICS.keep, REPLACE_LYRICS.close],
+    snapshot: REPLACE_LYRICS.snapshot,
   },
 ];
 

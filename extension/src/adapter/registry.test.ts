@@ -162,6 +162,7 @@ describe('the self-check of chained workflows', () => {
     'set-extend-from': 'Verify the source (Advanced)',
     'search-mashup-song': 'Choose the Suno action',
     'choose-mashup-song': 'Search for the Mashup’s second song',
+    'answer-replace-lyrics': 'Choose the Mashup’s second song',
   };
 
   it('Demo step 1: on the intact Create page, every workflow is ready, waiting for an earlier step, or not for this page', () => {
@@ -304,6 +305,7 @@ describe('the registry', () => {
       'verify-source-simple',
       'search-mashup-song',
       'choose-mashup-song',
+      'answer-replace-lyrics',
       'close-mashup-dialog',
       'set-extend-from',
       'choose-voice',

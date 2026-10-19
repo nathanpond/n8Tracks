@@ -329,6 +329,7 @@ describe('the diagnostic report', () => {
       { id: 'verify-source-simple', state: 'not_checked', step: null },
       { id: 'search-mashup-song', state: 'not_checked', step: null },
       { id: 'choose-mashup-song', state: 'not_checked', step: null },
+      { id: 'answer-replace-lyrics', state: 'not_checked', step: null },
       { id: 'close-mashup-dialog', state: 'not_checked', step: null },
       { id: 'set-extend-from', state: 'not_checked', step: null },
       { id: 'choose-voice', state: 'not_checked', step: null },

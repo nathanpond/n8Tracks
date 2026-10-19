@@ -8,6 +8,7 @@ import {
   EXCEPTIONS,
   MASHUP_PICKER,
   RECOGNISED_DIALOGS,
+  REPLACE_LYRICS,
   SAVE_TO_PICKER,
   type ControlFacts,
   type Verdict,
@@ -165,7 +166,7 @@ describe('the forbidden-control matcher, on the TS-003 snapshots', () => {
     // 2.5 s here and over 5 s on a GitHub runner, so the limit is three times a CI run's ~10 s.
   }, 30_000);
 
-  it('recognises only the two Overwrite questions, the Voice picker, Simple’s Lyrics and Styles dialogs, the Key popover, the Model dialog, and the Mashup dialog', () => {
+  it('recognises only the two Overwrite questions, the Voice picker, Simple’s Lyrics and Styles dialogs, the Key popover, the Model dialog, the Mashup dialog, and its Replace Lyrics question', () => {
     expect(RECOGNISED_DIALOGS.map((dialog) => [dialog.title, dialog.allows])).toEqual([
       ['Overwrite Lyrics & Styles?', ['Overwrite', 'Keep Current']],
       ['Overwrite Styles?', ['Overwrite', 'Keep Current']],
@@ -195,6 +196,7 @@ describe('the forbidden-control matcher, on the TS-003 snapshots', () => {
       ],
       ['Model', ['Close']],
       ['Add a song to mashup', ['Close', 'Search clips']],
+      ['Replace Lyrics?', ['Keep Current Lyrics', 'Close']],
     ]);
     // Only the Mashup dialog allows buttons by a pattern: a song's "Add <title> to mashup" (#438).
     expect(
@@ -584,5 +586,43 @@ describe('the “Add a song to mashup” dialog (#438, TS-007-18)', () => {
         ].toSorted(),
       );
     }
+  });
+});
+
+describe('Suno’s “Replace Lyrics?” question after a Mashup’s second song (#438, TS-007-19)', () => {
+  const dialog = { title: REPLACE_LYRICS.title };
+  const REFUSED = { kind: 'forbidden', reason: 'the dialog it is in does not allow it' };
+
+  it('allows only Keep Current Lyrics and Close', () => {
+    expect(classify(facts({ name: 'Keep Current Lyrics', dialog })).kind).toBe('allowed');
+    expect(classify(facts({ name: 'Close', dialog })).kind).toBe('allowed');
+    for (const name of [
+      'Mashup Lyrics',
+      'Use Lyrics from "The Long Thaw"',
+      'Use Lyrics from “The Long Thaw”',
+      'Keep Current',
+      'Overwrite',
+      'Create',
+      'Publish',
+      'Delete',
+    ]) {
+      expect(classify(facts({ name, dialog })), name).toEqual(REFUSED);
+    }
+  });
+
+  it('on its snapshot, allows Keep Current Lyrics and Close, and refuses Mashup Lyrics and Use Lyrics from …', () => {
+    load(REPLACE_LYRICS.snapshot);
+    const open = document.querySelector('[role="dialog"]');
+    const verdicts = Object.fromEntries(
+      [...(open?.querySelectorAll('*') ?? [])]
+        .filter((element) => roleOf(element) !== null)
+        .map((element) => [nameOf(element), verdictOf(element).kind]),
+    );
+    expect(verdicts).toEqual({
+      Close: 'allowed',
+      'Use Lyrics from "The Long Thaw"': 'forbidden',
+      'Keep Current Lyrics': 'allowed',
+      'Mashup Lyrics': 'forbidden',
+    });
   });
 });

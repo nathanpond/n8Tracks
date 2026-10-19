@@ -9,6 +9,7 @@ import {
   EXTEND_FROM,
   extendSeconds,
   extendTime,
+  KEEP_CURRENT_LYRICS,
   MASHUP_CLOSE,
   MASHUP_DIALOG,
   MASHUP_LIBRARY_TAB,
@@ -505,6 +506,35 @@ export const chooseMashupSong: Workflow<SearchMashupSongContext> = {
     },
   ],
   fixtures: ['create-source-mashup-add-song-dialog', 'create-source-mashup-add-song-search'],
+};
+
+/**
+ * Suno asks "Replace Lyrics?" once a Mashup's second song is added to a form that has lyrics (#438,
+ * TS-007-19): Keep Current Lyrics, which changes nothing; the Version's own lyrics are filled
+ * afterwards. "Mashup Lyrics" (it may generate lyrics) and "Use Lyrics from …" are never pressed:
+ * the matcher refuses them. Suno closing the question is read by the content script afterwards.
+ */
+export const answerReplaceLyrics: Workflow = {
+  id: 'answer-replace-lyrics',
+  title: 'Answer Suno’s Replace Lyrics question',
+  feature: 'generate',
+  startsOn: sunoPage('create'),
+  after: 'choose-mashup-song',
+  needs: [{ step: 'Keep Current Lyrics', check: (page) => present(page, KEEP_CURRENT_LYRICS) }],
+  steps: [
+    {
+      name: 'Keep Current Lyrics',
+      expect: ({ page }) => present(page, KEEP_CURRENT_LYRICS),
+      act: ({ page }) => {
+        const button = page.find(KEEP_CURRENT_LYRICS);
+        if (button.kind === 'found') {
+          page.click(button.found);
+        }
+      },
+      verify: () => OK,
+    },
+  ],
+  fixtures: ['create-source-mashup-replace-lyrics-dialog'],
 };
 
 /**

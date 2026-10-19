@@ -25,6 +25,7 @@ import { loadMore } from './loadMore.ts';
 import { recogniseSuno } from './recognise.ts';
 import {
   answerOverwrite,
+  answerReplaceLyrics,
   chooseMashupSong,
   chooseSourceAction,
   chooseVoice,
@@ -69,6 +70,7 @@ export const ADAPTER_WORKFLOWS: readonly Workflow[] = [
   verifySourceSimple,
   searchMashupSong,
   chooseMashupSong,
+  answerReplaceLyrics,
   closeMashupDialog,
   setExtendFrom,
   chooseVoice,

@@ -1979,6 +1979,8 @@ describe('Generate on Suno in the Suno tab: the clip’s page and the actions TS
     /** The dialog's controls the extension must never press, and Suno's own forbidden words. */
     const NEVER =
       /^(like|play|edit title|my library|everything|\(3\)|new$|filter|create|publish|delete)|double-tap/i;
+    /** Suno's "Replace Lyrics?" answers (TS-007-19): only Keep Current Lyrics may be pressed. */
+    const LYRICS_ANSWERS = /^(keep current lyrics|mashup lyrics|use lyrics from)/i;
 
     function mashupTab(secondId: string) {
       const second = coverSource({
@@ -2050,10 +2052,72 @@ describe('Generate on Suno in the Suno tab: the clip’s page and the actions TS
           'Add The Long Thaw to mashup',
         ]);
         expect(tab.pressed.filter((name) => NEVER.test(name))).toEqual([]);
+        // Suno did not ask "Replace Lyrics?" (a form without lyrics): nothing of it is pressed.
+        expect(tab.pressed.filter((name) => LYRICS_ANSWERS.test(name))).toEqual([]);
         expect(keys).not.toContain('Enter');
         expect(tab.steps().at(-1)).toBe('waiting review and create');
       },
     );
+
+    it('answers Suno’s “Replace Lyrics?” Keep Current Lyrics after the Add, never Mashup Lyrics or Use Lyrics from … (TS-007-19)', async () => {
+      const { tab } = mashupTab(ID(5));
+      const standIn = standInForSuno(document, { mashupRows: ROWS, mashupReplaceLyrics: true });
+      try {
+        await tab.generate.resume();
+      } finally {
+        standIn.stop();
+      }
+
+      expect(tab.pressed.slice(0, 3)).toEqual([
+        'Add another song to mashup',
+        'Add The Long Thaw to mashup',
+        'Keep Current Lyrics',
+      ]);
+      expect(tab.pressed.filter((name) => LYRICS_ANSWERS.test(name))).toEqual([
+        'Keep Current Lyrics',
+      ]);
+      expect(tab.pressed.filter((name) => NEVER.test(name))).toEqual([]);
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+      expect(tab.shown.some((state) => state.kind === 'source')).toBe(false);
+      expect(audioResult(tab.last())).toMatchObject({ outcome: 'verified', note: BOTH });
+      expect(tab.steps().at(-1)).toBe('waiting review and create');
+    });
+
+    it('answers “Replace Lyrics?” Keep Current Lyrics when it is still open as the user presses Continue (TS-007-19)', async () => {
+      const { tab } = mashupTab(ID(5));
+      const standIn = standInForSuno(document, { mashupRows: ROWS.slice(0, 4) });
+      try {
+        const running = tab.generate.resume();
+        await untilWaitingForSource(tab.generate);
+
+        // The user adds the song by hand; Suno asks, and the user presses Continue at once.
+        const region = document.querySelector('[role="region"]');
+        const player = region?.querySelector('[role="button"]')?.cloneNode(true) as Element;
+        player
+          .querySelector('img')
+          ?.setAttribute('src', `https://cdn2.suno.ai/image_${ID(5)}.jpeg`);
+        region?.append(player);
+        document.body.insertAdjacentHTML(
+          'beforeend',
+          snapshotHtml('create-source-mashup-replace-lyrics-dialog'),
+        );
+        tab.generate.continueSource();
+        await running;
+      } finally {
+        standIn.stop();
+      }
+
+      expect(tab.pressed.slice(0, 3)).toEqual([
+        'Add another song to mashup',
+        'Close',
+        'Keep Current Lyrics',
+      ]);
+      expect(tab.pressed.filter((name) => LYRICS_ANSWERS.test(name))).toEqual([
+        'Keep Current Lyrics',
+      ]);
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+      expect(audioResult(tab.last())).toMatchObject({ outcome: 'verified', note: BOTH });
+    });
 
     it.each([
       ['no row links to it (only its title is shown)', 'none', ROWS.slice(0, 4)],

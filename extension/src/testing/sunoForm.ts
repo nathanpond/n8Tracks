@@ -61,6 +61,14 @@
  *   the dialog closes unless `mashupDialogStaysOpen`. Its tabs, filter, sort, liked filter, the
  *   rows themselves, play, Edit title, and like do nothing here: the adapter must never reach them.
  *
+ * And what the owner saw after a Mashup's second song was added to a form with lyrics (#438,
+ * TS-007-19, 2026-10-19; the markup is the constructed
+ * `page.create-source-mashup-replace-lyrics-dialog.html`):
+ *
+ * - with `mashupReplaceLyrics`, a song's Add opens Suno's "Replace Lyrics?" question, its "Use
+ *   Lyrics from …" naming the song; Keep Current Lyrics or Close closes it. "Mashup Lyrics" and
+ *   "Use Lyrics from …" do nothing here: the adapter must never reach them.
+ *
  * Text boxes need no stand-in: the native value setter works in jsdom.
  */
 
@@ -83,6 +91,8 @@ export interface StandInOptions {
   onMashupSearch?: (query: string, shown: readonly MashupRow[]) => void;
   /** The Mashup dialog stays open after a song's Select, until Close or Escape. */
   mashupDialogStaysOpen?: boolean;
+  /** A song's Add in the Mashup dialog opens Suno's "Replace Lyrics?" question (TS-007-19). */
+  mashupReplaceLyrics?: boolean;
 }
 
 /** A song in the Mashup dialog's list (#438). */
@@ -657,6 +667,42 @@ function mashupPicker(document: Document, target: Element, options: StandInOptio
   if (options.mashupDialogStaysOpen !== true) {
     closeMashupDialog(dialog);
   }
+  if (options.mashupReplaceLyrics === true && row !== undefined) {
+    openReplaceLyrics(document, mashupRowOf(row).title);
+  }
+  return true;
+}
+
+/** Suno's "Replace Lyrics?" question (TS-007-19), its "Use Lyrics from …" naming the song. */
+function openReplaceLyrics(document: Document, title: string): void {
+  const portal = fromSnapshot(
+    document,
+    'create-source-mashup-replace-lyrics-dialog',
+    '[data-base-ui-portal]',
+  );
+  for (const label of portal.querySelectorAll('.hxc-btn-content')) {
+    if (label.textContent.startsWith('Use Lyrics from ')) {
+      label.textContent = `Use Lyrics from "${title}"`;
+    }
+  }
+  document.body.append(portal);
+}
+
+/** Keep Current Lyrics or Close closes the "Replace Lyrics?" question; its other answers do nothing. */
+function replaceLyrics(document: Document, target: Element): boolean {
+  const control = target.closest('button');
+  const dialog = control?.closest('[role="dialog"]');
+  if (control === null || dialog === null || dialog === undefined) {
+    return false;
+  }
+  const title = document.getElementById(dialog.getAttribute('aria-labelledby') ?? '');
+  if (title?.textContent.trim() !== 'Replace Lyrics?') {
+    return false;
+  }
+  const name = control.getAttribute('aria-label') ?? control.textContent.trim();
+  if (name === 'Close' || name === 'Keep Current Lyrics') {
+    (dialog.closest('[data-base-ui-portal]') ?? dialog).remove();
+  }
   return true;
 }
 
@@ -686,6 +732,7 @@ export function standInForSuno(document: Document, options: StandInOptions = {})
   const onClick = (event: Event) => {
     const target = event.target as Element;
     if (
+      replaceLyrics(document, target) ||
       mashupPicker(document, target, options) ||
       saveToPicker(document, target, options) ||
       modelDialogPicker(document, target, options.modelDialogStaysOpen === true) ||

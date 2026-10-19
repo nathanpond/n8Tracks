@@ -263,6 +263,7 @@ describe('the service worker router', () => {
         { id: 'verify-source-simple', state: 'not_checked' },
         { id: 'search-mashup-song', state: 'not_checked' },
         { id: 'choose-mashup-song', state: 'not_checked' },
+        { id: 'answer-replace-lyrics', state: 'not_checked' },
         { id: 'close-mashup-dialog', state: 'not_checked' },
         { id: 'set-extend-from', state: 'not_checked' },
         { id: 'choose-voice', state: 'not_checked' },

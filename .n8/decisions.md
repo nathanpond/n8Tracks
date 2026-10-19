@@ -4841,3 +4841,18 @@ Story #219 (on the milestone branch):
 - **Decision:** Both fixtures are rebuilt to the captured structure (made-up titles, placeholder IDs `…0401`–`…0405`, two rows "The Long Thaw"), and so is the stand-in: typing filters the rows, and an Add adds the player and closes the dialog. `ADAPTER_VERSION` 30. TS-007-18.
   **Why:** The fixtures were constructed from screenshots and did not match the live markup.
   **Issue:** #438
+
+## M4 captures — #438 (part 2, follow-up) Suno's "Replace Lyrics?" after the second song — 2026-10-19
+
+- **Decision:** Suno's "Replace Lyrics?" (asked once the second song is added to a form with lyrics) is answered **Keep Current Lyrics** by a new `answer-replace-lyrics` workflow, modelled on `answer-overwrite`. It runs after `choose-mashup-song` and the Mashup dialog closing, with a bounded wait of 2 s (`REPLACE_LYRICS_WAIT_MS`) for the question; a form with no lyrics is not asked and nothing is pressed. `ADAPTER_VERSION` 31. TS-007-19.
+  **Why:** The owner's live run and decision (#438 comment, 2026-10-19): Keep Current Lyrics changes nothing, and the fill then sets the Version's own lyrics.
+  **Issue:** #438
+- **Decision:** The by-hand Continue path answers the question the same way: before each verification of a Mashup's songs the question, when open, is answered Keep Current Lyrics and waited on to close (2 s). Only when it cannot be answered does the panel ask the user to press Keep Current Lyrics and Continue.
+  **Why:** Simpler and as safe as a second message: the answer is the one that changes nothing, and a question left open hides the form from the verification.
+  **Issue:** #438
+- **Decision (invariant 4):** "Replace Lyrics?" is a recognised dialog allowing only Keep Current Lyrics and Close. "Mashup Lyrics" (it may generate lyrics), "Use Lyrics from …", and any Create, Publish, or Delete are refused. Guard recipe, matcher tests, and bite tests cover each.
+  **Why:** The owner's decision: never press Mashup Lyrics or Use Lyrics from ….
+  **Issue:** #438
+- **Decision:** Its markup is assumed to be the Overwrite question's family (a Base UI `role=dialog` labelled by its title, × named "Close"), not captured; `page.create-source-mashup-replace-lyrics-dialog.html` is constructed on the Overwrite fixture with a made-up title. The stand-in opens it after an Add with `mashupReplaceLyrics`.
+  **Why:** Only a screenshot was available. If the live markup differs, the workflow stops at its step and the panel asks the user to answer it; nothing else is pressed.
+  **Issue:** #438

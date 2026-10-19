@@ -1,5 +1,5 @@
 import type { EntryResult, FormJob, FormSource } from './fill.ts';
-import { MASHUP_PICKER } from './forbidden.ts';
+import { MASHUP_PICKER, REPLACE_LYRICS } from './forbidden.ts';
 import type { Page, Region, Target } from './primitives.ts';
 import { expected, OK, type Check } from './workflow.ts';
 
@@ -649,6 +649,24 @@ export function mashupShowsFirstOnly(page: Page, load: LoadedSource): boolean {
   const shown = page.readAll(MASHUP_PLAYER);
   return shown.length === 1 && holdsClip(shown[0]?.image ?? null, load.sunoId);
 }
+
+/**
+ * Suno's "Replace Lyrics?" question (#438, TS-007-19), asked when a Mashup's second song is added to
+ * a form that has lyrics; by its title, as the Overwrite question is found.
+ */
+export const REPLACE_LYRICS_DIALOG: Target = {
+  role: 'dialog',
+  name: REPLACE_LYRICS.title,
+  description: 'Suno’s “Replace Lyrics?” question',
+};
+
+/** Its "Keep Current Lyrics": the one answer the extension gives, which changes nothing. */
+export const KEEP_CURRENT_LYRICS: Target = {
+  role: 'button',
+  name: REPLACE_LYRICS.keep,
+  within: REPLACE_LYRICS_DIALOG,
+  description: 'the “Keep Current Lyrics” button',
+};
 
 /** The Extend's continue-at time ("Extend from 00:54.0"): the one editable text in the section. */
 export const EXTEND_FROM: Target = {

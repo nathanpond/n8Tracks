@@ -119,6 +119,9 @@ const RUN_RECIPES: Readonly<Record<string, RunRecipe>> = {
   'search-mashup-song': { values: { song: MASHUP_SECOND } },
   'choose-mashup-song': { values: { song: MASHUP_SECOND } },
   'close-mashup-dialog': { values: {} },
+  // Suno's "Replace Lyrics?" after the second song (TS-007-19): Keep Current Lyrics only. Its
+  // "Mashup Lyrics" (which may generate lyrics) and "Use Lyrics from …" must never be reached.
+  'answer-replace-lyrics': { values: {} },
   // Preparing a download (#216): a library row's More options, the menu's Download, then a format
   // and "Unlock & Download" in the Download dialog, which are the second permitted change and are
   // pressed only through their own primitive. The menu's Publish and Move to Trash, and the
@@ -1124,6 +1127,56 @@ describe('the guard bites', () => {
     ).toContain(
       "'close' on overwrite-lyrics-styles-dialog: step 'act' tried a forbidden control (Close: the dialog it is in does not allow it)",
     );
+  });
+
+  it('lets a workflow answer “Replace Lyrics?” Keep Current Lyrics or close it, and refuses Mashup Lyrics, Use Lyrics from …, and an added Create (#438)', async () => {
+    const snapshot = 'create-source-mashup-replace-lyrics-dialog';
+    const dialog = { role: 'dialog', name: 'Replace Lyrics?', description: 'the dialog' } as const;
+    for (const answer of ['Keep Current Lyrics', 'Close']) {
+      const target: Target = { role: 'button', name: answer, within: dialog, description: answer };
+      const answering = testWorkflow('answer', [snapshot], clicking(target), target);
+      expect(
+        await exerciseWorkflows([answering], { recipes: recipes('answer'), snapshots: [snapshot] }),
+        answer,
+      ).toEqual([]);
+    }
+
+    for (const [name, label] of [
+      ['Mashup Lyrics', 'Mashup Lyrics'],
+      [/^Use Lyrics from /, 'Use Lyrics from "The Long Thaw"'],
+    ] as const) {
+      const refused: Target = { role: 'button', name, within: dialog, description: label };
+      const pressing = testWorkflow('rogue', [snapshot], clicking(refused), refused);
+      expect(
+        await exerciseWorkflows([pressing], { recipes: recipes('rogue'), snapshots: [snapshot] }),
+        label,
+      ).toContain(
+        `'rogue' on ${snapshot}: step 'act' tried a forbidden control (${label}: the dialog it is in does not allow it)`,
+      );
+    }
+
+    // A Create, Publish, or Delete Suno may add to the question is refused too.
+    for (const word of ['Create', 'Publish', 'Delete']) {
+      const target: Target = { role: 'button', name: word, within: dialog, description: word };
+      const adding = testWorkflow(
+        'press',
+        [],
+        (context) => {
+          // Test-only: adds the button Suno may show, as the static scan forbids shipped code to.
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.textContent = word;
+          document.querySelector('#_r_2d1_')?.append(button);
+          return clicking(target)(context);
+        },
+        null,
+      );
+      expect(
+        await exerciseWorkflows([adding], { recipes: recipes('press'), snapshots: [snapshot] }),
+      ).toEqual([
+        `'press' on ${snapshot}: step 'act' tried a forbidden control (${word}: the dialog it is in does not allow it)`,
+      ]);
+    }
   });
 
   it('allows creating a workspace only through its primitive, and only for a workflow allowed to', async () => {

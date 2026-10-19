@@ -26,6 +26,7 @@ import {
 import { runWorkflow, type RunResult } from './workflow.ts';
 import {
   answerOverwrite,
+  answerReplaceLyrics,
   chooseMashupSong,
   chooseSourceAction,
   chooseVoice,
@@ -682,6 +683,27 @@ describe('Suno’s Overwrite question (TS-003)', () => {
       expect(pressed).toEqual(['Overwrite']);
     },
   );
+});
+
+describe('Suno’s “Replace Lyrics?” after a Mashup’s second song (#438, TS-007-19)', () => {
+  it('answers Keep Current Lyrics, and never Mashup Lyrics or Use Lyrics from …', async () => {
+    const page = loadSnapshot('create-source-mashup-replace-lyrics-dialog');
+    const pressed = recordPresses();
+
+    expect((await run(page, answerReplaceLyrics, {})).ok).toBe(true);
+
+    expect(pressed).toEqual(['Keep Current Lyrics']);
+  });
+
+  it('presses nothing where Suno does not ask', async () => {
+    const page = loadSnapshot('create-source-mashup-one-song');
+    const pressed = recordPresses();
+
+    const result = await run(page, answerReplaceLyrics, {});
+
+    expect(result.ok ? null : result.failure.step).toBe('Keep Current Lyrics');
+    expect(pressed).toEqual([]);
+  });
 });
 
 describe('verifying the source on the Create form (TS-002)', () => {

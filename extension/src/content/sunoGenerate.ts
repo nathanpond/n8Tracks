@@ -29,6 +29,7 @@ import {
   mashupShowsFirstOnly,
   OVERWRITE_DIALOG,
   planSources,
+  REPLACE_LYRICS_DIALOG,
   SOURCE_ROUTES,
   sourceName,
   sourceShown,
@@ -42,6 +43,7 @@ import { formWorkflowsFor } from '../adapter/workflows/index.ts';
 import { chooseSaveTo, closeSaveTo } from '../adapter/workflows/saveTo.ts';
 import {
   answerOverwrite,
+  answerReplaceLyrics,
   chooseMashupSong,
   chooseSourceAction,
   chooseVoice,
@@ -132,7 +134,10 @@ import type { GenerateViewState } from '../panel/GenerateView.ts';
  * "Search clips" box (never Enter, never a tab), and its row is the one whose link leads to the
  * song's Suno ID (TS-007-18); that row's "Add <title> to mashup" (Select) is pressed and nothing
  * else. With no such row, or several, the dialog is closed and the user adds the song by hand and
- * presses Continue. Both songs are verified as before.
+ * presses Continue. Both songs are verified as before. When the form has lyrics, Suno then asks
+ * "Replace Lyrics?" (TS-007-19): it is answered Keep Current Lyrics, never "Mashup Lyrics" or
+ * "Use Lyrics from …", whether the extension added the song or the user did and pressed Continue
+ * with the question still open.
  *
  * Loading a source may set the form's Save to to the source's workspace (#435, TS-007-16). Before
  * the rest of a Song's form is filled, Save to is read; when it shows another workspace, its picker
@@ -231,6 +236,13 @@ export const SOURCE_WAIT_MS = 10_000;
 
 /** How long Suno may take to close the Mashup dialog once a song's Select is pressed (#438). */
 export const MASHUP_CLOSE_WAIT_MS = 3_000;
+
+/**
+ * How long Suno may take to ask "Replace Lyrics?" once a Mashup's second song is added (#438,
+ * TS-007-19), and to close it once answered. A form without lyrics is not asked, so this is waited
+ * out once on that path.
+ */
+export const REPLACE_LYRICS_WAIT_MS = 2_000;
 
 /** Why the extension could not add a Mashup's second song itself (#438), as the panel says it. */
 export const MASHUP_NOT_ADDED = {
@@ -1023,6 +1035,16 @@ export class SunoGenerate {
       }
       let why = firstOnly() ? await this.addMashupSong(load) : null;
       for (;;) {
+        // Suno's "Replace Lyrics?" (#438, TS-007-19), after the extension's Add or the user's.
+        const unanswered =
+          load.route === SOURCE_ROUTES.mashup ? await this.keepCurrentLyrics() : null;
+        if (unanswered !== null) {
+          if (!(await this.replaceLyricsByHand(unanswered))) {
+            return;
+          }
+          why = null;
+          continue;
+        }
         const verified = await session.run(verify, { load }, this.runOptions());
         if (verified.ok) {
           break;
@@ -1082,6 +1104,11 @@ export class SunoGenerate {
       const choosing = await session.run(chooseMashupSong, { song }, this.runOptions());
       if (choosing.ok) {
         await page.wait(() => page.find(MASHUP_DIALOG).kind !== 'found', MASHUP_CLOSE_WAIT_MS);
+        // Suno may ask "Replace Lyrics?" next (TS-007-19); it is answered before the form is read.
+        await page.wait(
+          () => page.find(REPLACE_LYRICS_DIALOG).kind === 'found',
+          REPLACE_LYRICS_WAIT_MS,
+        );
       }
       const choice = mashupChoice(page, song.sunoId);
       failure = !choosing.ok
@@ -1095,6 +1122,37 @@ export class SunoGenerate {
       await session.run(closeMashupDialog, {}, this.runOptions());
     }
     return failure;
+  }
+
+  /**
+   * Answers Suno's "Replace Lyrics?" Keep Current Lyrics when it is open (#438, TS-007-19), and
+   * waits for it to close. Null when it was not asked, or was answered and closed; otherwise why
+   * not, for the panel. Nothing else of it is pressed.
+   */
+  private async keepCurrentLyrics(): Promise<string | null> {
+    const { page, session } = this.options;
+    const asked = () => page.find(REPLACE_LYRICS_DIALOG).kind === 'found';
+    if (!asked()) {
+      return null;
+    }
+    const answered = await session.run(answerReplaceLyrics, {}, this.runOptions());
+    if (!answered.ok) {
+      return failureText(answered.failure);
+    }
+    await page.wait(() => !asked(), REPLACE_LYRICS_WAIT_MS);
+    return asked() ? 'it is still open after Keep Current Lyrics' : null;
+  }
+
+  /**
+   * Suno's "Replace Lyrics?" could not be answered: the panel asks the user to answer it Keep
+   * Current Lyrics and press Continue. True once they did; false when the request has ended.
+   */
+  private async replaceLyricsByHand(why: string): Promise<boolean> {
+    return (
+      (await this.askByHand(
+        `Suno asks “Replace Lyrics?” and the extension could not answer it (${why}). Press “Keep Current Lyrics” on Suno’s form (not “Mashup Lyrics” or “Use Lyrics from …”), then press Continue.`,
+      )) && this.begin(GENERATE_STEPS.verifySource, 'filling')
+    );
   }
 
   /**
