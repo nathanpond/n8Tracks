@@ -120,7 +120,13 @@ interface Options {
 // GitHub runner, past vitest's default 5 s. The limit is three times that CI time.
 vi.setConfig({ testTimeout: 30_000 });
 
+/** The click listeners the source-tab harness adds, removed after each test so none outlives it. */
+const harnessListeners: AbortController[] = [];
+
 afterEach(() => {
+  for (const listeners of harnessListeners.splice(0)) {
+    listeners.abort();
+  }
   document.body.innerHTML = '';
 });
 
@@ -1293,6 +1299,8 @@ function sourceTab(options: SourceTabOptions) {
     },
   };
   const pressed: string[] = [];
+  const listeners = new AbortController();
+  harnessListeners.push(listeners);
   document.addEventListener(
     'click',
     (event) => {
@@ -1304,7 +1312,7 @@ function sourceTab(options: SourceTabOptions) {
       pressed.push(name);
       options.onPress?.(name, suno);
     },
-    { capture: true },
+    { capture: true, signal: listeners.signal },
   );
   const asked: Request[] = [];
   const shown: GenerateViewState[] = [];
@@ -1646,6 +1654,51 @@ describe('Generate on Suno in the Suno tab: an automated source route (#148)', (
         ]) as unknown,
       },
     });
+  });
+
+  it('presses the action again when Suno ignored the first press, as a Pro item does right after its menu opens (TS-007-20)', async () => {
+    let presses = 0;
+    const tab = sourceTab({
+      job: job({
+        workspace: ON_MY_WORKSPACE,
+        form: advancedForm({ sources: [coverSource()] }),
+        source: { phase: 'opening', sunoId: SOURCE_CLIP },
+      }),
+      address: SONG_PAGE,
+      html: clipPageOf(SOURCE_CLIP),
+      onPress: (name, suno) => {
+        if (name === 'Cover') {
+          presses += 1;
+          // The first press is ignored (Suno still checking the plan); the second goes to Create.
+          if (presses === 2) {
+            suno.go(
+              'https://suno.com/create',
+              snapshotHtml('overwrite-lyrics-styles-dialog') +
+                snapshotHtml('create-source-advanced'),
+            );
+          }
+        }
+        if (name === 'Overwrite') {
+          document.querySelector('[role="dialog"]')?.remove();
+        }
+      },
+    });
+    const standIn = standInForSuno(document);
+    try {
+      await tab.generate.resume();
+    } finally {
+      standIn.stop();
+    }
+
+    expect(presses).toBe(2);
+    expect(tab.steps()).toEqual([
+      'filling choose source action',
+      'filling verify source',
+      'filling fill form',
+      'waiting review and create',
+    ]);
+    expect(audioResult(tab.last())).toMatchObject({ outcome: 'verified' });
+    expect(tab.pressed.filter((name) => FORBIDDEN_WORDS.test(name))).toEqual([]);
   });
 
   it('carries on after Suno loads Create anew: verifies the source and fills (Simple chip)', async () => {

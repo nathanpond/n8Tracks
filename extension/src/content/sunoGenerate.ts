@@ -220,6 +220,13 @@ export const CLIP_PAGE_PROBLEMS = {
   'nothing yet': 'Suno did not show the clip’s page in time',
 } as const;
 
+/** How long a source action waits after its submenu opens before it is pressed (TS-007-20). */
+export const ACTION_SETTLE_MS = 800;
+/** How long Suno may take to go to Create after a press before the action is pressed again. */
+export const ACTION_RETRY_AFTER_MS = 5_000;
+/** How many times a source action is pressed in all. */
+export const ACTION_ATTEMPTS = 2;
+
 /** After the action, Suno did not show the Create form (#148). */
 export function noFormAfter(name: string, action: string): string {
   return `Suno did not open the Create form after ${action} on the source ${name}. Start Generate on Suno again from n8Tracks.`;
@@ -977,17 +984,35 @@ export class SunoGenerate {
     if (!(await this.keepSource({ phase: 'chosen', sunoId: load.sunoId }))) {
       return;
     }
-    const chosen = await this.options.session.run(chooseSourceAction, context, this.runOptions());
-    if (!chosen.ok) {
-      await this.stop(failureText(chosen.failure));
-      return;
-    }
+    // A Pro item (Use as Inspiration, Voice) ignores a press that comes as its submenu opens:
+    // Suno is still checking the plan (TS-007-20, live 2026-10-19). The press waits a moment, and
+    // when Suno has not gone to Create a little later the menu is opened and pressed once more.
     const { page } = this.options;
-    if (!(await page.wait(() => sunoPageOf(page.address()) === 'create', PAGE_WAIT_MS))) {
-      await this.stop(noFormAfter(name, load.route.item));
-      return;
+    const clock = this.options.clock ?? realClock;
+    for (let attempt = 0; attempt < ACTION_ATTEMPTS; attempt += 1) {
+      if (attempt > 0) {
+        const reopened = await this.options.session.run(openSourceMenu, context, this.runOptions());
+        if (!reopened.ok) {
+          break;
+        }
+      }
+      await clock.sleep(ACTION_SETTLE_MS);
+      const chosen = await this.options.session.run(chooseSourceAction, context, this.runOptions());
+      if (!chosen.ok) {
+        await this.stop(failureText(chosen.failure));
+        return;
+      }
+      const last = attempt === ACTION_ATTEMPTS - 1;
+      const created = await page.wait(
+        () => sunoPageOf(page.address()) === 'create',
+        last ? PAGE_WAIT_MS : ACTION_RETRY_AFTER_MS,
+      );
+      if (created) {
+        await this.afterAction(form, load);
+        return;
+      }
     }
-    await this.afterAction(form, load);
+    await this.stop(noFormAfter(name, load.route.item));
   }
 
   /**
