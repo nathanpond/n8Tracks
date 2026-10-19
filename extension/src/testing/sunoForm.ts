@@ -49,16 +49,17 @@
  * - a row pressed sets the button to its name, and the picker closes unless `saveToStaysOpen`.
  *   Its "+" does nothing here: the adapter must never reach it.
  *
- * And what the owner saw of the "Add a song to mashup" dialog (#438, 2026-10-18; its markup is the
- * constructed `page.create-source-mashup-add-song-dialog.html`, and what follows a choice was not
- * seen live):
+ * And what the owner captured of the "Add a song to mashup" dialog (#438, TS-007-18, 2026-10-19;
+ * its markup is `page.create-source-mashup-add-song-dialog.html`, built from that capture, and
+ * what follows a choice was not seen live):
  *
  * - "Add another song to Mashup" opens the dialog, its rows `mashupRows` when given; its Close, or
  *   Escape, closes it;
- * - typing into its search box shows only the rows whose title holds the text, case aside, and
- *   calls `onMashupSearch` with the text and the rows shown (where a test has Suno answer);
- * - a row's Select adds that song's player to the Mashup's region, and the dialog closes unless
- *   `mashupDialogStaysOpen`. Its tabs, filter, sort, play, and like do nothing here.
+ * - typing into its "Search clips" box shows only the rows whose title holds the text, case aside,
+ *   and calls `onMashupSearch` with the text and the rows shown;
+ * - a row's "Add <title> to mashup" (Select) adds that song's player to the Mashup's region, and
+ *   the dialog closes unless `mashupDialogStaysOpen`. Its tabs, filter, sort, liked filter, the
+ *   rows themselves, play, Edit title, and like do nothing here: the adapter must never reach them.
  *
  * Text boxes need no stand-in: the native value setter works in jsdom.
  */
@@ -557,7 +558,9 @@ function filterSaveTo(event: Event): void {
   }
 }
 
-const MASHUP_SEARCH_BOX = 'input[placeholder^="Search for a song in your library"]';
+const MASHUP_SEARCH_BOX = '[role="dialog"] input[aria-label="Search clips"]';
+const MASHUP_ROW = '[role="rowgroup"] > [role="button"]';
+const MASHUP_ADD = /^Add .+ to mashup$/;
 
 /** The open Mashup dialog (#438), or null. */
 function openMashupDialog(document: Document): Element | null {
@@ -568,21 +571,39 @@ function closeMashupDialog(dialog: Element): void {
   (dialog.closest('[data-base-ui-portal]') ?? dialog).remove();
 }
 
-/** A Mashup dialog row's song: its title's text and its thumbnail's ID. */
+/** A Mashup dialog row's song: its link's text and the clip ID its link leads to. */
 function mashupRowOf(row: Element): MashupRow {
-  const image = row.querySelector('img')?.getAttribute('src') ?? '';
+  const link = row.querySelector('a[href^="/song/"]');
   return {
-    title: row.querySelector('.text-sm')?.textContent.trim() ?? '',
-    sunoId: /image_([^./]+)\.jpeg/.exec(image)?.[1] ?? '',
+    title: link?.textContent.trim() ?? '',
+    sunoId: link?.getAttribute('href')?.slice('/song/'.length) ?? '',
   };
 }
 
 /** The Mashup dialog's rows, shown or not. */
 function mashupRowsOf(dialog: Element): Element[] {
-  return [...dialog.querySelectorAll('.overflow-y-auto > div')];
+  return [...dialog.querySelectorAll(MASHUP_ROW)];
 }
 
-/** "Add another song to Mashup", the dialog it opens, and a song's Select in it (#438). */
+/** A row of the snapshot's, made the song's: its names, its thumbnail, and its link. */
+function mashupRowFor(template: Element, { title, sunoId }: MashupRow): Element {
+  const row = template.cloneNode(true) as Element;
+  row.setAttribute('aria-label', `${title}. Double-tap or press Enter to add to mashup.`);
+  row.querySelector('[aria-label^="Play "]')?.setAttribute('aria-label', `Play ${title}`);
+  const image = row.querySelector('img');
+  image?.setAttribute('alt', `${title} artwork`);
+  image?.setAttribute('src', `https://cdn2.suno.ai/image_${sunoId}.jpeg`);
+  const link = row.querySelector('a[href^="/song/"]');
+  link?.setAttribute('href', `/song/${sunoId}`);
+  if (link !== null) {
+    link.textContent = title;
+  }
+  row.querySelector('[aria-label^="Like "]')?.setAttribute('aria-label', `Like ${title}`);
+  row.querySelector('[aria-label^="Add "]')?.setAttribute('aria-label', `Add ${title} to mashup`);
+  return row;
+}
+
+/** "Add another song to Mashup", the dialog it opens, and a song's Add in it (#438). */
 function mashupPicker(document: Document, target: Element, options: StandInOptions): boolean {
   const add = target.closest('button[aria-label="Add another song to mashup"]');
   if (add !== null) {
@@ -594,45 +615,34 @@ function mashupPicker(document: Document, target: Element, options: StandInOptio
       'create-source-mashup-add-song-dialog',
       '[data-base-ui-portal]',
     );
-    const list = portal.querySelector('.overflow-y-auto');
-    const template = list?.querySelector(':scope > div');
+    const list = portal.querySelector('[role="rowgroup"]');
+    const template = list?.querySelector(':scope > [role="button"]');
     if (
       options.mashupRows !== undefined &&
       list !== null &&
       template !== null &&
       template !== undefined
     ) {
-      list.replaceChildren(
-        ...options.mashupRows.map(({ title, sunoId }) => {
-          const row = template.cloneNode(true) as Element;
-          const name = row.querySelector('.text-sm');
-          if (name !== null) {
-            name.textContent = title;
-          }
-          row
-            .querySelector('img')
-            ?.setAttribute('src', `https://cdn2.suno.ai/image_${sunoId}.jpeg`);
-          return row;
-        }),
-      );
+      list.replaceChildren(...options.mashupRows.map((song) => mashupRowFor(template, song)));
     }
     document.body.append(portal);
     return true;
   }
   const dialog = openMashupDialog(document);
-  const button = target.closest('button');
-  if (dialog === null || button === null || !dialog.contains(button)) {
+  const control = target.closest('button, [role="button"]');
+  if (dialog === null || control === null || !dialog.contains(control)) {
     return false;
   }
-  if (button.getAttribute('aria-label') === 'Close') {
+  const name = control.getAttribute('aria-label') ?? '';
+  if (name === 'Close') {
     closeMashupDialog(dialog);
     return true;
   }
-  if (button.textContent.trim() !== 'Select') {
-    // Tabs, filter, sort, play, and like: the adapter must never reach them.
+  if (control.localName !== 'button' || !MASHUP_ADD.test(name)) {
+    // Tabs, filter, sort, the liked filter, a row itself, play, Edit title, and like.
     return true;
   }
-  const row = mashupRowsOf(dialog).find((each) => each.contains(button));
+  const row = mashupRowsOf(dialog).find((each) => each.contains(control));
   const region = document.querySelector('[role="region"][aria-label^="Mashup songs"]');
   const player = region?.querySelector('[role="button"]')?.cloneNode(true) as Element | undefined;
   if (row !== undefined && region !== null && player !== undefined) {

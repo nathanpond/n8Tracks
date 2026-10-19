@@ -4820,3 +4820,24 @@ Story #219 (on the milestone branch):
 - **Decision:** Inspiration is unchanged. Its one-song snapshot has no "Add another song" button and the Inspo area was not captured in use, so the code path is not shared.
   **Why:** Out of scope unless trivially shared.
   **Issue:** #438
+
+## M4 captures — #438 (part 2, follow-up) the live "Add a song to mashup" dialog — 2026-10-19
+
+- **Decision:** The search box is found by its accessible name "Search clips" (`aria-label`), with the placeholder "Search for a song in your library..." kept as a second match for a box with no `aria-label`.
+  **Why:** The owner's console capture of 2026-10-19: the first live run stopped at "mashup dialog" because the box was looked for by its placeholder, which is not its name.
+  **Issue:** #438
+- **Decision:** `choose-mashup-song` chooses the row whose `a[href="/song/<id>"]` leads to the second song's Suno ID, waits up to 5 s for the list to show it, and presses that row's button named `^Add .+ to mashup$` (visible text "Select"). The row is the nearest part of the list around the link holding such a button and no other song's link (a new `Region.single`), and only when it holds exactly one. With no such link, or several, the dialog is closed and the by-hand Continue path asks for the song, as before.
+  **Why:** Every live row carries its clip's link, which tells two clips of one title apart exactly. `Region.single` keeps a row that shows no Add from borrowing a neighbour's.
+  **Issue:** #438
+- **Decision:** The feed-answer matching, the exact-title choice, and `Target.nth` are removed. There is no title fallback.
+  **Why:** The ID link makes them unnecessary. A title cannot tell two clips of one Create apart, and the Version's title may not be Suno's. Less code that presses things.
+  **Issue:** #438
+- **Decision (invariant 4):** In this dialog the matcher allows only the "Search clips" box, Close, and a `button` whose whole name matches `^Add .+ to mashup$` (new `RecognisedDialog.allowsButtons`, buttons only). Edit title (it renames the song in Suno), `Like …`, `Play …`, the rows themselves ("… Double-tap or press Enter to add to mashup."), the tabs, "(3)", "New", "Filter to show only liked clips", and anything starting Create, Publish, or Delete are refused. Matcher, guard, and bite tests cover each.
+  **Why:** The owner's capture: only the search box, the Add buttons, and Close may be pressed.
+  **Issue:** #438
+- **Decision (invariant 4 guard):** The guard's spies no longer count a press that only passes through a refused control on its way to a control the matcher allows inside it. The matcher judges the elements a pressed control sits in by their own names and the known selectors (`verdictOf`), and the guard now does the same. Exceptions and unrecognised dialogs are unchanged. A press aimed at a row, or at a refused control inside one (Edit title), still counts, and the bite tests show it.
+  **Why:** A song's Add sits inside its row, which is itself a `role=button` that may not be pressed. Every Add press would otherwise be reported as reaching the row. The invariant is unchanged: the matcher's rule for enclosing elements already allowed this press.
+  **Issue:** #438
+- **Decision:** Both fixtures are rebuilt to the captured structure (made-up titles, placeholder IDs `…0401`–`…0405`, two rows "The Long Thaw"), and so is the stand-in: typing filters the rows, and an Add adds the player and closes the dialog. `ADAPTER_VERSION` 30. TS-007-18.
+  **Why:** The fixtures were constructed from screenshots and did not match the live markup.
+  **Issue:** #438

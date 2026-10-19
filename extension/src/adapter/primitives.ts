@@ -27,8 +27,7 @@ import {
  *
  * Elements are found by role and accessible name, optionally inside a test attribute, never by a
  * class name. `find` looks inside open shadow roots, ignores hidden elements and the extension's
- * own panel, and never chooses between two matches, unless a target names the place of the one it
- * wants (`nth`, #438) because something other than the page told the matches apart.
+ * own panel, and never chooses between two matches.
  */
 
 /** The attribute on the panel's host element: `find` never looks inside it. */
@@ -102,6 +101,12 @@ export interface Region {
    * the page instead.
    */
   levels: number;
+  /**
+   * What the region may hold at most one of: it never grows past an element holding two, so that
+   * it stays within the anchor's own row of a list rather than reaching a part holding the next
+   * row's control (#438: one song link per row of Suno's "Add a song to mashup" list).
+   */
+  single?: Target;
   /** Plain words for a report: "the More Options section". */
   description: string;
 }
@@ -128,13 +133,6 @@ export interface Target {
   address?: string;
   /** Look only inside this element or region, which must itself be found exactly once. */
   within?: Target | Scope | Region;
-  /**
-   * Which of several visible matches, from 0 in document order, instead of none of them. Only for
-   * elements already told apart by something other than the page (#438: the rows of Suno's "Add a
-   * song to mashup" list, matched one for one to the clips of the search answer Suno sent, where
-   * two rows of the same title are two clips); a place past the last match is not found.
-   */
-  nth?: number;
   /** Plain words for a report, read after "expected": "a text box labelled Styles". */
   description: string;
 }
@@ -554,6 +552,9 @@ function regionFor(root: ParentNode, region: Region, wanted: Target | TextAnchor
   }
   let current = parentOf(anchor.element);
   for (let level = 1; current !== null && level <= region.levels; level += 1) {
+    if (region.single !== undefined && matching(current, region.single).length > 1) {
+      break;
+    }
     if (matching(current, wanted).length > 0) {
       return { kind: 'one', element: current };
     }
@@ -581,14 +582,7 @@ function locate(root: ParentNode, wanted: Wanted): Located {
     }
     container = outer.element;
   }
-  const matches = matching(container, wanted);
-  if (isTarget(wanted) && wanted.nth !== undefined) {
-    const placed = matches[wanted.nth];
-    return placed === undefined
-      ? { kind: 'not_found', missing: wanted }
-      : { kind: 'one', element: placed };
-  }
-  const [first, ...others] = matches;
+  const [first, ...others] = matching(container, wanted);
   if (first === undefined) {
     return { kind: 'not_found', missing: wanted };
   }

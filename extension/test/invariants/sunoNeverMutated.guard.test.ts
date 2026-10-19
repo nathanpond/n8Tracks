@@ -10,7 +10,7 @@ import {
 } from '../../src/adapter/sources.ts';
 import { ObservationFeed } from '../../src/adapter/observations.ts';
 import { OBSERVER_SOURCE } from '../../src/adapter/observed.ts';
-import { Page, type Target } from '../../src/adapter/primitives.ts';
+import { Page, type Region, type Target } from '../../src/adapter/primitives.ts';
 import { AdapterSession, WorkflowRegistry } from '../../src/adapter/registry.ts';
 import { OK, present, type Step, type Workflow } from '../../src/adapter/workflow.ts';
 import { ADAPTER_WORKFLOWS } from '../../src/adapter/workflows/index.ts';
@@ -40,13 +40,11 @@ import {
  * `sourceScan.ts` lists what the static scan does not see.
  */
 
-/** The Mashup's second song in the "Add a song to mashup" snapshots (#438), and Suno's answer. */
+/**
+ * The Mashup's second song in the "Add a song to mashup" snapshots (#438): one of two clips of
+ * one title, told apart by its row's link.
+ */
 const MASHUP_SECOND = { title: 'The Long Thaw', sunoId: '00000000-0000-4000-8000-000000000405' };
-const MASHUP_ANSWER = [
-  { id: '00000000-0000-4000-8000-000000000401', title: 'Paper Lanterns x The Long Thaw (Mashup)' },
-  { id: '00000000-0000-4000-8000-000000000404', title: 'The Long Thaw' },
-  { id: '00000000-0000-4000-8000-000000000405', title: 'The Long Thaw' },
-];
 
 /**
  * How the guard runs each registered workflow. A story that adds a workflow adds its recipe
@@ -113,15 +111,13 @@ const RUN_RECIPES: Readonly<Record<string, RunRecipe>> = {
   // pressed. Closing it sends Escape only.
   'choose-save-to': { values: { workspaceName: 'My Workspace' } },
   'close-save-to': { values: {} },
-  // A Mashup's second song (#438): "Add another song to Mashup", the song's title typed into the
-  // "Add a song to mashup" dialog's search box (never Enter), and one row's Select: by its Suno ID
-  // on the searched snapshot, whose answer lists two clips of the same title, and by its title on
-  // the unsearched one, where the answer does not match the rows. The dialog's tabs, filter, sort,
-  // play, and like buttons must never be reached. Closing it presses its Close only.
+  // A Mashup's second song (#438, TS-007-18): "Add another song to Mashup", the song's title
+  // typed into the dialog's "Search clips" box (never Enter), and the "Add … to mashup" of the row
+  // linking to its Suno ID, on both snapshots, each with two rows of its title. The dialog's tabs,
+  // filter, sort, liked filter, rows, play, Edit title, and like must never be reached. Closing it
+  // presses its Close only.
   'search-mashup-song': { values: { song: MASHUP_SECOND } },
-  'choose-mashup-song': {
-    values: { song: MASHUP_SECOND, clips: MASHUP_ANSWER, chosen: { by: null } },
-  },
+  'choose-mashup-song': { values: { song: MASHUP_SECOND } },
   'close-mashup-dialog': { values: {} },
   // Preparing a download (#216): a library row's More options, the menu's Download, then a format
   // and "Unlock & Download" in the Download dialog, which are the second permitted change and are
@@ -853,26 +849,33 @@ describe('the guard bites', () => {
     ).toEqual([`'bypass' on ${snapshot}: click reached button ""`]);
   }, 60_000);
 
-  it('refuses the Mashup dialog’s tabs, filter, sort, play, and like, and sees a press around the primitives (#438)', async () => {
+  it('refuses the Mashup dialog’s Edit title, like, play, rows, tabs, filter, sort, and liked filter, and sees a press around the primitives (#438)', async () => {
     const snapshot = 'create-source-mashup-add-song-search';
     document.body.innerHTML = snapshotHtml(snapshot);
-    // Everything pressable in the dialog but Select, Close, and the search box is spied on.
+    // Everything pressable in the dialog but a song's Add, Close, and the search box is spied on.
     const spied = forbiddenControls(document).filter((control) =>
       control.element.closest('[role="dialog"]'),
     );
     expect([...new Set(spied.map((control) => control.words))].toSorted()).toEqual([
-      'button ""',
       'button "(3)"',
-      'button "Like"',
+      'button "Edit title"',
+      'button "Filter to show only liked clips"',
+      'button "Like Paper Lanterns x The Long Thaw (Mashup)"',
+      'button "Like The Long Thaw"',
       'button "New"',
-      'button "Play"',
-      'heading "Add a song to mashup"',
-      'img ""',
+      'button "Paper Lanterns x The Long Thaw (Mashup). Double-tap or press Enter to add to mashup."',
+      'button "Play Paper Lanterns x The Long Thaw (Mashup)"',
+      'button "Play The Long Thaw"',
+      'button "The Long Thaw. Double-tap or press Enter to add to mashup."',
+      'img "Paper Lanterns x The Long Thaw (Mashup) artwork"',
+      'img "The Long Thaw artwork"',
+      'link "Paper Lanterns x The Long Thaw (Mashup)"',
+      'link "The Long Thaw"',
       'tab "Everything"',
       'tab "My Library"',
     ]);
 
-    // Adding the song, as the content script does, passes the guard: the search box and one Select.
+    // Adding the song, as the content script does, passes the guard: the search box and one Add.
     for (const id of ['search-mashup-song', 'choose-mashup-song']) {
       const workflow = ADAPTER_WORKFLOWS.find((each) => each.id === id);
       expect(workflow?.fixtures).toEqual([
@@ -896,16 +899,38 @@ describe('the guard bites', () => {
       name: 'Add a song to mashup',
       description: 'the Mashup dialog',
     };
-    const refusals: [Target, string][] = [
-      [{ role: 'tab', name: 'Everything', within: dialog, description: 'the Everything tab' }, ''],
-      [{ role: 'tab', name: 'My Library', within: dialog, description: 'the My Library tab' }, ''],
-      [{ role: 'button', name: '(3)', within: dialog, description: 'the filter button' }, ''],
-      [{ role: 'button', name: 'New', within: dialog, description: 'the sort button' }, ''],
-      [{ role: 'button', name: 'Play', within: dialog, nth: 0, description: 'a play button' }, ''],
-      [{ role: 'button', name: 'Like', within: dialog, nth: 0, description: 'a like button' }, ''],
-      [{ role: 'button', name: '', within: dialog, description: 'the liked-songs button' }, ''],
+    const row: Region = {
+      around: {
+        role: 'link',
+        address: `/song/${MASHUP_SECOND.sunoId}`,
+        within: dialog,
+        description: 'the song’s link',
+      },
+      levels: 6,
+      description: 'the song’s row',
+    };
+    const refusals: Target[] = [
+      { role: 'tab', name: 'Everything', within: dialog, description: 'the Everything tab' },
+      { role: 'tab', name: 'My Library', within: dialog, description: 'the My Library tab' },
+      { role: 'button', name: '(3)', within: dialog, description: 'the filter button' },
+      { role: 'button', name: 'New', within: dialog, description: 'the sort button' },
+      {
+        role: 'button',
+        name: 'Filter to show only liked clips',
+        within: dialog,
+        description: 'the liked filter',
+      },
+      { role: 'button', name: 'Edit title', within: row, description: 'the row’s Edit title' },
+      { role: 'button', name: /^Like /, within: row, description: 'the row’s like button' },
+      { role: 'button', name: /^Play /, within: row, description: 'the row’s play button' },
+      {
+        role: 'button',
+        name: 'Paper Lanterns x The Long Thaw (Mashup). Double-tap or press Enter to add to mashup.',
+        within: dialog,
+        description: 'a row itself',
+      },
     ];
-    for (const [target] of refusals) {
+    for (const target of refusals) {
       const rogue = testWorkflow('press', [], clicking(target), null);
       expect(
         await exerciseWorkflows([rogue], { recipes: recipes('press'), snapshots: [snapshot] }),
@@ -938,20 +963,38 @@ describe('the guard bites', () => {
       ]);
     }
 
-    const bypass = testWorkflow(
-      'bypass',
-      [],
-      () => {
-        // Test-only: reaches the page directly, as the static scan forbids shipped code to.
-        document
-          .querySelector('#_r_mx_ [aria-label="Like"]')
-          ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      },
-      null,
-    );
+    // Presses around the primitives: Edit title (inside its row, so the row is reached too), and
+    // a row itself.
+    const bypass = (selector: string) =>
+      testWorkflow(
+        'bypass',
+        [],
+        () => {
+          // Test-only: reaches the page directly, as the static scan forbids shipped code to.
+          document
+            .querySelector(selector)
+            ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        },
+        null,
+      );
+    const songRow = `#_r_mx_ [role="rowgroup"] > [role="button"]:has(a[href="/song/${MASHUP_SECOND.sunoId}"])`;
     expect(
-      await exerciseWorkflows([bypass], { recipes: recipes('bypass'), snapshots: [snapshot] }),
-    ).toEqual([`'bypass' on ${snapshot}: click reached button "Like"`]);
+      await exerciseWorkflows([bypass(`${songRow} [aria-label="Edit title"]`)], {
+        recipes: recipes('bypass'),
+        snapshots: [snapshot],
+      }),
+    ).toEqual([
+      `'bypass' on ${snapshot}: click reached button "The Long Thaw. Double-tap or press Enter to add to mashup."`,
+      `'bypass' on ${snapshot}: click reached button "Edit title"`,
+    ]);
+    expect(
+      await exerciseWorkflows([bypass(songRow)], {
+        recipes: recipes('bypass'),
+        snapshots: [snapshot],
+      }),
+    ).toEqual([
+      `'bypass' on ${snapshot}: click reached button "The Long Thaw. Double-tap or press Enter to add to mashup."`,
+    ]);
   }, 60_000);
 
   it('fails a workflow that presses Publish or Move to Trash in a clip menu', async () => {

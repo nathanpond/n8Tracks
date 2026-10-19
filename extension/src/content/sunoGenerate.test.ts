@@ -1334,7 +1334,6 @@ function sourceTab(options: SourceTabOptions) {
   });
   return {
     generate,
-    feed,
     asked,
     shown,
     pressed,
@@ -1968,7 +1967,7 @@ describe('Generate on Suno in the Suno tab: the clip’s page and the actions TS
     expect(tab.steps().at(-1)).toBe('waiting review and create');
   });
 
-  describe('adding a Mashup’s second song through Suno’s “Add a song to mashup” dialog (#438)', () => {
+  describe('adding a Mashup’s second song through Suno’s “Add a song to mashup” dialog (#438, TS-007-18)', () => {
     const ID = (n: number) => `00000000-0000-4000-8000-0000000004${String(n).padStart(2, '0')}`;
     const ROWS = [
       { title: 'Paper Lanterns x The Long Thaw (Mashup)', sunoId: ID(1) },
@@ -1978,7 +1977,8 @@ describe('Generate on Suno in the Suno tab: the clip’s page and the actions TS
       { title: 'The Long Thaw', sunoId: ID(5) },
     ];
     /** The dialog's controls the extension must never press, and Suno's own forbidden words. */
-    const NEVER = /^(like|play$|my library|everything|\(3\)|new$|create|publish|delete)/i;
+    const NEVER =
+      /^(like|play|edit title|my library|everything|\(3\)|new$|filter|create|publish|delete)|double-tap/i;
 
     function mashupTab(secondId: string) {
       const second = coverSource({
@@ -2003,47 +2003,35 @@ describe('Generate on Suno in the Suno tab: the clip’s page and the actions TS
       return { tab, keys };
     }
 
-    /** Suno answering the dialog's search with the rows it shows, as `POST /api/feed/v3` would. */
-    function answering(tab: ReturnType<typeof sourceTab>): StandInOptions['onMashupSearch'] {
-      return (_query, shown) => {
-        tab.feed.take(
-          observed('library-feed', {
-            clips: shown.map((row) => ({ id: row.sunoId, title: row.title })),
-            has_more: false,
-          }),
-        );
-      };
+    /** The clip ID of the row each "Add … to mashup" pressed sits in, by its link. */
+    function addedRows(): string[] {
+      const added: string[] = [];
+      document.addEventListener(
+        'click',
+        (event) => {
+          const target = event.target as Element;
+          if (target.closest('[role="dialog"]') && /^Add .+ to mashup$/.test(nameOf(target))) {
+            const row = target.closest('[role="rowgroup"] > [role="button"]');
+            added.push(row?.querySelector('a[href^="/song/"]')?.getAttribute('href') ?? '');
+          }
+        },
+        { capture: true },
+      );
+      return added;
     }
 
     const BOTH =
       '“Origin” and “The Long Thaw” are on the form: the Audio section names Mashup and shows each one’s thumbnail.';
 
-    it('adds it by its one row of exactly its title when Suno sends no answer, pressing only Select', async () => {
-      const { tab, keys } = mashupTab(ID(4));
-      const standIn = standInForSuno(document, { mashupRows: ROWS.slice(0, 4) });
-      try {
-        await tab.generate.resume();
-      } finally {
-        standIn.stop();
-      }
-
-      expect(audioResult(tab.last())).toMatchObject({ outcome: 'verified', note: BOTH });
-      expect(tab.shown.some((state) => state.kind === 'source')).toBe(false);
-      expect(tab.steps()).not.toContain('filling load source by hand');
-      expect(tab.pressed.slice(0, 2)).toEqual(['Add another song to mashup', 'Select']);
-      expect(tab.pressed.filter((name) => name === 'Select')).toHaveLength(1);
-      expect(tab.pressed.filter((name) => NEVER.test(name))).toEqual([]);
-      expect(keys).not.toContain('Enter');
-      expect(tab.steps().at(-1)).toBe('waiting review and create');
-    });
-
     it.each([4, 5])(
-      'adds it by its Suno ID when Suno answers the search, of two rows with its title (the clip …40%i)',
+      'adds it by the row linking to its Suno ID, of two rows with its title (the clip …40%i), pressing only its Add',
       async (n) => {
         const { tab, keys } = mashupTab(ID(n));
+        const added = addedRows();
+        const searched: string[] = [];
         const standIn = standInForSuno(document, {
           mashupRows: ROWS,
-          onMashupSearch: answering(tab),
+          onMashupSearch: (query) => searched.push(query),
         });
         try {
           await tab.generate.resume();
@@ -2054,34 +2042,31 @@ describe('Generate on Suno in the Suno tab: the clip’s page and the actions TS
         // Verified by both thumbnails: the row pressed was the clip's own.
         expect(audioResult(tab.last())).toMatchObject({ outcome: 'verified', note: BOTH });
         expect(tab.shown.some((state) => state.kind === 'source')).toBe(false);
-        expect(tab.pressed.filter((name) => name === 'Select')).toHaveLength(1);
+        expect(tab.steps()).not.toContain('filling load source by hand');
+        expect(searched).toEqual(['The Long Thaw']);
+        expect(added).toEqual([`/song/${ID(n)}`]);
+        expect(tab.pressed.slice(0, 2)).toEqual([
+          'Add another song to mashup',
+          'Add The Long Thaw to mashup',
+        ]);
         expect(tab.pressed.filter((name) => NEVER.test(name))).toEqual([]);
         expect(keys).not.toContain('Enter');
+        expect(tab.steps().at(-1)).toBe('waiting review and create');
       },
     );
 
     it.each([
-      ['two rows of its title, and no answer', 'several', ROWS, false],
-      ['two rows of its title, and an answer that does not match the rows', 'several', ROWS, true],
-      ['no row of exactly its title', 'none', ROWS.slice(0, 3), false],
+      ['no row links to it (only its title is shown)', 'none', ROWS.slice(0, 4)],
+      [
+        'two rows link to it',
+        'several',
+        [...ROWS.slice(0, 4), { title: 'The Long Thaw', sunoId: ID(4) }],
+      ],
     ] as const)(
-      'closes the dialog and asks for the song by hand: %s',
-      async (_case, problem, rows, mismatched) => {
-        const { tab, keys } = mashupTab(ID(5));
-        const standIn = standInForSuno(document, {
-          mashupRows: rows,
-          // An answer that lists the song but not as the rows show: one clip short.
-          ...(mismatched
-            ? {
-                onMashupSearch: (
-                  query: string,
-                  shown: readonly { title: string; sunoId: string }[],
-                ) => {
-                  answering(tab)?.(query, shown.slice(1));
-                },
-              }
-            : {}),
-        });
+      'closes the dialog and asks for the song by hand when %s',
+      async (_case, problem, rows) => {
+        const { tab, keys } = mashupTab(problem === 'none' ? ID(5) : ID(4));
+        const standIn = standInForSuno(document, { mashupRows: rows });
         try {
           const running = tab.generate.resume();
           await untilWaitingForSource(tab.generate);
@@ -2090,7 +2075,7 @@ describe('Generate on Suno in the Suno tab: the clip’s page and the actions TS
           const message = waiting?.kind === 'source' ? waiting.message : '';
           expect(message).toContain(`(${MASHUP_NOT_ADDED[problem]})`);
           expect(message).toContain('Add “The Long Thaw” with “Add another song to Mashup”');
-          // Closed by its ×, no Select pressed, nothing else of the dialog either.
+          // Closed by its ×, no Add pressed, nothing else of the dialog either.
           expect(document.querySelector('[role="dialog"]')).toBeNull();
           expect(tab.pressed).toEqual(['Add another song to mashup', 'Close']);
           expect(keys).not.toContain('Enter');
@@ -2100,7 +2085,10 @@ describe('Generate on Suno in the Suno tab: the clip’s page and the actions TS
           const player = region?.querySelector('[role="button"]')?.cloneNode(true) as Element;
           player
             .querySelector('img')
-            ?.setAttribute('src', `https://cdn2.suno.ai/image_${ID(5)}.jpeg`);
+            ?.setAttribute(
+              'src',
+              `https://cdn2.suno.ai/image_${problem === 'none' ? ID(5) : ID(4)}.jpeg`,
+            );
           region?.append(player);
           tab.generate.continueSource();
           await running;

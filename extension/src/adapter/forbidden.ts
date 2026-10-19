@@ -20,8 +20,9 @@
  * - In Create's Save to picker (#435, {@link SAVE_TO_PICKER}), a dialog or not, only a workspace's
  *   row "<name> (<N> clips)" may be pressed, and none whose name starts with one of those words:
  *   its "+" button and a "Create …" row may create a workspace, and are refused.
- * - In Suno's "Add a song to mashup" dialog (#438, {@link MASHUP_PICKER}), only a song's Select,
- *   the search box, and Close: its tabs, filter, sort, play, and like buttons are refused.
+ * - In Suno's "Add a song to mashup" dialog (#438, {@link MASHUP_PICKER}), only a song's
+ *   "Add <title> to mashup" button (its Select), the "Search clips" box, and Close: its tabs,
+ *   filter, sort, liked filter, rows, play, like, and Edit title buttons are refused.
  *
  * False positives are accepted: a refusal stops the workflow, it never presses something else.
  *
@@ -85,6 +86,12 @@ export interface RecognisedDialog {
   /** Accessible names of the controls that may be pressed; every other control is forbidden. */
   allows: readonly string[];
   /**
+   * Buttons whose whole accessible name matches this may be pressed too (#438: a song's
+   * "Add <title> to mashup", one per row, its title Suno's). Only a `button`: a link or an image
+   * named the same is still refused, and a button's own forbidden words still apply.
+   */
+  allowsButtons?: RegExp;
+  /**
    * Whether an element with no role may be pressed by its own text (TS-005: a voice is chosen in
    * the Voice picker by pressing its title, which Suno gives no role). Its text must not start with
    * a forbidden word ("Create Voice" is refused), and every element it sits in is still checked.
@@ -118,18 +125,21 @@ export const KEY_NOTES: readonly string[] = [
 
 /**
  * Suno's "Add a song to mashup" dialog (#438), opened by the form's "Add another song to Mashup"
- * once a Mashup holds its first song (the owner's capture of 2026-10-18; its markup and roles were
- * not seen live, so `page.create-source-mashup-add-song-dialog.html` is constructed). It holds the
- * tabs My Library and Everything, a search box, a filter, a sort, and a liked-songs button, and a
- * list of the user's songs, each with a play button on its thumbnail, a like button, and Select.
- * Only the search box (typed into, never pressed), a row's Select, and the dialog's Close (×) may
- * be pressed: the tabs, the filter and sort, play, and like are refused, so the list stays the
- * user's library as it is and no song is liked or played.
+ * once a Mashup holds its first song. Its markup is the owner's console capture of 2026-10-19
+ * (TS-007-18): a `role=dialog` labelled by its title text, a Close button, the tabs My Library
+ * and Everything, a "Search clips" box, a filter "(3)", a sort "New", "Filter to show only liked
+ * clips", and a `rowgroup` of rows. Each row is itself a `role=button` ("<title>. Double-tap or
+ * press Enter to add to mashup.") holding "Play <title>", a link to `/song/<clip ID>`, "Edit
+ * title" (which renames the song in Suno), "Like <title>", and "Add <title> to mashup" (its
+ * visible text "Select"). Only the search box (typed into, never pressed), a song's
+ * "Add … to mashup", and Close may be pressed: the tabs, filter, sort, liked filter, the rows
+ * themselves, play, like, and Edit title are refused, so the list stays the user's library as it
+ * is and no song is renamed, liked, or played.
  */
 export const MASHUP_PICKER = {
   title: 'Add a song to mashup',
-  field: 'Search for a song in your library…',
-  select: 'Select',
+  field: 'Search clips',
+  add: /^Add .+ to mashup$/,
   close: 'Close',
   snapshot: 'create-source-mashup-add-song-dialog',
 } as const;
@@ -146,7 +156,7 @@ export const MASHUP_PICKER = {
  * {@link DOWNLOAD_CLIP}, which only the download primitive presses (#216). The Model dialog
  * (#427, TS-007-10) lists the models as rows: a model's row may be pressed, its "Create Custom
  * Model" row never (it spends credits), and Close if it has one. In Suno's "Add a song to mashup"
- * dialog (#438, {@link MASHUP_PICKER}) only a song's Select, the search box, and Close.
+ * dialog (#438, {@link MASHUP_PICKER}) only a song's "Add … to mashup", the search box, and Close.
  */
 export const RECOGNISED_DIALOGS: readonly RecognisedDialog[] = [
   {
@@ -180,7 +190,8 @@ export const RECOGNISED_DIALOGS: readonly RecognisedDialog[] = [
   },
   {
     title: MASHUP_PICKER.title,
-    allows: [MASHUP_PICKER.select, MASHUP_PICKER.close, MASHUP_PICKER.field],
+    allows: [MASHUP_PICKER.close, MASHUP_PICKER.field],
+    allowsButtons: MASHUP_PICKER.add,
     snapshot: MASHUP_PICKER.snapshot,
   },
 ];
@@ -429,7 +440,8 @@ export function classify(facts: ControlFacts): Verdict {
     if (row && [facts.name, ...facts.otherNames].some((name) => FORBIDDEN_NAME.test(name.trim()))) {
       return forbidden('its name starts with Create, Publish, Delete, Trash, or Remove');
     }
-    if (!container && !byText && !row && !dialog.allows.includes(facts.name)) {
+    const namedButton = facts.role === 'button' && dialog.allowsButtons?.test(facts.name) === true;
+    if (!container && !byText && !row && !namedButton && !dialog.allows.includes(facts.name)) {
       return forbidden('the dialog it is in does not allow it');
     }
   }

@@ -20,7 +20,7 @@ import { expected, OK, type Check } from './workflow.ts';
  * song), so those routes are taken by the extension in Advanced mode. In Simple mode only Cover's
  * chip is captured; the other actions there are loaded by hand. A Mashup's second song is added
  * through the form's "Add another song to Mashup" and its "Add a song to mashup" dialog (#438, the
- * owner's capture of 2026-10-18), found by its Suno ID or its exact title, and otherwise by hand;
+ * owner's console capture of 2026-10-19), its row found by the link to its Suno ID, else by hand;
  * Inspiration songs after the first are added by hand (the Inspo area was not captured in use).
  * All are verified before anything else is filled. A
  * playlist used as Inspiration stays by hand: the Inspo picker's dialog has no title, so the
@@ -548,12 +548,16 @@ export const MASHUP_DIALOG: Target = {
   description: 'Suno’s “Add a song to mashup” dialog',
 };
 
-/** Its search box ("Search for a song in your library…"; "..." or "…" alike). */
+/**
+ * Its search box: an `input` named "Search clips" (`aria-label`; TS-007-18), its placeholder
+ * "Search for a song in your library..." ("..." or "…"). The name is what Suno gives it; the
+ * placeholder is taken only for a box that has no `aria-label`.
+ */
 export const MASHUP_SEARCH: Target = {
   role: 'textbox',
-  name: /^Search for a song in your library(…|\.\.\.)?$/,
+  name: /^(Search clips|Search for a song in your library(…|\.\.\.)?)$/,
   within: MASHUP_DIALOG,
-  description: 'the “Search for a song in your library…” box of the Mashup dialog',
+  description: 'the “Search clips” box of the Mashup dialog',
 };
 
 /** Its My Library tab, which is read only: the extension never presses a tab of it. */
@@ -572,113 +576,62 @@ export const MASHUP_CLOSE: Target = {
   description: 'the Mashup dialog’s Close (×)',
 };
 
-/** Every song's Select in the dialog, one per row. */
-export const MASHUP_SELECTS: Target = {
-  role: 'button',
-  name: MASHUP_PICKER.select,
-  within: MASHUP_DIALOG,
-  description: 'a song’s Select in the Mashup dialog',
+/**
+ * A song's link in the dialog's list, by the clip it addresses: `<a href="/song/<clip ID>">` in
+ * the song's row (TS-007-18). Read only: the extension never follows it.
+ */
+export function mashupSongLink(sunoId: string): Target {
+  return {
+    role: 'link',
+    address: `/song/${sunoId}`,
+    within: MASHUP_DIALOG,
+    description: 'a row of the Mashup dialog’s list linking to the second song',
+  };
+}
+
+/** Any song's link in the dialog: one per row. */
+const MASHUP_SONG_LINKS: Target = {
+  role: 'link',
+  description: 'a song’s link in the Mashup dialog',
 };
 
 /**
- * A song's title in the dialog's list: the element whose whole text is the title (the text, not
- * the cut the row shows with "…"); `nth` is its place among the rows of that title.
+ * How far out from a song's link its row may reach: the link sits three levels inside its row in
+ * the fixture built from the capture (its title line, the text column, the row), and six leaves
+ * room for a wrapper more. The region never grows past an element holding two song links, so
+ * another row's button is never taken for it, even when the song's own row shows none.
  */
-export function mashupSongTitle(title: string, nth?: number): Target {
-  return {
-    role: 'text',
-    name: title,
-    within: MASHUP_DIALOG,
-    ...(nth === undefined ? {} : { nth }),
-    description: 'the song’s title in the Mashup dialog',
-  };
-}
-
-/** How far out from a song's title its row may reach to hold the row's Select. */
 const MASHUP_ROW_LEVELS = 6;
 
 /**
- * The Select of the row holding that title: the nearest part of the list around the title that
- * holds a Select, which is the title's own row; two Selects there are never chosen between.
+ * The "Add <title> to mashup" button (its text "Select") of the row linking to `sunoId`: the
+ * nearest part of the list around the link that holds such a button and no other song's link,
+ * which is the link's own row, and only when it holds exactly one. The title in its name is
+ * Suno's, so it is matched by its form, never by the Version's title.
  */
-export function mashupSongSelect(title: string, nth?: number): Target {
+export function mashupSongAdd(sunoId: string): Target {
   return {
     role: 'button',
-    name: MASHUP_PICKER.select,
+    name: MASHUP_PICKER.add,
     within: {
-      around: mashupSongTitle(title, nth),
+      around: mashupSongLink(sunoId),
       levels: MASHUP_ROW_LEVELS,
-      description: 'the song’s row in the Mashup dialog',
+      // A row holds one song link: the region never reaches past it to another row's button.
+      single: MASHUP_SONG_LINKS,
+      description: 'the second song’s row in the Mashup dialog',
     },
-    description: 'the song’s Select in the Mashup dialog',
+    description: 'the second song’s “Add … to mashup” (Select) in the Mashup dialog',
   };
 }
 
-/** A clip of Suno's answer to the dialog's search: its ID and title. */
-export interface MashupClip {
-  id: string;
-  title: string;
-}
-
 /**
- * The clips of a feed answer, in order, when it lists `sunoId` (the song looked for); null
- * otherwise, so another list the page asked for is not taken for the search's.
+ * Whether the dialog's list shows the song (#438, TS-007-18): by the rows linking to its Suno ID,
+ * one (a row to choose), none, or several (none is chosen). Read only. Rows are never told by
+ * title: two clips of one Create share it, and every row carries its clip's link.
  */
-export function mashupClipsOf(body: unknown, sunoId: string): MashupClip[] | null {
-  const clips =
-    typeof body === 'object' && body !== null && 'clips' in body && Array.isArray(body.clips)
-      ? (body.clips as unknown[])
-      : [];
-  const read = clips.flatMap((clip) =>
-    typeof clip === 'object' &&
-    clip !== null &&
-    'id' in clip &&
-    typeof clip.id === 'string' &&
-    'title' in clip &&
-    typeof clip.title === 'string'
-      ? [{ id: clip.id, title: clip.title }]
-      : [],
-  );
-  return read.length === clips.length && read.some((clip) => clip.id === sunoId) ? read : null;
-}
-
-/** The second song's row in the dialog, and how it was told: by its Suno ID, or by its title. */
-export type MashupChoice =
-  { kind: 'row'; by: 'id' | 'title'; select: Target } | { kind: 'none' } | { kind: 'several' };
-
-/**
- * Which row of the dialog is `song` (#438). Read only. By its Suno ID when Suno's answer to the
- * search (`clips`, in order) matches the rows one for one: as many rows as clips, and for each
- * title as many rows as clips of it, so the clip's place among the clips of its title is its row's
- * among the rows of that title. Otherwise by the one row whose whole title is the song's exactly;
- * none, or several, is no choice.
- */
-export function mashupChoice(
-  page: Page,
-  song: { title: string; sunoId: string },
-  clips: readonly MashupClip[] | null,
-): MashupChoice {
-  const rows = page.readAll(MASHUP_SELECTS).length;
-  const index = clips === null ? -1 : clips.findIndex((clip) => clip.id === song.sunoId);
-  const clip = clips?.[index];
-  if (clips !== null && clip !== undefined && rows === clips.length) {
-    const titles = new Set(clips.map((each) => each.title));
-    const matched = [...titles].every(
-      (title) =>
-        title.trim() !== '' &&
-        page.readAll(mashupSongTitle(title)).length ===
-          clips.filter((each) => each.title === title).length,
-    );
-    if (matched) {
-      const nth = clips.slice(0, index).filter((each) => each.title === clip.title).length;
-      return { kind: 'row', by: 'id', select: mashupSongSelect(clip.title, nth) };
-    }
-  }
-  const named = song.title.trim() === '' ? 0 : page.readAll(mashupSongTitle(song.title)).length;
-  if (named === 1) {
-    return { kind: 'row', by: 'title', select: mashupSongSelect(song.title) };
-  }
-  return named === 0 ? { kind: 'none' } : { kind: 'several' };
+export function mashupChoice(page: Page, sunoId: string): 'row' | 'none' | 'several' {
+  const links = page.readAll(mashupSongLink(sunoId)).length;
+  return links === 1 ? 'row' : links === 0 ? 'none' : 'several';
 }
 
 /**

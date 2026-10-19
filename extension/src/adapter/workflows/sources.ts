@@ -13,8 +13,9 @@ import {
   MASHUP_DIALOG,
   MASHUP_LIBRARY_TAB,
   MASHUP_SEARCH,
-  MASHUP_SELECTS,
   mashupChoice,
+  mashupSongAdd,
+  mashupSongLink,
   MORE_OPTIONS,
   OVERWRITE_BUTTON,
   SIMPLE_CHIP_THUMBNAIL,
@@ -24,7 +25,6 @@ import {
   VOICE_DIALOG,
   voiceTitle,
   type LoadedSource,
-  type MashupClip,
   type SourceRoute,
 } from '../sources.ts';
 import { expected, OK, present, type Check, type StepContext, type Workflow } from '../workflow.ts';
@@ -385,19 +385,15 @@ export const closeVoicePicker: Workflow = {
   fixtures: ['create-voice-selected'],
 };
 
-/** How long the Mashup dialog's list may take to show the song once its title is typed. */
-export const MASHUP_ROW_WAIT_MS = 3_000;
+/**
+ * How long the Mashup dialog's list may take to show the song's row once its title is typed: Suno
+ * searches as the box changes, and the row is looked for until then.
+ */
+export const MASHUP_ROW_WAIT_MS = 5_000;
 
 /** Searching for a Mashup's second song (#438): its Suno title and ID. */
 export interface SearchMashupSongContext extends StepContext {
   song: { title: string; sunoId: string };
-}
-
-/** Choosing it: the song, and the clips of Suno's answer to the search, in order, if one came. */
-export interface ChooseMashupSongContext extends SearchMashupSongContext {
-  clips: readonly MashupClip[] | null;
-  /** How the row was told, once its Select was pressed: by the song's Suno ID, or by its title. */
-  chosen: { by: 'id' | 'title' | null };
 }
 
 function mashupDialogOpen(page: Page): boolean {
@@ -413,10 +409,10 @@ function onMyLibrary(page: Page): Check {
 }
 
 /**
- * Searches for a Mashup's second song (#438, the owner's capture of 2026-10-18): "Add another song
- * to Mashup" opens Suno's "Add a song to mashup" dialog, and on its My Library list (never another
- * tab) the song's Suno title is typed into "Search for a song in your library…" (the native setter
- * and an `input` event, as `search-workspaces` types, #434; never Enter). It presses nothing else.
+ * Searches for a Mashup's second song (#438): "Add another song to Mashup" opens Suno's "Add a song
+ * to mashup" dialog, and on its My Library list (never another tab) the song's Suno title is typed
+ * into its "Search clips" box (the native setter and an `input` event, as `search-workspaces`
+ * types, #434; never Enter). It presses nothing else.
  */
 export const searchMashupSong: Workflow<SearchMashupSongContext> = {
   id: 'search-mashup-song',
@@ -469,43 +465,38 @@ export const searchMashupSong: Workflow<SearchMashupSongContext> = {
 };
 
 /**
- * Chooses the searched song in the "Add a song to mashup" dialog (#438): its row is told by its
- * Suno ID when Suno's answer to the search matches the rows one for one, else by the one row whose
- * whole title is the song's (`mashupChoice`), and its Select is pressed. Nothing else is pressed:
- * the matcher refuses the dialog's tabs, filter, sort, play, and like buttons. With no such row,
- * or more than one, the step stops, and the content script closes the dialog and leaves the song
- * to the user. Suno closing the dialog on a choice, and the form showing the song, are read by the
- * content script afterwards (neither was seen live).
+ * Chooses the searched song in the "Add a song to mashup" dialog (#438, TS-007-18): its row is the
+ * one whose link leads to `/song/<its Suno ID>`, looked for until the list shows it (up to
+ * {@link MASHUP_ROW_WAIT_MS}), and that row's "Add <title> to mashup" (Select) is pressed. Nothing
+ * else is pressed: the matcher refuses the dialog's tabs, filter, sort, liked filter, the rows
+ * themselves, play, like, and Edit title. With no row linking to the song, or several, the step
+ * stops, and the content script closes the dialog and leaves the song to the user. Suno closing
+ * the dialog, and the form showing the song, are read by the content script afterwards.
  */
-export const chooseMashupSong: Workflow<ChooseMashupSongContext> = {
+export const chooseMashupSong: Workflow<SearchMashupSongContext> = {
   id: 'choose-mashup-song',
   title: 'Choose the Mashup’s second song',
   feature: 'generate',
   startsOn: sunoPage('create'),
   after: 'search-mashup-song',
-  needs: [{ step: 'song row', check: (page) => present(page, MASHUP_SELECTS) }],
+  needs: [{ step: 'song row', check: (page) => present(page, MASHUP_SEARCH) }],
   steps: [
     {
       name: 'song row',
-      expect: ({ page, song, clips }) => {
-        const choice = mashupChoice(page, song, clips);
-        return choice.kind === 'row'
-          ? OK
+      expect: ({ page, song }) => {
+        const choice = mashupChoice(page, song.sunoId);
+        return choice === 'row'
+          ? present(page, mashupSongAdd(song.sunoId))
           : expected(
-              choice.kind === 'none'
-                ? 'a song in the Mashup dialog’s list named exactly as the Version’s second song'
-                : 'one song in the Mashup dialog’s list named as the Version’s second song (found more than one, so none was chosen)',
+              choice === 'none'
+                ? mashupSongLink(song.sunoId).description
+                : 'one row of the Mashup dialog’s list linking to the second song (found more than one, so none was chosen)',
             );
       },
-      act: ({ page, song, clips, chosen }) => {
-        const choice = mashupChoice(page, song, clips);
-        if (choice.kind !== 'row') {
-          return;
-        }
-        const select = page.find(choice.select);
-        if (select.kind === 'found') {
-          page.click(select.found);
-          chosen.by = choice.by;
+      act: ({ page, song }) => {
+        const add = page.find(mashupSongAdd(song.sunoId));
+        if (add.kind === 'found') {
+          page.click(add.found);
         }
       },
       // What follows a choice is read by the content script: the dialog closing, and the form.

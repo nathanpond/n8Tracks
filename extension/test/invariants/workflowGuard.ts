@@ -17,7 +17,11 @@ import { fakeClock, loadSnapshot, SNAPSHOT_NAMES } from '../../src/testing/snaps
  *
  * - any click, pointer press, Enter or Space key, or form submission that reached one of them
  *   (an exception, creating a workspace or preparing a download, only for a workflow allowed to
- *   make it);
+ *   make it). A press aimed at a control the matcher allows, inside a refused one, reaches the
+ *   refused one only on its way: the matcher judges the elements a pressed control sits in by
+ *   their own names and the known selectors (`verdictOf`), so the guard does too, and such a press
+ *   counts only when that judgement refuses it (#438: a song's "Add … to mashup" sits inside its
+ *   row, which is itself a `role=button` that may not be pressed);
  * - any Enter key dispatched anywhere, and any form submitted anywhere;
  * - any press the matcher refused (a workflow that tried is a bug even though nothing happened);
  * - a workflow that did not run every step on each snapshot it lists as a fixture;
@@ -149,6 +153,24 @@ function spiedOnSnapshot(snapshot: string, document: Document): Spied[] {
 }
 
 /** Records activations of the spied controls, and Enter and submissions anywhere, until stopped. */
+/**
+ * Whether the event only passes through a refused control on its way to an allowed one inside it:
+ * aimed at another element, which the matcher allows pressing (itself and, by their own names and
+ * the known selectors, every element it sits in). Never for an exception's control, nor for an
+ * unrecognised dialog, where anything inside counts.
+ */
+function passesThrough(control: Spied, event: Event): boolean {
+  const target = event.target;
+  return (
+    control.exception === null &&
+    !isDialog(control.element) &&
+    target instanceof Element &&
+    target !== control.element &&
+    control.element.contains(target) &&
+    verdictOf(target).kind === 'allowed'
+  );
+}
+
 function watch(document: Document, spied: readonly Spied[]) {
   const activations: { words: string; event: string; exception: ExceptionName | null }[] = [];
   const anywhere: string[] = [];
@@ -165,6 +187,9 @@ function watch(document: Document, spied: readonly Spied[]) {
       listen(control.element, type, (event) => {
         const key = (event as KeyboardEvent).key;
         if (type === 'keydown' && !ACTIVATING_KEYS.has(key)) {
+          return;
+        }
+        if (passesThrough(control, event)) {
           return;
         }
         activations.push({

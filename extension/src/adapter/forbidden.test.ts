@@ -194,8 +194,15 @@ describe('the forbidden-control matcher, on the TS-003 snapshots', () => {
         ],
       ],
       ['Model', ['Close']],
-      ['Add a song to mashup', ['Select', 'Close', 'Search for a song in your library…']],
+      ['Add a song to mashup', ['Close', 'Search clips']],
     ]);
+    // Only the Mashup dialog allows buttons by a pattern: a song's "Add <title> to mashup" (#438).
+    expect(
+      RECOGNISED_DIALOGS.filter((dialog) => dialog.allowsButtons !== undefined).map((dialog) => [
+        dialog.title,
+        String(dialog.allowsButtons),
+      ]),
+    ).toEqual([['Add a song to mashup', String(/^Add .+ to mashup$/)]]);
     // Only the Model dialog's rows may be pressed (TS-007-10).
     expect(
       RECOGNISED_DIALOGS.filter((dialog) => dialog.pressesRows === true).map(
@@ -480,74 +487,102 @@ describe('the Save to picker (#435)', () => {
   });
 });
 
-describe('the “Add a song to mashup” dialog (#438)', () => {
+describe('the “Add a song to mashup” dialog (#438, TS-007-18)', () => {
   const dialog = { title: MASHUP_PICKER.title };
+  const REFUSED = { kind: 'forbidden', reason: 'the dialog it is in does not allow it' };
 
-  it('allows a song’s Select, its search box, and Close, and refuses its tabs, filter, sort, play, and like', () => {
-    expect(classify(facts({ name: 'Select', dialog })).kind).toBe('allowed');
+  it('allows a song’s “Add … to mashup”, the “Search clips” box, and Close', () => {
+    for (const name of ['Add The Long Thaw to mashup', 'Add Harbor Lights (Live) to mashup']) {
+      expect(classify(facts({ name, dialog })).kind, name).toBe('allowed');
+    }
     expect(classify(facts({ name: 'Close', dialog })).kind).toBe('allowed');
-    expect(classify(facts({ role: 'textbox', name: MASHUP_PICKER.field, dialog })).kind).toBe(
-      'allowed',
-    );
+    expect(classify(facts({ role: 'textbox', name: 'Search clips', dialog })).kind).toBe('allowed');
+  });
+
+  it('refuses Edit title, like, play, the rows themselves, the tabs, filter, sort, the liked filter, and Create, Publish, or Delete', () => {
     for (const [role, name] of [
+      ['button', 'Edit title'],
+      ['button', 'Like The Long Thaw'],
+      ['button', 'Play The Long Thaw'],
+      ['button', 'The Long Thaw. Double-tap or press Enter to add to mashup.'],
+      // A row whose title starts like its button is still a row: its name ends with a stop.
+      ['button', 'Add The Long Thaw to mashup. Double-tap or press Enter to add to mashup.'],
       ['tab', 'My Library'],
       ['tab', 'Everything'],
       ['button', '(3)'],
       ['button', 'New'],
+      ['button', 'Filter to show only liked clips'],
       ['button', ''],
-      ['button', 'Play'],
-      ['button', 'Like'],
+      ['button', 'Select'],
+      ['button', 'Add to mashup'],
+      ['button', 'add The Long Thaw to mashup'],
       ['button', 'Create'],
-      ['button', 'Delete'],
       ['button', 'Publish'],
+      ['button', 'Delete'],
+      // Named as a song's Add, but not a button: a link or an image.
+      ['link', 'Add The Long Thaw to mashup'],
+      ['img', 'Add The Long Thaw to mashup'],
+      // The placeholder is no longer the box's name: Suno names it "Search clips".
+      ['textbox', 'Search for a song in your library...'],
     ] as const) {
-      expect(classify(facts({ role, name, dialog })), `${role} "${name}"`).toEqual({
-        kind: 'forbidden',
-        reason: 'the dialog it is in does not allow it',
-      });
+      expect(classify(facts({ role, name, dialog })), `${role} "${name}"`).toEqual(REFUSED);
     }
+    // An Add whose own words start with a forbidden one is refused for them, wherever it is.
+    expect(
+      classify(facts({ name: 'Add The Long Thaw to mashup', otherNames: ['Delete'], dialog })),
+    ).toEqual({
+      kind: 'forbidden',
+      reason: 'its name starts with Create, Publish, Delete, Trash, or Remove',
+    });
   });
 
-  it('on its snapshots, allows only Select, Close, and the search box', () => {
+  it('on its snapshots, allows only a song’s Add, Close, and the search box', () => {
     for (const snapshot of [MASHUP_PICKER.snapshot, 'create-source-mashup-add-song-search']) {
       load(snapshot);
       const open = document.querySelector('[role="dialog"]');
       const inDialog = [...(open?.querySelectorAll('*') ?? [])].filter(
         (element) => roleOf(element) !== null,
       );
-      const allowed = [
+      const words = (kind: string) => [
         ...new Set(
           inDialog
-            .filter((element) => verdictOf(element).kind === 'allowed')
+            .filter((element) => verdictOf(element).kind === kind)
             .map((element) => `${roleOf(element) ?? ''} "${nameOf(element)}"`),
         ),
       ];
-      const refused = [
+      const titles = [
         ...new Set(
-          inDialog
-            .filter((element) => verdictOf(element).kind === 'forbidden')
-            .map((element) => `${roleOf(element) ?? ''} "${nameOf(element)}"`),
+          [...(open?.querySelectorAll('a[href^="/song/"]') ?? [])].map((link) => link.textContent),
         ),
       ];
-      // The tab list holds the tabs rather than being one; its tabs are refused.
-      expect(allowed.toSorted()).toEqual([
-        'button "Close"',
-        'button "Select"',
-        'tablist ""',
-        'textbox "Search for a song in your library…"',
-      ]);
-      expect(refused.toSorted()).toEqual([
-        'button ""',
-        'button "(3)"',
-        'button "Like"',
-        'button "New"',
-        'button "Play"',
-        // Not controls, but nothing in the dialog may be pressed unless it allows it.
-        'heading "Add a song to mashup"',
-        'img ""',
-        'tab "Everything"',
-        'tab "My Library"',
-      ]);
+      // The tab list and the row group hold controls rather than being ones.
+      expect(words('allowed').toSorted(), snapshot).toEqual(
+        [
+          'button "Close"',
+          'rowgroup ""',
+          'tablist ""',
+          'textbox "Search clips"',
+          ...titles.map((title) => `button "Add ${title} to mashup"`),
+        ].toSorted(),
+      );
+      expect(words('forbidden').toSorted(), snapshot).toEqual(
+        [
+          'button "(3)"',
+          'button "Edit title"',
+          'button "Filter to show only liked clips"',
+          'button "New"',
+          'tab "Everything"',
+          'tab "My Library"',
+          ...titles.flatMap((title) => [
+            `button "${title}. Double-tap or press Enter to add to mashup."`,
+            `button "Like ${title}"`,
+            `button "Play ${title}"`,
+            // Not controls, but nothing in the dialog may be pressed unless it allows it.
+            `img "${title} artwork"`,
+            `link "${title}"`,
+          ]),
+        ].toSorted(),
+      );
     }
   });
 });
