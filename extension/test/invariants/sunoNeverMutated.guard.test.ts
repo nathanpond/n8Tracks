@@ -275,7 +275,9 @@ describe('invariant 4: the extension never presses a forbidden control on Suno',
     expect(registryProblems(WORKFLOW_MODULES, ADAPTER_WORKFLOWS, RUN_RECIPES)).toEqual([]);
   });
 
-  it('spies on the forbidden controls of every snapshot it runs on', () => {
+  // It loads every snapshot and reads each one's controls, which takes about 5 s here and more on
+  // a GitHub runner, past vitest's default 5 s: the limit is the one sunoGenerate.test.ts uses.
+  it('spies on the forbidden controls of every snapshot it runs on', { timeout: 30_000 }, () => {
     // Complement: the spies are really there. Every snapshot but the playlist page and the clip's
     // page with its menu closed (TS-005), which have no Create, Publish, Delete, Trash, or Remove
     // control and no dialog, has at least one.
