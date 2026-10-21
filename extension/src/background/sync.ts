@@ -51,6 +51,9 @@ export const PART_RETRIES = 3;
 
 export const EXPORTS_PATH = 'api/v1/suno/exports';
 
+/** Where the user's voices a sync read are reported (#439). */
+export const DISCOVERED_VOICES_PATH = 'api/v1/suno/personas/discovered';
+
 /** The address of the review of an export in n8Tracks (the review story, #139). */
 export function reviewAddress(address: string, exportId: string): string {
   return `${address}/suno/imports/${encodeURIComponent(exportId)}`;
@@ -132,6 +135,8 @@ export class SyncCoordinator {
         return this.discard(tabId);
       case 'sync-images':
         return { images: await this.images.progress(tabId) };
+      case 'sync-voices':
+        return this.voices(request.complete, request.voices, tabId);
     }
   }
 
@@ -228,7 +233,7 @@ export class SyncCoordinator {
       leg: 0,
       attempt: 0,
       partNumber: 0,
-      counts: { clips: 0, trashed: 0, workspaces: 0, playlists: 0 },
+      counts: { clips: 0, trashed: 0, workspaces: 0, playlists: 0, voices: 0 },
       workspaces: [],
       exportId: null,
       updatedAt: this.now(),
@@ -344,6 +349,35 @@ export class SyncCoordinator {
     void this.images.start(exportId, tabId).catch(() => undefined);
     await this.openReview(reviewUrl, address, tabId);
     return { ok: true, reviewUrl };
+  }
+
+  /**
+   * Reports the user's voices the sync read (#439) to n8Tracks, once, on their own: not in the
+   * export, which the user reviews. Only this tab's sync may. A refusal is reported in plain words
+   * by its code, never with anything the request carried; it does not end the sync.
+   */
+  private async voices(
+    complete: boolean,
+    voices: Record<string, unknown>[],
+    tabId: number,
+  ): Promise<SyncReply<{ added: number }>> {
+    if ((await this.ownSession(tabId)) === null) {
+      return { ok: false, message: 'This tab is not running a sync.' };
+    }
+    try {
+      const response = await this.connection.call(DISCOVERED_VOICES_PATH, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ complete, voices }),
+      });
+      const body = await bodyOf(response);
+      if (!response.ok || !isRecord(body) || !Array.isArray(body.added)) {
+        return { ok: false, message: await refusal(response, 'your voices', body) };
+      }
+      return { ok: true, added: body.added.length };
+    } catch (error) {
+      return { ok: false, message: this.callFailure(error) };
+    }
   }
 
   private async discard(tabId: number): Promise<SyncReply> {

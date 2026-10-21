@@ -38,6 +38,7 @@ import {
   verifySourceSimple,
 } from './sources.ts';
 import { chooseSaveTo, closeSaveTo } from './saveTo.ts';
+import { closeVoiceList, openVoiceList, scrollVoiceList } from './voices.ts';
 import { createWorkspace, openWorkspaces, searchWorkspaces, signedIn } from './workspace.ts';
 
 /**
@@ -53,6 +54,9 @@ export const ADAPTER_WORKFLOWS: readonly Workflow[] = [
   searchWorkspaces,
   createWorkspace,
   switchForm,
+  openVoiceList,
+  scrollVoiceList,
+  closeVoiceList,
   fillSongsSimple,
   fillSongsAdvanced,
   checkSongsForm,

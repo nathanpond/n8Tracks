@@ -92,6 +92,13 @@ public static class RedactionPolicy
         "sourcevalue",
         "versionvalue",
 
+        // The user's Suno voice list as a sync reports it (#439): the raw persona objects ("voices"),
+        // and the persona owner's handle and display name Suno sends with each (user_handle,
+        // user_display_name), which the extension drops but a stray payload could still carry.
+        "voices",
+        "userhandle",
+        "userdisplayname",
+
         // A job's payload: whatever the code that enqueued it passed, which may be any of the above.
         "payload",
 

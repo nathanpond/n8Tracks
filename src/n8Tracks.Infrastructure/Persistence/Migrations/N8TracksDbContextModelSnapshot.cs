@@ -2434,6 +2434,17 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("suno_id");
 
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("")
+                        .HasColumnName("description");
+
+                    b.Property<bool?>("IsOwned")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("is_owned");
+
                     b.Property<string>("LastSeenUtc")
                         .IsRequired()
                         .HasColumnType("TEXT")
@@ -2443,6 +2454,13 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT")
                         .HasColumnName("name");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("available")
+                        .HasColumnName("state");
 
                     b.HasKey("SunoId")
                         .HasName("pk_suno_personas");

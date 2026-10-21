@@ -12,8 +12,9 @@
  * The lists the library reader reads (TS-003, "How lists are paged"), the answer to creating a
  * workspace, which gives Generate on Suno the new workspace's ID (#145), the answer to the
  * user's own Create click (#149), which the extension never makes itself (invariant 4), the
- * plan's download allowance the page reads when a Download dialog opens (TS-004, #215), and the
- * page's own answer when a format is prepared for download in that dialog (TS-004, #216).
+ * plan's download allowance the page reads when a Download dialog opens (TS-004, #215), the
+ * page's own answer when a format is prepared for download in that dialog (TS-004, #216), and the
+ * user's voice list the page asks for when the Voice picker opens (#439).
  */
 export type ObservedKind =
   | 'library-feed'
@@ -24,7 +25,8 @@ export type ObservedKind =
   | 'workspace-created'
   | 'create'
   | 'billing'
-  | 'download-clip';
+  | 'download-clip'
+  | 'personas';
 
 /** One Suno list response: method and path on Suno's API host, exact or by pattern. */
 interface ListPattern {
@@ -52,7 +54,18 @@ export const OBSERVED_LISTS: readonly ListPattern[] = [
   // TS-004: polled by the page after a format's button is pressed in the Download dialog, until it
   // answers `status: "ready"` with a signed `download_url`. Only those two members are forwarded.
   { kind: 'download-clip', method: 'GET', path: /^\/api\/download\/clip\/[^/]+$/ },
+  // #439: the user's voice list, requested by the page when Create's "+ Voice" opens the Voice
+  // picker (`GET /api/persona/get-personas/?page=N`). Only the paging counts and each persona's
+  // {@link PERSONA_FIELDS} are forwarded ({@link forwardedBody}): never the owner's handle, display
+  // name, or image, nor the persona's clip.
+  { kind: 'personas', method: 'GET', path: '/api/persona/get-personas' },
 ];
+
+/** The members of each persona in the voice list forwarded (#439): what n8Tracks keeps, and nothing else. */
+export const PERSONA_FIELDS = ['id', 'name', 'description', 'is_trashed', 'is_owned'] as const;
+
+/** The members of the voice list's answer forwarded beside its personas (#439): its paging counts. */
+export const PERSONA_PAGE_FIELDS = ['current_page', 'total_results'] as const;
 
 /** The members of a prepared download's answer forwarded (TS-004): its status and its address. */
 export const DOWNLOAD_CLIP_FIELDS = ['status', 'download_url'] as const;
@@ -77,9 +90,14 @@ export const DOWNLOAD_USAGE_FIELDS = [
 
 /**
  * What of a response body is forwarded: the whole body, less {@link NEVER_FORWARDED}, except for
- * the billing answer, of which only the download counts go ({@link DOWNLOAD_USAGE_FIELDS}).
+ * the billing answer, of which only the download counts go ({@link DOWNLOAD_USAGE_FIELDS}), a
+ * prepared download, of which only its status and address go, and the voice list, of which only
+ * its paging counts and each persona's {@link PERSONA_FIELDS} go (#439).
  */
 export function forwardedBody(kind: ObservedKind, body: unknown): unknown {
+  if (kind === 'personas') {
+    return personasBody(body);
+  }
   if (kind === 'download-clip') {
     return isRecord(body)
       ? Object.fromEntries(
@@ -247,6 +265,38 @@ export function downloadRequestOf(address: string, base: string): DownloadReques
   }
   const known = PREPARED_FORMATS.find((candidate) => candidate === format);
   return clipId === '' || known === undefined ? null : { clipId, format: known };
+}
+
+/**
+ * The voice list's answer as forwarded (#439): `current_page` and `total_results` when they are
+ * numbers, and `personas` (when a list) with each persona cut to {@link PERSONA_FIELDS} of the
+ * right type. A persona that is not an object is kept as `{}`, so the reader still sees one record
+ * without an ID there and stops, as for any page it cannot read.
+ */
+function personasBody(body: unknown): Record<string, unknown> {
+  if (!isRecord(body)) {
+    return {};
+  }
+  const forwarded: Record<string, unknown> = Object.fromEntries(
+    PERSONA_PAGE_FIELDS.filter((field) => typeof body[field] === 'number').map((field) => [
+      field,
+      body[field],
+    ]),
+  );
+  if (Array.isArray(body.personas)) {
+    forwarded.personas = body.personas.map((persona) =>
+      isRecord(persona)
+        ? Object.fromEntries(
+            PERSONA_FIELDS.filter((field) =>
+              field === 'is_trashed' || field === 'is_owned'
+                ? typeof persona[field] === 'boolean'
+                : typeof persona[field] === 'string',
+            ).map((field) => [field, persona[field]]),
+          )
+        : {},
+    );
+  }
+  return forwarded;
 }
 
 /** A copy of `value` with every member named in {@link NEVER_FORWARDED} left out, at any depth. */

@@ -831,6 +831,10 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                 table.HasCheckConstraint("ck_suno_personas_suno_id", "length(suno_id) BETWEEN 1 AND 100");
             });
             persona.HasKey(record => record.SunoId);
+            // No check on state (#439): adding one to an existing SQLite table rebuilds it, outside the
+            // migration's transaction; only SunoPersonaRules writes it, from its two names.
+            persona.Property(record => record.Description).HasDefaultValue(string.Empty);
+            persona.Property(record => record.State).HasDefaultValue(SunoPersonaRecord.Available);
         });
 
         modelBuilder.Entity<ExternalSunoReferenceRecord>(reference =>

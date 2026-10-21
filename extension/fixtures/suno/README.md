@@ -37,7 +37,7 @@ One pair of clips was made in each mode in a new workspace. The modes are `songs
 - `project.create.response.json`: `POST /api/project` from the inline "Create new workspace" row (body not captured).
 - `playlist-me.response.json`: `GET /api/playlist/me?page=1&show_trashed=false&show_sharelist=false`, the playlist list, requested when the Create form's Inspo picker opens. Trimmed to two.
 - `unified-feed.playlist.request.json` / `.response.json`: `POST /api/unified/feed` with `{ feed_id: "generic_playlist:<id>", cursor: null, page_size: 50, request_metadata: { sort_by: "default" } }`, a playlist's contents, requested when a playlist page opens. Songs are in `feed.items[].content_item`. No paging field appeared for an 8-song playlist. Trimmed to two items.
-- `persona-get-personas.response.json`: `GET /api/persona/get-personas/?page=1`, requested when the Voice picker opens.
+- `persona-get-personas.response.json`: `GET /api/persona/get-personas/?page=1`, requested when the Voice picker opens: the voice list a sync reads (#439, TS-007-21). Each persona carries the owner's `user_handle`, `user_display_name`, and `user_image_url` (redacted here) and a whole `clip`, none of which the observer forwards.
 
 ### TS-004: downloads
 

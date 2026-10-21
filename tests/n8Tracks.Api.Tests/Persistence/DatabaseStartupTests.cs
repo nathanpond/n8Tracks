@@ -83,7 +83,8 @@ public sealed class DatabaseStartupTests : IDisposable
             migration => Assert.Matches("^[0-9]{14}_AddPreferredAudioFiles\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_RederiveGenerationAudioUrls\\|10\\.0\\.", migration),
             migration => Assert.Matches("^[0-9]{14}_AddRetentionReleasedAudioFiles\\|10\\.0\\.", migration),
-            migration => Assert.Matches("^[0-9]{14}_RecordTrashedClipsNotOffered\\|10\\.0\\.", migration));
+            migration => Assert.Matches("^[0-9]{14}_RecordTrashedClipsNotOffered\\|10\\.0\\.", migration),
+            migration => Assert.Matches("^[0-9]{14}_RecordSunoVoiceLists\\|10\\.0\\.", migration));
 
         // ISO 8601 UTC with milliseconds and Z, taken when the migration ran.
         var initialized = TestDatabase.SchemaInitializedUtc(directory.Path);
@@ -412,7 +413,7 @@ public sealed class DatabaseStartupTests : IDisposable
 
         Assert.Equal(MigrationStatus.UpToDate, state.Status);
         Assert.Equal(TestDatabase.History(directory.Path)[^1].Split('|')[0], state.LastAppliedMigrationId);
-        Assert.EndsWith("_RecordTrashedClipsNotOffered", state.LastAppliedMigrationId, StringComparison.Ordinal);
+        Assert.EndsWith("_RecordSunoVoiceLists", state.LastAppliedMigrationId, StringComparison.Ordinal);
     }
 
     [Fact]

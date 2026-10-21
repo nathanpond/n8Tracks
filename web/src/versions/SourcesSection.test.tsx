@@ -470,7 +470,10 @@ describe('the Sources section of a Version (#125)', () => {
     serve();
     await openVersion();
     expect(await screen.findByTestId('no-playlists')).toHaveTextContent('none yet');
-    expect(await screen.findByTestId('no-personas')).toHaveTextContent('No Suno voices yet');
+    // A sync reads the user's voices (#439), so the empty list says so.
+    expect(await screen.findByTestId('no-personas')).toHaveTextContent(
+      'No Suno voices yet: a sync from the extension on Suno reads your voices, and imported clips add the voices they used.',
+    );
   });
 
   it('choosing Cover removes Inspiration after a confirmation, and hides it while Cover is chosen', async () => {
@@ -512,6 +515,40 @@ describe('the Sources section of a Version (#125)', () => {
     expect(await lastWrite(server.writes, 1)).toEqual({
       inputs: { voice: { personaId: 'pe-2', name: 'Smoky' } },
     });
+  });
+
+  it('offers the voices a sync read but not one Suno no longer offers, which a Version keeps (#439)', async () => {
+    const { server } = serve({ voice: { personaId: 'pe-gone', name: 'Retired' } });
+    server.personas = [
+      { id: 'pe-1', name: 'Velvet Alto', description: '', state: 'available', owned: true },
+      { id: 'pe-2', name: 'Gravel Baritone', description: '', state: 'unavailable', owned: true },
+      { id: 'pe-gone', name: 'Retired', description: '', state: 'unavailable', owned: true },
+    ];
+    await openVersion();
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: 'Voice' })).toBeEnabled();
+    });
+
+    const options = within(screen.getByRole('combobox', { name: 'Voice' }))
+      .getAllByRole('option')
+      .map((option) => option.textContent);
+    expect(options).toEqual(['None', 'Retired (no longer in your Suno voices)', 'Velvet Alto']);
+    expect(screen.getByRole('combobox', { name: 'Voice' })).toHaveValue('pe-gone');
+    expect(screen.queryByTestId('no-personas')).not.toBeInTheDocument();
+  });
+
+  it('says there are no voices yet when every voice known is no longer offered (#439)', async () => {
+    const { server } = serve();
+    server.personas = [
+      { id: 'pe-2', name: 'Gravel Baritone', description: '', state: 'unavailable', owned: true },
+    ];
+    await openVersion();
+    expect(await screen.findByTestId('no-personas')).toHaveTextContent('No Suno voices yet');
+    expect(
+      within(screen.getByRole('combobox', { name: 'Voice' }))
+        .getAllByRole('option')
+        .map((option) => option.textContent),
+    ).toEqual(['None']);
   });
 
   it('an audio file note replaces the audio action once confirmed, and says it is attached by hand in Suno', async () => {

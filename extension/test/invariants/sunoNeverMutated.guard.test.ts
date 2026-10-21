@@ -10,11 +10,16 @@ import {
 } from '../../src/adapter/sources.ts';
 import { ObservationFeed } from '../../src/adapter/observations.ts';
 import { OBSERVER_SOURCE } from '../../src/adapter/observed.ts';
-import { Page, type Region, type Target } from '../../src/adapter/primitives.ts';
+import { nameOf, Page, roleOf, type Region, type Target } from '../../src/adapter/primitives.ts';
 import { AdapterSession, WorkflowRegistry } from '../../src/adapter/registry.ts';
-import { OK, present, type Step, type Workflow } from '../../src/adapter/workflow.ts';
+import { OK, present, runWorkflow, type Step, type Workflow } from '../../src/adapter/workflow.ts';
 import { ADAPTER_WORKFLOWS } from '../../src/adapter/workflows/index.ts';
 import { chooseSourceAction, openSourceMenu } from '../../src/adapter/workflows/sources.ts';
+import {
+  closeVoiceList,
+  openVoiceList,
+  scrollVoiceList,
+} from '../../src/adapter/workflows/voices.ts';
 import { COMPLETION_LIMIT_MS, SunoGenerate } from '../../src/content/sunoGenerate.ts';
 import { fakeClock, SNAPSHOT_NAMES, snapshotHtml } from '../../src/testing/snapshots.ts';
 import { EXTENSION_ROOT, scanExtension } from './sourceScan.ts';
@@ -100,6 +105,12 @@ const RUN_RECIPES: Readonly<Record<string, RunRecipe>> = {
   // The Voice (TS-005): "+ Voice", then a voice's title in the picker, and its Close; on the snapshot
   // of the voice chosen, nothing is pressed. The picker's Play buttons must never be reached.
   'close-voice-picker': { values: {} },
+  // A sync's voice list (#439): "+ Voice" only, to make Suno send the list; a scroll that presses
+  // nothing; and the picker's Close (or Escape). No voice's title, Play, My Voices, Favorites, or
+  // "Create Voice" is ever pressed, on the picker's snapshot or any other.
+  'open-voice-list': { values: {} },
+  'scroll-voice-list': { values: {} },
+  'close-voice-list': { values: {} },
   'choose-voice': {
     values: {
       voice: { name: '<redacted 13 chars>', personaId: '00000000-0000-4000-8000-000000000203' },
@@ -364,7 +375,82 @@ describe('invariant 4: the extension never presses a forbidden control on Suno',
     ]);
     expect(searching.shown.at(-1)).toMatchObject({ kind: 'choose' });
   }, 60_000);
+
+  it('reads your voices pressing only “+ Voice” and the picker’s Close: never a voice, Play, My Voices, Favorites, or Create Voice (#439)', async () => {
+    // On Create with the picker closed: "+ Voice" is the one press.
+    const opening = await voicePresses('create-songs-advanced-more-options', openVoiceList);
+    expect(opening.pressed).toEqual(['button "Add Voice"']);
+    expect(opening.forbidden).toEqual(expect.arrayContaining(['button "Create song"']));
+
+    // With the picker open: opening again and scrolling press nothing; closing presses its Close.
+    const open = await voicePresses('voice-picker-with-source', openVoiceList);
+    expect(open.pressed).toEqual([]);
+    expect(open.ok).toBe(true);
+    const scrolled = await voicePresses('voice-picker-with-source', scrollVoiceList);
+    expect(scrolled).toMatchObject({ pressed: [], ok: true });
+    const closing = await voicePresses('voice-picker-with-source', closeVoiceList);
+    expect(closing.pressed).toEqual(['button "Close"']);
+    // Complement: the picker's own Create Voice and the voices' Play are on that page, unpressed.
+    expect(closing.texts).toEqual(expect.arrayContaining(['Create Voice']));
+    expect(closing.forbidden).toEqual(expect.arrayContaining(['button "Play"']));
+
+    // A picker with no Close is closed with Escape: a key that is not Enter, and no press.
+    const escaping = await voicePresses('voice-picker-with-source', closeVoiceList, () => {
+      document.querySelector('[role="dialog"] [aria-label="Close"]')?.remove();
+    });
+    expect(escaping.pressed).toEqual([]);
+    expect(escaping.keys).toEqual(['Escape']);
+  });
 });
+
+/**
+ * Runs one of the sync's voice workflows (#439) on `snapshot`, after `prepare`, and reports every
+ * press (a click on a control, by its role and name), every key, the forbidden controls on the page,
+ * and the texts in the Voice picker. Nothing reacts to a press, as nothing does in jsdom.
+ */
+async function voicePresses(
+  snapshot: string,
+  workflow: Workflow,
+  prepare: () => void = () => undefined,
+): Promise<{
+  ok: boolean;
+  pressed: string[];
+  keys: string[];
+  forbidden: string[];
+  texts: string[];
+}> {
+  document.body.innerHTML = snapshotHtml(snapshot);
+  prepare();
+  const forbidden = forbiddenControls(document).map((control) => control.words);
+  const pressed: string[] = [];
+  const keys: string[] = [];
+  document.addEventListener(
+    'click',
+    (event) => {
+      const target = event.target as Element;
+      pressed.push(`${roleOf(target) ?? target.localName} "${nameOf(target)}"`);
+    },
+    { capture: true },
+  );
+  document.addEventListener(
+    'keydown',
+    (event) => {
+      keys.push(event.key);
+    },
+    { capture: true },
+  );
+  const texts = [...document.querySelectorAll('[role="dialog"] span')]
+    .filter((span) => span.children.length === 0)
+    .map((span) => span.textContent);
+  const clock = fakeClock();
+  const page = new Page(document, {
+    address: () => 'https://suno.com/create',
+    navigate: () => undefined,
+    clock,
+  });
+  const result = await runWorkflow(workflow, page, {}, { clock });
+  return { ok: result.ok, pressed, keys, forbidden, texts };
+}
 
 /**
  * Runs Generate on Suno in a Suno tab on `snapshot` at `address`, for a Song whose workspace is
@@ -999,6 +1085,60 @@ describe('the guard bites', () => {
       `'bypass' on ${snapshot}: click reached button "The Long Thaw. Double-tap or press Enter to add to mashup."`,
     ]);
   }, 60_000);
+
+  it('refuses the Voice picker’s Create Voice and an added Create, Publish, or Delete, spies on each Play, and lets the voice leg’s own presses pass (#439)', async () => {
+    const snapshot = 'voice-picker-with-source';
+    const picker = { role: 'dialog', name: 'Voice', description: 'the Voice picker' } as const;
+    const createVoice: Target = {
+      role: 'text',
+      name: 'Create Voice',
+      within: picker,
+      description: 'Create Voice',
+    };
+    const rogue = testWorkflow('rogue', [snapshot], clicking(createVoice), null);
+    expect(
+      await exerciseWorkflows([rogue], { recipes: recipes('rogue'), snapshots: [snapshot] }),
+    ).toEqual([
+      `'rogue' on ${snapshot}: step 'act' tried a forbidden control (Create Voice: the dialog it is in does not allow it)`,
+      `'rogue' on ${snapshot}: not every step ran on its own fixture (missed 'act')`,
+    ]);
+    // Each voice's Play is spied on: a press that reached one would be reported.
+    document.body.innerHTML = snapshotHtml(snapshot);
+    expect(
+      forbiddenControls(document).filter((control) => control.words === 'button "Play"'),
+    ).toHaveLength(2);
+
+    for (const word of ['Create', 'Publish', 'Delete']) {
+      const target: Target = { role: 'button', name: word, within: picker, description: word };
+      const adding = testWorkflow(
+        'press',
+        [],
+        (context) => {
+          // Test-only: adds the button Suno may show, as the static scan forbids shipped code to.
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.textContent = word;
+          document.querySelector('[role="dialog"]')?.append(button);
+          return clicking(target)(context);
+        },
+        null,
+      );
+      expect(
+        await exerciseWorkflows([adding], { recipes: recipes('press'), snapshots: [snapshot] }),
+        word,
+      ).toEqual([
+        `'press' on ${snapshot}: step 'act' tried a forbidden control (${word}: the dialog it is in does not allow it)`,
+      ]);
+    }
+
+    // Complement: the voice leg's own workflows, on the same picker, find nothing to report.
+    expect(
+      await exerciseWorkflows([openVoiceList, scrollVoiceList, closeVoiceList], {
+        recipes: recipes('open-voice-list', 'scroll-voice-list', 'close-voice-list'),
+        snapshots: [snapshot, 'create-voice-selected', 'create-songs-advanced-more-options'],
+      }),
+    ).toEqual([]);
+  });
 
   it('fails a workflow that presses Publish or Move to Trash in a clip menu', async () => {
     for (const item of ['Publish', 'Move to Trash']) {

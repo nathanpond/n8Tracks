@@ -132,6 +132,8 @@ function worker(
         return Promise.resolve({ ok: true });
       case 'sync-images':
         return Promise.resolve({ images: images.shift() ?? null });
+      case 'sync-voices':
+        return Promise.resolve({ ok: true, added: request.voices.length });
       default:
         return Promise.resolve(undefined);
     }
@@ -326,7 +328,8 @@ describe('reading a leg after its page loads', () => {
       },
     });
     expect(sw.asked.some((request) => request.type === 'sync-discard')).toBe(false);
-    expect(visited).toEqual(['https://suno.com/me']);
+    // The next leg reads the user's voices on Create (#439).
+    expect(visited).toEqual(['https://suno.com/create']);
   });
 
   it('reads the workspace list, keeps it, and opens the library', async () => {
@@ -354,7 +357,7 @@ describe('reading a leg after its page loads', () => {
         workspacesComplete: true,
       },
     });
-    expect(visited).toEqual(['https://suno.com/me']);
+    expect(visited).toEqual(['https://suno.com/create']);
     expect(started.panel.isOpen).toBe(true);
   });
 
@@ -432,7 +435,7 @@ describe('reading a leg after its page loads', () => {
   it('reads the library into the export, then opens the Trash', async () => {
     const page = sunoObject('feed-v3.library-page-1.response');
     page.has_more = false;
-    const sw = worker(sessionAt(1, { workspaces: [{ id: 'w1' }] }));
+    const sw = worker(sessionAt(2, { workspaces: [{ id: 'w1' }] }));
     const { content: started, visited } = start({
       address: 'https://suno.com/me',
       worker: sw,
@@ -460,7 +463,7 @@ describe('reading a leg after its page loads', () => {
     page.has_more = false;
     delete page.next_cursor;
     const sw = worker(
-      sessionAt(1, { scope, legs: legsFor(scope), workspaces: [{ id: 'w1' }, { id: 'w2' }] }),
+      sessionAt(2, { scope, legs: legsFor(scope), workspaces: [{ id: 'w1' }, { id: 'w2' }] }),
     );
     const { content: started, visited } = start({
       address: 'https://suno.com/create?wid=w1',
@@ -490,7 +493,7 @@ describe('reading a leg after its page loads', () => {
   it("stops as 'Suno tab lost' when the Create page is not the workspace's own (#422)", async () => {
     const scope: SyncScope = { kind: 'workspaces', ids: ['w1', 'w2'], readTrash: false };
     for (const address of ['https://suno.com/create?wid=w2', 'https://suno.com/create']) {
-      const sw = worker(sessionAt(1, { scope, legs: legsFor(scope) }));
+      const sw = worker(sessionAt(2, { scope, legs: legsFor(scope) }));
       const { content: started, text } = start({
         address,
         snapshot: 'create-workspace-songs',
@@ -511,7 +514,7 @@ describe('reading a leg after its page loads', () => {
   it('reads the Trash, completes the export, and says the review is open', async () => {
     const trash = sunoObject('clips-trashed-v2.response');
     delete trash.next_cursor;
-    const sw = worker(sessionAt(2, { exportId: 'e1', partNumber: 1 }));
+    const sw = worker(sessionAt(3, { exportId: 'e1', partNumber: 1 }));
     const {
       content: started,
       visited,
@@ -548,7 +551,7 @@ describe('reading a leg after its page loads', () => {
       ignored: 0,
       ...change,
     });
-    const sw = worker(sessionAt(2, { exportId: 'e1', partNumber: 1 }), CONNECTED, [
+    const sw = worker(sessionAt(3, { exportId: 'e1', partNumber: 1 }), CONNECTED, [
       progress({ state: 'waiting', sent: 0 }),
       progress({}),
       progress({ state: 'finished', sent: 3, failed: 1 }),
@@ -575,7 +578,7 @@ describe('reading a leg after its page loads', () => {
   });
 
   it("stops as 'Suno tab lost' and discards the export when the tab is not on the leg's page", async () => {
-    const sw = worker(sessionAt(1, { exportId: 'e1' }));
+    const sw = worker(sessionAt(2, { exportId: 'e1' }));
     const {
       content: started,
       text,
@@ -596,7 +599,7 @@ describe('reading a leg after its page loads', () => {
   });
 
   it('stops at a page that does not look as expected, naming the step, and offers nothing for review', async () => {
-    const sw = worker(sessionAt(1));
+    const sw = worker(sessionAt(2));
     const {
       content: started,
       text,
@@ -621,17 +624,17 @@ describe('reading a leg after its page loads', () => {
   });
 
   it('opens the page again when no first page came, twice at most', async () => {
-    const sw = worker(sessionAt(1));
+    const sw = worker(sessionAt(2));
     const first = start({ address: 'https://suno.com/me', worker: sw });
     await first.content.resumed;
 
     expect(sw.asked.find((request) => request.type === 'sync-save')).toMatchObject({
-      progress: { leg: 1, attempt: 1 },
+      progress: { leg: 2, attempt: 1 },
     });
     expect(first.visited).toEqual(['https://suno.com/me']);
 
     content?.stop();
-    const again = worker(sessionAt(1, { attempt: 2 }));
+    const again = worker(sessionAt(2, { attempt: 2 }));
     const last = start({ address: 'https://suno.com/me', worker: again });
     await last.content.resumed;
 
@@ -655,7 +658,7 @@ describe('reading a leg after its page loads', () => {
           }, 1);
         }),
     };
-    const sw = worker(sessionAt(1, { exportId: 'e1' }));
+    const sw = worker(sessionAt(2, { exportId: 'e1' }));
     const {
       content: started,
       text,
@@ -679,6 +682,137 @@ describe('reading a leg after its page loads', () => {
     expect(visited).toEqual([]);
     expect(text('.sync-cancelled')).toBe(
       'Sync cancelled. Nothing more was read, and nothing was sent for review.',
+    );
+  });
+});
+
+describe("reading the user's voices on Create (#439)", () => {
+  const VOICE_LEG = 1;
+
+  /** The voice list's answer as the observer forwards it, with these voices. */
+  function voiceList(ids: string[], total = ids.length): ObservedMessage {
+    return observed('personas', {
+      current_page: 1,
+      total_results: total,
+      personas: ids.map((id) => ({
+        id,
+        name: `Voice ${id}`,
+        description: '',
+        is_trashed: false,
+        is_owned: true,
+      })),
+    });
+  }
+
+  /**
+   * Suno's answer to "+ Voice": the Voice picker (a dialog titled Voice with its Close) and the
+   * voice list, which the page asks for only then. Close removes the picker. Returns what was pressed.
+   */
+  function answerVoicePress(answer: () => void): string[] {
+    const pressed: string[] = [];
+    const add = document.querySelector('[aria-label="Add Voice"]');
+    if (add === null) {
+      throw new Error('the snapshot has no + Voice');
+    }
+    add.addEventListener('click', () => {
+      pressed.push('Add Voice');
+      const picker = document.createElement('div');
+      picker.setAttribute('role', 'dialog');
+      picker.setAttribute('aria-label', 'Voice');
+      const close = document.createElement('button');
+      close.setAttribute('aria-label', 'Close');
+      close.textContent = '×';
+      close.addEventListener('click', () => {
+        pressed.push('Close');
+        picker.remove();
+      });
+      picker.append(close);
+      document.body.append(picker);
+      answer();
+    });
+    return pressed;
+  }
+
+  it('presses + Voice, reads the list, closes the picker, sends the voices, and opens the library', async () => {
+    const sw = worker(sessionAt(VOICE_LEG));
+    const { content: started, visited } = start({
+      address: 'https://suno.com/create',
+      snapshot: 'create-songs-advanced-more-options',
+      worker: sw,
+    });
+    const pressed = answerVoicePress(() => {
+      started.observations.take(voiceList(['v1', 'v2']));
+    });
+
+    await started.resumed;
+
+    expect(pressed).toEqual(['Add Voice', 'Close']);
+    expect(sw.asked).toContainEqual({
+      type: 'sync-voices',
+      complete: true,
+      voices: [
+        { id: 'v1', name: 'Voice v1', description: '', is_trashed: false, is_owned: true },
+        { id: 'v2', name: 'Voice v2', description: '', is_trashed: false, is_owned: true },
+      ],
+    });
+    expect(sw.asked).toContainEqual({
+      type: 'sync-save',
+      progress: expect.objectContaining({
+        leg: VOICE_LEG + 1,
+        counts: expect.objectContaining({ voices: 2 }) as unknown,
+      }) as unknown,
+    });
+    expect(sw.types()).not.toContain('sync-create');
+    expect(sw.types()).not.toContain('sync-discard');
+    expect(visited).toEqual(['https://suno.com/me']);
+  });
+
+  it('goes on to the next leg, with a note, when + Voice is not there', async () => {
+    const sw = worker(sessionAt(VOICE_LEG));
+    const { content: started, visited } = start({
+      address: 'https://suno.com/create',
+      snapshot: null,
+      worker: sw,
+    });
+
+    await started.resumed;
+
+    expect(sw.types()).not.toContain('sync-voices');
+    expect(sw.types()).not.toContain('sync-discard');
+    const saved = sw.asked.find((request) => request.type === 'sync-save');
+    expect(saved).toMatchObject({ progress: { leg: VOICE_LEG + 1 } });
+    expect(saved?.type === 'sync-save' ? saved.progress.voicesNote : undefined).toMatch(
+      /^Your voices were not read: /,
+    );
+    expect(visited).toEqual(['https://suno.com/me']);
+  });
+
+  it('shows the note about the voices when the sync finishes', async () => {
+    const trash = sunoObject('clips-trashed-v2.response');
+    delete trash.next_cursor;
+    const sw = worker(
+      sessionAt(3, {
+        exportId: 'e1',
+        partNumber: 1,
+        counts: { clips: 0, trashed: 0, workspaces: 0, playlists: 0, voices: 2 },
+        voicesNote:
+          'Only some of your voices were read (Suno sent no further page), so none was marked unavailable.',
+      }),
+    );
+    const { content: started, text } = start({
+      address: 'https://suno.com/me/trash',
+      snapshot: 'library-trash',
+      worker: sw,
+      seen: [observed('trash', trash)],
+    });
+
+    await started.resumed;
+
+    expect(text('.sync-done')).toBe(
+      'Finished: read 0 workspaces, 0 clips, 2 clips in the Trash, 0 playlists, 2 voices. The review is open in n8Tracks.',
+    );
+    expect(text('.sync-voices')).toBe(
+      'Only some of your voices were read (Suno sent no further page), so none was marked unavailable.',
     );
   });
 });

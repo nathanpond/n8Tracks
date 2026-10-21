@@ -53,7 +53,7 @@ public sealed class SunoLibraryEndpointTests
         Assert.Equal(0, playlists[0].GetProperty("memberCount").GetInt32());
 
         Assert.Equal(
-            """{"items":[{"id":"pe-1","name":"airy"},{"id":"pe-2","name":"Smoky"}]}""",
+            """{"items":[{"id":"pe-1","name":"airy","description":"","state":"available","owned":null},{"id":"pe-2","name":"Smoky","description":"","state":"available","owned":null}]}""",
             (await ReadAsync(client, Personas)).GetRawText());
     }
 

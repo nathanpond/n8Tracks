@@ -264,7 +264,7 @@ export interface ChooseVoiceContext extends StepContext {
   voice: { name: string; personaId: string };
 }
 
-const VOICE_CLOSE: Target = {
+export const VOICE_CLOSE: Target = {
   role: 'button',
   name: 'Close',
   within: VOICE_DIALOG,

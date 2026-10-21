@@ -50,6 +50,7 @@ public static class DependencyInjection
         services.AddScoped<ISunoModelList>(static provider => provider.GetRequiredService<ModelCatalogService>());
         services.AddScoped<VersionDefaultsService>();
         services.AddScoped<SunoLibraryService>();
+        services.AddScoped<SunoPersonaService>();
         services.AddScoped<TombstoneService>();
         services.AddScoped<AudioFileLifecycle>();
         services.AddScoped<IRetentionRestoreParticipant>(static provider => provider.GetRequiredService<AudioFileLifecycle>());

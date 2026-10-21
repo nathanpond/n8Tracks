@@ -13,10 +13,12 @@ import {
   ReadCancelled,
   ReadStop,
   stepOf,
+  VOICES_STEP,
   type LegContext,
 } from './libraryReader.ts';
 import { ObservationFeed } from './observations.ts';
 import {
+  forwardedBody,
   OBSERVER_SOURCE,
   type ObservedKind,
   type ObservedMessage,
@@ -80,15 +82,31 @@ const START: SyncProgress = {
   workspaces: [],
 };
 
+/** How the fake page answers the voice leg (#439). */
+interface VoiceSetup {
+  /** What Suno answers when "+ Voice" opens the picker. */
+  onOpen?: ObservedMessage[];
+  /** What each scroll of the picker brings. */
+  onMore?: ObservedMessage[][];
+  /** Opening the picker stops at this step (a ReadStop), as when "+ Voice" is not found. */
+  openFails?: boolean;
+  /** Closing the picker stops. */
+  closeFails?: boolean;
+  /** n8Tracks' answer to the voices sent: null when it took them, else why not. */
+  refusal?: string | null;
+}
+
 /**
  * A fake Suno page: `onLoad` are the responses of the page's own first requests; each `more()`
  * (the load-more workflow: a scroll) makes Suno answer with the next entry of `onMore`, if any;
- * pressing Library's Workspaces tab (`openWorkspaceList`, #421) makes it answer with `onOpen`.
+ * pressing Library's Workspaces tab (`openWorkspaceList`, #421) makes it answer with `onOpen`; and
+ * opening the Voice picker (#439) answers as `voice` says.
  */
 function suno(
   onLoad: ObservedMessage[],
   onMore: ObservedMessage[][] = [],
   onOpen: ObservedMessage[] = [],
+  voice: VoiceSetup = {},
 ) {
   const clock = fakeClock();
   const feed = new ObservationFeed(
@@ -107,6 +125,9 @@ function suno(
   const parts: ExportPart[] = [];
   const moreSteps: string[] = [];
   const openSteps: string[] = [];
+  const voiceSteps: string[] = [];
+  const sentVoices: { complete: boolean; voices: Record<string, unknown>[] }[] = [];
+  const voiceMore = voice.onMore ?? [];
   const counts: unknown[] = [];
   const controller = new AbortController();
   let created = false;
@@ -126,6 +147,33 @@ function suno(
       }
       return Promise.resolve();
     },
+    openVoices: (step) => {
+      voiceSteps.push(`open ${step}`);
+      if (voice.openFails === true) {
+        return Promise.reject(new ReadStop('voice picker', 'the Voice picker'));
+      }
+      for (const message of (voice.onOpen ?? []).splice(0)) {
+        feed.take(message);
+      }
+      return Promise.resolve();
+    },
+    moreVoices: (step) => {
+      voiceSteps.push(`more ${step}`);
+      for (const message of voiceMore.shift() ?? []) {
+        feed.take(message);
+      }
+      return Promise.resolve();
+    },
+    closeVoices: (step) => {
+      voiceSteps.push(`close ${step}`);
+      return voice.closeFails === true
+        ? Promise.reject(new ReadStop('picker closed', 'the Voice picker, closed'))
+        : Promise.resolve();
+    },
+    sendVoices: (complete, voices) => {
+      sentVoices.push({ complete, voices: structuredClone(voices) });
+      return Promise.resolve(voice.refusal ?? null);
+    },
     sink: {
       create: (header) => {
         if (!created) {
@@ -144,7 +192,19 @@ function suno(
     versions: { extension: '0.1.0', adapter: 2 },
     now: () => '2026-10-06T12:00:00.000Z',
   };
-  return { feed, context, headers, parts, moreSteps, openSteps, counts, controller, clock };
+  return {
+    feed,
+    context,
+    headers,
+    parts,
+    moreSteps,
+    openSteps,
+    voiceSteps,
+    sentVoices,
+    counts,
+    controller,
+    clock,
+  };
 }
 
 async function stopOf(reading: Promise<unknown>): Promise<ReadStop> {
@@ -165,6 +225,7 @@ describe('the legs of a sync', () => {
   it('reads the workspace list, then what was chosen, then the Trash', () => {
     expect(legsFor(LIBRARY)).toEqual([
       { list: 'workspaces' },
+      { list: 'voices' },
       { list: 'library' },
       { list: 'trash' },
     ]);
@@ -172,12 +233,14 @@ describe('the legs of a sync', () => {
     const workspaces = legsFor({ kind: 'workspaces', ids: ['w1', 'w2'], readTrash: true });
     expect(workspaces).toEqual([
       { list: 'workspaces' },
+      { list: 'voices' },
       { list: 'workspace', id: 'w1' },
       { list: 'workspace', id: 'w2' },
       { list: 'trash' },
     ]);
     expect(workspaces.map((leg) => stepOf(leg, workspaces))).toEqual([
       'Read the workspace list',
+      'Read your voices',
       'Read workspace 1 of 2',
       'Read workspace 2 of 2',
       'Read the Trash',
@@ -192,12 +255,14 @@ describe('the legs of a sync', () => {
     });
     expect(playlists.map((leg) => leg.list)).toEqual([
       'workspaces',
+      'voices',
       'playlist',
       'playlist',
       'trash',
     ]);
     expect(playlists.map((leg) => stepOf(leg, playlists))).toEqual([
       'Read the workspace list',
+      'Read your voices',
       'Read playlist 1 of 2',
       'Read playlist 2 of 2',
       'Read the Trash',
@@ -207,6 +272,7 @@ describe('the legs of a sync', () => {
   it('skips the Trash on a workspace or playlist sync unless asked; a whole-library sync always reads it (#420)', () => {
     expect(legsFor({ kind: 'workspaces', ids: ['w1'], readTrash: false })).toEqual([
       { list: 'workspaces' },
+      { list: 'voices' },
       { list: 'workspace', id: 'w1' },
     ]);
     expect(
@@ -215,7 +281,11 @@ describe('the legs of a sync', () => {
         playlists: [{ id: 'p1', name: 'One' }],
         readTrash: false,
       }),
-    ).toEqual([{ list: 'workspaces' }, { list: 'playlist', id: 'p1', name: 'One' }]);
+    ).toEqual([
+      { list: 'workspaces' },
+      { list: 'voices' },
+      { list: 'playlist', id: 'p1', name: 'One' },
+    ]);
     expect(readsTrash(LIBRARY)).toBe(true);
     expect(readsTrash({ kind: 'workspaces', ids: ['w1'], readTrash: false })).toBe(false);
     expect(readsTrash({ kind: 'workspaces', ids: ['w1'], readTrash: true })).toBe(true);
@@ -308,7 +378,7 @@ describe('reading the workspace list', () => {
   it('presses nothing for any other leg (#421)', async () => {
     const page = suno([libraryPage([], false, null)]);
 
-    await readLeg(LIBRARY, legsFor(LIBRARY), { ...START, leg: 1 }, page.context);
+    await readLeg(LIBRARY, legsFor(LIBRARY), { ...START, leg: 2 }, page.context);
 
     expect(page.openSteps).toEqual([]);
   });
@@ -347,7 +417,7 @@ describe('reading the workspace list', () => {
   it('says the workspace list is not complete in the header the next leg creates (#434)', async () => {
     const short: SyncProgress = {
       ...START,
-      leg: 1,
+      leg: 2,
       workspaces: sunoObject('project-me.page-1.response').projects as unknown[],
       workspacesComplete: false,
     };
@@ -373,7 +443,7 @@ describe('reading the workspace list', () => {
 describe('reading the whole library', () => {
   const atLibrary: SyncProgress = {
     ...START,
-    leg: 1,
+    leg: 2,
     counts: { ...START.counts, workspaces: 3 },
     workspaces: sunoObject('project-me.page-1.response').projects as unknown[],
   };
@@ -410,7 +480,7 @@ describe('reading the whole library', () => {
       { partNumber: 1, clips: [...page1, ...page2], trashedClips: [], playlists: [] },
     ]);
     expect(next).toEqual({
-      leg: 2,
+      leg: 3,
       attempt: 0,
       partNumber: 1,
       counts: { clips: 4, trashed: 0, workspaces: 3, playlists: 0 },
@@ -612,7 +682,7 @@ describe("reading a chosen workspace's own feed (#422)", () => {
       ],
     );
 
-    const next = await readLeg(captured, legsFor(captured), { ...START, leg: 1 }, page.context);
+    const next = await readLeg(captured, legsFor(captured), { ...START, leg: 2 }, page.context);
 
     expect(page.moreSteps).toEqual(['Read workspace 1 of 1', 'Read workspace 1 of 1']);
     expect(page.parts.flatMap((part) => part.clips.map((clip) => (clip as Clip).id))).toEqual([
@@ -637,7 +707,7 @@ describe("reading a chosen workspace's own feed (#422)", () => {
       workspacePage('w1', clips(2, 'mine', 'w1'), false, null),
     ]);
 
-    const next = await readLeg(scope, legs, { ...START, leg: 1 }, page.context);
+    const next = await readLeg(scope, legs, { ...START, leg: 2 }, page.context);
 
     expect(page.parts.flatMap((part) => part.clips.map((clip) => (clip as Clip).id))).toEqual([
       'mine-0',
@@ -655,7 +725,7 @@ describe("reading a chosen workspace's own feed (#422)", () => {
       legs,
       {
         ...START,
-        leg: 2,
+        leg: 3,
         partNumber: 1,
         counts: { clips: 2, trashed: 0, workspaces: 3, playlists: 0 },
       },
@@ -670,7 +740,7 @@ describe("reading a chosen workspace's own feed (#422)", () => {
   it("stops, naming the workspace's step, when no first page of its feed comes", async () => {
     const page = suno([libraryPage(clips(2, 'library', 'w1'), false, null)]);
 
-    const stop = await stopOf(readLeg(scope, legs, { ...START, leg: 1 }, page.context));
+    const stop = await stopOf(readLeg(scope, legs, { ...START, leg: 2 }, page.context));
 
     expect(stop.step).toBe('Read workspace 1 of 2');
     expect(stop.expected).toBe(
@@ -682,7 +752,7 @@ describe("reading a chosen workspace's own feed (#422)", () => {
   it('is never complete without its last page: a page that does not come after a scroll stops the read', async () => {
     const page = suno([workspacePage('w1', clips(2, 'mine', 'w1'), true, null)]);
 
-    const stop = await stopOf(readLeg(scope, legs, { ...START, leg: 1 }, page.context));
+    const stop = await stopOf(readLeg(scope, legs, { ...START, leg: 2 }, page.context));
 
     expect(stop.expected).toBe("a page of the workspace's songs within 20 seconds (asked 3 times)");
     expect(page.moreSteps).toHaveLength(3);
@@ -691,7 +761,7 @@ describe("reading a chosen workspace's own feed (#422)", () => {
   it('creates the export even for an empty workspace, so it is still reviewed', async () => {
     const page = suno([workspacePage('w1', [], false, null)]);
 
-    await readLeg(scope, legs, { ...START, leg: 1 }, page.context);
+    await readLeg(scope, legs, { ...START, leg: 2 }, page.context);
 
     expect(page.headers).toHaveLength(1);
     expect(page.parts).toEqual([]);
@@ -702,7 +772,7 @@ describe("reading a chosen workspace's own feed (#422)", () => {
     const legs = legsFor(scope);
     const page = suno([workspacePage('w1', clips(2, 'one', 'w1'), false, null)]);
 
-    const next = await readLeg(scope, legs, { ...START, leg: 1 }, page.context);
+    const next = await readLeg(scope, legs, { ...START, leg: 2 }, page.context);
 
     expect(page.headers).toHaveLength(1);
     expect(page.headers[0]).toMatchObject({
@@ -766,7 +836,7 @@ describe('reading a playlist', () => {
     });
     const page = suno([other, playlistFeed(2)]);
 
-    const next = await readLeg(scope, legs, { ...START, leg: 1 }, page.context);
+    const next = await readLeg(scope, legs, { ...START, leg: 2 }, page.context);
 
     const items = (
       sunoObject('unified-feed.playlist.response').feed as {
@@ -799,7 +869,7 @@ describe('reading a playlist', () => {
     const unread: SyncScope = { ...scope, readTrash: false };
     const page = suno([playlistFeed(2)]);
 
-    const next = await readLeg(unread, legsFor(unread), { ...START, leg: 1 }, page.context);
+    const next = await readLeg(unread, legsFor(unread), { ...START, leg: 2 }, page.context);
 
     expect(page.headers[0]).toMatchObject({ libraryComplete: false, trashedComplete: false });
     expect(page.parts.every((part) => part.trashedClips.length === 0)).toBe(true);
@@ -809,7 +879,7 @@ describe('reading a playlist', () => {
   it('stops, naming the step, when fewer songs come than the playlist has (paging past 50 is unverified)', async () => {
     const page = suno([playlistFeed(60)]);
 
-    expect(await stopOf(readLeg(scope, legs, { ...START, leg: 1 }, page.context))).toMatchObject({
+    expect(await stopOf(readLeg(scope, legs, { ...START, leg: 2 }, page.context))).toMatchObject({
       step: 'Read playlist 1 of 1',
     });
     expect(page.parts).toEqual([]);
@@ -830,7 +900,7 @@ describe('reading the Trash', () => {
     const next = await readLeg(
       scope,
       legsFor(scope),
-      { ...START, leg: 2, partNumber: 2 },
+      { ...START, leg: 3, partNumber: 2 },
       page.context,
     );
 
@@ -842,9 +912,177 @@ describe('reading the Trash', () => {
         playlists: [],
       },
     ]);
-    expect(next).toMatchObject({ leg: 3, partNumber: 3, counts: { trashed: 5 } });
+    expect(next).toMatchObject({ leg: 4, partNumber: 3, counts: { trashed: 5 } });
   });
 });
+
+describe('reading your voices (#439)', () => {
+  const scope: SyncScope = { kind: 'workspaces', ids: ['w1'], readTrash: false };
+  const legs = legsFor(scope);
+  const atVoices: SyncProgress = { ...START, leg: 1, counts: { ...START.counts, voices: 0 } };
+
+  /** A page of the voice list as the observer forwards it: `count` personas from the capture. */
+  function voicePage(page: number, total: number, ids: string[]): ObservedMessage {
+    const captured = sunoObject('persona-get-personas.response');
+    const [model] = captured.personas as Record<string, unknown>[];
+    return observed(
+      'personas',
+      forwardedBody('personas', {
+        ...captured,
+        current_page: page,
+        total_results: total,
+        personas: ids.map((id) => ({ ...model, id, name: `Voice ${id}` })),
+      }),
+      { page },
+    );
+  }
+
+  it('reads the list Suno sends when the picker opens, closes it, and sends it whole, uploading nothing', async () => {
+    const page = suno([], [], [], { onOpen: [voicePage(1, 2, ['v1', 'v2'])] });
+
+    expect(legs[1]).toEqual({ list: 'voices' });
+    expect(stepOf(legs[1] ?? { list: 'voices' }, legs)).toBe(VOICES_STEP);
+    const next = await readLeg(scope, legs, atVoices, page.context);
+
+    expect(page.voiceSteps).toEqual([`open ${VOICES_STEP}`, `close ${VOICES_STEP}`]);
+    expect(page.sentVoices).toEqual([
+      {
+        complete: true,
+        voices: [
+          { id: 'v1', name: 'Voice v1', description: '', is_trashed: false, is_owned: true },
+          { id: 'v2', name: 'Voice v2', description: '', is_trashed: false, is_owned: true },
+        ],
+      },
+    ]);
+    // Nothing of the persona beyond what n8Tracks keeps reaches the reader.
+    expect(JSON.stringify(page.sentVoices)).not.toMatch(/user_handle|user_display_name|clip|image/);
+    expect(page.headers).toEqual([]);
+    expect(page.parts).toEqual([]);
+    expect(page.moreSteps).toEqual([]);
+    expect(page.openSteps).toEqual([]);
+    expect(next).toEqual({
+      ...atVoices,
+      leg: 2,
+      counts: { ...atVoices.counts, voices: 2 },
+      workspacesComplete: true,
+    });
+    expect(next.voicesNote).toBeUndefined();
+  });
+
+  it('scrolls the picker for each next page until it holds total_results', async () => {
+    const page = suno([], [], [], {
+      onOpen: [voicePage(1, 3, ['v1', 'v2'])],
+      onMore: [[voicePage(2, 3, ['v3'])]],
+    });
+
+    const next = await readLeg(scope, legs, atVoices, page.context);
+
+    expect(page.voiceSteps).toEqual([
+      `open ${VOICES_STEP}`,
+      `more ${VOICES_STEP}`,
+      `close ${VOICES_STEP}`,
+    ]);
+    expect(page.sentVoices[0]?.complete).toBe(true);
+    expect(page.sentVoices[0]?.voices.map((voice) => voice.id)).toEqual(['v1', 'v2', 'v3']);
+    expect(next.counts.voices).toBe(3);
+    expect(page.moreSteps).toEqual([]);
+  });
+
+  it('sends a short list as incomplete when no next page comes after one scroll, and says so', async () => {
+    const page = suno([], [], [], { onOpen: [voicePage(1, 5, ['v1', 'v2'])] });
+
+    const next = await readLeg(scope, legs, atVoices, page.context);
+
+    expect(page.voiceSteps.filter((step) => step.startsWith('more'))).toHaveLength(1);
+    expect(page.sentVoices.map((sent) => sent.complete)).toEqual([false]);
+    expect(page.sentVoices[0]?.voices.map((voice) => voice.id)).toEqual(['v1', 'v2']);
+    expect(next.leg).toBe(2);
+    expect(next.voicesNote).toBe(
+      'Only some of your voices were read (Suno sent no further page), so none was marked unavailable.',
+    );
+  });
+
+  it('goes on with the sync, sending nothing, when the picker cannot be opened', async () => {
+    const page = suno([], [], [], { openFails: true });
+
+    const next = await readLeg(scope, legs, atVoices, page.context);
+
+    expect(page.sentVoices).toEqual([]);
+    expect(page.voiceSteps).toEqual([`open ${VOICES_STEP}`, `close ${VOICES_STEP}`]);
+    expect(next.leg).toBe(2);
+    expect(next.voicesNote).toBe(
+      "Your voices were not read: step 'voice picker' expected the Voice picker.",
+    );
+  });
+
+  it('goes on with the sync, sending nothing, when no voice list comes within 20 seconds', async () => {
+    const page = suno([], [], [], { onOpen: [] });
+
+    const next = await readLeg(scope, legs, atVoices, page.context);
+
+    expect(page.sentVoices).toEqual([]);
+    expect(page.clock.slept.reduce((sum, ms) => sum + ms, 0)).toBeGreaterThanOrEqual(PAGE_WAIT_MS);
+    expect(next.leg).toBe(2);
+    expect(next.attempt).toBe(0);
+    expect(next.voicesNote).toBe(
+      "Your voices were not read: step 'Read your voices' expected a page of your voice list within 20 seconds of opening the Voice picker.",
+    );
+  });
+
+  it('goes on with the sync when a page cannot be read, or the picker cannot be closed', async () => {
+    const odd = observed('personas', { personas: [] }, { page: 1 });
+    const page = suno([], [], [], { onOpen: [odd], closeFails: true });
+
+    const next = await readLeg(scope, legs, atVoices, page.context);
+
+    expect(page.sentVoices).toEqual([]);
+    expect(next.leg).toBe(2);
+    expect(next.voicesNote).toBe(
+      "Your voices were not read: step 'Read your voices' expected a page of your voice list with its page number and total.",
+    );
+  });
+
+  it('says the voices were not recorded when n8Tracks refuses them, and goes on', async () => {
+    const page = suno([], [], [], {
+      onOpen: [voicePage(1, 1, ['v1'])],
+      refusal: 'n8Tracks refused your voices: 403 (insufficient_scope).',
+    });
+
+    const next = await readLeg(scope, legs, atVoices, page.context);
+
+    expect(next.leg).toBe(2);
+    expect(next.voicesNote).toBe(
+      'Your voices were read but not recorded: n8Tracks refused your voices: 403 (insufficient_scope).',
+    );
+  });
+
+  it('carries the note on to the end of the sync, and stops only when the user cancels', async () => {
+    const later = suno([workspacePageOf('w1', [], false)]);
+    const next = await readLeg(
+      scope,
+      legs,
+      { ...atVoices, leg: 2, voicesNote: 'Your voices were not read: why.' },
+      later.context,
+    );
+    expect(next.voicesNote).toBe('Your voices were not read: why.');
+
+    const page = suno([], [], [], { onOpen: [] });
+    page.controller.abort();
+    await expect(readLeg(scope, legs, atVoices, page.context)).rejects.toBeInstanceOf(
+      ReadCancelled,
+    );
+    expect(page.sentVoices).toEqual([]);
+  });
+});
+
+/** A last page of one workspace's own feed (#422), with these clips. */
+function workspacePageOf(id: string, pageClips: Clip[], hasMore: boolean): ObservedMessage {
+  return observed(
+    'library-feed',
+    { clips: pageClips, has_more: hasMore },
+    { filters: { workspace: { presence: 'True', workspaceId: id } } },
+  );
+}
 
 describe('reading the library for the Download view (#215)', () => {
   it('reads Library › Songs to its end the way the library leg does, sending nothing anywhere', async () => {

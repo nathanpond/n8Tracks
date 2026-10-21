@@ -31,6 +31,9 @@ describe('which responses the observer forwards', () => {
     [`${API}/api/generate/v2-web/`, 'POST', 'create'],
     // The plan's download allowance, which the page reads when a Download dialog opens (#215).
     [`${API}/api/billing/info/`, 'GET', 'billing'],
+    // The user's voice list, which the page asks for when the Voice picker opens (#439).
+    [`${API}/api/persona/get-personas/?page=1`, 'GET', 'personas'],
+    [`${API}/api/persona/get-personas?page=2`, 'GET', 'personas'],
   ])('forwards %s (%s) as %s', (address, method, kind) => {
     expect(observedKindOf(address, method, PAGE)).toBe(kind);
   });
@@ -39,7 +42,11 @@ describe('which responses the observer forwards', () => {
     // Only the Create itself: not a read of it, nor another generate path.
     [`${API}/api/generate/v2-web/`, 'GET'],
     [`${API}/api/generate/v2`, 'POST'],
-    [`${API}/api/persona/get-personas/?page=1`, 'GET'],
+    // Only the voice list read: not another persona path, nor a write to it.
+    [`${API}/api/persona/get-personas/?page=1`, 'POST'],
+    [`${API}/api/persona/create`, 'POST'],
+    [`${API}/api/persona/get-personas/extra`, 'GET'],
+    ['https://example.com/api/persona/get-personas/', 'GET'],
     [`${API}/api/billing/info/`, 'POST'],
     [`${API}/api/download/authorize`, 'POST'],
     [`${API}/api/feed/v3`, 'GET'],
@@ -272,5 +279,64 @@ describe("a prepared download's answer (#216, TS-004)", () => {
       forwardedBody('download-clip', sunoFixture('download-clip.wav.processing.response')),
     ).toEqual({ status: 'processing' });
     expect(forwardedBody('download-clip', 'not json')).toEqual({});
+  });
+});
+
+describe('what the observer forwards of the voice list (#439)', () => {
+  const captured = sunoFixture('persona-get-personas.response') as Record<string, unknown>;
+
+  it("forwards the paging counts and each persona's id, name, description, trashed and owned flags only", () => {
+    const forwarded = forwardedBody('personas', {
+      ...captured,
+      token: 'T',
+    }) as { personas: Record<string, unknown>[] };
+    const personas = captured.personas as Record<string, unknown>[];
+
+    expect(Object.keys(forwarded).toSorted()).toEqual([
+      'current_page',
+      'personas',
+      'total_results',
+    ]);
+    expect(forwarded).toMatchObject({ current_page: 1, total_results: 2 });
+    expect(forwarded.personas).toEqual(
+      personas.map((persona) => ({
+        id: persona.id,
+        name: persona.name,
+        description: persona.description,
+        is_trashed: persona.is_trashed,
+        is_owned: persona.is_owned,
+      })),
+    );
+    // Invariant 6: the owner's handle, display name, and image, and the persona's clip (its prompt
+    // and lyrics among it), stay in the page.
+    const sent = JSON.stringify(forwarded);
+    for (const kept of [
+      'user_handle',
+      'user_display_name',
+      'user_image_url',
+      'image_s3_id',
+      'clip',
+      'root_clip_id',
+      'voice_persona_count',
+      'max_voice_personas',
+      '"T"',
+    ]) {
+      expect(sent).not.toContain(kept);
+    }
+    // Complement: what was left out was there to leave.
+    expect(JSON.stringify(captured)).toContain('user_handle');
+    expect(JSON.stringify(captured)).toContain('"clip"');
+  });
+
+  it('drops a field of the wrong type, keeps a persona that is not an object as {}, and answers {} for no object', () => {
+    expect(
+      forwardedBody('personas', {
+        current_page: '1',
+        total_results: 3,
+        personas: [{ id: 7, name: 'Kept', is_owned: 'yes', is_trashed: false }, 'odd'],
+      }),
+    ).toEqual({ total_results: 3, personas: [{ name: 'Kept', is_trashed: false }, {}] });
+    expect(forwardedBody('personas', ['a list'])).toEqual({});
+    expect(forwardedBody('personas', { current_page: 1 })).toEqual({ current_page: 1 });
   });
 });

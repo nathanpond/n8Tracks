@@ -127,7 +127,7 @@ public sealed class ImportLineageTests
         Assert.Equal(["", "Inspiration list", "Night drive"], playlists.Select(static playlist => Text(playlist, "name")));
         Assert.Equal(["z-1"], ClipIds(playlists[0]));
         Assert.Equal(["voiced-1", "not-staged"], ClipIds(playlists[2]));
-        Assert.Equal("""{"items":[{"id":"pe-1","name":"Smoky"}]}""", (await ReadAsync(client, Personas)).GetRawText());
+        Assert.Equal("""{"items":[{"id":"pe-1","name":"Smoky","description":"","state":"available","owned":null}]}""", (await ReadAsync(client, Personas)).GetRawText());
 
         // A later commit refreshes what its clips touch: a listed playlist takes its name and clips as
         // seen; a playlist known only as a clip's Inspiration, and a Voice the clip leaves unnamed, keep
@@ -146,7 +146,7 @@ public sealed class ImportLineageTests
         Assert.Equal(["", "Inspiration list", "Night drive II"], playlists.Select(static playlist => Text(playlist, "name")));
         Assert.Equal(["a-1", "a-2"], ClipIds(playlists[1]));
         Assert.Equal(["voiced-2"], ClipIds(playlists[2]));
-        Assert.Equal("""{"items":[{"id":"pe-1","name":"Smoky"}]}""", (await ReadAsync(client, Personas)).GetRawText());
+        Assert.Equal("""{"items":[{"id":"pe-1","name":"Smoky","description":"","state":"available","owned":null}]}""", (await ReadAsync(client, Personas)).GetRawText());
     }
 
     /// <summary>

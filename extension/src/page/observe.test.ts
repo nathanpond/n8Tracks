@@ -161,7 +161,7 @@ describe('the page observer, replaying the TS-003 fixtures', () => {
     const { view, posted } = suno(
       fixtureAnswer({
         '/api/generate/v2-web/': 'generate-v2-web.songs-advanced.response',
-        '/api/persona/get-personas/': 'persona-get-personas.response',
+        '/api/persona/get-voice-settings/': 'persona-get-personas.response',
         '/api/download/authorize': 'download-authorize.response',
       }),
     );
@@ -173,7 +173,7 @@ describe('the page observer, replaying the TS-003 fixtures', () => {
     await used.text();
 
     await view.fetch(used);
-    await view.fetch(`${API}/api/persona/get-personas/?page=1`);
+    await view.fetch(`${API}/api/persona/get-voice-settings/?page=1`);
     await view.fetch(`${API}/api/download/authorize`, { method: 'POST', body: '{}' });
     await settled();
 
@@ -182,6 +182,27 @@ describe('the page observer, replaying the TS-003 fixtures', () => {
     expect(posted[0]?.message.submitted).toBeNull();
     expect(JSON.stringify(posted)).not.toContain('"T"');
     expect(JSON.stringify(posted)).not.toContain('unread-model');
+  });
+
+  it("forwards the voice list's counts and each persona's own fields only, and the page gets it whole (#439)", async () => {
+    const whole = sunoFixture('persona-get-personas.response') as Record<string, unknown>;
+    const { view, posted } = suno(() => jsonResponse(200, whole));
+
+    const answer = await view.fetch(`${API}/api/persona/get-personas/?page=1`);
+    await settled();
+
+    expect(posted.map(({ message }) => message.kind)).toEqual(['personas']);
+    expect(posted[0]?.message.request.page).toBe(1);
+    const body = posted[0]?.message.body as { personas: Record<string, unknown>[] };
+    expect(body.personas.map((persona) => Object.keys(persona).toSorted())).toEqual([
+      ['description', 'id', 'is_owned', 'is_trashed', 'name'],
+      ['description', 'id', 'is_owned', 'is_trashed', 'name'],
+    ]);
+    const sent = JSON.stringify(posted);
+    for (const kept of ['user_handle', 'user_display_name', 'user_image_url', '"clip"']) {
+      expect(sent).not.toContain(kept);
+    }
+    expect(await answer.json()).toEqual(whole);
   });
 
   it("forwards only the download counts of the page's own billing answer, and the page gets it whole (#215)", async () => {

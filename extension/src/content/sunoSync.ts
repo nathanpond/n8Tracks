@@ -1,4 +1,5 @@
 import {
+  sunoCreateAddress,
   sunoListAddress,
   sunoPageOf,
   sunoWorkspaceAddress,
@@ -17,8 +18,10 @@ import {
 import type { Page } from '../adapter/primitives.ts';
 import type { AdapterSession } from '../adapter/registry.ts';
 import { openWorkspaceList } from '../adapter/workflows/libraryTabs.ts';
+import { switchForm } from '../adapter/workflows/fillSongs.ts';
 import { loadMore } from '../adapter/workflows/loadMore.ts';
-import type { Workflow } from '../adapter/workflow.ts';
+import { closeVoiceList, openVoiceList, scrollVoiceList } from '../adapter/workflows/voices.ts';
+import type { StepContext, Workflow } from '../adapter/workflow.ts';
 import type {
   ImageProgress,
   Request,
@@ -38,6 +41,9 @@ import type { SyncViewState } from '../panel/SyncView.ts';
  * reads the leg the page is for. It never starts a sync by itself. The workspace list is the one
  * leg not reached by address alone (#421): its page is Library (`/me`), and the leg presses
  * Library's Workspaces tab there, since a direct load of `/me/workspaces` asks Suno for nothing.
+ * The user's voices (#439) are read on Create (`/create`): Songs in Advanced mode, then "+ Voice"
+ * opens the Voice picker, which makes the page ask Suno for the voice list; the picker is closed
+ * without a choice, and the voices go to n8Tracks through the service worker on their own.
  */
 
 export interface SunoSyncOptions {
@@ -93,6 +99,8 @@ function addressOf(leg: SyncLeg): URL {
       return sunoListAddress({ page: 'library' });
     case 'trash':
       return sunoListAddress({ page: 'trash' });
+    case 'voices':
+      return sunoCreateAddress();
   }
 }
 
@@ -119,6 +127,7 @@ function progressOf(session: SyncSession): SyncProgress {
     ...(session.workspacesComplete === undefined
       ? {}
       : { workspacesComplete: session.workspacesComplete }),
+    ...(session.voicesNote === undefined ? {} : { voicesNote: session.voicesNote }),
   };
 }
 
@@ -215,6 +224,20 @@ export class SunoSync {
     }
   }
 
+  /** Sends the voices read to n8Tracks (#439); null when it took them, else why not. */
+  private async sendVoices(
+    complete: boolean,
+    voices: Record<string, unknown>[],
+  ): Promise<string | null> {
+    let answer: SyncReply;
+    try {
+      answer = reply(await this.options.send({ type: 'sync-voices', complete, voices }));
+    } catch {
+      answer = reply(undefined);
+    }
+    return answer.ok ? null : answer.message;
+  }
+
   private sink(): ExportSink {
     const send = async (request: Request, step: string) => {
       let answer: SyncReply;
@@ -237,10 +260,14 @@ export class SunoSync {
    * Runs one of the reader's workflows on the page; a run that does not finish stops the leg at
    * `step`, saying what was expected.
    */
-  private async runStep(workflow: Workflow, step: string): Promise<void> {
+  private async runStep<C extends StepContext>(
+    workflow: Workflow<C>,
+    step: string,
+    values: Omit<C, keyof StepContext>,
+  ): Promise<void> {
     const result = await this.options.session.run(
       workflow,
-      {},
+      values,
       this.options.clock === undefined ? {} : { clock: this.options.clock },
     );
     if (!result.ok) {
@@ -268,8 +295,16 @@ export class SunoSync {
     try {
       next = await readLeg(session.scope, session.legs, progressOf(session), {
         observations: this.options.observations,
-        openWorkspaceList: (openStep) => this.runStep(openWorkspaceList, openStep),
-        more: (moreStep) => this.runStep(loadMore, moreStep),
+        openWorkspaceList: (openStep) => this.runStep(openWorkspaceList, openStep, {}),
+        more: (moreStep) => this.runStep(loadMore, moreStep, {}),
+        openVoices: async (openStep) => {
+          // "+ Voice" is on the Songs form in Advanced mode (TS-005).
+          await this.runStep(switchForm, openStep, { mode: 'advanced' });
+          await this.runStep(openVoiceList, openStep, {});
+        },
+        moreVoices: (moreStep) => this.runStep(scrollVoiceList, moreStep, {}),
+        closeVoices: (closeStep) => this.runStep(closeVoiceList, closeStep, {}),
+        sendVoices: (complete, voices) => this.sendVoices(complete, voices),
         sink: this.sink(),
         signal: controller.signal,
         progress: (counts) => {
@@ -320,7 +355,11 @@ export class SunoSync {
     }
     show(
       finished.ok
-        ? { kind: 'finished', counts: next.counts }
+        ? {
+            kind: 'finished',
+            counts: next.counts,
+            ...(next.voicesNote === undefined ? {} : { note: next.voicesNote }),
+          }
         : {
             kind: 'stopped',
             report: report('Finish the export', `n8Tracks to accept it (${finished.message})`),

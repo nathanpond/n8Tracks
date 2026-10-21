@@ -18,6 +18,12 @@ import type { ObservedKind, ObservedMessage, ObservedRequest } from './observed.
  * next page only on the user's own scroll (TS-007-15), so when no next page comes after a scroll
  * the sync goes on with what it read, and the header says `workspacesComplete: false` (#434). The
  * server then marks no workspace Unavailable.
+ *
+ * The user's voice list (#439) is read in a leg of its own, after the workspace list, on Create's
+ * Voice picker, and sent to n8Tracks on its own (`sync-voices`), not in the export. That leg never
+ * stops the sync: when it cannot be read or sent, the sync goes on and the panel says why
+ * ({@link SyncProgress.voicesNote}). Like the workspace list, it goes on short, as incomplete, when
+ * no next page comes after a scroll, and the server then marks no voice Unavailable.
  */
 
 /** How long a page of a list may take to come, after the action that asks for it (20 seconds). */
@@ -91,6 +97,17 @@ export interface LegContext extends ListContext {
    * for. Throws a {@link ReadStop}.
    */
   openWorkspaceList(step: string): Promise<void>;
+  /**
+   * Makes the page ask Suno for the user's voice list (#439): opens Create's Songs form in Advanced
+   * mode (`switch-form`) and presses "+ Voice" (`open-voice-list`). Throws a {@link ReadStop}.
+   */
+  openVoices(step: string): Promise<void>;
+  /** Asks for the voice list's next page: scrolls the picker (`scroll-voice-list`). Throws a {@link ReadStop}. */
+  moreVoices(step: string): Promise<void>;
+  /** Closes the Voice picker without choosing (`close-voice-list`). Throws a {@link ReadStop}. */
+  closeVoices(step: string): Promise<void>;
+  /** Sends the voices read to n8Tracks; null when it took them, else why not, in plain words. */
+  sendVoices(complete: boolean, voices: Record<string, unknown>[]): Promise<string | null>;
   sink: ExportSink;
   /** Counts so far, after each page. */
   progress(counts: SyncCounts): void;
@@ -121,35 +138,37 @@ export function readsTrash(scope: SyncScope): boolean {
 }
 
 /**
- * The legs a scope is read in. The workspace list is read for every scope, the Trash last when
- * read. A workspace sync reads each chosen workspace's own feed rather than the whole library
- * (#422).
+ * The legs a scope is read in. The workspace list and then the user's voices (#439) are read for
+ * every scope, the Trash last when read. A workspace sync reads each chosen workspace's own feed
+ * rather than the whole library (#422).
  */
 export function legsFor(scope: SyncScope): SyncLeg[] {
+  const first: SyncLeg[] = [{ list: 'workspaces' }, { list: 'voices' }];
   const trash: SyncLeg[] = readsTrash(scope) ? [{ list: 'trash' }] : [];
   switch (scope.kind) {
     case 'library':
-      return [{ list: 'workspaces' }, { list: 'library' }, ...trash];
+      return [...first, { list: 'library' }, ...trash];
     case 'workspaces':
-      return [
-        { list: 'workspaces' },
-        ...scope.ids.map((id): SyncLeg => ({ list: 'workspace', id })),
-        ...trash,
-      ];
+      return [...first, ...scope.ids.map((id): SyncLeg => ({ list: 'workspace', id })), ...trash];
     case 'playlists':
       return [
-        { list: 'workspaces' },
+        ...first,
         ...scope.playlists.map((playlist): SyncLeg => ({ list: 'playlist', ...playlist })),
         ...trash,
       ];
   }
 }
 
+/** The step the panel and the failure report name for the voice leg (#439). */
+export const VOICES_STEP = 'Read your voices';
+
 /** How the panel and the failure report name a leg's step. */
 export function stepOf(leg: SyncLeg, legs: readonly SyncLeg[]): string {
   switch (leg.list) {
     case 'workspaces':
       return 'Read the workspace list';
+    case 'voices':
+      return VOICES_STEP;
     case 'library':
       return 'Read the library';
     case 'trash':
@@ -302,6 +321,95 @@ const WORKSPACES: ListSpec = {
     records >= body.num_total_results,
   goesOnShort: true,
 };
+
+/**
+ * The user's voice list (#439): `GET /api/persona/get-personas/?page=N`, its answer
+ * `{ personas, current_page, total_results }` as the observer forwards it. Only page 1 was seen
+ * live (a few voices); it has ended when the voices read number `total_results`. Paging beyond it
+ * is assumed to be by page number on scroll, as the workspace list's, so the read goes on short
+ * when no next page comes.
+ */
+const VOICES: ListSpec = {
+  kind: 'personas',
+  what: 'a page of your voice list',
+  accepts: () => true,
+  parse: (body) => {
+    if (
+      !isRecord(body) ||
+      typeof body.current_page !== 'number' ||
+      typeof body.total_results !== 'number'
+    ) {
+      return { problem: 'a page of your voice list with its page number and total' };
+    }
+    const records = recordsOf(body.personas, 'a page of your voice list');
+    return 'problem' in records ? records : { key: `page:${String(body.current_page)}`, records };
+  },
+  ended: (body, records) =>
+    isRecord(body) && typeof body.total_results === 'number' && records >= body.total_results,
+  goesOnShort: true,
+};
+
+/** Plain words for why the voice leg did not finish, after "Your voices were not read: ". */
+function voicesFailure(error: unknown): string {
+  return error instanceof ReadStop
+    ? `step '${error.step}' expected ${error.expected}`
+    : 'the read did not finish';
+}
+
+/**
+ * The voice leg (#439): opens the Voice picker, reads the voice list Suno sends, closes the picker,
+ * and sends what was read to n8Tracks. Never throws but for {@link ReadCancelled}: whatever goes
+ * wrong becomes the note the panel shows when the sync finishes, and the sync goes on.
+ */
+async function readVoices(
+  step: string,
+  context: LegContext,
+  counts: SyncCounts,
+): Promise<string | undefined> {
+  const voices: Raw[] = [];
+  let complete = false;
+  let note: string | undefined;
+  const list: ListContext = { ...context, more: (moreStep) => context.moreVoices(moreStep) };
+  try {
+    await context.openVoices(step);
+    const read = await readList(
+      VOICES,
+      step,
+      list,
+      (records) => {
+        voices.push(...records);
+        counts.voices = voices.length;
+        context.progress({ ...counts });
+        return Promise.resolve();
+      },
+      'opening the Voice picker',
+    );
+    complete = read.complete;
+  } catch (error) {
+    if (error instanceof ReadCancelled || context.signal.aborted) {
+      throw error instanceof ReadCancelled ? error : new ReadCancelled();
+    }
+    note = `Your voices were not read: ${voicesFailure(error)}.`;
+  }
+  try {
+    await context.closeVoices(step);
+  } catch {
+    // The next leg's page replaces this one, picker and all.
+  }
+  if (note !== undefined && voices.length === 0) {
+    return note;
+  }
+  const refused = await context.sendVoices(complete, voices);
+  if (refused !== null) {
+    return `Your voices were read but not recorded: ${refused}`;
+  }
+  return (
+    note ??
+    (complete
+      ? undefined
+      : `Only some of your voices were read (Suno sent no further page), so none was marked unavailable.`)
+  );
+}
 
 function songCountOf(body: unknown): number | null {
   const feed = isRecord(body) ? body.feed : undefined;
@@ -523,7 +631,12 @@ export async function readLeg(
     });
   };
 
+  let voicesNote = start.voicesNote;
   switch (leg.list) {
+    case 'voices': {
+      voicesNote = await readVoices(step, context, counts);
+      break;
+    }
     case 'workspaces': {
       const projects: Raw[] = [];
       // A direct load of the list makes no request for it (#421): the tab is pressed first.
@@ -613,7 +726,15 @@ export async function readLeg(
       break;
     }
   }
-  return { leg: start.leg + 1, attempt: 0, partNumber, counts, workspaces, workspacesComplete };
+  return {
+    leg: start.leg + 1,
+    attempt: 0,
+    partNumber,
+    counts,
+    workspaces,
+    workspacesComplete,
+    ...(voicesNote === undefined ? {} : { voicesNote }),
+  };
 }
 
 /** The step the Download view (#215) names when reading the library stops. */

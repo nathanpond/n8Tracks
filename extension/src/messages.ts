@@ -202,9 +202,12 @@ export type SyncScope =
  * One list a sync reads, each on its own Suno page. A workspace sync reads each chosen workspace's
  * own feed (`workspace`, on `/create?wid=<id>`, #422); a `library` leg in a workspace sync's legs
  * comes from a sync begun before that, and is read as then: the whole library, kept by workspace.
+ * `voices` is the user's voice list, read on Create's Voice picker and reported to n8Tracks on its
+ * own (#439); a sync begun before that has no such leg.
  */
 export type SyncLeg =
   | { list: 'workspaces' }
+  | { list: 'voices' }
   | { list: 'library' }
   | { list: 'workspace'; id: string }
   | { list: 'playlist'; id: string; name: string }
@@ -216,6 +219,8 @@ export interface SyncCounts {
   trashed: number;
   workspaces: number;
   playlists: number;
+  /** The user's voices read (#439); absent in a sync begun before that. */
+  voices?: number;
 }
 
 /**
@@ -240,6 +245,12 @@ export interface SyncProgress {
    * #434, which read it to its end or stopped.
    */
   workspacesComplete?: boolean;
+  /**
+   * What the panel says about the voice list when the sync finishes (#439): why the voices were not
+   * read or not sent, or that the list was read only in part. Absent when it was read to its end
+   * and n8Tracks took it. A voice leg that goes wrong never stops the sync.
+   */
+  voicesNote?: string;
 }
 
 export interface SyncSession extends SyncProgress {
@@ -326,6 +337,11 @@ export type Request =
   | { type: 'sync-discard' }
   /** The cover images of this tab's last sync (#152). */
   | { type: 'sync-images' }
+  /**
+   * The user's voices a sync read (#439), each cut to the fields the observer forwards, and whether
+   * the list was read to its end: reported to n8Tracks on their own, not in the export.
+   */
+  | { type: 'sync-voices'; complete: boolean; voices: Record<string, unknown>[] }
   /** The Suno content script: a run that ended and the self-check states (#150). */
   | { type: 'diagnostics-record'; run?: unknown; statuses?: unknown }
   /** The options page and the panel: the diagnostic report, assembled now (#150). */
@@ -442,6 +458,7 @@ export interface ResponseFor {
   'sync-complete': SyncReply<{ reviewUrl: string }>;
   'sync-discard': SyncReply;
   'sync-images': { images: ImageProgress | null };
+  'sync-voices': SyncReply<{ added: number }>;
   'diagnostics-record': { recorded: true };
   'diagnostic-report': DiagnosticReport;
   /** `watching`: the Suno IDs of this tab's clips still watched for completion (#154). */
@@ -518,6 +535,7 @@ export const SYNC_TYPES = [
   'sync-complete',
   'sync-discard',
   'sync-images',
+  'sync-voices',
 ] as const satisfies readonly Request['type'][];
 
 export type SyncRequest = Extract<Request, { type: (typeof SYNC_TYPES)[number] }>;
@@ -672,8 +690,10 @@ function isSyncProgress(value: unknown): value is SyncProgress {
     ['clips', 'trashed', 'workspaces', 'playlists'].every((key) =>
       isCount((value.counts as Record<string, unknown>)[key]),
     ) &&
+    (value.counts.voices === undefined || isCount(value.counts.voices)) &&
     Array.isArray(value.workspaces) &&
-    (value.workspacesComplete === undefined || typeof value.workspacesComplete === 'boolean')
+    (value.workspacesComplete === undefined || typeof value.workspacesComplete === 'boolean') &&
+    (value.voicesNote === undefined || typeof value.voicesNote === 'string')
   );
 }
 
@@ -726,6 +746,12 @@ export function isRequest(value: unknown): value is Request {
       return isRecord(value.header);
     case 'sync-part':
       return isExportPart(value.part);
+    case 'sync-voices':
+      return (
+        typeof value.complete === 'boolean' &&
+        Array.isArray(value.voices) &&
+        value.voices.every(isRecord)
+      );
     // The service worker checks the parts itself: only declared names and fixed values are kept.
     case 'diagnostics-record':
       return (

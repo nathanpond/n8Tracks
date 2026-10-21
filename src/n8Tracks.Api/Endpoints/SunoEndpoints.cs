@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Http.HttpResults;
 using n8Tracks.Api.Auth;
@@ -5,6 +6,7 @@ using n8Tracks.Api.Problems;
 using n8Tracks.Application.Credentials;
 using n8Tracks.Application.Songs;
 using n8Tracks.Application.Suno;
+using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Api.Endpoints;
 
@@ -12,13 +14,16 @@ namespace n8Tracks.Api.Endpoints;
 /// What a client needs to offer a Version's Suno options without restating Suno's rules
 /// (<c>catalog.read</c>): the fields of Suno's Create screen as the embedded inventory records them,
 /// each with the Version option it is stored in and Suno's own explanation, and the models offered for
-/// a new choice. The model list itself is managed under <see cref="SunoModelsEndpoints"/>.
+/// a new choice. The model list itself is managed under <see cref="SunoModelsEndpoints"/>. Also the
+/// Suno playlists and personas n8Tracks knows, and the user's voice list as a sync reports it (#439,
+/// <c>suno.sync</c>).
 /// </summary>
 internal static class SunoEndpoints
 {
     public const string CreateFieldsPath = ApiProblem.VersionPrefix + "/suno/create-fields";
     public const string PlaylistsPath = ApiProblem.VersionPrefix + "/suno/playlists";
     public const string PersonasPath = ApiProblem.VersionPrefix + "/suno/personas";
+    public const string DiscoveredPersonasPath = PersonasPath + "/discovered";
 
     /// <summary>Each inventory key's Version option, as the API spells it (the inverse of <see cref="VersionInputRules.InventoryKey"/>).</summary>
     private static readonly Dictionary<string, string> OptionsByKey = VersionInputRules.Keys
@@ -48,11 +53,20 @@ internal static class SunoEndpoints
 
         endpoints.MapGet(PersonasPath, GetPersonasAsync)
             .WithName("GetSunoPersonas")
-            .WithSummary("The Suno personas (Voices) n8Tracks has seen in imported clips, by name, unpaged: what the Sources editor offers as a Voice. Empty until an import has run.")
+            .WithSummary("The Suno personas (Voices) n8Tracks knows, by name, unpaged: those seen in imported clips and those a sync read from the user's voice list (#439), each with its description, state (available, or unavailable when the last complete voice list left it out or named it trashed), and owned (Suno's is_owned; null when only a clip named it). What the Sources editor offers as a Voice (the available ones). Empty until an import or a sync has run.")
             .RequireScope(CredentialScopes.CatalogRead)
             .Produces<SunoPersonaListResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden);
+
+        endpoints.MapPut(DiscoveredPersonasPath, ReportPersonasAsync)
+            .WithName("ReportSunoPersonas")
+            .WithSummary("The extension reports the user's Suno voices, as a sync reads them (#439): { complete, voices: [<Suno's persona object>] }. Each is kept by its id, with its name (a blank one never overwrites a known name), description, is_trashed, and is_owned; nothing else of the object is kept. Only a complete list changes availability: a known persona it leaves out, or names with is_trashed, becomes unavailable, and one it lists untrashed becomes available again. Nothing is deleted and no Version changes. An entry without an id refuses the whole report; a repeated id keeps the last. Taken from a sync (suno.sync).")
+            .RequireScope(CredentialScopes.SunoSync)
+            .Produces<SunoPersonaReportResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         endpoints.MapSunoModels();
         endpoints.MapSunoWorkspaces();
@@ -115,7 +129,56 @@ internal static class SunoEndpoints
     {
         SessionEndpoints.NoStore(context);
         var personas = await library.PersonasAsync(cancellationToken);
-        return TypedResults.Ok(new SunoPersonaListResponse([.. personas.Select(static persona => new SunoPersonaResponse(persona.SunoId, persona.Name))]));
+        return TypedResults.Ok(SunoPersonaListResponse.From(personas));
+    }
+
+    /// <summary>
+    /// 200 with every persona as it is now and what the report changed; 422 <c>validation_failed</c>,
+    /// storing nothing, when <c>complete</c> is not true or false or an entry cannot be read. Logs counts
+    /// only: never a name, a description, or anything else of Suno's persona (invariant 6).
+    /// </summary>
+    private static async Task<Results<Ok<SunoPersonaReportResponse>, ProblemHttpResult>> ReportPersonasAsync(
+        SunoPersonaReportRequest? request,
+        SunoPersonaService personas,
+        SunoLibraryService library,
+        HttpContext context,
+        ILoggerFactory loggers,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        var complete = request?.Complete.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            _ => (bool?)null,
+        };
+        var reading = SunoPersonaService.ReadReport(request?.Voices ?? default);
+        var errors = reading is SunoPersonaReportReading.Invalid invalid
+            ? new Dictionary<string, string[]>(invalid.Errors, StringComparer.Ordinal)
+            : new Dictionary<string, string[]>(StringComparer.Ordinal);
+        if (complete is null)
+        {
+            errors[SunoPersonaService.CompleteField] = ["Send whether this is the complete list of voices: true or false."];
+        }
+
+        if (errors.Count > 0 || reading is not SunoPersonaReportReading.Read read)
+        {
+            return ApiProblem.ValidationFailed(context, errors);
+        }
+
+        var report = await personas.ReportAsync(read.Listings, complete!.Value, cancellationToken);
+        loggers.CreateLogger(typeof(SunoEndpoints)).LogInformation(
+            "Suno voices reported: {VoiceCount} named, complete {Complete}; {AddedCount} added, {RenamedCount} renamed, {UnavailableCount} now unavailable, {AvailableCount} available again",
+            read.Listings.Count,
+            complete.Value,
+            report.Added.Count,
+            report.Renamed.Count,
+            report.BecameUnavailable.Count,
+            report.BecameAvailable.Count);
+
+        var list = SunoPersonaListResponse.From(await library.PersonasAsync(cancellationToken));
+        return TypedResults.Ok(new SunoPersonaReportResponse(list.Items, report.Added, report.Renamed, report.BecameUnavailable, report.BecameAvailable));
     }
 }
 
@@ -129,11 +192,35 @@ internal sealed record SunoPlaylistListResponse(IReadOnlyList<SunoPlaylistRespon
 /// </summary>
 internal sealed record SunoPlaylistResponse(string Id, string Name, int MemberCount, IReadOnlyList<string> ClipIds, DateTimeOffset LastSeen);
 
-/// <summary>The Suno personas seen in imported clips, by name.</summary>
-internal sealed record SunoPersonaListResponse(IReadOnlyList<SunoPersonaResponse> Items);
+/// <summary>The Suno personas n8Tracks knows, by name.</summary>
+internal sealed record SunoPersonaListResponse(IReadOnlyList<SunoPersonaResponse> Items)
+{
+    public static SunoPersonaListResponse From(IReadOnlyList<SunoPersona> personas) =>
+        new([.. personas.Select(static persona => new SunoPersonaResponse(
+            persona.SunoId,
+            persona.Name,
+            persona.Description,
+            SunoPersonaRules.NameOf(persona.State),
+            persona.IsOwned))]);
+}
 
-/// <summary>A Suno persona (a Voice) seen in an imported clip: its Suno ID (<c>id</c>) and its name as last seen.</summary>
-internal sealed record SunoPersonaResponse(string Id, string Name);
+/// <summary>
+/// A Suno persona (a Voice) seen in an imported clip or the user's voice list: its Suno ID (<c>id</c>),
+/// its name and description as last seen (either may be empty), <c>state</c> (<c>available</c> or
+/// <c>unavailable</c>, #439), and <c>owned</c> (Suno's <c>is_owned</c>; null when only a clip named it).
+/// </summary>
+internal sealed record SunoPersonaResponse(string Id, string Name, string Description, string State, bool? Owned);
+
+/// <summary>A voice report as sent, read as raw JSON: <c>complete</c> (true or false) and <c>voices</c> (Suno's persona objects).</summary>
+internal sealed record SunoPersonaReportRequest(JsonElement Complete, JsonElement Voices);
+
+/// <summary>Every persona as it is after a voice report, and the Suno IDs the report added, renamed, made unavailable, and made available again.</summary>
+internal sealed record SunoPersonaReportResponse(
+    IReadOnlyList<SunoPersonaResponse> Items,
+    IReadOnlyList<string> Added,
+    IReadOnlyList<string> Renamed,
+    IReadOnlyList<string> BecameUnavailable,
+    IReadOnlyList<string> BecameAvailable);
 
 /// <summary>
 /// Suno's Create-screen fields. Each field is the inventory's own record (<c>key</c>, <c>label</c>,

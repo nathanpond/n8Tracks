@@ -5,7 +5,7 @@ using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Infrastructure.Persistence;
 
-/// <summary>The Suno playlists and personas seen in imports, in <c>suno_playlists</c> and <c>suno_personas</c>.</summary>
+/// <summary>The Suno playlists and personas seen in imports and voice lists, in <c>suno_playlists</c> and <c>suno_personas</c>.</summary>
 internal sealed class SunoLibraryStore(N8TracksDbContext context) : ISunoLibraryStore
 {
     public async Task<IReadOnlyList<SunoPlaylist>> PlaylistsAsync(CancellationToken cancellationToken)
@@ -21,8 +21,36 @@ internal sealed class SunoLibraryStore(N8TracksDbContext context) : ISunoLibrary
     public async Task<IReadOnlyList<SunoPersona>> PersonasAsync(CancellationToken cancellationToken)
     {
         var records = await context.SunoPersonas.AsNoTracking().ToListAsync(cancellationToken).ConfigureAwait(false);
-        return [.. records.Select(static record => new SunoPersona(record.SunoId, record.Name, UtcText.Parse(record.LastSeenUtc)))];
+        return [.. records.Select(ToPersona)];
     }
+
+    public async Task SavePersonaAsync(SunoPersona persona, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(persona);
+
+        var record = await context.SunoPersonas.SingleOrDefaultAsync(row => row.SunoId == persona.SunoId, cancellationToken).ConfigureAwait(false);
+        if (record is null)
+        {
+            record = new SunoPersonaRecord { SunoId = persona.SunoId, Name = persona.Name, LastSeenUtc = UtcText.From(persona.LastSeen) };
+            context.SunoPersonas.Add(record);
+        }
+
+        record.Name = persona.Name;
+        record.Description = persona.Description;
+        record.State = SunoPersonaRules.NameOf(persona.State);
+        record.IsOwned = persona.IsOwned;
+        record.LastSeenUtc = UtcText.From(persona.LastSeen);
+        await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        context.Entry(record).State = EntityState.Detached;
+    }
+
+    private static SunoPersona ToPersona(SunoPersonaRecord record) => new(
+        record.SunoId,
+        record.Name,
+        record.Description,
+        SunoPersonaRules.StateOf(record.State),
+        record.IsOwned,
+        UtcText.Parse(record.LastSeenUtc));
 
     public async Task RecordAsync(SunoLibrarySightings sightings, DateTimeOffset now, CancellationToken cancellationToken)
     {

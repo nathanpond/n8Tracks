@@ -205,6 +205,33 @@ describe('Sync to n8Tracks in the panel', () => {
     ).toContain('not the Trash');
   });
 
+  it('says every scope reads your voices, counts them, and shows the note about them at the end (#439)', async () => {
+    const scopes: SyncScope[] = [
+      { kind: 'library' },
+      { kind: 'workspaces', ids: ['w1'], readTrash: false },
+      { kind: 'playlists', playlists: [{ id: 'p1', name: 'M' }], readTrash: true },
+    ];
+    for (const scope of scopes) {
+      expect(summaryText(scope)).toContain('your voices');
+    }
+    expect(countsText({ ...COUNTS, voices: 1 })).toBe(
+      '12 workspaces, 140 clips, 1 clip in the Trash, 0 playlists, 1 voice',
+    );
+    const { sync } = view();
+    sync.show({
+      kind: 'finished',
+      counts: { ...COUNTS, voices: 3 },
+      note: 'Your voices were not read: step ’voice picker’ expected the Voice picker.',
+    });
+    expect(sync.element.querySelector('.sync-voices')?.textContent).toBe(
+      'Your voices were not read: step ’voice picker’ expected the Voice picker.',
+    );
+    await expectNoAxeViolations(document);
+    // Complement: without a note there is no such line.
+    sync.show({ kind: 'finished', counts: COUNTS });
+    expect(sync.element.querySelector('.sync-voices')).toBeNull();
+  });
+
   it('shows the summary, warns of a replaced export, and starts only on Start sync', async () => {
     const { sync, options, button } = view();
     sync.setAvailable(true, null);

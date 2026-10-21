@@ -13,7 +13,13 @@ export type SyncViewState =
   | { kind: 'choose' }
   | { kind: 'summary'; scope: SyncScope; replacesReady: boolean }
   | { kind: 'reading'; step: string; counts: SyncCounts }
-  | { kind: 'finished'; counts: SyncCounts; images?: ImageProgress | null }
+  | {
+      kind: 'finished';
+      counts: SyncCounts;
+      images?: ImageProgress | null;
+      /** About the user's voices (#439): why they were not read or sent, or read only in part. */
+      note?: string;
+    }
   | { kind: 'stopped'; report: string }
   | { kind: 'cancelled' };
 
@@ -46,6 +52,7 @@ export function countsText(counts: SyncCounts): string {
     plural(counts.clips, 'clip', 'clips'),
     plural(counts.trashed, 'clip in the Trash', 'clips in the Trash'),
     plural(counts.playlists, 'playlist', 'playlists'),
+    ...(counts.voices === undefined ? [] : [plural(counts.voices, 'voice', 'voices')]),
   ].join(', ');
 }
 
@@ -53,8 +60,8 @@ export function countsText(counts: SyncCounts): string {
 export function summaryText(scope: SyncScope): string {
   const lists =
     scope.kind === 'library' || scope.readTrash
-      ? 'plus the Trash list and the workspace list.'
-      : 'plus the workspace list (not the Trash).';
+      ? 'plus the Trash list, the workspace list, and your voices.'
+      : 'plus the workspace list and your voices (not the Trash).';
   switch (scope.kind) {
     case 'library':
       return `Reads your whole Suno library, in every workspace (the number of clips is not known until it has been read), ${lists}`;
@@ -261,7 +268,11 @@ export class SyncView {
           this.show({ kind: 'choose' });
         });
         this.firstControl = again;
-        this.body.append(done, images, again);
+        this.body.append(done, images);
+        if (this.state.note !== undefined) {
+          this.body.append(this.make('p', { class: 'detail sync-voices' }, this.state.note));
+        }
+        this.body.append(again);
         return;
       }
       case 'stopped': {

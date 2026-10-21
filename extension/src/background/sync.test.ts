@@ -153,11 +153,11 @@ describe('starting a sync', () => {
       session: {
         tabId: TAB,
         scope: { kind: 'library' },
-        legs: [{ list: 'workspaces' }, { list: 'library' }, { list: 'trash' }],
+        legs: [{ list: 'workspaces' }, { list: 'voices' }, { list: 'library' }, { list: 'trash' }],
         leg: 0,
         attempt: 0,
         partNumber: 0,
-        counts: { clips: 0, trashed: 0, workspaces: 0, playlists: 0 },
+        counts: { clips: 0, trashed: 0, workspaces: 0, playlists: 0, voices: 0 },
         workspaces: [],
         exportId: null,
         updatedAt: 42,
@@ -215,7 +215,7 @@ describe('carrying a sync between page loads', () => {
       session: {
         scope: { kind: 'workspaces', ids: ['w1'], readTrash: false },
         // Each chosen workspace's own feed, not the whole library (#422).
-        legs: [{ list: 'workspaces' }, { list: 'workspace', id: 'w1' }],
+        legs: [{ list: 'workspaces' }, { list: 'voices' }, { list: 'workspace', id: 'w1' }],
       },
     });
 
@@ -229,6 +229,7 @@ describe('carrying a sync between page loads', () => {
         scope: { kind: 'playlists', playlists, readTrash: true },
         legs: [
           { list: 'workspaces' },
+          { list: 'voices' },
           { list: 'playlist', id: 'p1', name: 'Morning' },
           { list: 'trash' },
         ],
@@ -506,5 +507,55 @@ describe('cover images with a sync (#152)', () => {
     expect(context.local.has(IMAGES_KEY)).toBe(false);
     expect(context.reads).not.toHaveBeenCalled();
     expect(await context.send({ type: 'sync-images' })).toEqual({ images: null });
+  });
+});
+
+describe("reporting the user's voices a sync read (#439)", () => {
+  const VOICES = [
+    { id: 'v1', name: 'Velvet Alto', description: '', is_trashed: false, is_owned: true },
+    { id: 'v2', name: 'Gravel Baritone', description: 'Low', is_trashed: true, is_owned: false },
+  ];
+
+  it('sends them on their own, as read, and nothing for the export', async () => {
+    const context = await started();
+    context.answer(() => jsonResponse(200, { items: [], added: ['v1', 'v2'], renamed: [] }));
+
+    const answer = await context.send({ type: 'sync-voices', complete: true, voices: VOICES });
+
+    expect(answer).toEqual({ ok: true, added: 2 });
+    expect(context.calls).toEqual([
+      {
+        method: 'PUT',
+        path: 'api/v1/suno/personas/discovered',
+        body: { complete: true, voices: VOICES },
+      },
+    ]);
+    // The sync goes on as it was: no export was created for the voices.
+    expect(await context.send({ type: 'sync-resume' })).toMatchObject({
+      session: { exportId: null, leg: 0 },
+    });
+  });
+
+  it('says why n8Tracks refused them, by its code only, and keeps the sync', async () => {
+    const context = await started();
+    context.answer(() => jsonResponse(403, { code: 'insufficient_scope', title: 'Velvet Alto' }));
+
+    const answer = await context.send({ type: 'sync-voices', complete: false, voices: VOICES });
+
+    expect(answer).toEqual({
+      ok: false,
+      message: 'n8Tracks refused your voices: 403 (insufficient_scope).',
+    });
+    expect(JSON.stringify(answer)).not.toContain('Velvet');
+    expect(await context.send({ type: 'sync-resume' })).toMatchObject({ session: { tabId: TAB } });
+  });
+
+  it('takes them only from the tab running the sync', async () => {
+    const context = await started();
+
+    expect(
+      await context.send({ type: 'sync-voices', complete: true, voices: VOICES }, TAB + 1),
+    ).toEqual({ ok: false, message: 'This tab is not running a sync.' });
+    expect(context.calls).toEqual([]);
   });
 });

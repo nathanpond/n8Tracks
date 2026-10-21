@@ -959,7 +959,11 @@ function InspirationChoices({
   );
 }
 
-/** The Voice: one of the personas n8Tracks has seen in imported clips, or none. */
+/**
+ * The Voice: one of the user's Suno voices n8Tracks knows (read by a sync, #439, or seen in imported
+ * clips), or none. A voice Suno no longer offers is not offered here, but a Version that has one
+ * keeps it, named as no longer in the user's voices.
+ */
 function VoicePart({
   lineage,
   readOnly,
@@ -971,8 +975,12 @@ function VoicePart({
 }) {
   const { state, reload } = useSunoPersonas();
   const voice = lineage.voice;
-  const personas = state.phase === 'ready' ? state.data : [];
+  const all = state.phase === 'ready' ? state.data : [];
+  const personas = all.filter((persona) => persona.state !== 'unavailable');
   const known = voice === null || personas.some((persona) => persona.id === voice.personaId);
+  const gone =
+    voice !== null &&
+    all.some((persona) => persona.id === voice.personaId && persona.state === 'unavailable');
   const nameOf = (id: string, name: string) => (name === '' ? id : name);
   return (
     <Stack gap="xs" role="group" aria-labelledby="voice-heading">
@@ -1000,7 +1008,12 @@ function VoicePart({
               { value: '', label: 'None' },
               ...(known
                 ? []
-                : [{ value: voice.personaId, label: nameOf(voice.personaId, voice.name) }]),
+                : [
+                    {
+                      value: voice.personaId,
+                      label: `${nameOf(voice.personaId, voice.name)}${gone ? ' (no longer in your Suno voices)' : ''}`,
+                    },
+                  ]),
               ...personas.map((persona) => ({
                 value: persona.id,
                 label: nameOf(persona.id, persona.name),
@@ -1023,8 +1036,8 @@ function VoicePart({
           />
           {state.phase === 'ready' && personas.length === 0 && (
             <Text size="sm" data-testid="no-personas">
-              No Suno voices yet: n8Tracks lists the voices it has seen in imported clips once an
-              import has run.
+              No Suno voices yet: a sync from the extension on Suno reads your voices, and imported
+              clips add the voices they used.
             </Text>
           )}
         </>

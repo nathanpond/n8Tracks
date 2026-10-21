@@ -160,6 +160,8 @@ describe('the self-check of chained workflows', () => {
     'verify-source-advanced': 'Choose the Suno action',
     'verify-source-simple': 'Choose the Suno action',
     'set-extend-from': 'Verify the source (Advanced)',
+    // The voice list's scroll waits for the picker the sync opens (#439).
+    'scroll-voice-list': 'Open the Voice picker for your voices',
     'search-mashup-song': 'Choose the Suno action',
     'choose-mashup-song': 'Search for the Mashup’s second song',
     'answer-replace-lyrics': 'Choose the Mashup’s second song',
@@ -288,6 +290,9 @@ describe('the registry', () => {
       'search-workspaces',
       'create-workspace',
       'switch-form',
+      'open-voice-list',
+      'scroll-voice-list',
+      'close-voice-list',
       'fill-songs-simple',
       'fill-songs-advanced',
       'check-songs-form',

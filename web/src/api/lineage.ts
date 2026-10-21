@@ -328,6 +328,14 @@ export interface SunoPlaylist {
 export interface SunoPersona {
   id: string;
   name: string;
+  description?: string;
+  /**
+   * `unavailable` when the last complete voice list a sync read (#439) left it out or named it
+   * trashed; the picker then no longer offers it, though a Version keeps it.
+   */
+  state?: 'available' | 'unavailable';
+  /** Suno's `is_owned`; null when only an imported clip named it. */
+  owned?: boolean | null;
 }
 
 function isSunoPlaylist(value: unknown): value is SunoPlaylist {
@@ -343,7 +351,12 @@ function isSunoPlaylist(value: unknown): value is SunoPlaylist {
 }
 
 function isSunoPersona(value: unknown): value is SunoPersona {
-  return isRecord(value) && typeof value.id === 'string' && typeof value.name === 'string';
+  return (
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    typeof value.name === 'string' &&
+    (value.state === undefined || value.state === 'available' || value.state === 'unavailable')
+  );
 }
 
 const acceptPlaylists = (answer: unknown) =>
@@ -361,7 +374,10 @@ export function useSunoPlaylists() {
   return useResource('api/v1/suno/playlists', acceptPlaylists);
 }
 
-/** The Suno personas seen in imported clips, by name; empty until an import has run. */
+/**
+ * The Suno personas n8Tracks knows, by name: those a sync read from the user's voice list (#439) and
+ * those seen in imported clips; empty until a sync or an import has run.
+ */
 export function useSunoPersonas() {
   return useResource('api/v1/suno/personas', acceptPersonas);
 }

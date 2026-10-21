@@ -4856,3 +4856,33 @@ Story #219 (on the milestone branch):
 - **Decision:** Its markup is assumed to be the Overwrite question's family (a Base UI `role=dialog` labelled by its title, × named "Close"), not captured; `page.create-source-mashup-replace-lyrics-dialog.html` is constructed on the Overwrite fixture with a made-up title. The stand-in opens it after an Add with `mashupReplaceLyrics`.
   **Why:** Only a screenshot was available. If the live markup differs, the workflow stops at its step and the panel asks the user to answer it; nothing else is pressed.
   **Issue:** #438
+
+## Ad-hoc — 2026-10-20
+
+- **Change:** A sync now also reads the user's Suno voices (#439): a new sync leg, "Read your voices", for every scope, and a new endpoint `PUT /api/v1/suno/personas/discovered` (`suno.sync`) that keeps them in `suno_personas`, which gains `description`, `is_owned`, and `state` (available or unavailable). `GET /api/v1/suno/personas` answers those fields too, and the Version's voice picker offers the available voices.
+  **Why:** Owner request in the #148 walkthrough: n8Tracks listed only the voices it had seen in imported clips, so a Version could not pick a voice never imported with.
+  **Affects:** M4 (#134 sync legs and the panel's counts, #148 the voice picker and its empty state), M7 (the API/MCP surface: a new `suno.sync` endpoint and three new fields on the personas list), M8 (#255 portable format, if it lists `suno_personas`).
+
+## M4 captures — #439 the user's voices read by a sync — 2026-10-20
+
+- **Decision:** The voice leg comes second in every scope, after the workspace list and before the library, workspaces, or playlists. It is read on `/create`: `switch-form` (Songs, Advanced), then a new `open-voice-list` presses "+ Voice", and the reader takes the `GET /api/persona/get-personas/` answers Suno sends (observer kind `personas`). It scrolls once for a next page (`scroll-voice-list`) when the voices read are fewer than `total_results`, then `close-voice-list` presses the picker's Close, or sends Escape, choosing nothing.
+  **Why:** The issue's design. Placing the leg early means a failure there costs nothing that was read: the export is created only by the clip legs.
+  **Issue:** #439
+- **Decision:** The leg never stops the sync. When the picker cannot be opened, no list comes within 20 seconds, a page cannot be read, or n8Tracks refuses the voices, the sync goes on to the next leg and the finished panel says why (`SyncProgress.voicesNote`). A list read only in part is sent as incomplete (`complete: false`); the leg does not reopen the page.
+  **Why:** The voices are an aid to the picker, not part of what the user reviews; losing a sync over them would be worse than a stale picker.
+  **Issue:** #439
+- **Decision:** The voices are reported on their own (`sync-voices` → `PUT /api/v1/suno/personas/discovered`), at the leg, not in the export. They are kept whether or not the export is later reviewed, discarded, or cancelled.
+  **Why:** Like the workspace list, `suno_personas` is Suno's own state, a read model, not catalog data: invariant 3's choices are about the catalog, and no Version changes when a voice is recorded or becomes unavailable.
+  **Issue:** #439
+- **Decision (server):** The rules mirror the workspace list's. A persona is kept by Suno ID with its name (a blank one never overwrites a known name), description, `is_trashed`, and `is_owned`; nothing else of Suno's object is stored. Only a complete list changes availability: a known persona it leaves out, or names trashed, becomes unavailable, and one it lists untrashed becomes available again. A persona first seen is available unless first seen trashed. Nothing is deleted. A persona only an imported clip named (someone else's public voice, say) also becomes unavailable when a complete list of the user's voices leaves it out; a Version that uses it keeps it, and the picker names it "no longer in your Suno voices". An entry without an ID refuses the whole report (422); a repeated ID keeps the last; at most 1,000 (Suno's own `max_voice_personas`). Only `suno.sync` may report.
+  **Why:** One rule for both of Suno's lists is easier to reason about; the picker should offer what Suno would.
+  **Issue:** #439
+- **Decision (invariant 6):** The observer forwards only `current_page`, `total_results`, and each persona's `id`, `name`, `description`, `is_trashed`, and `is_owned`: never the owner's handle, display name, or image, nor the persona's clip (which holds a prompt and lyrics). The server logs the report by its counts only, and `voices`, `userhandle`, and `userdisplayname` join the redaction policy's names.
+  **Why:** The capture shows `user_handle`, `user_display_name`, `user_image_url`, and a whole clip on every persona.
+  **Issue:** #439
+- **Decision (invariant 4):** The leg presses only "+ Voice" (outside any dialog, a plain button) and the Voice picker's Close; the scroll presses nothing. The matcher already refuses every other control in the picker but a voice's title, My Voices, and Favorites, and refuses "Create Voice" by its name; no matcher change was needed. Guard recipes for the three workflows, a test of exactly what each presses, and bite tests (Create Voice, an added Create/Publish/Delete, each Play spied on) cover it. `ADAPTER_VERSION` 33. TS-007-21.
+  **Why:** The design's rule: never press a voice, Create Voice, or anything that creates, publishes, or deletes.
+  **Issue:** #439
+- **Decision:** Not seen live, to confirm: paging beyond page 1 (assumed `page=N` on scroll, like the workspace list, and treated as incomplete when no next page comes), whether Suno sends the list again when the picker opens a second time in one page load (each leg has a page load of its own), whether a plan without Voices shows "+ Voice" or opens something else (the leg then stops at its step with a note), and whether the Favorites tab uses the same request (it is never pressed).
+  **Why:** Only one page of a few voices was captured (2026-10-20).
+  **Issue:** #439

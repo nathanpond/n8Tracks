@@ -13,6 +13,12 @@ public interface ISunoLibraryStore
     Task<IReadOnlyList<SunoPersona>> PersonasAsync(CancellationToken cancellationToken);
 
     /// <summary>
+    /// Stores <paramref name="persona"/> (#439), adding it or replacing the record with its Suno ID.
+    /// Inside the caller's transaction.
+    /// </summary>
+    Task SavePersonaAsync(SunoPersona persona, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Records <paramref name="sightings"/>, seen at <paramref name="now"/>, by Suno ID (#153): a playlist
     /// or persona not stored yet is added; a stored one takes the name seen unless that is blank, and a
     /// listed playlist its clip IDs, as last seen. A playlist known only as a clip's Inspiration leaves a
@@ -26,7 +32,8 @@ public interface ISunoLibraryStore
 /// n8Tracks has seen in imported data. Both lists are read models the import stories fill (#137,
 /// #153); until an import has run they are empty. Each is sorted by name (ignoring case, then by ID so
 /// the order is stable) and unpaged: a user has tens of each, not thousands. An import commit records
-/// what the clips it imports touch (<see cref="SunoReadModels"/>); nothing else writes them.
+/// what the clips it imports touch (<see cref="SunoReadModels"/>); the user's voice list, which a sync
+/// reads, also writes personas (<see cref="SunoPersonaService"/>, #439).
 /// </summary>
 public sealed class SunoLibraryService(ISunoLibraryStore store, IExclusiveTransaction transaction)
 {
@@ -39,7 +46,7 @@ public sealed class SunoLibraryService(ISunoLibraryStore store, IExclusiveTransa
             .ThenBy(static playlist => playlist.SunoId, StringComparer.Ordinal)];
     }
 
-    /// <summary>Every persona seen, by name.</summary>
+    /// <summary>Every persona seen, by name, Available or not.</summary>
     public async Task<IReadOnlyList<SunoPersona>> PersonasAsync(CancellationToken cancellationToken = default)
     {
         var personas = await store.PersonasAsync(cancellationToken).ConfigureAwait(false);
