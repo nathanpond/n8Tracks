@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.Mvc.Testing.Handlers;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -88,6 +89,35 @@ public class N8TracksApiFactory : WebApplicationFactory<Program>
     /// how the test host passes them on: not the environment. Set before the first request.
     /// </summary>
     internal IReadOnlyList<(string Name, string Value)> HostSettings { get; init; } = [];
+
+    /// <inheritdoc cref="CreateClient(WebApplicationFactoryClientOptions)"/>
+    public new HttpClient CreateClient() => CreateClient(ClientOptions);
+
+    /// <summary>
+    /// A client as the base class makes one, except that its cookies are kept by
+    /// <see cref="TestClockCookieHandler"/>, which judges expiry by the host's <see cref="TimeProvider"/>
+    /// rather than the real clock. The base class's cookie container would drop a session cookie the
+    /// server dated from <c>TestClock</c> (2026-10-01) once the real date passed its expiry. Hides
+    /// rather than overrides because the base methods are not virtual: call it through this type.
+    /// </summary>
+    public new HttpClient CreateClient(WebApplicationFactoryClientOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        if (!options.HandleCookies)
+        {
+            return base.CreateClient(options);
+        }
+
+        List<DelegatingHandler> handlers = [];
+        if (options.AllowAutoRedirect)
+        {
+            handlers.Add(new RedirectHandler(options.MaxAutomaticRedirections));
+        }
+
+        handlers.Add(new TestClockCookieHandler(() => (Services.GetService<TimeProvider>() ?? TimeProvider.System).GetUtcNow()));
+        return CreateDefaultClient(options.BaseAddress, [.. handlers]);
+    }
 
     protected override IHost CreateHost(IHostBuilder builder) =>
         TelemetryEnvironment.BuildHost(OtlpEndpoint, () => base.CreateHost(builder), EnvironmentName);
