@@ -46,5 +46,5 @@ export const openWorkspaceList: Workflow = {
       verify: () => OK,
     },
   ],
-  fixtures: ['library-list', 'library-songs-page-1'],
+  fixtures: ['library-list', 'library-songs-page-1', 'library-songs-groups'],
 };

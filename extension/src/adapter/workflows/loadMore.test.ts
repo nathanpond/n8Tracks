@@ -4,7 +4,7 @@ import { fakeClock, loadSnapshot } from '../../testing/snapshots.ts';
 import { checkWorkflow } from '../registry.ts';
 import { PrimitiveError } from '../primitives.ts';
 import { runWorkflow } from '../workflow.ts';
-import { askForMore, listOnPage, loadMore } from './loadMore.ts';
+import { askForMore, listOnPage, loadMore, SONG_ROW } from './loadMore.ts';
 
 afterEach(() => {
   document.body.innerHTML = '';
@@ -15,8 +15,14 @@ describe('the load-more workflow', () => {
     ['library-list', 'https://suno.com/me'],
     ['library-trash', 'https://suno.com/me/trash'],
     ['playlist', 'https://suno.com/playlist/00000000-0000-4000-8000-00000000012b'],
-    // The workspace list has no snapshot; the Library page around it has Suno's navigation.
+    // The TS-003 workspace list has no snapshot; the Library page around it has Suno's navigation.
     ['library-list', 'https://suno.com/me/workspaces'],
+    // TS-007-23: no rowgroup any more, only the rows (`role=group`) in plain wrappers.
+    ['library-songs-groups', 'https://suno.com/me'],
+    ['library-trash-groups', 'https://suno.com/me/trash'],
+    ['playlist-groups', 'https://suno.com/playlist/00000000-0000-4000-8000-00000000012b'],
+    ['library-workspaces', 'https://suno.com/me/workspaces'],
+    ['create-workspace-songs-groups', 'https://suno.com/create?wid=w-1'],
   ])('finds the list on the %s snapshot at %s', (snapshot, address) => {
     const page = loadSnapshot(snapshot, address);
 
@@ -25,9 +31,10 @@ describe('the load-more workflow', () => {
   });
 
   it('is not working where the list is missing, and not checked off a list page', () => {
-    expect(listOnPage(loadSnapshot('library-trash', 'https://suno.com/playlist/x'))).toEqual({
+    // The workspace list's page holds no song row.
+    expect(listOnPage(loadSnapshot('library-workspaces', 'https://suno.com/playlist/x'))).toEqual({
       ok: false,
-      expected: "the playlist's list of songs, named by its count",
+      expected: "Suno's list of songs",
     });
     expect(
       checkWorkflow(loadMore, loadSnapshot('library-list', 'https://suno.com/create')).state,
@@ -64,10 +71,36 @@ function clicks(): Element[] {
   return clicked;
 }
 
+describe('finding the rows of a song list (TS-007-23)', () => {
+  it('takes a row by the song link it holds, not Suno’s empty placeholders', () => {
+    const page = loadSnapshot('library-songs-groups', 'https://suno.com/me');
+    const groups = document.querySelectorAll('[role="group"]');
+    const placeholders = [...groups].filter((group) => group.querySelector('a') === null);
+    // Three rows and two placeholders ("Untitled", nothing inside) are in the fixture.
+    expect([groups.length, placeholders.length]).toEqual([5, 2]);
+    expect(page.readAll(SONG_ROW)).toHaveLength(3);
+
+    for (const link of document.querySelectorAll('a[href^="/song/"]')) {
+      link.remove();
+    }
+    expect(page.readAll(SONG_ROW)).toEqual([]);
+    expect(listOnPage(page)).toEqual({ ok: false, expected: "Suno's list of songs" });
+  });
+
+  it('finds the rows on the TS-003 and TS-007 snapshots too, where a rowgroup held them', () => {
+    for (const snapshot of ['library-list', 'library-trash', 'library-songs-page-1', 'playlist']) {
+      const page = loadSnapshot(snapshot, 'https://suno.com/me');
+      expect(page.readAll(SONG_ROW).length, snapshot).toBeGreaterThan(0);
+    }
+  });
+});
+
 describe('asking for more where Suno shows its pager (TS-007)', () => {
   it.each([
     ['library-songs-page-1', 2],
     ['library-songs-page-2', 3],
+    // TS-007-23: Library's pager is as TS-007 captured it.
+    ['library-songs-groups', 2],
   ])('presses only the pager’s › on %s, the button after the page number', (snapshot, count) => {
     const page = loadSnapshot(snapshot, 'https://suno.com/me');
     const { buttons, input } = pagerControls();
@@ -81,7 +114,7 @@ describe('asking for more where Suno shows its pager (TS-007)', () => {
     expect(page.refusal()).toBeNull();
   });
 
-  it.each(['library-songs-page-1', 'library-songs-page-2'])(
+  it.each(['library-songs-page-1', 'library-songs-page-2', 'library-songs-groups'])(
     'runs as the load-more workflow on %s, pressing ›',
     async (snapshot) => {
       const page = loadSnapshot(snapshot, 'https://suno.com/me', fakeClock());
@@ -109,6 +142,10 @@ describe('asking for more where Suno shows its pager (TS-007)', () => {
       ['library-list', 'https://suno.com/me'],
       ['library-trash', 'https://suno.com/me/trash'],
       ['playlist', 'https://suno.com/playlist/00000000-0000-4000-8000-00000000012b'],
+      // TS-007-23: still no pager on the Trash, a playlist, or the workspace list.
+      ['library-trash-groups', 'https://suno.com/me/trash'],
+      ['playlist-groups', 'https://suno.com/playlist/00000000-0000-4000-8000-00000000012b'],
+      ['library-workspaces', 'https://suno.com/me/workspaces'],
     ] as const) {
       const page = loadSnapshot(snapshot, address);
       const clicked = clicks();
@@ -191,83 +228,160 @@ function scrolling(element: Element): HTMLElement {
  * scroller, and the pane holding Suno's Create form beside it.
  */
 function createPanes(): { list: HTMLElement; form: HTMLElement } {
-  const rows = document.querySelector('[role="rowgroup"]');
+  const list = document.querySelector('.clip-browser-list-scroller');
   const create = document.querySelector('[aria-label="Create song"]');
-  const list = rows?.closest('.clip-browser-list-scroller');
   // The form's pane: the outermost ancestor of the Create button not holding the song list.
   let form: Element | null | undefined = create;
-  while (form?.parentElement != null && !form.parentElement.contains(rows ?? null)) {
+  while (form?.parentElement != null && !form.parentElement.contains(list)) {
     form = form.parentElement;
   }
-  if (list == null || form == null || rows == null) {
+  if (list === null || form == null) {
     throw new Error('the snapshot has no song list or Create form');
   }
   return { list: scrolling(list), form: scrolling(form) };
 }
 
-describe("asking for more of a workspace's songs on /create?wid= (#422)", () => {
+/** The pager in the header of a workspace's songs (TS-007-23): ‹, the page number, ›. */
+function workspacePager(): { previous: Element; input: Element; next: Element } {
+  const input = document.querySelector('input[aria-label="Current page number"]');
+  const previous = input?.previousElementSibling;
+  const next = input?.nextElementSibling;
+  if (input == null || previous == null || next == null) {
+    throw new Error('the snapshot has no pager above the songs');
+  }
+  return { previous, input, next };
+}
+
+describe("asking for more of a workspace's songs on /create?wid= (#422, TS-007-23)", () => {
   it('finds the song list on the snapshot, and only on a Create page opened for a workspace', () => {
-    const page = loadSnapshot('create-workspace-songs', WORKSPACE_SONGS);
+    const page = loadSnapshot('create-workspace-songs-groups', WORKSPACE_SONGS);
 
     expect(listOnPage(page)).toEqual({ ok: true });
     expect(checkWorkflow(loadMore, page).state).toBe('ready');
     expect(
-      checkWorkflow(loadMore, loadSnapshot('create-workspace-songs', 'https://suno.com/create'))
-        .state,
+      checkWorkflow(
+        loadMore,
+        loadSnapshot('create-workspace-songs-groups', 'https://suno.com/create'),
+      ).state,
     ).toBe('not-checked');
   });
 
-  it("scrolls the song list's own pane to its end, and neither the Create form's pane nor anything else", () => {
-    const page = loadSnapshot('create-workspace-songs', WORKSPACE_SONGS);
+  it("presses only the pager's Next page, scrolling neither the list nor the Create form", () => {
+    const page = loadSnapshot('create-workspace-songs-groups', WORKSPACE_SONGS);
     const { list, form } = createPanes();
+    const { next } = workspacePager();
     const clicked = clicks();
 
     askForMore(page);
 
-    expect(list.scrollTop).toBe(5000);
-    expect(form.scrollTop).toBe(0);
-    expect(clicked).toEqual([]);
+    expect(clicked).toEqual([next]);
+    expect(next.getAttribute('aria-label')).toBe('Next page');
+    expect([list.scrollTop, form.scrollTop]).toEqual([0, 0]);
     expect(page.refusal()).toBeNull();
   });
 
-  it('never presses a pager there, even one shaped like Library’s: that feed pages by scroll', () => {
-    const page = loadSnapshot('create-workspace-songs', WORKSPACE_SONGS);
-    const { list } = createPanes();
-    // A header control like Library's pager (‹ [n] ›), which the live page's ‹ 1 › is not.
-    const header = document.createElement('div');
-    header.innerHTML =
-      '<span>Page</span><button type="button"><svg></svg></button><input placeholder="#" value="1"><button type="button"><svg></svg></button>';
-    document.querySelector('[role="rowgroup"]')?.closest('[role="table"]')?.before(header);
-    expect(page.pagerNext().kind).toBe('found');
-    const clicked = clicks();
-
-    askForMore(page);
-
-    expect(clicked).toEqual([]);
-    expect(list.scrollTop).toBe(5000);
-  });
-
-  it('runs as the load-more workflow there, pressing nothing', async () => {
-    const page = loadSnapshot('create-workspace-songs', WORKSPACE_SONGS, fakeClock());
+  it('runs as the load-more workflow there, pressing Next page and nothing else', async () => {
+    const page = loadSnapshot('create-workspace-songs-groups', WORKSPACE_SONGS, fakeClock());
     const { list } = createPanes();
     const clicked = clicks();
 
     const result = await runWorkflow(loadMore, page, {}, { clock: fakeClock() });
 
     expect(result.ok).toBe(true);
-    expect(list.scrollTop).toBe(5000);
+    expect(clicked).toEqual([workspacePager().next]);
+    expect(list.scrollTop).toBe(0);
+  });
+
+  it('stops, pressing and scrolling nothing, where the list has no pager (the #422 snapshot)', async () => {
+    const page = loadSnapshot('create-workspace-songs', WORKSPACE_SONGS, fakeClock());
+    const list = scrolling(document.querySelector('.clip-browser-list-scroller') ?? document.body);
+    const clicked = clicks();
+
+    const result = await runWorkflow(loadMore, page, {}, { clock: fakeClock() });
+
+    expect(result.ok).toBe(false);
+    expect(result.ok ? '' : result.failure.expected).toMatch(/^Suno's pager/);
+    expect(clicked).toEqual([]);
+    expect(list.scrollTop).toBe(0);
+  });
+
+  it.each([
+    [
+      'a next button named otherwise',
+      () => {
+        workspacePager().next.setAttribute('aria-label', 'Publish');
+      },
+    ],
+    [
+      'a next button with text',
+      () => {
+        workspacePager().next.append('Next');
+      },
+    ],
+    [
+      'something more beside the page number',
+      () => {
+        workspacePager().next.after(document.createElement('button'));
+      },
+    ],
+    [
+      'the buttons the other way round',
+      () => {
+        const { previous, next } = workspacePager();
+        next.after(previous);
+      },
+    ],
+    [
+      'a second pager',
+      () => {
+        const input = document.createElement('input');
+        input.setAttribute('aria-label', 'Current page number');
+        document.body.append(input);
+      },
+    ],
+    [
+      "Library's pager as well",
+      () => {
+        const header = document.createElement('div');
+        header.innerHTML =
+          '<span>Page</span><button type="button"><svg></svg></button><input placeholder="#" value="1"><button type="button"><svg></svg></button>';
+        document.body.append(header);
+      },
+    ],
+  ])('fails closed, pressing nothing, on a pager with %s', (_what, change) => {
+    const page = loadSnapshot('create-workspace-songs-groups', WORKSPACE_SONGS);
+    change();
+    const clicked = clicks();
+
+    expect(page.pagerNext().kind).toBe('mismatch');
+    expect(() => {
+      askForMore(page);
+    }).toThrow(PrimitiveError);
     expect(clicked).toEqual([]);
   });
 
-  it('stops, scrolling nothing, when the page shows no song list', async () => {
-    const page = loadSnapshot('create-workspace-songs', WORKSPACE_SONGS, fakeClock());
-    const { form } = createPanes();
-    document.querySelector('[role="rowgroup"]')?.remove();
+  it('presses no disabled Next page (the last page)', () => {
+    const page = loadSnapshot('create-workspace-songs-groups', WORKSPACE_SONGS);
+    workspacePager().next.setAttribute('disabled', '');
+    const clicked = clicks();
+
+    expect(() => {
+      askForMore(page);
+    }).toThrow(PrimitiveError);
+    expect(clicked).toEqual([]);
+  });
+
+  it('stops, pressing nothing, when the page shows no song list', async () => {
+    const page = loadSnapshot('create-workspace-songs-groups', WORKSPACE_SONGS, fakeClock());
+    for (const row of document.querySelectorAll('[role="group"]')) {
+      row.remove();
+    }
+    const clicked = clicks();
 
     const result = await runWorkflow(loadMore, page, {}, { clock: fakeClock() });
 
     expect(result.ok).toBe(false);
     expect(result.ok ? '' : result.failure.expected).toBe("Suno's list of songs");
-    expect(form.scrollTop).toBe(0);
+    expect(clicked).toEqual([]);
   });
 });

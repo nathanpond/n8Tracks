@@ -9,9 +9,8 @@ import {
   FORMAT_CHOICES,
 } from '../downloadSteps.ts';
 import type { PreparedFormat } from '../observed.ts';
-import type { Page } from '../primitives.ts';
 import { OK, present, type StepContext, type Workflow } from '../workflow.ts';
-import { SONG_ROWS } from './loadMore.ts';
+import { songRowsOnPage } from './loadMore.ts';
 
 /**
  * Having a clip's file prepared on Suno (#216, TS-004): its row's "More options" on the Library
@@ -31,17 +30,13 @@ export interface DownloadFormatContext extends StepContext {
   format: PreparedFormat;
 }
 
-function songRows(page: Page) {
-  return present(page, SONG_ROWS);
-}
-
 /** The clip's row in the Library list, and its "More options" pressed. */
 export const openClipMenu: Workflow<ClipMenuContext> = {
   id: 'open-clip-menu',
   title: "Open a clip's menu in the Library",
   feature: 'download',
   startsOn: sunoPage('library'),
-  needs: [{ step: 'clip row', check: songRows }],
+  needs: [{ step: 'clip row', check: songRowsOnPage }],
   steps: [
     {
       name: 'clip row',

@@ -51,12 +51,18 @@ export function snapshotAddress(snapshot: string): string {
     case 'library-list':
     case 'library-songs-page-1':
     case 'library-songs-page-2':
+    case 'library-songs-groups':
       return 'https://suno.com/me';
     case 'library-trash':
+    case 'library-trash-groups':
       return 'https://suno.com/me/trash';
+    case 'library-workspaces':
+      return 'https://suno.com/me/workspaces';
     case 'playlist':
+    case 'playlist-groups':
       return PLAYLIST_ADDRESS;
     case 'create-workspace-songs':
+    case 'create-workspace-songs-groups':
       return WORKSPACE_SONGS_ADDRESS;
     default:
       return 'https://suno.com/create';

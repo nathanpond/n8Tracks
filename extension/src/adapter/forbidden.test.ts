@@ -159,6 +159,8 @@ describe('the forbidden-control matcher, on the TS-003 snapshots', () => {
       'download-dialog: MP3',
       'download-dialog: WAV',
       'download-dialog: Unlock & Download',
+      // TS-007-23: Library's Workspaces tab holds the same entry.
+      'library-workspaces: Create new workspace',
       'workspace-selector: Create new workspace',
     ]);
     expect(DOWNLOAD_CLIP.snapshots).toEqual(['download-dialog']);

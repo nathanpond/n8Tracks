@@ -40,6 +40,7 @@ export type Role =
   | 'combobox'
   | 'dialog'
   | 'grid'
+  | 'group'
   | 'heading'
   | 'img'
   | 'link'
@@ -128,9 +129,17 @@ export interface Target {
   leadText?: string;
   /**
    * For a link: the path of the address it leads to, compared exactly (`/song/<clip ID>`, as the
-   * Library's song links address a clip, TS-003). Reads only the link's own `href`.
+   * Library's song links address a clip, TS-003), or matching the expression (any song's link,
+   * TS-007-23). Reads only the link's own `href`.
    */
-  address?: string;
+  address?: string | RegExp;
+  /**
+   * Something the element holds: at least one visible element inside it matches this. A row of
+   * Suno's song lists has no name of its own to tell it from other groups and from the empty
+   * placeholders Suno lays out ahead of the rows it has drawn; it holds its song's link
+   * (TS-007-23).
+   */
+  holds?: Target;
   /** Look only inside this element or region, which must itself be found exactly once. */
   within?: Target | Scope | Region;
   /** Plain words for a report, read after "expected": "a text box labelled Styles". */
@@ -497,6 +506,21 @@ function linkPathOf(element: Element): string | null {
   }
 }
 
+function addressMatches(element: Element, wanted: string | RegExp | undefined): boolean {
+  if (wanted === undefined) {
+    return true;
+  }
+  const path = linkPathOf(element);
+  return path !== null && (typeof wanted === 'string' ? path === wanted : wanted.test(path));
+}
+
+/** Whether a visible element inside `element` matches `wanted` (always, when nothing is wanted). */
+function holdsMatch(element: Element, wanted: Target | undefined): boolean {
+  return (
+    wanted === undefined || elementsUnder(element).some((inner) => matchesTarget(inner, wanted))
+  );
+}
+
 function matchesTarget(element: Element, target: Target): boolean {
   if (target.role === 'text') {
     return (
@@ -509,10 +533,11 @@ function matchesTarget(element: Element, target: Target): boolean {
     roleOf(element) === target.role &&
     (target.testId === undefined || element.getAttribute('data-testid') === target.testId) &&
     (target.popup === undefined || element.getAttribute('aria-haspopup') === target.popup) &&
-    (target.address === undefined || linkPathOf(element) === target.address) &&
+    addressMatches(element, target.address) &&
     leadMatches(element, target.leadText) &&
     nameMatches(element, target.name) &&
-    !isHidden(element)
+    !isHidden(element) &&
+    holdsMatch(element, target.holds)
   );
 }
 
@@ -1076,27 +1101,39 @@ function imageAddressOf(element: Element): string | null {
 }
 
 /** One element {@link Page.readAll} read: never the element itself. */
-/** The next-page button of Suno's list pager (TS-007). It has no name: it is found by structure. */
+/** The next-page button of Suno's list pager (TS-007, TS-007-23): it is found by structure. */
 export const PAGER_NEXT: Target = {
   role: 'button',
-  description: "the list pager's next-page button (›), beside the Page label and its # box",
+  description: "the list pager's next-page button (›), beside the page number",
 };
 
 /**
- * Suno's list pager (TS-007, Library › Songs): no pager on the page (`none`), its next-page button
- * (`found`), or a pager that does not look as captured (`mismatch`, with what was expected).
+ * Suno's list pager (TS-007, Library › Songs; TS-007-23, a workspace's songs): no pager on the page
+ * (`none`), its next-page button (`found`), or a pager that does not look as captured (`mismatch`,
+ * with what was expected).
  */
 export type PagerResult =
   { kind: 'none' } | { kind: 'found'; found: Found } | { kind: 'mismatch'; expected: string };
 
+/** Whether every one of `buttons` is a plain `type=button` that shows only an icon. */
+function showsOnlyIcons(buttons: readonly Element[]): boolean {
+  return buttons.every(
+    (button) =>
+      button.localName === 'button' &&
+      button.getAttribute('type') === 'button' &&
+      collapse(button.textContent) === '' &&
+      button.querySelector('svg') !== null,
+  );
+}
+
 /**
- * Finds the next-page button of the list pager by its structure, as TS-007 captured it: one
+ * Library's pager, as TS-007 captured it below Library › Songs (and TS-007-23 saw again): one
  * visible `span` whose whole text is "Page", its parent holding exactly, in order, that span, a
- * button, one `input` with a placeholder (the page number), and a button, then nothing but buttons.
- * The button after the input is the next page. Every button there must have no name and show only
- * an icon; anything else is a mismatch, so a button that could be something else is never pressed.
+ * button, one `input` with a placeholder (the page number, `#`), and a button, then nothing but
+ * buttons. The button after the input is the next page. Every button there must have no name and
+ * show only an icon.
  */
-function pagerNextOf(root: ParentNode): PagerResult {
+function libraryPagerOf(root: ParentNode): PagerResult {
   const labels = elementsUnder(root).filter(
     (element) =>
       element.localName === 'span' &&
@@ -1131,18 +1168,74 @@ function pagerNextOf(root: ParentNode): PagerResult {
     return mismatch('in that order, with nothing else but buttons after');
   }
   const buttons = [previous, next, ...rest];
-  if (
-    buttons.some(
-      (button) =>
-        nameOf(button) !== '' ||
-        collapse(button.textContent) !== '' ||
-        button.querySelector('svg') === null ||
-        button.getAttribute('type') !== 'button',
-    )
-  ) {
+  if (buttons.some((button) => nameOf(button) !== '') || !showsOnlyIcons(buttons)) {
     return mismatch('whose buttons have no name and show only an icon');
   }
   return { kind: 'found', found: handle(PAGER_NEXT, next) };
+}
+
+/** The name of the page-number box in the pager above a workspace's songs (TS-007-23). */
+export const PAGE_NUMBER_NAME = 'Current page number';
+
+/**
+ * The pager in the header of a workspace's songs on `/create?wid=` (TS-007-23, seen live on
+ * 2026-10-31): one visible `input` named "Current page number", its parent holding exactly, in
+ * order, a button named "Previous page", that input, and a button named "Next page", each button
+ * showing only an icon. The last is the next page.
+ */
+function namedPagerOf(root: ParentNode): PagerResult {
+  const numbers = elementsUnder(root).filter(
+    (element) =>
+      element.localName === 'input' && nameOf(element) === PAGE_NUMBER_NAME && !isHidden(element),
+  );
+  if (numbers.length === 0) {
+    return { kind: 'none' };
+  }
+  const mismatch = (what: string): PagerResult => ({
+    kind: 'mismatch',
+    expected: `one list pager (Previous page, ${PAGE_NUMBER_NAME}, Next page) ${what}`,
+  });
+  const [number] = numbers;
+  if (numbers.length > 1 || number === undefined) {
+    return mismatch('on the page, not several');
+  }
+  const [previous, middle, next, ...rest] =
+    number.parentElement === null ? [] : [...number.parentElement.children];
+  if (
+    previous === undefined ||
+    next === undefined ||
+    middle !== number ||
+    rest.length > 0 ||
+    nameOf(previous) !== 'Previous page' ||
+    nameOf(next) !== 'Next page'
+  ) {
+    return mismatch('in that order, with nothing else beside them');
+  }
+  if (!showsOnlyIcons([previous, next])) {
+    return mismatch('whose buttons show only an icon');
+  }
+  return { kind: 'found', found: handle(PAGER_NEXT, next) };
+}
+
+/**
+ * Finds the next-page button of the list pager by its structure: Library's (`‹ [#] ›` after a
+ * "Page" label, TS-007) or the one above a workspace's songs (`‹ [n] ›`, its parts named,
+ * TS-007-23). Anything that looks like a pager but not as captured is a mismatch, and so are two
+ * pagers on one page, so a button that could be something else is never pressed.
+ */
+function pagerNextOf(root: ParentNode): PagerResult {
+  const library = libraryPagerOf(root);
+  const named = namedPagerOf(root);
+  if (library.kind === 'mismatch') {
+    return library;
+  }
+  if (named.kind === 'mismatch') {
+    return named;
+  }
+  if (library.kind === 'found' && named.kind === 'found') {
+    return { kind: 'mismatch', expected: 'one list pager on the page, not two' };
+  }
+  return library.kind === 'found' ? library : named;
 }
 
 export interface ReadAllEntry {

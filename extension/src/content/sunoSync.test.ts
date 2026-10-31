@@ -457,6 +457,42 @@ describe('reading a leg after its page loads', () => {
     expect(visited).toEqual(['https://suno.com/me/trash']);
   });
 
+  it("reads Library's songs across pages on the redesigned list, pressing only the pager's › (TS-007-23)", async () => {
+    const first = sunoObject('feed-v3.library-page-1.response');
+    const second = sunoObject('feed-v3.library-page-2.response');
+    second.has_more = false;
+    const next = observed('library-feed', second, LIBRARY_FILTERS);
+    next.request = { ...next.request, cursor: 'page-2' };
+    const sw = worker(sessionAt(2, { workspaces: [{ id: 'w1' }] }));
+    const pressed: Element[] = [];
+    document.addEventListener(
+      'click',
+      (event) => {
+        pressed.push(event.target as Element);
+      },
+      true,
+    );
+    const { content: started, visited } = start({
+      address: 'https://suno.com/me',
+      snapshot: 'library-songs-groups',
+      worker: sw,
+      seen: [observed('library-feed', first, LIBRARY_FILTERS), next],
+    });
+
+    await started.resumed;
+
+    // The one press is the pager's ›: the button after its page number (`#`).
+    expect(pressed).toHaveLength(1);
+    expect(pressed[0]?.previousElementSibling?.getAttribute('placeholder')).toBe('#');
+    expect(sw.asked.find((request) => request.type === 'sync-part')).toMatchObject({
+      part: {
+        partNumber: 1,
+        clips: [...(first.clips as unknown[]), ...(second.clips as unknown[])],
+      },
+    });
+    expect(visited).toEqual(['https://suno.com/me/trash']);
+  });
+
   it("reads a chosen workspace's own feed on /create?wid=, then opens the next workspace's page (#422)", async () => {
     const scope: SyncScope = { kind: 'workspaces', ids: ['w1', 'w2'], readTrash: false };
     const page = sunoObject('feed-v3.workspace-create-wid.page-1.response');
@@ -467,7 +503,7 @@ describe('reading a leg after its page loads', () => {
     );
     const { content: started, visited } = start({
       address: 'https://suno.com/create?wid=w1',
-      snapshot: 'create-workspace-songs',
+      snapshot: 'create-workspace-songs-groups',
       worker: sw,
       seen: [
         // The whole library's feed, and another workspace's, are not this leg's.
@@ -490,13 +526,49 @@ describe('reading a leg after its page loads', () => {
     expect(visited).toEqual(['https://suno.com/create?wid=w2']);
   });
 
+  it("asks for a workspace's next page by pressing the pager's Next page, and nothing else (TS-007-23)", async () => {
+    const scope: SyncScope = { kind: 'workspaces', ids: ['w1'], readTrash: false };
+    const first = sunoObject('feed-v3.workspace-create-wid.page-1.response');
+    const second = sunoObject('feed-v3.workspace-create-wid.page-2.response');
+    second.has_more = false;
+    delete second.next_cursor;
+    const next = observed('library-feed', second, workspaceFilters('w1'));
+    next.request = { ...next.request, cursor: 'page-2' };
+    const sw = worker(sessionAt(2, { scope, legs: legsFor(scope), workspaces: [{ id: 'w1' }] }));
+    const pressed: string[] = [];
+    document.addEventListener(
+      'click',
+      (event) => {
+        const target = event.target as Element;
+        pressed.push(target.getAttribute('aria-label') ?? target.localName);
+      },
+      true,
+    );
+    const { content: started } = start({
+      address: 'https://suno.com/create?wid=w1',
+      snapshot: 'create-workspace-songs-groups',
+      worker: sw,
+      seen: [observed('library-feed', first, workspaceFilters('w1')), next],
+    });
+
+    await started.resumed;
+
+    expect(pressed).toEqual(['Next page']);
+    expect(sw.asked.find((request) => request.type === 'sync-part')).toMatchObject({
+      part: {
+        partNumber: 1,
+        clips: [...(first.clips as unknown[]), ...(second.clips as unknown[])],
+      },
+    });
+  });
+
   it("stops as 'Suno tab lost' when the Create page is not the workspace's own (#422)", async () => {
     const scope: SyncScope = { kind: 'workspaces', ids: ['w1', 'w2'], readTrash: false };
     for (const address of ['https://suno.com/create?wid=w2', 'https://suno.com/create']) {
       const sw = worker(sessionAt(2, { scope, legs: legsFor(scope) }));
       const { content: started, text } = start({
         address,
-        snapshot: 'create-workspace-songs',
+        snapshot: 'create-workspace-songs-groups',
         worker: sw,
       });
 

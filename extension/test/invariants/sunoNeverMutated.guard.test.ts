@@ -60,7 +60,8 @@ const RUN_RECIPES: Readonly<Record<string, RunRecipe>> = {
   // A sync's workspace list (#421): Library's Workspaces tab, which only changes what Library
   // shows; the Library snapshots' Publish and Trash controls must never be reached.
   'open-workspace-list': { values: {} },
-  // Scrolls the list on screen; it presses nothing on any snapshot.
+  // Presses the list pager's › (TS-007, TS-007-23), or scrolls the list where it has none; it
+  // presses nothing forbidden on any snapshot.
   'load-more': { values: {} },
   // Generate on Suno's workspace (#145, TS-007-15). Checking sign-in reads only; opening the list
   // presses only the breadcrumb (no snapshot shows it); searching types into the list's search box
@@ -278,16 +279,15 @@ describe('invariant 4: the extension never presses a forbidden control on Suno',
   // It loads every snapshot and reads each one's controls, which takes about 5 s here and more on
   // a GitHub runner, past vitest's default 5 s: the limit is the one sunoGenerate.test.ts uses.
   it('spies on the forbidden controls of every snapshot it runs on', { timeout: 30_000 }, () => {
-    // Complement: the spies are really there. Every snapshot but the playlist page and the clip's
-    // page with its menu closed (TS-005), which have no Create, Publish, Delete, Trash, or Remove
-    // control and no dialog, has at least one.
+    // Complement: the spies are really there. Every snapshot but the playlist pages (TS-003 and
+    // TS-007-23) and the clip's page with its menu closed (TS-005), which have no Create, Publish,
+    // Delete, Trash, or Remove control and no dialog, has at least one.
+    const unspied = new Set(['playlist', 'playlist-groups', 'clip-page']);
     const spiedOn = SNAPSHOT_NAMES.filter((name) => {
       document.body.innerHTML = snapshotHtml(name);
       return forbiddenControls(document).length > 0;
     });
-    expect(spiedOn).toEqual(
-      SNAPSHOT_NAMES.filter((name) => name !== 'playlist' && name !== 'clip-page'),
-    );
+    expect(spiedOn).toEqual(SNAPSHOT_NAMES.filter((name) => !unspied.has(name)));
   });
 
   it('finds no request to Suno and no way to the page around the primitives', () => {
@@ -741,15 +741,16 @@ describe('the guard bites', () => {
     }
   });
 
-  it("guards a workspace's songs on /create?wid=, where the Create form sits beside the list (#422)", async () => {
-    const snapshot = 'create-workspace-songs';
+  it("guards a workspace's songs on /create?wid=, where the Create form sits beside the list (#422, TS-007-23)", async () => {
+    const snapshot = 'create-workspace-songs-groups';
     document.body.innerHTML = snapshotHtml(snapshot);
     // The page holds the Create button and each row's Publish button: all spied on.
     expect(forbiddenControls(document).map((control) => control.words)).toEqual(
       expect.arrayContaining(['button "Create song"', 'button "Publish clip"']),
     );
 
-    // The reader's scroll for more runs there in full and reaches none of them.
+    // The reader's press of the pager's Next page (TS-007-23) runs there in full and reaches none
+    // of them.
     const loadMore = ADAPTER_WORKFLOWS.find((workflow) => workflow.id === 'load-more');
     expect(loadMore?.fixtures).toContain(snapshot);
     expect(

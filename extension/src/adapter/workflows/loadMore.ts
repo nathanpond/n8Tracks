@@ -1,42 +1,50 @@
 import { sunoPageOf, sunoPages, WORKSPACE_SONGS_PAGE, type PagePattern } from '../addresses.ts';
-import { findProblem, PrimitiveError, type Page, type Target } from '../primitives.ts';
+import { PrimitiveError, type Page, type Target } from '../primitives.ts';
 import { expected, OK, present, type Check, type Workflow } from '../workflow.ts';
 import { SUNO_NAVIGATION } from './recognise.ts';
 
+/** Any song's link: `<a href="/song/<clip ID>">`, one in each row of Suno's song lists. */
+export const SONG_LINK: Target = {
+  role: 'link',
+  address: /^\/song\/[^/]+$/,
+  description: "a song's link",
+};
+
 /**
- * The rows of Library › Songs and of the Trash (TS-003: one `rowgroup` on each page), and of a
- * workspace's songs on `/create?wid=` (#422: the list beside Suno's Create form,
- * `page.create-workspace-songs.html`).
+ * One row of Suno's song lists: a `role=group` holding its song's link (TS-007-23). The rows of
+ * Library › Songs, the Trash, a workspace's songs on `/create?wid=` (#422), and a playlist page are
+ * all `div.clip-row[role=group]`, named by the song's title, with `data-clip-status` and a link to
+ * `/song/<clip ID>` inside. Since Suno's redesign seen on 2026-10-31 they sit in plain `div`s: the
+ * `rowgroup` that held them (TS-003) and the playlist's list named "N songs" are gone or no longer
+ * to be relied on. Suno also lays out empty placeholders ahead of the rows it has drawn
+ * (`role=group`, named "Untitled", nothing inside), which hold no link and are not rows here.
  */
-export const SONG_ROWS: Target = {
-  role: 'rowgroup',
-  description: "Suno's list of songs",
+export const SONG_ROW: Target = {
+  role: 'group',
+  holds: SONG_LINK,
+  description: "a row of Suno's list of songs",
 };
 
-/** A playlist page's songs: a list named by its count, "8 songs" (TS-003: `page.playlist.html`). */
-export const PLAYLIST_SONGS: Target = {
-  role: 'list',
-  name: /^[\d,]+ songs?$/,
-  description: "the playlist's list of songs, named by its count",
-};
+/** Suno's list of songs is on the page: at least one row of it (TS-007-23). Reads only. */
+export function songRowsOnPage(page: Page): Check {
+  return page.readAll(SONG_ROW).length > 0 ? OK : expected("Suno's list of songs");
+}
 
 /**
- * The list on the page the reader is reading: the song rows on the Library and Trash pages and on
- * a workspace's songs on the Create page (`/create?wid=`, #422), the playlist's songs on a playlist
- * page. The workspace list has no snapshot, so on that page only Suno's own navigation is
- * required; the reader's check of each response is what tells a page that does not look as
- * expected.
+ * The list on the page the reader is reading: the song rows on the Library and Trash pages, on a
+ * workspace's songs on the Create page (`/create?wid=`, #422), and on a playlist page. On the
+ * workspace list only Suno's own navigation is required; the reader's check of each response is
+ * what tells a page that does not look as expected.
  */
 export function listOnPage(page: Page): Check {
   if (WORKSPACE_SONGS_PAGE.matches(page.address())) {
-    return present(page, SONG_ROWS);
+    return songRowsOnPage(page);
   }
   switch (sunoPageOf(page.address())) {
     case 'library':
     case 'trash':
-      return present(page, SONG_ROWS);
     case 'playlist':
-      return present(page, PLAYLIST_SONGS);
+      return songRowsOnPage(page);
     case 'workspaces':
       return present(page, SUNO_NAVIGATION);
     default:
@@ -47,26 +55,18 @@ export function listOnPage(page: Page): Check {
 }
 
 /**
- * Asks Suno for the next page of the list on screen, as a user would. On a workspace's songs
- * (`/create?wid=`, #422), the song list is scrolled to its end and nothing else: that feed pages
- * by scroll with a cursor, the header's small ‹ 1 › control is not Library's pager, and Suno's
- * Create form beside the list is left alone. Elsewhere, where the list
- * has Suno's pager (TS-007: Library › Songs now pages, `‹ [n] ›`, instead of loading more on
- * scroll), its next-page button is pressed, found by structure ({@link Page.pagerNext}): a pager
- * that does not look as captured stops the step, and nothing else is pressed. Where there is no
- * pager, the list is scrolled to its end (TS-003: the Trash, the workspace list, and a playlist
- * load more on scroll). The library reader runs it once per page and watches Suno's own response
- * to it.
+ * Asks Suno for the next page of the list on screen, as a user would. Where the list has Suno's
+ * pager (TS-007: Library › Songs pages, `Page ‹ [#] ›`; TS-007-23: a workspace's songs on
+ * `/create?wid=` page by the `‹ [n] ›` in the list's header, and scrolling that list no longer
+ * loads more), its next-page button is pressed, found by structure ({@link Page.pagerNext}): a
+ * pager that does not look as captured stops the step, and nothing else is pressed. Suno's Create
+ * form beside a workspace's songs is left alone. On a workspace's songs the pager is required: a
+ * page without one stops the step rather than scrolling for a page that would not come. Where
+ * there is no pager, the page is scrolled to its end (TS-003: the Trash, the workspace list, and a
+ * playlist load more on scroll). The library reader runs it once per page and watches Suno's own
+ * response to it.
  */
 export function askForMore(page: Page): void {
-  if (WORKSPACE_SONGS_PAGE.matches(page.address())) {
-    const rows = page.find(SONG_ROWS);
-    if (rows.kind !== 'found') {
-      throw new PrimitiveError(findProblem(rows));
-    }
-    page.scrollListToEnd(rows.found);
-    return;
-  }
   const pager = page.pagerNext();
   switch (pager.kind) {
     case 'found':
@@ -75,6 +75,11 @@ export function askForMore(page: Page): void {
     case 'mismatch':
       throw new PrimitiveError(pager.expected);
     case 'none':
+      if (WORKSPACE_SONGS_PAGE.matches(page.address())) {
+        throw new PrimitiveError(
+          "Suno's pager (‹, the page number, ›) in the header of the workspace's songs",
+        );
+      }
       page.scrollToEnd();
   }
 }
@@ -110,6 +115,10 @@ export const loadMore: Workflow = {
     'playlist',
     'library-songs-page-1',
     'library-songs-page-2',
-    'create-workspace-songs',
+    'library-songs-groups',
+    'library-trash-groups',
+    'playlist-groups',
+    'library-workspaces',
+    'create-workspace-songs-groups',
   ],
 };

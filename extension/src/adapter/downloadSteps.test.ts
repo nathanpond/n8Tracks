@@ -11,6 +11,7 @@ import {
 import { forwardedBody, OBSERVER_SOURCE, type ObservedMessage } from './observed.ts';
 import { nameOf, Page } from './primitives.ts';
 import { runWorkflow, type Workflow } from './workflow.ts';
+import { openClipMenu } from './workflows/download.ts';
 
 /**
  * Preparing a file on Suno's page (#216, TS-004), over the snapshots: the Library list's row,
@@ -227,5 +228,30 @@ describe('preparing a file on Suno (TS-004)', () => {
     document.body.innerHTML = snapshotHtml('download-dialog');
     const page = new Page(document);
     expect(page.find(DOWNLOAD_DIALOG_TARGET).kind).toBe('found');
+  });
+});
+
+describe("opening a clip's menu on the redesigned Library list (TS-007-23)", () => {
+  it("presses the More options of the clip's own row, with no rowgroup around the rows", async () => {
+    document.body.innerHTML = snapshotHtml('library-songs-groups');
+    expect(document.querySelector('[role="rowgroup"]')).toBeNull();
+    const clip = '00000000-0000-4000-8000-000000000502';
+    const row = document.querySelector(`[role="group"]:has(a[href="/song/${clip}"])`);
+    const pressed: Element[] = [];
+    document.addEventListener(
+      'click',
+      (event) => {
+        pressed.push(event.target as Element);
+      },
+      { capture: true },
+    );
+    const page = new Page(document, { address: () => 'https://suno.com/me' });
+
+    const result = await runWorkflow(openClipMenu, page, { sunoId: clip }, { clock: fakeClock() });
+
+    expect(result.ok).toBe(true);
+    expect(pressed).toHaveLength(1);
+    expect(pressed[0]?.getAttribute('aria-label')).toBe('More options');
+    expect(row?.contains(pressed[0] ?? null)).toBe(true);
   });
 });

@@ -24,7 +24,7 @@ function clicks(): Element[] {
 }
 
 describe("opening Library's Workspaces tab (#421)", () => {
-  it.each(['library-list', 'library-songs-page-1'])(
+  it.each(['library-list', 'library-songs-page-1', 'library-songs-groups'])(
     'presses the Workspaces tab, and nothing else, on the %s snapshot',
     async (snapshot) => {
       const clock = fakeClock();

@@ -258,8 +258,9 @@ function workspaceFilterOf(filters: unknown): string | null {
 
 /**
  * One workspace's songs on `/create?wid=<id>` (#422): `POST /api/feed/v3` with a `workspace`
- * filter naming that workspace, and no other. Cursor paging by scroll, 20 a page; the list ends
- * when `has_more` is false (live, 2026-10-11: pages of 20, 20, and 5 for 45 clips).
+ * filter naming that workspace, and no other. Cursor paging, 20 a page, each next page asked for
+ * by the pager's › in the list's header (TS-007-23; by scroll until then); the list ends when
+ * `has_more` is false (live, 2026-10-11: pages of 20, 20, and 5 for 45 clips).
  */
 function workspaceSpec(id: string): ListSpec {
   return {

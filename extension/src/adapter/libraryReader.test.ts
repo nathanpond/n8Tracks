@@ -661,7 +661,7 @@ describe("reading a chosen workspace's own feed (#422)", () => {
   const scope: SyncScope = { kind: 'workspaces', ids: ['w1', 'w3'], readTrash: false };
   const legs = legsFor(scope);
 
-  it('reads the captured pages of the workspace feed, scrolling for each, until has_more is false', async () => {
+  it("reads the captured pages of the workspace feed, asking for each (the pager's ›, TS-007-23), until has_more is false", async () => {
     const workspace = '00000000-0000-4000-8000-000000000427';
     const captured: SyncScope = { kind: 'workspaces', ids: [workspace], readTrash: false };
     const first = sunoObject('feed-v3.workspace-create-wid.page-1.response');
@@ -749,13 +749,33 @@ describe("reading a chosen workspace's own feed (#422)", () => {
     expect(stop.reopen).toBe(true);
   });
 
-  it('is never complete without its last page: a page that does not come after a scroll stops the read', async () => {
+  it('is never complete without its last page: a page that does not come after › stops the read', async () => {
     const page = suno([workspacePage('w1', clips(2, 'mine', 'w1'), true, null)]);
 
     const stop = await stopOf(readLeg(scope, legs, { ...START, leg: 2 }, page.context));
 
     expect(stop.expected).toBe("a page of the workspace's songs within 20 seconds (asked 3 times)");
     expect(page.moreSteps).toHaveLength(3);
+  });
+
+  it('skips a page of the workspace feed it has read when › asks for it again, as on Library (TS-007-23)', async () => {
+    // The workspace's pager pages as Library's does (`feed/v3/offset`, then `feed/v3`): should
+    // Suno fetch page 2 ahead there too, the first › asks for it again.
+    const page = suno(
+      [
+        workspacePage('w1', clips(2, 'a', 'w1'), true, null),
+        workspacePage('w1', clips(2, 'b', 'w1'), true, 'c1'),
+      ],
+      [
+        [workspacePage('w1', clips(2, 'b', 'w1'), true, 'c1')],
+        [workspacePage('w1', clips(2, 'c', 'w1'), false, 'c2')],
+      ],
+    );
+
+    const next = await readLeg(scope, legs, { ...START, leg: 2 }, page.context);
+
+    expect(next.counts.clips).toBe(6);
+    expect(page.moreSteps).toEqual(['Read workspace 1 of 2', 'Read workspace 1 of 2']);
   });
 
   it('creates the export even for an empty workspace, so it is still reviewed', async () => {

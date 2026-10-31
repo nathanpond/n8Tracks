@@ -106,7 +106,7 @@ export const signedIn: Workflow = {
       verify: () => OK,
     },
   ],
-  fixtures: ['workspace-selector', 'create-workspace-songs'],
+  fixtures: ['workspace-selector', 'create-workspace-songs', 'create-workspace-songs-groups'],
 };
 
 /** Signed in, and the workspace list open. Reads, and presses only the breadcrumb. */

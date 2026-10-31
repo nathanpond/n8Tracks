@@ -42,11 +42,17 @@ describe('the committed Suno fixtures', () => {
     expect(missingImportMapKeys(read(inventoryPath), read(importMapPath))).toEqual([]);
   });
 
-  it('carry no real identifiers, query strings, or (locally) redaction terms', () => {
-    const terms = readRedactionTerms();
-    if (terms === undefined) {
-      console.log('No local redaction-terms.txt: checked identifiers and query strings only.');
-    }
-    expect(scanFixtures(fixturesDirectory, terms ?? [])).toEqual([]);
-  });
+  // With the local term list (some 18,000 terms) the scan takes about 11 s here, past vitest's
+  // default 5 s: the limit is the one the slow guard tests use, doubled.
+  it(
+    'carry no real identifiers, query strings, or (locally) redaction terms',
+    { timeout: 60_000 },
+    () => {
+      const terms = readRedactionTerms();
+      if (terms === undefined) {
+        console.log('No local redaction-terms.txt: checked identifiers and query strings only.');
+      }
+      expect(scanFixtures(fixturesDirectory, terms ?? [])).toEqual([]);
+    },
+  );
 });

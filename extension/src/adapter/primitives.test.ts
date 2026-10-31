@@ -642,6 +642,60 @@ describe('scrollToEnd, scrollListToEnd, and go (the library reader, #134, #422)'
   });
 });
 
+describe('song rows and the list pagers (TS-007-23)', () => {
+  const SONG: Target = { role: 'link', address: /^\/song\/[^/]+$/, description: 'a song link' };
+  const ROW: Target = { role: 'group', holds: SONG, description: 'a song row' };
+
+  it('matches a link’s path by an expression, and an element by what it holds', () => {
+    document.body.innerHTML = `
+      <div role="group" aria-label="One"><a href="/song/a">One</a></div>
+      <div role="group" aria-label="Untitled"></div>
+      <div role="group" aria-label="Two"><a href="/song/b?x=1">Two</a></div>
+      <div role="group" aria-label="Hidden" hidden><a href="/song/c">Three</a></div>
+      <div role="group" aria-label="Elsewhere"><a href="/song/d/lineage">Lineage</a></div>`;
+    const page = new Page(document, { address: () => 'https://suno.com/me' });
+
+    expect(page.readAll(ROW).map((row) => row.name)).toEqual(['One', 'Two']);
+    expect(page.readAll(SONG)).toHaveLength(2);
+    expect(page.find({ ...ROW, name: 'Untitled' }).kind).toBe('not_found');
+    expect(page.find({ role: 'group', name: 'Untitled', description: 'a placeholder' }).kind).toBe(
+      'found',
+    );
+  });
+
+  it("finds Library's pager on the redesigned page and the named one above a workspace's songs", () => {
+    const library = loadSnapshot('library-songs-groups', 'https://suno.com/me');
+    expect(library.pagerNext().kind).toBe('found');
+
+    const workspace = loadSnapshot(
+      'create-workspace-songs-groups',
+      'https://suno.com/create?wid=w-1',
+    );
+    const next = workspace.pagerNext();
+    expect(next.kind).toBe('found');
+    const pressed: string[] = [];
+    document.addEventListener(
+      'click',
+      (event) => {
+        pressed.push((event.target as Element).getAttribute('aria-label') ?? '');
+      },
+      true,
+    );
+    if (next.kind === 'found') {
+      workspace.click(next.found);
+    }
+    expect(pressed).toEqual(['Next page']);
+  });
+
+  it('finds no pager on the Trash, a playlist, or the workspace list', () => {
+    for (const snapshot of ['library-trash-groups', 'playlist-groups', 'library-workspaces']) {
+      expect(loadSnapshot(snapshot, 'https://suno.com/me').pagerNext(), snapshot).toEqual({
+        kind: 'none',
+      });
+    }
+  });
+});
+
 describe('regions and labels (#146)', () => {
   const MORE_OPTIONS: Target = {
     role: 'button',
