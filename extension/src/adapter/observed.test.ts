@@ -34,6 +34,17 @@ describe('which responses the observer forwards', () => {
     // The user's voice list, which the page asks for when the Voice picker opens (#439).
     [`${API}/api/persona/get-personas/?page=1`, 'GET', 'personas'],
     [`${API}/api/persona/get-personas?page=2`, 'GET', 'personas'],
+    // TS-007-22: the site now calls its API on its own host, under `/a/api/`.
+    ['https://suno.com/a/api/feed/v3', 'POST', 'library-feed'],
+    [
+      'https://suno.com/a/api/project/me?page=2&sort=max_created_at_last_updated_clip&show_trashed=false&exclude_shared=false',
+      'GET',
+      'workspaces',
+    ],
+    ['https://suno.com/a/api/playlist/me?page=1', 'GET', 'playlists'],
+    ['/a/api/unified/feed', 'POST', 'playlist-feed'],
+    ['https://suno.com/a/api/persona/get-personas/?page=1', 'GET', 'personas'],
+    ['https://suno.com/a/api/generate/v2-web/', 'POST', 'create'],
   ])('forwards %s (%s) as %s', (address, method, kind) => {
     expect(observedKindOf(address, method, PAGE)).toBe(kind);
   });
@@ -56,6 +67,11 @@ describe('which responses the observer forwards', () => {
     ['https://suno.com.example.com/api/feed/v3', 'POST'],
     ['https://cdn2.suno.ai/image_x.jpeg', 'GET'],
     ['::not an address', 'GET'],
+    // Only `/a` right before `/api/`: not another prefix, nor `/a` alone.
+    ['https://suno.com/b/api/feed/v3', 'POST'],
+    ['https://suno.com/a/a/api/feed/v3', 'POST'],
+    ['https://suno.com/aapi/feed/v3', 'POST'],
+    ['https://example.com/a/api/feed/v3', 'POST'],
   ])('leaves %s (%s) alone', (address, method) => {
     expect(observedKindOf(address, method, 'about:blank')).toBeNull();
   });

@@ -215,13 +215,20 @@ export const OBSERVER_BUFFER = 20;
 
 const SUNO_HOST = /(^|\.)suno\.com$/;
 
+/**
+ * The prefix Suno's site puts before its API paths when it calls them on its own host
+ * (`suno.com/a/api/feed/v3`, seen 2026-10-31, TS-007-22) instead of on `studio-api-prod.suno.com`.
+ */
+const SITE_API_PREFIX = /^\/a(?=\/api\/)/;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**
  * The list a request is for, or null when the observer leaves it alone: only HTTPS on suno.com or
- * one of its subdomains (Suno's API is `studio-api-prod.suno.com`), by exact path and method.
+ * one of its subdomains (Suno's API is `studio-api-prod.suno.com`), by exact path and method. A
+ * path under the site's `/a/api/` is read as the same path under `/api/` (TS-007-22).
  */
 export function observedKindOf(address: string, method: string, base: string): ObservedKind | null {
   let url: URL;
@@ -233,7 +240,7 @@ export function observedKindOf(address: string, method: string, base: string): O
   if (url.protocol !== 'https:' || !SUNO_HOST.test(url.hostname)) {
     return null;
   }
-  const path = url.pathname.replace(/\/+$/, '');
+  const path = url.pathname.replace(/\/+$/, '').replace(SITE_API_PREFIX, '');
   const verb = method.toUpperCase();
   return (
     OBSERVED_LISTS.find(
