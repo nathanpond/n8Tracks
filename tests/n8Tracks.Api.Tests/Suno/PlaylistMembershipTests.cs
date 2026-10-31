@@ -99,12 +99,16 @@ public sealed class PlaylistMembershipTests
         Assert.False(row.GetProperty("complete").GetBoolean());
         Assert.Equal((5, 3), (row.GetProperty("songCount").GetInt32(), row.GetProperty("read").GetInt32()));
         Assert.False(row.GetProperty("record").GetBoolean());
+        var nothing = await SummaryAsync(client, partial);
+        Assert.Equal((0, 1, true), (nothing.GetProperty("playlistChanges").GetInt32(), nothing.GetProperty("playlistChangesTotal").GetInt32(), nothing.GetProperty("nothingToDo").GetBoolean()));
         await ImportCommitApi.CommitAsync(client, partial);
         Assert.Equal("0", TestDatabase.Scalar(factory.DataPath, "SELECT count(*) FROM suno_playlists;"));
 
-        // Complement: chosen, the songs read are recorded.
+        // Complement: chosen, the songs read are recorded, and confirming has something to do.
         var chosen = await PlaylistExportAsync(client, token, [], Membership("pl-1", "Long Mix", 5, "c-1", "c-2", "c-3"));
         await SetAsync(client, chosen, record: true, "pl-1");
+        var something = await SummaryAsync(client, chosen);
+        Assert.Equal((1, false), (something.GetProperty("playlistChanges").GetInt32(), something.GetProperty("nothingToDo").GetBoolean()));
         await ImportCommitApi.CommitAsync(client, chosen);
         Assert.Equal("""["c-1","c-2","c-3"]""", TestDatabase.Scalar(factory.DataPath, "SELECT clip_ids FROM suno_playlists WHERE suno_id = 'pl-1';"));
     }
@@ -180,6 +184,13 @@ public sealed class PlaylistMembershipTests
         using var response = await client.GetAsync(SunoExportApi.Export(exportId, "/playlists"));
         Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
         return [.. (await SetupApi.JsonAsync(response)).GetProperty("items").EnumerateArray()];
+    }
+
+    private static async Task<JsonElement> SummaryAsync(HttpClient client, Guid exportId)
+    {
+        using var response = await client.GetAsync(SunoExportApi.Export(exportId, "/summary"));
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        return await SetupApi.JsonAsync(response);
     }
 
     internal static async Task<HttpResponseMessage> PatchAsync(HttpClient client, Guid exportId, string? ifMatch, string json)

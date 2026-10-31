@@ -24,6 +24,7 @@ import {
   sourcesFor,
   sourceTitle,
   useSunoPersonas,
+  playlistSongCount,
   useSunoPlaylists,
   type FileKind,
   type Lineage,
@@ -893,6 +894,11 @@ function InspirationChoices({
   onPlaylist: (playlist: { sunoPlaylistId: string; name: string; clipIds: string[] }) => void;
 }) {
   const { state, reload } = useSunoPlaylists();
+  // A playlist Suno no longer offers (#449) is not offered here; a Version that has one keeps it.
+  const offered =
+    state.phase === 'ready'
+      ? state.data.filter((candidate) => candidate.state !== 'unavailable')
+      : [];
   const songs = inspirationSources(lineage);
   return (
     <Stack gap="xs">
@@ -920,10 +926,10 @@ function InspirationChoices({
               Try again
             </Button>
           </Group>
-        ) : state.data.length === 0 ? (
+        ) : offered.length === 0 ? (
           <Text size="sm" data-testid="no-playlists">
-            Or use a Suno playlist: none yet. n8Tracks lists the playlists it has seen once an
-            import has run.
+            Or use a Suno playlist: none yet. n8Tracks lists your Suno playlists once a sync has
+            read them.
           </Text>
         ) : (
           <NativeSelect
@@ -931,13 +937,13 @@ function InspirationChoices({
             value=""
             data={[
               { value: '', label: 'Choose a playlist' },
-              ...state.data.map((candidate) => ({
+              ...offered.map((candidate) => ({
                 value: candidate.id,
-                label: `${candidate.name === '' ? candidate.id : candidate.name} (${String(candidate.memberCount)})`,
+                label: `${candidate.name === '' ? candidate.id : candidate.name} (${String(playlistSongCount(candidate))})`,
               })),
             ]}
             onChange={(event) => {
-              const chosen = state.data.find(
+              const chosen = offered.find(
                 (candidate) => candidate.id === event.currentTarget.value,
               );
               if (chosen !== undefined) {

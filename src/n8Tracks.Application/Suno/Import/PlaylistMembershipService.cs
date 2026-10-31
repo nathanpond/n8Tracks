@@ -205,6 +205,13 @@ public sealed class PlaylistMembershipService(
         return [.. rows.Select(static row => new PlaylistMembershipApplied(row.SunoId, row.Record))];
     }
 
+    /// <summary>How many of the export's playlist rows Confirm would record, and how many it has (for the review's summary).</summary>
+    internal async Task<(int Recorded, int Total)> CountsAsync(SunoExport export, CancellationToken cancellationToken)
+    {
+        var rows = await RowsAsync(export, cancellationToken).ConfigureAwait(false);
+        return (rows.Count(static row => row.Record), rows.Count);
+    }
+
     /// <summary>The Suno IDs of the playlists the export has rows for: the commit leaves them to <see cref="ApplyAsync"/>.</summary>
     internal async Task<IReadOnlySet<string>> RowIdsAsync(SunoExport export, CancellationToken cancellationToken) =>
         (await ListedAsync(export, cancellationToken).ConfigureAwait(false)).Select(static playlist => playlist.Id).ToHashSet(StringComparer.Ordinal);

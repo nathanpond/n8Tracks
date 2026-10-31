@@ -10,6 +10,7 @@ import type {
   RecordDiff,
   SunoImport,
 } from '../api/sunoImports';
+import type { PlaylistMembership } from '../api/sunoPlaylistMemberships';
 import type { RemoteStateRow } from '../api/sunoRemoteStates';
 import { healthyReport, jsonResponse, requestPath, stubFetch } from './helpers';
 import { baseSong } from './songServer';
@@ -275,6 +276,9 @@ export function importServer(records: ImportRecord[], exported: Partial<SunoImpo
     playlists: [] as { id: string; name: string | null; count: number }[],
     /** The Suno state changes (#142) and each change of them received. */
     remoteStates: [] as RemoteStateRow[],
+    /** A playlist sync's playlists (#449) and each choice of them received. */
+    memberships: [] as PlaylistMembership[],
+    membershipPatches: [] as ReceivedPatch[],
     /** Generations confirming gives Suno's final status (#314). */
     statusChanges: 0,
     remotePatches: [] as ReceivedPatch[],
@@ -353,6 +357,7 @@ export function importServer(records: ImportRecord[], exported: Partial<SunoImpo
         newlyIgnored === 0 &&
         resolved === 0 &&
         server.remoteStates.every((row) => !row.apply) &&
+        server.memberships.every((row) => !row.record) &&
         server.statusChanges === 0,
       nextKey: 'new:90',
       workspaces: server.workspaces.map((workspace) => ({
@@ -365,6 +370,8 @@ export function importServer(records: ImportRecord[], exported: Partial<SunoImpo
       remoteChanges: server.remoteStates.filter((row) => row.apply).length,
       remoteChangesTotal: server.remoteStates.length,
       statusChanges: server.statusChanges,
+      playlistChanges: server.memberships.filter((row) => row.record).length,
+      playlistChangesTotal: server.memberships.length,
     };
   };
 
@@ -519,6 +526,29 @@ export function importServer(records: ImportRecord[], exported: Partial<SunoImpo
           revision: server.export.revision,
         }),
       );
+    }
+    if (rest === '/playlists' && method === 'GET') {
+      return Promise.resolve(
+        jsonResponse(200, { items: server.memberships, revision: server.export.revision }),
+      );
+    }
+    if (rest === '/playlists' && method === 'PATCH') {
+      const headers = new Headers(init?.headers);
+      const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as {
+        sunoIds: string[];
+        record: boolean;
+      };
+      server.membershipPatches.push({ ifMatch: headers.get('If-Match'), body });
+      if (headers.get('If-Match') !== `"${String(server.export.revision)}"`) {
+        return Promise.resolve(
+          jsonResponse(409, { code: 'revision_conflict', current: counted() }),
+        );
+      }
+      server.memberships = server.memberships.map((row) =>
+        body.sunoIds.includes(row.sunoId) ? { ...row, record: body.record, chosen: true } : row,
+      );
+      server.export = { ...server.export, revision: server.export.revision + 1 };
+      return Promise.resolve(jsonResponse(200, counted()));
     }
     if (rest === '/remote-states' && method === 'PATCH') {
       const headers = new Headers(init?.headers);

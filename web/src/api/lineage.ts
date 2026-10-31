@@ -319,9 +319,22 @@ export function pastedSunoId(text: string): string | undefined {
 export interface SunoPlaylist {
   id: string;
   name: string;
+  /** How many clips an import last recorded it holding (`clipIds`); 0 until one did. */
   memberCount: number;
   clipIds: string[];
   lastSeen: string;
+  /**
+   * `unavailable` when the last complete playlist list a sync read (#449) left it out or named it
+   * trashed; the picker then no longer offers it, though a Version keeps it.
+   */
+  state?: 'available' | 'unavailable';
+  /** How many songs Suno last said it holds (#449); null when only an import saw it. */
+  songCount?: number | null;
+}
+
+/** How many songs to show beside a playlist's name: Suno's own count when known, else the members recorded. */
+export function playlistSongCount(playlist: SunoPlaylist): number {
+  return playlist.songCount ?? playlist.memberCount;
 }
 
 /** A Suno persona (a Voice) n8Tracks has seen in an imported clip. */
@@ -346,7 +359,11 @@ function isSunoPlaylist(value: unknown): value is SunoPlaylist {
     typeof value.memberCount === 'number' &&
     Array.isArray(value.clipIds) &&
     value.clipIds.every((clip) => typeof clip === 'string') &&
-    typeof value.lastSeen === 'string'
+    typeof value.lastSeen === 'string' &&
+    (value.state === undefined || value.state === 'available' || value.state === 'unavailable') &&
+    (value.songCount === undefined ||
+      value.songCount === null ||
+      typeof value.songCount === 'number')
   );
 }
 
@@ -369,7 +386,10 @@ const acceptPersonas = (answer: unknown) =>
     ? answer.items
     : undefined;
 
-/** The Suno playlists seen in imports, by name; empty until an import has run. */
+/**
+ * The Suno playlists n8Tracks knows, by name: those a sync read from the user's playlist list (#449)
+ * and those seen in imports; empty until a sync or an import has run.
+ */
 export function useSunoPlaylists() {
   return useResource('api/v1/suno/playlists', acceptPlaylists);
 }

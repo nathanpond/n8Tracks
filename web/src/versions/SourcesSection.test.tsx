@@ -466,6 +466,49 @@ describe('the Sources section of a Version (#125)', () => {
     expect(screen.getByRole('button', { name: 'Add an Inspiration song' })).toBeEnabled();
   });
 
+  it('offers the playlists a sync read (#449), with Suno’s song count, and not one Suno no longer offers', async () => {
+    const { server } = serve();
+    server.playlists = [
+      {
+        id: 'pl-read',
+        name: 'Harbour Lights',
+        memberCount: 0,
+        clipIds: [],
+        lastSeen: '2026-10-31T10:00:00Z',
+        state: 'available',
+        songCount: 24,
+      },
+      {
+        id: 'pl-gone',
+        name: 'Old Mixtape',
+        memberCount: 3,
+        clipIds: ['c1', 'c2', 'c3'],
+        lastSeen: '2026-10-01T10:00:00Z',
+        state: 'unavailable',
+        songCount: 3,
+      },
+    ];
+    const user = await openVersion();
+
+    const choice = await screen.findByRole('combobox', { name: 'Or use a Suno playlist' });
+    expect(
+      within(choice)
+        .getAllByRole('option')
+        .map((option) => option.textContent),
+    ).toEqual(['Choose a playlist', 'Harbour Lights (24)']);
+    await user.selectOptions(choice, 'Harbour Lights (24)');
+    expect(screen.getByTestId('inspiration-playlist')).toHaveTextContent(
+      'Playlist: Harbour Lights',
+    );
+    expect(await lastWrite(server.writes, 1)).toEqual({
+      inputs: {
+        inspiration: {
+          playlist: { sunoPlaylistId: 'pl-read', name: 'Harbour Lights', clipIds: [] },
+        },
+      },
+    });
+  });
+
   it('with no import yet, the playlist and voice lists say so', async () => {
     serve();
     await openVersion();
