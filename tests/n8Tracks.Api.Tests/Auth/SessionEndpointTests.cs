@@ -186,9 +186,11 @@ public sealed class SessionEndpointTests
         using var factory = WithClock(clock);
         using var client = factory.CreateClient();
         await SetupApi.CompleteAsync(client);
+        string token;
         using (var signIn = await SessionApi.SignInAsync(client, SetupApi.TestUsername, SetupApi.TestPassword))
         {
             Assert.Equal(HttpStatusCode.Created, signIn.StatusCode);
+            token = SessionApi.SessionToken(signIn)!;
         }
 
         // Day 29 after signing in: valid, and this use moves the expiry and issues the cookie again.
@@ -217,9 +219,17 @@ public sealed class SessionEndpointTests
             Assert.Equal(HttpStatusCode.OK, day58.StatusCode);
         }
 
-        // 30 days after the last use: expired, and told apart from nothing.
+        // 30 days after the last use: expired, and told apart from nothing. The client's jar judges
+        // expiry by the test clock (TestClockCookieHandler), so it has dropped the cookie by now; the
+        // token is then sent by hand so it is the server itself that refuses the expired session.
         clock.Advance(TimeSpan.FromDays(30));
-        using var expired = await client.GetAsync(SessionApi.Session);
+        using (var dropped = await client.GetAsync(SessionApi.Session))
+        {
+            await SetupApi.ProblemAsync(dropped, HttpStatusCode.Unauthorized, "not_authenticated");
+        }
+
+        using var cookieless = CookielessClient(factory);
+        using var expired = await SendWithCookie(cookieless, HttpMethod.Get, SessionApi.Session, token);
         await SetupApi.ProblemAsync(expired, HttpStatusCode.Unauthorized, "not_authenticated");
     }
 
