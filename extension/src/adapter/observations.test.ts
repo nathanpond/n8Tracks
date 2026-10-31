@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { fakeClock } from '../testing/snapshots.ts';
-import { ObservationFeed, type FeedWindow } from './observations.ts';
+import { mergeListed, ObservationFeed, type FeedWindow } from './observations.ts';
 import { OBSERVER_SOURCE, type ObservedMessage } from './observed.ts';
 
 const ORIGIN = 'https://suno.com';
@@ -70,6 +70,40 @@ describe('the observation feed, listening for the page observer', () => {
     message(workspaces, { source: {} });
 
     expect(feed.listedWorkspaces()).toEqual([]);
+  });
+});
+
+describe('the workspaces the sync panel offers (#448)', () => {
+  it("offers n8Tracks' workspaces in its order, then those only the page listed, each once", () => {
+    expect(
+      mergeListed(
+        [
+          { id: 'w-1', name: 'Harbour Lights' },
+          { id: 'w-2', name: 'Paper Moons' },
+          { id: 'w-3', name: 'Quiet Hours' },
+        ],
+        [
+          { id: 'w-4', name: 'Night Ferry' },
+          // A rename the page saw is taken; a blank name the page listed is not.
+          { id: 'w-2', name: 'Paper Moons, Revised' },
+          { id: 'w-3', name: ' ' },
+          { id: 'w-5', name: '' },
+        ],
+      ),
+    ).toEqual([
+      { id: 'w-1', name: 'Harbour Lights' },
+      { id: 'w-2', name: 'Paper Moons, Revised' },
+      { id: 'w-3', name: 'Quiet Hours' },
+      { id: 'w-4', name: 'Night Ferry' },
+      { id: 'w-5', name: '' },
+    ]);
+  });
+
+  it('offers what either side has when the other has nothing', () => {
+    const one = [{ id: 'w-1', name: 'Harbour Lights' }];
+    expect(mergeListed(one, [])).toEqual(one);
+    expect(mergeListed([], one)).toEqual(one);
+    expect(mergeListed([], [])).toEqual([]);
   });
 });
 

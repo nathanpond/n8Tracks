@@ -9,6 +9,7 @@ import { realClock, type Clock } from '../adapter/clock.ts';
 import {
   PAGE_RETRIES,
   readLeg,
+  readWorkspaceList,
   ReadCancelled,
   ReadStop,
   stepOf,
@@ -24,6 +25,7 @@ import { closeVoiceList, openVoiceList, scrollVoiceList } from '../adapter/workf
 import type { StepContext, Workflow } from '../adapter/workflow.ts';
 import type {
   ImageProgress,
+  KnownWorkspace,
   Request,
   ResponseFor,
   SyncLeg,
@@ -32,7 +34,7 @@ import type {
   SyncScope,
   SyncSession,
 } from '../messages.ts';
-import type { SyncViewState } from '../panel/SyncView.ts';
+import type { SyncViewState, WorkspaceListState } from '../panel/SyncView.ts';
 
 /**
  * The Suno tab's half of a sync (#134). The user starts it from the panel; each leg is read on
@@ -44,6 +46,12 @@ import type { SyncViewState } from '../panel/SyncView.ts';
  * The user's voices (#439) are read on Create (`/create`): Songs in Advanced mode, then "+ Voice"
  * opens the Voice picker, which makes the page ask Suno for the voice list; the picker is closed
  * without a choice, and the voices go to n8Tracks through the service worker on their own.
+ *
+ * The panel's Workspaces choice (#448) offers the workspaces n8Tracks knows, asked for when the
+ * choice is opened. "Refresh from Suno" reads Suno's workspace list as the sync's first leg does,
+ * with the same reader and workflows (Library's Workspaces tab, then a scroll for each next page),
+ * on Library's own page load, and reports it to n8Tracks; nothing else is pressed and no export is
+ * made.
  */
 
 export interface SunoSyncOptions {
@@ -56,9 +64,14 @@ export interface SunoSyncOptions {
   /** Shows the finished sync's cover images (#152), changing nothing else in the panel. */
   showImages?: (images: ImageProgress | null) => void;
   versions: { extension: string; adapter: number };
+  /** Shows where the Workspaces choice's list stands (#448), opening the panel. */
+  showWorkspaces?: (state: WorkspaceListState) => void;
   clock?: Clock;
   now?: () => string;
 }
+
+/** The step a Refresh from Suno names when it stops (#448). */
+export const REFRESH_STEP = 'Read the workspace list';
 
 /** How often the panel asks how the cover images are going (#152). */
 export const IMAGES_POLL_MS = 1_000;
@@ -139,6 +152,8 @@ function report(step: string, expected: string): string {
 export class SunoSync {
   private readonly options: SunoSyncOptions;
   private controller: AbortController | null = null;
+  /** The Available workspaces n8Tracks knows (#448), as last asked or reported. */
+  private known: KnownWorkspace[] = [];
 
   constructor(options: SunoSyncOptions) {
     this.options = options;
@@ -193,14 +208,137 @@ export class SunoSync {
     this.options.show({ kind: 'cancelled' });
   }
 
-  /** On every page load: reads this tab's leg, if the tab is in a sync. */
+  /**
+   * On every page load: reads this tab's leg, if the tab is in a sync, or Suno's workspace list, if
+   * its Refresh from Suno is waiting for this load (#448).
+   */
   async resume(): Promise<void> {
     const answer = (await this.options.send({ type: 'sync-resume' }).catch(() => undefined)) as
       ResponseFor['sync-resume'] | undefined;
     const session = isRecord(answer) ? (answer.session ?? null) : null;
     if (session !== null) {
       await this.readLeg(session);
+      return;
     }
+    if (isRecord(answer) && answer.refresh === true) {
+      await this.readWorkspaces();
+    }
+  }
+
+  /** The Available workspaces n8Tracks knows (#448), as last asked or reported. */
+  knownWorkspaces(): KnownWorkspace[] {
+    return [...this.known];
+  }
+
+  private showWorkspaces(state: WorkspaceListState): void {
+    this.options.showWorkspaces?.(state);
+  }
+
+  /** The Workspaces choice was opened (#448): asks n8Tracks for the workspaces it knows. */
+  async wantWorkspaces(): Promise<void> {
+    this.showWorkspaces({ kind: 'loading' });
+    let answer: SyncReply<{ workspaces: KnownWorkspace[] }>;
+    try {
+      answer = reply(await this.options.send({ type: 'sync-workspaces-known' }));
+    } catch {
+      answer = reply(undefined);
+    }
+    if (!answer.ok) {
+      this.showWorkspaces({
+        kind: 'failed',
+        message: `The workspaces n8Tracks knows could not be read: ${answer.message}`,
+      });
+      return;
+    }
+    this.known = answer.workspaces;
+    this.showWorkspaces({ kind: 'ready' });
+  }
+
+  /**
+   * "Refresh from Suno" (#448): the service worker holds the refresh for this tab, and Library
+   * (`/me`) is opened; its page load reads the list ({@link resume}). Refused while a sync runs.
+   */
+  async refreshWorkspaces(): Promise<void> {
+    if (this.controller !== null) {
+      return;
+    }
+    let answer: SyncReply;
+    try {
+      answer = reply(await this.options.send({ type: 'sync-workspaces-refresh' }));
+    } catch {
+      answer = reply(undefined);
+    }
+    if (!answer.ok) {
+      this.showWorkspaces({ kind: 'failed', message: `Not refreshed: ${answer.message}` });
+      return;
+    }
+    this.showWorkspaces({ kind: 'refreshing' });
+    this.options.page.go(addressOf({ list: 'workspaces' }));
+  }
+
+  /**
+   * Reads Suno's workspace list on Library, as the sync's first leg does, and reports it to
+   * n8Tracks; the panel shows the Workspaces choice with the list n8Tracks then knows.
+   */
+  private async readWorkspaces(): Promise<void> {
+    const { page, show } = this.options;
+    show({ kind: 'choose', scope: 'workspaces' });
+    this.showWorkspaces({ kind: 'refreshing' });
+    // The page the sync's workspace-list leg is read on: Library (`/me`).
+    if (!onPageOf({ list: 'workspaces' }, page.address())) {
+      this.showWorkspaces({
+        kind: 'failed',
+        message: `Not refreshed: step '${REFRESH_STEP}' expected the Suno tab to stay on Library.`,
+      });
+      return;
+    }
+    const controller = new AbortController();
+    this.controller = controller;
+    let read: { workspaces: Record<string, unknown>[]; complete: boolean };
+    try {
+      read = await readWorkspaceList(REFRESH_STEP, {
+        observations: this.options.observations,
+        openWorkspaceList: (openStep) => this.runStep(openWorkspaceList, openStep, {}),
+        more: (moreStep) => this.runStep(loadMore, moreStep, {}),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      this.showWorkspaces({
+        kind: 'failed',
+        message:
+          error instanceof ReadStop
+            ? `Not refreshed: ${report(error.step, error.expected)}.`
+            : 'Not refreshed: the read did not finish.',
+      });
+      return;
+    } finally {
+      this.controller = null;
+    }
+    let answer: SyncReply<{ workspaces: KnownWorkspace[] }>;
+    try {
+      answer = reply(
+        await this.options.send({
+          type: 'sync-workspaces-report',
+          complete: read.complete,
+          workspaces: read.workspaces,
+        }),
+      );
+    } catch {
+      answer = reply(undefined);
+    }
+    if (!answer.ok) {
+      this.showWorkspaces({
+        kind: 'failed',
+        message: `Your workspace list was read but not recorded: ${answer.message}`,
+      });
+      return;
+    }
+    this.known = answer.workspaces;
+    this.showWorkspaces({
+      kind: 'refreshed',
+      count: read.workspaces.length,
+      complete: read.complete,
+    });
   }
 
   private async discard(): Promise<void> {

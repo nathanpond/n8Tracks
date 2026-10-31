@@ -2,12 +2,14 @@ import { isSunoAddress } from '../adapter/addresses.ts';
 import { legsFor } from '../adapter/libraryReader.ts';
 import type {
   ExportPart,
+  KnownWorkspace,
   ResponseFor,
   SyncProgress,
   SyncReply,
   SyncRequest,
   SyncScope,
   SyncSession,
+  WorkspacesReply,
 } from '../messages.ts';
 import { DisconnectedError, type Connection } from './connection.ts';
 import { CoverImages } from './images.ts';
@@ -53,6 +55,38 @@ export const EXPORTS_PATH = 'api/v1/suno/exports';
 
 /** Where the user's voices a sync read are reported (#439). */
 export const DISCOVERED_VOICES_PATH = 'api/v1/suno/personas/discovered';
+
+/** The workspaces n8Tracks knows, which the sync panel offers (#448; `suno.sync` may read it). */
+export const WORKSPACES_PATH = 'api/v1/suno/workspaces';
+
+/** Where a Refresh from Suno reports the workspace list it read (#448). */
+export const DISCOVERED_WORKSPACES_PATH = 'api/v1/suno/workspaces/discovered';
+
+/**
+ * The session-storage key of a Refresh from Suno (#448) waiting for its tab's next page load: the
+ * tab, and when it was asked for.
+ */
+export const REFRESH_KEY = 'workspaceRefresh';
+
+/** How long a Refresh from Suno waits for its tab's page load before it is forgotten (1 minute). */
+export const REFRESH_WAIT_MS = 60_000;
+
+/** No workspaces, and why not. */
+function notKnown(message: string): WorkspacesReply {
+  return { ok: false, workspaces: [], message };
+}
+
+/** The Available workspaces of n8Tracks' list (`items`), by ID and name, in its order (by name). */
+function availableOf(body: unknown): KnownWorkspace[] | null {
+  if (!isRecord(body) || !Array.isArray(body.items)) {
+    return null;
+  }
+  return body.items.flatMap((item) =>
+    isRecord(item) && typeof item.id === 'string' && item.id !== '' && item.state === 'available'
+      ? [{ id: item.id, name: typeof item.name === 'string' ? item.name : '' }]
+      : [],
+  );
+}
 
 /** The address of the review of an export in n8Tracks (the review story, #139). */
 export function reviewAddress(address: string, exportId: string): string {
@@ -121,7 +155,12 @@ export class SyncCoordinator {
         return this.begin(request.scope, tabId);
       case 'sync-resume': {
         const session = await this.session();
-        return { session: session?.tabId === tabId ? session : null };
+        if (session?.tabId === tabId) {
+          return { session };
+        }
+        return (await this.takeRefresh(tabId))
+          ? { session: null, refresh: true }
+          : { session: null };
       }
       case 'sync-save':
         return this.save(request.progress, tabId);
@@ -137,6 +176,12 @@ export class SyncCoordinator {
         return { images: await this.images.progress(tabId) };
       case 'sync-voices':
         return this.voices(request.complete, request.voices, tabId);
+      case 'sync-workspaces-known':
+        return this.knownWorkspaces();
+      case 'sync-workspaces-refresh':
+        return this.beginRefresh(tabId);
+      case 'sync-workspaces-report':
+        return this.reportWorkspaces(request.complete, request.workspaces);
     }
   }
 
@@ -221,6 +266,8 @@ export class SyncCoordinator {
     if (!state.scopes.includes('suno.sync')) {
       return { ok: false, message: 'This credential lacks suno.sync.' };
     }
+    // A Refresh from Suno still waiting for its page load is forgotten (#448).
+    await this.browser.session.remove([REFRESH_KEY]);
     // A sync still receiving, in this tab or another, is discarded before the new one starts.
     const earlier = await this.session();
     if (earlier !== null) {
@@ -377,6 +424,80 @@ export class SyncCoordinator {
       return { ok: true, added: body.added.length };
     } catch (error) {
       return { ok: false, message: this.callFailure(error) };
+    }
+  }
+
+  /**
+   * The workspaces n8Tracks knows, for the sync panel's choice (#448): `GET /api/v1/suno/workspaces`,
+   * which `suno.sync` may read, cut to the Available ones' IDs and names.
+   */
+  private async knownWorkspaces(): Promise<WorkspacesReply> {
+    try {
+      const response = await this.connection.call(WORKSPACES_PATH);
+      const body = await bodyOf(response);
+      const workspaces = response.ok ? availableOf(body) : null;
+      return workspaces === null
+        ? notKnown(await refusal(response, 'the workspace list', body))
+        : { ok: true, workspaces, message: '' };
+    } catch (error) {
+      return notKnown(this.callFailure(error));
+    }
+  }
+
+  /**
+   * "Refresh from Suno" (#448): this tab reads Suno's workspace list on its next page load. Refused
+   * while a sync runs (it operates the page), and without `suno.sync`.
+   */
+  private async beginRefresh(tabId: number): Promise<SyncReply> {
+    const state = await this.connection.state(true);
+    if (state.status !== 'connected') {
+      return { ok: false, message: DISCONNECTED };
+    }
+    if (!state.scopes.includes('suno.sync')) {
+      return { ok: false, message: 'This credential lacks suno.sync.' };
+    }
+    if ((await this.session()) !== null) {
+      return { ok: false, message: 'A sync is running; refresh once it has finished.' };
+    }
+    await this.browser.session.set({ [REFRESH_KEY]: { tabId, at: this.now() } });
+    return { ok: true };
+  }
+
+  /** Whether this tab's Refresh from Suno is waiting for this page load; it is forgotten either way. */
+  private async takeRefresh(tabId: number): Promise<boolean> {
+    const stored = (await this.browser.session.get([REFRESH_KEY]))[REFRESH_KEY];
+    if (!isRecord(stored)) {
+      return false;
+    }
+    if (stored.tabId !== tabId) {
+      return false;
+    }
+    await this.browser.session.remove([REFRESH_KEY]);
+    return typeof stored.at === 'number' && this.now() - stored.at <= REFRESH_WAIT_MS;
+  }
+
+  /**
+   * Reports the workspace list a Refresh from Suno read (#448), as a sync's would be: complete only
+   * when it was read to its end, so a short list marks nothing Unavailable. Answers the Available
+   * workspaces n8Tracks knows after it. A refusal is reported by its code only.
+   */
+  private async reportWorkspaces(
+    complete: boolean,
+    workspaces: Record<string, unknown>[],
+  ): Promise<WorkspacesReply> {
+    try {
+      const response = await this.connection.call(DISCOVERED_WORKSPACES_PATH, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ complete, workspaces }),
+      });
+      const body = await bodyOf(response);
+      const known = response.ok ? availableOf(body) : null;
+      return known === null
+        ? notKnown(await refusal(response, 'the workspace list', body))
+        : { ok: true, workspaces: known, message: '' };
+    } catch (error) {
+      return notKnown(this.callFailure(error));
     }
   }
 

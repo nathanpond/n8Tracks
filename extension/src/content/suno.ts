@@ -1,5 +1,5 @@
 import type { Clock } from '../adapter/clock.ts';
-import { ObservationFeed, type FeedWindow } from '../adapter/observations.ts';
+import { mergeListed, ObservationFeed, type FeedWindow } from '../adapter/observations.ts';
 import { ADAPTER_VERSION } from '../adapter/version.ts';
 import { Page } from '../adapter/primitives.ts';
 import {
@@ -165,10 +165,17 @@ export function startSunoContent(options: SunoContentOptions): SunoContent {
   // Set below: the view's buttons call the sync, and the sync shows its states in the view.
   let sync: SunoSync | null = null;
   const syncView = new SyncView(page, {
+    // The workspaces n8Tracks knows, with those Suno listed on this page since (#448).
     choices: () => ({
-      workspaces: observations.listedWorkspaces(),
+      workspaces: mergeListed(sync?.knownWorkspaces() ?? [], observations.listedWorkspaces()),
       playlists: observations.listedPlaylists(),
     }),
+    wantWorkspaces: () => {
+      void sync?.wantWorkspaces();
+    },
+    refresh: () => {
+      void sync?.refreshWorkspaces();
+    },
     preview: (scope) => {
       void sync?.preview(scope);
     },
@@ -256,6 +263,9 @@ export function startSunoContent(options: SunoContentOptions): SunoContent {
     },
     showImages: (images) => {
       syncView.setImages(images);
+    },
+    showWorkspaces: (state) => {
+      syncView.setWorkspaceList(state);
     },
     versions: { extension: options.extensionVersion, adapter: ADAPTER_VERSION },
     ...(options.clock === undefined ? {} : { clock: options.clock }),

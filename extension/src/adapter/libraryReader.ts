@@ -349,6 +349,43 @@ const VOICES: ListSpec = {
   goesOnShort: true,
 };
 
+/** What reading the workspace list came to: Suno's raw projects, and whether its end was seen. */
+export interface WorkspaceListRead {
+  workspaces: Record<string, unknown>[];
+  complete: boolean;
+}
+
+/** What reading the workspace list needs: the list context, and the press that makes Suno send it. */
+export type WorkspaceListContext = ListContext & Pick<LegContext, 'openWorkspaceList'>;
+
+/**
+ * Reads Suno's workspace list on Library (`/me`): presses its Workspaces tab (a direct load of the
+ * list makes no request for it, #421), takes each page Suno sends, and scrolls once for each next
+ * one, going on short, as incomplete, when none comes (TS-007-15, #434). The sync's first leg reads
+ * it so, and so does the sync panel's "Refresh from Suno" (#448). `counted` hears the number read
+ * after each page. Throws {@link ReadStop} or {@link ReadCancelled}.
+ */
+export async function readWorkspaceList(
+  step: string,
+  context: WorkspaceListContext,
+  counted: (count: number) => void = () => undefined,
+): Promise<WorkspaceListRead> {
+  const projects: Raw[] = [];
+  await context.openWorkspaceList(step);
+  const read = await readList(
+    WORKSPACES,
+    step,
+    context,
+    (records) => {
+      projects.push(...records);
+      counted(projects.length);
+      return Promise.resolve();
+    },
+    'opening the Workspaces tab',
+  );
+  return { workspaces: projects, complete: read.complete };
+}
+
 /** Plain words for why the voice leg did not finish, after "Your voices were not read: ". */
 function voicesFailure(error: unknown): string {
   return error instanceof ReadStop
@@ -638,22 +675,11 @@ export async function readLeg(
       break;
     }
     case 'workspaces': {
-      const projects: Raw[] = [];
-      // A direct load of the list makes no request for it (#421): the tab is pressed first.
-      await context.openWorkspaceList(step);
-      const read = await readList(
-        WORKSPACES,
-        step,
-        context,
-        (records) => {
-          projects.push(...records);
-          counts.workspaces = projects.length;
-          context.progress({ ...counts });
-          return Promise.resolve();
-        },
-        'opening the Workspaces tab',
-      );
-      workspaces = projects;
+      const read = await readWorkspaceList(step, context, (count) => {
+        counts.workspaces = count;
+        context.progress({ ...counts });
+      });
+      workspaces = read.workspaces;
       workspacesComplete = read.complete;
       break;
     }

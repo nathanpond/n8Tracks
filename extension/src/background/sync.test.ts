@@ -66,6 +66,7 @@ async function setup(scopes = ['suno.sync'], imageFetch?: ImageFetch) {
   });
   expect((await connection.connect(`${ADDRESS}/`, TOKEN)).ok).toBe(true);
 
+  let time = 42;
   const session = new Map<string, unknown>();
   const local = new Map<string, unknown>();
   const store = (map: Map<string, unknown>) => ({
@@ -106,7 +107,7 @@ async function setup(scopes = ['suno.sync'], imageFetch?: ImageFetch) {
             sleep: () => Promise.resolve(),
           }),
         }),
-    now: () => 42,
+    now: () => time,
   });
   const send = (request: SyncRequest, tabId = TAB) => sync.handle(request, tabId);
   return {
@@ -117,6 +118,9 @@ async function setup(scopes = ['suno.sync'], imageFetch?: ImageFetch) {
     local,
     tabs,
     openTabs,
+    at: (value: number) => {
+      time = value;
+    },
     answer: (next: (call: Call) => Response) => {
       answer = next;
     },
@@ -557,5 +561,148 @@ describe("reporting the user's voices a sync read (#439)", () => {
       await context.send({ type: 'sync-voices', complete: true, voices: VOICES }, TAB + 1),
     ).toEqual({ ok: false, message: 'This tab is not running a sync.' });
     expect(context.calls).toEqual([]);
+  });
+});
+
+describe('the workspaces the sync panel offers (#448)', () => {
+  /** n8Tracks' list, as `GET /api/v1/suno/workspaces` answers it (made-up names). */
+  const LIST = {
+    items: [
+      { id: 'w-1', name: 'Harbour Lights', state: 'available', songCount: 3 },
+      { id: 'w-2', name: '', state: 'available', songCount: 0 },
+      { id: 'w-3', name: 'Old Sketches', state: 'unavailable', songCount: 1 },
+    ],
+  };
+
+  it('asks n8Tracks for the workspaces it knows, and offers the Available ones', async () => {
+    const context = await setup();
+    context.answer(() => jsonResponse(200, LIST));
+
+    expect(await context.send({ type: 'sync-workspaces-known' })).toEqual({
+      ok: true,
+      workspaces: [
+        { id: 'w-1', name: 'Harbour Lights' },
+        { id: 'w-2', name: '' },
+      ],
+      message: '',
+    });
+    expect(context.calls).toEqual([
+      { method: 'GET', path: 'api/v1/suno/workspaces', body: undefined },
+    ]);
+  });
+
+  it('says why n8Tracks refused the list, by its code only', async () => {
+    const context = await setup();
+    context.answer(() =>
+      jsonResponse(403, { code: 'insufficient_scope', title: 'Harbour Lights' }),
+    );
+
+    const answer = await context.send({ type: 'sync-workspaces-known' });
+
+    expect(answer).toEqual({
+      ok: false,
+      workspaces: [],
+      message: 'n8Tracks refused the workspace list: 403 (insufficient_scope).',
+    });
+    expect(JSON.stringify(answer)).not.toContain('Harbour');
+  });
+
+  it('holds a Refresh from Suno for its tab until that tab next loads a page, once', async () => {
+    const context = await setup();
+
+    expect(await context.send({ type: 'sync-workspaces-refresh' })).toEqual({ ok: true });
+    expect(context.calls).toEqual([]);
+
+    // Another tab's page load is not it.
+    expect(await context.send({ type: 'sync-resume' }, TAB + 1)).toEqual({ session: null });
+    expect(await context.send({ type: 'sync-resume' })).toEqual({ session: null, refresh: true });
+    // Said once: the next page load reads nothing.
+    expect(await context.send({ type: 'sync-resume' })).toEqual({ session: null });
+  });
+
+  it('forgets a Refresh from Suno whose page load did not come within a minute', async () => {
+    const context = await setup();
+    expect(await context.send({ type: 'sync-workspaces-refresh' })).toEqual({ ok: true });
+
+    context.at(42 + 60_001);
+
+    expect(await context.send({ type: 'sync-resume' })).toEqual({ session: null });
+  });
+
+  it('refuses a Refresh from Suno while a sync runs, and a sync forgets one waiting', async () => {
+    const running = await started();
+    expect(await running.send({ type: 'sync-workspaces-refresh' })).toEqual({
+      ok: false,
+      message: 'A sync is running; refresh once it has finished.',
+    });
+
+    const waiting = await setup();
+    expect(await waiting.send({ type: 'sync-workspaces-refresh' })).toEqual({ ok: true });
+    await waiting.send({ type: 'sync-begin', scope: { kind: 'library' } });
+    await waiting.send({ type: 'sync-discard' });
+    expect(await waiting.send({ type: 'sync-resume' })).toEqual({ session: null });
+  });
+
+  it('refuses a Refresh from Suno without suno.sync', async () => {
+    const context = await setup(['suno.generate']);
+
+    expect(await context.send({ type: 'sync-workspaces-refresh' })).toEqual({
+      ok: false,
+      message: 'This credential lacks suno.sync.',
+    });
+    expect(await context.send({ type: 'sync-resume' })).toEqual({ session: null });
+  });
+
+  it('reports the list a Refresh read, complete or not, and offers the Available ones after it', async () => {
+    const context = await setup();
+    context.answer(() =>
+      jsonResponse(200, {
+        ...LIST,
+        added: ['w-2'],
+        renamed: [],
+        becameUnavailable: [],
+        becameAvailable: [],
+      }),
+    );
+    const projects = [
+      { id: 'w-1', name: 'Harbour Lights' },
+      { id: 'w-2', name: '' },
+    ];
+
+    expect(
+      await context.send({ type: 'sync-workspaces-report', complete: false, workspaces: projects }),
+    ).toEqual({
+      ok: true,
+      workspaces: [
+        { id: 'w-1', name: 'Harbour Lights' },
+        { id: 'w-2', name: '' },
+      ],
+      message: '',
+    });
+    expect(context.calls).toEqual([
+      {
+        method: 'PUT',
+        path: 'api/v1/suno/workspaces/discovered',
+        body: { complete: false, workspaces: projects },
+      },
+    ]);
+  });
+
+  it('says why n8Tracks refused a report, by its code only', async () => {
+    const context = await setup();
+    context.answer(() => jsonResponse(422, { code: 'validation_failed', detail: 'Paper Moons' }));
+
+    const answer = await context.send({
+      type: 'sync-workspaces-report',
+      complete: true,
+      workspaces: [{ id: 'w-9', name: 'Paper Moons' }],
+    });
+
+    expect(answer).toEqual({
+      ok: false,
+      workspaces: [],
+      message: 'n8Tracks refused the workspace list: 422 (validation_failed).',
+    });
+    expect(JSON.stringify(answer)).not.toContain('Paper');
   });
 });

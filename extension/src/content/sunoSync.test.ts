@@ -8,6 +8,7 @@ import type {
   ConnectedState,
   ConnectionState,
   ImageProgress,
+  KnownWorkspace,
   Request,
   SyncScope,
   SyncSession,
@@ -99,16 +100,38 @@ function worker(
   session: SyncSession | null,
   connection: ConnectionState = CONNECTED,
   images: ImageProgress[] = [],
+  workspaces: { known?: KnownWorkspace[]; refresh?: boolean; reportRefused?: string } = {},
 ) {
   const asked: Request[] = [];
   let current = session;
+  let refresh = workspaces.refresh === true;
   const send = (request: Request): Promise<unknown> => {
     asked.push(structuredClone(request));
     switch (request.type) {
       case 'state':
         return Promise.resolve(connection);
-      case 'sync-resume':
-        return Promise.resolve({ session: current });
+      case 'sync-resume': {
+        const answer = refresh && current === null ? { session: null, refresh: true } : null;
+        refresh = false;
+        return Promise.resolve(answer ?? { session: current });
+      }
+      case 'sync-workspaces-known':
+        return Promise.resolve({ ok: true, workspaces: workspaces.known ?? [], message: '' });
+      case 'sync-workspaces-refresh':
+        return Promise.resolve({ ok: true });
+      case 'sync-workspaces-report':
+        return Promise.resolve(
+          workspaces.reportRefused === undefined
+            ? {
+                ok: true,
+                workspaces: request.workspaces.map((project) => ({
+                  id: project.id,
+                  name: project.name,
+                })),
+                message: '',
+              }
+            : { ok: false, workspaces: [], message: workspaces.reportRefused },
+        );
       case 'sync-preview':
         return Promise.resolve({ replacesReady: true });
       case 'sync-begin':
@@ -299,6 +322,180 @@ function answerTabPress(answer: () => void): Element[] {
   });
   return pressed;
 }
+
+describe('the Workspaces choice (#448)', () => {
+  /** The workspaces n8Tracks knows (made-up names). */
+  const KNOWN: KnownWorkspace[] = [
+    { id: 'w-1', name: 'Harbour Lights' },
+    { id: 'w-2', name: 'Paper Moons' },
+  ];
+
+  /** The panel's workspace checkboxes, by the name each is labelled with. */
+  function labels(root: ShadowRoot | null | undefined): string[] {
+    return [...(root?.querySelectorAll('.sync-list label') ?? [])].map((label) =>
+      label.textContent.trim(),
+    );
+  }
+
+  async function chooseWorkspaces(root: ShadowRoot | null | undefined) {
+    const radio = root?.querySelector<HTMLInputElement>('input[value="workspaces"]');
+    if (radio === null || radio === undefined) {
+      throw new Error('No Workspaces choice');
+    }
+    radio.checked = true;
+    radio.dispatchEvent(new Event('change'));
+    await Promise.resolve();
+  }
+
+  it('shows the workspaces n8Tracks knows straight away, with those Suno listed on this page, and opens nothing', async () => {
+    const sw = worker(null, CONNECTED, [], { known: KNOWN });
+    const {
+      content: started,
+      visited,
+      root,
+    } = start({
+      address: 'https://suno.com/create',
+      snapshot: null,
+      worker: sw,
+      // The tab saw a rename of one known workspace, and one n8Tracks does not know yet.
+      seen: [
+        observed('workspaces', {
+          projects: [
+            { id: 'w-2', name: 'Paper Moons, Revised' },
+            { id: 'w-4', name: 'Night Ferry' },
+          ],
+        }),
+      ],
+    });
+    await started.resumed;
+    await started.toggle();
+
+    await chooseWorkspaces(root);
+
+    await vi.waitFor(() => {
+      expect(labels(root)).toEqual(['Harbour Lights', 'Paper Moons, Revised', 'Night Ferry']);
+    });
+    expect(sw.types()).toContain('sync-workspaces-known');
+    expect(visited).toEqual([]);
+    await expectNoAxeViolations(document);
+  });
+
+  it('with none known, says so and offers Refresh from Suno, which opens Library to read the list', async () => {
+    const sw = worker(null, CONNECTED, [], { known: [] });
+    const {
+      content: started,
+      visited,
+      root,
+      text,
+      button,
+    } = start({ address: 'https://suno.com/create', snapshot: null, worker: sw });
+    await started.resumed;
+    await started.toggle();
+    await chooseWorkspaces(root);
+
+    await vi.waitFor(() => {
+      expect(text('.sync-workspaces')).toBe(
+        'n8Tracks knows no workspaces yet. Refresh from Suno to read your workspace list.',
+      );
+    });
+    expect(labels(root)).toEqual([]);
+
+    button('Refresh from Suno')?.click();
+
+    await vi.waitFor(() => {
+      expect(visited).toEqual(['https://suno.com/me']);
+    });
+    expect(sw.types()).toContain('sync-workspaces-refresh');
+    expect(text('.sync-workspaces')).toBe('Reading your workspace list on Suno…');
+    // A refresh is not a sync: nothing is begun.
+    expect(sw.types()).not.toContain('sync-begin');
+  });
+
+  it("reads Suno's workspace list on Library's page load, reports it, and shows what n8Tracks then knows", async () => {
+    const projects = sunoObject('project-me.page-1.response');
+    projects.num_total_results = 3;
+    const sw = worker(null, CONNECTED, [], { refresh: true });
+    const {
+      content: started,
+      visited,
+      root,
+      text,
+    } = start({ address: 'https://suno.com/me', worker: sw });
+    const pressed = answerTabPress(() => {
+      started.observations.take(observed('workspaces', projects));
+    });
+
+    await started.resumed;
+
+    expect(pressed).toHaveLength(1);
+    expect(sw.asked).toContainEqual({
+      type: 'sync-workspaces-report',
+      complete: true,
+      workspaces: projects.projects,
+    });
+    expect(started.panel.isOpen).toBe(true);
+    expect(root?.querySelector<HTMLInputElement>('input[value="workspaces"]')?.checked).toBe(true);
+    expect(text('.sync-workspaces')).toBe('Read 3 workspaces from Suno.');
+    expect(labels(root)).toHaveLength(3);
+    // Nothing else: no export, no other page.
+    expect(sw.types().filter((type) => type.startsWith('sync-') && type !== 'sync-resume')).toEqual(
+      ['sync-workspaces-report'],
+    );
+    expect(visited).toEqual([]);
+  });
+
+  it('reports a list Suno stops short as not complete, and says some may be missing', async () => {
+    const projects = sunoObject('project-me.page-1.response');
+    projects.num_total_results = 101;
+    const sw = worker(null, CONNECTED, [], { refresh: true });
+    const { content: started, text } = start({ address: 'https://suno.com/me', worker: sw });
+    answerTabPress(() => {
+      started.observations.take(observed('workspaces', projects));
+    });
+
+    await started.resumed;
+
+    expect(sw.asked).toContainEqual({
+      type: 'sync-workspaces-report',
+      complete: false,
+      workspaces: projects.projects,
+    });
+    expect(text('.sync-workspaces')).toContain('Suno sent no further page');
+  });
+
+  it('says why when n8Tracks did not take the list', async () => {
+    const projects = sunoObject('project-me.page-1.response');
+    projects.num_total_results = 3;
+    const sw = worker(null, CONNECTED, [], {
+      refresh: true,
+      reportRefused: 'n8Tracks refused the workspace list: 403 (insufficient_scope).',
+    });
+    const { content: started, text } = start({ address: 'https://suno.com/me', worker: sw });
+    answerTabPress(() => {
+      started.observations.take(observed('workspaces', projects));
+    });
+
+    await started.resumed;
+
+    expect(text('.sync-workspaces')).toBe(
+      'Your workspace list was read but not recorded: n8Tracks refused the workspace list: 403 (insufficient_scope).',
+    );
+  });
+
+  it('stops, pressing nothing, when Library shows no Workspaces tab', async () => {
+    const sw = worker(null, CONNECTED, [], { refresh: true });
+    const { content: started, text } = start({
+      address: 'https://suno.com/me',
+      snapshot: null,
+      worker: sw,
+    });
+
+    await started.resumed;
+
+    expect(text('.sync-workspaces')).toContain("Not refreshed: step 'Read the workspace list'");
+    expect(sw.types()).not.toContain('sync-workspaces-report');
+  });
+});
 
 describe('reading a leg after its page loads', () => {
   it('goes on with a workspace list Suno stops short, keeping it as not complete (TS-007-15, #434)', async () => {
