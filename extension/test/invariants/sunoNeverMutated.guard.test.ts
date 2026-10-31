@@ -21,6 +21,7 @@ import {
   scrollVoiceList,
 } from '../../src/adapter/workflows/voices.ts';
 import { COMPLETION_LIMIT_MS, SunoGenerate } from '../../src/content/sunoGenerate.ts';
+import { SunoSync } from '../../src/content/sunoSync.ts';
 import { fakeClock, SNAPSHOT_NAMES, snapshotHtml } from '../../src/testing/snapshots.ts';
 import { EXTENSION_ROOT, scanExtension } from './sourceScan.ts';
 import {
@@ -1471,4 +1472,116 @@ describe('the guard bites', () => {
       ),
     ).toEqual(expect.arrayContaining([expect.stringMatching(/names no page snapshot/)]));
   });
+});
+
+/**
+ * Runs the sync panel's Refresh from Suno (#448) on Library's page load, on `snapshot`: the tab's
+ * refresh is waiting, Suno answers the Workspaces tab's press with one page of the list, and the
+ * scroll for more with nothing. Reports every press and load, the workflows run, and what was sent.
+ */
+async function refreshOn(snapshot: string): Promise<{
+  happened: string[];
+  forbidden: string[];
+  ran: string[];
+  sent: string[];
+}> {
+  document.body.innerHTML = snapshotHtml(snapshot);
+  const happened: string[] = [];
+  const controls = forbiddenControls(document);
+  for (const control of controls) {
+    for (const type of ['click', 'pointerdown', 'mousedown', 'keydown', 'submit']) {
+      control.element.addEventListener(type, () => happened.push(`${type} on ${control.words}`), {
+        capture: true,
+      });
+    }
+  }
+  const clock = fakeClock();
+  const page = new Page(document, {
+    address: () => 'https://suno.com/me',
+    navigate: (to) => happened.push(`load ${to}`),
+    clock,
+  });
+  const feed = new ObservationFeed(
+    {
+      origin: 'https://suno.com',
+      postMessage: () => undefined,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    },
+    clock,
+  );
+  // Suno asks for the list only when the tab is pressed (#421); jsdom cannot follow the tab's link.
+  document.addEventListener(
+    'click',
+    (event) => {
+      const target = event.target instanceof Element ? event.target : null;
+      happened.push(`click on ${target === null ? 'the page' : nameOf(target)}`);
+      if (target !== null && roleOf(target) === 'tab') {
+        event.preventDefault();
+        feed.take({
+          source: OBSERVER_SOURCE,
+          type: 'observed',
+          kind: 'workspaces',
+          request: { cursor: null, page: 1, filters: null, feedId: null },
+          body: {
+            num_total_results: 21,
+            current_page: 1,
+            projects: [{ id: 'w-1', name: 'Harbour Lights' }],
+          },
+        });
+      }
+    },
+    { capture: true },
+  );
+  const ran: string[] = [];
+  const session = new AdapterSession(new WorkflowRegistry(ADAPTER_WORKFLOWS), page, (run) => {
+    ran.push(run.workflowId);
+  });
+  const sent: string[] = [];
+  const sync = new SunoSync({
+    page,
+    session,
+    observations: feed,
+    send: (request) => {
+      sent.push(request.type);
+      switch (request.type) {
+        case 'sync-resume':
+          return Promise.resolve({ session: null, refresh: true });
+        case 'sync-workspaces-report':
+          return Promise.resolve({ ok: true, workspaces: [], message: '' });
+        default:
+          return Promise.resolve({ ok: true });
+      }
+    },
+    show: () => undefined,
+    versions: { extension: '0.1.0', adapter: 1 },
+    clock,
+  });
+  await sync.resume();
+  return { happened, forbidden: controls.map((control) => control.words), ran, sent };
+}
+
+describe("invariant 4: the sync panel's Refresh from Suno (#448)", () => {
+  it(
+    "presses only Library's Workspaces tab and scrolls, reaching none of Library's forbidden controls",
+    { timeout: 30_000 },
+    async () => {
+      const { happened, forbidden, ran, sent } = await refreshOn('library-list');
+
+      // The page holds Publish and Trash controls, all spied on; none was reached.
+      expect(forbidden.length).toBeGreaterThan(0);
+      expect(happened.filter((event) => forbidden.some((words) => event.endsWith(words)))).toEqual(
+        [],
+      );
+      // One press, the tab's, and no page loaded.
+      expect(happened).toEqual(['click on Workspaces']);
+      // Only the sync's own read workflows ran, each with a recipe the guard runs on every snapshot.
+      expect(new Set(ran)).toEqual(new Set(['open-workspace-list', 'load-more']));
+      for (const id of ran) {
+        expect(RUN_RECIPES[id]).toBeDefined();
+      }
+      // Nothing but the report went to the service worker: no sync was begun, no export made.
+      expect(sent).toEqual(['sync-resume', 'sync-workspaces-report']);
+    },
+  );
 });

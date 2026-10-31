@@ -56,7 +56,7 @@ public sealed class SunoWorkspaceEndpointTests
     }
 
     [Fact]
-    public async Task ReportingNeedsSunoSyncOrSunoGenerateAndListingNeedsCatalogRead()
+    public async Task ReportingNeedsSunoSyncOrSunoGenerateAndListingNeedsCatalogReadOrSunoSync()
     {
         using var factory = SongApi.Host();
         using var client = factory.CreateClient();
@@ -74,9 +74,15 @@ public sealed class SunoWorkspaceEndpointTests
                 problem.GetProperty("requiredScope").EnumerateArray().Select(static scope => scope.GetString()));
         }
 
-        using (var listRefused = await CredentialApi.SendAsync(client, HttpMethod.Get, SunoWorkspaceApi.Workspaces, sync))
+        // Listing takes catalog.read or suno.sync (#448): suno.generate alone, or every other scope, is refused.
+        var neither = await CredentialApi.CreateTokenAsync(factory, [.. CredentialScopes.All.Where(static scope => scope != CredentialScopes.CatalogRead && scope != CredentialScopes.SunoSync)]);
+        foreach (var refusedToken in new[] { generate, neither })
         {
-            await SetupApi.ProblemAsync(listRefused, HttpStatusCode.Forbidden, "insufficient_scope");
+            using var listRefused = await CredentialApi.SendAsync(client, HttpMethod.Get, SunoWorkspaceApi.Workspaces, refusedToken);
+            var problem = await SetupApi.ProblemAsync(listRefused, HttpStatusCode.Forbidden, "insufficient_scope");
+            Assert.Equal(
+                [CredentialScopes.CatalogRead, CredentialScopes.SunoSync],
+                problem.GetProperty("requiredScope").EnumerateArray().Select(static scope => scope.GetString()));
         }
 
         Assert.Equal("0", TestDatabase.Scalar(factory.DataPath, "SELECT count(*) FROM suno_workspaces;"));
@@ -95,6 +101,10 @@ public sealed class SunoWorkspaceEndpointTests
         var reader = await CredentialApi.CreateTokenAsync(factory, CredentialScopes.CatalogRead);
         using var listed = await CredentialApi.SendAsync(client, HttpMethod.Get, SunoWorkspaceApi.Workspaces, reader);
         Assert.Equal("w-1", (await SetupApi.JsonAsync(listed)).GetProperty("items")[0].GetProperty("id").GetString());
+
+        // The extension's sync lists them too, for the sync panel's choice (#448).
+        using var listedBySync = await CredentialApi.SendAsync(client, HttpMethod.Get, SunoWorkspaceApi.Workspaces, sync);
+        Assert.Equal("w-1", (await SetupApi.JsonAsync(listedBySync)).GetProperty("items")[0].GetProperty("id").GetString());
     }
 
     [Fact]

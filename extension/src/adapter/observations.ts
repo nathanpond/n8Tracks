@@ -30,6 +30,24 @@ export interface Listed {
   name: string;
 }
 
+/**
+ * The workspaces to offer (#448): those n8Tracks knows, in its order (by name), then those Suno
+ * listed on this page that n8Tracks does not know yet, in the order seen. Each once by ID; a name
+ * Suno listed replaces the known one unless it is blank (the page saw it more recently).
+ */
+export function mergeListed(known: readonly Listed[], seen: readonly Listed[]): Listed[] {
+  const merged = new Map<string, string>();
+  for (const item of known) {
+    merged.set(item.id, item.name);
+  }
+  for (const item of seen) {
+    if (item.name.trim() !== '' || !merged.has(item.id)) {
+      merged.set(item.id, item.name);
+    }
+  }
+  return [...merged].map(([id, name]) => ({ id, name }));
+}
+
 /** The most responses waiting to be read; older ones are dropped first. */
 const QUEUE_LIMIT = 200;
 

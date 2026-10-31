@@ -7,10 +7,15 @@ import type { ImageProgress, SyncCounts, SyncScope } from '../messages.ts';
  * before that. While it reads, it shows counts and Cancel; when it stops, it names the step that
  * failed and offers Try again. Plain DOM in the panel's shadow root, every control labelled and
  * reachable by keyboard.
+ *
+ * The Workspaces choice (#448) offers the workspaces n8Tracks knows, from earlier syncs and Generate
+ * runs, with any Suno has shown this page since; "Refresh from Suno" reads Suno's workspace list
+ * again (on Library, as a sync's first leg does) and reports it to n8Tracks.
  */
 
 export type SyncViewState =
-  | { kind: 'choose' }
+  /** `scope`: the choice to show chosen (a Refresh from Suno comes back to Workspaces, #448). */
+  | { kind: 'choose'; scope?: ScopeKind }
   | { kind: 'summary'; scope: SyncScope; replacesReady: boolean }
   | { kind: 'reading'; step: string; counts: SyncCounts }
   | {
@@ -23,9 +28,28 @@ export type SyncViewState =
   | { kind: 'stopped'; report: string }
   | { kind: 'cancelled' };
 
+/**
+ * Where the Workspaces choice's list stands (#448): `loading` while n8Tracks is asked for the
+ * workspaces it knows; `refreshing` while Suno's list is read; `refreshed` once it was, with how many
+ * were read and whether to the list's end; `failed` with why, in plain words.
+ */
+export type WorkspaceListState =
+  | { kind: 'ready' }
+  | { kind: 'loading' }
+  | { kind: 'refreshing' }
+  | { kind: 'refreshed'; count: number; complete: boolean }
+  | { kind: 'failed'; message: string };
+
 export interface SyncViewOptions {
-  /** The workspaces and playlists Suno has listed on this page, to choose from. */
+  /**
+   * What to choose from: the workspaces n8Tracks knows with those Suno has listed on this page
+   * (#448), and the playlists Suno has listed on this page.
+   */
   choices(): { workspaces: Listed[]; playlists: Listed[] };
+  /** The Workspaces choice was opened: ask n8Tracks for the workspaces it knows (#448). */
+  wantWorkspaces(): void;
+  /** "Refresh from Suno" (#448): read Suno's workspace list again. */
+  refresh(): void;
   /** "Next": the summary needs to know whether an export waiting for review will be replaced. */
   preview(scope: SyncScope): void;
   /** "Start sync", after the summary. */
@@ -69,6 +93,26 @@ export function summaryText(scope: SyncScope): string {
       return `Reads the clips of ${plural(scope.ids.length, 'workspace', 'workspaces')} from your Suno library, ${lists}`;
     case 'playlists':
       return `Reads ${plural(scope.playlists.length, 'playlist', 'playlists')} with their songs, ${lists}`;
+  }
+}
+
+/** What the Workspaces choice says about its list (#448), or null when there is nothing to say. */
+export function workspaceListText(state: WorkspaceListState, known: number): string | null {
+  switch (state.kind) {
+    case 'loading':
+      return 'Asking n8Tracks for the workspaces it knows…';
+    case 'refreshing':
+      return 'Reading your workspace list on Suno…';
+    case 'refreshed':
+      return state.complete
+        ? `Read ${plural(state.count, 'workspace', 'workspaces')} from Suno.`
+        : `Read ${plural(state.count, 'workspace', 'workspaces')} from Suno; Suno sent no further page, so some may be missing. Scrolling Suno's list by hand loads more.`;
+    case 'failed':
+      return state.message;
+    case 'ready':
+      return known === 0
+        ? 'n8Tracks knows no workspaces yet. Refresh from Suno to read your workspace list.'
+        : null;
   }
 }
 
@@ -122,6 +166,8 @@ export class SyncView {
   /** "Also check Suno's Trash", for a workspace or playlist sync (#420): off until the user turns it on. */
   private readTrash = false;
   private state: SyncViewState = { kind: 'choose' };
+  /** Where the Workspaces choice's list stands (#448). */
+  private workspaceList: WorkspaceListState = { kind: 'ready' };
   /** The finished state's line about cover images, updated in place so focus stays put. */
   private imagesLine: HTMLElement | null = null;
 
@@ -134,6 +180,16 @@ export class SyncView {
     this.unavailable.hidden = true;
     this.body = this.make('div');
     this.element.append(heading, this.unavailable, this.body);
+    // Where focus is in the view, so drawing the Workspaces list again keeps it there (#448).
+    this.element.addEventListener('focusin', (event) => {
+      this.focused = event.target instanceof Node ? event.target : null;
+    });
+    this.element.addEventListener('focusout', (event) => {
+      const next = event.relatedTarget;
+      if (!(next instanceof Node) || !this.element.contains(next)) {
+        this.focused = null;
+      }
+    });
     this.render();
   }
 
@@ -153,9 +209,37 @@ export class SyncView {
 
   show(state: SyncViewState): void {
     const moved = state.kind !== this.state.kind;
+    if (state.kind === 'choose' && state.scope !== undefined && state.scope !== this.chosenKind) {
+      this.chosenKind = state.scope;
+      this.chosenIds = new Set();
+    }
     this.state = state;
     this.render();
     if (moved) {
+      this.focusFirst();
+    }
+  }
+
+  get workspaces(): WorkspaceListState {
+    return this.workspaceList;
+  }
+
+  /**
+   * The Workspaces choice's list changed (#448): its known workspaces came, or a Refresh from Suno
+   * began or ended. Drawn again while the choice is shown, keeping focus in the panel.
+   */
+  setWorkspaceList(state: WorkspaceListState): void {
+    this.workspaceList = state;
+    if (this.state.kind !== 'choose') {
+      return;
+    }
+    const focused = this.focused;
+    const hadFocus = focused !== null && this.body.contains(focused);
+    const refreshHadFocus = focused !== null && focused === this.refreshButton;
+    this.render();
+    if (refreshHadFocus) {
+      this.refreshButton?.focus();
+    } else if (hadFocus) {
       this.focusFirst();
     }
   }
@@ -200,6 +284,10 @@ export class SyncView {
   }
 
   private firstControl: HTMLElement | null = null;
+  /** What has focus in the view, or null when nothing in it does. */
+  private focused: Node | null = null;
+  /** The Workspaces choice's "Refresh from Suno", while shown. */
+  private refreshButton: HTMLButtonElement | null = null;
 
   private focusFirst(): void {
     if (this.firstControl?.isConnected === true) {
@@ -227,6 +315,7 @@ export class SyncView {
 
   private render(): void {
     this.firstControl = null;
+    this.refreshButton = null;
     this.imagesLine = null;
     this.body.replaceChildren();
     switch (this.state.kind) {
@@ -319,6 +408,9 @@ export class SyncView {
           this.chosenIds = new Set();
           this.render();
           this.focusFirst();
+          if (kind === 'workspaces') {
+            this.options.wantWorkspaces();
+          }
         }
       });
       if (this.firstControl === null || radio.checked) {
@@ -361,27 +453,28 @@ export class SyncView {
     group.append(
       this.make('legend', {}, kind === 'workspaces' ? 'Workspaces to read' : 'Playlists to read'),
     );
-    if (listed.length === 0) {
+    if (kind === 'workspaces') {
+      this.renderWorkspaceList(group, listed);
+    } else if (listed.length === 0) {
       group.append(
         this.make(
           'p',
           { class: 'detail' },
-          // TS-007: Suno asks for these lists only when its tab is clicked inside Library; a
-          // direct load or refresh of /me/workspaces or /me/playlists shows them from its cache.
-          kind === 'workspaces'
-            ? 'No workspaces yet: open Library on Suno, then click the Workspaces tab (refreshing the page does not load the list), then choose again.'
-            : 'No playlists yet: open Library on Suno, then click the Playlists tab (refreshing the page does not load the list), then choose again.',
+          // TS-007: Suno asks for this list only when its tab is clicked inside Library; a
+          // direct load or refresh of /me/playlists shows it from its cache.
+          'No playlists yet: open Library on Suno, then click the Playlists tab (refreshing the page does not load the list), then choose again.',
         ),
       );
       return group;
+    } else {
+      group.append(
+        this.make(
+          'p',
+          { class: 'detail' },
+          'These are the playlists Suno has shown on this page; scroll its list to see more.',
+        ),
+      );
     }
-    group.append(
-      this.make(
-        'p',
-        { class: 'detail' },
-        `These are the ${kind} Suno has shown on this page; scroll its list to see more.`,
-      ),
-    );
     for (const item of listed) {
       const label = this.make('label');
       const box = this.make('input', { type: 'checkbox', value: item.id });
@@ -398,6 +491,44 @@ export class SyncView {
       group.append(label);
     }
     return group;
+  }
+
+  /**
+   * The Workspaces choice's line about its list and its "Refresh from Suno" (#448). With nothing
+   * known, the line says so and the button is all there is to press.
+   */
+  private renderWorkspaceList(group: HTMLElement, listed: readonly Listed[]): void {
+    const state = this.workspaceList;
+    const busy = state.kind === 'loading' || state.kind === 'refreshing';
+    const text =
+      workspaceListText(state, listed.length) ??
+      'These are the workspaces n8Tracks knows, with any Suno has shown on this page. If one is missing, refresh from Suno.';
+    group.append(
+      this.make(
+        'p',
+        state.kind === 'failed'
+          ? { class: 'warning sync-workspaces', role: 'alert' }
+          : { class: 'detail sync-workspaces', role: 'status' },
+        text,
+      ),
+    );
+    const refresh = this.button(
+      'Refresh from Suno',
+      () => {
+        this.options.refresh();
+      },
+      busy || !this.available,
+    );
+    refresh.setAttribute('aria-describedby', 'n8-sync-refresh-hint');
+    this.refreshButton = refresh;
+    group.append(
+      refresh,
+      this.make(
+        'p',
+        { class: 'detail', id: 'n8-sync-refresh-hint' },
+        'Opens Library on Suno and reads your workspace list; it presses nothing that changes Suno.',
+      ),
+    );
   }
 
   /** "Also check Suno's Trash", with its hint: only for a workspace or playlist sync (#420). */

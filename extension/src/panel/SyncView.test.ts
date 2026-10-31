@@ -19,6 +19,8 @@ function view(listed: ReturnType<SyncViewOptions['choices']> = { workspaces: [],
     preview: vi.fn<(scope: SyncScope) => void>(),
     start: vi.fn<(scope: SyncScope) => void>(),
     cancel: vi.fn<() => void>(),
+    wantWorkspaces: vi.fn<() => void>(),
+    refresh: vi.fn<() => void>(),
   };
   const sync = new SyncView(document, options);
   const main = document.createElement('main');
@@ -104,13 +106,97 @@ describe('Sync to n8Tracks in the panel', () => {
     });
   });
 
-  it('says where to find the workspaces when Suno has listed none (TS-007: by the tab, not a refresh)', () => {
+  it('with no workspace known, says so and offers only Refresh from Suno (#448)', async () => {
     const empty = view();
     empty.sync.setAvailable(true, null);
     empty.choose('workspaces');
-    expect(empty.sync.element.textContent).toContain(
-      'No workspaces yet: open Library on Suno, then click the Workspaces tab (refreshing the page does not load the list), then choose again.',
+
+    // Opening the choice asks for the workspaces n8Tracks knows.
+    expect(empty.options.wantWorkspaces).toHaveBeenCalledTimes(1);
+    const text = empty.sync.element.textContent;
+    expect(text).toContain(
+      'n8Tracks knows no workspaces yet. Refresh from Suno to read your workspace list.',
     );
+    // No instruction to click Suno's own tabs, and nothing to tick.
+    expect(text).not.toContain('click the Workspaces tab');
+    expect(empty.sync.element.querySelectorAll('.sync-list input[type="checkbox"]')).toHaveLength(
+      0,
+    );
+    await expectNoAxeViolations(document);
+
+    empty.button('Refresh from Suno')?.click();
+    expect(empty.options.refresh).toHaveBeenCalledTimes(1);
+    expect(empty.options.preview).not.toHaveBeenCalled();
+    expect(empty.options.start).not.toHaveBeenCalled();
+  });
+
+  it('says where the workspace list stands, and offers Refresh only when nothing is under way (#448)', () => {
+    const listed = { workspaces: [{ id: 'w1', name: 'Harbour Lights' }], playlists: [] };
+    const { sync, button, choose } = view(listed);
+    sync.setAvailable(true, null);
+    choose('workspaces');
+    const line = () => sync.element.querySelector('.sync-workspaces');
+    const refresh = () => button('Refresh from Suno');
+
+    sync.setWorkspaceList({ kind: 'loading' });
+    expect(line()?.textContent).toBe('Asking n8Tracks for the workspaces it knows…');
+    expect(refresh()?.disabled).toBe(true);
+
+    sync.setWorkspaceList({ kind: 'ready' });
+    expect(line()?.textContent).toBe(
+      'These are the workspaces n8Tracks knows, with any Suno has shown on this page. If one is missing, refresh from Suno.',
+    );
+    expect(refresh()?.disabled).toBe(false);
+    expect(sync.element.textContent).toContain('Harbour Lights');
+
+    sync.setWorkspaceList({ kind: 'refreshing' });
+    expect(line()?.textContent).toBe('Reading your workspace list on Suno…');
+    expect(refresh()?.disabled).toBe(true);
+
+    sync.setWorkspaceList({ kind: 'refreshed', count: 1, complete: true });
+    expect(line()?.textContent).toBe('Read 1 workspace from Suno.');
+    sync.setWorkspaceList({ kind: 'refreshed', count: 20, complete: false });
+    expect(line()?.textContent).toContain('Suno sent no further page, so some may be missing.');
+
+    sync.setWorkspaceList({ kind: 'failed', message: 'Not refreshed: no answer.' });
+    expect(line()?.getAttribute('role')).toBe('alert');
+    expect(line()?.textContent).toBe('Not refreshed: no answer.');
+    expect(refresh()?.disabled).toBe(false);
+
+    // Not connected: nothing to press.
+    sync.setAvailable(false, 'Connect the extension to n8Tracks to sync.');
+    expect(refresh()?.disabled).toBe(true);
+  });
+
+  it('keeps the workspaces chosen and focus in the list when the list is drawn again (#448)', () => {
+    const { sync, input, choose } = view({
+      workspaces: [
+        { id: 'w1', name: 'Harbour Lights' },
+        { id: 'w2', name: 'Paper Moons' },
+      ],
+      playlists: [],
+    });
+    sync.setAvailable(true, null);
+    choose('workspaces');
+    const box = input('w2');
+    if (box === null) {
+      throw new Error('No checkbox for w2');
+    }
+    box.focus();
+    box.checked = true;
+    box.dispatchEvent(new Event('change'));
+
+    sync.setWorkspaceList({ kind: 'ready' });
+
+    expect(input('w2')?.checked).toBe(true);
+    expect(sync.element.contains(document.activeElement)).toBe(true);
+  });
+
+  it('comes back to the Workspaces choice when shown so (#448)', () => {
+    const { sync, input } = view();
+    sync.setAvailable(true, null);
+    sync.show({ kind: 'choose', scope: 'workspaces' });
+    expect(input('workspaces')?.checked).toBe(true);
   });
 
   it('chooses playlists by name, and says where to find them when Suno has listed none', async () => {

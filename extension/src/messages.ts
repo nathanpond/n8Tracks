@@ -263,6 +263,23 @@ export interface SyncSession extends SyncProgress {
   updatedAt: number;
 }
 
+/** A Suno workspace n8Tracks knows (#448): its Suno ID and its name as last seen (may be blank). */
+export interface KnownWorkspace {
+  id: string;
+  name: string;
+}
+
+/**
+ * The answer about the workspaces n8Tracks knows (#448): with `ok`, the Available ones; without,
+ * none, and why not in plain words. One shape rather than a {@link SyncReply} union, which would
+ * make the answers' union too large for the compiler to relate.
+ */
+export interface WorkspacesReply {
+  ok: boolean;
+  workspaces: KnownWorkspace[];
+  message: string;
+}
+
 /** A sync step's answer: done, or why not, in plain words for the panel. */
 export type SyncReply<T extends object = object> =
   ({ ok: true } & T) | { ok: false; message: string };
@@ -342,6 +359,15 @@ export type Request =
    * the list was read to its end: reported to n8Tracks on their own, not in the export.
    */
   | { type: 'sync-voices'; complete: boolean; voices: Record<string, unknown>[] }
+  /** The sync panel's Workspaces choice (#448): the workspaces n8Tracks knows, Available ones only. */
+  | { type: 'sync-workspaces-known' }
+  /**
+   * "Refresh from Suno" in the sync panel (#448): this tab is to read Suno's workspace list on its
+   * next page load (Library, `/me`), which `sync-resume` then answers with `refresh: true`.
+   */
+  | { type: 'sync-workspaces-refresh' }
+  /** The workspace list a Refresh from Suno read (#448), and whether to its end: reported to n8Tracks. */
+  | { type: 'sync-workspaces-report'; complete: boolean; workspaces: Record<string, unknown>[] }
   /** The Suno content script: a run that ended and the self-check states (#150). */
   | { type: 'diagnostics-record'; run?: unknown; statuses?: unknown }
   /** The options page and the panel: the diagnostic report, assembled now (#150). */
@@ -450,8 +476,11 @@ export interface ResponseFor {
   /** Whether an export of this extension's is waiting for review, which the new one replaces. */
   'sync-preview': { replacesReady: boolean };
   'sync-begin': SyncReply<{ session: SyncSession }>;
-  /** The sync this tab is running, if any. */
-  'sync-resume': { session: SyncSession | null };
+  /**
+   * The sync this tab is running, if any; `refresh` when, instead, its Refresh from Suno (#448) is
+   * to read the workspace list on this page load (said once: the next load is not asked to).
+   */
+  'sync-resume': { session: SyncSession | null; refresh?: boolean };
   'sync-save': SyncReply;
   'sync-create': SyncReply<{ exportId: string }>;
   'sync-part': SyncReply;
@@ -459,6 +488,10 @@ export interface ResponseFor {
   'sync-discard': SyncReply;
   'sync-images': { images: ImageProgress | null };
   'sync-voices': SyncReply<{ added: number }>;
+  'sync-workspaces-known': WorkspacesReply;
+  'sync-workspaces-refresh': SyncReply;
+  /** The workspaces n8Tracks knows after the report, Available ones only. */
+  'sync-workspaces-report': WorkspacesReply;
   'diagnostics-record': { recorded: true };
   'diagnostic-report': DiagnosticReport;
   /** `watching`: the Suno IDs of this tab's clips still watched for completion (#154). */
@@ -536,6 +569,9 @@ export const SYNC_TYPES = [
   'sync-discard',
   'sync-images',
   'sync-voices',
+  'sync-workspaces-known',
+  'sync-workspaces-refresh',
+  'sync-workspaces-report',
 ] as const satisfies readonly Request['type'][];
 
 export type SyncRequest = Extract<Request, { type: (typeof SYNC_TYPES)[number] }>;
@@ -737,7 +773,15 @@ export function isRequest(value: unknown): value is Request {
     case 'sync-complete':
     case 'sync-discard':
     case 'sync-images':
+    case 'sync-workspaces-known':
+    case 'sync-workspaces-refresh':
       return true;
+    case 'sync-workspaces-report':
+      return (
+        typeof value.complete === 'boolean' &&
+        Array.isArray(value.workspaces) &&
+        value.workspaces.every(isRecord)
+      );
     case 'sync-begin':
       return isSyncScope(value.scope);
     case 'sync-save':

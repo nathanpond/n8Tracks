@@ -4886,3 +4886,30 @@ Story #219 (on the milestone branch):
 - **Decision:** Not seen live, to confirm: paging beyond page 1 (assumed `page=N` on scroll, like the workspace list, and treated as incomplete when no next page comes), whether Suno sends the list again when the picker opens a second time in one page load (each leg has a page load of its own), whether a plan without Voices shows "+ Voice" or opens something else (the leg then stops at its step with a note), and whether the Favorites tab uses the same request (it is never pressed).
   **Why:** Only one page of a few voices was captured (2026-10-20).
   **Issue:** #439
+
+## Ad-hoc — 2026-10-31
+
+- **Change:** The sync panel's Workspaces choice lists the workspaces n8Tracks knows, merged with any the Suno tab has seen, and offers "Refresh from Suno", which reads Suno's workspace list on Library as a sync's first leg does and reports it to `PUT /api/v1/suno/workspaces/discovered` (#448). `GET /api/v1/suno/workspaces` now takes `catalog.read` or `suno.sync` (it took `catalog.read` only), so the extension's credential can read the list without any other catalog read. Playlists are not recorded from a list yet: the panel's Playlists choice still lists only what the tab has seen.
+  **Why:** Owner request in the #148 walkthrough: the panel listed only what the tab had loaded on this page visit, so the owner had to open Library and click its tabs, and any reload lost the list.
+  **Affects:** M4 (#134 the sync panel and its messages; #145 shares the discovered endpoint), M7 (the API/MCP surface: the workspace list's scopes; the gateway's token never holds `suno.sync`, so nothing it can do changes), M9 audit (authorization review of the new `suno.sync` read).
+
+## M4 captures — #448 known workspaces and Refresh from Suno — 2026-10-31
+
+- **Decision:** `suno.sync` may read `GET /api/v1/suno/workspaces`, beside `catalog.read`; no other endpoint changed, and the extension's credential gains no scope. `EndpointScopeGuardTests` pins the pair on that endpoint.
+  **Why:** The issue asks for the narrowest change. The list is what `suno.sync` already reports (names, availability, Song counts); granting `catalog.read` would have opened every Song, Version, and collection to the extension.
+  **Issue:** #448
+- **Decision:** The panel asks n8Tracks for the known workspaces when the Workspaces choice is opened (`sync-workspaces-known`), offers only the Available ones, and puts those the tab saw since after them (a rename the tab saw wins; a blank name does not). With none known it says so and offers only "Refresh from Suno"; the old "click the Workspaces tab" text is gone.
+  **Why:** The issue's design; asking once per opening keeps the panel's frequent self-check refreshes from calling n8Tracks.
+  **Issue:** #448
+- **Decision:** Refresh from Suno reuses the sync's workspace-list read, now `readWorkspaceList` in `libraryReader.ts` (the sync's leg calls it too), with the same workflows: `open-workspace-list` (Library's Workspaces tab) and `load-more`. The service worker holds the refresh for its tab in session storage for at most a minute (`workspaceRefresh`); the tab opens `/me`, and the next page load's `sync-resume` answers `refresh: true` once. It is refused while a sync runs, and a sync begun forgets a waiting one. The list is reported as complete only when read to its end, so a short list marks nothing Unavailable. No export is made. The tab stays on Library afterwards.
+  **Why:** One reader for the list, as the issue asks; the page load is needed because a direct load of `/me/workspaces` asks Suno for nothing (#421).
+  **Issue:** #448
+- **Decision (invariant 4):** No new workflow, selector, or address, so no new guard recipe and `ADAPTER_VERSION` stays 34. The guard gains a run of Refresh from Suno on the Library snapshot: it presses only the Workspaces tab, reaches none of the spied Publish or Trash controls, loads no page, runs only `open-workspace-list` and `load-more` (both with recipes), and sends only the report.
+  **Why:** The refresh is a new path to existing workflows; the guard proves the path, the recipes already prove the workflows on every snapshot.
+  **Issue:** #448
+- **Decision:** Playlists left as they are, as a follow-up. n8Tracks records Suno playlists (`suno_playlists`) only at an import commit, and only those holding an imported clip; a sync never reads the user's playlist list (it reads each chosen playlist's songs). Recording them would need a new playlist-list workflow (Library's Playlists tab, not captured live), a new discovered endpoint with its own availability rules, and a scope change on `GET /api/v1/suno/playlists`, which also answers member clip IDs.
+  **Why:** Larger than the workspace half, and the issue's done-when names workspaces only.
+  **Issue:** #448
+- **Decision (invariant 6):** The service worker answers refusals by status and code only; nothing logs a workspace name.
+  **Why:** As for the voices (#439).
+  **Issue:** #448

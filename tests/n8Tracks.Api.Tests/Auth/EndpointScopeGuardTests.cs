@@ -178,6 +178,12 @@ public sealed class EndpointScopeGuardTests
         Assert.Equal("any-caller", markers["* " + ApiNotFoundPattern]);
         Assert.Equal("any-caller", markers["GET /api/v1/extension/handshake"]);
         Assert.Equal(2, markers.Values.Count(static marker => marker == "any-caller"));
+
+        // The workspace list takes catalog.read or suno.sync (#448): the extension's sync panel offers
+        // the workspaces n8Tracks knows, and its credential need not read the rest of the catalog.
+        var workspaces = endpoints.Single(static endpoint => Describe(endpoint) == "GET /api/v1/suno/workspaces").Metadata.GetMetadata<RequiredScopes>()!;
+        Assert.True(workspaces.AnyOf);
+        Assert.Equal([CredentialScopes.CatalogRead, CredentialScopes.SunoSync], workspaces.Scopes);
     }
 
     /// <summary>Proves the check bites: an endpoint added to the test host without a marker fails it.</summary>

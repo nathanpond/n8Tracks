@@ -13,7 +13,8 @@ namespace n8Tracks.Api.Endpoints;
 /// <summary>
 /// The Suno workspaces n8Tracks knows (#129). The extension reports the user's workspace list
 /// (<c>suno.sync</c>, or <c>suno.generate</c> when Generate on Suno reads it, #145); anyone who
-/// reads the catalog lists them; and the signed-in user moves Songs from one workspace to another in
+/// reads the catalog lists them, and so does the extension's sync (<c>suno.sync</c>, #448: the sync
+/// panel offers the workspaces n8Tracks knows, a list <c>suno.sync</c> already reports); and the signed-in user moves Songs from one workspace to another in
 /// bulk (session only). A workspace is named by its Suno ID throughout.
 /// A Song's own workspace is changed with the Song's PATCH (<c>sunoWorkspaceId</c>).
 /// </summary>
@@ -38,8 +39,8 @@ internal static class SunoWorkspacesEndpoints
 
         endpoints.MapGet(WorkspacesPath, ListAsync)
             .WithName("ListSunoWorkspaces")
-            .WithSummary("Every Suno workspace n8Tracks knows, by name (a blank name sorts as \"(unnamed)\"), unpaged, each with its state (available or unavailable), when it was first and last seen, and how many live Songs are in it.")
-            .RequireScope(CredentialScopes.CatalogRead)
+            .WithSummary("Every Suno workspace n8Tracks knows, by name (a blank name sorts as \"(unnamed)\"), unpaged, each with its state (available or unavailable), when it was first and last seen, and how many live Songs are in it. Read with catalog.read, or by the extension's sync (suno.sync, #448), whose panel offers these workspaces to sync.")
+            .RequireAnyScope(CredentialScopes.CatalogRead, CredentialScopes.SunoSync)
             .Produces<SunoWorkspaceListResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden);
