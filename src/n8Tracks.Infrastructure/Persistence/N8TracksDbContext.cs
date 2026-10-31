@@ -707,6 +707,9 @@ public sealed class N8TracksDbContext(DbContextOptions<N8TracksDbContext> option
                 table.HasCheckConstraint("ck_suno_playlists_suno_id", "length(suno_id) BETWEEN 1 AND 100");
             });
             playlist.HasKey(record => record.SunoId);
+            // No check on state (#449), as for suno_personas: adding one rebuilds the table; only
+            // SunoPlaylistRules writes it, from its two names.
+            playlist.Property(record => record.State).HasDefaultValue(SunoPlaylistRecord.Available);
         });
 
         modelBuilder.Entity<SunoWorkspaceRecord>(workspace =>

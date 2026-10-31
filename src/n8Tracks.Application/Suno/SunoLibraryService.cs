@@ -19,6 +19,13 @@ public interface ISunoLibraryStore
     Task SavePersonaAsync(SunoPersona persona, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Stores <paramref name="playlist"/>'s name, state, song count, and last-seen time (#449), adding it
+    /// (with no members) or updating the record with its Suno ID; its members are left as they are.
+    /// Inside the caller's transaction.
+    /// </summary>
+    Task SavePlaylistAsync(SunoPlaylist playlist, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Records <paramref name="sightings"/>, seen at <paramref name="now"/>, by Suno ID (#153): a playlist
     /// or persona not stored yet is added; a stored one takes the name seen unless that is blank, and a
     /// listed playlist its clip IDs, as last seen. A playlist known only as a clip's Inspiration leaves a
@@ -32,12 +39,14 @@ public interface ISunoLibraryStore
 /// n8Tracks has seen in imported data. Both lists are read models the import stories fill (#137,
 /// #153); until an import has run they are empty. Each is sorted by name (ignoring case, then by ID so
 /// the order is stable) and unpaged: a user has tens of each, not thousands. An import commit records
-/// what the clips it imports touch (<see cref="SunoReadModels"/>); the user's voice list, which a sync
-/// reads, also writes personas (<see cref="SunoPersonaService"/>, #439).
+/// what the clips it imports touch (<see cref="SunoReadModels"/>) and the membership of the playlists a
+/// playlist sync read that the user left to record (#449); the user's voice list and playlist list, which
+/// a sync reads, also write personas (<see cref="SunoPersonaService"/>, #439) and playlists
+/// (<see cref="SunoPlaylistService"/>, #449), never a playlist's members.
 /// </summary>
 public sealed class SunoLibraryService(ISunoLibraryStore store, IExclusiveTransaction transaction)
 {
-    /// <summary>Every playlist seen, by name.</summary>
+    /// <summary>Every playlist seen, by name, Available or not.</summary>
     public async Task<IReadOnlyList<SunoPlaylist>> PlaylistsAsync(CancellationToken cancellationToken = default)
     {
         var playlists = await store.PlaylistsAsync(cancellationToken).ConfigureAwait(false);

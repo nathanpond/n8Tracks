@@ -15,8 +15,9 @@ namespace n8Tracks.Api.Endpoints;
 /// (<c>catalog.read</c>): the fields of Suno's Create screen as the embedded inventory records them,
 /// each with the Version option it is stored in and Suno's own explanation, and the models offered for
 /// a new choice. The model list itself is managed under <see cref="SunoModelsEndpoints"/>. Also the
-/// Suno playlists and personas n8Tracks knows, and the user's voice list as a sync reports it (#439,
-/// <c>suno.sync</c>).
+/// Suno playlists and personas n8Tracks knows, and the user's voice list and playlist list as a sync
+/// reports them (#439, #449, <c>suno.sync</c>), with the slim list of known playlists the sync panel
+/// offers (#449, <c>suno.sync</c>: names and states only, never a playlist's members).
 /// </summary>
 internal static class SunoEndpoints
 {
@@ -24,6 +25,7 @@ internal static class SunoEndpoints
     public const string PlaylistsPath = ApiProblem.VersionPrefix + "/suno/playlists";
     public const string PersonasPath = ApiProblem.VersionPrefix + "/suno/personas";
     public const string DiscoveredPersonasPath = PersonasPath + "/discovered";
+    public const string DiscoveredPlaylistsPath = PlaylistsPath + "/discovered";
 
     /// <summary>Each inventory key's Version option, as the API spells it (the inverse of <see cref="VersionInputRules.InventoryKey"/>).</summary>
     private static readonly Dictionary<string, string> OptionsByKey = VersionInputRules.Keys
@@ -45,11 +47,28 @@ internal static class SunoEndpoints
 
         endpoints.MapGet(PlaylistsPath, GetPlaylistsAsync)
             .WithName("GetSunoPlaylists")
-            .WithSummary("The Suno playlists n8Tracks has seen in imports, by name, unpaged: what the Sources editor offers as Inspiration. Empty until an import has run.")
+            .WithSummary("The Suno playlists n8Tracks knows, by name, unpaged: those seen in imports and those a sync read from the user's playlist list (#449), each with its members as an import last recorded them (clipIds, memberCount; empty until one did), songCount (Suno's own count as last listed; null when only an import saw it), and state (available, or unavailable when the last complete playlist list left it out or named it trashed). What the Sources editor offers as Inspiration (the available ones). Empty until an import or a sync has run.")
             .RequireScope(CredentialScopes.CatalogRead)
             .Produces<SunoPlaylistListResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden);
+
+        endpoints.MapGet(DiscoveredPlaylistsPath, GetKnownPlaylistsAsync)
+            .WithName("GetKnownSunoPlaylists")
+            .WithSummary("The Suno playlists n8Tracks knows, by name, unpaged, for the extension's sync panel (#449): each playlist's id, name, state, and songCount only, never its members. Read by the extension's sync (suno.sync).")
+            .RequireScope(CredentialScopes.SunoSync)
+            .Produces<SunoKnownPlaylistListResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
+        endpoints.MapPut(DiscoveredPlaylistsPath, ReportPlaylistsAsync)
+            .WithName("ReportSunoPlaylists")
+            .WithSummary("The extension reports the user's Suno playlists, as a sync reads them (#449): { complete, playlists: [<Suno's playlist object>] }. Each is kept by its id, with its name (a blank one never overwrites a known name), is_trashed, and song_count (else num_total_results); nothing else of the object is kept, and a playlist's members never change here (only an import commit records them). Only a complete list changes availability: a known playlist it leaves out, or names with is_trashed, becomes unavailable, and one it lists untrashed becomes available again. Nothing is deleted and no Version changes. An entry without an id refuses the whole report; a repeated id keeps the last. Answers the known playlists as GET .../discovered does. Taken from a sync (suno.sync).")
+            .RequireScope(CredentialScopes.SunoSync)
+            .Produces<SunoPlaylistReportResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         endpoints.MapGet(PersonasPath, GetPersonasAsync)
             .WithName("GetSunoPersonas")
@@ -74,6 +93,7 @@ internal static class SunoEndpoints
         endpoints.MapSunoIgnored();
         endpoints.MapSunoGenerationRequests();
         endpoints.MapSunoRemoteStates();
+        endpoints.MapSunoExportPlaylists();
         endpoints.MapSunoClipLookup();
 
         return endpoints;
@@ -118,7 +138,68 @@ internal static class SunoEndpoints
             playlist.Name,
             playlist.ClipIds.Count,
             playlist.ClipIds,
-            playlist.LastSeen))]));
+            playlist.LastSeen,
+            SunoPlaylistRules.NameOf(playlist.State),
+            playlist.SongCount))]));
+    }
+
+    /// <summary>200 with every playlist known, by name, without its members.</summary>
+    private static async Task<Ok<SunoKnownPlaylistListResponse>> GetKnownPlaylistsAsync(
+        SunoLibraryService library,
+        HttpContext context,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+        return TypedResults.Ok(SunoKnownPlaylistListResponse.From(await library.PlaylistsAsync(cancellationToken)));
+    }
+
+    /// <summary>
+    /// 200 with every playlist as it is now (without its members) and what the report changed; 422
+    /// <c>validation_failed</c>, storing nothing, when <c>complete</c> is not true or false or an entry
+    /// cannot be read. Logs counts only: never a name or anything else of Suno's playlist (invariant 6).
+    /// </summary>
+    private static async Task<Results<Ok<SunoPlaylistReportResponse>, ProblemHttpResult>> ReportPlaylistsAsync(
+        SunoPlaylistReportRequest? request,
+        SunoPlaylistService playlists,
+        SunoLibraryService library,
+        HttpContext context,
+        ILoggerFactory loggers,
+        CancellationToken cancellationToken)
+    {
+        SessionEndpoints.NoStore(context);
+
+        var complete = request?.Complete.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            _ => (bool?)null,
+        };
+        var reading = SunoPlaylistService.ReadReport(request?.Playlists ?? default);
+        var errors = reading is SunoPlaylistReportReading.Invalid invalid
+            ? new Dictionary<string, string[]>(invalid.Errors, StringComparer.Ordinal)
+            : new Dictionary<string, string[]>(StringComparer.Ordinal);
+        if (complete is null)
+        {
+            errors[SunoPlaylistService.CompleteField] = ["Send whether this is the complete list of playlists: true or false."];
+        }
+
+        if (errors.Count > 0 || reading is not SunoPlaylistReportReading.Read read)
+        {
+            return ApiProblem.ValidationFailed(context, errors);
+        }
+
+        var report = await playlists.ReportAsync(read.Listings, complete!.Value, cancellationToken);
+        loggers.CreateLogger(typeof(SunoEndpoints)).LogInformation(
+            "Suno playlists reported: {PlaylistCount} named, complete {Complete}; {AddedCount} added, {RenamedCount} renamed, {UnavailableCount} now unavailable, {AvailableCount} available again",
+            read.Listings.Count,
+            complete.Value,
+            report.Added.Count,
+            report.Renamed.Count,
+            report.BecameUnavailable.Count,
+            report.BecameAvailable.Count);
+
+        var list = SunoKnownPlaylistListResponse.From(await library.PlaylistsAsync(cancellationToken));
+        return TypedResults.Ok(new SunoPlaylistReportResponse(list.Items, report.Added, report.Renamed, report.BecameUnavailable, report.BecameAvailable));
     }
 
     /// <summary>200 with every persona seen, by name.</summary>
@@ -182,15 +263,43 @@ internal static class SunoEndpoints
     }
 }
 
-/// <summary>The Suno playlists seen in imports, by name.</summary>
+/// <summary>The Suno playlists n8Tracks knows, by name.</summary>
 internal sealed record SunoPlaylistListResponse(IReadOnlyList<SunoPlaylistResponse> Items);
 
 /// <summary>
-/// A Suno playlist seen in an import: its Suno ID (<c>id</c>), its name as last seen, how many clips
-/// it held then (<c>memberCount</c>) and their IDs in order (<c>clipIds</c>, the snapshot a Version
-/// keeps when it uses the playlist as Inspiration), and when it was last seen (UTC).
+/// A Suno playlist seen in an import or the user's playlist list: its Suno ID (<c>id</c>), its name as
+/// last seen, how many clips it held when an import last recorded its members (<c>memberCount</c>) and
+/// their IDs in order (<c>clipIds</c>, the snapshot a Version keeps when it uses the playlist as
+/// Inspiration; empty until an import recorded them), when it was last seen (UTC), <c>state</c>
+/// (<c>available</c> or <c>unavailable</c>, #449), and <c>songCount</c> (Suno's own count as last listed;
+/// null when only an import saw it).
 /// </summary>
-internal sealed record SunoPlaylistResponse(string Id, string Name, int MemberCount, IReadOnlyList<string> ClipIds, DateTimeOffset LastSeen);
+internal sealed record SunoPlaylistResponse(string Id, string Name, int MemberCount, IReadOnlyList<string> ClipIds, DateTimeOffset LastSeen, string State, int? SongCount);
+
+/// <summary>The Suno playlists n8Tracks knows, by name, without their members (#449).</summary>
+internal sealed record SunoKnownPlaylistListResponse(IReadOnlyList<SunoKnownPlaylistResponse> Items)
+{
+    public static SunoKnownPlaylistListResponse From(IReadOnlyList<SunoPlaylist> playlists) =>
+        new([.. playlists.Select(static playlist => new SunoKnownPlaylistResponse(
+            playlist.SunoId,
+            playlist.Name,
+            SunoPlaylistRules.NameOf(playlist.State),
+            playlist.SongCount))]);
+}
+
+/// <summary>A Suno playlist as the sync panel is told of it (#449): its Suno ID, name, state, and Suno's song count.</summary>
+internal sealed record SunoKnownPlaylistResponse(string Id, string Name, string State, int? SongCount);
+
+/// <summary>A playlist report as sent, read as raw JSON: <c>complete</c> (true or false) and <c>playlists</c> (Suno's playlist objects).</summary>
+internal sealed record SunoPlaylistReportRequest(JsonElement Complete, JsonElement Playlists);
+
+/// <summary>Every playlist as it is after a playlist report, without its members, and the Suno IDs the report added, renamed, made unavailable, and made available again.</summary>
+internal sealed record SunoPlaylistReportResponse(
+    IReadOnlyList<SunoKnownPlaylistResponse> Items,
+    IReadOnlyList<string> Added,
+    IReadOnlyList<string> Renamed,
+    IReadOnlyList<string> BecameUnavailable,
+    IReadOnlyList<string> BecameAvailable);
 
 /// <summary>The Suno personas n8Tracks knows, by name.</summary>
 internal sealed record SunoPersonaListResponse(IReadOnlyList<SunoPersonaResponse> Items)
