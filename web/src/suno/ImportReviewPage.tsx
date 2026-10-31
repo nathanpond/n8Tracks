@@ -39,6 +39,7 @@ import { ChoiceEditor } from './ChoiceEditor';
 import { ImportCommitView } from './ImportCommitView';
 import { LineageCell } from './LineageCell';
 import { RecordDiff } from './RecordDiff';
+import { PlaylistMemberships } from './PlaylistMemberships';
 import { RemoteStateChanges } from './RemoteStateChanges';
 import {
   CLASS_LABELS,
@@ -438,6 +439,18 @@ function LoadedReview({ id, onEnded }: { id: string; onEnded: () => void }) {
         }}
       />
 
+      {exported.scope?.kind === 'playlists' && (
+        <PlaylistMemberships
+          exportId={id}
+          revision={summary.revision}
+          onChanged={summaryLoad.reload}
+          onConflict={() => {
+            setConflict(true);
+          }}
+          onEnded={onEnded}
+        />
+      )}
+
       <Group gap="sm" align="flex-end" role="search" aria-label="Filter records">
         <NativeSelect
           label="Class"
@@ -780,6 +793,13 @@ function SummaryNumbers({ summary, testId }: { summary: ImportSummary; testId?: 
         <Text data-testid={testId === undefined ? 'summary-statuses' : undefined}>
           Update Suno’s status of {countText(summary.statusChanges ?? 0, 'Generation')} whose clip
           Suno finished since (their status only, whatever their choice).
+        </Text>
+      )}
+      {(summary.playlistChangesTotal ?? 0) > 0 && (
+        <Text data-testid={testId === undefined ? 'summary-playlists' : undefined}>
+          Record the songs of {countText(summary.playlistChanges ?? 0, 'playlist')} of{' '}
+          {String(summary.playlistChangesTotal ?? 0)} this sync read (which songs each holds; no
+          song is imported for it).
         </Text>
       )}
     </Stack>

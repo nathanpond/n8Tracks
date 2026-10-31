@@ -144,7 +144,7 @@ internal static class SunoExportsEndpoints
 
         endpoints.MapGet(SummaryPath, SummaryAsync)
             .WithName("GetSunoExportSummary")
-            .WithSummary("What confirming the export would do as its choices stand (#139): songs, versions (a new Song's Version 1 included), and generations to create, reimports among them, ignored (Don't copy, and records on the ignore list already that are not imported), and skipped (Skip this time); valid, and invalid choices by Suno ID with their reasons (at most 1,000 listed, invalidCount all), each checked again against the catalog as it is now; remoteChanges, how many Suno state changes (#142) confirming applies, of remoteChangesTotal; statusChanges, how many Generations confirming gives Suno's final status (complete or error) of a clip Suno finished since, whatever the records' choices (#314); nothingToDo when no record is imported or newly put on the ignore list and no Suno state change or final status is applied; nextKey, a temporary key no choice uses; the workspaces and playlists the records are in (id, name, count); and libraryExcluded, the kinds of clip Suno's library filters left out. With the export's revision as ETag.")
+            .WithSummary("What confirming the export would do as its choices stand (#139): songs, versions (a new Song's Version 1 included), and generations to create, reimports among them, ignored (Don't copy, and records on the ignore list already that are not imported), and skipped (Skip this time); valid, and invalid choices by Suno ID with their reasons (at most 1,000 listed, invalidCount all), each checked again against the catalog as it is now; remoteChanges, how many Suno state changes (#142) confirming applies, of remoteChangesTotal; statusChanges, how many Generations confirming gives Suno's final status (complete or error) of a clip Suno finished since, whatever the records' choices (#314); playlistChanges, how many playlists of a playlist sync confirming records the songs of, of playlistChangesTotal (#449); nothingToDo when no record is imported or newly put on the ignore list and no Suno state change, final status, or playlist's songs are applied; nextKey, a temporary key no choice uses; the workspaces and playlists the records are in (id, name, count); and libraryExcluded, the kinds of clip Suno's library filters left out. With the export's revision as ETag.")
             .SessionOnly()
             .Produces<SunoExportSummaryResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
@@ -1044,7 +1044,9 @@ internal sealed record SunoExportSummaryResponse(
     int Resolved,
     int RemoteChanges,
     int RemoteChangesTotal,
-    int StatusChanges)
+    int StatusChanges,
+    int PlaylistChanges,
+    int PlaylistChangesTotal)
 {
     public static SunoExportSummaryResponse From(ImportReviewSummary summary)
     {
@@ -1070,7 +1072,9 @@ internal sealed record SunoExportSummaryResponse(
             summary.Resolved,
             summary.RemoteChanges,
             summary.RemoteChangesTotal,
-            summary.StatusChanges);
+            summary.StatusChanges,
+            summary.PlaylistChanges,
+            summary.PlaylistChangesTotal);
     }
 }
 

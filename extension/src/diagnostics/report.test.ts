@@ -307,6 +307,7 @@ describe('the diagnostic report', () => {
       { id: 'recognise-suno', state: 'ready', step: null },
       { id: 'load-more', state: 'not_checked', step: null },
       { id: 'open-workspace-list', state: 'not_checked', step: null },
+      { id: 'open-playlist-list', state: 'not_checked', step: null },
       { id: 'signed-in', state: 'not_checked', step: null },
       { id: 'open-workspaces', state: 'not_checked', step: null },
       { id: 'search-workspaces', state: 'not_checked', step: null },

@@ -421,7 +421,7 @@ internal sealed class ImportCommitJob(
 
         await IgnoreAsync(export, plan, results, cancellationToken).ConfigureAwait(false);
         await RecordEventsAsync(attached, cancellationToken).ConfigureAwait(false);
-        await RecordLibraryAsync(export, attached, cancellationToken).ConfigureAwait(false);
+        var playlists = await RecordLibraryAsync(export, attached, cancellationToken).ConfigureAwait(false);
 
         foreach (var (clip, generationId) in attached)
         {
@@ -458,7 +458,10 @@ internal sealed class ImportCommitJob(
                 RemoteStateRules.NameOf(row.Kind),
                 row.Applied ? ImportCommitOutcomes.Applied : ImportCommitOutcomes.Skipped,
                 new CommittedRemoteGeneration(row.GenerationId, row.Shortcode)))],
-            [.. statuses.Select(static row => new CommittedStatus(row.SunoId, row.Status, new CommittedRemoteGeneration(row.GenerationId, row.Shortcode)))]);
+            [.. statuses.Select(static row => new CommittedStatus(row.SunoId, row.Status, new CommittedRemoteGeneration(row.GenerationId, row.Shortcode)))],
+            playlists.Count == 0
+                ? null
+                : [.. playlists.Select(static row => new CommittedPlaylist(row.SunoId, row.Recorded ? ImportCommitOutcomes.Applied : ImportCommitOutcomes.Skipped))]);
     }
 
     /// <summary>
@@ -507,28 +510,39 @@ internal sealed class ImportCommitJob(
 
     /// <summary>
     /// The Suno playlists and personas the clips attached touch, recorded for the Sources pickers (#153;
-    /// <see cref="SunoReadModels"/>): nothing when none was attached.
+    /// <see cref="SunoReadModels"/>), and then the membership of each playlist a playlist sync read, as
+    /// the user chose in the review (#449, <see cref="PlaylistMembershipService"/>). Those playlists are
+    /// left out of the first step, so a playlist whose membership the user chose not to record is not
+    /// recorded for holding an imported clip either. Returns the playlist rows and what was done with each.
     /// </summary>
-    private async Task RecordLibraryAsync(SunoExport export, List<(CommitClip Clip, Guid GenerationId)> attached, CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<PlaylistMembershipApplied>> RecordLibraryAsync(SunoExport export, List<(CommitClip Clip, Guid GenerationId)> attached, CancellationToken cancellationToken)
     {
-        if (attached.Count == 0)
+        var rows = await InScopeAsync<PlaylistMembershipService, IReadOnlySet<string>>(
+            membership => membership.RowIdsAsync(export, cancellationToken)).ConfigureAwait(false);
+        if (attached.Count > 0)
         {
-            return;
+            var imported = new List<(string SunoId, VersionLineage Lineage)>(attached.Count);
+            foreach (var (clip, _) in attached)
+            {
+                using var document = JsonDocument.Parse(clip.Record.RawJson);
+                imported.Add((clip.SunoId, LineageReader.Read(document.RootElement).Lineage));
+            }
+
+            var listed = (await SunoReadModels.ListedAsync(store, export, cancellationToken).ConfigureAwait(false))
+                .Where(playlist => !rows.Contains(playlist.Id))
+                .ToList();
+            var sightings = SunoReadModels.Of(listed, imported);
+            await InScopeAsync<SunoLibraryService, bool>(async library =>
+            {
+                await library.RecordAsync(sightings, time.GetUtcNow(), cancellationToken).ConfigureAwait(false);
+                return true;
+            }).ConfigureAwait(false);
         }
 
-        var imported = new List<(string SunoId, VersionLineage Lineage)>(attached.Count);
-        foreach (var (clip, _) in attached)
-        {
-            using var document = JsonDocument.Parse(clip.Record.RawJson);
-            imported.Add((clip.SunoId, LineageReader.Read(document.RootElement).Lineage));
-        }
-
-        var sightings = SunoReadModels.Of(await SunoReadModels.ListedAsync(store, export, cancellationToken).ConfigureAwait(false), imported);
-        await InScopeAsync<SunoLibraryService, bool>(async library =>
-        {
-            await library.RecordAsync(sightings, time.GetUtcNow(), cancellationToken).ConfigureAwait(false);
-            return true;
-        }).ConfigureAwait(false);
+        return rows.Count == 0
+            ? []
+            : await InScopeAsync<PlaylistMembershipService, IReadOnlyList<PlaylistMembershipApplied>>(
+                membership => membership.ApplyAsync(export, time.GetUtcNow(), cancellationToken)).ConfigureAwait(false);
     }
 
     private async Task<TResult> InScopeAsync<TService, TResult>(Func<TService, Task<TResult>> call)
@@ -1138,9 +1152,21 @@ internal sealed class CreatedCounts
 
 /// <summary>
 /// The commit job's result, kept with the job: every record's outcome, what was created, the Songs to link
-/// to, each remote-state row (#142), applied or skipped, and each Generation that took Suno's final status (#314).
+/// to, each remote-state row (#142), applied or skipped, each Generation that took Suno's final status (#314),
+/// and, for a playlist sync, each playlist whose membership was recorded (applied) or not (skipped) (#449;
+/// left out otherwise).
 /// </summary>
-internal sealed record CommitResult(Guid ExportId, IReadOnlyList<CommittedRecord> Records, CreatedCounts Created, IReadOnlyList<SongLink> Songs, IReadOnlyList<CommittedRemoteState> RemoteStates, IReadOnlyList<CommittedStatus> Statuses);
+internal sealed record CommitResult(
+    Guid ExportId,
+    IReadOnlyList<CommittedRecord> Records,
+    CreatedCounts Created,
+    IReadOnlyList<SongLink> Songs,
+    IReadOnlyList<CommittedRemoteState> RemoteStates,
+    IReadOnlyList<CommittedStatus> Statuses,
+    IReadOnlyList<CommittedPlaylist>? Playlists = null);
+
+/// <summary>A playlist a playlist sync read (#449): its Suno ID, and <c>applied</c> when its membership was recorded, else <c>skipped</c>.</summary>
+internal sealed record CommittedPlaylist(string SunoId, string Outcome);
 
 /// <summary>A Generation that took Suno's final status of its clip (#314): the clip, the status (<c>complete</c> or <c>error</c>), and the Generation.</summary>
 internal sealed record CommittedStatus(string SunoId, string Status, CommittedRemoteGeneration Generation);

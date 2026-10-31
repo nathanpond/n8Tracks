@@ -5,7 +5,7 @@ using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Infrastructure.Persistence;
 
-/// <summary>The Suno playlists and personas seen in imports and voice lists, in <c>suno_playlists</c> and <c>suno_personas</c>.</summary>
+/// <summary>The Suno playlists and personas seen in imports, voice lists, and playlist lists, in <c>suno_playlists</c> and <c>suno_personas</c>.</summary>
 internal sealed class SunoLibraryStore(N8TracksDbContext context) : ISunoLibraryStore
 {
     public async Task<IReadOnlyList<SunoPlaylist>> PlaylistsAsync(CancellationToken cancellationToken)
@@ -15,7 +15,29 @@ internal sealed class SunoLibraryStore(N8TracksDbContext context) : ISunoLibrary
             record.SunoId,
             record.Name,
             JsonSerializer.Deserialize<string[]>(record.ClipIds) ?? [],
-            UtcText.Parse(record.LastSeenUtc)))];
+            UtcText.Parse(record.LastSeenUtc),
+            SunoPlaylistRules.StateOf(record.State),
+            record.SongCount))];
+    }
+
+    public async Task SavePlaylistAsync(SunoPlaylist playlist, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(playlist);
+
+        var record = await context.SunoPlaylists.SingleOrDefaultAsync(row => row.SunoId == playlist.SunoId, cancellationToken).ConfigureAwait(false);
+        if (record is null)
+        {
+            record = new SunoPlaylistRecord { SunoId = playlist.SunoId, Name = playlist.Name, ClipIds = "[]", LastSeenUtc = UtcText.From(playlist.LastSeen) };
+            context.SunoPlaylists.Add(record);
+        }
+
+        // The members are an import's to record (#153, #449): a playlist list never changes them.
+        record.Name = playlist.Name;
+        record.State = SunoPlaylistRules.NameOf(playlist.State);
+        record.SongCount = playlist.SongCount;
+        record.LastSeenUtc = UtcText.From(playlist.LastSeen);
+        await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        context.Entry(record).State = EntityState.Detached;
     }
 
     public async Task<IReadOnlyList<SunoPersona>> PersonasAsync(CancellationToken cancellationToken)

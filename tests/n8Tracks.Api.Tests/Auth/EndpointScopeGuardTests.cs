@@ -184,6 +184,17 @@ public sealed class EndpointScopeGuardTests
         var workspaces = endpoints.Single(static endpoint => Describe(endpoint) == "GET /api/v1/suno/workspaces").Metadata.GetMetadata<RequiredScopes>()!;
         Assert.True(workspaces.AnyOf);
         Assert.Equal([CredentialScopes.CatalogRead, CredentialScopes.SunoSync], workspaces.Scopes);
+
+        // The sync panel reads the playlists n8Tracks knows with suno.sync alone (#449), from a list of their
+        // names and states only; the Sources editor's list, which holds their members, stays catalog.read.
+        Assert.Equal("scope", markers["GET /api/v1/suno/playlists/discovered"]);
+        Assert.Equal("scope", markers["PUT /api/v1/suno/playlists/discovered"]);
+        var known = endpoints.Single(static endpoint => Describe(endpoint) == "GET /api/v1/suno/playlists/discovered").Metadata.GetMetadata<RequiredScopes>()!;
+        Assert.Equal([CredentialScopes.SunoSync], known.Scopes);
+        var members = endpoints.Single(static endpoint => Describe(endpoint) == "GET /api/v1/suno/playlists").Metadata.GetMetadata<RequiredScopes>()!;
+        Assert.Equal([CredentialScopes.CatalogRead], members.Scopes);
+        Assert.Equal("session-only", markers["GET /api/v1/suno/exports/{id:guid}/playlists"]);
+        Assert.Equal("session-only", markers["PATCH /api/v1/suno/exports/{id:guid}/playlists"]);
     }
 
     /// <summary>Proves the check bites: an endpoint added to the test host without a marker fails it.</summary>
@@ -258,7 +269,7 @@ public sealed class EndpointScopeGuardTests
             }
         }
 
-        Assert.Equal(65, sessionOnly);
+        Assert.Equal(67, sessionOnly);
 
         // An anonymous endpoint answers as it would without the header, even to a token that is not one.
         using var status = await CredentialApi.SendRawAsync(client, HttpMethod.Get, SetupApi.Status, "Bearer not-a-token");

@@ -2163,6 +2163,10 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("library_filters_json");
 
+                    b.Property<string>("PlaylistChoicesJson")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("playlist_choices_json");
+
                     b.Property<string>("PlaylistsJson")
                         .IsRequired()
                         .HasColumnType("TEXT")
@@ -2491,6 +2495,17 @@ namespace n8Tracks.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT")
                         .HasColumnName("name");
+
+                    b.Property<int?>("SongCount")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("song_count");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("available")
+                        .HasColumnName("state");
 
                     b.HasKey("SunoId")
                         .HasName("pk_suno_playlists");

@@ -298,6 +298,56 @@ describe("a prepared download's answer (#216, TS-004)", () => {
   });
 });
 
+describe('what the observer forwards of the playlist list (#449)', () => {
+  const captured = sunoFixture('playlist-me.response') as Record<string, unknown>;
+
+  it("forwards the paging counts and each playlist's id, name, trashed flag, and counts only", () => {
+    const forwarded = forwardedBody('playlists', { ...captured, token: 'T' }) as {
+      playlists: Record<string, unknown>[];
+    };
+    const playlists = captured.playlists as Record<string, unknown>[];
+
+    expect(Object.keys(forwarded).toSorted()).toEqual([
+      'current_page',
+      'num_total_results',
+      'playlists',
+    ]);
+    expect(forwarded.playlists).toEqual(
+      playlists.map((playlist) => ({
+        id: playlist.id,
+        name: playlist.name,
+        is_trashed: playlist.is_trashed,
+        song_count: playlist.song_count,
+        num_total_results: playlist.num_total_results,
+      })),
+    );
+    // Invariant 6: the owner's handle, display name, and avatar, the image, and the description stay in the page.
+    const sent = JSON.stringify(forwarded);
+    for (const kept of [
+      'user_handle',
+      'user_display_name',
+      'user_avatar_image_url',
+      'image_url',
+      'description',
+      '"T"',
+    ]) {
+      expect(sent).not.toContain(kept);
+    }
+    expect(JSON.stringify(captured)).toContain('user_handle');
+  });
+
+  it('drops a field of the wrong type, keeps a playlist that is not an object as {}, and answers {} for no object', () => {
+    expect(
+      forwardedBody('playlists', {
+        current_page: '1',
+        num_total_results: 2,
+        playlists: [{ id: 'p1', name: 5, song_count: '3', is_trashed: 'no' }, 'p2'],
+      }),
+    ).toEqual({ num_total_results: 2, playlists: [{ id: 'p1' }, {}] });
+    expect(forwardedBody('playlists', 'not json')).toEqual({});
+  });
+});
+
 describe('what the observer forwards of the voice list (#439)', () => {
   const captured = sunoFixture('persona-get-personas.response') as Record<string, unknown>;
 

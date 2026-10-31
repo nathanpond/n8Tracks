@@ -20,7 +20,7 @@ import {
   closeDownloadDialog,
   openClipMenu,
 } from './download.ts';
-import { openWorkspaceList } from './libraryTabs.ts';
+import { openPlaylistList, openWorkspaceList } from './libraryTabs.ts';
 import { loadMore } from './loadMore.ts';
 import { recogniseSuno } from './recognise.ts';
 import {
@@ -49,6 +49,7 @@ export const ADAPTER_WORKFLOWS: readonly Workflow[] = [
   recogniseSuno,
   loadMore,
   openWorkspaceList,
+  openPlaylistList,
   signedIn,
   openWorkspaces,
   searchWorkspaces,

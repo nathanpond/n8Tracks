@@ -1,17 +1,117 @@
 namespace n8Tracks.Domain.Suno;
 
 /// <summary>
-/// A Suno playlist n8Tracks has seen in an import: its Suno ID, its name as last seen, and the clip IDs
-/// it held then, in order. A read model, filled by the import stories (#137, #153), that the Sources
-/// editor offers as Inspiration; a Version that uses one keeps its own snapshot of the clips.
+/// A Suno playlist n8Tracks knows: seen in an import, or listed by the user's playlist list, which a
+/// sync reads (#449). Its Suno ID, its name as last seen, the clip IDs it held when its membership was
+/// last recorded (by an import commit), in order, whether Suno still offers it, and how many songs
+/// Suno last said it holds. A read model that the Sources editor offers as Inspiration; a Version that
+/// uses one keeps its own snapshot of the clips. Records are never deleted in V1.
 /// </summary>
 /// <param name="SunoId">The playlist's Suno ID.</param>
 /// <param name="Name">Its name as last seen; may be blank (the ID is shown instead).</param>
-/// <param name="ClipIds">The clip IDs it held when last seen, in order.</param>
-/// <param name="LastSeen">When an import last saw it.</param>
-public sealed record SunoPlaylist(string SunoId, string Name, IReadOnlyList<string> ClipIds, DateTimeOffset LastSeen)
+/// <param name="ClipIds">The clip IDs it held when its membership was last recorded, in order; empty when it never was.</param>
+/// <param name="LastSeen">When an import or a playlist list last saw it.</param>
+/// <param name="State">Whether Suno still offers it, as the last complete playlist list said (#449).</param>
+/// <param name="SongCount">How many songs Suno last said it holds (its playlist list's <c>song_count</c>); null when only an import saw it.</param>
+public sealed record SunoPlaylist(
+    string SunoId,
+    string Name,
+    IReadOnlyList<string> ClipIds,
+    DateTimeOffset LastSeen,
+    SunoPlaylistState State = SunoPlaylistState.Available,
+    int? SongCount = null)
 {
     public IReadOnlyList<string> ClipIds { get; } = ClipIds ?? throw new ArgumentNullException(nameof(ClipIds));
+}
+
+/// <summary>Whether Suno still offers a playlist (#449), as for a persona (<see cref="SunoPersonaState"/>).</summary>
+public enum SunoPlaylistState
+{
+    /// <summary>Listed untrashed by the last complete playlist list, or never contradicted by one: offered as Inspiration.</summary>
+    Available,
+
+    /// <summary>Missing from the last complete playlist list, or trashed in Suno: a Version keeps it, but the picker no longer offers it.</summary>
+    Unavailable,
+}
+
+/// <summary>
+/// One playlist as the user's playlist list names it (#449, <c>GET /api/playlist/me</c>): the fields
+/// n8Tracks reads. Nothing else of Suno's playlist is kept (its image, its owner's handle and display
+/// name, its description, and its counts of plays and votes are never stored).
+/// </summary>
+/// <param name="SunoId">The playlist's <c>id</c>.</param>
+/// <param name="Name">Its <c>name</c>; null or blank when Suno sent none.</param>
+/// <param name="IsTrashed">Its <c>is_trashed</c>; false when Suno sent none.</param>
+/// <param name="SongCount">Its <c>song_count</c> (else <c>num_total_results</c>); null when Suno sent neither.</param>
+public sealed record SunoPlaylistListing(string SunoId, string? Name, bool IsTrashed, int? SongCount);
+
+/// <summary>
+/// The rules of keeping playlist records from the playlist lists a sync reports (#449). They mirror
+/// <see cref="SunoPersonaRules"/>: only a complete list changes whether a playlist is Available, and a
+/// list never changes a playlist's membership, which only an import commit records.
+/// </summary>
+public static class SunoPlaylistRules
+{
+    /// <summary>A Suno ID: a UUID in practice, kept as text up to this length (the table's check).</summary>
+    public const int SunoIdMaximumLength = 100;
+
+    public const int NameMaximumLength = 500;
+
+    /// <summary>The largest playlist object read, in characters of its JSON text (none is kept).</summary>
+    public const int RawJsonMaximumLength = 65_536;
+
+    /// <summary>How many playlists one report may name.</summary>
+    public const int MaximumReported = 1_000;
+
+    /// <summary>
+    /// The record after a listing. A playlist seen for the first time is Available, unless it is first
+    /// listed trashed, and holds no recorded members. A known one takes the listing's name unless that
+    /// is blank, its song count when sent, and the listing time as last seen; its members stay as they
+    /// are. Its state changes only when <paramref name="complete"/>: Unavailable when trashed, otherwise Available.
+    /// </summary>
+    public static SunoPlaylist Seen(SunoPlaylist? known, SunoPlaylistListing listing, bool complete, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(listing);
+
+        var name = string.IsNullOrWhiteSpace(listing.Name) ? null : listing.Name.Trim();
+        var reported = listing.IsTrashed ? SunoPlaylistState.Unavailable : SunoPlaylistState.Available;
+        if (known is null)
+        {
+            return new SunoPlaylist(listing.SunoId, name ?? string.Empty, [], now, reported, listing.SongCount);
+        }
+
+        return known with
+        {
+            Name = name ?? known.Name,
+            SongCount = listing.SongCount ?? known.SongCount,
+            State = complete ? reported : known.State,
+            LastSeen = now,
+        };
+    }
+
+    /// <summary>A known playlist a complete playlist list leaves out: Unavailable, everything else as it was.</summary>
+    public static SunoPlaylist Unlisted(SunoPlaylist known)
+    {
+        ArgumentNullException.ThrowIfNull(known);
+
+        return known with { State = SunoPlaylistState.Unavailable };
+    }
+
+    /// <summary>The API's and the table's name for a state.</summary>
+    public static string NameOf(SunoPlaylistState state) => state switch
+    {
+        SunoPlaylistState.Available => "available",
+        SunoPlaylistState.Unavailable => "unavailable",
+        _ => throw new ArgumentOutOfRangeException(nameof(state)),
+    };
+
+    /// <summary>The state a stored name means.</summary>
+    public static SunoPlaylistState StateOf(string name) => name switch
+    {
+        "available" => SunoPlaylistState.Available,
+        "unavailable" => SunoPlaylistState.Unavailable,
+        _ => throw new ArgumentOutOfRangeException(nameof(name), name, "Not a playlist state."),
+    };
 }
 
 /// <summary>

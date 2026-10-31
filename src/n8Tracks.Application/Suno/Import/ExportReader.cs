@@ -4,8 +4,12 @@ using n8Tracks.Domain.Suno;
 
 namespace n8Tracks.Application.Suno.Import;
 
-/// <summary>A playlist as an export names it: Suno's ID, its name, and the Suno IDs of its clips.</summary>
-public sealed record ExportPlaylist(string Id, string? Name, IReadOnlyList<string> ClipIds);
+/// <summary>
+/// A playlist as an export names it: Suno's ID, its name, and the Suno IDs of its clips. A playlist sync
+/// (#449) also sends <paramref name="SongCount"/>, how many songs the playlist's page said it holds, so a
+/// read that fell short of it is known as read in part; null when not sent.
+/// </summary>
+public sealed record ExportPlaylist(string Id, string? Name, IReadOnlyList<string> ClipIds, int? SongCount = null);
 
 /// <summary>What reading an export's header gave.</summary>
 public abstract record ExportHeaderReading
@@ -324,9 +328,9 @@ public static class ExportReader
         return [];
     }
 
-    /// <summary>The playlists as stored: <c>[{ id, name, clipIds }]</c>.</summary>
+    /// <summary>The playlists as stored: <c>[{ id, name, clipIds, songCount }]</c>.</summary>
     public static string PlaylistsJson(IReadOnlyList<ExportPlaylist> playlists) =>
-        JsonSerializer.Serialize(playlists.Select(static playlist => new { id = playlist.Id, name = playlist.Name, clipIds = playlist.ClipIds }));
+        JsonSerializer.Serialize(playlists.Select(static playlist => new { id = playlist.Id, name = playlist.Name, clipIds = playlist.ClipIds, songCount = playlist.SongCount }));
 
     private static void ReadClips(JsonElement root, string list, bool trashed, List<StagedClip> staged, Dictionary<string, string[]> errors)
     {
@@ -406,9 +410,21 @@ public static class ExportReader
                 }
             }
 
+            int? songCount = null;
+            if (playlist.TryGetProperty("songCount", out var countValue) && countValue.ValueKind != JsonValueKind.Null)
+            {
+                if (countValue.ValueKind != JsonValueKind.Number || !countValue.TryGetInt32(out var count) || count < 0)
+                {
+                    errors[at + ".songCount"] = ["Send how many songs the playlist's page said it holds: a whole number, 0 or more, or null."];
+                    continue;
+                }
+
+                songCount = count;
+            }
+
             if (Ids(playlist, "clipIds", at + ".clipIds", errors) is { } clipIds)
             {
-                read.Add(new ExportPlaylist(playlistId, name, clipIds));
+                read.Add(new ExportPlaylist(playlistId, name, clipIds, songCount));
             }
         }
 

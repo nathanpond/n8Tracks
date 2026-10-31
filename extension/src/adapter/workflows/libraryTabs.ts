@@ -48,3 +48,43 @@ export const openWorkspaceList: Workflow = {
   ],
   fixtures: ['library-list', 'library-songs-page-1', 'library-songs-groups'],
 };
+
+/**
+ * Library's Playlists tab (#449): the tab beside Songs whose whole text is "Playlists" and which
+ * leads to `/me/playlists`, found as {@link WORKSPACES_TAB} is.
+ */
+export const PLAYLISTS_TAB: Target = {
+  role: 'tab',
+  name: 'Playlists',
+  address: '/me/playlists',
+  description: "the Playlists tab in Library's tab row, leading to /me/playlists",
+};
+
+/**
+ * Brings the user's playlist list onto the page for the sync's playlist-list leg and the panel's
+ * Refresh from Suno (#449). As for the workspace list (#421), a direct load of `/me/playlists` asks
+ * Suno for nothing (TS-007); pressing Library's Playlists tab on `/me` makes the page ask for
+ * `GET /api/playlist/me`. A tab changes only what Library shows; the press goes through the click
+ * primitive, so the forbidden-control matcher is asked as for any other control.
+ */
+export const openPlaylistList: Workflow = {
+  id: 'open-playlist-list',
+  title: "Open Library's Playlists tab",
+  feature: 'sync',
+  startsOn: sunoPage('library'),
+  needs: [{ step: 'playlists tab', check: (page) => present(page, PLAYLISTS_TAB) }],
+  steps: [
+    {
+      name: 'playlists tab',
+      expect: ({ page }) => present(page, PLAYLISTS_TAB),
+      act: ({ page }) => {
+        const tab = page.find(PLAYLISTS_TAB);
+        if (tab.kind === 'found') {
+          page.click(tab.found);
+        }
+      },
+      verify: () => OK,
+    },
+  ],
+  fixtures: ['library-list', 'library-songs-page-1', 'library-songs-groups'],
+};

@@ -232,6 +232,45 @@ public sealed class ImportNeverOverwritesGuardTests
     }
 
     /// <summary>
+    /// A playlist sync's memberships (#449) change only by the user's confirmed choice: a commit records
+    /// the members of the playlist left to record (here, one already known: only its row changes), and of
+    /// no other. The one chosen not to record, and the one read in part and not chosen, keep their rows
+    /// as they were, and no other catalog row changes, though one song is not imported.
+    /// </summary>
+    [Fact]
+    public async Task APlaylistSyncChangesOnlyTheMembershipTheUserLeftToRecord()
+    {
+        using var factory = SongApi.Host();
+        using var client = await SessionApi.SignedInClientAsync(factory);
+        var token = await SunoWorkspaceApi.ExtensionTokenAsync(factory);
+        await PlaylistMembershipTests.ImportAsync(client, token, "c-have");
+        TestDatabase.Execute(factory.DataPath, """
+            INSERT INTO suno_playlists (suno_id, name, clip_ids, last_seen_utc) VALUES
+                ('pl-record', 'Recorded', '["c-old"]', '2026-09-01T00:00:00.000Z'),
+                ('pl-declined', 'Declined', '["c-old"]', '2026-09-01T00:00:00.000Z'),
+                ('pl-partial', 'Partial', '["c-old"]', '2026-09-01T00:00:00.000Z'),
+                ('pl-other', 'Untouched', '["x"]', '2026-09-01T00:00:00.000Z');
+            """);
+        var exportId = await PlaylistMembershipTests.PlaylistExportAsync(
+            client,
+            token,
+            [],
+            PlaylistMembershipTests.Membership("pl-record", "Recorded", 2, "c-have", "c-none"),
+            PlaylistMembershipTests.Membership("pl-declined", "Declined", 1, "c-have"),
+            PlaylistMembershipTests.Membership("pl-partial", "Partial", 9, "c-have"));
+        await PlaylistMembershipTests.SetAsync(client, exportId, record: false, "pl-declined");
+        var before = Rows(factory.DataPath);
+
+        await ImportCommitApi.CommitAsync(client, exportId);
+
+        var changes = Differences(before, Rows(factory.DataPath));
+        var (table, kind, key, row) = Assert.Single(changes);
+        Assert.Equal(("suno_playlists", 'C', "pl-record"), (table, kind, key));
+        Assert.True(before[table][key].SameExcept(row, "clip_ids", "last_seen_utc"));
+        Assert.Equal("""["c-have","c-none"]""", row["clip_ids"]);
+    }
+
+    /// <summary>
     /// The guard bites: with the commit made to retitle an existing Generation that no choice names (as
     /// an import must never do), the same run reports that row as unexplained.
     /// </summary>

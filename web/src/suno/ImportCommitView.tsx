@@ -1,6 +1,7 @@
 import { Anchor, Loader, Progress, Stack, Table, Text, Title } from '@mantine/core';
 import { Link } from 'react-router';
 import { useCommitJob, type CommitJob, type SunoImport } from '../api/sunoImports';
+import { playlistResultText } from '../api/sunoPlaylistMemberships';
 import { remoteResultText } from '../api/sunoRemoteStates';
 import { Notice } from '../components/Notice';
 import {
@@ -89,6 +90,9 @@ export function ImportCommitView({
       )}
       {result.statuses !== undefined && result.statuses.length > 0 && (
         <Text data-testid="commit-statuses">{statusResultText(result.statuses)}</Text>
+      )}
+      {result.playlists !== undefined && result.playlists.length > 0 && (
+        <Text data-testid="commit-playlists">{playlistResultText(result.playlists)}</Text>
       )}
       {result.songs.length > 0 && (
         <Stack gap={4} component="section" aria-labelledby="commit-songs-title">

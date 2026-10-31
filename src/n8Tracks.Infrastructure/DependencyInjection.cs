@@ -90,6 +90,7 @@ public static class DependencyInjection
         services.AddScoped<ISunoIgnoreListStore, SunoIgnoreListStore>();
         services.AddScoped<ISongWorkspaceStore, SunoWorkspaceStore>();
         services.AddScoped<IRemoteStateStore, RemoteStateStore>();
+        services.AddScoped<IPlaylistMembershipStore, PlaylistMembershipStore>();
         services.AddScoped<IGenerationRequestStore, SunoGenerationRequestStore>();
         services.AddScoped<IVersionDefaultsStore, VersionDefaultsStore>();
         services.AddSingleton<IMediaMount, MediaMountReader>();

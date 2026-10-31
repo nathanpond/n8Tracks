@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { apiFetch } from './client';
 import { ifMatch } from './saves';
 import { body, isErrorMap, isRecord, useResource } from './songs';
+import type { CommittedPlaylist } from './sunoPlaylistMemberships';
 import type { CommittedRemoteState } from './sunoRemoteStates';
 
 /** Where the review page of the export with ID `id` is (#139); the extension opens it after a sync. */
@@ -60,6 +61,8 @@ export interface SunoImport {
   trashedNotOffered?: number;
   /** The background job last run for it: classifying a large export, or committing it (#140). */
   jobId?: string | null;
+  /** What the sync read: `library`, `workspaces`, `playlists`, or `clips`, with the Suno IDs it named. */
+  scope?: { kind: string; ids: string[] };
 }
 
 /** A new Song, a new Version of a Song, or an existing Version, as stored in a choice. */
@@ -239,6 +242,9 @@ export interface ImportSummary {
   remoteChangesTotal?: number;
   /** How many Generations confirming gives Suno's final status of a clip it finished since (#314). */
   statusChanges?: number;
+  /** How many playlists of a playlist sync confirming records the songs of, of how many it read (#449). */
+  playlistChanges?: number;
+  playlistChangesTotal?: number;
 }
 
 /** The filters of the review: class, workspace, playlist (Suno IDs), and text in the title. */
@@ -700,6 +706,8 @@ export interface CommitResult {
   remoteStates?: CommittedRemoteState[];
   /** The Generations that took Suno's final status of their clip (#314). */
   statuses?: CommittedStatus[];
+  /** A playlist sync's playlists (#449), their songs recorded (`applied`) or left (`skipped`). */
+  playlists?: CommittedPlaylist[];
 }
 
 /** A Generation that took Suno's final status of its clip at the commit (#314). */

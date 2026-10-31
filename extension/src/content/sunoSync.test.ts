@@ -100,21 +100,51 @@ function worker(
   session: SyncSession | null,
   connection: ConnectionState = CONNECTED,
   images: ImageProgress[] = [],
-  workspaces: { known?: KnownWorkspace[]; refresh?: boolean; reportRefused?: string } = {},
+  workspaces: {
+    known?: KnownWorkspace[];
+    refresh?: boolean;
+    reportRefused?: string;
+    knownPlaylists?: KnownWorkspace[];
+    refreshPlaylists?: boolean;
+  } = {},
 ) {
   const asked: Request[] = [];
   let current = session;
   let refresh = workspaces.refresh === true;
+  let refreshPlaylists = workspaces.refreshPlaylists === true;
   const send = (request: Request): Promise<unknown> => {
     asked.push(structuredClone(request));
     switch (request.type) {
       case 'state':
         return Promise.resolve(connection);
       case 'sync-resume': {
-        const answer = refresh && current === null ? { session: null, refresh: true } : null;
+        const answer =
+          refresh && current === null
+            ? { session: null, refresh: true }
+            : refreshPlaylists && current === null
+              ? { session: null, refreshPlaylists: true }
+              : null;
         refresh = false;
+        refreshPlaylists = false;
         return Promise.resolve(answer ?? { session: current });
       }
+      case 'sync-playlists-known':
+        return Promise.resolve({
+          ok: true,
+          playlists: workspaces.knownPlaylists ?? [],
+          message: '',
+        });
+      case 'sync-playlists-refresh':
+        return Promise.resolve({ ok: true });
+      case 'sync-playlists-report':
+        return Promise.resolve({
+          ok: true,
+          playlists: request.playlists.map((playlist) => ({
+            id: playlist.id,
+            name: playlist.name,
+          })),
+          message: '',
+        });
       case 'sync-workspaces-known':
         return Promise.resolve({ ok: true, workspaces: workspaces.known ?? [], message: '' });
       case 'sync-workspaces-refresh':
@@ -632,7 +662,7 @@ describe('reading a leg after its page loads', () => {
   it('reads the library into the export, then opens the Trash', async () => {
     const page = sunoObject('feed-v3.library-page-1.response');
     page.has_more = false;
-    const sw = worker(sessionAt(2, { workspaces: [{ id: 'w1' }] }));
+    const sw = worker(sessionAt(3, { workspaces: [{ id: 'w1' }] }));
     const { content: started, visited } = start({
       address: 'https://suno.com/me',
       worker: sw,
@@ -660,7 +690,7 @@ describe('reading a leg after its page loads', () => {
     second.has_more = false;
     const next = observed('library-feed', second, LIBRARY_FILTERS);
     next.request = { ...next.request, cursor: 'page-2' };
-    const sw = worker(sessionAt(2, { workspaces: [{ id: 'w1' }] }));
+    const sw = worker(sessionAt(3, { workspaces: [{ id: 'w1' }] }));
     const pressed: Element[] = [];
     document.addEventListener(
       'click',
@@ -696,7 +726,7 @@ describe('reading a leg after its page loads', () => {
     page.has_more = false;
     delete page.next_cursor;
     const sw = worker(
-      sessionAt(2, { scope, legs: legsFor(scope), workspaces: [{ id: 'w1' }, { id: 'w2' }] }),
+      sessionAt(3, { scope, legs: legsFor(scope), workspaces: [{ id: 'w1' }, { id: 'w2' }] }),
     );
     const { content: started, visited } = start({
       address: 'https://suno.com/create?wid=w1',
@@ -731,7 +761,7 @@ describe('reading a leg after its page loads', () => {
     delete second.next_cursor;
     const next = observed('library-feed', second, workspaceFilters('w1'));
     next.request = { ...next.request, cursor: 'page-2' };
-    const sw = worker(sessionAt(2, { scope, legs: legsFor(scope), workspaces: [{ id: 'w1' }] }));
+    const sw = worker(sessionAt(3, { scope, legs: legsFor(scope), workspaces: [{ id: 'w1' }] }));
     const pressed: string[] = [];
     document.addEventListener(
       'click',
@@ -762,7 +792,7 @@ describe('reading a leg after its page loads', () => {
   it("stops as 'Suno tab lost' when the Create page is not the workspace's own (#422)", async () => {
     const scope: SyncScope = { kind: 'workspaces', ids: ['w1', 'w2'], readTrash: false };
     for (const address of ['https://suno.com/create?wid=w2', 'https://suno.com/create']) {
-      const sw = worker(sessionAt(2, { scope, legs: legsFor(scope) }));
+      const sw = worker(sessionAt(3, { scope, legs: legsFor(scope) }));
       const { content: started, text } = start({
         address,
         snapshot: 'create-workspace-songs-groups',
@@ -783,7 +813,7 @@ describe('reading a leg after its page loads', () => {
   it('reads the Trash, completes the export, and says the review is open', async () => {
     const trash = sunoObject('clips-trashed-v2.response');
     delete trash.next_cursor;
-    const sw = worker(sessionAt(3, { exportId: 'e1', partNumber: 1 }));
+    const sw = worker(sessionAt(4, { exportId: 'e1', partNumber: 1 }));
     const {
       content: started,
       visited,
@@ -820,7 +850,7 @@ describe('reading a leg after its page loads', () => {
       ignored: 0,
       ...change,
     });
-    const sw = worker(sessionAt(3, { exportId: 'e1', partNumber: 1 }), CONNECTED, [
+    const sw = worker(sessionAt(4, { exportId: 'e1', partNumber: 1 }), CONNECTED, [
       progress({ state: 'waiting', sent: 0 }),
       progress({}),
       progress({ state: 'finished', sent: 3, failed: 1 }),
@@ -847,7 +877,7 @@ describe('reading a leg after its page loads', () => {
   });
 
   it("stops as 'Suno tab lost' and discards the export when the tab is not on the leg's page", async () => {
-    const sw = worker(sessionAt(2, { exportId: 'e1' }));
+    const sw = worker(sessionAt(3, { exportId: 'e1' }));
     const {
       content: started,
       text,
@@ -868,7 +898,7 @@ describe('reading a leg after its page loads', () => {
   });
 
   it('stops at a page that does not look as expected, naming the step, and offers nothing for review', async () => {
-    const sw = worker(sessionAt(2));
+    const sw = worker(sessionAt(3));
     const {
       content: started,
       text,
@@ -893,17 +923,17 @@ describe('reading a leg after its page loads', () => {
   });
 
   it('opens the page again when no first page came, twice at most', async () => {
-    const sw = worker(sessionAt(2));
+    const sw = worker(sessionAt(3));
     const first = start({ address: 'https://suno.com/me', worker: sw });
     await first.content.resumed;
 
     expect(sw.asked.find((request) => request.type === 'sync-save')).toMatchObject({
-      progress: { leg: 2, attempt: 1 },
+      progress: { leg: 3, attempt: 1 },
     });
     expect(first.visited).toEqual(['https://suno.com/me']);
 
     content?.stop();
-    const again = worker(sessionAt(2, { attempt: 2 }));
+    const again = worker(sessionAt(3, { attempt: 2 }));
     const last = start({ address: 'https://suno.com/me', worker: again });
     await last.content.resumed;
 
@@ -927,7 +957,7 @@ describe('reading a leg after its page loads', () => {
           }, 1);
         }),
     };
-    const sw = worker(sessionAt(2, { exportId: 'e1' }));
+    const sw = worker(sessionAt(3, { exportId: 'e1' }));
     const {
       content: started,
       text,
@@ -1060,7 +1090,7 @@ describe("reading the user's voices on Create (#439)", () => {
     const trash = sunoObject('clips-trashed-v2.response');
     delete trash.next_cursor;
     const sw = worker(
-      sessionAt(3, {
+      sessionAt(4, {
         exportId: 'e1',
         partNumber: 1,
         counts: { clips: 0, trashed: 0, workspaces: 0, playlists: 0, voices: 2 },
@@ -1083,5 +1113,181 @@ describe("reading the user's voices on Create (#439)", () => {
     expect(text('.sync-voices')).toBe(
       'Only some of your voices were read (Suno sent no further page), so none was marked unavailable.',
     );
+  });
+});
+
+describe('playlists (#449)', () => {
+  const PLAYLIST_SCOPE: SyncScope = {
+    kind: 'playlists',
+    playlists: [{ id: '00000000-0000-4000-8000-00000000050a', name: 'Harbour Lights' }],
+    readTrash: false,
+  };
+  /** The song rows of `page.playlist-groups.html`: three of its 24 songs. */
+  const ROW_IDS = [
+    '00000000-0000-4000-8000-00000000050c',
+    '00000000-0000-4000-8000-00000000050e',
+    '00000000-0000-4000-8000-00000000050f',
+  ];
+
+  /** A page of the playlist list as the observer forwards it: made-up names. */
+  function playlistList(ids: string[]): ObservedMessage {
+    return observed('playlists', {
+      current_page: 1,
+      num_total_results: ids.length,
+      playlists: ids.map((id) => ({ id, name: `Mix ${id}`, is_trashed: false, song_count: 3 })),
+    });
+  }
+
+  /** Library's Playlists tab answers its press with `answer`, as Suno's request would. */
+  function answerPlaylistsTab(answer: () => void): string[] {
+    const pressed: string[] = [];
+    const tab = [...document.querySelectorAll('[role="tab"]')].find(
+      (element) => element.textContent === 'Playlists',
+    );
+    if (tab === undefined) {
+      throw new Error('the snapshot has no Playlists tab');
+    }
+    document.addEventListener(
+      'click',
+      (event) => {
+        const target = event.target as Element;
+        pressed.push(target.textContent);
+        if (target === tab) {
+          event.preventDefault();
+          answer();
+        }
+      },
+      { capture: true },
+    );
+    return pressed;
+  }
+
+  it("reads the playlist list on Library by its Playlists tab, reports it, and goes on (the sync's leg)", async () => {
+    const legs = legsFor(PLAYLIST_SCOPE);
+    const sw = worker(sessionAt(2, { scope: PLAYLIST_SCOPE, legs }));
+    const { content: started, visited } = start({ address: 'https://suno.com/me', worker: sw });
+    const pressed = answerPlaylistsTab(() => {
+      started.observations.take(playlistList(['p1', 'p2']));
+    });
+
+    await started.resumed;
+
+    expect(pressed).toEqual(['Playlists']);
+    expect(sw.asked).toContainEqual({
+      type: 'sync-playlists-report',
+      complete: true,
+      playlists: [
+        { id: 'p1', name: 'Mix p1', is_trashed: false, song_count: 3 },
+        { id: 'p2', name: 'Mix p2', is_trashed: false, song_count: 3 },
+      ],
+    });
+    expect(sw.types()).not.toContain('sync-create');
+    expect(visited).toEqual(['https://suno.com/playlist/00000000-0000-4000-8000-00000000050a']);
+  });
+
+  it("reads a playlist's songs from the rows of its page, scrolls for more, and says it was read in part", async () => {
+    const legs = legsFor(PLAYLIST_SCOPE);
+    const sw = worker(sessionAt(3, { scope: PLAYLIST_SCOPE, legs }));
+    const { content: started, text } = start({
+      address: 'https://suno.com/playlist/00000000-0000-4000-8000-00000000050a',
+      snapshot: 'playlist-groups',
+      worker: sw,
+    });
+    const clicks: string[] = [];
+    document.addEventListener(
+      'click',
+      (event) => {
+        clicks.push((event.target as Element).textContent);
+      },
+      { capture: true },
+    );
+
+    await started.resumed;
+
+    // Only the membership, with the count the page gave: the capture holds 3 of 24 rows.
+    expect(sw.asked).toContainEqual({
+      type: 'sync-part',
+      part: {
+        partNumber: 1,
+        clips: [],
+        trashedClips: [],
+        playlists: [
+          {
+            id: '00000000-0000-4000-8000-00000000050a',
+            name: 'Harbour Lights',
+            clipIds: ROW_IDS,
+            songCount: 24,
+          },
+        ],
+      },
+    });
+    // Scrolling presses nothing.
+    expect(clicks).toEqual([]);
+    expect(sw.types()).toContain('sync-complete');
+    expect(text('.sync-note')).toBe(
+      'Playlist “Harbour Lights” was read in part: 3 of 24 songs (Suno showed no more). The review shows it so, and does not record it unless you choose to.',
+    );
+  });
+
+  it('offers the playlists n8Tracks knows, and Refresh from Suno reads the list on Library', async () => {
+    const sw = worker(null, CONNECTED, [], {
+      knownPlaylists: [{ id: 'p-known', name: 'Paper Moons' }],
+    });
+    const {
+      content: started,
+      root,
+      visited,
+    } = start({
+      address: 'https://suno.com/create',
+      snapshot: null,
+      worker: sw,
+    });
+    await started.resumed;
+    await started.toggle();
+    const radio = root?.querySelector<HTMLInputElement>('input[value="playlists"]');
+    if (radio === null || radio === undefined) {
+      throw new Error('No Playlists choice');
+    }
+    radio.checked = true;
+    radio.dispatchEvent(new Event('change'));
+    await vi.waitFor(() => {
+      expect(
+        [...(root?.querySelectorAll('.sync-list label') ?? [])].map((label) =>
+          label.textContent.trim(),
+        ),
+      ).toEqual(['Paper Moons']);
+    });
+    expect(sw.types()).toContain('sync-playlists-known');
+
+    const refresh = [...(root?.querySelectorAll('button') ?? [])].find(
+      (button) => button.textContent === 'Refresh from Suno',
+    );
+    refresh?.click();
+    await vi.waitFor(() => {
+      expect(visited).toEqual(['https://suno.com/me']);
+    });
+    expect(sw.types()).toContain('sync-playlists-refresh');
+  });
+
+  it("reads Suno's playlist list on Library's page load after Refresh from Suno, and reports it", async () => {
+    const sw = worker(null, CONNECTED, [], { refreshPlaylists: true });
+    const {
+      content: started,
+      visited,
+      root,
+    } = start({ address: 'https://suno.com/me', worker: sw });
+    const pressed = answerPlaylistsTab(() => {
+      started.observations.take(playlistList(['p1']));
+    });
+
+    await started.resumed;
+
+    expect(pressed).toEqual(['Playlists']);
+    expect(root?.querySelector<HTMLInputElement>('input[value="playlists"]')?.checked).toBe(true);
+    expect(root?.querySelector('.sync-playlists')?.textContent).toBe('Read 1 playlist from Suno.');
+    expect(sw.types().filter((type) => type.startsWith('sync-') && type !== 'sync-resume')).toEqual(
+      ['sync-playlists-report'],
+    );
+    expect(visited).toEqual([]);
   });
 });

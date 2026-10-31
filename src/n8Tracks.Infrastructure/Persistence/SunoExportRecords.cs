@@ -52,6 +52,13 @@ public sealed class SunoExportRecord
     /// </summary>
     public string? RemoteSkipsJson { get; set; }
 
+    /// <summary>
+    /// The user's choices about the membership of the playlists a playlist sync read (#449), as a JSON
+    /// object of playlist Suno ID to whether its membership is recorded at Confirm; null when none was
+    /// made, and every playlist then takes its default.
+    /// </summary>
+    public string? PlaylistChoicesJson { get; set; }
+
     public required string CreatedUtc { get; set; }
 
     public string? CompletedUtc { get; set; }

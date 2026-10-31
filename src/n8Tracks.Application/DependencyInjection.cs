@@ -51,6 +51,7 @@ public static class DependencyInjection
         services.AddScoped<VersionDefaultsService>();
         services.AddScoped<SunoLibraryService>();
         services.AddScoped<SunoPersonaService>();
+        services.AddScoped<SunoPlaylistService>();
         services.AddScoped<TombstoneService>();
         services.AddScoped<AudioFileLifecycle>();
         services.AddScoped<IRetentionRestoreParticipant>(static provider => provider.GetRequiredService<AudioFileLifecycle>());
@@ -64,6 +65,7 @@ public static class DependencyInjection
         services.AddScoped<ImportReviewService>();
         services.AddScoped<IgnoreListService>();
         services.AddScoped<RemoteStateService>();
+        services.AddScoped<PlaylistMembershipService>();
         services.AddScoped<SunoStatusService>();
         services.AddScoped<GenerationRequestService>();
         services.AddScoped<ObservedCreateService>();
