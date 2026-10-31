@@ -165,16 +165,22 @@ export function startSunoContent(options: SunoContentOptions): SunoContent {
   // Set below: the view's buttons call the sync, and the sync shows its states in the view.
   let sync: SunoSync | null = null;
   const syncView = new SyncView(page, {
-    // The workspaces n8Tracks knows, with those Suno listed on this page since (#448).
+    // The workspaces (#448) and playlists (#449) n8Tracks knows, with those Suno listed on this page since.
     choices: () => ({
       workspaces: mergeListed(sync?.knownWorkspaces() ?? [], observations.listedWorkspaces()),
-      playlists: observations.listedPlaylists(),
+      playlists: mergeListed(sync?.knownPlaylists() ?? [], observations.listedPlaylists()),
     }),
     wantWorkspaces: () => {
       void sync?.wantWorkspaces();
     },
     refresh: () => {
       void sync?.refreshWorkspaces();
+    },
+    wantPlaylists: () => {
+      void sync?.wantPlaylists();
+    },
+    refreshPlaylists: () => {
+      void sync?.refreshPlaylists();
     },
     preview: (scope) => {
       void sync?.preview(scope);
@@ -266,6 +272,9 @@ export function startSunoContent(options: SunoContentOptions): SunoContent {
     },
     showWorkspaces: (state) => {
       syncView.setWorkspaceList(state);
+    },
+    showPlaylists: (state) => {
+      syncView.setPlaylistList(state);
     },
     versions: { extension: options.extensionVersion, adapter: ADAPTER_VERSION },
     ...(options.clock === undefined ? {} : { clock: options.clock }),

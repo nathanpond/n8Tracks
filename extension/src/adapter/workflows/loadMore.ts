@@ -32,9 +32,10 @@ export function songRowsOnPage(page: Page): Check {
 
 /**
  * The list on the page the reader is reading: the song rows on the Library and Trash pages, on a
- * workspace's songs on the Create page (`/create?wid=`, #422), and on a playlist page. On the
- * workspace list only Suno's own navigation is required; the reader's check of each response is
- * what tells a page that does not look as expected.
+ * workspace's songs on the Create page (`/create?wid=`, #422), and on a playlist page (whose rows
+ * the reader reads from the page, TS-007-24). On the workspace list and the playlist list (#449)
+ * only Suno's own navigation is required; the reader's check of each response is what tells a page
+ * that does not look as expected.
  */
 export function listOnPage(page: Page): Check {
   if (WORKSPACE_SONGS_PAGE.matches(page.address())) {
@@ -46,6 +47,7 @@ export function listOnPage(page: Page): Check {
     case 'playlist':
       return songRowsOnPage(page);
     case 'workspaces':
+    case 'playlists':
       return present(page, SUNO_NAVIGATION);
     default:
       return expected(
@@ -84,7 +86,7 @@ export function askForMore(page: Page): void {
   }
 }
 
-const LIBRARY_LISTS = sunoPages('library', 'trash', 'workspaces', 'playlist');
+const LIBRARY_LISTS = sunoPages('library', 'trash', 'workspaces', 'playlists', 'playlist');
 
 /** The pages a list is read on: Library's lists, a playlist, and a workspace's songs (#422). */
 const LIST_PAGES: PagePattern = {

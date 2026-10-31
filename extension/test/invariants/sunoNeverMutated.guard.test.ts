@@ -8,6 +8,7 @@ import {
   SOURCE_ROUTES,
   type LoadedSource,
 } from '../../src/adapter/sources.ts';
+import { legsFor } from '../../src/adapter/libraryReader.ts';
 import { ObservationFeed } from '../../src/adapter/observations.ts';
 import { OBSERVER_SOURCE } from '../../src/adapter/observed.ts';
 import { nameOf, Page, roleOf, type Region, type Target } from '../../src/adapter/primitives.ts';
@@ -61,6 +62,9 @@ const RUN_RECIPES: Readonly<Record<string, RunRecipe>> = {
   // A sync's workspace list (#421): Library's Workspaces tab, which only changes what Library
   // shows; the Library snapshots' Publish and Trash controls must never be reached.
   'open-workspace-list': { values: {} },
+  // A sync's playlist list (#449): Library's Playlists tab, which only changes what Library shows,
+  // as the Workspaces tab does; the Library snapshots' Publish and Trash must never be reached.
+  'open-playlist-list': { values: {} },
   // Presses the list pager's › (TS-007, TS-007-23), or scrolls the list where it has none; it
   // presses nothing forbidden on any snapshot.
   'load-more': { values: {} },
@@ -1582,6 +1586,165 @@ describe("invariant 4: the sync panel's Refresh from Suno (#448)", () => {
       }
       // Nothing but the report went to the service worker: no sync was begun, no export made.
       expect(sent).toEqual(['sync-resume', 'sync-workspaces-report']);
+    },
+  );
+});
+
+/**
+ * Runs the content script's playlist reading (#449) on `snapshot` at `address`: a Refresh from Suno
+ * of the playlist list (`refresh`), or one leg of a playlist sync. Every press and load is recorded,
+ * the forbidden controls are spied on, and pressing Library's Playlists tab answers with a list.
+ */
+async function playlistsOn(
+  snapshot: string,
+  address: string,
+  run: { refresh: true } | { leg: number },
+): Promise<{ happened: string[]; forbidden: string[]; ran: string[]; sent: string[] }> {
+  document.body.innerHTML = snapshotHtml(snapshot);
+  const happened: string[] = [];
+  const controls = forbiddenControls(document);
+  for (const control of controls) {
+    for (const type of ['click', 'pointerdown', 'mousedown', 'keydown', 'submit']) {
+      control.element.addEventListener(type, () => happened.push(`${type} on ${control.words}`), {
+        capture: true,
+      });
+    }
+  }
+  const clock = fakeClock();
+  const page = new Page(document, {
+    address: () => address,
+    navigate: (to) => happened.push(`load ${to}`),
+    clock,
+  });
+  const feed = new ObservationFeed(
+    {
+      origin: 'https://suno.com',
+      postMessage: () => undefined,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    },
+    clock,
+  );
+  document.addEventListener(
+    'click',
+    (event) => {
+      const target = event.target instanceof Element ? event.target : null;
+      happened.push(`click on ${target === null ? 'the page' : nameOf(target)}`);
+      if (target !== null && roleOf(target) === 'tab') {
+        event.preventDefault();
+        feed.take({
+          source: OBSERVER_SOURCE,
+          type: 'observed',
+          kind: 'playlists',
+          request: { cursor: null, page: 1, filters: null, feedId: null },
+          body: {
+            num_total_results: 1,
+            current_page: 1,
+            playlists: [{ id: 'p-1', name: 'Harbour Lights' }],
+          },
+        });
+      }
+    },
+    { capture: true },
+  );
+  const ran: string[] = [];
+  const session = new AdapterSession(new WorkflowRegistry(ADAPTER_WORKFLOWS), page, (record) => {
+    ran.push(record.workflowId);
+  });
+  const scope = {
+    kind: 'playlists' as const,
+    playlists: [{ id: '00000000-0000-4000-8000-00000000050a', name: 'Harbour Lights' }],
+    readTrash: false,
+  };
+  const legs = legsFor(scope);
+  const sent: string[] = [];
+  const sync = new SunoSync({
+    page,
+    session,
+    observations: feed,
+    send: (request) => {
+      sent.push(request.type);
+      switch (request.type) {
+        case 'sync-resume':
+          return Promise.resolve(
+            'refresh' in run
+              ? { session: null, refreshPlaylists: true }
+              : {
+                  session: {
+                    tabId: 1,
+                    scope,
+                    legs,
+                    leg: run.leg,
+                    attempt: 0,
+                    partNumber: 0,
+                    counts: { clips: 0, trashed: 0, workspaces: 0, playlists: 0 },
+                    workspaces: [],
+                    exportId: 'e1',
+                    updatedAt: 0,
+                  },
+                },
+          );
+        case 'sync-playlists-report':
+          return Promise.resolve({ ok: true, playlists: [], message: '' });
+        case 'sync-complete':
+          return Promise.resolve({ ok: false, message: 'not in this test' });
+        default:
+          return Promise.resolve({ ok: true });
+      }
+    },
+    show: () => undefined,
+    versions: { extension: '0.1.0', adapter: 1 },
+    clock,
+  });
+  await sync.resume();
+  return { happened, forbidden: controls.map((control) => control.words), ran, sent };
+}
+
+describe('invariant 4: reading playlists (#449)', () => {
+  it(
+    "presses only Library's Playlists tab to read the playlist list, by a Refresh or a sync's leg",
+    { timeout: 30_000 },
+    async () => {
+      for (const run of [{ refresh: true } as const, { leg: 2 }]) {
+        const { happened, forbidden, ran, sent } = await playlistsOn(
+          'library-list',
+          'https://suno.com/me',
+          run,
+        );
+
+        expect(forbidden.length).toBeGreaterThan(0);
+        expect(
+          happened.filter((event) => forbidden.some((words) => event.endsWith(words))),
+        ).toEqual([]);
+        expect(happened.filter((event) => event.startsWith('click'))).toEqual([
+          'click on Playlists',
+        ]);
+        expect(new Set(ran)).toEqual(new Set(['open-playlist-list']));
+        for (const id of ran) {
+          expect(RUN_RECIPES[id]).toBeDefined();
+        }
+        expect(sent).toContain('sync-playlists-report');
+        expect(sent).not.toContain('sync-begin');
+        document.body.innerHTML = '';
+      }
+    },
+  );
+
+  it(
+    "reads a playlist's songs from its page pressing nothing at all: only scrolls",
+    { timeout: 30_000 },
+    async () => {
+      const { happened, ran } = await playlistsOn(
+        'playlist-groups',
+        'https://suno.com/playlist/00000000-0000-4000-8000-00000000050a',
+        { leg: 3 },
+      );
+
+      // The capture holds no forbidden control (fixtures README), so the guard asks for no press of
+      // any kind: not a row, Play, Like, or the playlist's own buttons.
+      expect(happened.filter((event) => !event.startsWith('load '))).toEqual([]);
+      expect(new Set(ran)).toEqual(new Set(['load-more']));
+      expect(RUN_RECIPES['load-more']).toBeDefined();
     },
   );
 });

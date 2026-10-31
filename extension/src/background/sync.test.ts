@@ -157,7 +157,13 @@ describe('starting a sync', () => {
       session: {
         tabId: TAB,
         scope: { kind: 'library' },
-        legs: [{ list: 'workspaces' }, { list: 'voices' }, { list: 'library' }, { list: 'trash' }],
+        legs: [
+          { list: 'workspaces' },
+          { list: 'voices' },
+          { list: 'playlists' },
+          { list: 'library' },
+          { list: 'trash' },
+        ],
         leg: 0,
         attempt: 0,
         partNumber: 0,
@@ -219,7 +225,12 @@ describe('carrying a sync between page loads', () => {
       session: {
         scope: { kind: 'workspaces', ids: ['w1'], readTrash: false },
         // Each chosen workspace's own feed, not the whole library (#422).
-        legs: [{ list: 'workspaces' }, { list: 'voices' }, { list: 'workspace', id: 'w1' }],
+        legs: [
+          { list: 'workspaces' },
+          { list: 'voices' },
+          { list: 'playlists' },
+          { list: 'workspace', id: 'w1' },
+        ],
       },
     });
 
@@ -234,6 +245,7 @@ describe('carrying a sync between page loads', () => {
         legs: [
           { list: 'workspaces' },
           { list: 'voices' },
+          { list: 'playlists' },
           { list: 'playlist', id: 'p1', name: 'Morning' },
           { list: 'trash' },
         ],
@@ -704,5 +716,84 @@ describe('the workspaces the sync panel offers (#448)', () => {
       message: 'n8Tracks refused the workspace list: 422 (validation_failed).',
     });
     expect(JSON.stringify(answer)).not.toContain('Paper');
+  });
+});
+
+describe('the playlists the sync panel offers (#449)', () => {
+  /** n8Tracks' slim list, as `GET /api/v1/suno/playlists/discovered` answers it (made-up names). */
+  const LIST = {
+    items: [
+      { id: 'p-1', name: 'Harbour Lights', state: 'available', songCount: 24 },
+      { id: 'p-2', name: 'Old Mixtape', state: 'unavailable', songCount: 3 },
+    ],
+  };
+
+  it('asks n8Tracks for the playlists it knows, without their members, and offers the Available ones', async () => {
+    const context = await setup();
+    context.answer(() => jsonResponse(200, LIST));
+
+    expect(await context.send({ type: 'sync-playlists-known' })).toEqual({
+      ok: true,
+      playlists: [{ id: 'p-1', name: 'Harbour Lights' }],
+      message: '',
+    });
+    expect(context.calls).toEqual([
+      { method: 'GET', path: 'api/v1/suno/playlists/discovered', body: undefined },
+    ]);
+  });
+
+  it('holds a playlist Refresh from Suno for its tab, answered as refreshPlaylists once', async () => {
+    const context = await setup();
+
+    expect(await context.send({ type: 'sync-playlists-refresh' })).toEqual({ ok: true });
+    expect(await context.send({ type: 'sync-resume' })).toEqual({
+      session: null,
+      refreshPlaylists: true,
+    });
+    expect(await context.send({ type: 'sync-resume' })).toEqual({ session: null });
+
+    // The workspaces' refresh is still its own.
+    expect(await context.send({ type: 'sync-workspaces-refresh' })).toEqual({ ok: true });
+    expect(await context.send({ type: 'sync-resume' })).toEqual({ session: null, refresh: true });
+  });
+
+  it('reports a playlist list as read, and says why n8Tracks refused one by its code only', async () => {
+    const context = await setup();
+    context.answer(() =>
+      jsonResponse(200, {
+        ...LIST,
+        added: ['p-1'],
+        renamed: [],
+        becameUnavailable: [],
+        becameAvailable: [],
+      }),
+    );
+    const playlists = [{ id: 'p-1', name: 'Harbour Lights', is_trashed: false, song_count: 24 }];
+
+    expect(
+      await context.send({ type: 'sync-playlists-report', complete: true, playlists }),
+    ).toEqual({ ok: true, playlists: [{ id: 'p-1', name: 'Harbour Lights' }], message: '' });
+    expect(context.calls).toEqual([
+      {
+        method: 'PUT',
+        path: 'api/v1/suno/playlists/discovered',
+        body: { complete: true, playlists },
+      },
+    ]);
+
+    context.answer(() =>
+      jsonResponse(403, { code: 'insufficient_scope', title: 'Harbour Lights' }),
+    );
+    const refused = await context.send({
+      type: 'sync-playlists-report',
+      complete: false,
+      playlists,
+    });
+    expect(refused).toEqual({
+      ok: false,
+      playlists: [],
+      message: 'n8Tracks refused your playlist list: 403 (insufficient_scope).',
+    });
+    expect(JSON.stringify(refused)).not.toContain('Harbour');
   });
 });

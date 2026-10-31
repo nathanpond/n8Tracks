@@ -3,6 +3,7 @@ import { legsFor } from '../adapter/libraryReader.ts';
 import type {
   ExportPart,
   KnownWorkspace,
+  PlaylistsReply,
   ResponseFor,
   SyncProgress,
   SyncReply,
@@ -71,12 +72,26 @@ export const REFRESH_KEY = 'workspaceRefresh';
 /** How long a Refresh from Suno waits for its tab's page load before it is forgotten (1 minute). */
 export const REFRESH_WAIT_MS = 60_000;
 
+/** The playlists n8Tracks knows, without their members, which the Playlists choice offers (#449). */
+export const DISCOVERED_PLAYLISTS_PATH = 'api/v1/suno/playlists/discovered';
+
+/** The lists a Refresh from Suno reads: the workspace list (#448) or the playlist list (#449). */
+type RefreshList = 'workspaces' | 'playlists';
+
 /** No workspaces, and why not. */
 function notKnown(message: string): WorkspacesReply {
   return { ok: false, workspaces: [], message };
 }
 
-/** The Available workspaces of n8Tracks' list (`items`), by ID and name, in its order (by name). */
+/** No playlists, and why not. */
+function noPlaylists(message: string): PlaylistsReply {
+  return { ok: false, playlists: [], message };
+}
+
+/**
+ * The Available entries of n8Tracks' list of workspaces or playlists (`items`), by ID and name, in
+ * its order (by name).
+ */
 function availableOf(body: unknown): KnownWorkspace[] | null {
   if (!isRecord(body) || !Array.isArray(body.items)) {
     return null;
@@ -158,9 +173,14 @@ export class SyncCoordinator {
         if (session?.tabId === tabId) {
           return { session };
         }
-        return (await this.takeRefresh(tabId))
-          ? { session: null, refresh: true }
-          : { session: null };
+        switch (await this.takeRefresh(tabId)) {
+          case 'workspaces':
+            return { session: null, refresh: true };
+          case 'playlists':
+            return { session: null, refreshPlaylists: true };
+          default:
+            return { session: null };
+        }
       }
       case 'sync-save':
         return this.save(request.progress, tabId);
@@ -179,9 +199,15 @@ export class SyncCoordinator {
       case 'sync-workspaces-known':
         return this.knownWorkspaces();
       case 'sync-workspaces-refresh':
-        return this.beginRefresh(tabId);
+        return this.beginRefresh(tabId, 'workspaces');
       case 'sync-workspaces-report':
         return this.reportWorkspaces(request.complete, request.workspaces);
+      case 'sync-playlists-known':
+        return this.knownPlaylists();
+      case 'sync-playlists-refresh':
+        return this.beginRefresh(tabId, 'playlists');
+      case 'sync-playlists-report':
+        return this.reportPlaylists(request.complete, request.playlists);
     }
   }
 
@@ -448,7 +474,7 @@ export class SyncCoordinator {
    * "Refresh from Suno" (#448): this tab reads Suno's workspace list on its next page load. Refused
    * while a sync runs (it operates the page), and without `suno.sync`.
    */
-  private async beginRefresh(tabId: number): Promise<SyncReply> {
+  private async beginRefresh(tabId: number, list: RefreshList): Promise<SyncReply> {
     const state = await this.connection.state(true);
     if (state.status !== 'connected') {
       return { ok: false, message: DISCONNECTED };
@@ -459,21 +485,70 @@ export class SyncCoordinator {
     if ((await this.session()) !== null) {
       return { ok: false, message: 'A sync is running; refresh once it has finished.' };
     }
-    await this.browser.session.set({ [REFRESH_KEY]: { tabId, at: this.now() } });
+    await this.browser.session.set({ [REFRESH_KEY]: { tabId, at: this.now(), list } });
     return { ok: true };
   }
 
-  /** Whether this tab's Refresh from Suno is waiting for this page load; it is forgotten either way. */
-  private async takeRefresh(tabId: number): Promise<boolean> {
+  /**
+   * Which list this tab's Refresh from Suno is waiting to read on this page load (a refresh stored
+   * before #449 named none: the workspace list), or null; it is forgotten either way.
+   */
+  private async takeRefresh(tabId: number): Promise<RefreshList | null> {
     const stored = (await this.browser.session.get([REFRESH_KEY]))[REFRESH_KEY];
     if (!isRecord(stored)) {
-      return false;
+      return null;
     }
     if (stored.tabId !== tabId) {
-      return false;
+      return null;
     }
     await this.browser.session.remove([REFRESH_KEY]);
-    return typeof stored.at === 'number' && this.now() - stored.at <= REFRESH_WAIT_MS;
+    if (typeof stored.at !== 'number' || this.now() - stored.at > REFRESH_WAIT_MS) {
+      return null;
+    }
+    return stored.list === 'playlists' ? 'playlists' : 'workspaces';
+  }
+
+  /**
+   * The playlists n8Tracks knows, for the sync panel's Playlists choice (#449):
+   * `GET /api/v1/suno/playlists/discovered`, a list of names and states only (`suno.sync`), cut to
+   * the Available ones' IDs and names.
+   */
+  private async knownPlaylists(): Promise<PlaylistsReply> {
+    try {
+      const response = await this.connection.call(DISCOVERED_PLAYLISTS_PATH);
+      const body = await bodyOf(response);
+      const playlists = response.ok ? availableOf(body) : null;
+      return playlists === null
+        ? noPlaylists(await refusal(response, 'the playlist list', body))
+        : { ok: true, playlists, message: '' };
+    } catch (error) {
+      return noPlaylists(this.callFailure(error));
+    }
+  }
+
+  /**
+   * Reports a playlist list a sync's leg or a Refresh from Suno read (#449): complete only when it
+   * was read to its end, so a short list marks nothing Unavailable. Answers the Available playlists
+   * n8Tracks knows after it. A refusal is reported by its code only.
+   */
+  private async reportPlaylists(
+    complete: boolean,
+    playlists: Record<string, unknown>[],
+  ): Promise<PlaylistsReply> {
+    try {
+      const response = await this.connection.call(DISCOVERED_PLAYLISTS_PATH, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ complete, playlists }),
+      });
+      const body = await bodyOf(response);
+      const known = response.ok ? availableOf(body) : null;
+      return known === null
+        ? noPlaylists(await refusal(response, 'your playlist list', body))
+        : { ok: true, playlists: known, message: '' };
+    } catch (error) {
+      return noPlaylists(this.callFailure(error));
+    }
   }
 
   /**

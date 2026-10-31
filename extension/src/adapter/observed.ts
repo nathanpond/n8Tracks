@@ -44,6 +44,9 @@ export const OBSERVED_LISTS: readonly ListPattern[] = [
   { kind: 'library-feed', method: 'POST', path: '/api/feed/v3' },
   { kind: 'trash', method: 'GET', path: '/api/clips/trashed_v2' },
   { kind: 'workspaces', method: 'GET', path: '/api/project/me' },
+  // #449: the user's playlist list, requested when Library's Playlists tab is pressed (and when
+  // Create's Inspo picker opens). Only the paging counts and each playlist's
+  // {@link PLAYLIST_FIELDS} are forwarded ({@link forwardedBody}).
   { kind: 'playlists', method: 'GET', path: '/api/playlist/me' },
   { kind: 'playlist-feed', method: 'POST', path: '/api/unified/feed' },
   { kind: 'workspace-created', method: 'POST', path: '/api/project' },
@@ -63,6 +66,21 @@ export const OBSERVED_LISTS: readonly ListPattern[] = [
 
 /** The members of each persona in the voice list forwarded (#439): what n8Tracks keeps, and nothing else. */
 export const PERSONA_FIELDS = ['id', 'name', 'description', 'is_trashed', 'is_owned'] as const;
+
+/**
+ * The members of each playlist in the playlist list forwarded (#449, `GET /api/playlist/me`): what
+ * n8Tracks keeps (its name, whether trashed, and Suno's count of its songs), and nothing else.
+ */
+export const PLAYLIST_FIELDS = [
+  'id',
+  'name',
+  'is_trashed',
+  'song_count',
+  'num_total_results',
+] as const;
+
+/** The members of the playlist list's answer forwarded beside its playlists (#449): its paging counts. */
+export const PLAYLIST_PAGE_FIELDS = ['current_page', 'num_total_results'] as const;
 
 /** The members of the voice list's answer forwarded beside its personas (#439): its paging counts. */
 export const PERSONA_PAGE_FIELDS = ['current_page', 'total_results'] as const;
@@ -97,6 +115,9 @@ export const DOWNLOAD_USAGE_FIELDS = [
 export function forwardedBody(kind: ObservedKind, body: unknown): unknown {
   if (kind === 'personas') {
     return personasBody(body);
+  }
+  if (kind === 'playlists') {
+    return playlistsBody(body);
   }
   if (kind === 'download-clip') {
     return isRecord(body)
@@ -272,6 +293,43 @@ export function downloadRequestOf(address: string, base: string): DownloadReques
   }
   const known = PREPARED_FORMATS.find((candidate) => candidate === format);
   return clipId === '' || known === undefined ? null : { clipId, format: known };
+}
+
+/**
+ * The playlist list's answer as forwarded (#449): `current_page` and `num_total_results` when they
+ * are numbers, and `playlists` (when a list) with each playlist cut to {@link PLAYLIST_FIELDS} of the
+ * right type: never the owner's handle, display name, or avatar, the image, or the description.
+ */
+function playlistsBody(body: unknown): Record<string, unknown> {
+  if (!isRecord(body)) {
+    return {};
+  }
+  const forwarded: Record<string, unknown> = Object.fromEntries(
+    PLAYLIST_PAGE_FIELDS.filter((field) => typeof body[field] === 'number').map((field) => [
+      field,
+      body[field],
+    ]),
+  );
+  if (Array.isArray(body.playlists)) {
+    forwarded.playlists = body.playlists.map((playlist) =>
+      isRecord(playlist)
+        ? Object.fromEntries(
+            PLAYLIST_FIELDS.filter((field) => {
+              switch (field) {
+                case 'is_trashed':
+                  return typeof playlist[field] === 'boolean';
+                case 'song_count':
+                case 'num_total_results':
+                  return typeof playlist[field] === 'number';
+                default:
+                  return typeof playlist[field] === 'string';
+              }
+            }).map((field) => [field, playlist[field]]),
+          )
+        : {},
+    );
+  }
+  return forwarded;
 }
 
 /**

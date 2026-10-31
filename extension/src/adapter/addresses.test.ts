@@ -22,6 +22,7 @@ describe('Suno addresses', () => {
     ['https://suno.com/me', 'library'],
     ['https://suno.com/me/trash', 'trash'],
     ['https://suno.com/me/workspaces', 'workspaces'],
+    ['https://suno.com/me/playlists', 'playlists'],
     ['https://suno.com/playlist/00000000-0000-4000-8000-000000000101', 'playlist'],
     ['https://suno.com/song/00000000-0000-4000-8000-000000000101', 'song'],
     ['https://suno.com/song/00000000-0000-4000-8000-000000000101/extra', 'other'],

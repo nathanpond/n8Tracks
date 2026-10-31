@@ -285,6 +285,7 @@ describe('the registry', () => {
       'recognise-suno',
       'load-more',
       'open-workspace-list',
+      'open-playlist-list',
       'signed-in',
       'open-workspaces',
       'search-workspaces',

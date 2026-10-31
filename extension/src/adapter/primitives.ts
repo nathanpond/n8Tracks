@@ -65,7 +65,8 @@ export type Role =
   | 'textbox'
   /**
    * Not an ARIA role: an element Suno gives no role, found by its own whole text (`name`, a
-   * string), as {@link TextAnchor} finds one (TS-005: a voice's title in the Voice picker).
+   * string), as {@link TextAnchor} finds one (TS-005: a voice's title in the Voice picker), or by
+   * an expression its whole text matches (#449: a playlist's "24 songs").
    */
   | 'text';
 
@@ -525,8 +526,10 @@ function matchesTarget(element: Element, target: Target): boolean {
   if (target.role === 'text') {
     return (
       roleOf(element) === null &&
-      typeof target.name === 'string' &&
-      saysExactly(element, target.name)
+      target.name !== undefined &&
+      (typeof target.name === 'string'
+        ? saysExactly(element, target.name)
+        : saysMatching(element, target.name))
     );
   }
   return (
@@ -547,6 +550,18 @@ function saysExactly(element: Element, text: string): boolean {
   return (
     collapse(textOf(element, true)) === wanted &&
     !childElementsOf(element).some((child) => collapse(textOf(child, true)) === wanted) &&
+    !isHidden(element)
+  );
+}
+
+/**
+ * Whether the element's whole text matches `pattern`, and no element inside it does alone: the
+ * innermost element saying, say, "24 songs" (#449: a playlist's count in its header).
+ */
+function saysMatching(element: Element, pattern: RegExp): boolean {
+  return (
+    pattern.test(collapse(textOf(element, true))) &&
+    !childElementsOf(element).some((child) => pattern.test(collapse(textOf(child, true)))) &&
     !isHidden(element)
   );
 }
@@ -1349,6 +1364,35 @@ export class Page {
    * in, is not on the page.
    */
   readAll(target: Target): ReadAllEntry[] {
+    return this.readAllElements(target).map((element) => ({
+      name: nameOf(element),
+      reading: readingOf(element),
+      image: imageAddressOf(element),
+      lead: leadTextOf(element),
+    }));
+  }
+
+  /**
+   * For every visible element `target` matches, in page order, the paths that the visible links
+   * inside it which match `link` lead to (their own `href`, without query or fragment), each once,
+   * in order. Read only, as {@link readAll}: it hands out no element. A playlist page's rows are read
+   * so for their songs' IDs (TS-007-24), which Suno puts nowhere else but its embedded page data.
+   */
+  readLinks(target: Target, link: Target): string[][] {
+    return this.readAllElements(target).map((element) => {
+      const paths: string[] = [];
+      for (const inner of elementsUnder(element)) {
+        const path = matchesTarget(inner, link) ? linkPathOf(inner) : null;
+        if (path !== null && !paths.includes(path)) {
+          paths.push(path);
+        }
+      }
+      return paths;
+    });
+  }
+
+  /** The visible elements `target` matches, as {@link readAll} finds them. Never handed out. */
+  private readAllElements(target: Target): Element[] {
     this.trail.target = target;
     let container: ParentNode = this.document;
     if (target.within !== undefined) {
@@ -1360,12 +1404,7 @@ export class Page {
       }
       container = outer.element;
     }
-    return matching(container, target).map((element) => ({
-      name: nameOf(element),
-      reading: readingOf(element),
-      image: imageAddressOf(element),
-      lead: leadTextOf(element),
-    }));
+    return matching(container, target);
   }
 
   /**

@@ -21,6 +21,8 @@ function view(listed: ReturnType<SyncViewOptions['choices']> = { workspaces: [],
     cancel: vi.fn<() => void>(),
     wantWorkspaces: vi.fn<() => void>(),
     refresh: vi.fn<() => void>(),
+    wantPlaylists: vi.fn<() => void>(),
+    refreshPlaylists: vi.fn<() => void>(),
   };
   const sync = new SyncView(document, options);
   const main = document.createElement('main');
@@ -199,14 +201,30 @@ describe('Sync to n8Tracks in the panel', () => {
     expect(input('workspaces')?.checked).toBe(true);
   });
 
-  it('chooses playlists by name, and says where to find them when Suno has listed none', async () => {
+  it('chooses playlists by name; with none known, asks n8Tracks and offers Refresh from Suno (#449)', async () => {
     const empty = view();
     empty.sync.setAvailable(true, null);
     empty.choose('playlists');
+    expect(empty.options.wantPlaylists).toHaveBeenCalledTimes(1);
+    expect(empty.options.wantWorkspaces).not.toHaveBeenCalled();
     expect(empty.sync.element.textContent).toContain(
-      'No playlists yet: open Library on Suno, then click the Playlists tab (refreshing the page does not load the list), then choose again.',
+      'n8Tracks knows no playlists yet. Refresh from Suno to read your playlist list.',
+    );
+    expect(empty.sync.element.textContent).not.toContain('click the Playlists tab');
+    expect(empty.sync.element.textContent).toContain(
+      'Opens Library on Suno and reads your playlist list; it presses nothing that changes Suno.',
     );
     await expectNoAxeViolations(document);
+    empty.button('Refresh from Suno')?.click();
+    expect(empty.options.refreshPlaylists).toHaveBeenCalledTimes(1);
+    expect(empty.options.refresh).not.toHaveBeenCalled();
+
+    // Its own list state: a refresh under way disables the button, and its outcome is said.
+    empty.sync.setPlaylistList({ kind: 'refreshing' });
+    expect(empty.button('Refresh from Suno')?.disabled).toBe(true);
+    expect(empty.sync.element.textContent).toContain('Reading your playlist list on Suno…');
+    empty.sync.setPlaylistList({ kind: 'refreshed', count: 10, complete: true });
+    expect(empty.sync.element.textContent).toContain('Read 10 playlists from Suno.');
     document.body.innerHTML = '';
 
     const { sync, options, button, input, choose } = view({

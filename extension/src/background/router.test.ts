@@ -241,6 +241,7 @@ describe('the service worker router', () => {
         { id: 'recognise-suno', state: 'ready' },
         { id: 'load-more', state: 'not_checked' },
         { id: 'open-workspace-list', state: 'not_checked' },
+        { id: 'open-playlist-list', state: 'not_checked' },
         { id: 'signed-in', state: 'not_checked' },
         { id: 'open-workspaces', state: 'not_checked' },
         { id: 'search-workspaces', state: 'not_checked' },

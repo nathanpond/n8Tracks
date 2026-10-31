@@ -203,11 +203,14 @@ export type SyncScope =
  * own feed (`workspace`, on `/create?wid=<id>`, #422); a `library` leg in a workspace sync's legs
  * comes from a sync begun before that, and is read as then: the whole library, kept by workspace.
  * `voices` is the user's voice list, read on Create's Voice picker and reported to n8Tracks on its
- * own (#439); a sync begun before that has no such leg.
+ * own (#439); a sync begun before that has no such leg. `playlists` is the user's playlist list,
+ * read on Library's Playlists tab and reported on its own too (#449). A `playlist` leg reads one
+ * playlist's songs from the rows of its page (TS-007-24).
  */
 export type SyncLeg =
   | { list: 'workspaces' }
   | { list: 'voices' }
+  | { list: 'playlists' }
   | { list: 'library' }
   | { list: 'workspace'; id: string }
   | { list: 'playlist'; id: string; name: string }
@@ -251,6 +254,12 @@ export interface SyncProgress {
    * and n8Tracks took it. A voice leg that goes wrong never stops the sync.
    */
   voicesNote?: string;
+  /**
+   * What else the panel says when the sync finishes (#449): why the playlist list was not read or
+   * not sent, or read in part, and each playlist whose songs were read in part. Absent when there
+   * is nothing to say. Neither ever stops the sync.
+   */
+  notes?: string[];
 }
 
 export interface SyncSession extends SyncProgress {
@@ -280,6 +289,19 @@ export interface WorkspacesReply {
   message: string;
 }
 
+/** A Suno playlist n8Tracks knows (#449): its Suno ID and its name as last seen (may be blank). */
+export interface KnownPlaylist {
+  id: string;
+  name: string;
+}
+
+/** The answer about the playlists n8Tracks knows (#449), shaped as {@link WorkspacesReply}. */
+export interface PlaylistsReply {
+  ok: boolean;
+  playlists: KnownPlaylist[];
+  message: string;
+}
+
 /** A sync step's answer: done, or why not, in plain words for the panel. */
 export type SyncReply<T extends object = object> =
   ({ ok: true } & T) | { ok: false; message: string };
@@ -289,7 +311,11 @@ export interface ExportPart {
   partNumber: number;
   clips: unknown[];
   trashedClips: unknown[];
-  playlists: { id: string; name: string; clipIds: string[] }[];
+  /**
+   * The playlists read: each one's songs, in order, and (#449) how many songs its page said it
+   * holds, so n8Tracks knows a read that fell short of it.
+   */
+  playlists: { id: string; name: string; clipIds: string[]; songCount?: number | null }[];
 }
 
 /**
@@ -368,6 +394,18 @@ export type Request =
   | { type: 'sync-workspaces-refresh' }
   /** The workspace list a Refresh from Suno read (#448), and whether to its end: reported to n8Tracks. */
   | { type: 'sync-workspaces-report'; complete: boolean; workspaces: Record<string, unknown>[] }
+  /** The sync panel's Playlists choice (#449): the playlists n8Tracks knows, Available ones only. */
+  | { type: 'sync-playlists-known' }
+  /**
+   * "Refresh from Suno" in the Playlists choice (#449): this tab is to read Suno's playlist list on
+   * its next page load (Library, `/me`), which `sync-resume` then answers with `refreshPlaylists: true`.
+   */
+  | { type: 'sync-playlists-refresh' }
+  /**
+   * The playlist list a sync's leg or a Refresh from Suno read (#449), each playlist cut to the
+   * fields the observer forwards, and whether to its end: reported to n8Tracks, not in the export.
+   */
+  | { type: 'sync-playlists-report'; complete: boolean; playlists: Record<string, unknown>[] }
   /** The Suno content script: a run that ended and the self-check states (#150). */
   | { type: 'diagnostics-record'; run?: unknown; statuses?: unknown }
   /** The options page and the panel: the diagnostic report, assembled now (#150). */
@@ -478,9 +516,10 @@ export interface ResponseFor {
   'sync-begin': SyncReply<{ session: SyncSession }>;
   /**
    * The sync this tab is running, if any; `refresh` when, instead, its Refresh from Suno (#448) is
-   * to read the workspace list on this page load (said once: the next load is not asked to).
+   * to read the workspace list on this page load (said once: the next load is not asked to);
+   * `refreshPlaylists` when it is the Playlists choice's Refresh from Suno (#449), for the playlist list.
    */
-  'sync-resume': { session: SyncSession | null; refresh?: boolean };
+  'sync-resume': { session: SyncSession | null; refresh?: boolean; refreshPlaylists?: boolean };
   'sync-save': SyncReply;
   'sync-create': SyncReply<{ exportId: string }>;
   'sync-part': SyncReply;
@@ -492,6 +531,10 @@ export interface ResponseFor {
   'sync-workspaces-refresh': SyncReply;
   /** The workspaces n8Tracks knows after the report, Available ones only. */
   'sync-workspaces-report': WorkspacesReply;
+  'sync-playlists-known': PlaylistsReply;
+  'sync-playlists-refresh': SyncReply;
+  /** The playlists n8Tracks knows after the report, Available ones only. */
+  'sync-playlists-report': PlaylistsReply;
   'diagnostics-record': { recorded: true };
   'diagnostic-report': DiagnosticReport;
   /** `watching`: the Suno IDs of this tab's clips still watched for completion (#154). */
@@ -572,6 +615,9 @@ export const SYNC_TYPES = [
   'sync-workspaces-known',
   'sync-workspaces-refresh',
   'sync-workspaces-report',
+  'sync-playlists-known',
+  'sync-playlists-refresh',
+  'sync-playlists-report',
 ] as const satisfies readonly Request['type'][];
 
 export type SyncRequest = Extract<Request, { type: (typeof SYNC_TYPES)[number] }>;
@@ -729,7 +775,9 @@ function isSyncProgress(value: unknown): value is SyncProgress {
     (value.counts.voices === undefined || isCount(value.counts.voices)) &&
     Array.isArray(value.workspaces) &&
     (value.workspacesComplete === undefined || typeof value.workspacesComplete === 'boolean') &&
-    (value.voicesNote === undefined || typeof value.voicesNote === 'string')
+    (value.voicesNote === undefined || typeof value.voicesNote === 'string') &&
+    (value.notes === undefined ||
+      (Array.isArray(value.notes) && value.notes.every((note) => typeof note === 'string')))
   );
 }
 
@@ -775,7 +823,15 @@ export function isRequest(value: unknown): value is Request {
     case 'sync-images':
     case 'sync-workspaces-known':
     case 'sync-workspaces-refresh':
+    case 'sync-playlists-known':
+    case 'sync-playlists-refresh':
       return true;
+    case 'sync-playlists-report':
+      return (
+        typeof value.complete === 'boolean' &&
+        Array.isArray(value.playlists) &&
+        value.playlists.every(isRecord)
+      );
     case 'sync-workspaces-report':
       return (
         typeof value.complete === 'boolean' &&

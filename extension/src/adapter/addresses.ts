@@ -10,7 +10,7 @@ const SUNO_ORIGIN = 'https://suno.com';
 
 /** The kinds of Suno page a workflow can start on, by address (TS-003 snapshots). */
 export type SunoPage =
-  'create' | 'library' | 'trash' | 'workspaces' | 'playlist' | 'song' | 'other';
+  'create' | 'library' | 'trash' | 'workspaces' | 'playlists' | 'playlist' | 'song' | 'other';
 
 /** A set of Suno pages a workflow starts on, with plain words for the panel. */
 export interface PagePattern {
@@ -42,6 +42,9 @@ export function sunoPageOf(address: URL): SunoPage | null {
   if (path === '/me/workspaces') {
     return 'workspaces';
   }
+  if (path === '/me/playlists') {
+    return 'playlists';
+  }
   if (/^\/playlist\/[^/]+$/.test(path)) {
     return 'playlist';
   }
@@ -62,6 +65,7 @@ const PAGE_WORDS: Record<Exclude<SunoPage, 'other'>, string> = {
   library: 'the Library',
   trash: 'the Library trash',
   workspaces: "the Library's workspace list",
+  playlists: "the Library's playlist list",
   playlist: 'a playlist page',
   song: 'a song page',
 };

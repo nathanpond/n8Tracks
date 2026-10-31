@@ -8,7 +8,9 @@ import {
 import { realClock, type Clock } from '../adapter/clock.ts';
 import {
   PAGE_RETRIES,
+  PLAYLISTS_STEP,
   readLeg,
+  readPlaylistList,
   readWorkspaceList,
   ReadCancelled,
   ReadStop,
@@ -18,13 +20,15 @@ import {
 } from '../adapter/libraryReader.ts';
 import type { Page } from '../adapter/primitives.ts';
 import type { AdapterSession } from '../adapter/registry.ts';
-import { openWorkspaceList } from '../adapter/workflows/libraryTabs.ts';
+import { readPlaylistPage } from '../adapter/playlistPage.ts';
+import { openPlaylistList, openWorkspaceList } from '../adapter/workflows/libraryTabs.ts';
 import { switchForm } from '../adapter/workflows/fillSongs.ts';
 import { loadMore } from '../adapter/workflows/loadMore.ts';
 import { closeVoiceList, openVoiceList, scrollVoiceList } from '../adapter/workflows/voices.ts';
 import type { StepContext, Workflow } from '../adapter/workflow.ts';
 import type {
   ImageProgress,
+  KnownPlaylist,
   KnownWorkspace,
   Request,
   ResponseFor,
@@ -52,6 +56,11 @@ import type { SyncViewState, WorkspaceListState } from '../panel/SyncView.ts';
  * with the same reader and workflows (Library's Workspaces tab, then a scroll for each next page),
  * on Library's own page load, and reports it to n8Tracks; nothing else is pressed and no export is
  * made.
+ *
+ * Playlists (#449) follow the same pattern: the playlist list is read on Library by pressing its
+ * Playlists tab, in a leg of every sync and by the Playlists choice's own "Refresh from Suno", and
+ * reported on its own. A playlist's songs are read from the rows of its page (TS-007-24), with a
+ * scroll for more while fewer rows are read than its "N songs"; nothing is pressed there.
  */
 
 export interface SunoSyncOptions {
@@ -66,12 +75,17 @@ export interface SunoSyncOptions {
   versions: { extension: string; adapter: number };
   /** Shows where the Workspaces choice's list stands (#448), opening the panel. */
   showWorkspaces?: (state: WorkspaceListState) => void;
+  /** Shows where the Playlists choice's list stands (#449), as for the workspaces. */
+  showPlaylists?: (state: WorkspaceListState) => void;
   clock?: Clock;
   now?: () => string;
 }
 
 /** The step a Refresh from Suno names when it stops (#448). */
 export const REFRESH_STEP = 'Read the workspace list';
+
+/** How long a playlist page is given to draw its rows, after it opened or was scrolled (#449). */
+export const PLAYLIST_SETTLE_MS = 1_000;
 
 /** How often the panel asks how the cover images are going (#152). */
 export const IMAGES_POLL_MS = 1_000;
@@ -108,6 +122,7 @@ function addressOf(leg: SyncLeg): URL {
     case 'playlist':
       return sunoListAddress({ page: 'playlist', id: leg.id });
     case 'workspaces':
+    case 'playlists':
     case 'library':
       return sunoListAddress({ page: 'library' });
     case 'trash':
@@ -141,6 +156,7 @@ function progressOf(session: SyncSession): SyncProgress {
       ? {}
       : { workspacesComplete: session.workspacesComplete }),
     ...(session.voicesNote === undefined ? {} : { voicesNote: session.voicesNote }),
+    ...(session.notes === undefined ? {} : { notes: session.notes }),
   };
 }
 
@@ -154,6 +170,8 @@ export class SunoSync {
   private controller: AbortController | null = null;
   /** The Available workspaces n8Tracks knows (#448), as last asked or reported. */
   private known: KnownWorkspace[] = [];
+  /** The Available playlists n8Tracks knows (#449), as last asked or reported. */
+  private playlists: KnownPlaylist[] = [];
 
   constructor(options: SunoSyncOptions) {
     this.options = options;
@@ -222,7 +240,133 @@ export class SunoSync {
     }
     if (isRecord(answer) && answer.refresh === true) {
       await this.readWorkspaces();
+      return;
     }
+    if (isRecord(answer) && answer.refreshPlaylists === true) {
+      await this.readPlaylists();
+    }
+  }
+
+  /** The Available playlists n8Tracks knows (#449), as last asked or reported. */
+  knownPlaylists(): KnownPlaylist[] {
+    return [...this.playlists];
+  }
+
+  private showPlaylists(state: WorkspaceListState): void {
+    this.options.showPlaylists?.(state);
+  }
+
+  /** The Playlists choice was opened (#449): asks n8Tracks for the playlists it knows. */
+  async wantPlaylists(): Promise<void> {
+    this.showPlaylists({ kind: 'loading' });
+    let answer: SyncReply<{ playlists: KnownPlaylist[] }>;
+    try {
+      answer = reply(await this.options.send({ type: 'sync-playlists-known' }));
+    } catch {
+      answer = reply(undefined);
+    }
+    if (!answer.ok) {
+      this.showPlaylists({
+        kind: 'failed',
+        message: `The playlists n8Tracks knows could not be read: ${answer.message}`,
+      });
+      return;
+    }
+    this.playlists = answer.playlists;
+    this.showPlaylists({ kind: 'ready' });
+  }
+
+  /**
+   * The Playlists choice's "Refresh from Suno" (#449): as for the workspaces, the service worker
+   * holds the refresh for this tab and Library is opened; its page load reads the playlist list.
+   */
+  async refreshPlaylists(): Promise<void> {
+    if (this.controller !== null) {
+      return;
+    }
+    let answer: SyncReply;
+    try {
+      answer = reply(await this.options.send({ type: 'sync-playlists-refresh' }));
+    } catch {
+      answer = reply(undefined);
+    }
+    if (!answer.ok) {
+      this.showPlaylists({ kind: 'failed', message: `Not refreshed: ${answer.message}` });
+      return;
+    }
+    this.showPlaylists({ kind: 'refreshing' });
+    this.options.page.go(addressOf({ list: 'playlists' }));
+  }
+
+  /**
+   * Reads Suno's playlist list on Library, as the sync's playlist-list leg does, and reports it to
+   * n8Tracks; the panel shows the Playlists choice with the list n8Tracks then knows.
+   */
+  private async readPlaylists(): Promise<void> {
+    const { page, show } = this.options;
+    show({ kind: 'choose', scope: 'playlists' });
+    this.showPlaylists({ kind: 'refreshing' });
+    if (!onPageOf({ list: 'playlists' }, page.address())) {
+      this.showPlaylists({
+        kind: 'failed',
+        message: `Not refreshed: step '${PLAYLISTS_STEP}' expected the Suno tab to stay on Library.`,
+      });
+      return;
+    }
+    const controller = new AbortController();
+    this.controller = controller;
+    let read: { playlists: Record<string, unknown>[]; complete: boolean };
+    try {
+      read = await readPlaylistList(PLAYLISTS_STEP, {
+        observations: this.options.observations,
+        openPlaylistList: (openStep) => this.runStep(openPlaylistList, openStep, {}),
+        more: (moreStep) => this.runStep(loadMore, moreStep, {}),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      this.showPlaylists({
+        kind: 'failed',
+        message:
+          error instanceof ReadStop
+            ? `Not refreshed: ${report(error.step, error.expected)}.`
+            : 'Not refreshed: the read did not finish.',
+      });
+      return;
+    } finally {
+      this.controller = null;
+    }
+    const answer = await this.reportPlaylists(read.complete, read.playlists);
+    if (!answer.ok) {
+      this.showPlaylists({
+        kind: 'failed',
+        message: `Your playlist list was read but not recorded: ${answer.message}`,
+      });
+      return;
+    }
+    this.showPlaylists({
+      kind: 'refreshed',
+      count: read.playlists.length,
+      complete: read.complete,
+    });
+  }
+
+  /** Sends a playlist list read to n8Tracks (#449), keeping the Available playlists it answers. */
+  private async reportPlaylists(
+    complete: boolean,
+    playlists: Record<string, unknown>[],
+  ): Promise<SyncReply> {
+    let answer: SyncReply<{ playlists: KnownPlaylist[] }>;
+    try {
+      answer = reply(
+        await this.options.send({ type: 'sync-playlists-report', complete, playlists }),
+      );
+    } catch {
+      answer = reply(undefined);
+    }
+    if (answer.ok) {
+      this.playlists = answer.playlists;
+    }
+    return answer;
   }
 
   /** The Available workspaces n8Tracks knows (#448), as last asked or reported. */
@@ -443,6 +587,13 @@ export class SunoSync {
         moreVoices: (moreStep) => this.runStep(scrollVoiceList, moreStep, {}),
         closeVoices: (closeStep) => this.runStep(closeVoiceList, closeStep, {}),
         sendVoices: (complete, voices) => this.sendVoices(complete, voices),
+        openPlaylistList: (openStep) => this.runStep(openPlaylistList, openStep, {}),
+        sendPlaylists: async (complete, playlists) => {
+          const answer = await this.reportPlaylists(complete, playlists);
+          return answer.ok ? null : answer.message;
+        },
+        readPlaylistPage: () => readPlaylistPage(page),
+        settle: () => (this.options.clock ?? realClock).sleep(PLAYLIST_SETTLE_MS),
         sink: this.sink(),
         signal: controller.signal,
         progress: (counts) => {
@@ -497,6 +648,7 @@ export class SunoSync {
             kind: 'finished',
             counts: next.counts,
             ...(next.voicesNote === undefined ? {} : { note: next.voicesNote }),
+            ...(next.notes === undefined ? {} : { notes: next.notes }),
           }
         : {
             kind: 'stopped',
