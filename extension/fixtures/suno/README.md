@@ -35,7 +35,7 @@ One pair of clips was made in each mode in a new workspace. The modes are `songs
 - `clips-trashed-v2.response.json`: `GET /api/clips/trashed_v2?limit=20` from Library › Trash (`/me/trash`). The response is `{ clips, num_total_results, next_cursor }`; the next page is `?limit=20&cursor=<next_cursor>`, requested on scroll. `num_total_results` was 0 although 20 clips came back. Trimmed to two clips.
 - `project-me.page-1.response.json`, `project-me.last-page.response.json`: `GET /api/project/me?page=N&sort=max_created_at_last_&show_trashed=false&exclude_shared=false`, the workspace list. Pages are numbered, 20 per page, with `num_total_results`; the next page is requested as the list is scrolled (pages 1 and 5 of 5 here, trimmed to three workspaces).
 - `project.create.response.json`: `POST /api/project` from the inline "Create new workspace" row (body not captured).
-- `playlist-me.response.json`: `GET /api/playlist/me?page=1&show_trashed=false&show_sharelist=false`, the playlist list, requested when the Create form's Inspo picker opens. Trimmed to two.
+- `playlist-me.response.json`: `GET /api/playlist/me?page=1&show_trashed=false&show_sharelist=false`, the playlist list, requested when the Create form's Inspo picker opens and (TS-007-24) when Library's Playlists tab is pressed; a sync's playlist-list leg reads it (#449). Trimmed to two.
 - `unified-feed.playlist.request.json` / `.response.json`: `POST /api/unified/feed` with `{ feed_id: "generic_playlist:<id>", cursor: null, page_size: 50, request_metadata: { sort_by: "default" } }`, a playlist's contents, requested when a playlist page opens. Songs are in `feed.items[].content_item`. No paging field appeared for an 8-song playlist. Trimmed to two items.
 - `persona-get-personas.response.json`: `GET /api/persona/get-personas/?page=1`, requested when the Voice picker opens: the voice list a sync reads (#439, TS-007-21). Each persona carries the owner's `user_handle`, `user_display_name`, and `user_image_url` (redacted here) and a whole `clip`, none of which the observer forwards.
 
@@ -93,7 +93,7 @@ What changed from the TS-003, TS-007, and #422 snapshots:
 | `page.playlist-groups.html` | A playlist (`/playlist/<id>`): its header and three of its rows. No pager, and no Create, Publish, Delete, Trash, or Remove control. |
 | `page.library-workspaces.html` | Library › Workspaces (`/me/workspaces`): "Create new workspace" and three workspaces (`role=button` rows, no link, no identifier). No pager. |
 
-Not captured: `page.library-playlists.raw.html` (Library › Playlists) was taken too but is not committed, as no workflow runs on that page.
+Not captured: `page.library-playlists.raw.html` (Library › Playlists) was taken too but is not committed: the playlist-list leg (#449) presses the Playlists tab on Library (`/me`, the Library snapshots) and only scrolls `/me/playlists`, whose answer the reader judges. A playlist leg reads its rows and "24 songs" from `page.playlist-groups.html` (TS-007-24).
 
 ## Page snapshots
 
