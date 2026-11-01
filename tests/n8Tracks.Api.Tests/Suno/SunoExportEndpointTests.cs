@@ -83,7 +83,11 @@ public sealed class SunoExportEndpointTests
         Assert.Equal(2, export.GetProperty("trashedNotOffered").GetInt32());
         var readyAt = DateTime.Parse(export.GetProperty("readyAt").GetString()!, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
         Assert.Equal(readyAt.AddDays(7), DateTime.Parse(export.GetProperty("expiresAt").GetString()!, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind));
-        Assert.Equal(export.GetRawText(), (await SunoExportApi.GetAsync(client, token, id)).GetRawText());
+        // Completing also says whether the review has anything to decide (#450); reading it again does not.
+        Assert.False(export.GetProperty("nothingToReview").GetBoolean());
+        var completed = JsonNode.Parse(export.GetRawText())!.AsObject();
+        completed.Remove("nothingToReview");
+        Assert.Equal(completed.ToJsonString(), JsonNode.Parse((await SunoExportApi.GetAsync(client, token, id)).GetRawText())!.ToJsonString());
 
         var records = await SunoExportApi.RecordsByIdAsync(client, id);
         Assert.Equal(5, records.Count);

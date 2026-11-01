@@ -249,6 +249,33 @@ public sealed class ImportReviewService(
             playlistChangesTotal);
     }
 
+    /// <summary>
+    /// Whether a finished export leaves its review nothing to decide (#450): it is ready, every record is
+    /// linked (a Generation holds it and nothing compared differs, so there is no new, changed, conflict,
+    /// ignored, or deleted record to choose on), and confirming it would follow no Suno state (#142), give
+    /// no Generation Suno's final status (#314), and record no playlist's songs other than n8Tracks has
+    /// (#449). The extension then discards it instead of opening the review. False while it is still
+    /// receiving or classifying, or once it ended; null when there is no such export. Reads only.
+    /// </summary>
+    public async Task<bool?> NothingToReviewAsync(Guid exportId, CancellationToken cancellationToken = default)
+    {
+        if (await staging.FindAsync(exportId, null, cancellationToken).ConfigureAwait(false) is not { } view)
+        {
+            return null;
+        }
+
+        if (view.Export.State != SunoExportState.Ready
+            || view.Counts.Any(static pair => pair.Key != SunoRecordClass.Linked && pair.Value > 0))
+        {
+            return false;
+        }
+
+        var (_, remoteChanges) = await remoteStates.CountsAsync(view.Export, cancellationToken).ConfigureAwait(false);
+        return remoteChanges == 0
+            && await statuses.CountAsync(exportId, cancellationToken).ConfigureAwait(false) == 0
+            && !await memberships.AnyChangeAsync(view.Export, cancellationToken).ConfigureAwait(false);
+    }
+
     /// <summary>The workspaces the records are in, named from the export's own list and then from the workspaces n8Tracks knows.</summary>
     private async Task<IReadOnlyList<ImportFacet>> WorkspaceFacetsAsync(SunoExport export, StagedFacets facets, CancellationToken cancellationToken)
     {
