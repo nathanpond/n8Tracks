@@ -103,6 +103,12 @@ function availableOf(body: unknown): KnownWorkspace[] | null {
   );
 }
 
+/** How many records a completed export holds (`counts.total`), or 0 when it does not say. */
+function totalOf(body: Record<string, unknown>): number {
+  const total = isRecord(body.counts) ? body.counts.total : undefined;
+  return typeof total === 'number' && Number.isInteger(total) && total >= 0 ? total : 0;
+}
+
 /** The address of the review of an export in n8Tracks (the review story, #139). */
 export function reviewAddress(address: string, exportId: string): string {
   return `${address}/suno/imports/${encodeURIComponent(exportId)}`;
@@ -391,12 +397,18 @@ export class SyncCoordinator {
     return { ok: false, message: last };
   }
 
-  private async complete(tabId: number): Promise<SyncReply<{ reviewUrl: string }>> {
+  /**
+   * Completes the export. When n8Tracks answers that its review has nothing to decide (#450: decided
+   * there, never here), the export is discarded as a cancelled sync's is and no review opens;
+   * otherwise the review opens, and the cover images are sent.
+   */
+  private async complete(tabId: number): Promise<ResponseFor['sync-complete']> {
     const session = await this.ownSession(tabId);
     const exportId = session?.exportId ?? null;
     if (session === null || exportId === null) {
       return { ok: false, message: 'This tab has no export to finish.' };
     }
+    let body: unknown;
     try {
       const response = await this.connection.call(
         `${EXPORTS_PATH}/${encodeURIComponent(exportId)}/complete`,
@@ -407,9 +419,14 @@ export class SyncCoordinator {
         await this.end(session);
         return { ok: false, message };
       }
+      body = await bodyOf(response);
     } catch (error) {
       await this.end(session);
       return { ok: false, message: this.callFailure(error) };
+    }
+    if (isRecord(body) && body.nothingToReview === true) {
+      await this.end(session);
+      return { ok: true, nothingNew: { songs: totalOf(body) } };
     }
     await this.browser.session.remove([SYNC_KEY]);
     const state = await this.connection.state();

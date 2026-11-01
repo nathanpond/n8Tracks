@@ -354,6 +354,8 @@ export function startSunoContent(options: SunoContentOptions): SunoContent {
       }
       panel.open();
       watch();
+      // Opened on the Workspaces or Playlists choice: its list as n8Tracks knows it now (#450).
+      syncView.askChosen();
       await Promise.all([refresh(), download.prepare()]);
     },
     refresh,

@@ -1456,6 +1456,7 @@ public sealed class VersionImmutabilityGuardTests
         ["ChangeResolutionService.DiffAsync(Guid, String, CancellationToken)"] = "reads only: a Changed or Conflict record's diff (#141); the commit, exercised above, is what moves a Conflict's Generation",
         ["ImportReviewService.RecordsAsync(Guid, StagedRecordQuery, CancellationToken)"] = "reads only",
         ["ImportReviewService.SummaryAsync(Guid, CancellationToken)"] = "reads only",
+        ["ImportReviewService.NothingToReviewAsync(Guid, CancellationToken)"] = "reads only: whether a completed export leaves its review nothing to decide (#450)",
         ["RemoteStateService.ListAsync(Guid, String, Int32, Int32, CancellationToken)"] = "reads only: the Suno state changes of an export (#142)",
         ["RemoteStateService.SetAppliedAsync(Guid, Int32, IReadOnlyCollection`1, Boolean, CancellationToken)"] = "writes only which Suno state changes are skipped, on the staged export (suno_exports, #142); the commit, exercised above, applies them, and changes only a Generation's remote state, state, and archiver, never a Version",
         ["PlaylistMembershipService.ListAsync(Guid, CancellationToken)"] = "reads only: the playlists a playlist sync read (#449)",

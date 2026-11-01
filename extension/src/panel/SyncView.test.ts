@@ -5,6 +5,7 @@ import { expectNoAxeViolations } from '../testing/a11y.ts';
 import {
   countsText,
   imagesText,
+  nothingNewText,
   summaryText,
   SyncView,
   TRASH_HINT,
@@ -334,6 +335,51 @@ describe('Sync to n8Tracks in the panel', () => {
     // Complement: without a note there is no such line.
     sync.show({ kind: 'finished', counts: COUNTS });
     expect(sync.element.querySelector('.sync-voices')).toBeNull();
+  });
+
+  it('says there is nothing new, with no review, when n8Tracks had nothing to review (#450)', async () => {
+    expect(nothingNewText(227)).toBe('Nothing new: n8Tracks already has all 227 songs.');
+    expect(nothingNewText(1)).toBe('Nothing new: n8Tracks already has the 1 song.');
+    expect(nothingNewText(0)).toBe('Nothing new: there was nothing for n8Tracks to review.');
+    const { sync } = view();
+    sync.show({ kind: 'finished', counts: COUNTS, nothingNew: 227 });
+    const done = sync.element.querySelector('.sync-done')?.textContent ?? '';
+    expect(done).toBe(
+      'Finished: read 12 workspaces, 140 clips, 1 clip in the Trash, 0 playlists. Nothing new: n8Tracks already has all 227 songs.',
+    );
+    expect(done).not.toContain('review is open');
+    expect(sync.element.querySelector('a')).toBeNull();
+    await expectNoAxeViolations(document);
+  });
+
+  it('asks for the chosen list again on coming back to the choice, but not for a choice shown with its scope (#450)', () => {
+    const { sync, options, choose, button } = view({
+      workspaces: [{ id: 'w1', name: 'Studio' }],
+      playlists: [{ id: 'p1', name: 'Morning' }],
+    });
+    sync.setAvailable(true, null);
+    choose('playlists');
+    expect(options.wantPlaylists).toHaveBeenCalledTimes(1);
+
+    // Back from the summary, and Sync again after a sync: no change event, so the view asks.
+    sync.show({ kind: 'summary', scope: { kind: 'library' }, replacesReady: false });
+    button('Back')?.click();
+    expect(options.wantPlaylists).toHaveBeenCalledTimes(2);
+    sync.show({ kind: 'finished', counts: COUNTS });
+    button('Sync again')?.click();
+    expect(options.wantPlaylists).toHaveBeenCalledTimes(3);
+    sync.askChosen();
+    expect(options.wantPlaylists).toHaveBeenCalledTimes(4);
+
+    // A Refresh from Suno's page load shows the choice with its own list: nothing more is asked.
+    sync.show({ kind: 'choose', scope: 'workspaces' });
+    expect(options.wantWorkspaces).not.toHaveBeenCalled();
+
+    // On Whole library there is nothing to ask for.
+    choose('library');
+    sync.askChosen();
+    expect(options.wantWorkspaces).not.toHaveBeenCalled();
+    expect(options.wantPlaylists).toHaveBeenCalledTimes(4);
   });
 
   it('shows the summary, warns of a replaced export, and starts only on Start sync', async () => {

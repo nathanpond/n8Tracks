@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Http.HttpResults;
 using n8Tracks.Api.Auth;
@@ -84,7 +85,7 @@ internal static class SunoExportsEndpoints
 
         endpoints.MapPost(CompletePath, CompleteAsync)
             .WithName("CompleteSunoExport")
-            .WithSummary("Completes a receiving export: its clips are staged (one record per Suno ID; the Trash copy wins) and classified as new, linked, changed, conflict, ignored, or deleted, inline for up to 2,000 clips (then ready) or in a background job (classifying, with jobId). Any earlier export under review is discarded. A complete workspace list updates the workspaces' names and availability at once. 409 export_not_receiving when completed already; 409 import_in_progress while another export is being committed.")
+            .WithSummary("Completes a receiving export: its clips are staged (one record per Suno ID; the Trash copy wins) and classified as new, linked, changed, conflict, ignored, or deleted, inline for up to 2,000 clips (then ready) or in a background job (classifying, with jobId). nothingToReview is true when the export is ready and its review has nothing to decide (#450): every record linked, and no Suno state, final status, or playlist membership for Confirm to write; the extension then discards it. Any earlier export under review is discarded. A complete workspace list updates the workspaces' names and availability at once. 409 export_not_receiving when completed already; 409 import_in_progress while another export is being committed.")
             .RequireScope(CredentialScopes.SunoSync)
             .Produces<SunoExportResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
@@ -302,6 +303,7 @@ internal static class SunoExportsEndpoints
     private static async Task<Results<Ok<SunoExportResponse>, ProblemHttpResult>> CompleteAsync(
         Guid id,
         ExportStagingService exports,
+        ImportReviewService review,
         HttpContext context,
         ILoggerFactory loggers,
         CancellationToken cancellationToken)
@@ -327,7 +329,9 @@ internal static class SunoExportsEndpoints
                         completed.Discarded.Count);
                 }
 
-                return TypedResults.Ok(SunoExportResponse.From(view));
+                // Decided here, in the service layer, never by the extension (invariant 5).
+                var nothingToReview = await review.NothingToReviewAsync(id, cancellationToken) == true;
+                return TypedResults.Ok(SunoExportResponse.From(view) with { NothingToReview = nothingToReview });
             case ExportCompleteOutcome.NotFound:
                 return NoSuchExport(context);
             case ExportCompleteOutcome.NotReceiving notReceiving:
@@ -812,7 +816,9 @@ internal static class SunoExportsEndpoints
 /// <c>libraryExcluded</c> names the kinds of clip Suno's library filters left out (#139): the filter
 /// members, such as <c>disliked</c>, <c>stem</c>, <c>stemComplement</c>, and <c>fromStudioProject</c>.
 /// <c>trashedNotOffered</c> is how many clips in Suno's Trash that were never imported classification
-/// left out (#418): they are in no count, no list, and no commit.
+/// left out (#418): they are in no count, no list, and no commit. <c>nothingToReview</c> is answered by
+/// completing only (#450): true when the export is ready and its review has nothing to decide, so the
+/// extension discards it instead of opening the review.
 /// </summary>
 internal sealed record SunoExportResponse(
     Guid Id,
@@ -835,7 +841,8 @@ internal sealed record SunoExportResponse(
     Guid? JobId,
     int Revision,
     IReadOnlyList<string> LibraryExcluded,
-    int TrashedNotOffered)
+    int TrashedNotOffered,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? NothingToReview = null)
 {
     public static SunoExportResponse From(ExportView view)
     {

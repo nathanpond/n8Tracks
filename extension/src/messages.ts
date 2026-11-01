@@ -523,7 +523,11 @@ export interface ResponseFor {
   'sync-save': SyncReply;
   'sync-create': SyncReply<{ exportId: string }>;
   'sync-part': SyncReply;
-  'sync-complete': SyncReply<{ reviewUrl: string }>;
+  /**
+   * The review opened (`reviewUrl`), or, when n8Tracks said the review had nothing to decide (#450),
+   * `nothingNew` with how many songs the export held: the export was discarded and no review opened.
+   */
+  'sync-complete': SyncReply<{ reviewUrl: string } | { nothingNew: { songs: number } }>;
   'sync-discard': SyncReply;
   'sync-images': { images: ImageProgress | null };
   'sync-voices': SyncReply<{ added: number }>;

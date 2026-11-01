@@ -61,6 +61,9 @@ import type { SyncViewState, WorkspaceListState } from '../panel/SyncView.ts';
  * Playlists tab, in a leg of every sync and by the Playlists choice's own "Refresh from Suno", and
  * reported on its own. A playlist's songs are read from the rows of its page (TS-007-24), with a
  * scroll for more while fewer rows are read than its "N songs"; nothing is pressed there.
+ *
+ * A Refresh from Suno that stops still offers the list n8Tracks knows, asked for again, beside why
+ * it stopped (#450): its page load shows the choice already selected, so nothing else asks.
  */
 
 export interface SunoSyncOptions {
@@ -259,6 +262,16 @@ export class SunoSync {
   /** The Playlists choice was opened (#449): asks n8Tracks for the playlists it knows. */
   async wantPlaylists(): Promise<void> {
     this.showPlaylists({ kind: 'loading' });
+    const failure = await this.askPlaylists();
+    this.showPlaylists(
+      failure === null
+        ? { kind: 'ready' }
+        : { kind: 'failed', message: `The playlists n8Tracks knows could not be read: ${failure}` },
+    );
+  }
+
+  /** Asks n8Tracks for the playlists it knows, keeping them when it answers; null, or why not. */
+  private async askPlaylists(): Promise<string | null> {
     let answer: SyncReply<{ playlists: KnownPlaylist[] }>;
     try {
       answer = reply(await this.options.send({ type: 'sync-playlists-known' }));
@@ -266,14 +279,19 @@ export class SunoSync {
       answer = reply(undefined);
     }
     if (!answer.ok) {
-      this.showPlaylists({
-        kind: 'failed',
-        message: `The playlists n8Tracks knows could not be read: ${answer.message}`,
-      });
-      return;
+      return answer.message;
     }
     this.playlists = answer.playlists;
-    this.showPlaylists({ kind: 'ready' });
+    return null;
+  }
+
+  /**
+   * A Refresh from Suno of the playlist list that did not finish: the choice still offers the
+   * playlists n8Tracks knows (#450), not only those Suno listed on this page, and says why.
+   */
+  private async playlistsNotRefreshed(message: string): Promise<void> {
+    await this.askPlaylists();
+    this.showPlaylists({ kind: 'failed', message });
   }
 
   /**
@@ -307,10 +325,9 @@ export class SunoSync {
     show({ kind: 'choose', scope: 'playlists' });
     this.showPlaylists({ kind: 'refreshing' });
     if (!onPageOf({ list: 'playlists' }, page.address())) {
-      this.showPlaylists({
-        kind: 'failed',
-        message: `Not refreshed: step '${PLAYLISTS_STEP}' expected the Suno tab to stay on Library.`,
-      });
+      await this.playlistsNotRefreshed(
+        `Not refreshed: step '${PLAYLISTS_STEP}' expected the Suno tab to stay on Library.`,
+      );
       return;
     }
     const controller = new AbortController();
@@ -324,23 +341,20 @@ export class SunoSync {
         signal: controller.signal,
       });
     } catch (error) {
-      this.showPlaylists({
-        kind: 'failed',
-        message:
-          error instanceof ReadStop
-            ? `Not refreshed: ${report(error.step, error.expected)}.`
-            : 'Not refreshed: the read did not finish.',
-      });
-      return;
-    } finally {
       this.controller = null;
+      await this.playlistsNotRefreshed(
+        error instanceof ReadStop
+          ? `Not refreshed: ${report(error.step, error.expected)}.`
+          : 'Not refreshed: the read did not finish.',
+      );
+      return;
     }
+    this.controller = null;
     const answer = await this.reportPlaylists(read.complete, read.playlists);
     if (!answer.ok) {
-      this.showPlaylists({
-        kind: 'failed',
-        message: `Your playlist list was read but not recorded: ${answer.message}`,
-      });
+      await this.playlistsNotRefreshed(
+        `Your playlist list was read but not recorded: ${answer.message}`,
+      );
       return;
     }
     this.showPlaylists({
@@ -381,6 +395,19 @@ export class SunoSync {
   /** The Workspaces choice was opened (#448): asks n8Tracks for the workspaces it knows. */
   async wantWorkspaces(): Promise<void> {
     this.showWorkspaces({ kind: 'loading' });
+    const failure = await this.askWorkspaces();
+    this.showWorkspaces(
+      failure === null
+        ? { kind: 'ready' }
+        : {
+            kind: 'failed',
+            message: `The workspaces n8Tracks knows could not be read: ${failure}`,
+          },
+    );
+  }
+
+  /** Asks n8Tracks for the workspaces it knows, keeping them when it answers; null, or why not. */
+  private async askWorkspaces(): Promise<string | null> {
     let answer: SyncReply<{ workspaces: KnownWorkspace[] }>;
     try {
       answer = reply(await this.options.send({ type: 'sync-workspaces-known' }));
@@ -388,14 +415,16 @@ export class SunoSync {
       answer = reply(undefined);
     }
     if (!answer.ok) {
-      this.showWorkspaces({
-        kind: 'failed',
-        message: `The workspaces n8Tracks knows could not be read: ${answer.message}`,
-      });
-      return;
+      return answer.message;
     }
     this.known = answer.workspaces;
-    this.showWorkspaces({ kind: 'ready' });
+    return null;
+  }
+
+  /** As {@link playlistsNotRefreshed}, for the workspace list (#450). */
+  private async workspacesNotRefreshed(message: string): Promise<void> {
+    await this.askWorkspaces();
+    this.showWorkspaces({ kind: 'failed', message });
   }
 
   /**
@@ -430,10 +459,9 @@ export class SunoSync {
     this.showWorkspaces({ kind: 'refreshing' });
     // The page the sync's workspace-list leg is read on: Library (`/me`).
     if (!onPageOf({ list: 'workspaces' }, page.address())) {
-      this.showWorkspaces({
-        kind: 'failed',
-        message: `Not refreshed: step '${REFRESH_STEP}' expected the Suno tab to stay on Library.`,
-      });
+      await this.workspacesNotRefreshed(
+        `Not refreshed: step '${REFRESH_STEP}' expected the Suno tab to stay on Library.`,
+      );
       return;
     }
     const controller = new AbortController();
@@ -447,17 +475,15 @@ export class SunoSync {
         signal: controller.signal,
       });
     } catch (error) {
-      this.showWorkspaces({
-        kind: 'failed',
-        message:
-          error instanceof ReadStop
-            ? `Not refreshed: ${report(error.step, error.expected)}.`
-            : 'Not refreshed: the read did not finish.',
-      });
-      return;
-    } finally {
       this.controller = null;
+      await this.workspacesNotRefreshed(
+        error instanceof ReadStop
+          ? `Not refreshed: ${report(error.step, error.expected)}.`
+          : 'Not refreshed: the read did not finish.',
+      );
+      return;
     }
+    this.controller = null;
     let answer: SyncReply<{ workspaces: KnownWorkspace[] }>;
     try {
       answer = reply(
@@ -471,10 +497,9 @@ export class SunoSync {
       answer = reply(undefined);
     }
     if (!answer.ok) {
-      this.showWorkspaces({
-        kind: 'failed',
-        message: `Your workspace list was read but not recorded: ${answer.message}`,
-      });
+      await this.workspacesNotRefreshed(
+        `Your workspace list was read but not recorded: ${answer.message}`,
+      );
       return;
     }
     this.known = answer.workspaces;
@@ -636,17 +661,21 @@ export class SunoSync {
       return;
     }
 
-    let finished: SyncReply<{ reviewUrl: string }>;
+    let finished: ResponseFor['sync-complete'];
     try {
       finished = reply(await this.options.send({ type: 'sync-complete' }));
     } catch {
       finished = reply(undefined);
     }
+    // n8Tracks decides whether the review has anything to decide (#450); with nothing, the service
+    // worker has discarded the export, and no review opened.
+    const nothingNew = finished.ok && 'nothingNew' in finished ? finished.nothingNew : null;
     show(
       finished.ok
         ? {
             kind: 'finished',
             counts: next.counts,
+            ...(nothingNew === null ? {} : { nothingNew: nothingNew.songs }),
             ...(next.voicesNote === undefined ? {} : { note: next.voicesNote }),
             ...(next.notes === undefined ? {} : { notes: next.notes }),
           }
@@ -655,7 +684,7 @@ export class SunoSync {
             report: report('Finish the export', `n8Tracks to accept it (${finished.message})`),
           },
     );
-    if (finished.ok) {
+    if (finished.ok && nothingNew === null) {
       await this.watchImages();
     }
   }

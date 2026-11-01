@@ -212,6 +212,10 @@ public sealed class PlaylistMembershipService(
         return (rows.Count(static row => row.Record), rows.Count);
     }
 
+    /// <summary>Whether any of the export's playlist rows holds songs other than n8Tracks records for that playlist (#450).</summary>
+    internal async Task<bool> AnyChangeAsync(SunoExport export, CancellationToken cancellationToken) =>
+        (await RowsAsync(export, cancellationToken).ConfigureAwait(false)).Any(static row => row.Change != PlaylistMembershipChange.Same);
+
     /// <summary>The Suno IDs of the playlists the export has rows for: the commit leaves them to <see cref="ApplyAsync"/>.</summary>
     internal async Task<IReadOnlySet<string>> RowIdsAsync(SunoExport export, CancellationToken cancellationToken) =>
         (await ListedAsync(export, cancellationToken).ConfigureAwait(false)).Select(static playlist => playlist.Id).ToHashSet(StringComparer.Ordinal);

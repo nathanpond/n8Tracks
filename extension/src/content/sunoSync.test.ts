@@ -106,6 +106,8 @@ function worker(
     reportRefused?: string;
     knownPlaylists?: KnownWorkspace[];
     refreshPlaylists?: boolean;
+    /** n8Tracks had nothing to review in the export (#450): how many songs it held. */
+    nothingNew?: number;
   } = {},
 ) {
   const asked: Request[] = [];
@@ -176,10 +178,11 @@ function worker(
         return Promise.resolve({ ok: true });
       case 'sync-complete':
         current = null;
-        return Promise.resolve({
-          ok: true,
-          reviewUrl: 'https://n8tracks.example.com/suno/imports/e1',
-        });
+        return Promise.resolve(
+          workspaces.nothingNew === undefined
+            ? { ok: true, reviewUrl: 'https://n8tracks.example.com/suno/imports/e1' }
+            : { ok: true, nothingNew: { songs: workspaces.nothingNew } },
+        );
       case 'sync-discard':
         current = null;
         return Promise.resolve({ ok: true });
@@ -837,6 +840,30 @@ describe('reading a leg after its page loads', () => {
     );
   });
 
+  it('says there is nothing new, and follows no cover images, when n8Tracks has nothing to review (#450)', async () => {
+    const trash = sunoObject('clips-trashed-v2.response');
+    delete trash.next_cursor;
+    const sw = worker(sessionAt(4, { exportId: 'e1', partNumber: 1 }), CONNECTED, [], {
+      nothingNew: 227,
+    });
+    const { content: started, text } = start({
+      address: 'https://suno.com/me/trash',
+      snapshot: 'library-trash',
+      worker: sw,
+      seen: [observed('trash', trash)],
+    });
+
+    await started.resumed;
+
+    expect(text('.sync-done')).toBe(
+      'Finished: read 0 workspaces, 0 clips, 2 clips in the Trash, 0 playlists. Nothing new: n8Tracks already has all 227 songs.',
+    );
+    expect(sw.types()).toContain('sync-complete');
+    // The service worker discarded the export: nothing is asked of it after.
+    expect(sw.types()).not.toContain('sync-images');
+    expect(sw.types()).not.toContain('sync-discard');
+  });
+
   it('follows the cover images after the export is complete, until they are done (#152)', async () => {
     const trash = sunoObject('clips-trashed-v2.response');
     delete trash.next_cursor;
@@ -1289,5 +1316,145 @@ describe('playlists (#449)', () => {
       ['sync-playlists-report'],
     );
     expect(visited).toEqual([]);
+  });
+
+  it('after a workspace sync finishes, Sync again then Playlists shows the playlists n8Tracks knows (#450)', async () => {
+    const scope: SyncScope = { kind: 'workspaces', ids: ['w1'], readTrash: false };
+    const page = sunoObject('feed-v3.workspace-create-wid.page-1.response');
+    page.has_more = false;
+    delete page.next_cursor;
+    const sw = worker(
+      sessionAt(3, { scope, legs: legsFor(scope), workspaces: [{ id: 'w1' }] }),
+      CONNECTED,
+      [],
+      { knownPlaylists: [{ id: 'p-known', name: 'Paper Moons' }] },
+    );
+    const {
+      content: started,
+      root,
+      button,
+    } = start({
+      address: 'https://suno.com/create?wid=w1',
+      snapshot: 'create-workspace-songs-groups',
+      worker: sw,
+      seen: [observed('library-feed', page, workspaceFilters('w1'))],
+    });
+    await started.resumed;
+    expect(root?.querySelector('.sync-done')).not.toBeNull();
+    button('Sync again')?.click();
+    await vi.waitFor(() => {
+      expect(root?.querySelector<HTMLInputElement>('input[value="playlists"]')?.disabled).toBe(
+        false,
+      );
+    });
+    root?.querySelector<HTMLInputElement>('input[value="playlists"]')?.click();
+    await vi.waitFor(() => {
+      expect(
+        [...(root?.querySelectorAll('.sync-list label') ?? [])].map((label) =>
+          label.textContent.trim(),
+        ),
+      ).toEqual(['Paper Moons']);
+    });
+  });
+
+  /** The labels of the panel's list checkboxes. */
+  function listed(root: ShadowRoot | null | undefined): string[] {
+    return [...(root?.querySelectorAll('.sync-list label') ?? [])].map((label) =>
+      label.textContent.trim(),
+    );
+  }
+
+  it('a Refresh from Suno that stops still offers the playlists n8Tracks knows (#450)', async () => {
+    // The choice comes already selected with this page load, so no change event asks n8Tracks.
+    const sw = worker(null, CONNECTED, [], {
+      refreshPlaylists: true,
+      knownPlaylists: [{ id: 'p-known', name: 'Paper Moons' }],
+    });
+    const {
+      content: started,
+      root,
+      text,
+    } = start({
+      address: 'https://suno.com/me',
+      snapshot: null,
+      worker: sw,
+    });
+
+    await started.resumed;
+
+    expect(root?.querySelector<HTMLInputElement>('input[value="playlists"]')?.checked).toBe(true);
+    expect(text('.sync-playlists')).toContain("Not refreshed: step 'Read your playlists'");
+    expect(listed(root)).toEqual(['Paper Moons']);
+    expect(sw.types()).toContain('sync-playlists-known');
+    expect(sw.types()).not.toContain('sync-playlists-report');
+  });
+
+  it('a Refresh from Suno that stops still offers the workspaces n8Tracks knows (#450)', async () => {
+    const sw = worker(null, CONNECTED, [], {
+      refresh: true,
+      known: [{ id: 'w-known', name: 'Night Ferry' }],
+    });
+    const {
+      content: started,
+      root,
+      text,
+    } = start({
+      address: 'https://suno.com/me',
+      snapshot: null,
+      worker: sw,
+    });
+
+    await started.resumed;
+
+    expect(root?.querySelector<HTMLInputElement>('input[value="workspaces"]')?.checked).toBe(true);
+    expect(text('.sync-workspaces')).toContain("Not refreshed: step 'Read the workspace list'");
+    expect(listed(root)).toEqual(['Night Ferry']);
+    expect(sw.types()).toContain('sync-workspaces-known');
+  });
+
+  it('asks n8Tracks again when the panel comes back to the Playlists choice, or opens on it (#450)', async () => {
+    const sw = worker(null, CONNECTED, [], {
+      knownPlaylists: [{ id: 'p-known', name: 'Paper Moons' }],
+    });
+    const {
+      content: started,
+      root,
+      button,
+    } = start({
+      address: 'https://suno.com/create',
+      snapshot: null,
+      worker: sw,
+    });
+    await started.resumed;
+    await started.toggle();
+    const radio = root?.querySelector<HTMLInputElement>('input[value="playlists"]');
+    if (radio === null || radio === undefined) {
+      throw new Error('No Playlists choice');
+    }
+    radio.checked = true;
+    radio.dispatchEvent(new Event('change'));
+    await vi.waitFor(() => {
+      expect(listed(root)).toEqual(['Paper Moons']);
+    });
+    const asked = () => sw.types().filter((type) => type === 'sync-playlists-known').length;
+    expect(asked()).toBe(1);
+
+    // Next, then Back: the choice is still Playlists, with the playlist chosen, and asks again.
+    root?.querySelector<HTMLInputElement>('input[value="p-known"]')?.click();
+    button('Next')?.click();
+    await vi.waitFor(() => {
+      expect(button('Back')).toBeDefined();
+    });
+    button('Back')?.click();
+    await vi.waitFor(() => {
+      expect(asked()).toBe(2);
+    });
+    expect(listed(root)).toEqual(['Paper Moons']);
+    expect(root?.querySelector<HTMLInputElement>('input[value="p-known"]')?.checked).toBe(true);
+
+    // Closed and opened again on the choice: asked again.
+    await started.toggle();
+    await started.toggle();
+    expect(asked()).toBe(3);
   });
 });
