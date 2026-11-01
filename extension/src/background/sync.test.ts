@@ -409,6 +409,56 @@ describe('finishing a sync', () => {
     expect(context.calls.at(-1)?.path).toBe(`api/v1/suno/exports/${EXPORT}/discard`);
     expect(context.tabs.create).not.toHaveBeenCalled();
   });
+
+  it('discards the export, opening no review, when n8Tracks says it has nothing to review (#450)', async () => {
+    const context = await created();
+    context.openTabs.push({ id: 11, url: `${ADDRESS}/songs` });
+    context.answer((call) =>
+      call.path.endsWith('/complete')
+        ? jsonResponse(200, {
+            id: EXPORT,
+            state: 'ready',
+            counts: { linked: 227, total: 227 },
+            nothingToReview: true,
+          })
+        : jsonResponse(200, { id: EXPORT, state: 'discarded' }),
+    );
+
+    expect(await context.send({ type: 'sync-complete' })).toEqual({
+      ok: true,
+      nothingNew: { songs: 227 },
+    });
+
+    // The cancel path's discard, and nothing after it: no review, no cover images.
+    expect(context.calls.map((call) => `${call.method} ${call.path}`).slice(-2)).toEqual([
+      `POST api/v1/suno/exports/${EXPORT}/complete`,
+      `POST api/v1/suno/exports/${EXPORT}/discard`,
+    ]);
+    expect(context.tabs.update).not.toHaveBeenCalled();
+    expect(context.tabs.create).not.toHaveBeenCalled();
+    expect(context.session.has(SYNC_KEY)).toBe(false);
+    expect(await context.send({ type: 'sync-images' })).toEqual({ images: null });
+    // The next sync's summary finds nothing waiting.
+    expect(await context.send({ type: 'sync-preview' })).toEqual({ replacesReady: false });
+  });
+
+  it('opens the review as before when n8Tracks says there is something to review (#450)', async () => {
+    const context = await created();
+    context.answer(() =>
+      jsonResponse(200, {
+        id: EXPORT,
+        state: 'ready',
+        counts: { total: 3 },
+        nothingToReview: false,
+      }),
+    );
+
+    expect(await context.send({ type: 'sync-complete' })).toEqual({
+      ok: true,
+      reviewUrl: `${ADDRESS}/suno/imports/${EXPORT}`,
+    });
+    expect(context.calls.some((call) => call.path.endsWith('/discard'))).toBe(false);
+  });
 });
 
 describe('ending a sync without an export', () => {

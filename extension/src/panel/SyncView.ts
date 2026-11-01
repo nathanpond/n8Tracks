@@ -11,7 +11,12 @@ import type { ImageProgress, SyncCounts, SyncScope } from '../messages.ts';
  * The Workspaces choice (#448) offers the workspaces n8Tracks knows, from earlier syncs and Generate
  * runs, with any Suno has shown this page since; "Refresh from Suno" reads Suno's workspace list
  * again (on Library, as a sync's first leg does) and reports it to n8Tracks. The Playlists choice
- * (#449) does the same with the playlists n8Tracks knows and Suno's playlist list.
+ * (#449) does the same with the playlists n8Tracks knows and Suno's playlist list. Either list is
+ * asked for again whenever the view comes back to its choice already selected, since no change
+ * event fires then (#450).
+ *
+ * A sync whose export n8Tracks found nothing to review in ends with "Nothing new" and no review
+ * (#450): n8Tracks decides that, and the service worker has discarded the export.
  */
 
 export type SyncViewState =
@@ -27,6 +32,11 @@ export type SyncViewState =
       note?: string;
       /** About the playlist list and the playlists read in part (#449). */
       notes?: string[];
+      /**
+       * Set when n8Tracks said the review had nothing to decide (#450): how many songs the export held.
+       * The export was discarded, and no review opened.
+       */
+      nothingNew?: number;
     }
   | { kind: 'stopped'; report: string }
   | { kind: 'cancelled' };
@@ -137,6 +147,17 @@ function knownListText(
   }
 }
 
+/**
+ * What the finished sync says when n8Tracks had nothing for the review to decide (#450): the export
+ * was discarded, so there is no review to open.
+ */
+export function nothingNewText(songs: number): string {
+  if (songs === 0) {
+    return 'Nothing new: there was nothing for n8Tracks to review.';
+  }
+  return `Nothing new: n8Tracks already has ${songs === 1 ? 'the 1 song' : `all ${String(songs)} songs`}.`;
+}
+
 /** The hint beside "Also check Suno's Trash" (#420). */
 export const TRASH_HINT =
   "Songs moved to Suno's Trash are archived in n8Tracks at the next sync that reads the Trash. Reading it takes longer; a whole-library sync always reads it.";
@@ -240,6 +261,27 @@ export class SyncView {
     this.render();
     if (moved) {
       this.focusFirst();
+    }
+    // Back at the choice with Workspaces or Playlists still chosen (Back, Sync again, Try again):
+    // no change event fires, so the list is asked for again (#450). A choice shown with its scope
+    // (a Refresh from Suno's page load) comes with its own list.
+    if (state.kind === 'choose' && state.scope === undefined) {
+      this.askChosen();
+    }
+  }
+
+  /**
+   * Asks n8Tracks again for the list of the choice shown, when it is Workspaces or Playlists (#450):
+   * on coming back to the choice, and when the panel is opened on it.
+   */
+  askChosen(): void {
+    if (this.state.kind !== 'choose') {
+      return;
+    }
+    if (this.chosenKind === 'workspaces') {
+      this.options.wantWorkspaces();
+    } else if (this.chosenKind === 'playlists') {
+      this.options.wantPlaylists?.();
     }
   }
 
@@ -385,7 +427,11 @@ export class SyncView {
         const done = this.make(
           'p',
           { role: 'status', class: 'sync-done' },
-          `Finished: read ${countsText(this.state.counts)}. The review is open in n8Tracks.`,
+          `Finished: read ${countsText(this.state.counts)}. ${
+            this.state.nothingNew === undefined
+              ? 'The review is open in n8Tracks.'
+              : nothingNewText(this.state.nothingNew)
+          }`,
         );
         // A status region of its own, so its count updates are announced without moving focus.
         const images = this.make('p', { role: 'status', class: 'sync-images' });
@@ -449,11 +495,7 @@ export class SyncView {
           this.chosenIds = new Set();
           this.render();
           this.focusFirst();
-          if (kind === 'workspaces') {
-            this.options.wantWorkspaces();
-          } else if (kind === 'playlists') {
-            this.options.wantPlaylists?.();
-          }
+          this.askChosen();
         }
       });
       if (this.firstControl === null || radio.checked) {
