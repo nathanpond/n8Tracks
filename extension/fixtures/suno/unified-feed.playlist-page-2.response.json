@@ -1,0 +1,2384 @@
+{
+  "feed": {
+    "feed_id": "generic_playlist:00000000-0000-4000-8000-000000000600",
+    "feed_container_type": "playlist",
+    "feed_container_id": "00000000-0000-4000-8000-000000000600",
+    "feed_direct_link": "/playlist/00000000-0000-4000-8000-000000000600",
+    "feed_title": "Synthetic Playlist",
+    "feed_image_url": "https://cdn2.suno.ai/image_00000000-0000-4000-8000-000000000601.jpeg",
+    "items": [
+      {
+        "content_id": "00000000-0000-4000-8000-000000000633",
+        "content_type": "clip",
+        "content_item": {
+          "id": "00000000-0000-4000-8000-000000000633",
+          "status": "complete",
+          "title": "Synthetic Song 51",
+          "entity_type": "song_schema",
+          "video_url": "https://cdn1.suno.ai/00000000-0000-4000-8000-000000000633.mp4",
+          "audio_url": "https://studio-api.prod.suno.com/api/forbidden",
+          "media_urls": [
+            {
+              "url": "https://d2lwuy8qc234o3.cloudfront.net/1/clip/00000000-0000-4000-8000-000000000633.m4a",
+              "content_type": "m4a-opus",
+              "delivery": "progressive",
+              "encoding": "1.0.0"
+            }
+          ],
+          "image_url": "https://cdn2.suno.ai/image_00000000-0000-4000-8000-000000000633.jpeg",
+          "image_large_url": "https://cdn2.suno.ai/image_large_00000000-0000-4000-8000-000000000633.jpeg",
+          "major_model_version": "v6",
+          "model_name": "chirp-hawk",
+          "metadata": {
+            "tags": "synthetic pop, bright synths, test",
+            "prompt": "Short made-up lyrics 51\nSecond line",
+            "type": "gen",
+            "duration": 170.5,
+            "stream": true,
+            "has_stem": false,
+            "is_remix": false,
+            "can_remix": true,
+            "vox_render_mode": "strict",
+            "is_mumble": false,
+            "priority": 10,
+            "uses_latest_model": true,
+            "refund_credits": false,
+            "can_publish_with_vocal": true,
+            "video_is_stale": false
+          },
+          "caption": "",
+          "is_liked": false,
+          "user_id": "00000000-0000-4000-8000-0000000006ff",
+          "display_name": "Test Owner",
+          "handle": "test-owner",
+          "avatar_image_url": "https://cdn1.suno.ai/avatar-test.jpg",
+          "is_trashed": false,
+          "is_hidden": false,
+          "is_public": false,
+          "created_at": "2026-10-23T12:50:00.000Z",
+          "updated_at": "2026-10-30T09:00:00.000Z",
+          "reaction": {
+            "play_count": 50,
+            "skip_count": 0,
+            "flagged": false,
+            "reaction_type": "L",
+            "updated_at": "2026-10-30T09:00:00.000Z"
+          },
+          "play_count": 50,
+          "upvote_count": 0,
+          "comment_count": 0,
+          "flag_count": 0,
+          "explicit": false,
+          "display_tags": "pop, synth",
+          "is_download_unlocked": false,
+          "is_contest_clip": false,
+          "has_hook": false,
+          "batch_index": 0,
+          "albums": [],
+          "action_config": {
+            "actions": [
+              {
+                "action_type": "add_to_playlist",
+                "disabled": false,
+                "visible": true
+              }
+            ]
+          },
+          "is_persona_root": false,
+          "is_following_creator": false,
+          "allow_comments": true,
+          "is_verified": false
+        },
+        "added_at": "2026-10-30T10:50:00.000Z",
+        "logging_context": {
+          "recommendation_item_id": ""
+        }
+      },
+      {
+        "content_id": "00000000-0000-4000-8000-000000000634",
+        "content_type": "clip",
+        "content_item": {
+          "id": "00000000-0000-4000-8000-000000000634",
+          "status": "complete",
+          "title": "Synthetic Song 52",
+          "entity_type": "song_schema",
+          "video_url": "https://cdn1.suno.ai/00000000-0000-4000-8000-000000000634.mp4",
+          "audio_url": "https://studio-api.prod.suno.com/api/forbidden",
+          "media_urls": [
+            {
+              "url": "https://d2lwuy8qc234o3.cloudfront.net/1/clip/00000000-0000-4000-8000-000000000634.m4a",
+              "content_type": "m4a-opus",
+              "delivery": "progressive",
+              "encoding": "1.0.0"
+            }
+          ],
+          "image_url": "https://cdn2.suno.ai/image_00000000-0000-4000-8000-000000000634.jpeg",
+          "image_large_url": "https://cdn2.suno.ai/image_large_00000000-0000-4000-8000-000000000634.jpeg",
+          "major_model_version": "v6",
+          "model_name": "chirp-hawk",
+          "metadata": {
+            "tags": "synthetic pop, bright synths, test",
+            "prompt": "[Intro]\nSynthetic lyrics 52\n\n[Verse]\nA made-up line for a made-up song, café ✓ 🎵\nAnother line that rhymes with nothing at all\n\n[Verse]\nA made-up line for a made-up song, café ✓ 🎵\nAnother line that rhymes with nothing at all\n\n[Verse]\nA made-up line for a made-up song, café ✓ 🎵\nAnother line that rhymes with nothing at all\n\n[Verse]\nA made-up line for a made-up song, café ✓ 🎵\nAnother line that rhymes with nothing at all\n\n[Verse]\nA made-up line for a made-up song, café ✓ 🎵\nAnother line that rhymes with nothing at all\n\n[Verse]\nA made-up line for a made-up song, café ✓ 🎵\nAnother line that rhymes with nothing at all\n\n[Verse]\nA made-up line for a made-up song, café ✓ 🎵\nAnother line that rhymes with nothing at all\n\n[Verse]\nA made-up line for a made-up song, café ✓ 🎵\nAnother line that rhymes with nothing at all\n\n[Verse]\nA made-up line for a made-up song, café ✓ 🎵\nAnother line that rhymes with nothing at all\n\n[Verse]\nA made-up line for a made-up song, café ✓ 🎵\nAnother line that rhymes with nothing at all\n\n[Verse]\nA made-up line for a made-up song, café ✓ 🎵\nAnother line that rhymes with nothing at all\n\n[Verse]\nA made-up line for a made-up song, café ✓ 🎵\nAnother line that rhymes with nothing at all\n\n[Outro]\nThe end\n",
+            "type": "gen",
+            "duration": 171.5,
+            "stream": true,
+            "has_stem": false,
+            "is_remix": false,
+            "can_remix": true,
+            "vox_render_mode": "strict",
+            "is_mumble": false,
+            "priority": 10,
+            "uses_latest_model": true,
+            "refund_credits": false,
+            "can_publish_with_vocal": true,
+            "video_is_stale": false
+          },
+          "caption": "",
+          "is_liked": false,
+          "user_id": "00000000-0000-4000-8000-0000000006ff",
+          "display_name": "Test Owner",
+          "handle": "test-owner",
+          "avatar_image_url": "https://cdn1.suno.ai/avatar-test.jpg",
+          "is_trashed": false,
+          "is_hidden": false,
+          "is_public": false,
+          "created_at": "2026-10-24T12:51:00.000Z",
+          "updated_at": "2026-10-30T09:00:00.000Z",
+          "reaction": {
+            "play_count": 51,
+            "skip_count": 0,
+            "flagged": false,
+            "reaction_type": "L",
+            "updated_at": "2026-10-30T09:00:00.000Z"
+          },
+          "play_count": 51,
+          "upvote_count": 0,
+          "comment_count": 0,
+          "flag_count": 0,
+          "explicit": false,
+          "display_tags": "pop, synth",
+          "is_download_unlocked": false,
+          "is_contest_clip": false,
+          "has_hook": false,
+          "batch_index": 1,
+          "albums": [],
+          "action_config": {
+            "actions": [
+              {
+                "action_type": "add_to_playlist",
+                "disabled": false,
+                "visible": true
+              }
+            ]
+          },
+          "is_persona_root": false,
+          "is_following_creator": false,
+          "allow_comments": true,
+          "is_verified": false
+        },
+        "added_at": "2026-10-30T10:51:00.000Z",
+        "logging_context": {
+          "recommendation_item_id": ""
+        }
+      },
+      {
+        "content_id": "00000000-0000-4000-8000-000000000635",
+        "content_type": "clip",
+        "content_item": {
+          "id": "00000000-0000-4000-8000-000000000635",
+          "status": "complete",
+          "title": "Synthetic Song 53",
+          "entity_type": "song_schema",
+          "video_url": "https://cdn1.suno.ai/00000000-0000-4000-8000-000000000635.mp4",
+          "audio_url": "https://studio-api.prod.suno.com/api/forbidden",
+          "media_urls": [
+            {
+              "url": "https://d2lwuy8qc234o3.cloudfront.net/1/clip/00000000-0000-4000-8000-000000000635.m4a",
+              "content_type": "m4a-opus",
+              "delivery": "progressive",
+              "encoding": "1.0.0"
+            }
+          ],
+          "image_url": "https://cdn2.suno.ai/image_00000000-0000-4000-8000-000000000635.jpeg",
+          "image_large_url": "https://cdn2.suno.ai/image_large_00000000-0000-4000-8000-000000000635.jpeg",
+          "major_model_version": "v6",
+          "model_name": "chirp-hawk",
+          "metadata": {
+            "tags": "synthetic pop, bright synths, test",
+            "prompt": "Short made-up lyrics 53\nSecond line",
+            "type": "gen",
+            "duration": 172.5,
+            "stream": true,
+            "has_stem": false,
+            "is_remix": false,
+            "can_remix": true,
+            "vox_render_mode": "strict",
+            "is_mumble": false,
+            "priority": 10,
+            "uses_latest_model": true,
+            "refund_credits": false,
+            "can_publish_with_vocal": true,
+            "video_is_stale": false
+          },
+          "caption": "",
+          "is_liked": false,
+          "user_id": "00000000-0000-4000-8000-0000000006ff",
+          "display_name": "Test Owner",
+          "handle": "test-owner",
+          "avatar_image_url": "https://cdn1.suno.ai/avatar-test.jpg",
+          "is_trashed": false,
+          "is_hidden": false,
+          "is_public": false,
+          "created_at": "2026-10-25T12:52:00.000Z",
+          "updated_at": "2026-10-30T09:00:00.000Z",
+          "reaction": {
+            "play_count": 52,
+            "skip_count": 0,
+            "flagged": false,
+            "reaction_type": "L",
+            "updated_at": "2026-10-30T09:00:00.000Z"
+          },
+          "play_count": 52,
+          "upvote_count": 0,
+          "comment_count": 0,
+          "flag_count": 0,
+          "explicit": false,
+          "display_tags": "pop, synth",
+          "is_download_unlocked": false,
+          "is_contest_clip": false,
+          "has_hook": false,
+          "batch_index": 0,
+          "albums": [],
+          "action_config": {
+            "actions": [
+              {
+                "action_type": "add_to_playlist",
+                "disabled": false,
+                "visible": true
+              }
+            ]
+          },
+          "is_persona_root": false,
+          "is_following_creator": false,
+          "allow_comments": true,
+          "is_verified": false
+        },
+        "added_at": "2026-10-30T10:52:00.000Z",
+        "logging_context": {
+          "recommendation_item_id": ""
+        }
+      },
+      {
+        "content_id": "00000000-0000-4000-8000-000000000636",
+        "content_type": "clip",
+        "content_item": {
+          "id": "00000000-0000-4000-8000-000000000636",
+          "status": "complete",
+          "title": "Synthetic Song 54",
+          "entity_type": "song_schema",
+          "video_url": "https://cdn1.suno.ai/00000000-0000-4000-8000-000000000636.mp4",
+          "audio_url": "https://studio-api.prod.suno.com/api/forbidden",
+          "media_urls": [
+            {
+              "url": "https://d2lwuy8qc234o3.cloudfront.net/1/clip/00000000-0000-4000-8000-000000000636.m4a",
+              "content_type": "m4a-opus",
+              "delivery": "progressive",
+              "encoding": "1.0.0"
+            }
+          ],
+          "image_url": "https://cdn2.suno.ai/image_00000000-0000-4000-8000-000000000636.jpeg",
+          "image_large_url": "https://cdn2.suno.ai/image_large_00000000-0000-4000-8000-000000000636.jpeg",
+          "major_model_version": "v6",
+          "model_name": "chirp-hawk",
+          "metadata": {
+            "tags": "synthetic pop, bright synths, test",
+            "prompt": "Short made-up lyrics 54\nSecond line",
+            "type": "gen",
+            "duration": 173.5,
+            "stream": true,
+            "has_stem": false,
+            "is_remix": false,
+            "can_remix": true,
+            "vox_render_mode": "strict",
+            "is_mumble": false,
+            "priority": 10,
+            "uses_latest_model": true,
+            "refund_credits": false,
+            "can_publish_with_vocal": true,
+            "video_is_stale": false,
+            "edited_clip_id": "00000000-0000-4000-8000-000000000635",
+            "task": "edit_crop",
+            "variation_category": "edit"
+          },
+          "caption": "",
+          "is_liked": false,
+          "user_id": "00000000-0000-4000-8000-0000000006ff",
+          "display_name": "Test Owner",
+          "handle": "test-owner",
+          "avatar_image_url": "https://cdn1.suno.ai/avatar-test.jpg",
+          "is_trashed": false,
+          "is_hidden": false,
+          "is_public": false,
+          "created_at": "2026-10-26T12:53:00.000Z",
+          "updated_at": "2026-10-30T09:00:00.000Z",
+          "reaction": {
+            "play_count": 53,
+            "skip_count": 0,
+            "flagged": false,
+            "reaction_type": "L",
+            "updated_at": "2026-10-30T09:00:00.000Z"
+          },
+          "play_count": 53,
+          "upvote_count": 0,
+          "comment_count": 0,
+          "flag_count": 0,
+          "explicit": false,
+          "display_tags": "pop, synth",
+          "is_download_unlocked": false,
+          "is_contest_clip": false,
+          "has_hook": false,
+          "batch_index": 1,
+          "albums": [],
+          "action_config": {
+            "actions": [
+              {
+                "action_type": "add_to_playlist",
+                "disabled": false,
+                "visible": true
+              }
+            ]
+          },
+          "is_persona_root": false,
+          "is_following_creator": false,
+          "allow_comments": true,
+          "is_verified": false
+        },
+        "added_at": "2026-10-30T10:53:00.000Z",
+        "logging_context": {
+          "recommendation_item_id": ""
+        }
+      },
+      {
+        "content_id": "00000000-0000-4000-8000-000000000637",
+        "content_type": "clip",
+        "content_item": {
+          "id": "00000000-0000-4000-8000-000000000637",
+          "status": "complete",
+          "title": "Synthetic Song 55",
+          "entity_type": "song_schema",
+          "video_url": "https://cdn1.suno.ai/00000000-0000-4000-8000-000000000637.mp4",
+          "audio_url": "https://studio-api.prod.suno.com/api/forbidden",
+          "media_urls": [
+            {
+              "url": "https://d2lwuy8qc234o3.cloudfront.net/1/clip/00000000-0000-4000-8000-000000000637.m4a",
+              "content_type": "m4a-opus",
+              "delivery": "progressive",
+              "encoding": "1.0.0"
+            }
+          ],
+          "image_url": "https://cdn2.suno.ai/image_00000000-0000-4000-8000-000000000637.jpeg",
+          "image_large_url": "https://cdn2.suno.ai/image_large_00000000-0000-4000-8000-000000000637.jpeg",
+          "major_model_version": "v6",
+          "model_name": "chirp-hawk",
+          "metadata": {
+            "tags": "synthetic pop, bright synths, test",
+            "prompt": "Short made-up lyrics 55\nSecond line",
+            "type": "gen",
+            "duration": 174.5,
+            "stream": true,
+            "has_stem": false,
+            "is_remix": false,
+            "can_remix": true,
+            "vox_render_mode": "strict",
+            "is_mumble": false,
+            "priority": 10,
+            "uses_latest_model": true,
+            "refund_credits": false,
+            "can_publish_with_vocal": true,
+            "video_is_stale": false
+          },
+          "caption": "",
+          "is_liked": false,
+          "user_id": "00000000-0000-4000-8000-0000000006ff",
+          "display_name": "Test Owner",
+          "handle": "test-owner",
+          "avatar_image_url": "https://cdn1.suno.ai/avatar-test.jpg",
+          "is_trashed": false,
+          "is_hidden": false,
+          "is_public": false,
+          "created_at": "2026-10-27T12:54:00.000Z",
+          "updated_at": "2026-10-30T09:00:00.000Z",
+          "reaction": {
+            "play_count": 54,
+            "skip_count": 0,
+            "flagged": false,
+            "reaction_type": "L",
+            "updated_at": "2026-10-30T09:00:00.000Z"
+          },
+          "play_count": 54,
+          "upvote_count": 0,
+          "comment_count": 0,
+          "flag_count": 0,
+          "explicit": false,
+          "display_tags": "pop, synth",
+          "is_download_unlocked": false,
+          "is_contest_clip": false,
+          "has_hook": false,
+          "batch_index": 0,
+          "albums": [],
+          "action_config": {
+            "actions": [
+              {
+                "action_type": "add_to_playlist",
+                "disabled": false,
+                "visible": true
+              }
+            ]
+          },
+          "is_persona_root": false,
+          "is_following_creator": false,
+          "allow_comments": true,
+          "is_verified": false
+        },
+        "added_at": "2026-10-30T10:54:00.000Z",
+        "logging_context": {
+          "recommendation_item_id": ""
+        }
+      },
+      {
+        "content_id": "00000000-0000-4000-8000-000000000638",
+        "content_type": "clip",
+        "content_item": {
+          "id": "00000000-0000-4000-8000-000000000638",
+          "status": "complete",
+          "title": "Synthetic Song 56",
+          "entity_type": "song_schema",
+          "video_url": "https://cdn1.suno.ai/00000000-0000-4000-8000-000000000638.mp4",
+          "audio_url": "https://studio-api.prod.suno.com/api/forbidden",
+          "media_urls": [
+            {
+              "url": "https://d2lwuy8qc234o3.cloudfront.net/1/clip/00000000-0000-4000-8000-000000000638.m4a",
+              "content_type": "m4a-opus",
+              "delivery": "progressive",
+              "encoding": "1.0.0"
+            }
+          ],
+          "image_url": "https://cdn2.suno.ai/image_00000000-0000-4000-8000-000000000638.jpeg",
+          "image_large_url": "https://cdn2.suno.ai/image_large_00000000-0000-4000-8000-000000000638.jpeg",
+          "major_model_version": "v6",
+          "model_name": "chirp-hawk",
+          "metadata": {
+            "tags": "synthetic pop, bright synths, test",
+            "prompt": "Short made-up lyrics 56\nSecond line",
+            "type": "gen",
+            "duration": 175.5,
+            "stream": true,
+            "has_stem": false,
+            "is_remix": false,
+            "can_remix": true,
+            "vox_render_mode": "strict",
+            "is_mumble": false,
+            "priority": 10,
+            "uses_latest_model": true,
+            "refund_credits": false,
+            "can_publish_with_vocal": true,
+            "video_is_stale": false
+          },
+          "caption": "",
+          "is_liked": false,
+          "user_id": "00000000-0000-4000-8000-0000000006ff",
+          "display_name": "Test Owner",
+          "handle": "test-owner",
+          "avatar_image_url": "https://cdn1.suno.ai/avatar-test.jpg",
+          "is_trashed": false,
+          "is_hidden": false,
+          "is_public": false,
+          "created_at": "2026-10-28T12:55:00.000Z",
+          "updated_at": "2026-10-30T09:00:00.000Z",
+          "reaction": {
+            "play_count": 55,
+            "skip_count": 0,
+            "flagged": false,
+            "reaction_type": "L",
+            "updated_at": "2026-10-30T09:00:00.000Z"
+          },
+          "play_count": 55,
+          "upvote_count": 0,
+          "comment_count": 0,
+          "flag_count": 0,
+          "explicit": false,
+          "display_tags": "pop, synth",
+          "is_download_unlocked": false,
+          "is_contest_clip": false,
+          "has_hook": false,
+          "batch_index": 1,
+          "albums": [],
+          "action_config": {
+            "actions": [
+              {
+                "action_type": "add_to_playlist",
+                "disabled": false,
+                "visible": true
+              }
+            ]
+          },
+          "is_persona_root": false,
+          "is_following_creator": false,
+          "allow_comments": true,
+          "is_verified": false
+        },
+        "added_at": "2026-10-30T10:55:00.000Z",
+        "logging_context": {
+          "recommendation_item_id": ""
+        }
+      },
+      {
+        "content_id": "00000000-0000-4000-8000-000000000639",
+        "content_type": "clip",
+        "content_item": {
+          "id": "00000000-0000-4000-8000-000000000639",
+          "status": "complete",
+          "title": "Synthetic Song 57",
+          "entity_type": "song_schema",
+          "video_url": "https://cdn1.suno.ai/00000000-0000-4000-8000-000000000639.mp4",
+          "audio_url": "https://studio-api.prod.suno.com/api/forbidden",
+          "media_urls": [
+            {
+              "url": "https://d2lwuy8qc234o3.cloudfront.net/1/clip/00000000-0000-4000-8000-000000000639.m4a",
+              "content_type": "m4a-opus",
+              "delivery": "progressive",
+              "encoding": "1.0.0"
+            }
+          ],
+          "image_url": "https://cdn2.suno.ai/image_00000000-0000-4000-8000-000000000639.jpeg",
+          "image_large_url": "https://cdn2.suno.ai/image_large_00000000-0000-4000-8000-000000000639.jpeg",
+          "major_model_version": "v6",
+          "model_name": "chirp-hawk",
+          "metadata": {
+            "tags": "synthetic pop, bright synths, test",
+            "prompt": "Short made-up lyrics 57\nSecond line",
+            "type": "gen",
+            "duration": 176.5,
+            "stream": true,
+            "has_stem": false,
+            "is_remix": false,
+            "can_remix": true,
+            "vox_render_mode": "strict",
+            "is_mumble": false,
+            "priority": 10,
+            "uses_latest_model": true,
+            "refund_credits": false,
+            "can_publish_with_vocal": true,
+            "video_is_stale": false
+          },
+          "caption": "",
+          "is_liked": false,
+          "user_id": "00000000-0000-4000-8000-0000000006ff",
+          "display_name": "Test Owner",
+          "handle": "test-owner",
+          "avatar_image_url": "https://cdn1.suno.ai/avatar-test.jpg",
+          "is_trashed": false,
+          "is_hidden": false,
+          "is_public": false,
+          "created_at": "2026-10-01T12:56:00.000Z",
+          "updated_at": "2026-10-30T09:00:00.000Z",
+          "reaction": {
+            "play_count": 56,
+            "skip_count": 0,
+            "flagged": false,
+            "reaction_type": "L",
+            "updated_at": "2026-10-30T09:00:00.000Z"
+          },
+          "play_count": 56,
+          "upvote_count": 0,
+          "comment_count": 0,
+          "flag_count": 0,
+          "explicit": false,
+          "display_tags": "pop, synth",
+          "is_download_unlocked": false,
+          "is_contest_clip": false,
+          "has_hook": false,
+          "batch_index": 0,
+          "albums": [],
+          "action_config": {
+            "actions": [
+              {
+                "action_type": "add_to_playlist",
+                "disabled": false,
+                "visible": true
+              }
+            ]
+          },
+          "is_persona_root": false,
+          "is_following_creator": false,
+          "allow_comments": true,
+          "is_verified": false
+        },
+        "added_at": "2026-10-30T10:56:00.000Z",
+        "logging_context": {
+          "recommendation_item_id": ""
+        }
+      },
+      {
+        "content_id": "00000000-0000-4000-8000-00000000063a",
+        "content_type": "clip",
+        "content_item": {
+          "id": "00000000-0000-4000-8000-00000000063a",
+          "status": "complete",
+          "title": "Synthetic Song 58",
+          "entity_type": "song_schema",
+          "video_url": "https://cdn1.suno.ai/00000000-0000-4000-8000-00000000063a.mp4",
+          "audio_url": "https://studio-api.prod.suno.com/api/forbidden",
+          "media_urls": [
+            {
+              "url": "https://d2lwuy8qc234o3.cloudfront.net/1/clip/00000000-0000-4000-8000-00000000063a.m4a",
+              "content_type": "m4a-opus",
+              "delivery": "progressive",
+              "encoding": "1.0.0"
+            }
+          ],
+          "image_url": "https://cdn2.suno.ai/image_00000000-0000-4000-8000-00000000063a.jpeg",
+          "image_large_url": "https://cdn2.suno.ai/image_large_00000000-0000-4000-8000-00000000063a.jpeg",
+          "major_model_version": "v6",
+          "model_name": "chirp-hawk",
+          "metadata": {
+            "tags": "synthetic pop, bright synths, test",
+            "prompt": "Short made-up lyrics 58\nSecond line",
+            "type": "gen",
+            "duration": 177.5,
+            "stream": true,
+            "has_stem": false,
+            "is_remix": false,
+            "can_remix": true,
+            "vox_render_mode": "strict",
+            "is_mumble": false,
+            "priority": 10,
+            "uses_latest_model": true,
+            "refund_credits": false,
+            "can_publish_with_vocal": true,
+            "video_is_stale": false,
+            "upsample_clip_id": "00000000-0000-4000-8000-000000000638",
+            "task": "upsample"
+          },
+          "caption": "",
+          "is_liked": false,
+          "user_id": "00000000-0000-4000-8000-0000000006ff",
+          "display_name": "Test Owner",
+          "handle": "test-owner",
+          "avatar_image_url": "https://cdn1.suno.ai/avatar-test.jpg",
+          "is_trashed": false,
+          "is_hidden": false,
+          "is_public": false,
+          "created_at": "2026-10-02T12:57:00.000Z",
+          "updated_at": "2026-10-30T09:00:00.000Z",
+          "reaction": {
+            "play_count": 57,
+            "skip_count": 0,
+            "flagged": false,
+            "reaction_type": "L",
+            "updated_at": "2026-10-30T09:00:00.000Z"
+          },
+          "play_count": 57,
+          "upvote_count": 0,
+          "comment_count": 0,
+          "flag_count": 0,
+          "explicit": false,
+          "display_tags": "pop, synth",
+          "is_download_unlocked": false,
+          "is_contest_clip": false,
+          "has_hook": false,
+          "batch_index": 1,
+          "albums": [],
+          "action_config": {
+            "actions": [
+              {
+                "action_type": "add_to_playlist",
+                "disabled": false,
+                "visible": true
+              }
+            ]
+          },
+          "is_persona_root": false,
+          "is_following_creator": false,
+          "allow_comments": true,
+          "is_verified": false
+        },
+        "added_at": "2026-10-30T10:57:00.000Z",
+        "logging_context": {
+          "recommendation_item_id": ""
+        }
+      },
+      {
+        "content_id": "00000000-0000-4000-8000-00000000063b",
+        "content_type": "clip",
+        "content_item": {
+          "id": "00000000-0000-4000-8000-00000000063b",
+          "status": "complete",
+          "title": "Synthetic Song 59",
+          "entity_type": "song_schema",
+          "video_url": "https://cdn1.suno.ai/00000000-0000-4000-8000-00000000063b.mp4",
+          "audio_url": "https://studio-api.prod.suno.com/api/forbidden",
+          "media_urls": [
+            {
+              "url": "https://d2lwuy8qc234o3.cloudfront.net/1/clip/00000000-0000-4000-8000-00000000063b.m4a",
+              "content_type": "m4a-opus",
+              "delivery": "progressive",
+              "encoding": "1.0.0"
+            }
+          ],
+          "image_url": "https://cdn2.suno.ai/image_00000000-0000-4000-8000-00000000063b.jpeg",
+          "image_large_url": "https://cdn2.suno.ai/image_large_00000000-0000-4000-8000-00000000063b.jpeg",
+          "major_model_version": "v6",
+          "model_name": "chirp-hawk",
+          "metadata": {
+            "tags": "synthetic pop, bright synths, test",
+            "prompt": "Short made-up lyrics 59\nSecond line",
+            "type": "gen",
+            "duration": 178.5,
+            "stream": true,
+            "has_stem": false,
+            "is_remix": false,
+            "can_remix": true,
+            "vox_render_mode": "strict",
+            "is_mumble": false,
+            "priority": 10,
+            "uses_latest_model": true,
+            "refund_credits": false,
+            "can_publish_with_vocal": true,
+            "video_is_stale": false
+          },
+          "caption": "",
+          "is_liked": false,
+          "user_id": "00000000-0000-4000-8000-0000000006ff",
+          "display_name": "Test Owner",
+          "handle": "test-owner",
+          "avatar_image_url": "https://cdn1.suno.ai/avatar-test.jpg",
+          "is_trashed": false,
+          "is_hidden": false,
+          "is_public": false,
+          "created_at": "2026-10-03T12:58:00.000Z",
+          "updated_at": "2026-10-30T09:00:00.000Z",
+          "reaction": {
+            "play_count": 58,
+            "skip_count": 0,
+            "flagged": false,
+            "reaction_type": "L",
+            "updated_at": "2026-10-30T09:00:00.000Z"
+          },
+          "play_count": 58,
+          "upvote_count": 0,
+          "comment_count": 0,
+          "flag_count": 0,
+          "explicit": false,
+          "display_tags": "pop, synth",
+          "is_download_unlocked": false,
+          "is_contest_clip": false,
+          "has_hook": false,
+          "batch_index": 0,
+          "albums": [],
+          "action_config": {
+            "actions": [
+              {
+                "action_type": "add_to_playlist",
+                "disabled": false,
+                "visible": true
+              }
+            ]
+          },
+          "is_persona_root": false,
+          "is_following_creator": false,
+          "allow_comments": true,
+          "is_verified": false
+        },
+        "added_at": "2026-10-30T10:58:00.000Z",
+        "logging_context": {
+          "recommendation_item_id": ""
+        }
+      },
+      {
+        "content_id": "00000000-0000-4000-8000-00000000063c",
+        "content_type": "clip",
+        "content_item": {
+          "id": "00000000-0000-4000-8000-00000000063c",
+          "status": "complete",
+          "title": "Synthetic Song 60",
+          "entity_type": "song_schema",
+          "video_url": "https://cdn1.suno.ai/00000000-0000-4000-8000-00000000063c.mp4",
+          "audio_url": "https://studio-api.prod.suno.com/api/forbidden",
+          "media_urls": [
+            {
+              "url": "https://d2lwuy8qc234o3.cloudfront.net/1/clip/00000000-0000-4000-8000-00000000063c.m4a",
+              "content_type": "m4a-opus",
+              "delivery": "progressive",
+              "encoding": "1.0.0"
+            }
+          ],
+          "image_url": "https://cdn2.suno.ai/image_00000000-0000-4000-8000-00000000063c.jpeg",
+          "image_large_url": "https://cdn2.suno.ai/image_large_00000000-0000-4000-8000-00000000063c.jpeg",
+          "major_model_version": "v6",
+          "model_name": "chirp-hawk",
+          "metadata": {
+            "tags": "synthetic pop, bright synths, test",
+            "prompt": "Short made-up lyrics 60\nSecond line",
+            "type": "gen",
+            "duration": 179.5,
+            "stream": true,
+            "has_stem": false,
+            "is_remix": false,
+            "can_remix": true,
+            "vox_render_mode": "strict",
+            "is_mumble": false,
+            "priority": 10,
+            "uses_latest_model": true,
+            "refund_credits": false,
+            "can_publish_with_vocal": true,
+            "video_is_stale": false
+          },
+          "caption": "",
+          "is_liked": false,
+          "user_id": "00000000-0000-4000-8000-0000000006ff",
+          "display_name": "Test Owner",
+          "handle": "test-owner",
+          "avatar_image_url": "https://cdn1.suno.ai/avatar-test.jpg",
+          "is_trashed": false,
+          "is_hidden": false,
+          "is_public": false,
+          "created_at": "2026-10-04T12:59:00.000Z",
+          "updated_at": "2026-10-30T09:00:00.000Z",
+          "reaction": {
+            "play_count": 59,
+            "skip_count": 0,
+            "flagged": false,
+            "reaction_type": "L",
+            "updated_at": "2026-10-30T09:00:00.000Z"
+          },
+          "play_count": 59,
+          "upvote_count": 0,
+          "comment_count": 0,
+          "flag_count": 0,
+          "explicit": false,
+          "display_tags": "pop, synth",
+          "is_download_unlocked": false,
+          "is_contest_clip": false,
+          "has_hook": false,
+          "batch_index": 1,
+          "albums": [],
+          "action_config": {
+            "actions": [
+              {
+                "action_type": "add_to_playlist",
+                "disabled": false,
+                "visible": true
+              }
+            ]
+          },
+          "is_persona_root": false,
+          "is_following_creator": false,
+          "allow_comments": true,
+          "is_verified": false
+        },
+        "added_at": "2026-10-30T10:59:00.000Z",
+        "logging_context": {
+          "recommendation_item_id": ""
+        }
+      },
+      {
+        "content_id": "00000000-0000-4000-8000-00000000063d",
+        "content_type": "clip",
+        "content_item": {
+          "id": "00000000-0000-4000-8000-00000000063d",
+          "status": "complete",
+          "title": "Synthetic Song 61",
+          "entity_type": "song_schema",
+          "video_url": "https://cdn1.suno.ai/00000000-0000-4000-8000-00000000063d.mp4",
+          "audio_url": "https://studio-api.prod.suno.com/api/forbidden",
+          "media_urls": [
+            {
+              "url": "https://d2lwuy8qc234o3.cloudfront.net/1/clip/00000000-0000-4000-8000-00000000063d.m4a",
+              "content_type": "m4a-opus",
+              "delivery": "progressive",
+              "encoding": "1.0.0"
+            }
+          ],
+          "image_url": "https://cdn2.suno.ai/image_00000000-0000-4000-8000-00000000063d.jpeg",
+          "image_large_url": "https://cdn2.suno.ai/image_large_00000000-0000-4000-8000-00000000063d.jpeg",
+          "major_model_version": "v6",
+          "model_name": "chirp-hawk",
+          "metadata": {
+            "tags": "synthetic pop, bright synths, test",
+            "prompt": "Short made-up lyrics 61\nSecond line",
+            "type": "gen",
+            "duration": 180.5,
+            "stream": true,
+            "has_stem": false,
+            "is_remix": false,
+            "can_remix": true,
+            "vox_render_mode": "strict",
+            "is_mumble": false,
+            "priority": 10,
+            "uses_latest_model": true,
+            "refund_credits": false,
+            "can_publish_with_vocal": true,
+            "video_is_stale": false
+          },
+          "caption": "",
+          "is_liked": false,
+          "user_id": "00000000-0000-4000-8000-0000000006ff",
+          "display_name": "Test Owner",
+          "handle": "test-owner",
+          "avatar_image_url": "https://cdn1.suno.ai/avatar-test.jpg",
+          "is_trashed": false,
+          "is_hidden": false,
+          "is_public": false,
+          "created_at": "2026-10-05T12:00:00.000Z",
+          "updated_at": "2026-10-30T09:00:00.000Z",
+          "reaction": {
+            "play_count": 60,
+            "skip_count": 0,
+            "flagged": false,
+            "reaction_type": "L",
+            "updated_at": "2026-10-30T09:00:00.000Z"
+          },
+          "play_count": 60,
+          "upvote_count": 0,
+          "comment_count": 0,
+          "flag_count": 0,
+          "explicit": false,
+          "display_tags": "pop, synth",
+          "is_download_unlocked": false,
+          "is_contest_clip": false,
+          "has_hook": false,
+          "batch_index": 0,
+          "albums": [],
+          "action_config": {
+            "actions": [
+              {
+                "action_type": "add_to_playlist",
+                "disabled": false,
+                "visible": true
+              }
+            ]
+          },
+          "is_persona_root": false,
+          "is_following_creator": false,
+          "allow_comments": true,
+          "is_verified": false
+        },
+        "added_at": "2026-10-30T10:00:00.000Z",
+        "logging_context": {
+          "recommendation_item_id": ""
+        }
+      },
+      {
+        "content_id": "00000000-0000-4000-8000-00000000063e",
+        "content_type": "clip",
+        "content_item": {
+          "id": "00000000-0000-4000-8000-00000000063e",
+          "status": "complete",
+          "title": "Synthetic Song 62",
+          "entity_type": "song_schema",
+          "video_url": "https://cdn1.suno.ai/00000000-0000-4000-8000-00000000063e.mp4",
+          "audio_url": "https://studio-api.prod.suno.com/api/forbidden",
+          "media_urls": [
+            {
+              "url": "https://d2lwuy8qc234o3.cloudfront.net/1/clip/00000000-0000-4000-8000-00000000063e.m4a",
+              "content_type": "m4a-opus",
+              "delivery": "progressive",
+              "encoding": "1.0.0"
+            }
+          ],
+          "image_url": "https://cdn2.suno.ai/image_00000000-0000-4000-8000-00000000063e.jpeg",
+          "image_large_url": "https://cdn2.suno.ai/image_large_00000000-0000-4000-8000-00000000063e.jpeg",
+          "major_model_version": "v6",
+          "model_name": "chirp-hawk",
+          "metadata": {
+            "tags": "synthetic pop, bright synths, test",
+            "prompt": "Short made-up lyrics 62\nSecond line",
+            "type": "gen",
+            "duration": 181.5,
+            "stream": true,
+            "has_stem": false,
+            "is_remix": false,
+            "can_remix": true,
+            "vox_render_mode": "strict",
+            "is_mumble": false,
+            "priority": 10,
+            "uses_latest_model": true,
+            "refund_credits": false,
+            "can_publish_with_vocal": true,
+            "video_is_stale": false
+          },
+          "caption": "",
+          "is_liked": false,
+          "user_id": "00000000-0000-4000-8000-0000000006ff",
+          "display_name": "Test Owner",
+          "handle": "test-owner",
+          "avatar_image_url": "https://cdn1.suno.ai/avatar-test.jpg",
+          "is_trashed": false,
+          "is_hidden": false,
+          "is_public": false,
+          "created_at": "2026-10-06T12:01:00.000Z",
+          "updated_at": "2026-10-30T09:00:00.000Z",
+          "reaction": {
+            "play_count": 61,
+            "skip_count": 0,
+            "flagged": false,
+            "reaction_type": "L",
+            "updated_at": "2026-10-30T09:00:00.000Z"
+          },
+          "play_count": 61,
+          "upvote_count": 0,
+          "comment_count": 0,
+          "flag_count": 0,
+          "explicit": false,
+          "display_tags": "pop, synth",
+          "is_download_unlocked": false,
+          "is_contest_clip": false,
+          "has_hook": false,
+          "batch_index": 1,
+          "albums": [],
+          "action_config": {
+            "actions": [
+              {
+                "action_type": "add_to_playlist",
+                "disabled": false,
+                "visible": true
+              }
+            ]
+          },
+          "is_persona_root": false,
+          "is_following_creator": false,
+          "allow_comments": true,
+          "is_verified": false
+        },
+        "added_at": "2026-10-30T10:01:00.000Z",
+        "logging_context": {
+          "recommendation_item_id": ""
+        }
+      },
+      {
+        "content_id": "00000000-0000-4000-8000-00000000063f",
+        "content_type": "clip",
+        "content_item": {
+          "id": "00000000-0000-4000-8000-00000000063f",
+          "status": "complete",
+          "title": "Synthetic Song 63",
+          "entity_type": "song_schema",
+          "video_url": "https://cdn1.suno.ai/00000000-0000-4000-8000-00000000063f.mp4",
+          "audio_url": "https://studio-api.prod.suno.com/api/forbidden",
+          "media_urls": [
+            {
+              "url": "https://d2lwuy8qc234o3.cloudfront.net/1/clip/00000000-0000-4000-8000-00000000063f.m4a",
+              "content_type": "m4a-opus",
+              "delivery": "progressive",
+              "encoding": "1.0.0"
+            }
+          ],
+          "image_url": "https://cdn2.suno.ai/image_00000000-0000-4000-8000-00000000063f.jpeg",
+          "image_large_url": "https://cdn2.suno.ai/image_large_00000000-0000-4000-8000-00000000063f.jpeg",
+          "major_model_version": "v6",
+          "model_name": "chirp-hawk",
+          "metadata": {
+            "tags": "synthetic pop, bright synths, test",
+            "prompt": "Short made-up lyrics 63\nSecond line",
+            "type": "gen",
+            "duration": 182.5,
+            "stream": true,
+            "has_stem": false,
+            "is_remix": false,
+            "can_remix": true,
+            "vox_render_mode": "strict",
+            "is_mumble": false,
+            "priority": 10,
+            "uses_latest_model": true,
+            "refund_credits": false,
+            "can_publish_with_vocal": true,
+            "video_is_stale": false
+          },
+          "caption": "",
+          "is_liked": false,
+          "user_id": "00000000-0000-4000-8000-0000000006ff",
+          "display_name": "Test Owner",
+          "handle": "test-owner",
+          "avatar_image_url": "https://cdn1.suno.ai/avatar-test.jpg",
+          "is_trashed": false,
+          "is_hidden": false,
+          "is_public": false,
+          "created_at": "2026-10-07T12:02:00.000Z",
+          "updated_at": "2026-10-30T09:00:00.000Z",
+          "reaction": {
+            "play_count": 62,
+            "skip_count": 0,
+            "flagged": false,
+            "reaction_type": "L",
+            "updated_at": "2026-10-30T09:00:00.000Z"
+          },
+          "play_count": 62,
+          "upvote_count": 0,
+          "comment_count": 0,
+          "flag_count": 0,
+          "explicit": false,
+          "display_tags": "pop, synth",
+          "is_download_unlocked": false,
+          "is_contest_clip": false,
+          "has_hook": false,
+          "batch_index": 0,
+          "albums": [],
+          "action_config": {
+            "actions": [
+              {
+                "action_type": "add_to_playlist",
+                "disabled": false,
+                "visible": true
+              }
+            ]
+          },
+          "is_persona_root": false,
+          "is_following_creator": false,
+          "allow_comments": true,
+          "is_verified": false
+        },
+        "added_at": "2026-10-30T10:02:00.000Z",
+        "logging_context": {
+          "recommendation_item_id": ""
+        }
+      },
+      {
+        "content_id": "00000000-0000-4000-8000-000000000640",
+        "content_type": "clip",
+        "content_item": {
+          "id": "00000000-0000-4000-8000-000000000640",
+          "status": "complete",
+          "title": "Synthetic Song 64",
+          "entity_type": "song_schema",
+          "video_url": "https://cdn1.suno.ai/00000000-0000-4000-8000-000000000640.mp4",
+          "audio_url": "https://studio-api.prod.suno.com/api/forbidden",
+          "media_urls": [
+            {
+              "url": "https://d2lwuy8qc234o3.cloudfront.net/1/clip/00000000-0000-4000-8000-000000000640.m4a",
+              "content_type": "m4a-opus",
+              "delivery": "progressive",
+              "encoding": "1.0.0"
+            }
+          ],
+          "image_url": "https://cdn2.suno.ai/image_00000000-0000-4000-8000-000000000640.jpeg",
+          "image_large_url": "https://cdn2.suno.ai/image_large_00000000-0000-4000-8000-000000000640.jpeg",
+          "major_model_version": "v6",
+          "model_name": "chirp-hawk",
+          "metadata": {
+            "tags": "synthetic pop, bright synths, test",
+            "prompt": "Short made-up lyrics 64\nSecond line",
+            "type": "gen",
+            "duration": 183.5,
+            "stream": true,
+            "has_stem": false,
+            "is_remix": false,
+            "can_remix": true,
+            "vox_render_mode": "strict",
+            "is_mumble": false,
+            "priority": 10,
+            "uses_latest_model": true,
+            "refund_credits": false,
+            "can_publish_with_vocal": true,
+            "video_is_stale": false,
+            "edited_clip_id": "00000000-0000-4000-8000-00000000063f",
+            "task": "edit_crop",
+            "variation_category": "edit"
+          },
+          "caption": "",
+          "is_liked": false,
+          "user_id": "00000000-0000-4000-8000-0000000006ff",
+          "display_name": "Test Owner",
+          "handle": "test-owner",
+          "avatar_image_url": "https://cdn1.suno.ai/avatar-test.jpg",
+          "is_trashed": false,
+          "is_hidden": false,
+          "is_public": false,
+          "created_at": "2026-10-08T12:03:00.000Z",
+          "updated_at": "2026-10-30T09:00:00.000Z",
+          "reaction": {
+            "play_count": 63,
+            "skip_count": 0,
+            "flagged": false,
+            "reaction_type": "L",
+            "updated_at": "2026-10-30T09:00:00.000Z"
+          },
+          "play_count": 63,
+          "upvote_count": 0,
+          "comment_count": 0,
+          "flag_count": 0,
+          "explicit": false,
+          "display_tags": "pop, synth",
+          "is_download_unlocked": false,
+          "is_contest_clip": false,
+          "has_hook": false,
+          "batch_index": 1,
+          "albums": [],
+          "action_config": {
+            "actions": [
+              {
+                "action_type": "add_to_playlist",
+                "disabled": false,
+                "visible": true
+              }
+            ]
+          },
+          "is_persona_root": false,
+          "is_following_creator": false,
+          "allow_comments": true,
+          "is_verified": false
+        },
+        "added_at": "2026-10-30T10:03:00.000Z",
+        "logging_context": {
+          "recommendation_item_id": ""
+        }
+      },
+      {
+        "content_id": "00000000-0000-4000-8000-000000000641",
+        "content_type": "clip",
+        "content_item": {
+          "id": "00000000-0000-4000-8000-000000000641",
+          "status": "complete",
+          "title": "Synthetic Song 65",
+          "entity_type": "song_schema",
+          "video_url": "https://cdn1.suno.ai/00000000-0000-4000-8000-000000000641.mp4",
+          "audio_url": "https://studio-api.prod.suno.com/api/forbidden",
+          "media_urls": [
+            {
+              "url": "https://d2lwuy8qc234o3.cloudfront.net/1/clip/00000000-0000-4000-8000-000000000641.m4a",
+              "content_type": "m4a-opus",
+              "delivery": "progressive",
+              "encoding": "1.0.0"
+            }
+          ],
+          "image_url": "https://cdn2.suno.ai/image_00000000-0000-4000-8000-000000000641.jpeg",
+          "image_large_url": "https://cdn2.suno.ai/image_large_00000000-0000-4000-8000-000000000641.jpeg",
+          "major_model_version": "v6",
+          "model_name": "chirp-hawk",
+          "metadata": {
+            "tags": "synthetic pop, bright synths, test",
+            "prompt": "Short made-up lyrics 65\nSecond line",
+            "type": "gen",
+            "duration": 184.5,
+            "stream": true,
+            "has_stem": false,
+            "is_remix": false,
+            "can_remix": true,
+            "vox_render_mode": "strict",
+            "is_mumble": false,
+            "priority": 10,
+            "uses_latest_model": true,
+            "refund_credits": false,
+            "can_publish_with_vocal": true,
+            "video_is_stale": false
+          },
+          "caption": "",
+          "is_liked": false,
+          "user_id": "00000000-0000-4000-8000-0000000006ff",
+          "display_name": "Test Owner",
+          "handle": "test-owner",
+          "avatar_image_url": "https://cdn1.suno.ai/avatar-test.jpg",
+          "is_trashed": false,
+          "is_hidden": false,
+          "is_public": false,
+          "created_at": "2026-10-09T12:04:00.000Z",
+          "updated_at": "2026-10-30T09:00:00.000Z",
+          "reaction": {
+            "play_count": 64,
+            "skip_count": 0,
+            "flagged": false,
+            "reaction_type": "L",
+            "updated_at": "2026-10-30T09:00:00.000Z"
+          },
+          "play_count": 64,
+          "upvote_count": 0,
+          "comment_count": 0,
+          "flag_count": 0,
+          "explicit": false,
+          "display_tags": "pop, synth",
+          "is_download_unlocked": false,
+          "is_contest_clip": false,
+          "has_hook": false,
+          "batch_index": 0,
+          "albums": [],
+          "action_config": {
+            "actions": [
+              {
+                "action_type": "add_to_playlist",
+                "disabled": false,
+                "visible": true
+              }
+            ]
+          },
+          "is_persona_root": false,
+          "is_following_creator": false,
+          "allow_comments": true,
+          "is_verified": false
+        },
+        "added_at": "2026-10-30T10:04:00.000Z",
+        "logging_context": {
+          "recommendation_item_id": ""
+        }
+      },
+      {
+        "content_id": "00000000-0000-4000-8000-000000000642",
+        "content_type": "clip",
+        "content_item": {
+          "id": "00000000-0000-4000-8000-000000000642",
+          "status": "complete",
+          "title": "Synthetic Song 66",
+          "entity_type": "song_schema",
+          "video_url": "https://cdn1.suno.ai/00000000-0000-4000-8000-000000000642.mp4",
+          "audio_url": "https://studio-api.prod.suno.com/api/forbidden",
+          "media_urls": [
+            {
+              "url": "https://d2lwuy8qc234o3.cloudfront.net/1/clip/00000000-0000-4000-8000-000000000642.m4a",
+              "content_type": "m4a-opus",
+              "delivery": "progressive",
+              "encoding": "1.0.0"
+            }
+          ],
+          "image_url": "https://cdn2.suno.ai/image_00000000-0000-4000-8000-000000000642.jpeg",
+          "image_large_url": "https://cdn2.suno.ai/image_large_00000000-0000-4000-8000-000000000642.jpeg",
+          "major_model_version": "v6",
+          "model_name": "chirp-hawk",
+          "metadata": {
+            "tags": "synthetic pop, bright synths, test",
+            "prompt": "Short made-up lyrics 66\nSecond line",
+            "type": "gen",
+            "duration": 185.5,
+            "stream": true,
+            "has_stem": false,
+            "is_remix": false,
+            "can_remix": true,
+            "vox_render_mode": "strict",
+            "is_mumble": false,
+            "priority": 10,
+            "uses_latest_model": true,
+            "refund_credits": false,
+            "can_publish_with_vocal": true,
+            "video_is_stale": false
+          },
+          "caption": "",
+          "is_liked": false,
+          "user_id": "00000000-0000-4000-8000-0000000006ff",
+          "display_name": "Test Owner",
+          "handle": "test-owner",
+          "avatar_image_url": "https://cdn1.suno.ai/avatar-test.jpg",
+          "is_trashed": false,
+          "is_hidden": false,
+          "is_public": false,
+          "created_at": "2026-10-10T12:05:00.000Z",
+          "updated_at": "2026-10-30T09:00:00.000Z",
+          "reaction": {
+            "play_count": 65,
+            "skip_count": 0,
+            "flagged": false,
+            "reaction_type": "L",
+            "updated_at": "2026-10-30T09:00:00.000Z"
+          },
+          "play_count": 65,
+          "upvote_count": 0,
+          "comment_count": 0,
+          "flag_count": 0,
+          "explicit": false,
+          "display_tags": "pop, synth",
+          "is_download_unlocked": false,
+          "is_contest_clip": false,
+          "has_hook": false,
+          "batch_index": 1,
+          "albums": [],
+          "action_config": {
+            "actions": [
+              {
+                "action_type": "add_to_playlist",
+                "disabled": false,
+                "visible": true
+              }
+            ]
+          },
+          "is_persona_root": false,
+          "is_following_creator": false,
+          "allow_comments": true,
+          "is_verified": false
+        },
+        "added_at": "2026-10-30T10:05:00.000Z",
+        "logging_context": {
+          "recommendation_item_id": ""
+        }
+      },
+      {
+        "content_id": "00000000-0000-4000-8000-000000000643",
+        "content_type": "clip",
+        "content_item": {
+          "id": "00000000-0000-4000-8000-000000000643",
+          "status": "complete",
+          "title": "Synthetic Song 67",
+          "entity_type": "song_schema",
+          "video_url": "https://cdn1.suno.ai/00000000-0000-4000-8000-000000000643.mp4",
+          "audio_url": "https://studio-api.prod.suno.com/api/forbidden",
+          "media_urls": [
+            {
+              "url": "https://d2lwuy8qc234o3.cloudfront.net/1/clip/00000000-0000-4000-8000-000000000643.m4a",
+              "content_type": "m4a-opus",
+              "delivery": "progressive",
+              "encoding": "1.0.0"
+            }
+          ],
+          "image_url": "https://cdn2.suno.ai/image_00000000-0000-4000-8000-000000000643.jpeg",
+          "image_large_url": "https://cdn2.suno.ai/image_large_00000000-0000-4000-8000-000000000643.jpeg",
+          "major_model_version": "v6",
+          "model_name": "chirp-hawk",
+          "metadata": {
+            "tags": "synthetic pop, bright synths, test",
+            "prompt": "Short made-up lyrics 67\nSecond line",
+            "type": "gen",
+            "duration": 186.5,
+            "stream": true,
+            "has_stem": false,
+            "is_remix": false,
+            "can_remix": true,
+            "vox_render_mode": "strict",
+            "is_mumble": false,
+            "priority": 10,
+            "uses_latest_model": true,
+            "refund_credits": false,
+            "can_publish_with_vocal": true,
+            "video_is_stale": false
+          },
+          "caption": "",
+          "is_liked": false,
+          "user_id": "00000000-0000-4000-8000-0000000006ff",
+          "display_name": "Test Owner",
+          "handle": "test-owner",
+          "avatar_image_url": "https://cdn1.suno.ai/avatar-test.jpg",
+          "is_trashed": false,
+          "is_hidden": false,
+          "is_public": false,
+          "created_at": "2026-10-11T12:06:00.000Z",
+          "updated_at": "2026-10-30T09:00:00.000Z",
+          "reaction": {
+            "play_count": 66,
+            "skip_count": 0,
+            "flagged": false,
+            "reaction_type": "L",
+            "updated_at": "2026-10-30T09:00:00.000Z"
+          },
+          "play_count": 66,
+          "upvote_count": 0,
+          "comment_count": 0,
+          "flag_count": 0,
+          "explicit": false,
+          "display_tags": "pop, synth",
+          "is_download_unlocked": false,
+          "is_contest_clip": false,
+          "has_hook": false,
+          "batch_index": 0,
+          "albums": [],
+          "action_config": {
+            "actions": [
+              {
+                "action_type": "add_to_playlist",
+                "disabled": false,
+                "visible": true
+              }
+            ]
+          },
+          "is_persona_root": false,
+          "is_following_creator": false,
+          "allow_comments": true,
+          "is_verified": false
+        },
+        "added_at": "2026-10-30T10:06:00.000Z",
+        "logging_context": {
+          "recommendation_item_id": ""
+        }
+      },
+      {
+        "content_id": "00000000-0000-4000-8000-000000000644",
+        "content_type": "clip",
+        "content_item": {
+          "id": "00000000-0000-4000-8000-000000000644",
+          "status": "complete",
+          "title": "Synthetic Song 68",
+          "entity_type": "song_schema",
+          "video_url": "https://cdn1.suno.ai/00000000-0000-4000-8000-000000000644.mp4",
+          "audio_url": "https://studio-api.prod.suno.com/api/forbidden",
+          "media_urls": [
+            {
+              "url": "https://d2lwuy8qc234o3.cloudfront.net/1/clip/00000000-0000-4000-8000-000000000644.m4a",
+              "content_type": "m4a-opus",
+              "delivery": "progressive",
+              "encoding": "1.0.0"
+            }
+          ],
+          "image_url": "https://cdn2.suno.ai/image_00000000-0000-4000-8000-000000000644.jpeg",
+          "image_large_url": "https://cdn2.suno.ai/image_large_00000000-0000-4000-8000-000000000644.jpeg",
+          "major_model_version": "v6",
+          "model_name": "chirp-hawk",
+          "metadata": {
+            "tags": "synthetic pop, bright synths, test",
+            "prompt": "Short made-up lyrics 68\nSecond line",
+            "type": "gen",
+            "duration": 187.5,
+            "stream": true,
+            "has_stem": false,
+            "is_remix": false,
+            "can_remix": true,
+            "vox_render_mode": "strict",
+            "is_mumble": false,
+            "priority": 10,
+            "uses_latest_model": true,
+            "refund_credits": false,
+            "can_publish_with_vocal": true,
+            "video_is_stale": false,
+            "upsample_clip_id": "00000000-0000-4000-8000-000000000642",
+            "task": "upsample"
+          },
+          "caption": "",
+          "is_liked": false,
+          "user_id": "00000000-0000-4000-8000-0000000006ff",
+          "display_name": "Test Owner",
+          "handle": "test-owner",
+          "avatar_image_url": "https://cdn1.suno.ai/avatar-test.jpg",
+          "is_trashed": false,
+          "is_hidden": false,
+          "is_public": false,
+          "created_at": "2026-10-12T12:07:00.000Z",
+          "updated_at": "2026-10-30T09:00:00.000Z",
+          "reaction": {
+            "play_count": 67,
+            "skip_count": 0,
+            "flagged": false,
+            "reaction_type": "L",
+            "updated_at": "2026-10-30T09:00:00.000Z"
+          },
+          "play_count": 67,
+          "upvote_count": 0,
+          "comment_count": 0,
+          "flag_count": 0,
+          "explicit": false,
+          "display_tags": "pop, synth",
+          "is_download_unlocked": false,
+          "is_contest_clip": false,
+          "has_hook": false,
+          "batch_index": 1,
+          "albums": [],
+          "action_config": {
+            "actions": [
+              {
+                "action_type": "add_to_playlist",
+                "disabled": false,
+                "visible": true
+              }
+            ]
+          },
+          "is_persona_root": false,
+          "is_following_creator": false,
+          "allow_comments": true,
+          "is_verified": false
+        },
+        "added_at": "2026-10-30T10:07:00.000Z",
+        "logging_context": {
+          "recommendation_item_id": ""
+        }
+      },
+      {
+        "content_id": "00000000-0000-4000-8000-000000000645",
+        "content_type": "clip",
+        "content_item": {
+          "id": "00000000-0000-4000-8000-000000000645",
+          "status": "complete",
+          "title": "Synthetic Song 69",
+          "entity_type": "song_schema",
+          "video_url": "https://cdn1.suno.ai/00000000-0000-4000-8000-000000000645.mp4",
+          "audio_url": "https://studio-api.prod.suno.com/api/forbidden",
+          "media_urls": [
+            {
+              "url": "https://d2lwuy8qc234o3.cloudfront.net/1/clip/00000000-0000-4000-8000-000000000645.m4a",
+              "content_type": "m4a-opus",
+              "delivery": "progressive",
+              "encoding": "1.0.0"
+            }
+          ],
+          "image_url": "https://cdn2.suno.ai/image_00000000-0000-4000-8000-000000000645.jpeg",
+          "image_large_url": "https://cdn2.suno.ai/image_large_00000000-0000-4000-8000-000000000645.jpeg",
+          "major_model_version": "v6",
+          "model_name": "chirp-hawk",
+          "metadata": {
+            "tags": "synthetic pop, bright synths, test",
+            "prompt": "Short made-up lyrics 69\nSecond line",
+            "type": "gen",
+            "duration": 188.5,
+            "stream": true,
+            "has_stem": false,
+            "is_remix": false,
+            "can_remix": true,
+            "vox_render_mode": "strict",
+            "is_mumble": false,
+            "priority": 10,
+            "uses_latest_model": true,
+            "refund_credits": false,
+            "can_publish_with_vocal": true,
+            "video_is_stale": false
+          },
+          "caption": "",
+          "is_liked": false,
+          "user_id": "00000000-0000-4000-8000-0000000006ff",
+          "display_name": "Test Owner",
+          "handle": "test-owner",
+          "avatar_image_url": "https://cdn1.suno.ai/avatar-test.jpg",
+          "is_trashed": false,
+          "is_hidden": false,
+          "is_public": false,
+          "created_at": "2026-10-13T12:08:00.000Z",
+          "updated_at": "2026-10-30T09:00:00.000Z",
+          "reaction": {
+            "play_count": 68,
+            "skip_count": 0,
+            "flagged": false,
+            "reaction_type": "L",
+            "updated_at": "2026-10-30T09:00:00.000Z"
+          },
+          "play_count": 68,
+          "upvote_count": 0,
+          "comment_count": 0,
+          "flag_count": 0,
+          "explicit": false,
+          "display_tags": "pop, synth",
+          "is_download_unlocked": false,
+          "is_contest_clip": false,
+          "has_hook": false,
+          "batch_index": 0,
+          "albums": [],
+          "action_config": {
+            "actions": [
+              {
+                "action_type": "add_to_playlist",
+                "disabled": false,
+                "visible": true
+              }
+            ]
+          },
+          "is_persona_root": false,
+          "is_following_creator": false,
+          "allow_comments": true,
+          "is_verified": false
+        },
+        "added_at": "2026-10-30T10:08:00.000Z",
+        "logging_context": {
+          "recommendation_item_id": ""
+        }
+      },
+      {
+        "content_id": "00000000-0000-4000-8000-000000000646",
+        "content_type": "clip",
+        "content_item": {
+          "id": "00000000-0000-4000-8000-000000000646",
+          "status": "complete",
+          "title": "Synthetic Song 70",
+          "entity_type": "song_schema",
+          "video_url": "https://cdn1.suno.ai/00000000-0000-4000-8000-000000000646.mp4",
+          "audio_url": "https://studio-api.prod.suno.com/api/forbidden",
+          "media_urls": [
+            {
+              "url": "https://d2lwuy8qc234o3.cloudfront.net/1/clip/00000000-0000-4000-8000-000000000646.m4a",
+              "content_type": "m4a-opus",
+              "delivery": "progressive",
+              "encoding": "1.0.0"
+            }
+          ],
+          "image_url": "https://cdn2.suno.ai/image_00000000-0000-4000-8000-000000000646.jpeg",
+          "image_large_url": "https://cdn2.suno.ai/image_large_00000000-0000-4000-8000-000000000646.jpeg",
+          "major_model_version": "v6",
+          "model_name": "chirp-hawk",
+          "metadata": {
+            "tags": "synthetic pop, bright synths, test",
+            "prompt": "Short made-up lyrics 70\nSecond line",
+            "type": "gen",
+            "duration": 189.5,
+            "stream": true,
+            "has_stem": false,
+            "is_remix": false,
+            "can_remix": true,
+            "vox_render_mode": "strict",
+            "is_mumble": false,
+            "priority": 10,
+            "uses_latest_model": true,
+            "refund_credits": false,
+            "can_publish_with_vocal": true,
+            "video_is_stale": false
+          },
+          "caption": "",
+          "is_liked": false,
+          "user_id": "00000000-0000-4000-8000-0000000006ff",
+          "display_name": "Test Owner",
+          "handle": "test-owner",
+          "avatar_image_url": "https://cdn1.suno.ai/avatar-test.jpg",
+          "is_trashed": false,
+          "is_hidden": false,
+          "is_public": false,
+          "created_at": "2026-10-14T12:09:00.000Z",
+          "updated_at": "2026-10-30T09:00:00.000Z",
+          "reaction": {
+            "play_count": 69,
+            "skip_count": 0,
+            "flagged": false,
+            "reaction_type": "L",
+            "updated_at": "2026-10-30T09:00:00.000Z"
+          },
+          "play_count": 69,
+          "upvote_count": 0,
+          "comment_count": 0,
+          "flag_count": 0,
+          "explicit": false,
+          "display_tags": "pop, synth",
+          "is_download_unlocked": false,
+          "is_contest_clip": false,
+          "has_hook": false,
+          "batch_index": 1,
+          "albums": [],
+          "action_config": {
+            "actions": [
+              {
+                "action_type": "add_to_playlist",
+                "disabled": false,
+                "visible": true
+              }
+            ]
+          },
+          "is_persona_root": false,
+          "is_following_creator": false,
+          "allow_comments": true,
+          "is_verified": false
+        },
+        "added_at": "2026-10-30T10:09:00.000Z",
+        "logging_context": {
+          "recommendation_item_id": ""
+        }
+      },
+      {
+        "content_id": "00000000-0000-4000-8000-000000000647",
+        "content_type": "clip",
+        "content_item": {
+          "id": "00000000-0000-4000-8000-000000000647",
+          "status": "complete",
+          "title": "Synthetic Song 71",
+          "entity_type": "song_schema",
+          "video_url": "https://cdn1.suno.ai/00000000-0000-4000-8000-000000000647.mp4",
+          "audio_url": "https://studio-api.prod.suno.com/api/forbidden",
+          "media_urls": [
+            {
+              "url": "https://d2lwuy8qc234o3.cloudfront.net/1/clip/00000000-0000-4000-8000-000000000647.m4a",
+              "content_type": "m4a-opus",
+              "delivery": "progressive",
+              "encoding": "1.0.0"
+            }
+          ],
+          "image_url": "https://cdn2.suno.ai/image_00000000-0000-4000-8000-000000000647.jpeg",
+          "image_large_url": "https://cdn2.suno.ai/image_large_00000000-0000-4000-8000-000000000647.jpeg",
+          "major_model_version": "v6",
+          "model_name": "chirp-hawk",
+          "metadata": {
+            "tags": "synthetic pop, bright synths, test",
+            "prompt": "Short made-up lyrics 71\nSecond line",
+            "type": "gen",
+            "duration": 190.5,
+            "stream": true,
+            "has_stem": false,
+            "is_remix": false,
+            "can_remix": true,
+            "vox_render_mode": "strict",
+            "is_mumble": false,
+            "priority": 10,
+            "uses_latest_model": true,
+            "refund_credits": false,
+            "can_publish_with_vocal": true,
+            "video_is_stale": false
+          },
+          "caption": "",
+          "is_liked": false,
+          "user_id": "00000000-0000-4000-8000-0000000006ff",
+          "display_name": "Test Owner",
+          "handle": "test-owner",
+          "avatar_image_url": "https://cdn1.suno.ai/avatar-test.jpg",
+          "is_trashed": false,
+          "is_hidden": false,
+          "is_public": false,
+          "created_at": "2026-10-15T12:10:00.000Z",
+          "updated_at": "2026-10-30T09:00:00.000Z",
+          "reaction": {
+            "play_count": 70,
+            "skip_count": 0,
+            "flagged": false,
+            "reaction_type": "L",
+            "updated_at": "2026-10-30T09:00:00.000Z"
+          },
+          "play_count": 70,
+          "upvote_count": 0,
+          "comment_count": 0,
+          "flag_count": 0,
+          "explicit": false,
+          "display_tags": "pop, synth",
+          "is_download_unlocked": false,
+          "is_contest_clip": false,
+          "has_hook": false,
+          "batch_index": 0,
+          "albums": [],
+          "action_config": {
+            "actions": [
+              {
+                "action_type": "add_to_playlist",
+                "disabled": false,
+                "visible": true
+              }
+            ]
+          },
+          "is_persona_root": false,
+          "is_following_creator": false,
+          "allow_comments": true,
+          "is_verified": false
+        },
+        "added_at": "2026-10-30T10:10:00.000Z",
+        "logging_context": {
+          "recommendation_item_id": ""
+        }
+      },
+      {
+        "content_id": "00000000-0000-4000-8000-000000000648",
+        "content_type": "clip",
+        "content_item": {
+          "id": "00000000-0000-4000-8000-000000000648",
+          "status": "complete",
+          "title": "Synthetic Song 72",
+          "entity_type": "song_schema",
+          "video_url": "https://cdn1.suno.ai/00000000-0000-4000-8000-000000000648.mp4",
+          "audio_url": "https://studio-api.prod.suno.com/api/forbidden",
+          "media_urls": [
+            {
+              "url": "https://d2lwuy8qc234o3.cloudfront.net/1/clip/00000000-0000-4000-8000-000000000648.m4a",
+              "content_type": "m4a-opus",
+              "delivery": "progressive",
+              "encoding": "1.0.0"
+            }
+          ],
+          "image_url": "https://cdn2.suno.ai/image_00000000-0000-4000-8000-000000000648.jpeg",
+          "image_large_url": "https://cdn2.suno.ai/image_large_00000000-0000-4000-8000-000000000648.jpeg",
+          "major_model_version": "v6",
+          "model_name": "chirp-hawk",
+          "metadata": {
+            "tags": "synthetic pop, bright synths, test",
+            "prompt": "Short made-up lyrics 72\nSecond line",
+            "type": "gen",
+            "duration": 191.5,
+            "stream": true,
+            "has_stem": false,
+            "is_remix": false,
+            "can_remix": true,
+            "vox_render_mode": "strict",
+            "is_mumble": false,
+            "priority": 10,
+            "uses_latest_model": true,
+            "refund_credits": false,
+            "can_publish_with_vocal": true,
+            "video_is_stale": false
+          },
+          "caption": "",
+          "is_liked": false,
+          "user_id": "00000000-0000-4000-8000-0000000006ff",
+          "display_name": "Test Owner",
+          "handle": "test-owner",
+          "avatar_image_url": "https://cdn1.suno.ai/avatar-test.jpg",
+          "is_trashed": false,
+          "is_hidden": false,
+          "is_public": false,
+          "created_at": "2026-10-16T12:11:00.000Z",
+          "updated_at": "2026-10-30T09:00:00.000Z",
+          "reaction": {
+            "play_count": 71,
+            "skip_count": 0,
+            "flagged": false,
+            "reaction_type": "L",
+            "updated_at": "2026-10-30T09:00:00.000Z"
+          },
+          "play_count": 71,
+          "upvote_count": 0,
+          "comment_count": 0,
+          "flag_count": 0,
+          "explicit": false,
+          "display_tags": "pop, synth",
+          "is_download_unlocked": false,
+          "is_contest_clip": false,
+          "has_hook": false,
+          "batch_index": 1,
+          "albums": [],
+          "action_config": {
+            "actions": [
+              {
+                "action_type": "add_to_playlist",
+                "disabled": false,
+                "visible": true
+              }
+            ]
+          },
+          "is_persona_root": false,
+          "is_following_creator": false,
+          "allow_comments": true,
+          "is_verified": false
+        },
+        "added_at": "2026-10-30T10:11:00.000Z",
+        "logging_context": {
+          "recommendation_item_id": ""
+        }
+      },
+      {
+        "content_id": "00000000-0000-4000-8000-000000000649",
+        "content_type": "clip",
+        "content_item": {
+          "id": "00000000-0000-4000-8000-000000000649",
+          "status": "complete",
+          "title": "Synthetic Song 73",
+          "entity_type": "song_schema",
+          "video_url": "https://cdn1.suno.ai/00000000-0000-4000-8000-000000000649.mp4",
+          "audio_url": "https://studio-api.prod.suno.com/api/forbidden",
+          "media_urls": [
+            {
+              "url": "https://d2lwuy8qc234o3.cloudfront.net/1/clip/00000000-0000-4000-8000-000000000649.m4a",
+              "content_type": "m4a-opus",
+              "delivery": "progressive",
+              "encoding": "1.0.0"
+            }
+          ],
+          "image_url": "https://cdn2.suno.ai/image_00000000-0000-4000-8000-000000000649.jpeg",
+          "image_large_url": "https://cdn2.suno.ai/image_large_00000000-0000-4000-8000-000000000649.jpeg",
+          "major_model_version": "v6",
+          "model_name": "chirp-hawk",
+          "metadata": {
+            "tags": "synthetic pop, bright synths, test",
+            "prompt": "Short made-up lyrics 73\nSecond line",
+            "type": "gen",
+            "duration": 192.5,
+            "stream": true,
+            "has_stem": false,
+            "is_remix": false,
+            "can_remix": true,
+            "vox_render_mode": "strict",
+            "is_mumble": false,
+            "priority": 10,
+            "uses_latest_model": true,
+            "refund_credits": false,
+            "can_publish_with_vocal": true,
+            "video_is_stale": false
+          },
+          "caption": "",
+          "is_liked": false,
+          "user_id": "00000000-0000-4000-8000-0000000006ff",
+          "display_name": "Test Owner",
+          "handle": "test-owner",
+          "avatar_image_url": "https://cdn1.suno.ai/avatar-test.jpg",
+          "is_trashed": false,
+          "is_hidden": false,
+          "is_public": false,
+          "created_at": "2026-10-17T12:12:00.000Z",
+          "updated_at": "2026-10-30T09:00:00.000Z",
+          "reaction": {
+            "play_count": 72,
+            "skip_count": 0,
+            "flagged": false,
+            "reaction_type": "L",
+            "updated_at": "2026-10-30T09:00:00.000Z"
+          },
+          "play_count": 72,
+          "upvote_count": 0,
+          "comment_count": 0,
+          "flag_count": 0,
+          "explicit": false,
+          "display_tags": "pop, synth",
+          "is_download_unlocked": false,
+          "is_contest_clip": false,
+          "has_hook": false,
+          "batch_index": 0,
+          "albums": [],
+          "action_config": {
+            "actions": [
+              {
+                "action_type": "add_to_playlist",
+                "disabled": false,
+                "visible": true
+              }
+            ]
+          },
+          "is_persona_root": false,
+          "is_following_creator": false,
+          "allow_comments": true,
+          "is_verified": false
+        },
+        "added_at": "2026-10-30T10:12:00.000Z",
+        "logging_context": {
+          "recommendation_item_id": ""
+        }
+      },
+      {
+        "content_id": "00000000-0000-4000-8000-00000000064a",
+        "content_type": "clip",
+        "content_item": {
+          "id": "00000000-0000-4000-8000-00000000064a",
+          "status": "complete",
+          "title": "Synthetic Song 74",
+          "entity_type": "song_schema",
+          "video_url": "https://cdn1.suno.ai/00000000-0000-4000-8000-00000000064a.mp4",
+          "audio_url": "https://studio-api.prod.suno.com/api/forbidden",
+          "media_urls": [
+            {
+              "url": "https://d2lwuy8qc234o3.cloudfront.net/1/clip/00000000-0000-4000-8000-00000000064a.m4a",
+              "content_type": "m4a-opus",
+              "delivery": "progressive",
+              "encoding": "1.0.0"
+            }
+          ],
+          "image_url": "https://cdn2.suno.ai/image_00000000-0000-4000-8000-00000000064a.jpeg",
+          "image_large_url": "https://cdn2.suno.ai/image_large_00000000-0000-4000-8000-00000000064a.jpeg",
+          "major_model_version": "v6",
+          "model_name": "chirp-hawk",
+          "metadata": {
+            "tags": "synthetic pop, bright synths, test",
+            "prompt": "Short made-up lyrics 74\nSecond line",
+            "type": "gen",
+            "duration": 193.5,
+            "stream": true,
+            "has_stem": false,
+            "is_remix": false,
+            "can_remix": true,
+            "vox_render_mode": "strict",
+            "is_mumble": false,
+            "priority": 10,
+            "uses_latest_model": true,
+            "refund_credits": false,
+            "can_publish_with_vocal": true,
+            "video_is_stale": false,
+            "edited_clip_id": "00000000-0000-4000-8000-000000000649",
+            "task": "edit_crop",
+            "variation_category": "edit"
+          },
+          "caption": "",
+          "is_liked": false,
+          "user_id": "00000000-0000-4000-8000-0000000006ff",
+          "display_name": "Test Owner",
+          "handle": "test-owner",
+          "avatar_image_url": "https://cdn1.suno.ai/avatar-test.jpg",
+          "is_trashed": false,
+          "is_hidden": false,
+          "is_public": false,
+          "created_at": "2026-10-18T12:13:00.000Z",
+          "updated_at": "2026-10-30T09:00:00.000Z",
+          "reaction": {
+            "play_count": 73,
+            "skip_count": 0,
+            "flagged": false,
+            "reaction_type": "L",
+            "updated_at": "2026-10-30T09:00:00.000Z"
+          },
+          "play_count": 73,
+          "upvote_count": 0,
+          "comment_count": 0,
+          "flag_count": 0,
+          "explicit": false,
+          "display_tags": "pop, synth",
+          "is_download_unlocked": false,
+          "is_contest_clip": false,
+          "has_hook": false,
+          "batch_index": 1,
+          "albums": [],
+          "action_config": {
+            "actions": [
+              {
+                "action_type": "add_to_playlist",
+                "disabled": false,
+                "visible": true
+              }
+            ]
+          },
+          "is_persona_root": false,
+          "is_following_creator": false,
+          "allow_comments": true,
+          "is_verified": false
+        },
+        "added_at": "2026-10-30T10:13:00.000Z",
+        "logging_context": {
+          "recommendation_item_id": ""
+        }
+      },
+      {
+        "content_id": "00000000-0000-4000-8000-00000000064b",
+        "content_type": "clip",
+        "content_item": {
+          "id": "00000000-0000-4000-8000-00000000064b",
+          "status": "complete",
+          "title": "Synthetic Song 75",
+          "entity_type": "song_schema",
+          "video_url": "https://cdn1.suno.ai/00000000-0000-4000-8000-00000000064b.mp4",
+          "audio_url": "https://studio-api.prod.suno.com/api/forbidden",
+          "media_urls": [
+            {
+              "url": "https://d2lwuy8qc234o3.cloudfront.net/1/clip/00000000-0000-4000-8000-00000000064b.m4a",
+              "content_type": "m4a-opus",
+              "delivery": "progressive",
+              "encoding": "1.0.0"
+            }
+          ],
+          "image_url": "https://cdn2.suno.ai/image_00000000-0000-4000-8000-00000000064b.jpeg",
+          "image_large_url": "https://cdn2.suno.ai/image_large_00000000-0000-4000-8000-00000000064b.jpeg",
+          "major_model_version": "v6",
+          "model_name": "chirp-hawk",
+          "metadata": {
+            "tags": "synthetic pop, bright synths, test",
+            "prompt": "Short made-up lyrics 75\nSecond line",
+            "type": "gen",
+            "duration": 194.5,
+            "stream": true,
+            "has_stem": false,
+            "is_remix": false,
+            "can_remix": true,
+            "vox_render_mode": "strict",
+            "is_mumble": false,
+            "priority": 10,
+            "uses_latest_model": true,
+            "refund_credits": false,
+            "can_publish_with_vocal": true,
+            "video_is_stale": false
+          },
+          "caption": "",
+          "is_liked": false,
+          "user_id": "00000000-0000-4000-8000-0000000006ff",
+          "display_name": "Test Owner",
+          "handle": "test-owner",
+          "avatar_image_url": "https://cdn1.suno.ai/avatar-test.jpg",
+          "is_trashed": false,
+          "is_hidden": false,
+          "is_public": false,
+          "created_at": "2026-10-19T12:14:00.000Z",
+          "updated_at": "2026-10-30T09:00:00.000Z",
+          "reaction": {
+            "play_count": 74,
+            "skip_count": 0,
+            "flagged": false,
+            "reaction_type": "L",
+            "updated_at": "2026-10-30T09:00:00.000Z"
+          },
+          "play_count": 74,
+          "upvote_count": 0,
+          "comment_count": 0,
+          "flag_count": 0,
+          "explicit": false,
+          "display_tags": "pop, synth",
+          "is_download_unlocked": false,
+          "is_contest_clip": false,
+          "has_hook": false,
+          "batch_index": 0,
+          "albums": [],
+          "action_config": {
+            "actions": [
+              {
+                "action_type": "add_to_playlist",
+                "disabled": false,
+                "visible": true
+              }
+            ]
+          },
+          "is_persona_root": false,
+          "is_following_creator": false,
+          "allow_comments": true,
+          "is_verified": false
+        },
+        "added_at": "2026-10-30T10:14:00.000Z",
+        "logging_context": {
+          "recommendation_item_id": ""
+        }
+      },
+      {
+        "content_id": "00000000-0000-4000-8000-00000000064c",
+        "content_type": "clip",
+        "content_item": {
+          "id": "00000000-0000-4000-8000-00000000064c",
+          "status": "complete",
+          "title": "Synthetic Song 76",
+          "entity_type": "song_schema",
+          "video_url": "https://cdn1.suno.ai/00000000-0000-4000-8000-00000000064c.mp4",
+          "audio_url": "https://studio-api.prod.suno.com/api/forbidden",
+          "media_urls": [
+            {
+              "url": "https://d2lwuy8qc234o3.cloudfront.net/1/clip/00000000-0000-4000-8000-00000000064c.m4a",
+              "content_type": "m4a-opus",
+              "delivery": "progressive",
+              "encoding": "1.0.0"
+            }
+          ],
+          "image_url": "https://cdn2.suno.ai/image_00000000-0000-4000-8000-00000000064c.jpeg",
+          "image_large_url": "https://cdn2.suno.ai/image_large_00000000-0000-4000-8000-00000000064c.jpeg",
+          "major_model_version": "v6",
+          "model_name": "chirp-hawk",
+          "metadata": {
+            "tags": "synthetic pop, bright synths, test",
+            "prompt": "Short made-up lyrics 76\nSecond line",
+            "type": "gen",
+            "duration": 195.5,
+            "stream": true,
+            "has_stem": false,
+            "is_remix": false,
+            "can_remix": true,
+            "vox_render_mode": "strict",
+            "is_mumble": false,
+            "priority": 10,
+            "uses_latest_model": true,
+            "refund_credits": false,
+            "can_publish_with_vocal": true,
+            "video_is_stale": false
+          },
+          "caption": "",
+          "is_liked": false,
+          "user_id": "00000000-0000-4000-8000-0000000006ff",
+          "display_name": "Test Owner",
+          "handle": "test-owner",
+          "avatar_image_url": "https://cdn1.suno.ai/avatar-test.jpg",
+          "is_trashed": false,
+          "is_hidden": false,
+          "is_public": false,
+          "created_at": "2026-10-20T12:15:00.000Z",
+          "updated_at": "2026-10-30T09:00:00.000Z",
+          "reaction": {
+            "play_count": 75,
+            "skip_count": 0,
+            "flagged": false,
+            "reaction_type": "L",
+            "updated_at": "2026-10-30T09:00:00.000Z"
+          },
+          "play_count": 75,
+          "upvote_count": 0,
+          "comment_count": 0,
+          "flag_count": 0,
+          "explicit": false,
+          "display_tags": "pop, synth",
+          "is_download_unlocked": false,
+          "is_contest_clip": false,
+          "has_hook": false,
+          "batch_index": 1,
+          "albums": [],
+          "action_config": {
+            "actions": [
+              {
+                "action_type": "add_to_playlist",
+                "disabled": false,
+                "visible": true
+              }
+            ]
+          },
+          "is_persona_root": false,
+          "is_following_creator": false,
+          "allow_comments": true,
+          "is_verified": false
+        },
+        "added_at": "2026-10-30T10:15:00.000Z",
+        "logging_context": {
+          "recommendation_item_id": ""
+        }
+      },
+      {
+        "content_id": "00000000-0000-4000-8000-00000000064d",
+        "content_type": "clip",
+        "content_item": {
+          "id": "00000000-0000-4000-8000-00000000064d",
+          "status": "complete",
+          "title": "Synthetic Song 77",
+          "entity_type": "song_schema",
+          "video_url": "https://cdn1.suno.ai/00000000-0000-4000-8000-00000000064d.mp4",
+          "audio_url": "https://studio-api.prod.suno.com/api/forbidden",
+          "media_urls": [
+            {
+              "url": "https://d2lwuy8qc234o3.cloudfront.net/1/clip/00000000-0000-4000-8000-00000000064d.m4a",
+              "content_type": "m4a-opus",
+              "delivery": "progressive",
+              "encoding": "1.0.0"
+            }
+          ],
+          "image_url": "https://cdn2.suno.ai/image_00000000-0000-4000-8000-00000000064d.jpeg",
+          "image_large_url": "https://cdn2.suno.ai/image_large_00000000-0000-4000-8000-00000000064d.jpeg",
+          "major_model_version": "v6",
+          "model_name": "chirp-hawk",
+          "metadata": {
+            "tags": "synthetic pop, bright synths, test",
+            "prompt": "Short made-up lyrics 77\nSecond line",
+            "type": "gen",
+            "duration": 196.5,
+            "stream": true,
+            "has_stem": false,
+            "is_remix": false,
+            "can_remix": true,
+            "vox_render_mode": "strict",
+            "is_mumble": false,
+            "priority": 10,
+            "uses_latest_model": true,
+            "refund_credits": false,
+            "can_publish_with_vocal": true,
+            "video_is_stale": false
+          },
+          "caption": "",
+          "is_liked": false,
+          "user_id": "00000000-0000-4000-8000-0000000006ff",
+          "display_name": "Test Owner",
+          "handle": "test-owner",
+          "avatar_image_url": "https://cdn1.suno.ai/avatar-test.jpg",
+          "is_trashed": false,
+          "is_hidden": false,
+          "is_public": false,
+          "created_at": "2026-10-21T12:16:00.000Z",
+          "updated_at": "2026-10-30T09:00:00.000Z",
+          "reaction": {
+            "play_count": 76,
+            "skip_count": 0,
+            "flagged": false,
+            "reaction_type": "L",
+            "updated_at": "2026-10-30T09:00:00.000Z"
+          },
+          "play_count": 76,
+          "upvote_count": 0,
+          "comment_count": 0,
+          "flag_count": 0,
+          "explicit": false,
+          "display_tags": "pop, synth",
+          "is_download_unlocked": false,
+          "is_contest_clip": false,
+          "has_hook": false,
+          "batch_index": 0,
+          "albums": [],
+          "action_config": {
+            "actions": [
+              {
+                "action_type": "add_to_playlist",
+                "disabled": false,
+                "visible": true
+              }
+            ]
+          },
+          "is_persona_root": false,
+          "is_following_creator": false,
+          "allow_comments": true,
+          "is_verified": false
+        },
+        "added_at": "2026-10-30T10:16:00.000Z",
+        "logging_context": {
+          "recommendation_item_id": ""
+        }
+      }
+    ],
+    "item_count": 77,
+    "logging_context": {
+      "feed_session_id": "test-session"
+    },
+    "request_metadata": {
+      "sort_by": "default"
+    },
+    "feed_metadata": {
+      "is_owner": true
+    }
+  }
+}

@@ -1391,6 +1391,18 @@ export class Page {
     });
   }
 
+  /**
+   * The text of each inline script in the page Suno served (a `script` with no `src`), in document
+   * order. Read only, as {@link readAll}: no element is handed out, nothing is run, and no request
+   * is made. A playlist page's songs are read so (#452, TS-007-25) from the data Suno embeds in it
+   * (`self.__next_f.push(...)`), since the page asks Suno for none of them.
+   */
+  readInlineScripts(): string[] {
+    return [...this.document.scripts]
+      .filter((script) => !script.hasAttribute('src'))
+      .map((script) => script.text);
+  }
+
   /** The visible elements `target` matches, as {@link readAll} finds them. Never handed out. */
   private readAllElements(target: Target): Element[] {
     this.trail.target = target;

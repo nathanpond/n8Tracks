@@ -284,10 +284,17 @@ describe('invariant 4: the extension never presses a forbidden control on Suno',
   // It loads every snapshot and reads each one's controls, which takes about 5 s here and more on
   // a GitHub runner, past vitest's default 5 s: the limit is the one sunoGenerate.test.ts uses.
   it('spies on the forbidden controls of every snapshot it runs on', { timeout: 30_000 }, () => {
-    // Complement: the spies are really there. Every snapshot but the playlist pages (TS-003 and
-    // TS-007-23) and the clip's page with its menu closed (TS-005), which have no Create, Publish,
-    // Delete, Trash, or Remove control and no dialog, has at least one.
-    const unspied = new Set(['playlist', 'playlist-groups', 'clip-page']);
+    // Complement: the spies are really there. Every snapshot but the playlist pages (TS-003,
+    // TS-007-23, and the synthetic ones of TS-007-25) and the clip's page with its menu closed
+    // (TS-005), which have no Create, Publish, Delete, Trash, or Remove control and no dialog, has at
+    // least one.
+    const unspied = new Set([
+      'playlist',
+      'playlist-groups',
+      'playlist-embedded',
+      'playlist-embedded-no-feed',
+      'clip-page',
+    ]);
     const spiedOn = SNAPSHOT_NAMES.filter((name) => {
       document.body.innerHTML = snapshotHtml(name);
       return forbiddenControls(document).length > 0;
@@ -1599,6 +1606,7 @@ async function playlistsOn(
   snapshot: string,
   address: string,
   run: { refresh: true } | { leg: number },
+  playlistId = '00000000-0000-4000-8000-00000000050a',
 ): Promise<{ happened: string[]; forbidden: string[]; ran: string[]; sent: string[] }> {
   document.body.innerHTML = snapshotHtml(snapshot);
   const happened: string[] = [];
@@ -1653,7 +1661,7 @@ async function playlistsOn(
   });
   const scope = {
     kind: 'playlists' as const,
-    playlists: [{ id: '00000000-0000-4000-8000-00000000050a', name: 'Harbour Lights' }],
+    playlists: [{ id: playlistId, name: 'Harbour Lights' }],
     readTrash: false,
   };
   const legs = legsFor(scope);
@@ -1734,17 +1742,21 @@ describe('invariant 4: reading playlists (#449)', () => {
     "reads a playlist's songs from its page pressing nothing at all: only scrolls",
     { timeout: 30_000 },
     async () => {
-      const { happened, ran } = await playlistsOn(
-        'playlist-groups',
-        'https://suno.com/playlist/00000000-0000-4000-8000-00000000050a',
+      // The synthetic page of TS-007-25: 50 of its 77 songs in its embedded data, so the leg scrolls
+      // for the next page (none comes here, and it goes on as read in part).
+      const { happened, ran, sent } = await playlistsOn(
+        'playlist-embedded',
+        'https://suno.com/playlist/00000000-0000-4000-8000-000000000600',
         { leg: 3 },
+        '00000000-0000-4000-8000-000000000600',
       );
 
-      // The capture holds no forbidden control (fixtures README), so the guard asks for no press of
+      // The page holds no forbidden control (fixtures README), so the guard asks for no press of
       // any kind: not a row, Play, Like, or the playlist's own buttons.
       expect(happened.filter((event) => !event.startsWith('load '))).toEqual([]);
       expect(new Set(ran)).toEqual(new Set(['load-more']));
       expect(RUN_RECIPES['load-more']).toBeDefined();
+      expect(sent).toContain('sync-part');
     },
   );
 });

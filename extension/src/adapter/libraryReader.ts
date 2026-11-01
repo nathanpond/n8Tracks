@@ -1,5 +1,11 @@
 import type { ExportPart, SyncCounts, SyncLeg, SyncProgress, SyncScope } from '../messages.ts';
 import type { ObservedKind, ObservedMessage, ObservedRequest } from './observed.ts';
+import {
+  observedPlaylistPage,
+  playlistFeedId,
+  type PlaylistClip,
+  type PlaylistDataRead,
+} from './playlistData.ts';
 import type { PlaylistPageRead } from './playlistPage.ts';
 
 /**
@@ -27,10 +33,13 @@ import type { PlaylistPageRead } from './playlistPage.ts';
  * no next page comes after a scroll, and the server then marks no voice Unavailable.
  *
  * The user's playlist list (#449) is read the same way, third, on Library's Playlists tab, and sent
- * on its own (`sync-playlists-report`). A playlist's songs are no longer fetched by its page
- * (TS-007-24): the playlist leg reads their IDs from the rows on the page, scrolling while fewer
- * rows are read than the count in its header, and sends only the membership. A playlist read short
- * of its count is sent as read, with the count, and the panel says it was read in part.
+ * on its own (`sync-playlists-report`). A playlist's first songs are no longer fetched by its page
+ * (TS-007-24): the playlist leg reads them from the data Suno embedded in the page it served
+ * (`playlistData.ts`, #452, TS-007-25), and each later page from the `POST /api/unified/feed` answer
+ * the page sends as it is scrolled, until the playlist's size is reached. The songs go into the
+ * export as a workspace sync's do, with the membership. The song IDs of the rows on the page
+ * (#449) are a cross-check. A playlist read short of its size is sent as read, with the size, and
+ * the panel says it was read in part.
  */
 
 /** How long a page of a list may take to come, after the action that asks for it (20 seconds). */
@@ -124,6 +133,11 @@ export interface LegContext extends ListContext {
   sendPlaylists(complete: boolean, playlists: Record<string, unknown>[]): Promise<string | null>;
   /** Reads the songs and the count a playlist page shows now (TS-007-24). Reads only. */
   readPlaylistPage(): PlaylistPageRead;
+  /**
+   * Reads the first page of the playlist's songs from the data Suno embedded in the page it served
+   * (#452, TS-007-25). Reads only: no request, no cookie.
+   */
+  readPlaylistData(playlistId: string): PlaylistDataRead;
   /** Waits a moment for the page to draw, after it opened or was scrolled. */
   settle(): Promise<void>;
   sink: ExportSink;
@@ -560,65 +574,159 @@ async function readPlaylists(step: string, context: LegContext): Promise<string 
     : 'Only some of your playlists were read (Suno sent no further page), so none was marked unavailable.';
 }
 
-/** How many scrolls in a row may bring no new row before a playlist is read as far as it goes. */
+/** How many pages in a row may bring no new song before a playlist is read as far as it goes. */
 export const PLAYLIST_IDLE_SCROLLS = PAGE_RETRIES + 1;
 
 /** How many waits for a playlist's first rows, after its page opened (20 seconds at 1 a second). */
 export const PLAYLIST_FIRST_WAITS = 20;
 
+/** What the leg says, after the step, when Suno's data for a playlist cannot be read (#452). */
+export const PLAYLIST_PAGE_CHANGED = 'the playlist page changed';
+
+function playlistPageChanged(step: string, problem: string): ReadStop {
+  return new ReadStop(
+    step,
+    `Suno's data for the playlist's songs in its page, but ${PLAYLIST_PAGE_CHANGED} (${problem})`,
+  );
+}
+
+/** What reading a playlist leg came to (#452). */
+interface PlaylistRead {
+  /** The playlist's songs, in order, each once: those read from Suno's data, then any row alone showed. */
+  clipIds: string[];
+  /** How many songs the playlist holds, as Suno's data (else its header) says; null when neither does. */
+  songCount: number | null;
+  /** How many songs' data was read. */
+  read: number;
+  /** Whether every song's data was read. */
+  complete: boolean;
+}
+
 /**
- * A playlist's songs, from its page (TS-007-24): the song IDs of its rows, and the count in its
- * header. It waits for the first rows to be drawn, then, while fewer songs are read than the
- * count, scrolls for more, keeping every row seen (Suno may draw only part of a long list at a
- * time); it ends when the count is reached, when a scroll brings nothing new
- * {@link PLAYLIST_IDLE_SCROLLS} times in a row, or (with no count shown) after the first scroll
- * that brings nothing. Paging past one load was not seen live; a read short of the count is
- * returned as it is, never stopped. Throws {@link ReadStop} when no row comes at all (and the
- * count is not 0), or {@link ReadCancelled}.
+ * A playlist's songs (#452, TS-007-25). The first page comes from the data Suno embedded in the page
+ * it served ({@link LegContext.readPlaylistData}); while fewer songs are read than the playlist's
+ * size and Suno gave a next cursor, the page is scrolled (`load-more`: it has no pager) and the
+ * `POST /api/unified/feed` answer it sends for that playlist is taken, each cursor once. Each page's
+ * new clips go to `take` as they come. A page that does not come after {@link PAGE_RETRIES} more
+ * scrolls, or {@link PLAYLIST_IDLE_SCROLLS} pages in a row with no new song, end the read short, as
+ * read in part; it is never stopped silently.
+ *
+ * The song IDs of the rows on the page (#449, TS-007-24) are a cross-check: the read waits up to 20
+ * seconds for the first rows when the data names songs, and keeps every row seen as it scrolls. When
+ * every song's data was read, a row showing a song the data does not hold stops the read (the data
+ * is not this playlist's); when not, such songs follow in the membership, without data.
+ *
+ * Throws {@link ReadStop} when the embedded data cannot be found or read ("the playlist page
+ * changed"), when no row comes at all, or when an observed page cannot be read, or {@link
+ * ReadCancelled}.
  */
-async function readPlaylistSongs(step: string, context: LegContext): Promise<PlaylistPageRead> {
+async function readPlaylistSongs(
+  step: string,
+  playlistId: string,
+  context: LegContext,
+  take: (clips: PlaylistClip[]) => Promise<void>,
+): Promise<PlaylistRead> {
   const cancelled = () => context.signal.aborted;
-  let read = context.readPlaylistPage();
+  const first = context.readPlaylistData(playlistId);
+  if ('problem' in first) {
+    throw playlistPageChanged(step, first.problem);
+  }
+
+  let rows = context.readPlaylistPage();
   for (
     let wait = 0;
-    read.clipIds.length === 0 && read.songCount !== 0 && wait < PLAYLIST_FIRST_WAITS;
+    rows.clipIds.length === 0 && first.clips.length > 0 && wait < PLAYLIST_FIRST_WAITS;
     wait += 1
   ) {
     await context.settle();
     if (cancelled()) {
       throw new ReadCancelled();
     }
-    read = context.readPlaylistPage();
+    rows = context.readPlaylistPage();
   }
-  if (read.clipIds.length === 0 && read.songCount !== 0) {
+  if (rows.clipIds.length === 0 && first.clips.length > 0) {
     throw new ReadStop(
       step,
       "the playlist's songs on its page within 20 seconds of opening it",
       true,
     );
   }
-  const clipIds = [...read.clipIds];
-  const seen = new Set(clipIds);
-  let songCount = read.songCount;
+  const shown = new Set(rows.clipIds);
+  const header = rows.songCount;
+
+  const clipIds: string[] = [];
+  const seen = new Set<string>();
+  const keep = async (clips: PlaylistClip[]): Promise<number> => {
+    const fresh = clips.filter((clip) => {
+      if (seen.has(clip.id)) {
+        return false;
+      }
+      seen.add(clip.id);
+      clipIds.push(clip.id);
+      return true;
+    });
+    await take(fresh);
+    return fresh.length;
+  };
+  await keep(first.clips);
+
+  const feedId = playlistFeedId(playlistId);
+  const cursors = new Set<string>();
+  let cursor = first.nextCursor;
+  let songCount = first.itemCount ?? header;
   let idle = 0;
   while (
-    songCount === null ? idle === 0 : clipIds.length < songCount && idle < PLAYLIST_IDLE_SCROLLS
+    cursor !== null &&
+    (songCount === null || clipIds.length < songCount) &&
+    idle < PLAYLIST_IDLE_SCROLLS
   ) {
+    let message: ObservedMessage | null = null;
+    for (let attempt = 0; message === null && attempt <= PAGE_RETRIES; attempt += 1) {
+      if (cancelled()) {
+        throw new ReadCancelled();
+      }
+      await context.more(step);
+      message = await context.observations.next(
+        'playlist-feed',
+        (observed) =>
+          observed.request.feedId === feedId &&
+          observed.request.cursor !== null &&
+          !cursors.has(observed.request.cursor),
+        PAGE_WAIT_MS,
+        context.signal,
+      );
+      await context.settle();
+      for (const id of context.readPlaylistPage().clipIds) {
+        shown.add(id);
+      }
+    }
     if (cancelled()) {
       throw new ReadCancelled();
     }
-    await context.more(step);
-    await context.settle();
-    const again = context.readPlaylistPage();
-    songCount = songCount ?? again.songCount;
-    const fresh = again.clipIds.filter((id) => !seen.has(id));
-    for (const id of fresh) {
-      seen.add(id);
-      clipIds.push(id);
+    if (message === null) {
+      // No next page came after the scrolls: the playlist goes on as read so far.
+      break;
     }
-    idle = fresh.length === 0 ? idle + 1 : 0;
+    cursors.add(message.request.cursor ?? '');
+    const page = observedPlaylistPage(message.body, playlistId);
+    if ('problem' in page) {
+      throw new ReadStop(step, `a page of the playlist's songs that can be read (${page.problem})`);
+    }
+    idle = (await keep(page.clips)) === 0 ? idle + 1 : 0;
+    cursor = page.nextCursor;
+    songCount = songCount ?? page.itemCount;
   }
-  return { clipIds, songCount };
+
+  const read = clipIds.length;
+  const complete = songCount === null ? cursor === null : read >= songCount;
+  const unheld = [...shown].filter((id) => !seen.has(id));
+  if (complete && unheld.length > 0) {
+    throw playlistPageChanged(
+      step,
+      `its rows show ${String(unheld.length)} song(s) its data does not hold`,
+    );
+  }
+  return { clipIds: [...clipIds, ...unheld], songCount, read, complete };
 }
 
 /**
@@ -870,15 +978,28 @@ export async function readLeg(
       break;
     }
     case 'playlist': {
-      // Membership only (#449): the songs' own data comes from library and workspace syncs.
-      const read = await readPlaylistSongs(step, context);
+      // The songs go into the export as a workspace sync's do, with the membership (#452).
+      const read = await readPlaylistSongs(step, leg.id, context, async (clips) => {
+        buffer.push(...clips);
+        counts.clips += clips.length;
+        context.progress({ ...counts });
+        while (buffer.length >= PART_CLIPS) {
+          const rest = buffer.splice(PART_CLIPS);
+          await flush(false);
+          buffer.push(...rest);
+        }
+      });
       counts.playlists += 1;
       context.progress({ ...counts });
-      if (read.songCount !== null && read.clipIds.length < read.songCount) {
+      if (!read.complete) {
         const name = leg.name.trim() === '' ? 'A playlist' : `Playlist “${leg.name}”`;
+        const of =
+          read.songCount === null
+            ? `${String(read.read)} songs`
+            : `${String(read.read)} of ${String(read.songCount)} songs`;
         notes = [
           ...notes,
-          `${name} was read in part: ${String(read.clipIds.length)} of ${String(read.songCount)} songs (Suno showed no more). The review shows it so, and does not record it unless you choose to.`,
+          `${name} was read in part: ${of} (Suno sent no further page). The review shows it so, and does not record it unless you choose to.`,
         ];
       }
       await flush(false, [

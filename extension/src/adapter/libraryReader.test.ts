@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { ExportPart, SyncLeg, SyncProgress, SyncScope } from '../messages.ts';
-import { fakeClock } from '../testing/snapshots.ts';
+import { fakeClock, snapshotHtml } from '../testing/snapshots.ts';
 import { sunoObject } from '../testing/sunoResponses.ts';
 import {
   exportHeader,
   legsFor,
   readsTrash,
+  PAGE_RETRIES,
   PAGE_WAIT_MS,
   PART_CLIPS,
   PLAYLIST_FIRST_WAITS,
@@ -20,6 +21,14 @@ import {
   type LegContext,
 } from './libraryReader.ts';
 import { ObservationFeed } from './observations.ts';
+import {
+  observedPlaylistPage,
+  PLAYLIST_SOURCE,
+  PLAYLIST_SOURCE_MEMBER,
+  readEmbeddedPlaylist,
+  type PlaylistDataRead,
+  type PlaylistFeedPage,
+} from './playlistData.ts';
 import {
   forwardedBody,
   OBSERVER_SOURCE,
@@ -112,6 +121,8 @@ interface PlaylistSetup {
    * first wait, and after each wait or scroll.
    */
   reads?: { clipIds: string[]; songCount: number | null }[];
+  /** The first page of the playlist's songs in the data Suno embedded in its page (#452). */
+  data?: PlaylistDataRead;
 }
 
 /**
@@ -217,6 +228,8 @@ function suno(
       const read = reads.length > 1 ? reads.shift() : reads[0];
       return structuredClone(read ?? { clipIds: [], songCount: null });
     },
+    readPlaylistData: () =>
+      structuredClone(playlist.data ?? { clips: [], nextCursor: null, itemCount: 0 }),
     settle: () => {
       settled += 1;
       return Promise.resolve();
@@ -889,7 +902,7 @@ describe('reading chosen workspaces in a sync begun before #422', () => {
   });
 });
 
-describe('reading a playlist from its page (#449, TS-007-24)', () => {
+describe("reading a playlist's songs from its page (#452, TS-007-25; #449, TS-007-24)", () => {
   const PLAYLIST = '00000000-0000-4000-8000-00000000012b';
   const scope: SyncScope = {
     kind: 'playlists',
@@ -898,25 +911,80 @@ describe('reading a playlist from its page (#449, TS-007-24)', () => {
   };
   const legs = legsFor(scope);
   const atPlaylist: SyncProgress = { ...START, leg: 3 };
+  const STEP = 'Read playlist 1 of 1';
 
-  it("reads the rows' song IDs and sends only the membership, with the playlist's count", async () => {
-    const page = suno([], [], [], {}, { reads: [{ clipIds: ['s1', 's2', 's3'], songCount: 3 }] });
+  /** Clips of the playlist, as the playlist leg sends them: with their source marked. */
+  function songs(...ids: string[]): Clip[] {
+    return ids.map((id) => ({
+      id,
+      title: `Song ${id}`,
+      [PLAYLIST_SOURCE_MEMBER]: PLAYLIST_SOURCE,
+    }));
+  }
+
+  /** The IDs of a part's clips. */
+  function idsOf(part: ExportPart | undefined): string[] {
+    return ((part?.clips ?? []) as Clip[]).map((clip) => clip.id);
+  }
+
+  /** The first page as the embedded data gives it. */
+  function data(clipsRead: Clip[], nextCursor: string | null, itemCount: number | null) {
+    return { clips: clipsRead, nextCursor, itemCount };
+  }
+
+  /** A later page, as the page's own `POST /api/unified/feed` answer brings it (snake_case). */
+  function feedPage(
+    cursor: string,
+    clipsRead: Clip[],
+    nextCursor: string | null,
+    playlist = PLAYLIST,
+  ): ObservedMessage {
+    return observed(
+      'playlist-feed',
+      {
+        feed: {
+          feed_id: `generic_playlist:${playlist}`,
+          items: clipsRead.map((clip) => {
+            // Suno's own answer carries no source mark: the reader adds it.
+            const sent = Object.fromEntries(
+              Object.entries(clip).filter(([key]) => key !== PLAYLIST_SOURCE_MEMBER),
+            );
+            return { content_type: 'clip', content_item: sent };
+          }),
+          ...(nextCursor === null ? {} : { next_cursor: nextCursor }),
+        },
+      },
+      { feedId: `generic_playlist:${playlist}`, cursor },
+    );
+  }
+
+  it('imports the songs in the embedded data, with the membership, without scrolling when they are all there', async () => {
+    const page = suno(
+      [],
+      [],
+      [],
+      {},
+      {
+        data: data(songs('s1', 's2', 's3'), null, 3),
+        reads: [{ clipIds: ['s1', 's2', 's3'], songCount: 3 }],
+      },
+    );
 
     const next = await readLeg(scope, legs, atPlaylist, page.context);
 
     expect(page.parts).toEqual([
       {
         partNumber: 1,
-        clips: [],
+        clips: songs('s1', 's2', 's3'),
         trashedClips: [],
         playlists: [
           { id: PLAYLIST, name: 'Harbour Lights', clipIds: ['s1', 's2', 's3'], songCount: 3 },
         ],
       },
     ]);
-    // Nothing is asked of Suno's API and nothing is scrolled: the page showed every song.
+    // Nothing is asked of Suno and nothing is scrolled: the page held every song.
     expect(page.moreSteps).toEqual([]);
-    expect(next.counts).toMatchObject({ clips: 0, playlists: 1 });
+    expect(next.counts).toMatchObject({ clips: 3, playlists: 1 });
     expect(next.notes).toBeUndefined();
     expect(page.headers[0]).toMatchObject({
       scope: { kind: 'playlists', ids: [PLAYLIST] },
@@ -925,71 +993,302 @@ describe('reading a playlist from its page (#449, TS-007-24)', () => {
     });
   });
 
-  it('waits for the first rows, then scrolls while fewer are read than the count, keeping every row seen', async () => {
+  it("reads a 77-song playlist: 50 from the page's data, the rest from the answer a scroll brings", async () => {
+    const id = '00000000-0000-4000-8000-000000000600';
+    const html = snapshotHtml('playlist-embedded');
+    const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(
+      (match) => match[1] ?? '',
+    );
+    const first = readEmbeddedPlaylist(scripts, id) as PlaylistFeedPage;
+    const second = observedPlaylistPage(
+      sunoObject('unified-feed.playlist-page-2.response'),
+      id,
+    ) as PlaylistFeedPage;
+    const rows = [...html.matchAll(/href="\/song\/([^"]+)"/g)].map((match) => match[1] ?? '');
+    const longScope: SyncScope = {
+      kind: 'playlists',
+      playlists: [{ id, name: 'Synthetic Playlist' }],
+      readTrash: false,
+    };
+    const page = suno(
+      [],
+      [
+        [
+          observed('playlist-feed', sunoObject('unified-feed.playlist-page-2.response'), {
+            feedId: `generic_playlist:${id}`,
+            cursor: '50',
+          }),
+        ],
+      ],
+      [],
+      {},
+      {
+        data: first,
+        reads: [
+          { clipIds: rows, songCount: 77 },
+          { clipIds: second.clips.map((clip) => clip.id), songCount: 77 },
+        ],
+      },
+    );
+
+    const next = await readLeg(longScope, legsFor(longScope), atPlaylist, page.context);
+
+    const all = [...first.clips, ...second.clips];
+    // The page draws 20 of its rows; each is one of the songs read.
+    expect(rows).toHaveLength(20);
+    expect(all).toHaveLength(77);
+    expect(page.moreSteps).toEqual([STEP]);
+    expect(page.parts).toEqual([
+      {
+        partNumber: 1,
+        clips: all,
+        trashedClips: [],
+        playlists: [
+          {
+            id,
+            name: 'Synthetic Playlist',
+            clipIds: all.map((clip) => clip.id),
+            songCount: 77,
+          },
+        ],
+      },
+    ]);
+    expect(next.counts).toMatchObject({ clips: 77, playlists: 1 });
+    expect(next.notes).toBeUndefined();
+  });
+
+  it('takes each cursor once, and only the answers for this playlist', async () => {
+    const page = suno(
+      [],
+      [
+        [
+          feedPage('2', songs('x1'), null, '00000000-0000-4000-8000-0000000001ff'),
+          feedPage('2', songs('s3', 's4'), '4'),
+        ],
+        [feedPage('2', songs('s3', 's4'), '4'), feedPage('4', songs('s5'), null)],
+      ],
+      [],
+      {},
+      {
+        data: data(songs('s1', 's2'), '2', 5),
+        reads: [{ clipIds: ['s1', 's2'], songCount: 5 }],
+      },
+    );
+
+    await readLeg(scope, legs, atPlaylist, page.context);
+
+    expect(page.moreSteps).toEqual([STEP, STEP]);
+    expect(idsOf(page.parts[0])).toEqual(['s1', 's2', 's3', 's4', 's5']);
+    expect(page.parts[0]?.playlists[0]).toMatchObject({
+      clipIds: ['s1', 's2', 's3', 's4', 's5'],
+      songCount: 5,
+    });
+  });
+
+  it('stops, saying the playlist page changed, when the embedded data cannot be read, and sends nothing', async () => {
     const page = suno(
       [],
       [],
       [],
       {},
       {
+        data: { problem: 'its embedded data holds no feed query for this playlist' },
+        reads: [{ clipIds: ['s1'], songCount: 1 }],
+      },
+    );
+
+    const stop = await stopOf(readLeg(scope, legs, atPlaylist, page.context));
+
+    expect(stop.step).toBe(STEP);
+    expect(stop.expected).toContain('the playlist page changed');
+    expect(stop.expected).toContain('no feed query');
+    expect(stop.reopen).toBe(false);
+    expect(page.parts).toEqual([]);
+    expect(page.headers).toEqual([]);
+  });
+
+  it('sends a playlist read short of its size as read, and says it was read in part', async () => {
+    const page = suno(
+      [],
+      [],
+      [],
+      {},
+      {
+        data: data(songs('s1', 's2'), '2', 24),
+        reads: [{ clipIds: ['s1', 's2'], songCount: 24 }],
+      },
+    );
+
+    const next = await readLeg(scope, legs, atPlaylist, page.context);
+
+    // Asked for the next page again before going on: never a silent stop.
+    expect(page.moreSteps).toHaveLength(PAGE_RETRIES + 1);
+    expect(idsOf(page.parts[0])).toEqual(['s1', 's2']);
+    expect(page.parts[0]?.playlists[0]).toMatchObject({ clipIds: ['s1', 's2'], songCount: 24 });
+    expect(next.notes).toEqual([
+      'Playlist “Harbour Lights” was read in part: 2 of 24 songs (Suno sent no further page). The review shows it so, and does not record it unless you choose to.',
+    ]);
+    expect(next.leg).toBe(legs.length - 1);
+  });
+
+  it('keeps songs a row alone showed in the membership of a read in part, without data', async () => {
+    const page = suno(
+      [],
+      [],
+      [],
+      {},
+      {
+        data: data(songs('s1'), '1', 3),
         reads: [
-          { clipIds: [], songCount: null },
-          { clipIds: ['s1', 's2'], songCount: 4 },
-          // Suno draws part of a long list at a time: the first rows may leave the page.
-          { clipIds: ['s2', 's3'], songCount: 4 },
-          { clipIds: ['s3', 's4'], songCount: 4 },
+          { clipIds: ['s1'], songCount: 3 },
+          { clipIds: ['s1', 's2'], songCount: 3 },
         ],
       },
     );
 
     await readLeg(scope, legs, atPlaylist, page.context);
 
-    expect(page.moreSteps).toEqual(['Read playlist 1 of 1', 'Read playlist 1 of 1']);
-    expect(page.parts[0]?.playlists[0]).toMatchObject({
-      clipIds: ['s1', 's2', 's3', 's4'],
-      songCount: 4,
-    });
+    expect(idsOf(page.parts[0])).toEqual(['s1']);
+    expect(page.parts[0]?.playlists[0]).toMatchObject({ clipIds: ['s1', 's2'], songCount: 3 });
   });
 
-  it('sends a playlist read short of its count as read, and says it was read in part', async () => {
-    const page = suno([], [], [], {}, { reads: [{ clipIds: ['s1', 's2'], songCount: 24 }] });
+  it("stops when every song's data was read but a row shows a song the data does not hold", async () => {
+    const page = suno(
+      [],
+      [],
+      [],
+      {},
+      {
+        data: data(songs('s1', 's2'), null, 2),
+        reads: [{ clipIds: ['s1', 's9'], songCount: 2 }],
+      },
+    );
 
-    const next = await readLeg(scope, legs, atPlaylist, page.context);
+    const stop = await stopOf(readLeg(scope, legs, atPlaylist, page.context));
 
-    // Asked for more until scrolls brought nothing new, then went on: never a silent stop.
-    expect(page.moreSteps).toHaveLength(PLAYLIST_IDLE_SCROLLS);
-    expect(page.parts[0]?.playlists[0]).toMatchObject({ clipIds: ['s1', 's2'], songCount: 24 });
-    expect(next.notes).toEqual([
-      'Playlist “Harbour Lights” was read in part: 2 of 24 songs (Suno showed no more). The review shows it so, and does not record it unless you choose to.',
-    ]);
-    expect(next.leg).toBe(legs.length - 1);
+    expect(stop.expected).toContain('the playlist page changed');
+    expect(stop.expected).toContain('its rows show 1 song(s) its data does not hold');
+    expect(page.parts).toEqual([]);
   });
 
-  it('scrolls once when the page shows no count, and takes what it shows', async () => {
-    const page = suno([], [], [], {}, { reads: [{ clipIds: ['s1'], songCount: null }] });
+  it('stops when a later page cannot be read', async () => {
+    const page = suno(
+      [],
+      [
+        [
+          observed(
+            'playlist-feed',
+            { feed: { items: [{ content_type: 'clip', content_item: {} }] } },
+            { feedId: `generic_playlist:${PLAYLIST}`, cursor: '1' },
+          ),
+        ],
+      ],
+      [],
+      {},
+      { data: data(songs('s1'), '1', 2), reads: [{ clipIds: ['s1'], songCount: 2 }] },
+    );
+
+    const stop = await stopOf(readLeg(scope, legs, atPlaylist, page.context));
+
+    expect(stop.expected).toBe(
+      "a page of the playlist's songs that can be read (an item of the playlist is not a song with an ID)",
+    );
+  });
+
+  it('uploads a long playlist in parts of 200, the membership with the last', async () => {
+    const ids = Array.from({ length: 250 }, (_, index) => `s${String(index)}`);
+    const page = suno(
+      [],
+      [],
+      [],
+      {},
+      {
+        data: data(songs(...ids), null, 250),
+        reads: [{ clipIds: ids.slice(0, 20), songCount: 250 }],
+      },
+    );
 
     await readLeg(scope, legs, atPlaylist, page.context);
 
-    expect(page.moreSteps).toEqual(['Read playlist 1 of 1']);
-    expect(page.parts[0]?.playlists[0]).toMatchObject({ clipIds: ['s1'], songCount: null });
+    expect(page.parts.map((part) => [part.clips.length, part.playlists.length])).toEqual([
+      [PART_CLIPS, 0],
+      [50, 1],
+    ]);
+    expect(page.parts[1]?.playlists[0]?.clipIds).toEqual(ids);
   });
 
   it('sends an empty playlist without waiting, and stops, asking for the page again, when no row ever comes', async () => {
-    const empty = suno([], [], [], {}, { reads: [{ clipIds: [], songCount: 0 }] });
+    const empty = suno(
+      [],
+      [],
+      [],
+      {},
+      { data: data([], null, 0), reads: [{ clipIds: [], songCount: 0 }] },
+    );
     await readLeg(scope, legs, atPlaylist, empty.context);
     expect(empty.settled()).toBe(0);
     expect(empty.parts[0]?.playlists[0]).toMatchObject({ clipIds: [], songCount: 0 });
 
-    const page = suno([], [], [], {}, { reads: [{ clipIds: [], songCount: 5 }] });
+    const page = suno(
+      [],
+      [],
+      [],
+      {},
+      { data: data(songs('s1'), null, 1), reads: [{ clipIds: [], songCount: 1 }] },
+    );
     const stop = await stopOf(readLeg(scope, legs, atPlaylist, page.context));
-    expect(stop).toMatchObject({ step: 'Read playlist 1 of 1', reopen: true });
+    expect(stop).toMatchObject({ step: STEP, reopen: true });
     expect(page.settled()).toBe(PLAYLIST_FIRST_WAITS);
     expect(page.parts).toEqual([]);
   });
 
+  it('waits for the first rows to be drawn before the cross-check', async () => {
+    const page = suno(
+      [],
+      [],
+      [],
+      {},
+      {
+        data: data(songs('s1'), null, 1),
+        reads: [
+          { clipIds: [], songCount: null },
+          { clipIds: ['s1'], songCount: 1 },
+        ],
+      },
+    );
+
+    await readLeg(scope, legs, atPlaylist, page.context);
+
+    expect(page.settled()).toBe(1);
+    expect(page.parts[0]?.playlists[0]).toMatchObject({ clipIds: ['s1'], songCount: 1 });
+  });
+
+  it('ends after pages in a row that bring no new song', async () => {
+    const page = suno(
+      [],
+      Array.from({ length: PLAYLIST_IDLE_SCROLLS + 2 }, (_, index) => [
+        feedPage(String(index + 1), songs('s1'), String(index + 2)),
+      ]),
+      [],
+      {},
+      { data: data(songs('s1'), '1', 5), reads: [{ clipIds: ['s1'], songCount: 5 }] },
+    );
+
+    const next = await readLeg(scope, legs, atPlaylist, page.context);
+
+    expect(page.moreSteps).toHaveLength(PLAYLIST_IDLE_SCROLLS);
+    expect(next.notes?.[0]).toContain('was read in part: 1 of 5 songs');
+  });
+
   it('says the Trash is not complete when a playlist sync does not read it (#420)', async () => {
     const unread: SyncScope = { ...scope, readTrash: false };
-    const page = suno([], [], [], {}, { reads: [{ clipIds: ['s1'], songCount: 1 }] });
+    const page = suno(
+      [],
+      [],
+      [],
+      {},
+      { data: data(songs('s1'), null, 1), reads: [{ clipIds: ['s1'], songCount: 1 }] },
+    );
 
     const next = await readLeg(unread, legsFor(unread), atPlaylist, page.context);
 

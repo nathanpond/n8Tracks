@@ -20,6 +20,7 @@ import {
 } from '../adapter/libraryReader.ts';
 import type { Page } from '../adapter/primitives.ts';
 import type { AdapterSession } from '../adapter/registry.ts';
+import { readEmbeddedPlaylist } from '../adapter/playlistData.ts';
 import { readPlaylistPage } from '../adapter/playlistPage.ts';
 import { openPlaylistList, openWorkspaceList } from '../adapter/workflows/libraryTabs.ts';
 import { switchForm } from '../adapter/workflows/fillSongs.ts';
@@ -59,8 +60,9 @@ import type { SyncViewState, WorkspaceListState } from '../panel/SyncView.ts';
  *
  * Playlists (#449) follow the same pattern: the playlist list is read on Library by pressing its
  * Playlists tab, in a leg of every sync and by the Playlists choice's own "Refresh from Suno", and
- * reported on its own. A playlist's songs are read from the rows of its page (TS-007-24), with a
- * scroll for more while fewer rows are read than its "N songs"; nothing is pressed there.
+ * reported on its own. A playlist's songs are read from the data Suno embedded in its page and,
+ * past the first page, from the answers the page sends as it is scrolled (#452, TS-007-25); its
+ * rows' song IDs (TS-007-24) are the cross-check. Nothing is pressed there.
  */
 
 export interface SunoSyncOptions {
@@ -593,6 +595,7 @@ export class SunoSync {
           return answer.ok ? null : answer.message;
         },
         readPlaylistPage: () => readPlaylistPage(page),
+        readPlaylistData: (id) => readEmbeddedPlaylist(page.readInlineScripts(), id),
         settle: () => (this.options.clock ?? realClock).sleep(PLAYLIST_SETTLE_MS),
         sink: this.sink(),
         signal: controller.signal,
