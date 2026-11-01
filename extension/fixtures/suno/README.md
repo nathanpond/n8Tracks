@@ -37,6 +37,7 @@ One pair of clips was made in each mode in a new workspace. The modes are `songs
 - `project.create.response.json`: `POST /api/project` from the inline "Create new workspace" row (body not captured).
 - `playlist-me.response.json`: `GET /api/playlist/me?page=1&show_trashed=false&show_sharelist=false`, the playlist list, requested when the Create form's Inspo picker opens and (TS-007-24) when Library's Playlists tab is pressed; a sync's playlist-list leg reads it (#449). Trimmed to two.
 - `unified-feed.playlist.request.json` / `.response.json`: `POST /api/unified/feed` with `{ feed_id: "generic_playlist:<id>", cursor: null, page_size: 50, request_metadata: { sort_by: "default" } }`, a playlist's contents, requested when a playlist page opens. Songs are in `feed.items[].content_item`. No paging field appeared for an 8-song playlist. Trimmed to two items.
+- `unified-feed.playlist-page-2.request.json` / `.response.json` (#452, TS-007-25, synthetic): the page's own `POST /api/unified/feed` for cursor "50" as it is scrolled, and its snake_case answer with songs 51 to 77 of the synthetic 77-song playlist (`…0600`; songs `…0632`–`…064d`), `item_count: 77`, no `next_cursor`. Made-up titles, lyrics, and owner.
 - `persona-get-personas.response.json`: `GET /api/persona/get-personas/?page=1`, requested when the Voice picker opens: the voice list a sync reads (#439, TS-007-21). Each persona carries the owner's `user_handle`, `user_display_name`, and `user_image_url` (redacted here) and a whole `clip`, none of which the observer forwards.
 
 ### TS-004: downloads
@@ -92,6 +93,13 @@ What changed from the TS-003, TS-007, and #422 snapshots:
 | `page.create-workspace-songs-groups.html` | A workspace's songs on `/create?wid=<id>`: Suno's Create form beside the song list, the list's header with its pager (‹ 1 ›), and three rows in two date sections, then two placeholders in a third. |
 | `page.playlist-groups.html` | A playlist (`/playlist/<id>`): its header and three of its rows. No pager, and no Create, Publish, Delete, Trash, or Remove control. |
 | `page.library-workspaces.html` | Library › Workspaces (`/me/workspaces`): "Create new workspace" and three workspaces (`role=button` rows, no link, no identifier). No pager. |
+
+Synthetic (#452, TS-007-25): no capture with its scripts is committed, so these reproduce the wrapping of a playlist page's embedded data with made-up IDs, titles, lyrics, and owner; the structure is the owner's read-only capture of 2026-10-31 (TS-007-25).
+
+| File | What it is |
+|---|---|
+| `page.playlist-embedded.html` | A 77-song playlist (`/playlist/…0600`): its header ("77 songs"), 20 drawn rows of its first songs, and its scripts: one with `src`, the bootstrap and form-state pushes, and six `self.__next_f.push([1,"…"])` data pushes (the head rows, two text rows of long lyrics with raw newlines, the row holding `…["3"].prefetched.dehydratedState` split across two pushes, the root). The dehydrated state holds the feed query (50 items, `nextCursor: "50"`, `itemCount: 77`) and one query per clip. One title is sent as `"$$…"`, and `downloadUnlockedAt` as `"$undefined"`. No Create, Publish, Delete, Trash, or Remove control. |
+| `page.playlist-embedded-no-feed.html` | The same page, three rows, with no feed query in its dehydrated state: the "playlist page changed" case. |
 
 Not captured: `page.library-playlists.raw.html` (Library › Playlists) was taken too but is not committed: the playlist-list leg (#449) presses the Playlists tab on Library (`/me`, the Library snapshots) and only scrolls `/me/playlists`, whose answer the reader judges. A playlist leg reads its rows and "24 songs" from `page.playlist-groups.html` (TS-007-24).
 
