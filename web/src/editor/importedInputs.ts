@@ -3,6 +3,10 @@ import type { ImportedInputs } from '../api/versions';
 
 /** The words for an option the API names `key`: its field's label, else the key itself. */
 export function importedOptionLabel(key: string, fields: readonly CreateField[]): string {
+  // A clip from a playlist's data may not say its mode (#452).
+  if (key === 'songMode' || key === 'speechMode') {
+    return 'Mode';
+  }
   const field = fields.find((candidate) =>
     key === 'lyrics' || key === 'styles' ? candidate.key === key : candidate.option === key,
   );

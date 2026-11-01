@@ -125,6 +125,45 @@ public sealed class ClipInputMapperTests
         Assert.Equal(CreationMode.Advanced, Map(clip).Inputs.SongMode);
     }
 
+    /// <summary>
+    /// A clip a playlist leg sent (#452, marked with <see cref="ClipReader.SourceMember"/>) lacks what its
+    /// source does not carry: each option it lacks is not returned, never Suno's default, and takes no part
+    /// in a comparison; without a description prompt its mode is not returned either. So a Version made
+    /// from the whole clip does not differ from it, where the same clip without the mark would.
+    /// </summary>
+    [Fact]
+    public void APlaylistClipMarksWhatItLacksAsNotReturnedAndDiffersOnNothingElse()
+    {
+        var whole = Map(FixtureClip(Advanced));
+        var lacking = FixtureClip(Advanced);
+        var metadata = lacking["metadata"]!.AsObject();
+        foreach (var name in new[] { "control_sliders", "is_max_mode", "negative_tags", "model_badges" })
+        {
+            Assert.True(metadata.Remove(name));
+        }
+
+        Assert.True(lacking.AsObject().Remove("project"));
+        var unmarked = Map(lacking);
+        lacking[ClipReader.SourceMember] = "playlist";
+
+        var mapped = Map(lacking);
+
+        // The model too: its badge is gone, and the version and name it falls back to do not tell a label.
+        string[] lacked = [.. new[] { "weirdness", "style_influence", "variety", "max_mode", "exclude_styles", "model" }.Select(ApiName), VersionInputRules.SongModeKey];
+        foreach (var key in lacked)
+        {
+            Assert.Contains(key, mapped.Marks.NotReturned);
+            Assert.DoesNotContain(key, mapped.Compared.Keys);
+        }
+
+        // What it carries is read as before.
+        Assert.Equal(whole.Lyrics, mapped.Lyrics);
+        Assert.Null(mapped.Model);
+        Assert.False(ClipInputMapper.Differs(mapped, whole.Lyrics, whole.Styles, whole.Inputs, whole.Marks));
+        Assert.True(ClipInputMapper.Differs(unmarked, whole.Lyrics, whole.Styles, whole.Inputs, whole.Marks));
+        Assert.True(ClipInputMapper.Differs(mapped, whole.Lyrics + " more", whole.Styles, whole.Inputs, whole.Marks));
+    }
+
     /// <summary>Every Songs option the story lists is read, or marked not returned, and no option of another tab is.</summary>
     [Fact]
     public void EverySongsOptionIsReadOrMarkedNotReturned()

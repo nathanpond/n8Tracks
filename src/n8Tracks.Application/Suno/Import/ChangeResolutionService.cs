@@ -81,7 +81,7 @@ public sealed class ChangeResolutionService(ISunoExportStore exports, ISunoClipL
             return new RecordDiffOutcome.NotDiffed(record.Class);
         }
 
-        var fields = RecordClassifier.ChangedFieldsOf(linked, read.Fields)
+        var fields = RecordClassifier.ChangedFieldsOf(linked, read)
             .Select(field => new FieldDiff(field, RememberedChoiceRules.ComparedValue(linked.Stored, field), RememberedChoiceRules.ComparedValue(read.Fields, field)))
             .ToList();
         var inputs = new List<InputDiff>();
@@ -170,7 +170,7 @@ internal sealed class ChangeResolutionWriter(
         }
 
         var now = time.GetUtcNow();
-        var changed = SunoExportRules.ChangedFields(linked.Stored, read.Fields);
+        var changed = ClipReader.ChangedFields(linked.Stored, read);
         var accepted = changed.Where(field => clip.Choice.AcceptFields?.Contains(field, StringComparer.Ordinal) == true).ToList();
         var createdVersion = false;
         string outcome;

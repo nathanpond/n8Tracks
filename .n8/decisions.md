@@ -4940,3 +4940,15 @@ Story #219 (on the milestone branch):
 - **Decision:** N in "Nothing new: n8Tracks already has all N songs" is the export's record count (`counts.total`); one record reads "the 1 song", none "there was nothing for n8Tracks to review".
   **Why:** The records are the songs the sync read; a playlist sync of known memberships has none.
   **Issue:** #450
+
+## Ad-hoc — 2026-10-31 (#452)
+
+- **Change:** A playlist sync imports the playlist's songs again, as a workspace sync does, and keeps recording the membership (#452). The playlist leg reads the first page from the data Suno embeds in the page it served (the RSC flight pushes in the inline scripts, a TanStack dehydrated feed query; new read-only primitive `Page.readInlineScripts`, new `adapter/playlistData.ts`) and later pages from the observed `POST /api/unified/feed` as it scrolls, until `itemCount`; the rows' song IDs (#449) are a cross-check, and unreadable data stops the sync ("the playlist page changed"). Each clip is rebuilt in snake_case and marked `n8tracks_source: "playlist"`: an exception to "raw objects are sent as Suno returned them". The server reads a marked clip's absent members as not known (`ClipReader.IsFromPartialSource`): a compared field it lacks is not a change, an option it lacks is not returned (never the default, no model fallback), and its mode is not returned without a description prompt; the web labels that mode "Mode" in the imported notice. TS-007-25, `ADAPTER_VERSION` 37.
+  **Why:** Owner request in the #148 walkthrough: a playlist sync's review showed "0 songs in n8Tracks, 14 not imported"; the owner expects the songs imported.
+  **Affects:** M4 (#134 the playlist leg and the export format; #135/#136 the input mapping gains a partial-source rule; #139/#140/#141 classification and change review now ignore what a playlist clip lacks; #449 membership is unchanged), M8 (portable import must keep `n8tracks_source` in a Generation's raw clip if it re-reads raw clips), M9 audit (the extension now parses page script text; review the parser's bounds and the invariant 4 and 6 surface).
+
+## Ad-hoc — 2026-10-31 (M12, #451)
+
+- **Change:** Added milestone M12: V2, after M11, as a placeholder for work deliberately left out of V1, including the invariants marked "Expected to change in V2" (2, 4, 7). Filed spike #451 there: whether the extension should read Suno through its API with the user's session token, as a third-party extension does, instead of only observing the page's own requests. For V1, a playlist sync reads the data Suno embeds in the page (#452), within the observe-only boundary.
+  **Why:** Owner request in the #148 walkthrough, after seeing how fast a direct-API extension reads a library. Adopting it would amend the boundary in `docs/suno-integration.md` and touch invariants 4 and 6, so it is a deliberate V2 decision, not a V1 change.
+  **Affects:** M12 (new); M10/M11 unchanged in scope. If the spike recommends adoption, M4's adapter stories (#134) and the invariant 4 and 6 guards would be revisited in V2.

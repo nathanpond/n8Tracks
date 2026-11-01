@@ -35,7 +35,83 @@ public static class ClipReader
     /// <summary>The longest Suno ID accepted (Suno's are UUIDs).</summary>
     public const int MaximumIdLength = 200;
 
+    /// <summary>
+    /// The member the extension adds to a clip it read from a source that leaves members out (#452):
+    /// a playlist page's data, and the playlist feed it pages through. Such a clip lacks what a library
+    /// or workspace feed carries (the workspace, Suno's analysis of BPM and key, any option Suno
+    /// omits), so a member it lacks is not known: never Suno's default, and never a change.
+    /// </summary>
+    public const string SourceMember = "n8tracks_source";
+
     private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+
+    /// <summary>
+    /// Where each compared field (<see cref="SunoExportRules.ChangedFields"/>) is in a clip: a member,
+    /// or a member of <c>metadata</c>.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, string[]> ComparedPaths = new Dictionary<string, string[]>(StringComparer.Ordinal)
+    {
+        ["title"] = ["title"],
+        ["tags"] = ["metadata", "tags"],
+        ["duration"] = ["metadata", "duration"],
+        ["modelVersion"] = ["major_model_version"],
+        ["modelName"] = ["model_name"],
+        ["minimumBpm"] = ["metadata", "min_bpm"],
+        ["maximumBpm"] = ["metadata", "max_bpm"],
+        ["averageBpm"] = ["metadata", "avg_bpm"],
+        ["key"] = ["metadata", "key"],
+        ["imageUrl"] = ["image_url"],
+    };
+
+    /// <summary>
+    /// Whether <paramref name="clip"/> came from a source that leaves members out (<see cref="SourceMember"/>
+    /// is a string on it, #452).
+    /// </summary>
+    public static bool IsFromPartialSource(JsonElement clip) =>
+        clip.ValueKind == JsonValueKind.Object
+        && clip.TryGetProperty(SourceMember, out var source)
+        && source.ValueKind == JsonValueKind.String;
+
+    /// <summary>
+    /// The compared fields in which <paramref name="incoming"/> differs from <paramref name="stored"/>
+    /// (<see cref="SunoExportRules.ChangedFields"/>), less, for a clip from a source that leaves members
+    /// out (<see cref="IsFromPartialSource"/>), each field whose member the clip lacks: what the source
+    /// does not carry is not known, so it is not a change (invariant 3, #452).
+    /// </summary>
+    public static IReadOnlyList<string> ChangedFields(ClipFields stored, ClipReading.Read incoming)
+    {
+        ArgumentNullException.ThrowIfNull(stored);
+        ArgumentNullException.ThrowIfNull(incoming);
+
+        var changed = SunoExportRules.ChangedFields(stored, incoming.Fields);
+        if (changed.Count == 0)
+        {
+            return changed;
+        }
+
+        using var document = JsonDocument.Parse(incoming.Raw);
+        var clip = document.RootElement;
+        return IsFromPartialSource(clip)
+            ? [.. changed.Where(field => !ComparedPaths.TryGetValue(field, out var path) || Carries(clip, path))]
+            : changed;
+    }
+
+    /// <summary>Whether <paramref name="clip"/> has the member at <paramref name="path"/>, of any value.</summary>
+    private static bool Carries(JsonElement clip, string[] path)
+    {
+        var at = clip;
+        foreach (var name in path)
+        {
+            if (at.ValueKind != JsonValueKind.Object || !at.TryGetProperty(name, out var member))
+            {
+                return false;
+            }
+
+            at = member;
+        }
+
+        return true;
+    }
 
     /// <summary>Reads <paramref name="raw"/>, the text of one clip object.</summary>
     public static ClipReading Read(string? raw)

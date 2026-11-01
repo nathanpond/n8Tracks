@@ -1149,12 +1149,6 @@ describe('playlists (#449)', () => {
     playlists: [{ id: '00000000-0000-4000-8000-00000000050a', name: 'Harbour Lights' }],
     readTrash: false,
   };
-  /** The song rows of `page.playlist-groups.html`: three of its 24 songs. */
-  const ROW_IDS = [
-    '00000000-0000-4000-8000-00000000050c',
-    '00000000-0000-4000-8000-00000000050e',
-    '00000000-0000-4000-8000-00000000050f',
-  ];
 
   /** A page of the playlist list as the observer forwards it: made-up names. */
   function playlistList(ids: string[]): ObservedMessage {
@@ -1212,13 +1206,29 @@ describe('playlists (#449)', () => {
     expect(visited).toEqual(['https://suno.com/playlist/00000000-0000-4000-8000-00000000050a']);
   });
 
-  it("reads a playlist's songs from the rows of its page, scrolls for more, and says it was read in part", async () => {
-    const legs = legsFor(PLAYLIST_SCOPE);
-    const sw = worker(sessionAt(3, { scope: PLAYLIST_SCOPE, legs }));
+  /** The synthetic playlist of TS-007-25: 77 songs, 50 in its page's embedded data (#452). */
+  const LONG_ID = '00000000-0000-4000-8000-000000000600';
+  const LONG_SCOPE: SyncScope = {
+    kind: 'playlists',
+    playlists: [{ id: LONG_ID, name: 'Synthetic Playlist' }],
+    readTrash: false,
+  };
+
+  /** The page's own `POST /api/unified/feed` answer for the songs after the first 50. */
+  function secondPage(): ObservedMessage {
+    const message = observed('playlist-feed', sunoObject('unified-feed.playlist-page-2.response'));
+    message.request = { ...message.request, cursor: '50', feedId: `generic_playlist:${LONG_ID}` };
+    return message;
+  }
+
+  it("imports a playlist's songs from its page's data and the page Suno sends on a scroll, with the membership", async () => {
+    const legs = legsFor(LONG_SCOPE);
+    const sw = worker(sessionAt(3, { scope: LONG_SCOPE, legs }));
     const { content: started, text } = start({
-      address: 'https://suno.com/playlist/00000000-0000-4000-8000-00000000050a',
-      snapshot: 'playlist-groups',
+      address: `https://suno.com/playlist/${LONG_ID}`,
+      snapshot: 'playlist-embedded',
       worker: sw,
+      seen: [secondPage()],
     });
     const clicks: string[] = [];
     document.addEventListener(
@@ -1231,28 +1241,54 @@ describe('playlists (#449)', () => {
 
     await started.resumed;
 
-    // Only the membership, with the count the page gave: the capture holds 3 of 24 rows.
-    expect(sw.asked).toContainEqual({
-      type: 'sync-part',
-      part: {
-        partNumber: 1,
-        clips: [],
-        trashedClips: [],
-        playlists: [
-          {
-            id: '00000000-0000-4000-8000-00000000050a',
-            name: 'Harbour Lights',
-            clipIds: ROW_IDS,
-            songCount: 24,
-          },
-        ],
-      },
-    });
+    const part = sw.asked.find((request) => request.type === 'sync-part');
+    const sentPart = part?.type === 'sync-part' ? part.part : null;
+    const ids = Array.from(
+      { length: 77 },
+      (_, index) => `00000000-0000-4000-8000-${(0x601 + index).toString(16).padStart(12, '0')}`,
+    );
+    expect((sentPart?.clips as { id: string }[] | undefined)?.map((clip) => clip.id)).toEqual(ids);
+    expect(sentPart?.playlists).toEqual([
+      { id: LONG_ID, name: 'Synthetic Playlist', clipIds: ids, songCount: 77 },
+    ]);
     // Scrolling presses nothing.
     expect(clicks).toEqual([]);
     expect(sw.types()).toContain('sync-complete');
+    expect(text('.sync-note')).toBe('');
+  });
+
+  it('says a playlist was read in part when Suno sends no next page after the scrolls', async () => {
+    const legs = legsFor(LONG_SCOPE);
+    const sw = worker(sessionAt(3, { scope: LONG_SCOPE, legs }));
+    const { content: started, text } = start({
+      address: `https://suno.com/playlist/${LONG_ID}`,
+      snapshot: 'playlist-embedded',
+      worker: sw,
+    });
+
+    await started.resumed;
+
+    expect(sw.types()).toContain('sync-complete');
     expect(text('.sync-note')).toBe(
-      'Playlist “Harbour Lights” was read in part: 3 of 24 songs (Suno showed no more). The review shows it so, and does not record it unless you choose to.',
+      'Playlist “Synthetic Playlist” was read in part: 50 of 77 songs (Suno sent no further page). The review shows it so, and does not record it unless you choose to.',
+    );
+  });
+
+  it('stops, saying the playlist page changed, when its embedded data holds no feed for it', async () => {
+    const legs = legsFor(LONG_SCOPE);
+    const sw = worker(sessionAt(3, { scope: LONG_SCOPE, legs }));
+    const { content: started, text } = start({
+      address: `https://suno.com/playlist/${LONG_ID}`,
+      snapshot: 'playlist-embedded-no-feed',
+      worker: sw,
+    });
+
+    await started.resumed;
+
+    expect(sw.types()).not.toContain('sync-part');
+    expect(sw.types()).toContain('sync-discard');
+    expect(text('.sync-stopped')).toBe(
+      `Sync stopped: step 'Read playlist 1 of 1' expected Suno's data for the playlist's songs in its page, but the playlist page changed (its embedded data holds no feed query for this playlist). Nothing was sent for review.`,
     );
   });
 
