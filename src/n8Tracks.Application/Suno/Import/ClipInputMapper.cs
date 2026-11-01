@@ -201,8 +201,18 @@ public static class ClipInputMapper
         return MapWith(clip, models, map, inventory, CreateReader(clip, request), fromCreate: true);
     }
 
-    /// <summary>Where an option's value is read from a feed clip: <c>paths.feed</c>, then its fallbacks; an entry with neither must say it is not returned.</summary>
-    private static Func<ImportFieldEntry, FieldValue> FeedReader(JsonElement clip) => entry =>
+    /// <summary>
+    /// Where an option's value is read from a feed clip: <c>paths.feed</c>, then its fallbacks; an entry with neither must
+    /// say it is not returned. In a clip from a source that leaves members out (a playlist's, #452,
+    /// <see cref="ClipReader.IsFromPartialSource"/>), an option the clip lacks is not returned, never the default.
+    /// </summary>
+    private static Func<ImportFieldEntry, FieldValue> FeedReader(JsonElement clip)
+    {
+        var partial = ClipReader.IsFromPartialSource(clip);
+        return entry => FeedValue(clip, entry, partial);
+    }
+
+    private static FieldValue FeedValue(JsonElement clip, ImportFieldEntry entry, bool partial)
     {
         if (entry.FeedPath is null)
         {
@@ -211,10 +221,12 @@ public static class ClipInputMapper
                 : throw new InvalidOperationException($"The import field map neither maps '{entry.Key}' nor says Suno does not return it.");
         }
 
+        // A fallback stands in for a member a feed clip lacks; in a clip from a playlist (#452) the member
+        // may be one its source never carries (the model badge), so no fallback guesses it.
         var value = ImportFieldMap.Read(clip, entry.FeedPath)
-            ?? entry.FeedFallbacks.Select(path => ImportFieldMap.Read(clip, path)).FirstOrDefault(static found => found is not null);
-        return value is null && entry.AbsentInClipIsNotReturned ? FieldValue.NotRead : new FieldValue(true, value, null);
-    };
+            ?? (partial ? null : entry.FeedFallbacks.Select(path => ImportFieldMap.Read(clip, path)).FirstOrDefault(static found => found is not null));
+        return value is null && (entry.AbsentInClipIsNotReturned || partial) ? FieldValue.NotRead : new FieldValue(true, value, null);
+    }
 
     /// <summary>Where an option's value is read from an observed Create: the response clip, else the request, else nowhere.</summary>
     private static Func<ImportFieldEntry, FieldValue> CreateReader(JsonElement clip, JsonElement? request) => entry =>
@@ -279,7 +291,16 @@ public static class ClipInputMapper
         {
             [VersionInputRules.KindKey] = json[VersionInputRules.KindKey]!.ToJsonString(),
         };
-        if (modeKey is not null)
+        // A clip from a source that leaves members out (#452) and has no description prompt does not say
+        // whether it was made in Simple mode: its mode is not returned, so not compared.
+        var modeNotReturned = modeKey is not null
+            && ClipReader.IsFromPartialSource(clip)
+            && ImportFieldMap.Read(clip, "metadata.gpt_description_prompt") is null;
+        if (modeNotReturned)
+        {
+            notReturned.Add(modeKey!);
+        }
+        else if (modeKey is not null)
         {
             compared[modeKey] = json[modeKey]!.ToJsonString();
         }

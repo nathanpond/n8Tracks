@@ -220,5 +220,37 @@ public sealed class ClipReaderTests
         Assert.Equal("Café été \U0001F3B5", read.Fields.Title);
     }
 
+    /// <summary>
+    /// A clip a playlist leg sent (#452) carries <see cref="ClipReader.SourceMember"/>: a compared field
+    /// whose member it lacks (here Suno's BPM and key analysis, and the image) is not known, so it is not a
+    /// change. The same clip without the mark changes every one of them; one it does carry still changes.
+    /// </summary>
+    [Fact]
+    public void AClipFromAPlaylistChangesNothingItDoesNotCarry()
+    {
+        var full = JsonNode.Parse(Clips.FixtureClip("feed-v3.completed-clip.response.json"))!;
+        var stored = Read(full.ToJsonString());
+        var lacking = full.DeepClone().AsObject();
+        var metadata = lacking["metadata"]!.AsObject();
+        foreach (var name in new[] { "key", "min_bpm", "max_bpm", "avg_bpm" })
+        {
+            Assert.True(metadata.Remove(name));
+        }
+
+        Assert.True(lacking.Remove("image_url"));
+        Assert.True(lacking.Remove("project"));
+
+        Assert.Equal(["minimumBpm", "maximumBpm", "averageBpm", "key", "imageUrl"], ClipReader.ChangedFields(stored, ReadWhole(lacking)));
+
+        lacking[ClipReader.SourceMember] = "playlist";
+        Assert.True(ClipReader.IsFromPartialSource(System.Text.Json.JsonSerializer.SerializeToElement(lacking)));
+        Assert.Empty(ClipReader.ChangedFields(stored, ReadWhole(lacking)));
+
+        lacking["title"] = "A title Suno changed";
+        Assert.Equal(["title"], ClipReader.ChangedFields(stored, ReadWhole(lacking)));
+    }
+
+    private static ClipReading.Read ReadWhole(JsonNode clip) => Assert.IsType<ClipReading.Read>(ClipReader.Read(clip.ToJsonString()));
+
     private static ClipFields Read(string raw) => Assert.IsType<ClipReading.Read>(ClipReader.Read(raw)).Fields;
 }

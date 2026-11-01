@@ -28,6 +28,9 @@ describe('the imported Version notice', () => {
     expect(importedOptionLabel('lyrics', FIELDS)).toBe('Lyrics');
     expect(importedOptionLabel('vocalGender', FIELDS)).toBe('Vocal Gender');
     expect(importedOptionLabel('notAnOption', FIELDS)).toBe('notAnOption');
+    // A clip from a playlist's data may not say its mode (#452).
+    expect(importedOptionLabel('songMode', FIELDS)).toBe('Mode');
+    expect(importedOptionLabel('speechMode', FIELDS)).toBe('Mode');
     expect(outOfRangeText(IMPORTED, FIELDS)).toBe('Lyrics, Variety (Suno returned 7)');
   });
 

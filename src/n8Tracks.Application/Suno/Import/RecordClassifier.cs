@@ -50,7 +50,7 @@ public sealed class RecordClassifier(ISunoClipLookup lookup, TombstoneService to
             if (live.TryGetValue(record.SunoId, out var linked))
             {
                 generationId = linked.GenerationId;
-                changed = ClipReader.Read(record.RawJson) is ClipReading.Read read ? ChangedFieldsOf(linked, read.Fields) : [];
+                changed = ClipReader.Read(record.RawJson) is ClipReading.Read read ? ChangedFieldsOf(linked, read) : [];
 
                 inputsDiffer = linked.Version is { } version && InputsDiffer(record.RawJson, version, linked.KeptInputsHash, modelList);
             }
@@ -69,16 +69,17 @@ public sealed class RecordClassifier(ISunoClipLookup lookup, TombstoneService to
 
     /// <summary>
     /// The compared fields in which <paramref name="incoming"/> differs from the Generation of
-    /// <paramref name="linked"/>; none while Suno still has the values the user declined (#141), so a
-    /// declined change is neither a class nor a diff again until Suno's data changes.
+    /// <paramref name="linked"/>, less those a clip from a playlist does not carry (#452,
+    /// <see cref="ClipReader.ChangedFields"/>); none while Suno still has the values the user declined
+    /// (#141), so a declined change is neither a class nor a diff again until Suno's data changes.
     /// </summary>
-    internal static IReadOnlyList<string> ChangedFieldsOf(LinkedClip linked, ClipFields incoming)
+    internal static IReadOnlyList<string> ChangedFieldsOf(LinkedClip linked, ClipReading.Read incoming)
     {
         ArgumentNullException.ThrowIfNull(linked);
         ArgumentNullException.ThrowIfNull(incoming);
 
-        var changed = SunoExportRules.ChangedFields(linked.Stored, incoming);
-        return changed.Count > 0 && RememberedChoiceRules.Remembers(linked.DeclinedHash, RememberedChoiceRules.DeclinedHash(incoming)) ? [] : changed;
+        var changed = ClipReader.ChangedFields(linked.Stored, incoming);
+        return changed.Count > 0 && RememberedChoiceRules.Remembers(linked.DeclinedHash, RememberedChoiceRules.DeclinedHash(incoming.Fields)) ? [] : changed;
     }
 
     /// <summary>
