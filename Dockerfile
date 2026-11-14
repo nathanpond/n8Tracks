@@ -19,7 +19,7 @@ COPY web/ ./
 RUN npm run build
 
 # --- Backend: framework-dependent publish of n8Tracks.Api -----------------------------------------
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:11.0 AS build
 ARG TARGETARCH
 WORKDIR /src
 
