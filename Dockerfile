@@ -54,7 +54,7 @@ RUN version="${VERSION:-$(tr -d '[:space:]' < VERSION)}" \
         --output /app/publish
 
 # --- Runtime --------------------------------------------------------------------------------------
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:11.0 AS runtime
 
 # Time zone data for TZ. No curl or wget: the health check is the app binary itself.
 # The base image ships an empty /media; it is removed so that a media folder that is not mounted is
