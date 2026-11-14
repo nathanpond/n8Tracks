@@ -39,7 +39,7 @@ RUN version="${VERSION:-$(tr -d '[:space:]' < VERSION)}" \
         --output /app/publish
 
 # --- Runtime --------------------------------------------------------------------------------------
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:11.0 AS runtime
 
 # Nothing is installed: no curl or wget (the health check is the gateway binary itself), and no time
 # zone data (the gateway shows no local times; its log is in UTC).
